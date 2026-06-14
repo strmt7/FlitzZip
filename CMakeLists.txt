@@ -100,6 +100,7 @@ if(SUPERZIP_ENABLE_HIP)
             -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec.hip.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"

@@ -18,7 +18,7 @@ bool is_windows_reserved_name(std::string name) {
     if (dot != std::string::npos) {
         name.resize(dot);
     }
-    std::ranges::transform(name, name.begin(), [](unsigned char ch) {
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
         return static_cast<char>(std::toupper(ch));
     });
     static constexpr std::array reserved = {
@@ -26,7 +26,7 @@ bool is_windows_reserved_name(std::string name) {
         "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     };
-    return std::ranges::find(reserved, name) != reserved.end();
+    return std::find(reserved.begin(), reserved.end(), name) != reserved.end();
 }
 
 // Purpose: Detect drive-rooted paths such as `C:`.

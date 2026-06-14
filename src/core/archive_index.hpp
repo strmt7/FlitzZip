@@ -1,7 +1,7 @@
 #pragma once
 
+#include "core/archive_block_types.hpp"
 #include "core/resource_limits.hpp"
-#include "core/archive_blocks.hpp"
 
 #include <cstddef>
 #include <cstdint>
