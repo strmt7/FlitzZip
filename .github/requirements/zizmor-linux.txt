@@ -1,0 +1,3 @@
+--only-binary=:all:
+zizmor==1.25.2 \
+    --hash=sha256:c4246f1344d8dbeffc044d7bb11b131773a7db7eb57d9073c45942dfd3543a1f

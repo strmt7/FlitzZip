@@ -21,8 +21,11 @@ concurrency:
 
 jobs:
   openvas-greenbone:
+    name: Greenbone/OpenVAS plus Vulnetix
     runs-on: ubuntu-latest
     timeout-minutes: 390
+    environment:
+      name: openvas-scanning
     env:
       GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
       GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
@@ -54,6 +57,14 @@ jobs:
           scan_config_id="${GREENBONE_SCAN_CONFIG_ID:-daba56c8-73ec-11df-a475-002264764cea}"
           scanner_id="${GREENBONE_SCANNER_ID:-08b69003-5fc2-4037-a479-93b440211c73}"
           port_list_id="${GREENBONE_PORT_LIST_ID:-}"
+
+          for value_name in target port max_minutes delete_task scan_config_id scanner_id port_list_id; do
+            value="${!value_name}"
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "::error::$value_name must be a single-line value"
+              exit 1
+            fi
+          done
 
           missing=()
           [ -n "${GREENBONE_HOST:-}" ] || missing+=("GREENBONE_HOST")
@@ -94,14 +105,22 @@ jobs:
         if: steps.config.outputs.enabled == 'true'
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.14.4"
+          python-version: "3.13"
       - name: Install Greenbone tools
         if: steps.config.outputs.enabled == 'true'
         shell: bash
-        run: python -m pip install --disable-pip-version-check gvm-tools==26.0.4
+        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/gvm-tools-linux.txt
       - name: Run Greenbone/OpenVAS scan
         if: steps.config.outputs.enabled == 'true'
         shell: bash
+        env:
+          GREENBONE_EFFECTIVE_PORT: ${{ steps.config.outputs.port }}
+          GREENBONE_EFFECTIVE_TARGET: ${{ steps.config.outputs.target }}
+          GREENBONE_EFFECTIVE_SCAN_CONFIG_ID: ${{ steps.config.outputs.scan_config_id }}
+          GREENBONE_EFFECTIVE_SCANNER_ID: ${{ steps.config.outputs.scanner_id }}
+          GREENBONE_EFFECTIVE_PORT_LIST_ID: ${{ steps.config.outputs.port_list_id }}
+          GREENBONE_EFFECTIVE_MAX_MINUTES: ${{ steps.config.outputs.max_minutes }}
+          GREENBONE_EFFECTIVE_DELETE_TASK: ${{ steps.config.outputs.delete_task }}
         run: |
           set -euo pipefail
           gvm-script \
@@ -110,30 +129,30 @@ jobs:
             --timeout -1 \
             tls \
             --hostname "$GREENBONE_HOST" \
-            --port "${{ steps.config.outputs.port }}" \
+            --port "$GREENBONE_EFFECTIVE_PORT" \
             .github/openvas/openvas_scan.gmp.py \
-            "${{ steps.config.outputs.target }}" \
+            "$GREENBONE_EFFECTIVE_TARGET" \
             reports/openvas \
-            "${{ steps.config.outputs.scan_config_id }}" \
-            "${{ steps.config.outputs.scanner_id }}" \
-            "${{ steps.config.outputs.port_list_id }}" \
-            "${{ steps.config.outputs.max_minutes }}" \
-            "${{ steps.config.outputs.delete_task }}"
+            "$GREENBONE_EFFECTIVE_SCAN_CONFIG_ID" \
+            "$GREENBONE_EFFECTIVE_SCANNER_ID" \
+            "$GREENBONE_EFFECTIVE_PORT_LIST_ID" \
+            "$GREENBONE_EFFECTIVE_MAX_MINUTES" \
+            "$GREENBONE_EFFECTIVE_DELETE_TASK"
       - name: Vulnetix health check
         if: ${{ env.VULNETIX_ORG_ID != '' }}
-        uses: Vulnetix/cli@a6fb5f993c6404f1d2d2c36542fed67aa2a7738d # main as checked 2026-06-14
+        uses: Vulnetix/cli@788f50663ced622fbc2d1eefd244c9143451ed09 # main as checked 2026-06-14
         with:
-          org-id: ${{ secrets.VULNETIX_ORG_ID }}
+          org-id: ${{ env.VULNETIX_ORG_ID }}
       - name: Upload OpenVAS artifacts to Vulnetix
         if: ${{ env.VULNETIX_ORG_ID != '' }}
-        uses: Vulnetix/cli@a6fb5f993c6404f1d2d2c36542fed67aa2a7738d # main as checked 2026-06-14
+        uses: Vulnetix/cli@788f50663ced622fbc2d1eefd244c9143451ed09 # main as checked 2026-06-14
         with:
-          org-id: ${{ secrets.VULNETIX_ORG_ID }}
+          org-id: ${{ env.VULNETIX_ORG_ID }}
           task: upload
           artifact-path: reports/openvas
       - name: Upload OpenVAS artifact
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: greenbone-openvas-reports
           path: reports/openvas

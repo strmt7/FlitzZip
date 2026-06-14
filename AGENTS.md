@@ -37,7 +37,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.github/codeql/`: CodeQL scanning configuration.
-- `.github/workflows/beta-release.yml`: manual x64 beta release, installer smoke, and prerelease publishing workflow.
+- `.github/requirements/`: hash-locked Python scanner requirements for GitHub-hosted Linux jobs.
+- `.github/workflows/release.yml`: manual x64 release, installer smoke, beta/stable track selection, and publishing workflow.
 - `.agents/skills/` and `mcp/`: local helper skills/MCPs for future agents.
 
 ## Build And Test Commands

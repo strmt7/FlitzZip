@@ -10,6 +10,8 @@ are used, and default to read-only repository permissions.
   weekly schedule, and manual dispatch.
 - `.github/workflows/greenbone-openvas-vulnetix.yml` runs on push, pull
   request, weekly schedule, and manual dispatch.
+- `.github/workflows/release.yml` is manual-only and runs release build,
+  packaging, install smoke tests, repository security scan, and publication.
 - `.github/dependabot.yml` keeps GitHub Actions dependencies visible through
   Dependabot pull requests.
 
@@ -20,14 +22,14 @@ are used, and default to read-only repository permissions.
 | CodeQL C++ | Archive parser, path handling, CLI, Win32 UI, HIP boundary | GitHub code scanning |
 | CodeQL Actions | Workflow injection and Actions misuse | GitHub code scanning |
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
-| zizmor | GitHub Actions security analysis | SARIF upload |
+| zizmor | GitHub Actions security analysis through a hash-locked Python wheel | SARIF upload |
 | Trivy | Filesystem dependency, config, secret, and license scan | SARIF upload |
-| Semgrep | Cross-language SAST for C/C++, PowerShell, and workflow files | SARIF upload |
+| Semgrep | Cross-language SAST through a digest-pinned scanner container | SARIF upload |
 | DevSkim | Microsoft security anti-pattern scanning | SARIF upload |
 | OSV Scanner | Known dependency vulnerability scan | GitHub code scanning |
 | Dependency Review | Blocks vulnerable dependency changes on PRs | PR check |
 | OSSF Scorecard | Repository supply-chain security posture | SARIF upload |
-| Greenbone/OpenVAS | Network/host vulnerability scan for authorized targets | XML/JSON artifact and optional Vulnetix upload |
+| Greenbone/OpenVAS | Network/host vulnerability scan through hash-locked GVM tools for authorized targets | XML/JSON artifact and optional Vulnetix upload |
 | Vulnetix | Optional external vulnerability-management upload | Vulnetix project |
 
 ## Required GitHub Repository Settings

@@ -18,6 +18,8 @@ jobs:
   codeql-cpp:
     name: CodeQL C++
     runs-on: windows-2022
+    # CodeQL needs action metadata for analysis, repository contents to build,
+    # and security-events write permission to upload SARIF.
     permissions:
       actions: read
       contents: read
@@ -28,7 +30,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           languages: c-cpp
           build-mode: manual
@@ -39,13 +41,15 @@ jobs:
         shell: pwsh
         run: tools/build.ps1 -Configuration Release -PackageVersion 0.1.0-security
       - name: Analyze C++
-        uses: github/codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           category: /language:c-cpp
 
   codeql-actions:
     name: CodeQL GitHub Actions
     runs-on: ubuntu-latest
+    # CodeQL needs action metadata for analysis, repository contents to scan,
+    # and security-events write permission to upload SARIF.
     permissions:
       actions: read
       contents: read
@@ -56,19 +60,20 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           languages: actions
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
       - name: Analyze GitHub Actions
-        uses: github/codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           category: /language:actions
 
   workflow-security:
     name: Workflow lint and injection scan
     runs-on: ubuntu-latest
+    # zizmor uses action metadata and uploads workflow-audit SARIF.
     permissions:
       actions: read
       contents: read
@@ -79,14 +84,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Go
-        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: "1.25.x"
           cache: false
       - name: Setup Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.14.4"
+          python-version: "3.13"
       - name: Audit scan scope
         shell: bash
         run: |
@@ -106,11 +111,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check zizmor==1.25.2
+          python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/zizmor-linux.txt
           zizmor --format sarif --persona auditor .github/workflows > zizmor-results.sarif
       - name: Upload zizmor SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: zizmor-results.sarif
           category: zizmor
@@ -118,6 +123,7 @@ jobs:
   trivy-filesystem:
     name: Trivy filesystem security scan
     runs-on: ubuntu-latest
+    # Trivy reads repository contents and uploads filesystem-scan SARIF.
     permissions:
       actions: read
       contents: read
@@ -136,7 +142,7 @@ jobs:
             -not -path './.git/*' -not -path './third_party/*' -not -path './build/*' -not -path './out/*' | sort
           echo "::endgroup::"
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           format: sarif
@@ -147,7 +153,7 @@ jobs:
           skip-dirs: third_party,build,out,reports
       - name: Upload Trivy SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs
@@ -155,6 +161,7 @@ jobs:
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
+    # Semgrep reads repository contents and uploads SAST SARIF.
     permissions:
       actions: read
       contents: read
@@ -164,10 +171,6 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.14.4"
       - name: Audit scan scope
         run: |
           echo "::group::Semgrep scan scope"
@@ -175,13 +178,19 @@ jobs:
             \( -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' -o -name '*.ps1' -o -name '*.yml' -o -name '*.yaml' \) \
             -not -path './third_party/*' | sort
           echo "::endgroup::"
-      - name: Install Semgrep
-        run: python -m pip install --disable-pip-version-check semgrep==1.163.0
       - name: Run Semgrep
-        run: semgrep scan --sarif --config auto --exclude third_party --exclude build --exclude out . > semgrep-results.sarif
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -w /src \
+            semgrep/semgrep:1.163.0@sha256:7cad2bc2d1e44f87f0bf4be6d1fa23aa90fb72015bebc89fb91385d813987a03 \
+            semgrep scan --sarif --metrics=off --config auto --exclude third_party --exclude build --exclude out . \
+            > semgrep-results.sarif
       - name: Upload Semgrep SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: semgrep-results.sarif
           category: semgrep
@@ -189,6 +198,7 @@ jobs:
   devskim:
     name: DevSkim security lint
     runs-on: ubuntu-latest
+    # DevSkim reads repository contents and uploads security-lint SARIF.
     permissions:
       actions: read
       contents: read
@@ -214,13 +224,14 @@ jobs:
           ignore-globs: "**/.git/**,**/third_party/**,**/build/**,**/out/**,**/reports/**"
       - name: Upload DevSkim SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: devskim-results.sarif
           category: devskim
 
   osv-scanner:
     name: OSV dependency vulnerability scan
+    # OSV scans dependency manifests and writes dependency SARIF.
     permissions:
       actions: read
       contents: read
@@ -235,6 +246,7 @@ jobs:
   sbom:
     name: SBOM generation
     runs-on: ubuntu-latest
+    # SBOM generation only needs repository read access.
     permissions:
       contents: read
     steps:
@@ -243,7 +255,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           path: .
           format: spdx-json
@@ -254,6 +266,8 @@ jobs:
     name: OSSF Scorecard supply-chain security
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # Scorecard reads repository metadata, uses OIDC for result signing, and
+    # uploads SARIF to code scanning.
     permissions:
       actions: read
       contents: read
@@ -273,7 +287,7 @@ jobs:
           publish_results: true
       - name: Upload Scorecard SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: scorecard-results.sarif
           category: scorecard
@@ -282,6 +296,7 @@ jobs:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Dependency Review only needs repository contents and pull-request metadata.
     permissions:
       contents: read
       pull-requests: read

@@ -9,8 +9,8 @@ created.
 
 Do not open public issues for exploitable archive parsing, path traversal,
 malware scanning, credential, or supply-chain findings. Report privately through
-GitHub's private vulnerability reporting if it is enabled for the repository, or
-contact the repository owner through their preferred private channel.
+GitHub private vulnerability reporting:
+https://github.com/strmt7/SuperZip/security/advisories/new
 
 ## Scope
 

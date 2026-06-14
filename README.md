@@ -37,9 +37,10 @@ tools/package.ps1 -Configuration Release
 The package script installs the built executables and docs into `out/` and then
 creates a ZIP package. Build/package outputs are ignored by Git.
 
-Manual beta releases are created by `.github/workflows/beta-release.yml`. See
-`docs/release.md` for version inputs, MSI packaging, and the self-hosted AMD HIP
-runner requirement for GPU-enabled release binaries.
+Manual releases are created by `.github/workflows/release.yml`. See
+`docs/release.md` for version inputs, beta/stable release tracks, MSI
+packaging, and the self-hosted AMD HIP runner requirement for GPU-enabled
+release binaries.
 
 ## CLI
 

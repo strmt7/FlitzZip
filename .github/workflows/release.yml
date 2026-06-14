@@ -1,0 +1,116 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: SemVer product version without v prefix; leave empty to use CMake project version
+        required: false
+        default: ""
+        type: string
+      replace_existing:
+        description: Delete an existing release/tag with the same version before publishing
+        required: false
+        default: false
+        type: boolean
+      release_track:
+        description: Release track; beta publishes a GitHub prerelease, stable publishes a normal release
+        required: true
+        default: beta
+        type: choice
+        options:
+          - beta
+          - stable
+      runner_profile:
+        description: Hosted validation or self-hosted AMD HIP release runner
+        required: true
+        default: hosted-windows
+        type: choice
+        options:
+          - hosted-windows
+          - self-hosted-amd-hip
+      create_msi:
+        description: Build and install-test the MSI in addition to the portable ZIP
+        required: false
+        default: true
+        type: boolean
+      enable_hip:
+        description: Build with AMD HIP; requires the self-hosted-amd-hip runner profile
+        required: false
+        default: false
+        type: boolean
+      hip_arch:
+        description: AMD HIP GPU architecture, for example gfx1201
+        required: false
+        default: gfx1201
+        type: string
+
+# Top-level read access is enough for workflow dispatch metadata and checkout defaults.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.release_version || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  hosted-windows:
+    name: Hosted Windows release validation
+    if: inputs.runner_profile == 'hosted-windows'
+    runs-on: windows-2022
+    timeout-minutes: 180
+    # The release action creates tags/releases, so this job needs write access to repository contents.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run release pipeline
+        uses: ./.github/actions/windows-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          release_version: ${{ inputs.release_version }}
+          replace_existing: ${{ inputs.replace_existing }}
+          release_track: ${{ inputs.release_track }}
+          create_msi: ${{ inputs.create_msi }}
+          enable_hip: ${{ inputs.enable_hip }}
+          hip_arch: ${{ inputs.hip_arch }}
+          allow_hip: "false"
+
+  self-hosted-amd-hip:
+    name: Self-hosted AMD HIP release
+    if: inputs.runner_profile == 'self-hosted-amd-hip'
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - AMD
+      - HIP
+    timeout-minutes: 240
+    # The release action creates tags/releases, so this job needs write access to repository contents.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run release pipeline
+        uses: ./.github/actions/windows-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          release_version: ${{ inputs.release_version }}
+          replace_existing: ${{ inputs.replace_existing }}
+          release_track: ${{ inputs.release_track }}
+          create_msi: ${{ inputs.create_msi }}
+          enable_hip: ${{ inputs.enable_hip }}
+          hip_arch: ${{ inputs.hip_arch }}
+          allow_hip: "true"

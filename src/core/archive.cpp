@@ -238,6 +238,8 @@ OperationStats compress_szip(
         entry.uncompressed_size = manifest_entry.size;
         entry.payload_offset = stream_position(output);
 
+        // Directories are represented in the index only; they never carry
+        // payload blocks, CRCs, or archive data bytes.
         if (manifest_entry.directory) {
             index.entries.push_back(std::move(entry));
             progress.finish_entry();
@@ -252,6 +254,8 @@ OperationStats compress_szip(
         std::uint64_t remaining = manifest_entry.size;
         std::uint64_t payload_written = 0;
         std::uint32_t crc = 0;
+        // Files are streamed in bounded chunks so compression never requires
+        // loading a whole large file into RAM.
         while (remaining > 0) {
             const auto want = std::min<std::uint64_t>(remaining, options.chunk_size);
             auto chunk = read_file_chunk(input, want);
@@ -298,6 +302,8 @@ OperationStats compress_szip(
     stats.output_bytes = std::filesystem::file_size(output_archive);
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 
+    // Optional verify-after-write reuses the normal extraction validator so the
+    // just-created archive is checked through the same bounds and CRC path.
     if (options.verify_after_write) {
         (void)verify_szip(output_archive, ExtractOptions{.gpu_required = options.gpu_required, .block_size = options.block_size});
     }

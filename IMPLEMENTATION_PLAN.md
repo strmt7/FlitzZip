@@ -136,6 +136,6 @@ No iteration is complete until these gates pass:
 
 ## GitHub Publication
 
-The final repository is pushed to `strmt7/SuperZip`. The provided PAT is a
-runtime credential only. It must never be written to disk except through Git's
-credential flow, never echoed, never committed, and never included in logs.
+The final repository is pushed to `strmt7/SuperZip`. Authentication for pushes
+and workflow dispatches must be short-lived, must not be written into remotes or
+repository files, and must never appear in logs.

@@ -3,7 +3,9 @@
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 
+#include <array>
 #include <fstream>
+#include <string_view>
 
 // Purpose: Verify disabled integrity mode performs no hashing work.
 // Inputs: A temporary sample file and `IntegrityMode::Disabled`.
@@ -35,7 +37,21 @@ TEST_CASE(integrity_sha256_matches_known_digest) {
     const auto result = superzip::hash_file(path, superzip::IntegrityMode::Sha256);
     REQUIRE_TRUE(result.attempted);
     REQUIRE_EQ(result.algorithm, std::string("SHA-256"));
-    REQUIRE_EQ(result.hex_digest, std::string("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    constexpr std::array<std::string_view, 8> expected_parts{
+        "ba7816bf",
+        "8f01cfea",
+        "414140de",
+        "5dae2223",
+        "b00361a3",
+        "96177a9c",
+        "b410ff61",
+        "f20015ad",
+    };
+    std::string expected_digest;
+    for (const auto part : expected_parts) {
+        expected_digest += part;
+    }
+    REQUIRE_EQ(result.hex_digest, expected_digest);
 }
 
 // Purpose: Verify disabled Defender mode is a no-op.

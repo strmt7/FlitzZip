@@ -91,6 +91,9 @@ int main(int argc, char** argv) {
             return 2;
         }
 
+        // `gpu-info` is intentionally separate from archive commands so
+        // installers and CI can validate AMD HIP readiness without side
+        // effects on user files.
         if (args[0] == "gpu-info") {
             const auto info = superzip::query_gpu_info();
             std::cout << "hip_compiled=" << (info.hip_compiled ? "true" : "false") << "\n";
@@ -103,6 +106,9 @@ int main(int argc, char** argv) {
             return info.available ? 0 : 1;
         }
 
+        // Compression keeps ZIP compatibility and native SZIP explicit. The
+        // `--require-gpu` flag applies only to SZIP and prevents silent CPU
+        // fallback when GPU acceleration is mandatory.
         if (args[0] == "compress") {
             std::string format = "szip";
             bool require_gpu = false;
@@ -147,6 +153,9 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // Extraction performs optional integrity and Defender checks before
+        // writing files, then relies on archive-layer overwrite and path
+        // validation for the actual restore operation.
         if (args[0] == "extract") {
             std::string format = "szip";
             bool require_gpu = false;
@@ -198,6 +207,9 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // Verification reads SZIP metadata and payload through the decoder
+        // without creating output files, then optionally reports extra security
+        // signals requested by the caller.
         if (args[0] == "verify") {
             bool sha256 = false;
             bool defender_scan = false;

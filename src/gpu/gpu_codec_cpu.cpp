@@ -3,7 +3,6 @@
 #include "core/result.hpp"
 
 #include <algorithm>
-#include <cstring>
 
 namespace superzip {
 
@@ -67,7 +66,7 @@ void decode_chunk_cpu(
     std::size_t out_pos = 0;
     for (const auto& block : blocks) {
         const auto len = static_cast<std::size_t>(block.uncompressed_len);
-        if (out_pos + len > output.size()) {
+        if (out_pos > output.size() || len > output.size() - out_pos) {
             throw ArchiveError("decoded block exceeds output buffer");
         }
         if (block.kind == BlockKind::Fill) {
@@ -75,10 +74,10 @@ void decode_chunk_cpu(
         } else if (block.kind == BlockKind::Raw) {
             const auto offset = static_cast<std::size_t>(block.encoded_offset);
             const auto encoded_len = static_cast<std::size_t>(block.encoded_len);
-            if (encoded_len != len || offset + encoded_len > payload.size()) {
+            if (encoded_len != len || offset > payload.size() || encoded_len > payload.size() - offset) {
                 throw ArchiveError("raw block exceeds encoded payload");
             }
-            std::memcpy(output.data() + out_pos, payload.data() + offset, len);
+            std::ranges::copy(payload.subspan(offset, len), output.subspan(out_pos, len).begin());
         } else {
             throw ArchiveError("unknown block kind");
         }
