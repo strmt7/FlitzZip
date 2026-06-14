@@ -67,11 +67,19 @@ runs:
       run: |
         $ErrorActionPreference = "Stop"
         New-Item -ItemType Directory -Force -Path out | Out-Null
-        gh api --paginate "repos/$env:GITHUB_REPOSITORY/tags" --jq ".[].name" |
+        $existingTagsPath = "out\existing-release-tags.txt"
+        $existingTags = @(
+            gh api --paginate "repos/$env:GITHUB_REPOSITORY/tags" --jq ".[].name"
+        )
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to query existing release tags."
+        }
+        $existingTags |
+            Where-Object { $_ } |
             Sort-Object -Unique |
-            Set-Content -LiteralPath out\existing-release-tags.txt
-        if (-not (Test-Path -LiteralPath out\existing-release-tags.txt)) {
-            New-Item -ItemType File -Path out\existing-release-tags.txt | Out-Null
+            Set-Content -LiteralPath $existingTagsPath
+        if (-not (Test-Path -LiteralPath $existingTagsPath)) {
+            Set-Content -LiteralPath $existingTagsPath -Value ""
         }
 
         $requestedVersion = [string]$env:RELEASE_VERSION_INPUT
@@ -107,7 +115,7 @@ runs:
         $metadataArgs = @(
             "tools/release_metadata.py",
             "--requested-version", $requestedVersion,
-            "--existing-tags-file", "out/existing-release-tags.txt",
+            "--existing-tags-file", $existingTagsPath,
             "--repo-root", "$PWD",
             "--json-output", "out/release-metadata.json"
         )
