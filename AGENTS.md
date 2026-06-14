@@ -46,7 +46,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 
 ## Build And Test Commands
 
-Use these from the repository root:
+Use these from the repository root. The normal local build is HIP-enabled and
+requires `HIP_PATH`:
 
 ```powershell
 tools\build.ps1 -Configuration Release
@@ -54,11 +55,12 @@ tools\test.ps1 -Configuration Release
 tools\security_scan.ps1
 ```
 
-Optional HIP build, only when AMD ROCm/HIP for Windows is installed and `HIP_PATH` is set:
+Use CPU-only validation only for hosted CI or static-analysis jobs that cannot
+install AMD HIP:
 
 ```powershell
-tools\build.ps1 -Configuration Release -EnableHip -HipArch gfx1201
-build\Release\superzip_cli.exe gpu-info
+tools\build.ps1 -Configuration Release -CpuOnlyValidation
+tools\test.ps1 -Configuration Release
 ```
 
 Benchmark only after correctness tests pass:
@@ -67,7 +69,7 @@ Benchmark only after correctness tests pass:
 tools\bench.ps1 -Configuration Release
 ```
 
-Package validation:
+HIP package validation:
 
 ```powershell
 tools\package.ps1 -Configuration Release
@@ -103,6 +105,8 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and a secrets-gated authorized live OpenVAS/Vulnetix lane.
+- Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
+- Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; SuperZip delay-loads it and reports missing prerequisites through `dependency-check`.
 - Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
 - Do not add GitHub Actions `environment:` blocks that can create deployment records. If an environment is necessary for secret governance, use `deployment: false` and document the reason in `docs/security-code-scanning.md`.

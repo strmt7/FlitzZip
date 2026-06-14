@@ -38,7 +38,7 @@ jobs:
           queries: security-extended,security-and-quality
       - name: Build C++ database
         shell: pwsh
-        run: tools/build.ps1 -Configuration Release -PackageVersion 0.1.0-security
+        run: tools/build.ps1 -Configuration Release -CpuOnlyValidation -PackageVersion 0.1.0-security
       - name: Analyze C++
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:

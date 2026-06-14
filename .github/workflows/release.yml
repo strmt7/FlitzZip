@@ -40,6 +40,9 @@ jobs:
     name: Hosted Windows release validation
     runs-on: windows-2022
     timeout-minutes: 180
+    environment:
+      name: release-secrets
+      deployment: false
     # The release action creates tags/releases, so this job needs write access to repository contents.
     permissions:
       contents: write # allow the manual release job to create tags and GitHub releases
@@ -54,11 +57,14 @@ jobs:
         uses: ./.github/actions/windows-release
         env:
           GH_TOKEN: ${{ github.token }}
+          HIP_SDK_INSTALLER_URL: ${{ secrets.HIP_SDK_INSTALLER_URL }}
+          HIP_SDK_INSTALLER_SHA256: ${{ secrets.HIP_SDK_INSTALLER_SHA256 }}
+          WIX_OSMF_EULA_ID: ${{ vars.WIX_OSMF_EULA_ID }}
         with:
           release_version: ${{ inputs.release_version }}
           replace_existing: ${{ inputs.replace_existing }}
           release_track: ${{ inputs.release_track }}
           create_msi: ${{ inputs.create_msi }}
-          enable_hip: "false"
+          enable_hip: "true"
           hip_arch: gfx1201
-          allow_hip: "false"
+          allow_hip: "true"

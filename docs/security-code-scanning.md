@@ -18,6 +18,9 @@ are used, and default to read-only repository permissions.
   request only.
 - `.github/workflows/release.yml` is manual-only and runs release build,
   packaging, install smoke tests, repository security scan, and publication.
+  Product releases are HIP-enabled and require the HIP SDK installer checksum
+  secrets plus the WiX v7 EULA acknowledgement variable documented in
+  `docs/release.md`.
 - `.github/dependabot.yml` keeps GitHub Actions dependencies visible through
   Dependabot pull requests.
 

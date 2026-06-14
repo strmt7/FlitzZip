@@ -28,10 +28,10 @@ jobs:
           Get-Command cmake | Select-Object Source,Version
       - name: Configure
         shell: pwsh
-        run: tools/build.ps1 -ConfigureOnly
+        run: tools/build.ps1 -ConfigureOnly -CpuOnlyValidation
       - name: Build
         shell: pwsh
-        run: tools/build.ps1
+        run: tools/build.ps1 -CpuOnlyValidation
       - name: Test
         shell: pwsh
         run: tools/test.ps1

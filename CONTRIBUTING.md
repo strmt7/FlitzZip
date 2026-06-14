@@ -13,12 +13,16 @@ tools\security_scan.ps1
 tools\package.ps1 -Configuration Release
 ```
 
-If AMD ROCm/HIP for Windows is installed:
+The default build is HIP-enabled and requires `HIP_PATH`. If a hosted CI or
+static-analysis machine cannot install AMD HIP, use explicit CPU-only
+validation:
 
 ```powershell
-tools\build.ps1 -Configuration Release -EnableHip -HipArch gfx1201 -VcvarsVersion 14.44
-tools\bench.ps1 -Configuration Release -RequireGpu
+tools\build.ps1 -Configuration Release -CpuOnlyValidation
+tools\test.ps1 -Configuration Release
 ```
+
+Do not publish CPU-only validation packages.
 
 ## Pull Request Expectations
 

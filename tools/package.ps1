@@ -2,6 +2,7 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Configuration = "Release",
     [string]$PackageVersion = "",
+    [switch]$AllowCpuValidationPackage,
     [switch]$CreateMsi
 )
 
@@ -48,8 +49,48 @@ function Find-CMake {
     throw "CMake was not found."
 }
 
+# Purpose: Find the WiX CLI from the repository-local tool cache or PATH.
+# Inputs: None; probes the ignored local tools folder first, then PATH.
+# Outputs: Returns wix.exe path or throws when WiX is unavailable.
+function Find-Wix {
+    $candidates = @(
+        (Join-Path $repo "out\tools\wix\wix.exe")
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    $cmd = Get-Command wix -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    throw "WiX was not found. Install the pinned WiX .NET tool before requesting MSI packaging."
+}
+
+# Purpose: Ensure WiX v7 has an explicit maintainer EULA acceptance before MSI creation.
+# Inputs: WixPath is the resolved wix.exe path.
+# Outputs: Accepts the configured EULA for the current user profile or throws when the repository variable is absent.
+function Confirm-WixEula {
+    param([string]$WixPath)
+    if ($env:SUPERZIP_ACCEPT_WIX_OSMF_EULA -ne "wix7") {
+        throw "MSI packaging with WiX v7 requires SUPERZIP_ACCEPT_WIX_OSMF_EULA=wix7 after accepting the WiX OSMF EULA."
+    }
+    & $WixPath eula accept $env:SUPERZIP_ACCEPT_WIX_OSMF_EULA
+    if ($LASTEXITCODE -ne 0) {
+        throw "WiX EULA acceptance command failed."
+    }
+}
+
 if (-not (Test-Path $build)) {
     throw "Build directory not found. Run tools/build.ps1 first."
+}
+
+$cachePath = Join-Path $build "CMakeCache.txt"
+if (-not (Test-Path -LiteralPath $cachePath)) {
+    throw "CMake cache not found. Run tools/build.ps1 first."
+}
+$cacheLines = Get-Content -LiteralPath $cachePath
+$hipEntry = $cacheLines | Where-Object { $_ -match '^SUPERZIP_ENABLE_HIP:[^=]+=.+$' } | Select-Object -First 1
+$hipEnabled = $hipEntry -match '=ON$'
+if (-not $hipEnabled -and -not $AllowCpuValidationPackage) {
+    throw "Refusing to package a CPU-only SuperZip build. Rebuild with AMD HIP enabled, or pass -AllowCpuValidationPackage only for internal CI validation artifacts that will not be released."
 }
 
 if (Test-Path $stage) {
@@ -58,6 +99,32 @@ if (Test-Path $stage) {
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 $cmake = Find-CMake
 & $cmake --install $build --config $Configuration --prefix $stage
+
+$cli = Join-Path $stage "bin\superzip_cli.exe"
+if (-not (Test-Path -LiteralPath $cli)) {
+    throw "Staged CLI was not produced: $cli"
+}
+if ($hipEnabled) {
+    $manifest = Join-Path $stage "superzip-runtime-dependencies.json"
+    if (-not (Test-Path -LiteralPath $manifest)) {
+        throw "HIP runtime dependency manifest was not staged: $manifest"
+    }
+    if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $dependencyOutput = & $cli dependency-check 2>&1
+    $dependencyExit = $LASTEXITCODE
+    $dependencyOutput | Set-Content -LiteralPath (Join-Path $stage "superzip-dependency-check.txt")
+    if ($dependencyOutput -notcontains "hip_compiled=true") {
+        throw "Staged CLI is not reporting a HIP-enabled build."
+    }
+    if ($dependencyOutput -notcontains "hip_runtime_loadable=true") {
+        throw "Staged CLI cannot load the AMD HIP runtime on this build host. Install/update the AMD GPU driver or ensure the HIP SDK bin directory is discoverable before packaging."
+    }
+    if ($dependencyExit -notin @(0, 12)) {
+        throw "Staged CLI dependency check failed with exit code $dependencyExit."
+    }
+}
 
 if (Test-Path $package) {
     Remove-Item -LiteralPath $package -Force
@@ -75,10 +142,9 @@ if ($CreateMsi) {
     if (-not (Test-Path $cpack)) {
         throw "CPack was not found next to CMake at $cmake."
     }
-    $wix = Get-Command wix -ErrorAction SilentlyContinue
-    if (-not $wix) {
-        throw "WiX was not found. Install the WiX .NET tool before requesting MSI packaging."
-    }
+    $wix = Find-Wix
+    Confirm-WixEula -WixPath $wix
+    $env:PATH = "$(Split-Path -Parent $wix);$env:PATH"
     & $cpack -G WIX -C $Configuration --config (Join-Path $build "CPackConfig.cmake") -B (Join-Path $repo "out")
     $msi = Join-Path $repo "out\$packageBase.msi"
     if (-not (Test-Path $msi)) {

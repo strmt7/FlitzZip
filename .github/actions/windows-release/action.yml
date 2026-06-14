@@ -98,7 +98,7 @@ runs:
             throw "hip_arch must look like gfx1201."
         }
         if ($env:ENABLE_HIP -eq "true" -and $env:ALLOW_HIP -ne "true") {
-            throw "enable_hip=true is disabled in the hosted GitHub release workflow."
+            throw "enable_hip=true requires allow_hip=true for this runner profile."
         }
         if ($env:RELEASE_TRACK -eq "stable" -and $requestedVersion -match "-") {
             throw "stable releases must not use a prerelease SemVer suffix."
@@ -141,6 +141,48 @@ runs:
             }
         }
 
+    - name: Install AMD HIP SDK
+      if: inputs.enable_hip == 'true'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        if ($env:HIP_PATH -and (Test-Path -LiteralPath (Join-Path $env:HIP_PATH "bin\hipcc.exe"))) {
+            Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:HIP_PATH "bin")
+            return
+        }
+        if (-not $env:HIP_SDK_INSTALLER_URL) {
+            throw "HIP_SDK_INSTALLER_URL secret is required for HIP-enabled hosted release builds."
+        }
+        if (-not $env:HIP_SDK_INSTALLER_SHA256) {
+            throw "HIP_SDK_INSTALLER_SHA256 secret is required for HIP-enabled hosted release builds."
+        }
+        if ($env:HIP_SDK_INSTALLER_URL -match "[`r`n]" -or $env:HIP_SDK_INSTALLER_SHA256 -match "[`r`n]") {
+            throw "HIP SDK installer inputs must be single-line values."
+        }
+        if ($env:HIP_SDK_INSTALLER_SHA256 -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw "HIP_SDK_INSTALLER_SHA256 must be a 64-character SHA-256 digest."
+        }
+        $installer = Join-Path $env:RUNNER_TEMP "amd-hip-sdk-installer.exe"
+        Invoke-WebRequest -Uri $env:HIP_SDK_INSTALLER_URL -OutFile $installer
+        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+        if ($actualHash -ne $env:HIP_SDK_INSTALLER_SHA256.ToLowerInvariant()) {
+            throw "HIP SDK installer SHA-256 mismatch."
+        }
+        $installLog = Join-Path $env:RUNNER_TEMP "amd-hip-sdk-install.log"
+        $process = Start-Process -FilePath $installer -ArgumentList @("-install", "-log", $installLog) -PassThru -Wait
+        if ($process.ExitCode -ne 0) {
+            throw "AMD HIP SDK installer failed with exit code $($process.ExitCode). See $installLog."
+        }
+        $hipRoot = Get-ChildItem -LiteralPath "C:\Program Files\AMD\ROCm" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bin\hipcc.exe") } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+        if (-not $hipRoot) {
+            throw "AMD HIP SDK installation completed but hipcc.exe was not found under C:\Program Files\AMD\ROCm."
+        }
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$($hipRoot.FullName)"
+        Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $hipRoot.FullName "bin")
+
     - name: Toolchain diagnostics
       shell: pwsh
       run: |
@@ -166,9 +208,13 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
+        if ($env:WIX_OSMF_EULA_ID -ne "wix7") {
+            throw "Set repository variable WIX_OSMF_EULA_ID to wix7 after accepting the WiX v7 OSMF EULA."
+        }
         $toolPath = Join-Path $env:RUNNER_TEMP "wix"
         dotnet tool install --tool-path $toolPath wix --version 7.0.0
         Add-Content -LiteralPath $env:GITHUB_PATH -Value $toolPath
+        & (Join-Path $toolPath "wix.exe") eula accept $env:WIX_OSMF_EULA_ID
         & (Join-Path $toolPath "wix.exe") --version
         & (Join-Path $toolPath "wix.exe") extension add --global WixToolset.UI.wixext/7.0.0
 
@@ -178,7 +224,9 @@ runs:
         $ErrorActionPreference = "Stop"
         $args = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
         if ($env:ENABLE_HIP -eq "true") {
-            $args += @("-EnableHip", "-HipArch", $env:HIP_ARCH)
+            $args += @("-HipArch", $env:HIP_ARCH)
+        } else {
+            $args += "-CpuOnlyValidation"
         }
         & tools/build.ps1 @args
 
@@ -195,6 +243,9 @@ runs:
       run: |
         $ErrorActionPreference = "Stop"
         $args = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+        if ($env:ENABLE_HIP -ne "true") {
+            $args += "-AllowCpuValidationPackage"
+        }
         if ($env:CREATE_MSI -eq "true") {
             $args += "-CreateMsi"
         }
@@ -213,9 +264,19 @@ runs:
         New-Item -ItemType Directory -Force -Path $input, $extract | Out-Null
         Set-Content -LiteralPath (Join-Path $input "alpha.txt") -Value "SuperZip release smoke $env:RELEASE_TAG"
         $cli = Join-Path $PWD "out\install-Release\bin\superzip_cli.exe"
-        & $cli gpu-info
-        if ($LASTEXITCODE -ne 0 -and $env:ENABLE_HIP -eq "true") {
-            throw "GPU info failed during HIP-enabled release smoke."
+        $dependency = & $cli dependency-check
+        $dependencyExit = $LASTEXITCODE
+        $dependency | Set-Content -LiteralPath (Join-Path $root "portable-dependency-check.txt")
+        if ($env:ENABLE_HIP -eq "true") {
+            if ($dependency -notcontains "hip_compiled=true") {
+                throw "Portable release artifact is not HIP-enabled."
+            }
+            if ($dependency -notcontains "hip_runtime_loadable=true") {
+                throw "Portable release artifact cannot load the AMD HIP runtime."
+            }
+            if ($dependencyExit -notin @(0, 12)) {
+                throw "Portable dependency check failed with exit code $dependencyExit."
+            }
         }
         & $cli compress --format zip --output (Join-Path $root "archive.zip") $input
         & $cli extract --format zip --output $extract (Join-Path $root "archive.zip")
@@ -224,7 +285,7 @@ runs:
         }
         $archive = Join-Path $root "archive.szip"
         $szipArgs = @("compress", "--format", "szip", "--sha256", "--output", $archive, $input)
-        if ($env:ENABLE_HIP -eq "true") {
+        if ($env:ENABLE_HIP -eq "true" -and $dependencyExit -eq 0) {
             $szipArgs = @("compress", "--format", "szip", "--require-gpu", "--sha256", "--output", $archive, $input)
         }
         & $cli @szipArgs
@@ -249,9 +310,19 @@ runs:
         if (-not (Test-Path $cli)) {
             throw "Installed CLI was not found at $cli."
         }
-        & $cli gpu-info
-        if ($LASTEXITCODE -ne 0 -and $env:ENABLE_HIP -eq "true") {
-            throw "Installed GPU info failed during HIP-enabled release smoke."
+        $dependency = & $cli dependency-check
+        $dependencyExit = $LASTEXITCODE
+        $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-dependency-check.txt")
+        if ($env:ENABLE_HIP -eq "true") {
+            if ($dependency -notcontains "hip_compiled=true") {
+                throw "Installed release artifact is not HIP-enabled."
+            }
+            if ($dependency -notcontains "hip_runtime_loadable=true") {
+                throw "Installed release artifact cannot load the AMD HIP runtime."
+            }
+            if ($dependencyExit -notin @(0, 12)) {
+                throw "Installed dependency check failed with exit code $dependencyExit."
+            }
         }
         $process = Start-Process msiexec.exe -ArgumentList @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) -PassThru -Wait
         if ($process.ExitCode -ne 0) {
@@ -267,9 +338,9 @@ runs:
         $ErrorActionPreference = "Stop"
         $notes = Join-Path $PWD "out\release-notes.md"
         $hipLine = if ($env:ENABLE_HIP -eq "true") {
-            "- AMD HIP enabled: yes, architecture $env:HIP_ARCH."
+            "- AMD HIP enabled: yes, architecture $env:HIP_ARCH. The HIP runtime is supplied by the installed AMD GPU driver."
         } else {
-            "- AMD HIP enabled: no in this hosted validation build. Use the documented Windows-native local HIP build path for GPU-enabled binaries until a secure hosted AMD runner is available."
+            "- AMD HIP enabled: no. This track is for internal validation only and must not be published as a product release."
         }
         @"
         # SuperZip $env:RELEASE_TAG

@@ -30,11 +30,12 @@ Security-sensitive SuperZip areas include:
 Before a security release:
 
 1. Add or update a regression test.
-2. Run `tools\build.ps1 -Configuration Release`.
+2. Run `tools\build.ps1 -Configuration Release` on a HIP-capable Windows host.
 3. Run `tools\test.ps1 -Configuration Release`.
-4. Run `tools\security_scan.ps1`.
-5. Verify the GitHub `security` and `greenbone-openvas-vulnetix` workflows.
-6. Verify no credentials or local paths are present in commits.
+4. Run `build\Release\superzip_cli.exe dependency-check`.
+5. Run `tools\security_scan.ps1`.
+6. Verify the GitHub `security` and `greenbone-openvas-vulnetix` workflows.
+7. Verify no credentials or local paths are present in commits.
 
 ## Automation
 

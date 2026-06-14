@@ -1,8 +1,37 @@
 # Release Workflow
 
-SuperZip releases are published by `.github/workflows/release.yml`. The workflow
-is manual-only, versioned by SemVer, and can publish either a beta GitHub
-prerelease or a stable GitHub release.
+SuperZip releases are created by `.github/workflows/release.yml`. The workflow
+is manual-only, versioned with SemVer, and publishes either a beta prerelease or
+a stable GitHub release.
+
+## Release Artifacts
+
+Every product release must be Windows x64 and HIP-enabled. The portable ZIP and
+MSI contain the same application binaries and the same documentation. The
+portable package is installation-free, not feature-reduced.
+
+The release workflow refuses to publish CPU-only artifacts. CPU-only builds are
+reserved for internal CI validation on GitHub-hosted runners that do not have the
+AMD HIP SDK.
+
+## Repository Inputs
+
+Before running a HIP-enabled hosted release, create the `release-secrets`
+environment and configure:
+
+- `HIP_SDK_INSTALLER_URL`: environment secret containing the AMD HIP SDK
+  installer URL accepted from AMD's license-gated download page.
+- `HIP_SDK_INSTALLER_SHA256`: environment secret containing the expected SHA-256
+  digest of that installer.
+- `WIX_OSMF_EULA_ID`: repository variable set to `wix7` after the maintainer has
+  accepted the WiX v7 OSMF EULA.
+
+The release workflow uses `environment: { name: release-secrets, deployment:
+false }` so environment secrets are scoped without creating GitHub deployment
+records.
+
+Do not commit AMD installer URLs, driver packages, credentials, or local
+download paths to the repository.
 
 ## Manual Inputs
 
@@ -12,28 +41,45 @@ prerelease or a stable GitHub release.
   set to `true`.
 - `release_track`: `beta` publishes a prerelease; `stable` publishes a normal
   release.
-- `create_msi`: builds and smoke-tests an MSI with WiX in addition to the
-  portable ZIP.
+- `create_msi`: builds and smoke-tests the MSI in addition to the portable ZIP.
 
-## Runner Contract
+## Validation
 
-GitHub-hosted Windows runners are valid for release-mechanics validation: x64
-build, tests, portable ZIP packaging, MSI creation, silent install, silent
-uninstall, checksums, and GitHub release publication. They do not provide an AMD
-GPU and must not publish HIP-enabled binaries.
+The workflow performs:
 
-GitHub Actions in this repository must not use self-hosted runners because the
-workflow-security scanner treats them as a repository security risk. GPU-enabled
-HIP builds remain supported through the Windows-native local build path:
+- HIP SDK installation and checksum verification when `HIP_PATH` is not already
+  present on the runner.
+- HIP-enabled build and C++ tests.
+- Local repository security scan.
+- Portable package staging, dependency check, SZIP/ZIP smoke tests, and
+  checksum generation.
+- MSI creation and silent install/uninstall smoke tests when requested.
+- GitHub release creation with attached SHA-256 files.
 
-```powershell
-tools\build.ps1 -Configuration Release -EnableHip -HipArch gfx1201
-build\Release\superzip_cli.exe gpu-info
-```
+## Installer Dependency Contract
 
-Add a GitHub-hosted AMD HIP release path only after a secure hosted AMD Windows
-runner or deterministic HIP SDK setup is available and the workflow-security
-scanner is clean without suppressions.
+The MSI must install SuperZip itself and validate external prerequisites. It must
+not silently install or downgrade AMD GPU drivers. AMD's Windows HIP deployment
+guidance treats the HIP runtime as part of the AMD GPU driver, and the HIP SDK
+installer requires explicit license acceptance and administrator privileges.
+
+The installer smoke test runs `superzip_cli.exe dependency-check` after install.
+The accepted states are:
+
+- `0`: release artifact is HIP-enabled, the HIP runtime is loadable, and an AMD
+  GPU is available.
+- `12`: release artifact is HIP-enabled and the HIP runtime is loadable, but the
+  hosted runner has no supported AMD GPU.
+
+Exit codes `10` and `11` are release-blocking because they mean the installed
+artifact is CPU-only or cannot load the AMD driver-provided HIP runtime.
+
+GitHub-hosted runners normally do not provide an AMD GPU. The workflow therefore
+requires a HIP-enabled binary and a loadable HIP runtime, but it treats a missing
+GPU device as a hosted-runner limitation. Hardware execution with
+`--require-gpu` is validated on AMD hosts through local smoke tests and should be
+added to hosted release validation only when a secure AMD Windows runner profile
+is available without introducing self-hosted-runner risk.
 
 ## Triggering
 
@@ -44,9 +90,9 @@ Use the GitHub UI:
 3. Enter a product version such as `0.1.0`.
 4. Choose `release_track=beta` for the first public beta or `stable` for a
    normal release.
-5. Keep `create_msi=true` unless MSI validation is intentionally being isolated.
+5. Keep `create_msi=true` unless MSI validation is intentionally isolated.
 
-Use GitHub CLI for the first beta validation run:
+Use GitHub CLI:
 
 ```powershell
 gh workflow run release.yml -R strmt7/SuperZip `

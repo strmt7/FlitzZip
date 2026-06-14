@@ -1,141 +1,107 @@
 # SuperZip Enterprise Implementation Plan
 
-## Current Direction
+## Direction
 
-SuperZip is a native Windows desktop application written in modern C++ with an
-AMD-only GPU acceleration boundary. The original plan's `hipcomp-core` boundary
-is preserved as the hardware abstraction contract, but the implementation is
-native C++ instead of Python/PyQt because HIP/ROCm acceleration and Windows
-packaging are best served by a direct native runtime.
+SuperZip is a native Windows x64 archive application written in modern C++20.
+The GPU boundary is AMD HIP only. The native `.szip` format is the
+GPU-accelerated product path, while standard `.zip` support is compatibility
+only through miniz 3.1.1.
 
-The application delivers two explicit archive modes:
+Portable ZIP and MSI packages must be functionally identical HIP-enabled
+artifacts. CPU-only builds exist only so hosted CI can run static analysis and
+core archive tests where AMD HIP is unavailable.
 
-- `SuperZip GPU (.szip)`: AMD HIP accelerated archive mode using chunked,
-  bounded-memory compression and decompression.
-- `ZIP compatibility (.zip)`: standards-oriented ZIP read/write path for
-  interoperability, kept separate from GPU-native mode so the UI never implies
-  unsupported GPU DEFLATE behavior.
+## Requirements
 
-The installed ROCm tree on the target host exposes HIP 7.1 and an AMD Radeon RX
-9070 XT (`gfx1201`). The build remains configurable for other AMD GFX targets.
-
-## Product Requirements
-
-- Native C++20/C++23 codebase.
-- Native Windows GUI with a simple, modern, enterprise interface.
-- AMD GPU acceleration only. No CUDA, no vendor-neutral WebGPU path, and no
-  hidden GPU fallback to non-AMD devices.
-- Clear AMD GPU diagnostics page showing ROCm/HIP status, device name, target
-  architecture, and acceleration availability.
-- Main queue page, compress page, extract page, security review page,
-  preferences page, history page, and diagnostics page.
-- Responsive UI: all archive work runs on worker threads, progress is sampled
-  atomically, cancellation is cooperative, and the message pump is never blocked.
-- Secure extraction: reject absolute paths, drive-rooted paths, UNC paths,
-  traversal (`..`), unsafe names, malformed metadata, overflowed sizes, and
-  archive entries that would resolve outside the destination root.
-- No personal secrets in code, docs, logs, commits, CI, or screenshots.
+- AMD HIP is the only GPU acceleration method.
+- No CUDA, WebGPU, DirectCompute, OpenCL, or cross-vendor fallback.
+- Windows x64 only.
+- Portable and MSI packages must both contain the same HIP-enabled executables.
+- The app must delay-load the AMD HIP runtime and report missing prerequisites
+  through `dependency-check`, not fail with a Windows loader dialog.
+- The MSI and release workflow must validate that the installed artifact is
+  HIP-enabled. They must not silently install or downgrade AMD GPU drivers.
+- Archive work must be chunked and bounded in memory.
+- Extraction must reject traversal, absolute paths, UNC paths, reserved Windows
+  device names, malformed metadata, CRC mismatches, and accidental overwrites.
+- Microsoft Defender scanning and SHA-256 hashing remain opt-in.
+- No secrets, personal paths, local machine names, build artifacts, or release
+  archives may be committed.
 
 ## Architecture
 
 ```text
 src/
-  app/        Native Win32 GUI, windows, layout, history, settings
-  cli/        Command-line entry point for tests and automation
-  core/       Archive model, path safety, streaming I/O, progress contracts
-  gpu/        AMD HIP device context and SuperZip GPU codec
-  zip/        Standard ZIP compatibility adapter
-resources/   UI assets and generated design references
-tests/       C++ test binaries and PowerShell integration tests
-tools/       Build, benchmark, security, and release automation
-.agents/     Repo-local skills for future agents
-mcp/         Local MCP helper for safe SuperZip build/test operations
+  app/        Native Win32 GUI and DPI-aware layout
+  cli/        Command-line automation and dependency checks
+  core/       Archive model, safety validation, integrity, progress
+  gpu/        AMD HIP device discovery and GPU codec boundary
+  zip/        ZIP compatibility adapter using miniz 3.1.1
+tests/       C++ regression tests
+tools/       Build, package, benchmark, and security automation
+third_party/ Patched production dependencies plus upstream provenance copies
 ```
 
-The boundary is:
+The only layer allowed to call HIP is `src/gpu/`. Higher layers consume typed
+archive options, progress snapshots, and errors.
 
-```text
-GUI/CLI -> Controller/JobRunner -> ArchiveService -> HardwareEngine -> HIP/hipcomp-core boundary
-```
+## Iterations
 
-`HardwareEngine` is the only layer allowed to call HIP, ROCm, or future
-`hipcomp-core` APIs. Higher layers operate on typed progress snapshots,
-settings objects, and archive plans.
+### Iteration 1: Architecture
 
-## Iterative Execution Log
+- Replaced prototype-level shell assumptions with a native C++/Win32 app.
+- Preserved AMD HIP as the fundamental acceleration boundary.
+- Separated native `.szip` from `.zip` compatibility.
 
-### Iteration 1: Plan Correction
+### Iteration 2: Responsiveness
 
-- Replaced the Python/PyQt shell with native C++/Win32.
-- Kept the AMD HIP/hipcomp-core abstraction as the fundamental hardware method.
-- Added explicit product pages beyond the main screen.
-- Added secure extraction and no-secret handling as core requirements.
-- Added benchmark comparison requirements against `bea4dev/cozip` without
-  copying code, UI, shaders, or implementation details.
+- Added background archive work.
+- Kept progress state explicit and sampled.
+- Designed the GUI around PerMonitorV2 DPI and high-refresh repaint coalescing.
 
-### Iteration 2: Performance Contract
+### Iteration 3: Security
 
-- Added chunked streaming to avoid whole-archive memory spikes.
-- Added worker-thread job execution for GUI responsiveness.
-- Added atomic progress snapshots and throughput reporting.
-- Added benchmark harness requirements for compress, extract, verify, and UI
-  startup latency.
+- Added archive path validation and malicious-entry tests.
+- Added optional Defender scanning and optional SHA-256 integrity checks.
+- Added layered CI security scans and OpenVAS/Vulnetix integration lanes.
 
-### Iteration 3: Security Contract
+### Iteration 4: Packaging
 
-- Added path traversal and malformed archive tests.
-- Added static no-secret scans.
-- Added CI gates inspired by the user's reference repository style: tests, lint-like
-  checks, security scans, and documentation validation.
+- Made HIP the default local build.
+- Added explicit CPU-only validation mode for hosted CI.
+- Switched to the static MSVC runtime so packages do not need a VC redistributable.
+- Delay-loaded the AMD HIP runtime and added `dependency-check`.
+- Made portable packaging fail closed for CPU-only builds.
+- Added release inputs for HIP SDK installer checksum verification and WiX v7
+  EULA acknowledgement.
 
-### Iteration 4: UI Surface Contract
+### Iteration 5: Vendored Dependency Hardening
 
-- Expanded the UI scope to all core pages:
-  - Main queue
-  - Compress settings
-  - Extract settings
-  - Security review
-  - Operation history
-  - AMD GPU diagnostics
-  - Preferences/About
-- Generated design references with the built-in image generation tool and will
-  store selected references under `resources/design/`.
-
-### Iteration 5: Responsiveness, DPI, And Opt-In Security
-
-- Added PerMonitorV2 DPI manifest support and startup DPI awareness.
-- Rebuilt GUI layout around DPI-scaled integer geometry and native ClearType
-  fonts.
-- Added double-buffered painting and coalesced repaint requests for high-refresh
-  displays.
-- Wired Preferences/Security toggles into real job behavior for AMD GPU
-  requirement, overwrite, SHA-256 integrity hashing, and Microsoft Defender
-  scanning.
-- Replaced ZIP compatibility whole-file buffering with miniz file streaming APIs
-  to reduce SuperZip RAM usage on large archives.
-
-### Iteration 6: CI And Bounded-Memory Extraction
-
-- Fixed GitHub Actions to run on a Visual Studio 2022 hosted image and emit
-  toolchain diagnostics.
-- Added repository `.gitattributes` for stable line endings and binary assets.
-- Changed `.szip` verification and extraction to decode bounded block windows
-  instead of allocating whole archive entries.
-- Added test coverage that forces multi-window extraction.
+- Preserved an unmodified miniz 3.1.1 upstream source archive under
+  `third_party/upstream/miniz/3.1.1/`.
+- Kept the patched production copy under `third_party/miniz/`.
+- Removed static-analysis findings without changing ZIP compatibility behavior.
 
 ## Validation Gates
 
-No iteration is complete until these gates pass:
+For HIP-capable Windows hosts:
 
-1. `tools/build.ps1 -Configuration Release`
-2. `tools/test.ps1`
-3. `tools/security_scan.ps1`
-4. `tools/bench.ps1`
-5. Manual GUI smoke test for startup, navigation, compress, extract, cancel,
-   error state, and GPU diagnostics.
+```powershell
+tools\build.ps1 -Configuration Release
+tools\test.ps1 -Configuration Release
+build\Release\superzip_cli.exe dependency-check
+tools\package.ps1 -Configuration Release
+tools\bench.ps1 -Configuration Release
+```
 
-## GitHub Publication
+For hosted CI without HIP:
 
-The final repository is pushed to `strmt7/SuperZip`. Authentication for pushes
-and workflow dispatches must be short-lived, must not be written into remotes or
-repository files, and must never appear in logs.
+```powershell
+tools\build.ps1 -Configuration Release -CpuOnlyValidation
+tools\test.ps1 -Configuration Release
+tools\security_scan.ps1
+```
+
+Before publishing, GitHub workflows must complete without skipped user-authored
+jobs, deployments must remain absent, and open vulnerability alerts must be
+triaged through real fixes or documented external governance constraints.

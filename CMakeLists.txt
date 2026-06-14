@@ -2,7 +2,11 @@ cmake_minimum_required(VERSION 3.24)
 
 project(SuperZip VERSION 0.1.0 LANGUAGES C CXX)
 
-option(SUPERZIP_ENABLE_HIP "Build AMD HIP acceleration backend" OFF)
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+option(SUPERZIP_ENABLE_HIP "Build AMD HIP acceleration backend" ON)
 option(SUPERZIP_BUILD_GUI "Build native Windows GUI" ON)
 option(SUPERZIP_BUILD_TESTS "Build C++ test binaries" ON)
 set(SUPERZIP_HIP_ARCH "gfx1201" CACHE STRING "AMD GPU target architecture for HIP kernels")
@@ -46,7 +50,6 @@ target_compile_definitions(superzip_core PUBLIC
 )
 
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     target_compile_options(superzip_core PRIVATE /W4 /permissive- /EHsc /wd4201)
 else()
     target_compile_options(superzip_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -68,6 +71,15 @@ if(SUPERZIP_ENABLE_HIP)
     if(NOT EXISTS "${SUPERZIP_HIP_LIB}")
         message(FATAL_ERROR "amdhip64.lib not found at ${SUPERZIP_HIP_LIB}")
     endif()
+    file(GLOB SUPERZIP_HIP_RUNTIME_DLL_CANDIDATES "${SUPERZIP_HIP_PATH}/bin/amdhip64*.dll")
+    list(LENGTH SUPERZIP_HIP_RUNTIME_DLL_CANDIDATES SUPERZIP_HIP_RUNTIME_DLL_COUNT)
+    if(NOT SUPERZIP_HIP_RUNTIME_DLL_COUNT EQUAL 1)
+        message(FATAL_ERROR "Expected exactly one amdhip64 runtime DLL under ${SUPERZIP_HIP_PATH}/bin so the release can record the required AMD driver runtime major version.")
+    endif()
+    list(GET SUPERZIP_HIP_RUNTIME_DLL_CANDIDATES 0 SUPERZIP_HIP_RUNTIME_DLL)
+    get_filename_component(SUPERZIP_HIP_RUNTIME_DLL_NAME "${SUPERZIP_HIP_RUNTIME_DLL}" NAME)
+    file(SHA256 "${SUPERZIP_HIP_RUNTIME_DLL}" SUPERZIP_HIP_RUNTIME_DLL_SHA256)
+    file(SIZE "${SUPERZIP_HIP_RUNTIME_DLL}" SUPERZIP_HIP_RUNTIME_DLL_SIZE)
 
     set(SUPERZIP_HIP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_codec.obj")
     add_custom_command(
@@ -94,9 +106,21 @@ if(SUPERZIP_ENABLE_HIP)
     target_compile_definitions(superzip_gpu_hip PUBLIC SUPERZIP_ENABLE_HIP=1)
     target_link_libraries(superzip_gpu_hip PUBLIC "${SUPERZIP_HIP_LIB}")
     target_include_directories(superzip_core PUBLIC "${SUPERZIP_HIP_PATH}/include")
-    target_compile_definitions(superzip_core PUBLIC __HIP_PLATFORM_AMD__=1)
+    target_compile_definitions(superzip_core PUBLIC
+        __HIP_PLATFORM_AMD__=1
+        SUPERZIP_HIP_RUNTIME_DLL_NAME="${SUPERZIP_HIP_RUNTIME_DLL_NAME}"
+    )
+    if(MSVC)
+        target_link_libraries(superzip_core PUBLIC delayimp)
+        target_link_options(superzip_core PUBLIC "/DELAYLOAD:${SUPERZIP_HIP_RUNTIME_DLL_NAME}")
+    endif()
     target_link_libraries(superzip_core PUBLIC superzip_gpu_hip)
     target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=1)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/superzip-runtime-dependencies.json.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json"
+        @ONLY
+    )
 else()
     target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=0)
 endif()
@@ -143,6 +167,9 @@ install(FILES
     DESTINATION .
 )
 install(DIRECTORY docs DESTINATION .)
+if(SUPERZIP_ENABLE_HIP)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json" DESTINATION .)
+endif()
 
 set(CPACK_PACKAGE_NAME "SuperZip")
 set(CPACK_PACKAGE_VENDOR "strmt7")

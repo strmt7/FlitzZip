@@ -29,9 +29,11 @@ struct EncodedChunk {
 
 struct GpuInfo {
     bool hip_compiled = false;
+    bool hip_runtime_loadable = false;
     bool available = false;
     int device_count = 0;
     int selected_device = -1;
+    std::string runtime_name;
     std::string device_name;
     std::string gcn_arch;
     std::string status;

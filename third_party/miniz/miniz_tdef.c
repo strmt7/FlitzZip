@@ -39,11 +39,20 @@ extern "C"
         void *m_pOut_buf;
         size_t *m_pIn_buf_size;
         size_t *m_pOut_buf_size;
+        void *m_pPut_buf_user;
         tdefl_flush m_flush;
         const mz_uint8 *m_pSrc;
         size_t m_src_buf_left;
         size_t m_out_buf_ofs;
     } tdefl_compress_state;
+
+    /* Inputs: d is the compressor that may currently hold transient output cursors.
+       Output: Resets the cursors so caller-owned buffers are not retained after public calls return. */
+    static void tdefl_reset_transient_output(tdefl_compressor *d)
+    {
+        d->m_pOutput_buf = d->m_output_buf;
+        d->m_pOutput_buf_end = d->m_output_buf;
+    }
 
     /* ------------------- Low-level Compression (independent from all decompression API's) */
 
@@ -752,7 +761,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
             if (d->m_pPut_buf_func)
             {
                 *s->m_pIn_buf_size = s->m_pSrc - (const mz_uint8 *)s->m_pIn_buf;
-                if (!(*d->m_pPut_buf_func)(d->m_output_buf, n, d->m_pPut_buf_user))
+                if (!(*d->m_pPut_buf_func)(d->m_output_buf, n, s->m_pPut_buf_user))
                     return (d->m_prev_return_status = TDEFL_STATUS_PUT_BUF_FAILED);
             }
             else if (pOutput_buf_start == d->m_output_buf)
@@ -1285,14 +1294,16 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         return (d->m_finished && !d->m_output_flush_remaining) ? TDEFL_STATUS_DONE : TDEFL_STATUS_OKAY;
     }
 
-    /* Compress caller-provided input into either a caller output buffer or the initialized output callback. */
-    tdefl_status tdefl_compress(tdefl_compressor *d, const void *pIn_buf, size_t *pIn_buf_size, void *pOut_buf, size_t *pOut_buf_size, tdefl_flush flush)
+    /* Inputs: d is an initialized compressor, pIn_buf/pIn_buf_size is caller input, pOut_buf/pOut_buf_size is direct output or NULL for callback output, pPut_buf_user is callback context for this call only, and flush selects block finalization.
+       Output: Returns tdefl_status, updates caller byte counts, and does not retain caller-owned pointer state after returning. */
+    static tdefl_status tdefl_compress_internal(tdefl_compressor *d, const void *pIn_buf, size_t *pIn_buf_size, void *pOut_buf, size_t *pOut_buf_size, void *pPut_buf_user, tdefl_flush flush)
     {
         tdefl_compress_state call_state;
 #define TDEFL_COMPRESS_RETURN(status_expr)            \
         do                                            \
         {                                             \
             tdefl_status status_value = (status_expr); \
+            tdefl_reset_transient_output(d);          \
             return status_value;                      \
         }                                             \
         MZ_MACRO_END
@@ -1310,6 +1321,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         call_state.m_pIn_buf_size = pIn_buf_size;
         call_state.m_pOut_buf = pOut_buf;
         call_state.m_pOut_buf_size = pOut_buf_size;
+        call_state.m_pPut_buf_user = pPut_buf_user;
         call_state.m_pSrc = (const mz_uint8 *)(pIn_buf);
         call_state.m_src_buf_left = pIn_buf_size ? *pIn_buf_size : 0;
         call_state.m_out_buf_ofs = 0;
@@ -1364,16 +1376,30 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
 #undef TDEFL_COMPRESS_RETURN
     }
 
+    tdefl_status tdefl_compress(tdefl_compressor *d, const void *pIn_buf, size_t *pIn_buf_size, void *pOut_buf, size_t *pOut_buf_size, tdefl_flush flush)
+    {
+        return tdefl_compress_internal(d, pIn_buf, pIn_buf_size, pOut_buf, pOut_buf_size, NULL, flush);
+    }
+
     tdefl_status tdefl_compress_buffer(tdefl_compressor *d, const void *pIn_buf, size_t in_buf_size, tdefl_flush flush)
     {
         MZ_ASSERT(d->m_pPut_buf_func);
-        return tdefl_compress(d, pIn_buf, &in_buf_size, NULL, NULL, flush);
+        return tdefl_compress_internal(d, pIn_buf, &in_buf_size, NULL, NULL, NULL, flush);
+    }
+
+    tdefl_status tdefl_compress_buffer_with_user(tdefl_compressor *d, const void *pIn_buf, size_t in_buf_size, void *pPut_buf_user, tdefl_flush flush)
+    {
+        MZ_ASSERT(d->m_pPut_buf_func);
+        return tdefl_compress_internal(d, pIn_buf, &in_buf_size, NULL, NULL, pPut_buf_user, flush);
     }
 
     tdefl_status tdefl_init(tdefl_compressor *d, tdefl_put_buf_func_ptr pPut_buf_func, void *pPut_buf_user, int flags)
     {
+        if (!d)
+            return TDEFL_STATUS_BAD_PARAM;
+        if (pPut_buf_user)
+            return TDEFL_STATUS_BAD_PARAM;
         d->m_pPut_buf_func = pPut_buf_func;
-        d->m_pPut_buf_user = pPut_buf_user;
         d->m_flags = (mz_uint)(flags);
         d->m_max_probes[0] = 1 + ((flags & 0xFFF) + 2) / 3;
         d->m_greedy_parsing = (flags & TDEFL_GREEDY_PARSING_FLAG) != 0;
@@ -1417,8 +1443,8 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         pComp = (tdefl_compressor *)MZ_MALLOC(sizeof(tdefl_compressor));
         if (!pComp)
             return MZ_FALSE;
-        succeeded = (tdefl_init(pComp, pPut_buf_func, pPut_buf_user, flags) == TDEFL_STATUS_OKAY);
-        succeeded = succeeded && (tdefl_compress_buffer(pComp, pBuf, buf_len, TDEFL_FINISH) == TDEFL_STATUS_DONE);
+        succeeded = (tdefl_init(pComp, pPut_buf_func, NULL, flags) == TDEFL_STATUS_OKAY);
+        succeeded = succeeded && (tdefl_compress_buffer_with_user(pComp, pBuf, buf_len, pPut_buf_user, TDEFL_FINISH) == TDEFL_STATUS_DONE);
         MZ_FREE(pComp);
         return succeeded;
     }
@@ -1536,13 +1562,13 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         for (z = 41; z; --z)
             tdefl_output_buffer_putter(&z, 1, &out_buf);
         /* compress image data */
-        tdefl_init(pComp, tdefl_output_buffer_putter, &out_buf, s_tdefl_png_num_probes[MZ_MIN(10, level)] | TDEFL_WRITE_ZLIB_HEADER);
+        tdefl_init(pComp, tdefl_output_buffer_putter, NULL, s_tdefl_png_num_probes[MZ_MIN(10, level)] | TDEFL_WRITE_ZLIB_HEADER);
         for (y = 0; y < h; ++y)
         {
-            tdefl_compress_buffer(pComp, &z, 1, TDEFL_NO_FLUSH);
-            tdefl_compress_buffer(pComp, (mz_uint8 *)pImage + (flip ? (h - 1 - y) : y) * bpl, bpl, TDEFL_NO_FLUSH);
+            tdefl_compress_buffer_with_user(pComp, &z, 1, &out_buf, TDEFL_NO_FLUSH);
+            tdefl_compress_buffer_with_user(pComp, (mz_uint8 *)pImage + (flip ? (h - 1 - y) : y) * bpl, bpl, &out_buf, TDEFL_NO_FLUSH);
         }
-        if (tdefl_compress_buffer(pComp, NULL, 0, TDEFL_FINISH) != TDEFL_STATUS_DONE)
+        if (tdefl_compress_buffer_with_user(pComp, NULL, 0, &out_buf, TDEFL_FINISH) != TDEFL_STATUS_DONE)
         {
             MZ_FREE(pComp);
             MZ_FREE(out_buf.m_pBuf);

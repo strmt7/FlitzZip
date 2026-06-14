@@ -137,7 +137,6 @@ enum
     typedef struct
     {
         tdefl_put_buf_func_ptr m_pPut_buf_func;
-        void *m_pPut_buf_user;
         mz_uint m_flags, m_max_probes[2];
         int m_greedy_parsing;
         mz_uint m_adler32, m_lookahead_pos, m_lookahead_size, m_dict_size;
@@ -157,8 +156,8 @@ enum
 
     /* Initializes the compressor. */
     /* There is no corresponding deinit() function because the tdefl API's do not dynamically allocate memory. */
-    /* pBut_buf_func: If NULL, output data will be supplied to the specified callback. In this case, the user should call the tdefl_compress_buffer() API for compression. */
-    /* If pBut_buf_func is NULL the user should always call the tdefl_compress() API. */
+    /* pPut_buf_func: If non-NULL, output data is supplied to the callback. Provide callback user data per compression call with tdefl_compress_buffer_with_user(). */
+    /* If pPut_buf_func is NULL the user should always call the tdefl_compress() API. */
     /* flags: See the above enums (TDEFL_HUFFMAN_ONLY, TDEFL_WRITE_ZLIB_HEADER, etc.) */
     MINIZ_EXPORT tdefl_status tdefl_init(tdefl_compressor *d, tdefl_put_buf_func_ptr pPut_buf_func, void *pPut_buf_user, int flags);
 
@@ -168,6 +167,10 @@ enum
     /* tdefl_compress_buffer() is only usable when the tdefl_init() is called with a non-NULL tdefl_put_buf_func_ptr. */
     /* tdefl_compress_buffer() always consumes the entire input buffer. */
     MINIZ_EXPORT tdefl_status tdefl_compress_buffer(tdefl_compressor *d, const void *pIn_buf, size_t in_buf_size, tdefl_flush flush);
+
+    /* Inputs: d is an initialized callback compressor, pIn_buf/in_buf_size is the next input chunk, pPut_buf_user is passed only to this call's callback, and flush controls block finalization. */
+    /* Output: Returns the compression status and never stores pPut_buf_user in tdefl_compressor. */
+    MINIZ_EXPORT tdefl_status tdefl_compress_buffer_with_user(tdefl_compressor *d, const void *pIn_buf, size_t in_buf_size, void *pPut_buf_user, tdefl_flush flush);
 
     MINIZ_EXPORT tdefl_status tdefl_get_prev_return_status(tdefl_compressor *d);
     MINIZ_EXPORT mz_uint32 tdefl_get_adler32(tdefl_compressor *d);

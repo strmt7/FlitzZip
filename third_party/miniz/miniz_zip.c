@@ -3452,8 +3452,8 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             state.m_cur_archive_file_ofs = cur_archive_file_ofs;
             state.m_comp_size = 0;
 
-            if ((tdefl_init(pComp, mz_zip_writer_add_put_buf_callback, &state, tdefl_create_comp_flags_from_zip_params(level, -15, MZ_DEFAULT_STRATEGY)) != TDEFL_STATUS_OKAY) ||
-                (tdefl_compress_buffer(pComp, pBuf, buf_size, TDEFL_FINISH) != TDEFL_STATUS_DONE))
+            if ((tdefl_init(pComp, mz_zip_writer_add_put_buf_callback, NULL, tdefl_create_comp_flags_from_zip_params(level, -15, MZ_DEFAULT_STRATEGY)) != TDEFL_STATUS_OKAY) ||
+                (tdefl_compress_buffer_with_user(pComp, pBuf, buf_size, &state, TDEFL_FINISH) != TDEFL_STATUS_DONE))
             {
                 pZip->m_pFree(pZip->m_pAlloc_opaque, pComp);
                 return mz_zip_set_error(pZip, MZ_ZIP_COMPRESSION_FAILED);
@@ -3733,7 +3733,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
                 state.m_cur_archive_file_ofs = cur_archive_file_ofs;
                 state.m_comp_size = 0;
 
-                if (tdefl_init(pComp, mz_zip_writer_add_put_buf_callback, &state, tdefl_create_comp_flags_from_zip_params(level, -15, MZ_DEFAULT_STRATEGY)) != TDEFL_STATUS_OKAY)
+                if (tdefl_init(pComp, mz_zip_writer_add_put_buf_callback, NULL, tdefl_create_comp_flags_from_zip_params(level, -15, MZ_DEFAULT_STRATEGY)) != TDEFL_STATUS_OKAY)
                 {
                     pZip->m_pFree(pZip->m_pAlloc_opaque, pComp);
                     pZip->m_pFree(pZip->m_pAlloc_opaque, pRead_buf);
@@ -3761,7 +3761,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
                     if (n == 0)
                         flush = TDEFL_FINISH;
 
-                    status = tdefl_compress_buffer(pComp, pRead_buf, n, flush);
+                    status = tdefl_compress_buffer_with_user(pComp, pRead_buf, n, &state, flush);
                     if (status == TDEFL_STATUS_DONE)
                     {
                         result = MZ_TRUE;

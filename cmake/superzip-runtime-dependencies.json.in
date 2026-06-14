@@ -1,0 +1,22 @@
+{
+  "product": "SuperZip",
+  "package_version": "@SUPERZIP_PACKAGE_VERSION@",
+  "platform": "windows-x64",
+  "gpu_backend": {
+    "vendor": "AMD",
+    "api": "HIP",
+    "enabled": true,
+    "arch": "@SUPERZIP_HIP_ARCH@"
+  },
+  "packaged_runtime_files": [],
+  "host_prerequisites": [
+    {
+      "name": "AMD GPU driver with HIP-capable runtime support",
+      "installed_by_superzip": false,
+      "required_runtime_dll": "@SUPERZIP_HIP_RUNTIME_DLL_NAME@",
+      "build_sdk_runtime_sha256": "@SUPERZIP_HIP_RUNTIME_DLL_SHA256@",
+      "build_sdk_runtime_size_bytes": @SUPERZIP_HIP_RUNTIME_DLL_SIZE@,
+      "reason": "AMD documents the HIP runtime as supplied by the AMD GPU driver. SuperZip delay-loads this runtime so the app and installer can report missing prerequisites cleanly."
+    }
+  ]
+}

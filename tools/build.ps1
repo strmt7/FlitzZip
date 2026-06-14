@@ -2,6 +2,7 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Configuration = "Release",
     [switch]$EnableHip,
+    [switch]$CpuOnlyValidation,
     [switch]$ConfigureOnly,
     [string]$HipArch = "gfx1201",
     [string]$VcvarsVersion = "14.44",
@@ -47,7 +48,10 @@ function Find-CMake {
 }
 
 $cmake = Find-CMake
-$hipArg = if ($EnableHip.IsPresent) { "ON" } else { "OFF" }
+if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
+    throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
+}
+$hipArg = if ($CpuOnlyValidation.IsPresent) { "OFF" } else { "ON" }
 $PackageVersion = Resolve-PackageVersion -RequestedVersion $PackageVersion
 $configureArgs = @(
     "-S", $repo,

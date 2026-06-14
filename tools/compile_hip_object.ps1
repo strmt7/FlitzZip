@@ -34,7 +34,7 @@ $outputDir = Split-Path -Parent $Output
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $include = Join-Path $RepoRoot "src"
-$cmd = "call `"$vcvars`" amd64 -vcvars_ver=$VcvarsVersion >nul && `"$hipcc`" --offload-arch=$Arch -std=c++20 -O3 -fms-runtime-lib=dll -DSUPERZIP_ENABLE_HIP=1 -I`"$include`" -c `"$Source`" -o `"$Output`""
+$cmd = "call `"$vcvars`" amd64 -vcvars_ver=$VcvarsVersion >nul && `"$hipcc`" --offload-arch=$Arch -std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$include`" -c `"$Source`" -o `"$Output`""
 cmd /c $cmd
 if ($LASTEXITCODE -ne 0) {
     throw "hipcc failed with exit code $LASTEXITCODE"

@@ -20,6 +20,7 @@ void usage() {
         << "SuperZip CLI\n"
         << "Usage:\n"
         << "  superzip_cli gpu-info\n"
+        << "  superzip_cli dependency-check\n"
         << "  superzip_cli compress --format szip|zip --output <archive> [--require-gpu] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format szip|zip --output <directory> [--require-gpu] [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--sha256] [--defender-scan] <archive.szip>\n";
@@ -67,6 +68,37 @@ void print_defender_scan(const std::filesystem::path& path, bool block_if_detect
     }
 }
 
+// Purpose: Print AMD HIP dependency state in a stable machine-readable format.
+// Inputs: `info` is the GPU/runtime status returned by the backend.
+// Outputs: Writes one key/value block to stdout.
+void print_gpu_info(const superzip::GpuInfo& info) {
+    std::cout << "hip_compiled=" << (info.hip_compiled ? "true" : "false") << "\n";
+    std::cout << "hip_runtime_loadable=" << (info.hip_runtime_loadable ? "true" : "false") << "\n";
+    std::cout << "hip_runtime_name=" << info.runtime_name << "\n";
+    std::cout << "available=" << (info.available ? "true" : "false") << "\n";
+    std::cout << "device_count=" << info.device_count << "\n";
+    std::cout << "selected_device=" << info.selected_device << "\n";
+    std::cout << "device_name=" << info.device_name << "\n";
+    std::cout << "gcn_arch=" << info.gcn_arch << "\n";
+    std::cout << "status=" << info.status << "\n";
+}
+
+// Purpose: Convert AMD HIP dependency status into deterministic installer-friendly process codes.
+// Inputs: `info` is the GPU/runtime status returned by the backend.
+// Outputs: Returns 0 when a HIP build, runtime, and AMD device are available; otherwise returns a stable nonzero code.
+int dependency_exit_code(const superzip::GpuInfo& info) {
+    if (!info.hip_compiled) {
+        return 10;
+    }
+    if (!info.hip_runtime_loadable) {
+        return 11;
+    }
+    if (!info.available) {
+        return 12;
+    }
+    return 0;
+}
+
 // Purpose: Read the value following a named command-line flag.
 // Inputs: `args` is the full argument vector, `index` is the current flag index and is advanced, and `name` is the flag label for diagnostics.
 // Outputs: Returns the following argument value; throws `ArchiveError` when the value is missing.
@@ -96,14 +128,16 @@ int main(int argc, char** argv) {
         // effects on user files.
         if (args[0] == "gpu-info") {
             const auto info = superzip::query_gpu_info();
-            std::cout << "hip_compiled=" << (info.hip_compiled ? "true" : "false") << "\n";
-            std::cout << "available=" << (info.available ? "true" : "false") << "\n";
-            std::cout << "device_count=" << info.device_count << "\n";
-            std::cout << "selected_device=" << info.selected_device << "\n";
-            std::cout << "device_name=" << info.device_name << "\n";
-            std::cout << "gcn_arch=" << info.gcn_arch << "\n";
-            std::cout << "status=" << info.status << "\n";
+            print_gpu_info(info);
             return info.available ? 0 : 1;
+        }
+
+        if (args[0] == "dependency-check") {
+            const auto info = superzip::query_gpu_info();
+            print_gpu_info(info);
+            const int code = dependency_exit_code(info);
+            std::cout << "dependency_status=" << (code == 0 ? "ready" : code == 10 ? "cpu_only_build" : code == 11 ? "missing_hip_runtime" : "missing_amd_gpu") << "\n";
+            return code;
         }
 
         // Compression keeps ZIP compatibility and native SZIP explicit. The
