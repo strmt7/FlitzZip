@@ -9,9 +9,15 @@ endif()
 option(SUPERZIP_ENABLE_HIP "Build AMD HIP acceleration backend" ON)
 option(SUPERZIP_BUILD_GUI "Build native Windows GUI" ON)
 option(SUPERZIP_BUILD_TESTS "Build C++ test binaries" ON)
+option(SUPERZIP_BUILD_FUZZERS "Build libFuzzer targets for parser hardening" OFF)
 set(SUPERZIP_HIP_ARCH "gfx1201" CACHE STRING "AMD GPU target architecture for HIP kernels")
 set(SUPERZIP_VCVARS_VERSION "14.44" CACHE STRING "MSVC toolset version used by hipcc on Windows")
 set(SUPERZIP_PACKAGE_VERSION "${PROJECT_VERSION}" CACHE STRING "Display version used in package filenames and app diagnostics")
+set(SUPERZIP_MSI_INSTALL_SCOPE "perUser" CACHE STRING "WiX MSI install scope: perUser for non-admin installs or perMachine for managed elevated deployment")
+set_property(CACHE SUPERZIP_MSI_INSTALL_SCOPE PROPERTY STRINGS perUser perMachine)
+if(NOT SUPERZIP_MSI_INSTALL_SCOPE STREQUAL "perUser" AND NOT SUPERZIP_MSI_INSTALL_SCOPE STREQUAL "perMachine")
+    message(FATAL_ERROR "SUPERZIP_MSI_INSTALL_SCOPE must be perUser or perMachine.")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +34,7 @@ target_compile_definitions(miniz PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 add_library(superzip_core STATIC
     src/core/archive.cpp
+    src/core/archive_blocks.cpp
     src/core/archive_index.cpp
     src/core/checksum.cpp
     src/core/defender_scan.cpp
@@ -35,7 +42,7 @@ add_library(superzip_core STATIC
     src/core/integrity.cpp
     src/core/path_safety.cpp
     src/core/progress.cpp
-    src/gpu/gpu_codec_cpu.cpp
+    src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
     src/zip/zip_adapter.cpp
 )
@@ -93,6 +100,7 @@ if(SUPERZIP_ENABLE_HIP)
             -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec.hip.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
         VERBATIM
@@ -159,6 +167,29 @@ if(SUPERZIP_BUILD_TESTS)
     add_test(NAME superzip_tests COMMAND superzip_tests)
 endif()
 
+if(SUPERZIP_BUILD_FUZZERS)
+    add_executable(superzip_archive_index_fuzzer
+        fuzz/archive_index_fuzzer.cpp
+        src/core/archive_index.cpp
+    )
+    target_include_directories(superzip_archive_index_fuzzer PRIVATE src)
+    target_compile_definitions(superzip_archive_index_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
+    add_executable(superzip_path_safety_fuzzer
+        fuzz/path_safety_fuzzer.cpp
+        src/core/path_safety.cpp
+    )
+    target_include_directories(superzip_path_safety_fuzzer PRIVATE src)
+
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
+    endif()
+    target_compile_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
+
 install(FILES
     README.md
     LICENSE
@@ -180,9 +211,10 @@ set(CPACK_PACKAGE_EXECUTABLES "SuperZip" "SuperZip")
 set(CPACK_CREATE_DESKTOP_LINKS "SuperZip")
 set(CPACK_PACKAGE_FILE_NAME "SuperZip-${SUPERZIP_PACKAGE_VERSION}-win64")
 set(CPACK_SYSTEM_NAME "win64")
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/LICENSE" "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY)
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
 set(CPACK_WIX_VERSION 4)
 set(CPACK_WIX_UPGRADE_GUID "8E0D80F6-859D-4FE9-B082-F0D8048A8B57")
-set(CPACK_WIX_INSTALL_SCOPE "perMachine")
+set(CPACK_WIX_INSTALL_SCOPE "${SUPERZIP_MSI_INSTALL_SCOPE}")
 set(CPACK_GENERATOR "ZIP")
 include(CPack)

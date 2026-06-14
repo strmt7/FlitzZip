@@ -1,6 +1,6 @@
 ---
 name: superzip-build-test
-description: Build, test, benchmark, and security-scan the SuperZip native C++ AMD HIP project on Windows. Use when changing SuperZip C++ source, build scripts, security checks, GPU code, ZIP/SZIP archive logic, or GUI behavior.
+description: Build, test, benchmark, and security-scan the SuperZip native C++ AMD HIP project on Windows. Use when changing SuperZip C++ source, build scripts, security checks, GPU code, ZIP/SUZIP archive logic, or GUI behavior.
 ---
 
 # SuperZip Build/Test Skill

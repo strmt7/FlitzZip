@@ -20,6 +20,9 @@ archive.
 - Internal allocations use bounded Windows heap helpers.
 - Internal byte copies, fills, and C-string length checks route through checked
   helper functions with explicit destination capacity.
+- `tinfl_decompress` uses explicit resume labels instead of one oversized
+  coroutine `switch` case, preserving upstream state IDs while keeping static
+  analysis and maintenance boundaries clear.
 - `tdefl_compress` uses stack-local transient call state instead of storing
   caller buffer addresses in `tdefl_compressor`.
 - Upstream maintenance notes in comments were reworded so security scanners do

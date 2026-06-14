@@ -1,11 +1,15 @@
 #include "test_util.hpp"
 
+#include "core/checksum.hpp"
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 
 #include <array>
+#include <cstddef>
 #include <fstream>
+#include <span>
 #include <string_view>
+#include <vector>
 
 // Purpose: Verify disabled integrity mode performs no hashing work.
 // Inputs: A temporary sample file and `IntegrityMode::Disabled`.
@@ -52,6 +56,33 @@ TEST_CASE(integrity_sha256_matches_known_digest) {
         expected_digest += part;
     }
     REQUIRE_EQ(result.hex_digest, expected_digest);
+}
+
+// Purpose: Verify parallel chunk CRCs can be combined into the same value as a single pass.
+// Inputs: A deterministic byte vector and several chunk split points.
+// Outputs: Throws if `crc32_combine` differs from contiguous CRC-32.
+TEST_CASE(crc32_combine_matches_single_pass_crc) {
+    std::vector<std::byte> bytes;
+    bytes.reserve(257 * 1024);
+    for (std::size_t i = 0; i < 257 * 1024; ++i) {
+        bytes.push_back(static_cast<std::byte>((i * 131U + 17U) & 0xFFU));
+    }
+
+    const auto expected = superzip::crc32(std::span<const std::byte>(bytes.data(), bytes.size()));
+    const std::array<std::size_t, 6> splits{
+        0U,
+        1U,
+        4096U,
+        65536U,
+        bytes.size() - 1U,
+        bytes.size(),
+    };
+    for (const std::size_t split : splits) {
+        const auto first = superzip::crc32(std::span<const std::byte>(bytes.data(), split));
+        const auto second = superzip::crc32(std::span<const std::byte>(bytes.data() + split, bytes.size() - split));
+        const auto combined = superzip::crc32_combine(first, second, bytes.size() - split);
+        REQUIRE_EQ(combined, expected);
+    }
 }
 
 // Purpose: Verify disabled Defender mode is a no-op.

@@ -6,7 +6,8 @@ param(
     [switch]$ConfigureOnly,
     [string]$HipArch = "gfx1201",
     [string]$VcvarsVersion = "14.44",
-    [string]$PackageVersion = ""
+    [string]$PackageVersion = "",
+    [ValidateSet("perUser", "perMachine")] [string]$MsiInstallScope = "perUser"
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +63,7 @@ $configureArgs = @(
     "-DSUPERZIP_HIP_ARCH=$HipArch",
     "-DSUPERZIP_VCVARS_VERSION=$VcvarsVersion",
     "-DSUPERZIP_PACKAGE_VERSION=$PackageVersion",
+    "-DSUPERZIP_MSI_INSTALL_SCOPE=$MsiInstallScope",
     "-DSUPERZIP_BUILD_GUI=ON",
     "-DSUPERZIP_BUILD_TESTS=ON"
 )

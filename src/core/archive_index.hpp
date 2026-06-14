@@ -1,6 +1,7 @@
 #pragma once
 
-#include "gpu/gpu_codec.hpp"
+#include "core/resource_limits.hpp"
+#include "core/archive_blocks.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +12,7 @@
 
 namespace superzip {
 
-constexpr std::uint32_t kSuperZipMagic = 0x505A5355;  // USZP
+constexpr std::uint32_t kSuperZipMagic = 0x505A5553;  // SUZP
 constexpr std::uint32_t kSuperZipVersion = 1;
 
 struct ArchiveEntry {

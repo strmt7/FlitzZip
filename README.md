@@ -1,7 +1,7 @@
 # SuperZip
 
 SuperZip is a Windows x64 archive application built around AMD HIP acceleration.
-Its native `.szip` format is the GPU-first path. Standard `.zip` support exists
+Its native `.suzip` format is the GPU-first path. Standard `.zip` support exists
 for compatibility and is handled by the vendored miniz 3.1.1 codebase.
 
 The product ships as two equivalent Windows packages:
@@ -62,29 +62,39 @@ tools/package.ps1 -Configuration Release
 
 The package script refuses to package a CPU-only build unless
 `-AllowCpuValidationPackage` is passed explicitly for internal validation. For
-MSI packaging, install the pinned WiX tool and set
+MSI packaging, install the pinned repo-local WiX tool and set
 `SUPERZIP_ACCEPT_WIX_OSMF_EULA=wix7` only after accepting the WiX v7 OSMF EULA:
 
 ```powershell
+tools/install_wix.ps1
+$env:SUPERZIP_ACCEPT_WIX_OSMF_EULA = "wix7"
 tools/package.ps1 -Configuration Release -CreateMsi
 ```
+
+The MSI build defaults to `perUser` install scope so silent install/uninstall
+smoke tests work without elevation. Managed per-machine deployment is available
+by building with `tools/build.ps1 -MsiInstallScope perMachine`, then packaging
+from an elevated/admin validation environment.
 
 ## CLI
 
 ```powershell
 build/Release/superzip_cli.exe dependency-check
 build/Release/superzip_cli.exe gpu-info
-build/Release/superzip_cli.exe compress --format szip --require-gpu --output archive.szip path\to\folder
-build/Release/superzip_cli.exe extract --format szip --require-gpu --output restored archive.szip
+build/Release/superzip_cli.exe compress --format suzip --require-gpu --output archive.suzip path\to\folder
+build/Release/superzip_cli.exe compress --format suzip --require-gpu --verify-after-write --output archive.suzip path\to\folder
+build/Release/superzip_cli.exe extract --format suzip --require-gpu --output restored archive.suzip
 build/Release/superzip_cli.exe compress --format zip --output archive.zip path\to\folder
 build/Release/superzip_cli.exe extract --format zip --output restored archive.zip
-build/Release/superzip_cli.exe verify --sha256 archive.szip
+build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
 
-Use `--require-gpu` for `.szip` operations that must fail instead of falling
+Use `--require-gpu` for `.suzip` operations that must fail instead of falling
 back to the CPU validation path. Extraction refuses to overwrite by default.
-Optional `--sha256` and `--defender-scan` flags add integrity hashing and
-Microsoft Defender checks without making either feature implicit.
+Use `--force-cpu` only for diagnostics and CPU/GPU benchmarks on a HIP-enabled
+build. Optional `--verify-after-write`, `--sha256`, and `--defender-scan` flags
+add post-write archive validation, integrity hashing, and Microsoft Defender
+checks without making those extra passes implicit.
 
 ## GUI
 
@@ -102,9 +112,66 @@ available as opt-in checks.
 
 GitHub Actions run build/test validation, CodeQL, Trivy, Semgrep, DevSkim, OSV,
 Dependency Review, OSSF Scorecard, workflow linting, secret scanning, SBOM
-generation, and a Greenbone/OpenVAS integration audit. The live OpenVAS/Vulnetix
-scan is scheduled/manual and requires repository secrets.
+generation, ClusterFuzzLite parser fuzzing, and a Greenbone/OpenVAS integration
+audit. The live OpenVAS/Vulnetix scan is scheduled/manual and requires
+repository secrets.
+
+## Fuzzing
+
+Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
+builds libFuzzer targets for SuperZip archive-index metadata and archive-entry
+path canonicalization with address and undefined-behavior sanitizers:
+
+```powershell
+tools/fuzz.ps1 -Runs 512
+```
+
+The GitHub workflow runs automatically on pull requests, pushes to `main`, a
+weekly schedule, and manual dispatch.
+
+## Benchmarking
+
+For a direct correctness proof that `--require-gpu` is not falling back to CPU,
+run:
+
+```powershell
+tools/gpu_proof.ps1 -Configuration Release
+```
+
+This proof generates a tiny temporary filesystem workload, runs compress, compress with
+`--verify-after-write`, verify, and extract with `--require-gpu`, then fails
+unless backend HIP telemetry reports kernel launches, HIP event time, transfer
+bytes, device allocations, and matching restored file hashes.
+
+`tools/storage_smoke.ps1` is the only normal filesystem smoke for the archive
+write/read path. It defaults to an 8 MiB bounded workload and deletes the
+temporary data after SHA-256 comparison:
+
+```powershell
+tools/storage_smoke.ps1 -Configuration Release
+```
+
+`tools/bench.ps1` is memory-only by default. It generates deterministic chunks
+inside `superzip_cli.exe`, stores the encoded archive representation in process
+RAM, verifies/extracts from RAM, and reports `memory_only=true` plus
+`disk_write_bytes=0` from both the forced-CPU and required-GPU benchmark lanes:
+
+```powershell
+tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
+```
+
+Use `-Profile Mixed`, `-Profile Compressible`, and `-Profile Incompressible`
+when characterizing a release candidate. The script refuses workloads smaller
+than 10 GiB and reports production-aligned worker allocation (`Workers`,
+`InflightChunks`, and `CodecWorkers`) plus backend HIP event counters, kernel
+time, transfer bytes, and allocation bytes emitted by the SuperZip GPU backend
+itself. Do not treat a GPU-only timing as a product benchmark; if required HIP
+is slower than forced CPU, record it as an optimization finding. Full filesystem
+benchmarks are opt-in only through `-Mode Filesystem -AllowLargeDiskWrites` and
+should be used only on storage intentionally reserved for destructive benchmark
+wear.
 
 See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
-`docs/third-party.md`, `docs/release.md`, and
+`docs/compression-backend-evaluation.md`, `docs/third-party.md`,
+`docs/release.md`, and
 `docs/security-code-scanning.md`.

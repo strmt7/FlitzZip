@@ -31,6 +31,7 @@ function Resolve-PackageVersion {
 $PackageVersion = Resolve-PackageVersion -RequestedVersion $PackageVersion
 $packageBase = "SuperZip-$PackageVersion-win64"
 $package = Join-Path $repo "out\$packageBase-portable.zip"
+$wixUiExtension = "WixToolset.UI.wixext/7.0.0"
 
 # Purpose: Find a usable CMake executable on a Windows development or CI host.
 # Inputs: None; probes known install paths and PATH.
@@ -61,7 +62,7 @@ function Find-Wix {
     }
     $cmd = Get-Command wix -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-    throw "WiX was not found. Install the pinned WiX .NET tool before requesting MSI packaging."
+    throw "WiX was not found. Run tools/install_wix.ps1 to install the pinned repo-local WiX .NET tool before requesting MSI packaging."
 }
 
 # Purpose: Ensure WiX v7 has an explicit maintainer EULA acceptance before MSI creation.
@@ -75,6 +76,17 @@ function Confirm-WixEula {
     & $WixPath eula accept $env:SUPERZIP_ACCEPT_WIX_OSMF_EULA
     if ($LASTEXITCODE -ne 0) {
         throw "WiX EULA acceptance command failed."
+    }
+}
+
+# Purpose: Install the pinned WiX UI extension required by CPack's WiX generator.
+# Inputs: WixPath is the resolved repo-local or PATH-provided wix.exe path.
+# Outputs: Makes `WixToolset.UI.wixext` available to WiX or throws on install failure.
+function Ensure-WixUiExtension {
+    param([string]$WixPath)
+    & $WixPath extension add --global $wixUiExtension
+    if ($LASTEXITCODE -ne 0) {
+        throw "WiX UI extension installation failed."
     }
 }
 
@@ -144,6 +156,7 @@ if ($CreateMsi) {
     }
     $wix = Find-Wix
     Confirm-WixEula -WixPath $wix
+    Ensure-WixUiExtension -WixPath $wix
     $env:PATH = "$(Split-Path -Parent $wix);$env:PATH"
     & $cpack -G WIX -C $Configuration --config (Join-Path $build "CPackConfig.cmake") -B (Join-Path $repo "out")
     $msi = Join-Path $repo "out\$packageBase.msi"

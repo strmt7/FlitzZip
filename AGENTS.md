@@ -15,16 +15,26 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.szip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
 - Do not commit credentials, tokens, personal paths, user profiles, local machine names, build artifacts, archives, crash dumps, `.vs`, or generated binary outputs.
-- Workflows in this repository must never create GitHub deployment records. Any job that uses a GitHub Actions `environment:` for secret governance must set `deployment: false`, and security scans must verify this before a push.
+- Workflows in this repository must never create GitHub deployment records. Do not add GitHub Actions `environment:` blocks or `deployment:` keys; use repository secrets and repository variables for workflow inputs that need protection.
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
+- Maintainer authorization is recorded for AI agents to accept EULAs required
+  by pinned SuperZip build, benchmark, packaging, and verification tooling, such
+  as the WiX v7 OSMF EULA, when that acceptance is necessary to run repository
+  validation. Keep acceptance scoped to this repo's documented toolchain, record
+  it in the command path, and do not accept unrelated software, driver,
+  service, or personal-account agreements.
 - Do not change the AMD-only HIP acceleration strategy to CUDA, WebGPU, OpenCL, or a cross-vendor abstraction without explicit approval.
+- Before proposing alternate GPU compute stacks, read
+  `docs/compression-backend-evaluation.md`. rocPRIM can be used as a HIP
+  building block; rocSPARSE, OpenCL, SYCL, and OpenMP offload are not approved
+  replacement archive-codec paths for this repository.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
 ## Project Map
@@ -35,10 +45,12 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `src/cli/`: command-line entry point for deterministic automation.
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.
 - `tests/cpp/`: focused C++ test harness.
+- `fuzz/`: libFuzzer targets, dictionaries, and options for parser hardening.
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
 - `third_party/miniz/`: patched production miniz 3.1.1 copy used by the build.
 - `third_party/upstream/miniz/3.1.1/`: unmodified upstream miniz 3.1.1 source archive and checksum for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
+- `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
 - `.github/requirements/`: hash-locked Python scanner requirements for GitHub-hosted Linux jobs.
 - `.github/workflows/release.yml`: manual x64 release, installer smoke, beta/stable track selection, and publishing workflow.
@@ -66,7 +78,21 @@ tools\test.ps1 -Configuration Release
 Benchmark only after correctness tests pass:
 
 ```powershell
-tools\bench.ps1 -Configuration Release
+tools\gpu_proof.ps1 -Configuration Release
+tools\storage_smoke.ps1 -Configuration Release
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
+```
+
+`tools\bench.ps1` is memory-only by default and must report
+`memory_only=true` and `disk_write_bytes=0`. Do not run large generated
+filesystem benchmarks unless a maintainer explicitly accepts storage wear and
+passes both `-Mode Filesystem` and `-AllowLargeDiskWrites`.
+
+Parser fuzzing is automatic in GitHub Actions. Local sanitizer fuzzing requires
+Docker and uses ClusterFuzzLite's Clang/libFuzzer toolchain:
+
+```powershell
+tools\fuzz.ps1 -Runs 512
 ```
 
 HIP package validation:
@@ -105,11 +131,12 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and a secrets-gated authorized live OpenVAS/Vulnetix lane.
+- Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
 - Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; SuperZip delay-loads it and reports missing prerequisites through `dependency-check`.
 - Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
-- Do not add GitHub Actions `environment:` blocks that can create deployment records. If an environment is necessary for secret governance, use `deployment: false` and document the reason in `docs/security-code-scanning.md`.
+- Do not add GitHub Actions `environment:` blocks or `deployment:` keys. This repository uses repository secrets and repository variables instead of Actions environments so workflows cannot create deployment records.
 - Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.
 - Preserve the patched/original miniz split: production changes go under `third_party/miniz`, and the upstream archive under `third_party/upstream/miniz/3.1.1` stays unmodified.
 

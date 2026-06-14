@@ -1,16 +1,83 @@
 #include "core/archive.hpp"
+#include "core/checksum.hpp"
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "zip/zip_adapter.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <filesystem>
+#include <future>
 #include <iostream>
+#include <limits>
+#include <memory>
+#include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace {
+
+constexpr std::uint64_t kCliMiB = 1024ULL * 1024ULL;
+constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL;
+
+struct MemoryBenchmarkOptions {
+    std::uint64_t size_mib = 10240;
+    std::string profile = "Mixed";
+    bool require_gpu = false;
+    bool force_cpu = false;
+    std::uint32_t workers = 0;
+    int compression_level = 1;
+};
+
+struct MemoryArchiveChunk {
+    superzip::EncodedChunk encoded;
+    std::uint32_t crc32 = 0;
+    std::uint64_t uncompressed_size = 0;
+};
+
+struct PendingMemoryEncode {
+    std::size_t index = 0;
+    std::future<MemoryArchiveChunk> result;
+};
+
+struct PendingMemoryCrc {
+    std::size_t index = 0;
+    std::future<superzip::DecodedChunkCrc> result;
+};
+
+struct MemoryDecodeResult {
+    std::uint32_t crc32 = 0;
+    bool gpu_used = false;
+};
+
+struct PendingMemoryDecode {
+    std::size_t index = 0;
+    std::future<MemoryDecodeResult> result;
+};
+
+struct MemoryBenchmarkResult {
+    superzip::OperationStats stats;
+    std::uint32_t codec_workers = 1;
+    double compress_seconds = 0.0;
+    double verify_seconds = 0.0;
+    double extract_seconds = 0.0;
+};
 
 // Purpose: Print command-line help for supported SuperZip operations.
 // Inputs: None.
@@ -20,10 +87,12 @@ void usage() {
         << "SuperZip CLI\n"
         << "Usage:\n"
         << "  superzip_cli gpu-info\n"
+        << "  superzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
         << "  superzip_cli dependency-check\n"
-        << "  superzip_cli compress --format szip|zip --output <archive> [--require-gpu] [--sha256] [--defender-scan] <path>...\n"
-        << "  superzip_cli extract --format szip|zip --output <directory> [--require-gpu] [--overwrite] [--sha256] [--defender-scan] <archive>\n"
-        << "  superzip_cli verify [--sha256] [--defender-scan] <archive.szip>\n";
+        << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--compression-level <1-9>]\n"
+        << "  superzip_cli compress --format suzip|zip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
+        << "  superzip_cli extract --format suzip|zip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
 // Purpose: Convert byte/second statistics to MiB/s for display.
@@ -40,10 +109,374 @@ void print_stats(const superzip::OperationStats& stats) {
     std::cout << "entries=" << stats.entries
               << " input_bytes=" << stats.input_bytes
               << " output_bytes=" << stats.output_bytes
+              << " workers=" << stats.workers
+              << " inflight_chunks=" << stats.inflight_chunks
               << " gpu_used=" << (stats.gpu_used ? "true" : "false")
+              << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
+              << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
+              << " gpu_kernel_launches=" << stats.gpu_runtime.kernel_launches
+              << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms
+              << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
+              << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
+              << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
+              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
               << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << "\n";
+}
+
+// Purpose: Print memory-only benchmark statistics in the same stable key/value style as archive operations.
+// Inputs: `result` is the completed memory benchmark result.
+// Outputs: Writes one parseable line to stdout.
+void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
+    const auto& stats = result.stats;
+    std::cout << "entries=" << stats.entries
+              << " input_bytes=" << stats.input_bytes
+              << " output_bytes=" << stats.output_bytes
+              << " workers=" << stats.workers
+              << " inflight_chunks=" << stats.inflight_chunks
+              << " codec_workers=" << result.codec_workers
+              << " gpu_used=" << (stats.gpu_used ? "true" : "false")
+              << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
+              << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
+              << " gpu_kernel_launches=" << stats.gpu_runtime.kernel_launches
+              << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms
+              << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
+              << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
+              << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
+              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
+              << " seconds=" << stats.seconds
+              << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
+              << " compress_seconds=" << result.compress_seconds
+              << " verify_seconds=" << result.verify_seconds
+              << " extract_seconds=" << result.extract_seconds
+              << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
+              << " verify_mib_s=" << mib_per_second(stats.input_bytes, result.verify_seconds)
+              << " extract_mib_s=" << mib_per_second(stats.input_bytes, result.extract_seconds)
+              << " memory_only=true"
+              << " disk_write_bytes=0"
+              << "\n";
+}
+
+// Purpose: Add two unsigned 64-bit counters while detecting overflow.
+// Inputs: `lhs` and `rhs` are byte counters and `message` labels the failing operation.
+// Outputs: Returns the sum or throws `ArchiveError` before wraparound.
+std::uint64_t checked_add_cli_u64(std::uint64_t lhs, std::uint64_t rhs, const char* message) {
+    if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) {
+        throw superzip::ArchiveError(message);
+    }
+    return lhs + rhs;
+}
+
+// Purpose: Multiply two unsigned 64-bit counters while detecting overflow.
+// Inputs: `lhs` and `rhs` are byte counters and `message` labels the failing operation.
+// Outputs: Returns the product or throws `ArchiveError` before wraparound.
+std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, const char* message) {
+    if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
+        throw superzip::ArchiveError(message);
+    }
+    return lhs * rhs;
+}
+
+// Purpose: Estimate safe host-memory growth before the process risks exceeding the SuperZip RAM target.
+// Inputs: None.
+// Outputs: Returns available growth bytes until 80% host RAM use, or a conservative fallback on unsupported hosts.
+std::uint64_t safe_host_memory_growth_bytes() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status) != 0 && status.ullAvailPhys <= status.ullTotalPhys) {
+        const auto total = static_cast<std::uint64_t>(status.ullTotalPhys);
+        const auto available = static_cast<std::uint64_t>(status.ullAvailPhys);
+        const auto used = total - available;
+        const auto target = (total / 100U) * superzip::kHostMemoryTargetUsagePercent;
+        return used >= target ? 0 : target - used;
+    }
+#endif
+    return 4ULL * 1024ULL * 1024ULL * 1024ULL;
+}
+
+// Purpose: Refuse a memory-only benchmark that would plausibly force paging or exceed the RAM-use policy.
+// Inputs: `total_bytes` is the virtual uncompressed workload size.
+// Outputs: Returns normally when host RAM can hold the generated in-memory archive and working chunks.
+void assert_memory_benchmark_budget(std::uint64_t total_bytes) {
+    auto required = checked_add_cli_u64(total_bytes, kMemoryBenchmarkReserveBytes, "memory benchmark budget overflow");
+    required = checked_add_cli_u64(
+        required,
+        checked_multiply_cli_u64(superzip::kMaxArchiveChunkBytes, 2U, "memory benchmark working set overflow"),
+        "memory benchmark budget overflow");
+    const auto safe_growth = safe_host_memory_growth_bytes();
+    if (required > safe_growth) {
+        throw superzip::ArchiveError(
+            "memory benchmark would exceed the 80% host RAM target; reduce --size-mib or close other memory-heavy processes");
+    }
+}
+
+// Purpose: Resolve bounded in-flight work for the memory-only benchmark pipeline.
+// Inputs: `workers` is the resolved CPU worker count and `total_bytes` is the virtual workload size.
+// Outputs: Returns a queue depth that fits the 80% host RAM policy and SuperZip's in-flight limit.
+std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, std::uint64_t total_bytes) {
+    const auto safe_growth = safe_host_memory_growth_bytes();
+    auto baseline = checked_add_cli_u64(total_bytes, kMemoryBenchmarkReserveBytes, "memory benchmark budget overflow");
+    baseline = checked_add_cli_u64(
+        baseline,
+        checked_multiply_cli_u64(superzip::kMaxArchiveChunkBytes, 2U, "memory benchmark working set overflow"),
+        "memory benchmark budget overflow");
+    if (baseline >= safe_growth) {
+        return 1;
+    }
+    const auto remaining = safe_growth - baseline;
+    const auto per_inflight = checked_multiply_cli_u64(
+        superzip::kMaxArchiveChunkBytes,
+        2U,
+        "memory benchmark in-flight budget overflow");
+    const auto memory_limited = static_cast<std::uint32_t>(
+        std::max<std::uint64_t>(1U, remaining / per_inflight));
+    return std::max<std::uint32_t>(
+        1U,
+        std::min({workers, memory_limited, superzip::kMaxInflightArchiveChunks}));
+}
+
+// Purpose: Match production per-chunk codec worker allocation for the memory-only benchmark.
+// Inputs: `workers` is the global worker budget, `inflight` is resolved queue depth, and `chunk_count` is the generated workload chunk count.
+// Outputs: Returns at least one codec worker per chunk, using more workers only when fewer chunks can be active.
+std::uint32_t resolve_memory_codec_workers(
+    std::uint32_t workers,
+    std::uint32_t inflight,
+    std::size_t chunk_count) {
+    const auto active_windows = std::max<std::uint32_t>(
+        1U,
+        std::min<std::uint32_t>(
+            inflight,
+            static_cast<std::uint32_t>(std::min<std::size_t>(chunk_count, std::numeric_limits<std::uint32_t>::max()))));
+    return std::max<std::uint32_t>(
+        1U,
+        std::min<std::uint32_t>(workers, (workers + active_windows - 1U) / active_windows));
+}
+
+// Purpose: Generate a deterministic random-looking byte from a virtual workload offset.
+// Inputs: `index` is the zero-based virtual byte offset.
+// Outputs: Returns one reproducible byte without maintaining RNG state.
+std::uint8_t randomish_benchmark_byte(std::uint64_t index) {
+    std::uint64_t value = index + 0x9E3779B97F4A7C15ULL;
+    value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+    value ^= value >> 31U;
+    return static_cast<std::uint8_t>(value >> 56U);
+}
+
+// Purpose: Fill a benchmark chunk with deterministic compressible or incompressible data.
+// Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size, and `profile` selects data shape.
+// Outputs: Writes benchmark bytes into `buffer` without filesystem access.
+void fill_memory_benchmark_chunk(
+    std::vector<std::byte>& buffer,
+    std::uint64_t global_offset,
+    std::uint64_t total_bytes,
+    const std::string& profile) {
+    std::uint64_t zero_limit = 0;
+    std::uint64_t text_limit = 0;
+    if (profile == "Compressible") {
+        zero_limit = total_bytes / 10U;
+        text_limit = zero_limit + ((total_bytes / 10U) * 8U);
+    } else if (profile == "Mixed") {
+        zero_limit = total_bytes / 4U;
+        text_limit = zero_limit + (total_bytes / 4U);
+    } else if (profile != "Incompressible") {
+        throw superzip::ArchiveError("unknown memory benchmark profile: " + profile);
+    }
+
+    constexpr char text[] = "SuperZip memory benchmark line: AMD HIP native archive codec, metadata, and verification.\n";
+    constexpr auto text_len = sizeof(text) - 1U;
+    for (std::size_t i = 0; i < buffer.size(); ++i) {
+        const auto pos = global_offset + i;
+        if (pos < zero_limit) {
+            buffer[i] = std::byte{0};
+        } else if (pos < text_limit) {
+            buffer[i] = static_cast<std::byte>(text[pos % text_len]);
+        } else {
+            buffer[i] = static_cast<std::byte>(randomish_benchmark_byte(pos));
+        }
+    }
+}
+
+// Purpose: Resolve the worker count used by in-memory codec benchmarks.
+// Inputs: `requested` is the user-provided worker count, where zero means automatic.
+// Outputs: Returns a bounded worker count accepted by codec resource limits.
+std::uint32_t resolve_memory_benchmark_workers(std::uint32_t requested) {
+    if (requested > superzip::kMaxArchiveWorkers) {
+        throw superzip::ArchiveError("worker count exceeds SuperZip resource limit");
+    }
+    if (requested != 0) {
+        return requested;
+    }
+    return std::min<std::uint32_t>(
+        superzip::kMaxArchiveWorkers,
+        std::max<std::uint32_t>(1U, static_cast<std::uint32_t>(std::max(1U, std::thread::hardware_concurrency()))));
+}
+
+// Purpose: Run a no-filesystem CPU or AMD-HIP benchmark over generated in-memory chunks.
+// Inputs: `options` controls virtual workload size, data profile, backend lane, worker count, and compression level.
+// Outputs: Returns timing, byte counts, GPU telemetry, and correctness-checked phase statistics.
+MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
+    if (options.size_mib < 10240U) {
+        throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
+    }
+    if (options.compression_level < 1 || options.compression_level > 9) {
+        throw superzip::ArchiveError("compression level must be between 1 and 9");
+    }
+    if (options.require_gpu && options.force_cpu) {
+        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+    }
+    const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
+    assert_memory_benchmark_budget(total_bytes);
+
+    const auto workers = resolve_memory_benchmark_workers(options.workers);
+    const auto inflight = resolve_memory_benchmark_inflight(workers, total_bytes);
+    const auto chunk_count = static_cast<std::size_t>(
+        (total_bytes + superzip::kMaxArchiveChunkBytes - 1U) / superzip::kMaxArchiveChunkBytes);
+    const auto codec_workers = resolve_memory_codec_workers(workers, inflight, chunk_count);
+    auto telemetry = std::make_shared<superzip::GpuTelemetry>();
+    const superzip::GpuCodecOptions codec_options{
+        .require_gpu = options.require_gpu,
+        .force_cpu = options.force_cpu,
+        .block_size = superzip::kDefaultArchiveBlockBytes,
+        .worker_count = codec_workers,
+        .compression_level = options.compression_level,
+        .telemetry = telemetry,
+    };
+
+    MemoryBenchmarkResult result;
+    result.stats.input_bytes = total_bytes;
+    result.stats.workers = workers;
+    result.stats.inflight_chunks = inflight;
+    result.codec_workers = codec_workers;
+    std::vector<MemoryArchiveChunk> archive;
+    archive.resize(chunk_count);
+
+    const auto total_started = std::chrono::steady_clock::now();
+    auto phase_started = std::chrono::steady_clock::now();
+    std::deque<PendingMemoryEncode> pending_encode;
+    auto flush_one_encode = [&]() {
+        auto pending = std::move(pending_encode.front());
+        pending_encode.pop_front();
+        auto chunk = pending.result.get();
+        result.stats.gpu_used = result.stats.gpu_used || chunk.encoded.gpu_used;
+        result.stats.output_bytes = checked_add_cli_u64(
+            result.stats.output_bytes,
+            chunk.encoded.payload.size(),
+            "memory benchmark encoded byte count overflows");
+        archive[pending.index] = std::move(chunk);
+    };
+    for (std::uint64_t offset = 0, index = 0; offset < total_bytes; ++index) {
+        const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, total_bytes - offset);
+        std::vector<std::byte> input;
+        input.resize(static_cast<std::size_t>(want));
+        fill_memory_benchmark_chunk(input, offset, total_bytes, options.profile);
+        pending_encode.push_back(PendingMemoryEncode{
+            .index = static_cast<std::size_t>(index),
+            .result = std::async(
+                std::launch::async,
+                [input = std::move(input), want, codec_options]() mutable {
+                    auto encoded = superzip::encode_chunk(
+                        std::span<const std::byte>(input.data(), input.size()),
+                        codec_options);
+                    const auto chunk_crc = encoded.source_crc32_available
+                        ? encoded.source_crc32
+                        : superzip::crc32(std::span<const std::byte>(input.data(), input.size()));
+                    return MemoryArchiveChunk{
+                        .encoded = std::move(encoded),
+                        .crc32 = chunk_crc,
+                        .uncompressed_size = want,
+                    };
+                }),
+        });
+        offset += want;
+        if (pending_encode.size() >= inflight) {
+            flush_one_encode();
+        }
+    }
+    while (!pending_encode.empty()) {
+        flush_one_encode();
+    }
+    result.compress_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+
+    phase_started = std::chrono::steady_clock::now();
+    std::deque<PendingMemoryCrc> pending_crc;
+    auto flush_one_crc = [&]() {
+        auto pending = std::move(pending_crc.front());
+        pending_crc.pop_front();
+        const auto decoded_crc = pending.result.get();
+        const auto& chunk = archive[pending.index];
+        result.stats.gpu_used = result.stats.gpu_used || decoded_crc.gpu_used;
+        if (decoded_crc.crc32 != chunk.crc32) {
+            throw superzip::ArchiveError("memory benchmark verification CRC mismatch");
+        }
+    };
+    for (std::size_t index = 0; index < archive.size(); ++index) {
+        pending_crc.push_back(PendingMemoryCrc{
+            .index = index,
+            .result = std::async(
+                std::launch::async,
+                [&archive, index, codec_options] {
+                    const auto& chunk = archive[index];
+                    return superzip::crc_decoded_chunk(
+                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
+                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(), chunk.encoded.blocks.size()),
+                        chunk.uncompressed_size,
+                        codec_options);
+                }),
+        });
+        if (pending_crc.size() >= inflight) {
+            flush_one_crc();
+        }
+    }
+    while (!pending_crc.empty()) {
+        flush_one_crc();
+    }
+    result.verify_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+
+    phase_started = std::chrono::steady_clock::now();
+    std::deque<PendingMemoryDecode> pending_decode;
+    auto flush_one_decode = [&]() {
+        auto pending = std::move(pending_decode.front());
+        pending_decode.pop_front();
+        const auto decoded = pending.result.get();
+        result.stats.gpu_used = result.stats.gpu_used || decoded.gpu_used;
+        if (decoded.crc32 != archive[pending.index].crc32) {
+            throw superzip::ArchiveError("memory benchmark extraction CRC mismatch");
+        }
+    };
+    for (std::size_t index = 0; index < archive.size(); ++index) {
+        pending_decode.push_back(PendingMemoryDecode{
+            .index = index,
+            .result = std::async(
+                std::launch::async,
+                [&archive, index, codec_options] {
+                    const auto& chunk = archive[index];
+                    std::vector<std::byte> decoded(static_cast<std::size_t>(chunk.uncompressed_size));
+                    const bool decoded_on_gpu = superzip::decode_chunk(
+                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
+                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(), chunk.encoded.blocks.size()),
+                        std::span<std::byte>(decoded.data(), decoded.size()),
+                        codec_options);
+                    return MemoryDecodeResult{
+                        .crc32 = superzip::crc32(std::span<const std::byte>(decoded.data(), decoded.size())),
+                        .gpu_used = decoded_on_gpu,
+                    };
+                }),
+        });
+        if (pending_decode.size() >= inflight) {
+            flush_one_decode();
+        }
+    }
+    while (!pending_decode.empty()) {
+        flush_one_decode();
+    }
+    result.extract_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+    result.stats.entries = archive.size();
+    result.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
+    result.stats.gpu_runtime = superzip::snapshot_gpu_telemetry(*telemetry);
+    return result;
 }
 
 // Purpose: Print SHA-256 integrity data for an archive.
@@ -78,9 +511,31 @@ void print_gpu_info(const superzip::GpuInfo& info) {
     std::cout << "available=" << (info.available ? "true" : "false") << "\n";
     std::cout << "device_count=" << info.device_count << "\n";
     std::cout << "selected_device=" << info.selected_device << "\n";
+    std::cout << "vram_total_bytes=" << info.vram_total_bytes << "\n";
+    std::cout << "vram_free_bytes=" << info.vram_free_bytes << "\n";
     std::cout << "device_name=" << info.device_name << "\n";
     std::cout << "gcn_arch=" << info.gcn_arch << "\n";
     std::cout << "status=" << info.status << "\n";
+}
+
+// Purpose: Print HIP-only diagnostic results in a stable machine-readable format.
+// Inputs: `result` is the completed diagnostic output.
+// Outputs: Writes one key/value block to stdout.
+void print_gpu_diagnostic(const superzip::GpuDiagnosticResult& result) {
+    std::cout << "hip_compiled=" << (result.info.hip_compiled ? "true" : "false") << "\n";
+    std::cout << "hip_runtime_loadable=" << (result.info.hip_runtime_loadable ? "true" : "false") << "\n";
+    std::cout << "hip_runtime_name=" << result.info.runtime_name << "\n";
+    std::cout << "available=" << (result.info.available ? "true" : "false") << "\n";
+    std::cout << "device_name=" << result.info.device_name << "\n";
+    std::cout << "gcn_arch=" << result.info.gcn_arch << "\n";
+    std::cout << "diagnostic_bytes=" << result.bytes << "\n";
+    std::cout << "diagnostic_kernel_launches=" << result.kernel_launches << "\n";
+    std::cout << "diagnostic_kernel_ms=" << result.kernel_ms << "\n";
+    std::cout << "diagnostic_h2d_bytes=" << result.h2d_bytes << "\n";
+    std::cout << "diagnostic_d2h_bytes=" << result.d2h_bytes << "\n";
+    std::cout << "diagnostic_device_allocation_bytes=" << result.device_allocation_bytes << "\n";
+    std::cout << "diagnostic_checksum=" << result.checksum << "\n";
+    std::cout << "diagnostic_wall_seconds=" << result.wall_seconds << "\n";
 }
 
 // Purpose: Convert AMD HIP dependency status into deterministic installer-friendly process codes.
@@ -110,6 +565,32 @@ std::string require_arg(const std::vector<std::string>& args, std::size_t& index
     return args[index];
 }
 
+// Purpose: Parse an unsigned 32-bit tuning argument.
+// Inputs: `args` is the full argument vector, `index` is the current flag index and is advanced, and `name` is the flag label for diagnostics.
+// Outputs: Returns the parsed integer; throws `ArchiveError` when the value is invalid.
+std::uint32_t require_u32_arg(const std::vector<std::string>& args, std::size_t& index, const char* name) {
+    const auto text = require_arg(args, index, name);
+    std::size_t parsed = 0;
+    const unsigned long value = std::stoul(text, &parsed, 10);
+    if (parsed != text.size() || value > std::numeric_limits<std::uint32_t>::max()) {
+        throw superzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
+// Purpose: Parse a bounded signed integer tuning argument.
+// Inputs: `args` is the full argument vector, `index` is the current flag index and is advanced, `name` labels diagnostics, and `minimum`/`maximum` define the accepted range.
+// Outputs: Returns the parsed integer; throws `ArchiveError` when the value is invalid or out of range.
+int require_int_arg(const std::vector<std::string>& args, std::size_t& index, const char* name, int minimum, int maximum) {
+    const auto text = require_arg(args, index, name);
+    std::size_t parsed = 0;
+    const int value = std::stoi(text, &parsed, 10);
+    if (parsed != text.size() || value < minimum || value > maximum) {
+        throw superzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
+    }
+    return value;
+}
+
 }  // namespace
 
 // Purpose: Execute the SuperZip command-line interface.
@@ -132,6 +613,24 @@ int main(int argc, char** argv) {
             return info.available ? 0 : 1;
         }
 
+        if (args[0] == "gpu-diagnostic") {
+            superzip::GpuDiagnosticOptions options;
+            for (std::size_t i = 1; i < args.size(); ++i) {
+                if (args[i] == "--seconds") {
+                    const auto seconds = require_int_arg(args, i, "--seconds", 1, 30);
+                    options.seconds = static_cast<double>(seconds);
+                } else if (args[i] == "--buffer-mib") {
+                    options.buffer_mib = require_u32_arg(args, i, "--buffer-mib");
+                } else if (args[i] == "--inner-iterations") {
+                    options.inner_iterations = require_u32_arg(args, i, "--inner-iterations");
+                } else {
+                    throw superzip::ArchiveError("unknown gpu-diagnostic argument: " + args[i]);
+                }
+            }
+            print_gpu_diagnostic(superzip::run_gpu_diagnostic(options));
+            return 0;
+        }
+
         if (args[0] == "dependency-check") {
             const auto info = superzip::query_gpu_info();
             print_gpu_info(info);
@@ -140,12 +639,39 @@ int main(int argc, char** argv) {
             return code;
         }
 
-        // Compression keeps ZIP compatibility and native SZIP explicit. The
-        // `--require-gpu` flag applies only to SZIP and prevents silent CPU
-        // fallback when GPU acceleration is mandatory.
+        if (args[0] == "memory-benchmark") {
+            MemoryBenchmarkOptions options;
+            for (std::size_t i = 1; i < args.size(); ++i) {
+                if (args[i] == "--size-mib") {
+                    options.size_mib = require_u32_arg(args, i, "--size-mib");
+                } else if (args[i] == "--profile") {
+                    options.profile = require_arg(args, i, "--profile");
+                } else if (args[i] == "--require-gpu") {
+                    options.require_gpu = true;
+                } else if (args[i] == "--force-cpu") {
+                    options.force_cpu = true;
+                } else if (args[i] == "--workers") {
+                    options.workers = require_u32_arg(args, i, "--workers");
+                } else if (args[i] == "--compression-level") {
+                    options.compression_level = require_int_arg(args, i, "--compression-level", 1, 9);
+                } else {
+                    throw superzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
+                }
+            }
+            print_memory_benchmark_stats(run_memory_benchmark(options));
+            return 0;
+        }
+
+        // Compression keeps ZIP compatibility and native SUZIP explicit.
+        // `--force-cpu` is only for diagnostics and benchmarking.
         if (args[0] == "compress") {
-            std::string format = "szip";
+            std::string format = "suzip";
             bool require_gpu = false;
+            bool force_cpu = false;
+            std::uint32_t workers = 0;
+            std::uint32_t inflight = 0;
+            int compression_level = 1;
+            bool verify_after_write = false;
             bool sha256 = false;
             bool defender_scan = false;
             std::filesystem::path output;
@@ -157,6 +683,16 @@ int main(int argc, char** argv) {
                     output = require_arg(args, i, "--output");
                 } else if (args[i] == "--require-gpu") {
                     require_gpu = true;
+                } else if (args[i] == "--force-cpu") {
+                    force_cpu = true;
+                } else if (args[i] == "--workers") {
+                    workers = require_u32_arg(args, i, "--workers");
+                } else if (args[i] == "--inflight") {
+                    inflight = require_u32_arg(args, i, "--inflight");
+                } else if (args[i] == "--compression-level") {
+                    compression_level = require_int_arg(args, i, "--compression-level", 1, 9);
+                } else if (args[i] == "--verify-after-write") {
+                    verify_after_write = true;
                 } else if (args[i] == "--sha256") {
                     sha256 = true;
                 } else if (args[i] == "--defender-scan") {
@@ -169,10 +705,18 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
-            if (format == "szip") {
+            if (require_gpu && force_cpu) {
+                throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+            }
+            if (format == "suzip") {
                 superzip::CompressOptions options;
                 options.gpu_required = require_gpu;
-                print_stats(superzip::compress_szip(sources, output, options));
+                options.force_cpu = force_cpu;
+                options.worker_count = workers;
+                options.max_inflight_chunks = inflight;
+                options.compression_level = compression_level;
+                options.verify_after_write = verify_after_write;
+                print_stats(superzip::compress_suzip(sources, output, options));
             } else if (format == "zip") {
                 print_stats(superzip::compress_zip(sources, output));
             } else {
@@ -191,8 +735,11 @@ int main(int argc, char** argv) {
         // writing files, then relies on archive-layer overwrite and path
         // validation for the actual restore operation.
         if (args[0] == "extract") {
-            std::string format = "szip";
+            std::string format = "suzip";
             bool require_gpu = false;
+            bool force_cpu = false;
+            std::uint32_t workers = 0;
+            std::uint32_t inflight = 0;
             bool overwrite = false;
             bool sha256 = false;
             bool defender_scan = false;
@@ -205,6 +752,12 @@ int main(int argc, char** argv) {
                     output = require_arg(args, i, "--output");
                 } else if (args[i] == "--require-gpu") {
                     require_gpu = true;
+                } else if (args[i] == "--force-cpu") {
+                    force_cpu = true;
+                } else if (args[i] == "--workers") {
+                    workers = require_u32_arg(args, i, "--workers");
+                } else if (args[i] == "--inflight") {
+                    inflight = require_u32_arg(args, i, "--inflight");
                 } else if (args[i] == "--overwrite") {
                     overwrite = true;
                 } else if (args[i] == "--sha256") {
@@ -219,17 +772,23 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
+            if (require_gpu && force_cpu) {
+                throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+            }
             if (sha256) {
                 print_integrity_hash(archive);
             }
             if (defender_scan) {
                 print_defender_scan(archive, true);
             }
-            if (format == "szip") {
+            if (format == "suzip") {
                 superzip::ExtractOptions options;
                 options.gpu_required = require_gpu;
+                options.force_cpu = force_cpu;
                 options.overwrite = overwrite;
-                print_stats(superzip::extract_szip(archive, output, options));
+                options.worker_count = workers;
+                options.max_inflight_chunks = inflight;
+                print_stats(superzip::extract_suzip(archive, output, options));
             } else if (format == "zip") {
                 print_stats(superzip::extract_zip(archive, output, overwrite));
             } else {
@@ -241,15 +800,27 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // Verification reads SZIP metadata and payload through the decoder
+        // Verification reads SUZIP metadata and payload through the decoder
         // without creating output files, then optionally reports extra security
         // signals requested by the caller.
         if (args[0] == "verify") {
+            bool require_gpu = false;
+            bool force_cpu = false;
+            std::uint32_t workers = 0;
+            std::uint32_t inflight = 0;
             bool sha256 = false;
             bool defender_scan = false;
             std::filesystem::path archive;
             for (std::size_t i = 1; i < args.size(); ++i) {
-                if (args[i] == "--sha256") {
+                if (args[i] == "--require-gpu") {
+                    require_gpu = true;
+                } else if (args[i] == "--force-cpu") {
+                    force_cpu = true;
+                } else if (args[i] == "--workers") {
+                    workers = require_u32_arg(args, i, "--workers");
+                } else if (args[i] == "--inflight") {
+                    inflight = require_u32_arg(args, i, "--inflight");
+                } else if (args[i] == "--sha256") {
                     sha256 = true;
                 } else if (args[i] == "--defender-scan") {
                     defender_scan = true;
@@ -261,9 +832,15 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
+            if (require_gpu && force_cpu) {
+                throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+            }
             superzip::ExtractOptions options;
-            options.gpu_required = false;
-            print_stats(superzip::verify_szip(archive, options));
+            options.gpu_required = require_gpu;
+            options.force_cpu = force_cpu;
+            options.worker_count = workers;
+            options.max_inflight_chunks = inflight;
+            print_stats(superzip::verify_suzip(archive, options));
             if (sha256) {
                 print_integrity_hash(archive);
             }

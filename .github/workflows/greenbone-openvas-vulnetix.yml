@@ -82,9 +82,8 @@ jobs:
               "event_name": os.environ["GITHUB_EVENT_NAME"],
               "head_sha": os.environ["GITHUB_SHA"],
               "live_network_scan": {
-                  "status": "requires-authorized-target-and-environment-secrets",
+                  "status": "requires-authorized-target-and-repository-secrets",
                   "trigger_events": ["workflow_dispatch", "schedule"],
-                  "environment": "greenbone-openvas-security-scanning",
                   "required_secrets": [
                       "GREENBONE_HOST",
                       "GREENBONE_USERNAME",
@@ -109,7 +108,7 @@ jobs:
           (output_dir / "openvas-integration-summary.md").write_text(
               "# Greenbone/OpenVAS integration audit\n\n"
               "The workflow, locked scanner dependencies, and GMP script parsed successfully. "
-              "A live network vulnerability scan requires the documented environment secrets "
+              "A live network vulnerability scan requires the documented repository secrets "
               "and runs in the separate `greenbone-openvas-live` workflow.\n",
               encoding="utf-8",
           )

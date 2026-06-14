@@ -283,12 +283,12 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $extract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable ZIP smoke extraction did not preserve payload."
         }
-        $archive = Join-Path $root "archive.szip"
-        $szipArgs = @("compress", "--format", "szip", "--sha256", "--output", $archive, $input)
+        $archive = Join-Path $root "archive.suzip"
+        $suzipArgs = @("compress", "--format", "suzip", "--sha256", "--output", $archive, $input)
         if ($env:ENABLE_HIP -eq "true" -and $dependencyExit -eq 0) {
-            $szipArgs = @("compress", "--format", "szip", "--require-gpu", "--sha256", "--output", $archive, $input)
+            $suzipArgs = @("compress", "--format", "suzip", "--require-gpu", "--sha256", "--output", $archive, $input)
         }
-        & $cli @szipArgs
+        & $cli @suzipArgs
         & $cli verify --sha256 $archive
 
     - name: MSI install smoke
@@ -306,9 +306,14 @@ runs:
         if ($process.ExitCode -ne 0) {
             throw "MSI install failed with exit code $($process.ExitCode)."
         }
-        $cli = Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe"
-        if (-not (Test-Path $cli)) {
-            throw "Installed CLI was not found at $cli."
+        $cliCandidates = @(
+            (Join-Path $env:LocalAppData "SuperZip\bin\superzip_cli.exe"),
+            (Join-Path $env:LocalAppData "Programs\SuperZip\bin\superzip_cli.exe"),
+            (Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe")
+        )
+        $cli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $cli) {
+            throw "Installed CLI was not found in the per-user or per-machine SuperZip install locations."
         }
         $dependency = & $cli dependency-check
         $dependencyExit = $LASTEXITCODE
@@ -328,8 +333,9 @@ runs:
         if ($process.ExitCode -ne 0) {
             throw "MSI uninstall failed with exit code $($process.ExitCode)."
         }
-        if (Test-Path $cli) {
-            throw "Installed CLI remained after MSI uninstall."
+        $remainingCli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($remainingCli) {
+            throw "Installed CLI remained after MSI uninstall at $remainingCli."
         }
 
     - name: Generate release notes

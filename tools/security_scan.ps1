@@ -39,7 +39,7 @@ if ($forbidden) {
     throw "Build artifacts found outside build directory: $($forbidden[0].FullName)"
 }
 
-# Purpose: Verify workflow policy rules that prevent hidden deployments, suppressed failures, and source-scan blind spots.
+# Purpose: Verify workflow policy rules that prevent deployments, suppressed failures, and source-scan blind spots.
 # Inputs: Reads tracked GitHub workflow/configuration files from `.github`.
 # Outputs: Throws when workflow policy is violated; otherwise returns normally.
 function Test-WorkflowSecurityPolicy {
@@ -57,10 +57,10 @@ function Test-WorkflowSecurityPolicy {
         for ($i = 0; $i -lt $lines.Count; ++$i) {
             $line = $lines[$i]
             if ($line -match '^\s*environment\s*:') {
-                $window = ($lines[$i..([Math]::Min($i + 6, $lines.Count - 1))] -join "`n")
-                if ($window -notmatch '(?m)^\s*deployment\s*:\s*false\s*(#.*)?$') {
-                    throw "Workflow environment without deployment:false found in $($file.FullName):$($i + 1)"
-                }
+                throw "Workflow environment blocks are forbidden because they can create GitHub deployment records: $($file.FullName):$($i + 1)"
+            }
+            if ($line -match '^\s*deployment\s*:') {
+                throw "Workflow deployment keys are forbidden in this repository: $($file.FullName):$($i + 1)"
             }
             if ($line -match 'continue-on-error\s*:\s*true') {
                 throw "Workflow soft-fail behavior is forbidden in $($file.FullName):$($i + 1)"

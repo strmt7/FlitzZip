@@ -10,7 +10,7 @@ Before editing security-sensitive code, identify the boundary:
 - Archive metadata parser.
 - Destination path join and canonicalization.
 - ZIP compatibility extraction.
-- SZIP block metadata validation.
+- SUZIP block metadata validation.
 - Microsoft Defender opt-in scan.
 - GitHub Actions scanner integration.
 

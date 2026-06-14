@@ -50,11 +50,17 @@ Users can opt in to stronger SHA-256 integrity hashing for archive files or
 post-extraction verification. This is intentionally separate from the mandatory
 CRC path because SHA-256 costs extra I/O on large archives.
 
+Compression can also opt in to `--verify-after-write`, which immediately reads
+the completed `.suzip` archive through the normal verifier. This extra pass is
+not implicit because it doubles read work for large archives and should be a
+deliberate integrity policy choice.
+
 The CLI exposes:
 
 ```powershell
-build/Release/superzip_cli.exe verify --sha256 archive.szip
-build/Release/superzip_cli.exe extract --defender-scan --output restored archive.szip
+build/Release/superzip_cli.exe compress --format suzip --verify-after-write --output archive.suzip path\to\folder
+build/Release/superzip_cli.exe verify --sha256 archive.suzip
+build/Release/superzip_cli.exe extract --defender-scan --output restored archive.suzip
 ```
 
 The GUI Preferences page must keep SHA-256 hashing disabled by default and label
@@ -79,10 +85,9 @@ after a real authorized OpenVAS scan has produced artifacts. The current pin is:
 - optional `task: upload`
 - optional `artifact-path: ./reports/`
 
-The SuperZip workflow fails closed until the required
-`greenbone-openvas-security-scanning` environment secrets are configured. Do not
-add hard-coded organization IDs, tokens, URLs, scan targets, or credentials to
-the repository.
+The SuperZip workflow fails closed until the required repository secrets are
+configured. Do not add hard-coded organization IDs, tokens, URLs, scan targets,
+or credentials to the repository.
 
 Note: the action is pinned to the `v3.9.1` commit observed on June 14, 2026.
 Re-check the upstream action before rotating that pin.

@@ -73,7 +73,7 @@ bool load_hip_runtime() {
 // Purpose: Query AMD HIP availability and selected device metadata.
 // Inputs: None.
 // Outputs: Returns device status; absent or unreadable devices are reported in-band rather than thrown.
-GpuInfo query_gpu_info_cpu_only() {
+GpuInfo query_hip_gpu_info() {
     GpuInfo info;
 #if SUPERZIP_ENABLE_HIP
     info.hip_compiled = true;
@@ -97,6 +97,13 @@ GpuInfo query_gpu_info_cpu_only() {
     if (props_status != hipSuccess) {
         info.status = "Unable to read AMD HIP device properties";
         return info;
+    }
+    std::size_t free_bytes = 0;
+    std::size_t total_bytes = 0;
+    const auto memory_status = hipMemGetInfo(&free_bytes, &total_bytes);
+    if (memory_status == hipSuccess) {
+        info.vram_free_bytes = static_cast<std::uint64_t>(free_bytes);
+        info.vram_total_bytes = static_cast<std::uint64_t>(total_bytes);
     }
     info.available = true;
     info.selected_device = selected;

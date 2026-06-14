@@ -40,9 +40,6 @@ jobs:
     name: Hosted Windows release validation
     runs-on: windows-2022
     timeout-minutes: 180
-    environment:
-      name: release-secrets
-      deployment: false
     # The release action creates tags/releases, so this job needs write access to repository contents.
     permissions:
       contents: write # allow the manual release job to create tags and GitHub releases

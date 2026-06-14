@@ -3,7 +3,7 @@
 ## Direction
 
 SuperZip is a native Windows x64 archive application written in modern C++20.
-The GPU boundary is AMD HIP only. The native `.szip` format is the
+The GPU boundary is AMD HIP only. The native `.suzip` format is the
 GPU-accelerated product path, while standard `.zip` support is compatibility
 only through miniz 3.1.1.
 
@@ -22,6 +22,10 @@ core archive tests where AMD HIP is unavailable.
 - The MSI and release workflow must validate that the installed artifact is
   HIP-enabled. They must not silently install or downgrade AMD GPU drivers.
 - Archive work must be chunked and bounded in memory.
+- Native archive chunks are hard-capped at 128 MiB, archive metadata counts are
+  bounded, and HIP allocations preflight available VRAM before kernel work.
+- Native `.suzip` blocks may be fill, raw, or bounded miniz-deflate payloads;
+  the GPU acceleration boundary remains AMD HIP-only.
 - Extraction must reject traversal, absolute paths, UNC paths, reserved Windows
   device names, malformed metadata, CRC mismatches, and accidental overwrites.
 - Microsoft Defender scanning and SHA-256 hashing remain opt-in.
@@ -51,7 +55,7 @@ archive options, progress snapshots, and errors.
 
 - Replaced prototype-level shell assumptions with a native C++/Win32 app.
 - Preserved AMD HIP as the fundamental acceleration boundary.
-- Separated native `.szip` from `.zip` compatibility.
+- Separated native `.suzip` from `.zip` compatibility.
 
 ### Iteration 2: Responsiveness
 
@@ -90,8 +94,9 @@ For HIP-capable Windows hosts:
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
 build\Release\superzip_cli.exe dependency-check
+tools\gpu_proof.ps1 -Configuration Release -SizeMiB 512
 tools\package.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
 ```
 
 For hosted CI without HIP:
@@ -105,3 +110,8 @@ tools\security_scan.ps1
 Before publishing, GitHub workflows must complete without skipped user-authored
 jobs, deployments must remain absent, and open vulnerability alerts must be
 triaged through real fixes or documented external governance constraints.
+Release performance notes must include forced-CPU and required-HIP runs with
+CPU, GPU, logical-disk active time, and disk throughput telemetry for mixed,
+compressible, and incompressible workloads.
+Required-HIP claims must also include backend `gpu_*` counters proving HIP
+kernel launches, HIP event time, transfer bytes, and device allocation bytes.

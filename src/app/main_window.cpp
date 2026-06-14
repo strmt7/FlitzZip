@@ -659,7 +659,7 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
     }
 
     RECT destination{area.left, area.bottom - scale(88), area.right - scale(182), area.bottom - scale(44)};
-    draw_field(dc, destination, L"Destination", (std::filesystem::current_path() / "SuperZip-output.szip").wstring(), false);
+    draw_field(dc, destination, L"Destination", (std::filesystem::current_path() / "SuperZip-output.suzip").wstring(), false);
     draw_button(dc, RECT{area.right - scale(168), area.bottom - scale(64), area.right - scale(20), area.bottom - scale(24)}, L"Start", true);
     draw_field(dc, RECT{area.left, area.bottom - scale(40), area.left + scale(264), area.bottom}, L"Profile", L"Balanced (AMD GPU)", true);
 }
@@ -673,12 +673,12 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     const int left = area.left;
     const int mid = area.left + (area.right - area.left) / 2 + scale(14);
     const int field_w = (area.right - area.left) / 2 - scale(26);
-    draw_field(dc, RECT{left, area.top + scale(54), left + field_w, area.top + scale(104)}, L"Archive name", L"SuperZip-output.szip", false);
+    draw_field(dc, RECT{left, area.top + scale(54), left + field_w, area.top + scale(104)}, L"Archive name", L"SuperZip-output.suzip", false);
     draw_field(dc, RECT{mid, area.top + scale(54), mid + field_w, area.top + scale(104)}, L"Destination", std::filesystem::current_path().wstring(), false);
-    draw_field(dc, RECT{left, area.top + scale(124), left + field_w, area.top + scale(174)}, L"Archive format", L"SuperZip GPU (.szip)", true);
+    draw_field(dc, RECT{left, area.top + scale(124), left + field_w, area.top + scale(174)}, L"Archive format", L"SuperZip GPU (.suzip)", true);
     draw_field(dc, RECT{mid, area.top + scale(124), mid + field_w, area.top + scale(174)}, L"Compression profile", L"Balanced (default)", true);
     draw_field(dc, RECT{left, area.top + scale(194), left + field_w, area.top + scale(244)}, L"Compression method", state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred", true);
-    draw_field(dc, RECT{mid, area.top + scale(194), mid + field_w, area.top + scale(244)}, L"Block size", L"64 KiB bounded chunks", true);
+    draw_field(dc, RECT{mid, area.top + scale(194), mid + field_w, area.top + scale(244)}, L"Block size", L"1 MiB blocks / 128 MiB chunks", true);
 
     RECT advanced{left, area.top + scale(270), area.right, area.top + scale(390)};
     fill_round_rect(dc, advanced, kPanel, scale(4));
@@ -689,7 +689,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_checkbox(dc, RECT{advanced.left + scale(18), advanced.top + scale(48), advanced.left + scale(310), advanced.top + scale(76)}, L"Solid archive", true);
     draw_checkbox(dc, RECT{advanced.left + scale(18), advanced.top + scale(80), advanced.left + scale(310), advanced.top + scale(108)}, L"Store timestamps", true);
     draw_checkbox(dc, RECT{advanced.left + scale(342), advanced.top + scale(48), advanced.left + scale(680), advanced.top + scale(76)}, L"Delete files after compression", false);
-    draw_checkbox(dc, RECT{advanced.left + scale(342), advanced.top + scale(80), advanced.left + scale(680), advanced.top + scale(108)}, L"Test archive after creation", true);
+    draw_toggle(dc, RECT{advanced.left + scale(342), advanced.top + scale(80), advanced.left + scale(710), advanced.top + scale(108)}, L"Verify archive after write", state.verify_after_write_opt_in);
 
     RECT security{left, area.top + scale(410), area.right, area.top + scale(528)};
     fill_round_rect(dc, security, kPanel, scale(4));
@@ -747,6 +747,7 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     const Row rows[] = {
         {L"Path safety", L"Safe", kOk},
         {L"CRC metadata", L"Verified", kOk},
+        {L"Post-write verify", state.verify_after_write_opt_in ? L"Enabled" : L"Not selected", state.verify_after_write_opt_in ? kOk : kWarn},
         {L"SHA-256 optional", state.integrity_hash_opt_in ? L"Enabled" : L"Not selected", state.integrity_hash_opt_in ? kOk : kWarn},
         {L"Defender optional", state.defender_scan_opt_in ? L"Enabled" : L"Not selected", state.defender_scan_opt_in ? kOk : kWarn},
         {L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", state.overwrite ? kWarn : kOk},
@@ -826,7 +827,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     draw_text(dc, RECT{top.left + scale(18), top.top + scale(12), top.left + scale(180), top.top + scale(40)}, L"HIP status", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{top.left + scale(190), top.top + scale(12), top.right - scale(18), top.top + scale(40)}, widen(state.gpu_status), ready ? kOk : kWarn, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{top.left + scale(18), top.top + scale(50), top.right - scale(18), top.bottom - scale(12)}, ready ? L"SuperZip will use AMD HIP for native .szip jobs that require GPU acceleration." : L"This build or host is not reporting an active AMD HIP device. GPU-required jobs fail instead of silently using a different vendor path.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{top.left + scale(18), top.top + scale(50), top.right - scale(18), top.bottom - scale(12)}, ready ? L"SuperZip will use AMD HIP for native .suzip jobs that require GPU acceleration." : L"This build or host is not reporting an active AMD HIP device. GPU-required jobs fail instead of silently using a different vendor path.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     const int card_w = (area.right - area.left - scale(28)) / 3;
     RECT gpu{area.left, area.top + scale(166), area.left + card_w, area.top + scale(316)};
@@ -845,7 +846,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, ready ? L"Backend: AMD HIP\nTarget: configured at build time\nDevice: reported by HIP runtime" : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP compatibility uses miniz streaming file APIs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .szip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     RECT monitor{area.left, area.top + scale(342), area.right, area.bottom};
     fill_round_rect(dc, monitor, kPanel, scale(4));
@@ -892,8 +893,8 @@ void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& 
     draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(48), security.right - scale(16), security.top + scale(80)}, L"SHA-256 integrity check", state.integrity_hash_opt_in);
     draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(84), security.right - scale(16), security.top + scale(116)}, L"Microsoft Defender scan", state.defender_scan_opt_in);
     draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(120), security.right - scale(16), security.top + scale(152)}, L"Require AMD GPU acceleration", state.gpu_required);
-    draw_field(dc, RECT{performance.left + scale(18), performance.top + scale(48), performance.right - scale(18), performance.top + scale(94)}, L"Worker priority", L"Responsive background", true);
-    draw_field(dc, RECT{performance.left + scale(18), performance.top + scale(106), performance.right - scale(18), performance.top + scale(152)}, L"Memory policy", L"Bounded chunk windows", true);
+    draw_toggle(dc, RECT{performance.left + scale(18), performance.top + scale(48), performance.right - scale(18), performance.top + scale(80)}, L"Verify archive after write", state.verify_after_write_opt_in);
+    draw_field(dc, RECT{performance.left + scale(18), performance.top + scale(94), performance.right - scale(18), performance.top + scale(140)}, L"Memory policy", L"Bounded chunk windows", true);
     draw_field(dc, RECT{logging.left + scale(18), logging.top + scale(48), logging.right - scale(18), logging.top + scale(94)}, L"Log level", L"Information", true);
     draw_field(dc, RECT{logging.left + scale(18), logging.top + scale(106), logging.right - scale(18), logging.top + scale(152)}, L"Log retention", L"Session only", true);
 }
@@ -911,7 +912,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .szip GPU archive jobs from standard .zip compatibility mode. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from standard .zip compatibility mode. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -1016,6 +1017,9 @@ bool MainWindow::handle_content_click(int x, int y) {
         const RECT sha{security.left + scale(18), security.top + scale(48), security.right - scale(16), security.top + scale(80)};
         const RECT defender{security.left + scale(18), security.top + scale(84), security.right - scale(16), security.top + scale(116)};
         const RECT gpu{security.left + scale(18), security.top + scale(120), security.right - scale(16), security.top + scale(152)};
+        const RECT general{area.left, area.top + scale(56), area.left + scale(470), area.top + scale(224)};
+        const RECT performance{general.right + scale(18), general.top, area.right, area.top + scale(224)};
+        const RECT verify{performance.left + scale(18), performance.top + scale(48), performance.right - scale(18), performance.top + scale(80)};
         if (contains_point(sha, x, y)) {
             state_.integrity_hash_opt_in = !state_.integrity_hash_opt_in;
             changed = true;
@@ -1025,12 +1029,20 @@ bool MainWindow::handle_content_click(int x, int y) {
         } else if (contains_point(gpu, x, y)) {
             state_.gpu_required = !state_.gpu_required;
             changed = true;
+        } else if (contains_point(verify, x, y)) {
+            state_.verify_after_write_opt_in = !state_.verify_after_write_opt_in;
+            changed = true;
         }
     } else if (page == Page::Compress) {
+        const RECT advanced{area.left, area.top + scale(270), area.right, area.top + scale(390)};
         const RECT security{area.left, area.top + scale(410), area.right, area.top + scale(528)};
+        const RECT verify{advanced.left + scale(342), advanced.top + scale(80), advanced.left + scale(710), advanced.top + scale(108)};
         const RECT sha{security.left + scale(18), security.top + scale(46), security.left + scale(420), security.top + scale(78)};
         const RECT defender{security.left + scale(18), security.top + scale(82), security.left + scale(420), security.top + scale(114)};
-        if (contains_point(sha, x, y)) {
+        if (contains_point(verify, x, y)) {
+            state_.verify_after_write_opt_in = !state_.verify_after_write_opt_in;
+            changed = true;
+        } else if (contains_point(sha, x, y)) {
             state_.integrity_hash_opt_in = !state_.integrity_hash_opt_in;
             changed = true;
         } else if (contains_point(defender, x, y)) {
@@ -1133,21 +1145,24 @@ void MainWindow::start_compress() {
     bool gpu_required = true;
     bool integrity = false;
     bool defender = false;
+    bool verify_after_write = false;
     {
         std::lock_guard lock(mutex_);
         sources = state_.queued_paths;
         gpu_required = state_.gpu_required;
         integrity = state_.integrity_hash_opt_in;
         defender = state_.defender_scan_opt_in;
+        verify_after_write = state_.verify_after_write_opt_in;
     }
     if (sources.empty()) {
         return;
     }
-    const auto output = std::filesystem::current_path() / "SuperZip-output.szip";
-    run_job([this, sources, output, gpu_required, integrity, defender] {
+    const auto output = std::filesystem::current_path() / "SuperZip-output.suzip";
+    run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write] {
         CompressOptions options;
         options.gpu_required = gpu_required;
-        auto stats = compress_szip(sources, output, options, [this](const ProgressSnapshot& snapshot) {
+        options.verify_after_write = verify_after_write;
+        auto stats = compress_suzip(sources, output, options, [this](const ProgressSnapshot& snapshot) {
             std::lock_guard lock(mutex_);
             state_.progress = snapshot;
             request_repaint();
@@ -1199,7 +1214,7 @@ void MainWindow::start_extract() {
         ExtractOptions options;
         options.gpu_required = gpu_required;
         options.overwrite = overwrite;
-        auto stats = extract_szip(archive, output, options, [this](const ProgressSnapshot& snapshot) {
+        auto stats = extract_suzip(archive, output, options, [this](const ProgressSnapshot& snapshot) {
             std::lock_guard lock(mutex_);
             state_.progress = snapshot;
             request_repaint();

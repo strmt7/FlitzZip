@@ -38,17 +38,57 @@ extern "C"
 #define TINFL_MEMCPY(d, s, l) (void)mz_copy_bytes((d), (l), (s), (l))
 #define TINFL_MEMSET(p, c, l) (void)mz_fill_bytes((p), (mz_uint8)(c), (l))
 
-#define TINFL_CR_BEGIN  \
-    switch (r->m_state) \
-    {                   \
-        case 0:
+#define TINFL_CR_STATE_LABEL(state_index) tinfl_cr_state_##state_index
+#define TINFL_CR_DISPATCH(state_index) \
+    case state_index:                  \
+        goto TINFL_CR_STATE_LABEL(state_index)
+#define TINFL_CR_BEGIN              \
+    switch (r->m_state)             \
+    {                               \
+        case 0:                     \
+            break;                  \
+            TINFL_CR_DISPATCH(1);   \
+            TINFL_CR_DISPATCH(2);   \
+            TINFL_CR_DISPATCH(3);   \
+            TINFL_CR_DISPATCH(5);   \
+            TINFL_CR_DISPATCH(6);   \
+            TINFL_CR_DISPATCH(7);   \
+            TINFL_CR_DISPATCH(9);   \
+            TINFL_CR_DISPATCH(10);  \
+            TINFL_CR_DISPATCH(11);  \
+            TINFL_CR_DISPATCH(14);  \
+            TINFL_CR_DISPATCH(16);  \
+            TINFL_CR_DISPATCH(17);  \
+            TINFL_CR_DISPATCH(18);  \
+            TINFL_CR_DISPATCH(21);  \
+            TINFL_CR_DISPATCH(23);  \
+            TINFL_CR_DISPATCH(24);  \
+            TINFL_CR_DISPATCH(25);  \
+            TINFL_CR_DISPATCH(26);  \
+            TINFL_CR_DISPATCH(27);  \
+            TINFL_CR_DISPATCH(32);  \
+            TINFL_CR_DISPATCH(34);  \
+            TINFL_CR_DISPATCH(35);  \
+            TINFL_CR_DISPATCH(36);  \
+            TINFL_CR_DISPATCH(37);  \
+            TINFL_CR_DISPATCH(38);  \
+            TINFL_CR_DISPATCH(39);  \
+            TINFL_CR_DISPATCH(41);  \
+            TINFL_CR_DISPATCH(42);  \
+            TINFL_CR_DISPATCH(51);  \
+            TINFL_CR_DISPATCH(52);  \
+            TINFL_CR_DISPATCH(53);  \
+        default:                    \
+            status = TINFL_STATUS_FAILED; \
+            goto common_exit;       \
+    }
 #define TINFL_CR_RETURN(state_index, result) \
     do                                       \
     {                                        \
         status = result;                     \
         r->m_state = state_index;            \
         goto common_exit;                    \
-        case state_index:;                   \
+        TINFL_CR_STATE_LABEL(state_index):;  \
     }                                        \
     MZ_MACRO_END
 #define TINFL_CR_RETURN_FOREVER(state_index, result) \
@@ -60,7 +100,7 @@ extern "C"
         }                                            \
     }                                                \
     MZ_MACRO_END
-#define TINFL_CR_FINISH }
+#define TINFL_CR_FINISH
 
 #define TINFL_GET_BYTE(state_index, c)                                                                                                                           \
     do                                                                                                                                                           \

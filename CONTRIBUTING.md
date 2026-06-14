@@ -13,6 +13,14 @@ tools\security_scan.ps1
 tools\package.ps1 -Configuration Release
 ```
 
+Parser fuzzing runs in GitHub Actions through ClusterFuzzLite. When changing
+archive metadata or path-safety code, also run the fuzz build locally if Docker
+is available:
+
+```powershell
+tools\fuzz.ps1 -Runs 512
+```
+
 The default build is HIP-enabled and requires `HIP_PATH`. If a hosted CI or
 static-analysis machine cannot install AMD HIP, use explicit CPU-only
 validation:

@@ -1,0 +1,52 @@
+name: fuzzing
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read # allow checkout and ClusterFuzzLite source access
+
+concurrency:
+  group: fuzzing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clusterfuzzlite:
+    name: ClusterFuzzLite parser fuzzing
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # allow checkout and ClusterFuzzLite source access
+      security-events: write # allow fuzzing SARIF upload when generated
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - address
+          - undefined
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Build fuzzers
+        uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          language: c++
+          sanitizer: ${{ matrix.sanitizer }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run fuzzers
+        uses: google/clusterfuzzlite/actions/run_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          language: c++
+          sanitizer: ${{ matrix.sanitizer }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mode: ${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }}
+          fuzz-seconds: ${{ github.event_name == 'pull_request' && '300' || '900' }}
+          parallel-fuzzing: true
+          output-sarif: ${{ github.event_name != 'pull_request' }}

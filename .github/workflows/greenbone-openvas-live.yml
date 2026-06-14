@@ -22,9 +22,6 @@ jobs:
     name: Authorized Greenbone/OpenVAS scan plus Vulnetix
     runs-on: ubuntu-latest
     timeout-minutes: 390
-    environment:
-      name: greenbone-openvas-security-scanning
-      deployment: false
     env:
       GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
       GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
@@ -84,7 +81,7 @@ jobs:
             cat > reports/openvas/openvas-summary.md <<'EOF'
           # Greenbone/OpenVAS configuration missing
 
-          The authorized live scan cannot run until the required environment secrets are configured.
+          The authorized live scan cannot run until the required repository secrets are configured.
           See `docs/security-code-scanning.md` for the exact secret names and setup commands.
           EOF
             echo "::error::Greenbone/OpenVAS required secrets are missing: ${missing[*]}"

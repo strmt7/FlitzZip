@@ -32,11 +32,12 @@ struct UiState {
     std::string status = "Ready";
     std::string gpu_status;
     ProgressSnapshot progress;
-    bool prefer_szip = true;
+    bool prefer_suzip = true;
     bool gpu_required = true;
     bool overwrite = false;
     bool integrity_hash_opt_in = false;
     bool defender_scan_opt_in = false;
+    bool verify_after_write_opt_in = false;
 };
 
 class MainWindow {

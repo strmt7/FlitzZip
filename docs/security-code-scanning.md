@@ -61,8 +61,7 @@ Greenbone/OpenVAS is a real network scanner. It needs an authorized target and
 a reachable Greenbone GMP endpoint. Do not point it at systems you do not own
 or have explicit permission to scan.
 
-Required environment secrets for the `greenbone-openvas-security-scanning`
-environment:
+Required repository secrets:
 
 - `GREENBONE_HOST`: Greenbone/GVM host reachable from GitHub Actions.
 - `GREENBONE_USERNAME`: Greenbone user with permission to create targets,
@@ -70,8 +69,7 @@ environment:
 - `GREENBONE_PASSWORD`: Password for `GREENBONE_USERNAME`.
 - `GREENBONE_TARGET`: Authorized host, IP, or CIDR to scan by default.
 
-Optional environment secrets for the `greenbone-openvas-security-scanning`
-environment:
+Optional repository secrets:
 
 - `GREENBONE_PORT`: GMP TLS port. Defaults to `9390`.
 - `GREENBONE_SCAN_CONFIG_ID`: Scan config UUID. Defaults to the Greenbone
@@ -86,28 +84,25 @@ environment:
 - `VULNETIX_ORG_ID`: Vulnetix organization identifier for uploading OpenVAS
   artifacts after the scan.
 
-Create the `greenbone-openvas-security-scanning` environment and secrets through
-the GitHub UI:
+Create the repository secrets through the GitHub UI:
 
 1. Open `https://github.com/strmt7/SuperZip`.
-2. Go to `Settings > Environments`.
-3. Click `New environment`.
-4. Enter `greenbone-openvas-security-scanning`.
-5. Add each required value under `Environment secrets`.
+2. Go to `Settings > Secrets and variables > Actions`.
+3. Add each required value under `Repository secrets`.
 
-The workflow uses `environment: { deployment: false }` for this job. GitHub's
-current documented behavior is that this grants environment secret access
-without creating a deployment object or deployment history entry.
+Do not create a GitHub Actions environment for this workflow. SuperZip workflows
+must never create deployment records, and scanner credentials must stay in
+repository secrets.
 
-Create the same environment secrets with GitHub CLI without exposing values in
+Create the same repository secrets with GitHub CLI without exposing values in
 shell history:
 
 ```powershell
-gh secret set GREENBONE_HOST -R strmt7/SuperZip --env greenbone-openvas-security-scanning
-gh secret set GREENBONE_USERNAME -R strmt7/SuperZip --env greenbone-openvas-security-scanning
-gh secret set GREENBONE_PASSWORD -R strmt7/SuperZip --env greenbone-openvas-security-scanning
-gh secret set GREENBONE_TARGET -R strmt7/SuperZip --env greenbone-openvas-security-scanning
-gh secret set VULNETIX_ORG_ID -R strmt7/SuperZip --env greenbone-openvas-security-scanning
+gh secret set GREENBONE_HOST -R strmt7/SuperZip
+gh secret set GREENBONE_USERNAME -R strmt7/SuperZip
+gh secret set GREENBONE_PASSWORD -R strmt7/SuperZip
+gh secret set GREENBONE_TARGET -R strmt7/SuperZip
+gh secret set VULNETIX_ORG_ID -R strmt7/SuperZip
 ```
 
 Each command prompts for the secret value. Do not pass secret values with
@@ -130,7 +125,7 @@ Each command prompts for the secret value. Do not pass secret values with
   Semgrep's default ignore list so tests and vendored code are scanned.
 - Security findings should be fixed at the root cause. Suppressions are allowed
   only after the evidence is documented in this runbook or an issue.
-- Workflows must never create GitHub deployment records. If an `environment:`
-  block is necessary for secret governance, it must set `deployment: false` and
-  local security checks must enforce that policy.
+- Workflows must never create GitHub deployment records. GitHub Actions
+  `environment:` blocks and `deployment:` keys are forbidden by local security
+  checks.
 - Refresh GitHub Security tab alerts after every security remediation push.
