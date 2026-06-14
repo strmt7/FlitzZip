@@ -28,6 +28,15 @@ build/Release/superzip_cli.exe gpu-info
 
 `HIP_PATH` must point at the AMD ROCm/HIP installation.
 
+Package a local build:
+
+```powershell
+tools/package.ps1 -Configuration Release
+```
+
+The package script installs the built executables and docs into `out/` and then
+creates a ZIP package. Build/package outputs are ignored by Git.
+
 ## CLI
 
 ```powershell
@@ -51,6 +60,12 @@ and Preferences pages. It is PerMonitorV2 DPI-aware, double-buffered, and uses
 native DPI fonts so it remains crisp on high-refresh and high-resolution
 displays. Archive work runs on a background thread and repaint requests are
 coalesced to avoid flooding 200 Hz displays.
+
+## Memory Model
+
+Native `.szip` compression, verification, and extraction are chunked. ZIP
+compatibility uses miniz file streaming APIs. SuperZip should not need to load a
+whole large archive entry into RAM for normal operations.
 
 ## Security
 

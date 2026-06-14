@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -84,24 +85,79 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
     return index;
 }
 
-// Purpose: Read a payload range for one archive entry.
-// Inputs: `input` is the archive stream, `entry` supplies payload offset/size, and `archive_size` bounds the read.
+// Purpose: Read a bounded payload range for one archive entry.
+// Inputs: `input` is the archive stream, `entry` supplies payload base metadata, `archive_size` bounds the file, `relative_offset` is entry-relative payload offset, and `size` is bytes to read.
 // Outputs: Returns payload bytes; throws `ArchiveError` when metadata points outside the archive or bytes are truncated.
-std::vector<std::byte> read_payload(
+std::vector<std::byte> read_payload_window(
     std::ifstream& input,
     const ArchiveEntry& entry,
-    std::uint64_t archive_size) {
+    std::uint64_t archive_size,
+    std::uint64_t relative_offset,
+    std::uint64_t size) {
     if (entry.payload_offset > archive_size || entry.payload_size > archive_size ||
-        entry.payload_offset + entry.payload_size > archive_size) {
+        entry.payload_offset > archive_size - entry.payload_size ||
+        relative_offset > entry.payload_size || size > entry.payload_size - relative_offset) {
         throw ArchiveError("entry payload points outside archive");
     }
-    input.seekg(static_cast<std::streamoff>(entry.payload_offset), std::ios::beg);
-    std::vector<std::byte> payload(static_cast<std::size_t>(entry.payload_size));
+    input.seekg(static_cast<std::streamoff>(entry.payload_offset + relative_offset), std::ios::beg);
+    std::vector<std::byte> payload(static_cast<std::size_t>(size));
     input.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-    if (static_cast<std::uint64_t>(input.gcount()) != entry.payload_size) {
+    if (static_cast<std::uint64_t>(input.gcount()) != size) {
         throw ArchiveError("entry payload is truncated");
     }
     return payload;
+}
+
+// Purpose: Process one entry's block stream in bounded memory chunks.
+// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads, `options` controls chunk/GPU behavior, and `consume` receives decoded bytes.
+// Outputs: Returns true if any chunk used AMD HIP; throws on malformed block windows, decode errors, or callback failures.
+bool decode_entry_streaming(
+    std::ifstream& input,
+    const ArchiveEntry& entry,
+    std::uint64_t archive_size,
+    const ExtractOptions& options,
+    const GpuCodecOptions& gpu_options,
+    const std::function<void(std::span<const std::byte>)>& consume) {
+    const auto chunk_limit = std::max<std::uint64_t>(options.chunk_size, options.block_size);
+    bool gpu_used = false;
+    std::size_t block_index = 0;
+    while (block_index < entry.blocks.size()) {
+        std::uint64_t uncompressed_window = 0;
+        std::uint64_t payload_start = entry.payload_size;
+        std::uint64_t payload_end = 0;
+        const auto first = block_index;
+        while (block_index < entry.blocks.size()) {
+            const auto& block = entry.blocks[block_index];
+            if (block.kind == BlockKind::Raw) {
+                payload_start = std::min<std::uint64_t>(payload_start, block.encoded_offset);
+                payload_end = std::max<std::uint64_t>(payload_end, block.encoded_offset + block.encoded_len);
+            }
+            uncompressed_window += block.uncompressed_len;
+            ++block_index;
+            if (uncompressed_window >= chunk_limit) {
+                break;
+            }
+        }
+
+        const bool has_payload = payload_end > payload_start;
+        const auto payload_size = has_payload ? payload_end - payload_start : 0;
+        auto payload = read_payload_window(input, entry, archive_size, has_payload ? payload_start : 0, payload_size);
+        std::vector<BlockDescriptor> adjusted;
+        adjusted.reserve(block_index - first);
+        for (std::size_t i = first; i < block_index; ++i) {
+            auto block = entry.blocks[i];
+            if (block.kind == BlockKind::Raw) {
+                block.encoded_offset -= payload_start;
+            } else {
+                block.encoded_offset = 0;
+            }
+            adjusted.push_back(block);
+        }
+        std::vector<std::byte> decoded(static_cast<std::size_t>(uncompressed_window));
+        gpu_used = decode_chunk(payload, adjusted, decoded, gpu_options) || gpu_used;
+        consume(std::span<const std::byte>(decoded.data(), decoded.size()));
+    }
+    return gpu_used;
 }
 
 // Purpose: Sum uncompressed block lengths for an entry.
@@ -133,10 +189,12 @@ void validate_entry_metadata(const ArchiveEntry& entry) {
         if (block.kind == BlockKind::Fill && block.encoded_len != 0) {
             throw ArchiveError("fill block contains payload bytes");
         }
-        if (block.kind == BlockKind::Raw &&
-            (block.encoded_len != block.uncompressed_len ||
-             block.encoded_offset + block.encoded_len > entry.payload_size)) {
-            throw ArchiveError("raw block metadata is invalid");
+        if (block.kind == BlockKind::Raw) {
+            if (block.encoded_len != block.uncompressed_len ||
+                block.encoded_len > entry.payload_size ||
+                block.encoded_offset > entry.payload_size - block.encoded_len) {
+                throw ArchiveError("raw block metadata is invalid");
+            }
         }
     }
 }
@@ -293,23 +351,29 @@ OperationStats extract_szip(
             throw SecurityError("refusing to overwrite existing file: " + target.string());
         }
         std::filesystem::create_directories(target.parent_path());
-        auto payload = read_payload(input, entry, archive_size);
-        std::vector<std::byte> decoded(static_cast<std::size_t>(entry.uncompressed_size));
-        const bool decoded_on_gpu = decode_chunk(payload, entry.blocks, decoded, gpu_options);
-        const auto actual_crc = crc32(decoded);
-        if (actual_crc != entry.crc32) {
-            throw ArchiveError("CRC mismatch while extracting: " + entry.path);
-        }
         std::ofstream output(target, std::ios::binary | std::ios::trunc);
         if (!output) {
             throw ArchiveError("cannot create output file: " + target.string());
         }
-        output.write(reinterpret_cast<const char*>(decoded.data()), static_cast<std::streamsize>(decoded.size()));
+        std::uint32_t actual_crc = 0;
+        const bool decoded_on_gpu = decode_entry_streaming(
+            input,
+            entry,
+            archive_size,
+            options,
+            gpu_options,
+            [&](std::span<const std::byte> decoded) {
+                actual_crc = crc32(decoded, actual_crc);
+                output.write(reinterpret_cast<const char*>(decoded.data()), static_cast<std::streamsize>(decoded.size()));
+                progress.add_bytes(decoded.size());
+            });
         if (!output) {
             throw ArchiveError("failed to write output file: " + target.string());
         }
+        if (actual_crc != entry.crc32) {
+            throw ArchiveError("CRC mismatch while extracting: " + entry.path);
+        }
         stats.gpu_used = stats.gpu_used || decoded_on_gpu;
-        progress.add_bytes(decoded.size());
         progress.finish_entry();
         publish_progress(progress, progress_callback);
     }
@@ -349,14 +413,21 @@ OperationStats verify_szip(
             continue;
         }
         progress.set_current(entry.path);
-        auto payload = read_payload(input, entry, archive_size);
-        std::vector<std::byte> decoded(static_cast<std::size_t>(entry.uncompressed_size));
-        const bool decoded_on_gpu = decode_chunk(payload, entry.blocks, decoded, gpu_options);
-        if (crc32(decoded) != entry.crc32) {
+        std::uint32_t actual_crc = 0;
+        const bool decoded_on_gpu = decode_entry_streaming(
+            input,
+            entry,
+            archive_size,
+            options,
+            gpu_options,
+            [&](std::span<const std::byte> decoded) {
+                actual_crc = crc32(decoded, actual_crc);
+                progress.add_bytes(decoded.size());
+            });
+        if (actual_crc != entry.crc32) {
             throw ArchiveError("CRC mismatch while verifying: " + entry.path);
         }
         stats.gpu_used = stats.gpu_used || decoded_on_gpu;
-        progress.add_bytes(decoded.size());
         progress.finish_entry();
         publish_progress(progress, progress_callback);
     }

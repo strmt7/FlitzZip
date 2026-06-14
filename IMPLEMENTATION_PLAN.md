@@ -114,6 +114,15 @@ settings objects, and archive plans.
 - Replaced ZIP compatibility whole-file buffering with miniz file streaming APIs
   to reduce SuperZip RAM usage on large archives.
 
+### Iteration 6: CI And Bounded-Memory Extraction
+
+- Fixed GitHub Actions to run on a Visual Studio 2022 hosted image and emit
+  toolchain diagnostics.
+- Added repository `.gitattributes` for stable line endings and binary assets.
+- Changed `.szip` verification and extraction to decode bounded block windows
+  instead of allocating whole archive entries.
+- Added test coverage that forces multi-window extraction.
+
 ## Validation Gates
 
 No iteration is complete until these gates pass:

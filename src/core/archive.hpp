@@ -18,6 +18,7 @@ struct CompressOptions {
 struct ExtractOptions {
     bool gpu_required = true;
     bool overwrite = false;
+    std::uint64_t chunk_size = 16 * 1024 * 1024;
     std::uint32_t block_size = 64 * 1024;
 };
 

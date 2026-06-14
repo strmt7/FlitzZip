@@ -32,6 +32,7 @@ TEST_CASE(szip_roundtrip_repetitive_and_randomish_files) {
     superzip::ExtractOptions extract;
     extract.gpu_required = false;
     extract.overwrite = true;
+    extract.chunk_size = 64 * 1024;
     (void)superzip::extract_szip(archive, output, extract);
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "zeros.bin"));
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "nested" / "pattern.bin"));

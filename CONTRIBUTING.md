@@ -10,6 +10,7 @@ boundaries, and git workflow.
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
 tools\security_scan.ps1
+tools\package.ps1 -Configuration Release
 ```
 
 If AMD ROCm/HIP for Windows is installed:

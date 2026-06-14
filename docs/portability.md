@@ -47,3 +47,15 @@ rate displays do not accumulate redundant paint messages.
 The application should store preferences and history under the user's Windows
 known application-data folder in a later persistence pass. It must not store
 absolute build paths or secrets.
+
+## Large Files
+
+Archive operations are designed around bounded chunks rather than whole-file
+buffers:
+
+- `.szip` compression reads source files in configurable chunks.
+- `.szip` verification and extraction decode bounded block windows.
+- ZIP compatibility delegates file I/O to miniz file streaming APIs.
+
+Future release packaging should keep this model intact and add large-file
+regression benchmarks before changing archive layout or block grouping.

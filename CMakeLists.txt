@@ -102,6 +102,7 @@ endif()
 
 add_executable(superzip_cli src/cli/main.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
+install(TARGETS superzip_cli RUNTIME DESTINATION bin)
 
 if(SUPERZIP_BUILD_GUI AND WIN32)
     add_executable(SuperZip WIN32
@@ -113,6 +114,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
     if(MSVC)
         target_link_options(SuperZip PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest")
     endif()
+    install(TARGETS SuperZip RUNTIME DESTINATION bin)
 endif()
 
 if(WIN32)
@@ -131,3 +133,20 @@ if(SUPERZIP_BUILD_TESTS)
     target_link_libraries(superzip_tests PRIVATE superzip_core)
     add_test(NAME superzip_tests COMMAND superzip_tests)
 endif()
+
+install(FILES
+    README.md
+    LICENSE
+    SECURITY.md
+    CONTRIBUTING.md
+    DESTINATION .
+)
+install(DIRECTORY docs DESTINATION .)
+
+set(CPACK_PACKAGE_NAME "SuperZip")
+set(CPACK_PACKAGE_VENDOR "strmt7")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Native Windows AMD HIP archive application")
+set(CPACK_PACKAGE_FILE_NAME "SuperZip-${PROJECT_VERSION}-Windows")
+set(CPACK_GENERATOR "ZIP")
+include(CPack)
