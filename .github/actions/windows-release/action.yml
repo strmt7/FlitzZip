@@ -230,11 +230,15 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        $buildArgs = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+        $buildArgs = @{
+            Configuration = "Release"
+            PackageVersion = $env:PACKAGE_VERSION
+        }
         if ($env:ENABLE_HIP -eq "true") {
-            $buildArgs += @("-HipArch", $env:HIP_ARCH)
+            $buildArgs.EnableHip = $true
+            $buildArgs.HipArch = $env:HIP_ARCH
         } else {
-            $buildArgs += "-CpuOnlyValidation"
+            $buildArgs.CpuOnlyValidation = $true
         }
         & tools/build.ps1 @buildArgs
 
@@ -250,12 +254,15 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        $packageArgs = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+        $packageArgs = @{
+            Configuration = "Release"
+            PackageVersion = $env:PACKAGE_VERSION
+        }
         if ($env:ENABLE_HIP -ne "true") {
-            $packageArgs += "-AllowCpuValidationPackage"
+            $packageArgs.AllowCpuValidationPackage = $true
         }
         if ($env:CREATE_MSI -eq "true") {
-            $packageArgs += "-CreateMsi"
+            $packageArgs.CreateMsi = $true
         }
         & tools/package.ps1 @packageArgs
 
