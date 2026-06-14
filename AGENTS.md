@@ -100,7 +100,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
-- Keep CI layered: build, tests, secret scan, dependency review/security scanning, and automatic secrets-gated OpenVAS/Vulnetix lane.
+- Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and a secrets-gated authorized live OpenVAS/Vulnetix lane.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
 - Do not add GitHub Actions `environment:` blocks that can create deployment records. If an environment is necessary for secret governance, use `deployment: false` and document the reason in `docs/security-code-scanning.md`.
 - Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.

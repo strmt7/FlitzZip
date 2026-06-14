@@ -8,8 +8,11 @@ are used, and default to read-only repository permissions.
 
 - `.github/workflows/security-code-scanning.yml` runs on push, pull request,
   weekly schedule, and manual dispatch.
-- `.github/workflows/greenbone-openvas-vulnetix.yml` runs on push, pull
-  request, weekly schedule, and manual dispatch.
+- `.github/workflows/greenbone-openvas-vulnetix.yml` runs a Greenbone/OpenVAS
+  integration audit on push, pull request, weekly schedule, and manual dispatch.
+  The authorized live network scan runs only on weekly schedule or manual
+  dispatch because it requires private scanner infrastructure and an approved
+  target.
 - `.github/workflows/release.yml` is manual-only and runs release build,
   packaging, install smoke tests, repository security scan, and publication.
 - `.github/dependabot.yml` keeps GitHub Actions dependencies visible through
@@ -32,7 +35,7 @@ are used, and default to read-only repository permissions.
 | TruffleHog | Independent full git history secret scan | JSONL artifact |
 | Dependency Review | Blocks vulnerable dependency changes on PRs | PR check |
 | OSSF Scorecard | Repository supply-chain security posture | SARIF upload |
-| Greenbone/OpenVAS | Network/host vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and optional Vulnetix upload |
+| Greenbone/OpenVAS | Always-on scanner integration audit plus scheduled/manual network vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and optional Vulnetix upload |
 | Vulnetix | Optional external vulnerability-management upload | Vulnetix project |
 
 ## Required GitHub Repository Settings
@@ -44,7 +47,7 @@ Enable these in `strmt7/SuperZip`:
 3. `Settings > Code security and analysis > Secret scanning`.
 4. `Settings > Code security and analysis > Private vulnerability reporting`.
 5. Branch protection or rulesets requiring `windows-ci`, `security`, and
-   `greenbone-openvas-vulnetix` checks before protected-branch updates.
+   `Greenbone/OpenVAS integration audit` checks before protected-branch updates.
 
 ## Greenbone/OpenVAS Secrets
 
@@ -75,7 +78,9 @@ environment:
 - `GREENBONE_DELETE_TASK`: Whether to delete the temporary scan task after
   report collection. Defaults to `true`.
 - `VULNETIX_ORG_ID`: Vulnetix organization identifier for uploading OpenVAS
-  artifacts after the scan.
+  artifacts after the scan. When this is absent, the workflow keeps the
+  OpenVAS reports attached to the GitHub Actions run and records that Vulnetix
+  upload is not configured.
 
 Create the `greenbone-openvas-security-scanning` environment and secrets through
 the GitHub UI:
@@ -106,8 +111,13 @@ Each command prompts for the secret value. Do not pass secret values with
 
 ## Operational Rules
 
-- If Greenbone or Vulnetix secrets are absent, the workflow fails closed with an
-  explicit report. It does not claim a host scan succeeded.
+- The push and pull-request lane validates the workflow, hash-locked Greenbone
+  tools, and GMP script contract without touching a network target.
+- The scheduled/manual live scan lane fails closed with an explicit report when
+  required Greenbone secrets are absent. It does not claim a host scan
+  succeeded.
+- The live scan lane fails when Greenbone reports any critical, high, medium,
+  or low vulnerability count.
 - Pull requests from forks do not receive repository secrets. That is expected
   GitHub Actions behavior.
 - Scanner scope must not be narrowed only to silence findings. Any exclusion
