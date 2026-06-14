@@ -35,6 +35,12 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+      - name: Prepare fuzz output directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-out
+          chmod 0777 build-out
       - name: Build fuzzers
         uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
         with:
