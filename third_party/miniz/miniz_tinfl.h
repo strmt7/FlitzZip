@@ -22,7 +22,7 @@ extern "C"
     };
 
     /* High level decompression functions: */
-    /* tinfl_decompress_mem_to_heap() decompresses a block in memory to a heap block allocated via malloc(). */
+    /* tinfl_decompress_mem_to_heap() decompresses a block in memory to a heap block allocated by miniz. */
     /* On entry: */
     /*  pSrc_buf, src_buf_len: Pointer and size of the Deflate or zlib source data to decompress. */
     /* On return: */

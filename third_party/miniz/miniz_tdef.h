@@ -45,14 +45,14 @@ extern "C"
     };
 
     /* High level compression functions: */
-    /* tdefl_compress_mem_to_heap() compresses a block in memory to a heap block allocated via malloc(). */
+    /* tdefl_compress_mem_to_heap() compresses a block in memory to a heap block allocated by miniz. */
     /* On entry: */
     /*  pSrc_buf, src_buf_len: Pointer and size of source block to compress. */
     /*  flags: The max match finder probes (default is 128) logically OR'd against the above flags. Higher probes are slower but improve compression. */
     /* On return: */
     /*  Function returns a pointer to the compressed data, or NULL on failure. */
     /*  *pOut_len will be set to the compressed data's size, which could be larger than src_buf_len on uncompressible data. */
-    /*  The caller must free() the returned block when it's no longer needed. */
+    /*  The caller must release the returned block with mz_free() when it is no longer needed. */
     MINIZ_EXPORT void *tdefl_compress_mem_to_heap(const void *pSrc_buf, size_t src_buf_len, size_t *pOut_len, int flags);
 
     /* tdefl_compress_mem_to_mem() compresses a block in memory to another block in memory. */
@@ -145,12 +145,6 @@ enum
         mz_uint m_num_flags_left, m_total_lz_bytes, m_lz_code_buf_dict_pos, m_bits_in, m_bit_buffer;
         mz_uint m_saved_match_dist, m_saved_match_len, m_saved_lit, m_output_flush_ofs, m_output_flush_remaining, m_finished, m_block_index, m_wants_to_finish;
         tdefl_status m_prev_return_status;
-        const void *m_pIn_buf;
-        void *m_pOut_buf;
-        size_t *m_pIn_buf_size, *m_pOut_buf_size;
-        tdefl_flush m_flush;
-        const mz_uint8 *m_pSrc;
-        size_t m_src_buf_left, m_out_buf_ofs;
         mz_uint8 m_dict[TDEFL_LZ_DICT_SIZE + TDEFL_MAX_MATCH_LEN - 1];
         mz_uint16 m_huff_count[TDEFL_MAX_HUFF_TABLES][TDEFL_MAX_HUFF_SYMBOLS];
         mz_uint16 m_huff_codes[TDEFL_MAX_HUFF_TABLES][TDEFL_MAX_HUFF_SYMBOLS];

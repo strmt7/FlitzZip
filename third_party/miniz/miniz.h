@@ -233,7 +233,7 @@ extern "C"
     /* For more compatibility with zlib, miniz.c uses unsigned long for some parameters/struct members. Beware: mz_ulong can be either 32 or 64-bits! */
     typedef unsigned long mz_ulong;
 
-    /* mz_free() internally uses the MZ_FREE() macro (which by default calls free() unless you've modified the MZ_MALLOC macro) to release a block allocated from the heap. */
+    /* mz_free() releases a block allocated through the configured miniz heap callbacks. */
     MINIZ_EXPORT void mz_free(void *p);
 
 #define MZ_ADLER32_INIT (1)

@@ -35,8 +35,8 @@ extern "C"
 
     /* ------------------- Low-level Decompression (completely independent from all compression API's) */
 
-#define TINFL_MEMCPY(d, s, l) memcpy(d, s, l)
-#define TINFL_MEMSET(p, c, l) memset(p, c, l)
+#define TINFL_MEMCPY(d, s, l) (void)mz_copy_bytes((d), (l), (s), (l))
+#define TINFL_MEMSET(p, c, l) (void)mz_fill_bytes((p), (mz_uint8)(c), (l))
 
 #define TINFL_CR_BEGIN  \
     switch (r->m_state) \
@@ -557,7 +557,7 @@ extern "C"
                         do
                         {
 #ifdef MINIZ_UNALIGNED_USE_MEMCPY
-                            memcpy(pOut_buf_cur, pSrc, sizeof(mz_uint32) * 2);
+                            (void)mz_copy_bytes(pOut_buf_cur, sizeof(mz_uint32) * 2, pSrc, sizeof(mz_uint32) * 2);
 #else
                             ((mz_uint32 *)pOut_buf_cur)[0] = ((const mz_uint32 *)pSrc)[0];
                             ((mz_uint32 *)pOut_buf_cur)[1] = ((const mz_uint32 *)pSrc)[1];
@@ -732,7 +732,7 @@ extern "C"
         size_t in_buf_ofs = 0, dict_ofs = 0;
         if (!pDict)
             return TINFL_STATUS_FAILED;
-        memset(pDict, 0, TINFL_LZ_DICT_SIZE);
+        (void)mz_fill_bytes(pDict, 0, TINFL_LZ_DICT_SIZE);
         tinfl_init(&decomp);
         for (;;)
         {

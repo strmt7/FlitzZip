@@ -36,6 +36,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.
 - `tests/cpp/`: focused C++ test harness.
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
+- `third_party/miniz/`: patched production miniz 3.1.1 copy used by the build.
+- `third_party/upstream/miniz/3.1.1/`: unmodified upstream miniz 3.1.1 source archive and checksum for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.github/codeql/`: CodeQL scanning configuration.
 - `.github/requirements/`: hash-locked Python scanner requirements for GitHub-hosted Linux jobs.
@@ -101,9 +103,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and a secrets-gated authorized live OpenVAS/Vulnetix lane.
+- Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
 - Do not add GitHub Actions `environment:` blocks that can create deployment records. If an environment is necessary for secret governance, use `deployment: false` and document the reason in `docs/security-code-scanning.md`.
 - Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.
+- Preserve the patched/original miniz split: production changes go under `third_party/miniz`, and the upstream archive under `third_party/upstream/miniz/3.1.1` stays unmodified.
 
 ## GUI Rules
 

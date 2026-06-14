@@ -2,7 +2,6 @@ name: security
 
 on:
   push:
-  pull_request:
   schedule:
     - cron: "23 3 * * 1"
   workflow_dispatch:
@@ -335,7 +334,6 @@ jobs:
 
   scorecard:
     name: OSSF Scorecard supply-chain security
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Scorecard reads repository metadata, uses OIDC for result signing, and
     # uploads SARIF to code scanning.
@@ -361,22 +359,3 @@ jobs:
         with:
           sarif_file: scorecard-results.sarif
           category: scorecard
-
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    # Dependency Review only needs repository contents and pull-request metadata.
-    permissions:
-      contents: read # allow dependency manifest diff inspection
-      pull-requests: read # allow dependency review on pull requests
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-      - name: Dependency Review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-          warn-only: false

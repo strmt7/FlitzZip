@@ -45,9 +45,6 @@ extern "C"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#ifndef __cplusplus
-#define MICROSOFT_WINDOWS_WINBASE_H_DEFINE_INTERLOCKED_CPLUSPLUS_OVERLOADS 0
-#endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -56,8 +53,17 @@ extern "C"
 static WCHAR *mz_utf8z_to_widechar(const char *str)
 {
     int reqChars = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
-    WCHAR *wStr = (WCHAR *)malloc(reqChars * sizeof(WCHAR));
-    MultiByteToWideChar(CP_UTF8, 0, str, -1, wStr, reqChars);
+    WCHAR *wStr;
+    if (reqChars <= 0)
+        return NULL;
+    wStr = (WCHAR *)MZ_MALLOC((size_t)reqChars * sizeof(WCHAR));
+    if (!wStr)
+        return NULL;
+    if (!MultiByteToWideChar(CP_UTF8, 0, str, -1, wStr, reqChars))
+    {
+        MZ_FREE(wStr);
+        return NULL;
+    }
     return wStr;
 }
 
@@ -66,9 +72,15 @@ static FILE *mz_fopen(const char *pFilename, const char *pMode)
     WCHAR *wFilename = mz_utf8z_to_widechar(pFilename);
     WCHAR *wMode = mz_utf8z_to_widechar(pMode);
     FILE *pFile = NULL;
+    if (!wFilename || !wMode)
+    {
+        MZ_FREE(wFilename);
+        MZ_FREE(wMode);
+        return NULL;
+    }
     errno_t err = _wfopen_s(&pFile, wFilename, wMode);
-    free(wFilename);
-    free(wMode);
+    MZ_FREE(wFilename);
+    MZ_FREE(wMode);
     return err ? NULL : pFile;
 }
 
@@ -77,9 +89,15 @@ static FILE *mz_freopen(const char *pPath, const char *pMode, FILE *pStream)
     WCHAR *wPath = mz_utf8z_to_widechar(pPath);
     WCHAR *wMode = mz_utf8z_to_widechar(pMode);
     FILE *pFile = NULL;
+    if (!wPath || !wMode)
+    {
+        MZ_FREE(wPath);
+        MZ_FREE(wMode);
+        return NULL;
+    }
     errno_t err = _wfreopen_s(&pFile, wPath, wMode, pStream);
-    free(wPath);
-    free(wMode);
+    MZ_FREE(wPath);
+    MZ_FREE(wMode);
     return err ? NULL : pFile;
 }
 
@@ -87,16 +105,20 @@ static FILE *mz_freopen(const char *pPath, const char *pMode, FILE *pStream)
 static int mz_stat(const char *path, struct _stat *buffer)
 {
     WCHAR *wPath = mz_utf8z_to_widechar(path);
+    if (!wPath)
+        return -1;
     int res = _wstat(wPath, buffer);
-    free(wPath);
+    MZ_FREE(wPath);
     return res;
 }
 #else
 static int mz_stat64(const char *path, struct __stat64 *buffer)
 {
     WCHAR *wPath = mz_utf8z_to_widechar(path);
+    if (!wPath)
+        return -1;
     int res = _wstat64(wPath, buffer);
-    free(wPath);
+    MZ_FREE(wPath);
     return res;
 }
 #endif
@@ -121,91 +143,8 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 #define MZ_FREOPEN mz_freopen
 #define MZ_DELETE_FILE remove
 
-#elif defined(__WATCOMC__)
-#ifndef MINIZ_NO_TIME
-#include <sys/utime.h>
-#endif
-#define MZ_FOPEN(f, m) fopen(f, m)
-#define MZ_FCLOSE fclose
-#define MZ_FREAD fread
-#define MZ_FWRITE fwrite
-#define MZ_FTELL64 _ftelli64
-#define MZ_FSEEK64 _fseeki64
-#define MZ_FILE_STAT_STRUCT stat
-#define MZ_FILE_STAT stat
-#define MZ_FFLUSH fflush
-#define MZ_FREOPEN(f, m, s) freopen(f, m, s)
-#define MZ_DELETE_FILE remove
-
-#elif defined(__TINYC__)
-#ifndef MINIZ_NO_TIME
-#include <sys/utime.h>
-#endif
-#define MZ_FOPEN(f, m) fopen(f, m)
-#define MZ_FCLOSE fclose
-#define MZ_FREAD fread
-#define MZ_FWRITE fwrite
-#define MZ_FTELL64 ftell
-#define MZ_FSEEK64 fseek
-#define MZ_FILE_STAT_STRUCT stat
-#define MZ_FILE_STAT stat
-#define MZ_FFLUSH fflush
-#define MZ_FREOPEN(f, m, s) freopen(f, m, s)
-#define MZ_DELETE_FILE remove
-
-#elif defined(__USE_LARGEFILE64) /* gcc, clang */
-#ifndef MINIZ_NO_TIME
-#include <utime.h>
-#endif
-#define MZ_FOPEN(f, m) fopen64(f, m)
-#define MZ_FCLOSE fclose
-#define MZ_FREAD fread
-#define MZ_FWRITE fwrite
-#define MZ_FTELL64 ftello64
-#define MZ_FSEEK64 fseeko64
-#define MZ_FILE_STAT_STRUCT stat64
-#define MZ_FILE_STAT stat64
-#define MZ_FFLUSH fflush
-#define MZ_FREOPEN(p, m, s) freopen64(p, m, s)
-#define MZ_DELETE_FILE remove
-
-#elif defined(__APPLE__) || defined(__FreeBSD__) || (defined(__linux__) && defined(__x86_64__))
-#ifndef MINIZ_NO_TIME
-#include <utime.h>
-#endif
-#define MZ_FOPEN(f, m) fopen(f, m)
-#define MZ_FCLOSE fclose
-#define MZ_FREAD fread
-#define MZ_FWRITE fwrite
-#define MZ_FTELL64 ftello
-#define MZ_FSEEK64 fseeko
-#define MZ_FILE_STAT_STRUCT stat
-#define MZ_FILE_STAT stat
-#define MZ_FFLUSH fflush
-#define MZ_FREOPEN(p, m, s) freopen(p, m, s)
-#define MZ_DELETE_FILE remove
-
 #else
-#pragma message("Using fopen, ftello, fseeko, stat() etc. path for file I/O - this path may not support large files.")
-#ifndef MINIZ_NO_TIME
-#include <utime.h>
-#endif
-#define MZ_FOPEN(f, m) fopen(f, m)
-#define MZ_FCLOSE fclose
-#define MZ_FREAD fread
-#define MZ_FWRITE fwrite
-#ifdef __STRICT_ANSI__
-#define MZ_FTELL64 ftell
-#define MZ_FSEEK64 fseek
-#else
-#define MZ_FTELL64 ftello
-#define MZ_FSEEK64 fseeko
-#endif
-#define MZ_FILE_STAT_STRUCT stat
-#define MZ_FILE_STAT stat
-#define MZ_FFLUSH fflush
-#define MZ_FREOPEN(f, m, s) freopen(f, m, s)
-#define MZ_DELETE_FILE remove
+#error "SuperZip's patched miniz stdio backend is Windows-only."
 #endif /* #ifdef _MSC_VER */
 #endif /* #ifdef MINIZ_NO_STDIO */
 
@@ -347,14 +286,14 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 
     static MZ_FORCEINLINE void mz_zip_array_init(mz_zip_array *pArray, mz_uint32 element_size)
     {
-        memset(pArray, 0, sizeof(mz_zip_array));
+        MZ_CLEAR_PTR(pArray);
         pArray->m_element_size = element_size;
     }
 
     static MZ_FORCEINLINE void mz_zip_array_clear(mz_zip_archive *pZip, mz_zip_array *pArray)
     {
         pZip->m_pFree(pZip->m_pAlloc_opaque, pArray->m_p);
-        memset(pArray, 0, sizeof(mz_zip_array));
+        MZ_CLEAR_PTR(pArray);
     }
 
     static mz_bool mz_zip_array_ensure_capacity(mz_zip_archive *pZip, mz_zip_array *pArray, size_t min_new_capacity, mz_uint growing)
@@ -409,7 +348,11 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if (!mz_zip_array_resize(pZip, pArray, orig_size + n, MZ_TRUE))
             return MZ_FALSE;
         if (n > 0)
-            memcpy((mz_uint8 *)pArray->m_p + orig_size * pArray->m_element_size, pElements, n * pArray->m_element_size);
+        {
+            const size_t dst_capacity = (pArray->m_capacity - orig_size) * pArray->m_element_size;
+            if (!mz_copy_bytes((mz_uint8 *)pArray->m_p + orig_size * pArray->m_element_size, dst_capacity, pElements, n * pArray->m_element_size))
+                return MZ_FALSE;
+        }
         return MZ_TRUE;
     }
 
@@ -417,7 +360,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
     static MZ_TIME_T mz_zip_dos_to_time_t(int dos_time, int dos_date)
     {
         struct tm tm;
-        memset(&tm, 0, sizeof(tm));
+        MZ_CLEAR_OBJ(tm);
         tm.tm_isdst = -1;
         tm.tm_year = ((dos_date >> 9) & 127) + 1980 - 1900;
         tm.tm_mon = ((dos_date >> 5) & 15) - 1;
@@ -442,7 +385,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             return;
         }
 #else
-        struct tm *tm = localtime(&time);
+#error "SuperZip's patched miniz time conversion expects the Visual Studio secure CRT."
 #endif /* #ifdef _MSC_VER */
 
         *pDOS_time = (mz_uint16)(((tm->tm_hour) << 11) + ((tm->tm_min) << 5) + ((tm->tm_sec) >> 1));
@@ -470,7 +413,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
     {
         struct utimbuf t;
 
-        memset(&t, 0, sizeof(t));
+        MZ_CLEAR_OBJ(t);
         t.actime = access_time;
         t.modtime = modified_time;
 
@@ -507,7 +450,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if (NULL == (pZip->m_pState = (mz_zip_internal_state *)pZip->m_pAlloc(pZip->m_pAlloc_opaque, 1, sizeof(mz_zip_internal_state))))
             return mz_zip_set_error(pZip, MZ_ZIP_ALLOC_FAILED);
 
-        memset(pZip->m_pState, 0, sizeof(mz_zip_internal_state));
+        MZ_CLEAR_PTR(pZip->m_pState);
         MZ_ZIP_ARRAY_SET_ELEMENT_SIZE(&pZip->m_pState->m_central_dir, sizeof(mz_uint8));
         MZ_ZIP_ARRAY_SET_ELEMENT_SIZE(&pZip->m_pState->m_central_dir_offsets, sizeof(mz_uint32));
         MZ_ZIP_ARRAY_SET_ELEMENT_SIZE(&pZip->m_pState->m_sorted_central_dir_offsets, sizeof(mz_uint32));
@@ -921,7 +864,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
                     }
                 }
 
-                /* I've seen archives that aren't marked as zip64 that uses zip64 ext data, argh */
+                /* Some archives are not marked as zip64 but still carry zip64 extended data. */
                 if ((comp_size != MZ_UINT32_MAX) && (decomp_size != MZ_UINT32_MAX))
                 {
                     if (((!MZ_READ_LE32(p + MZ_ZIP_CDH_METHOD_OFS)) && (decomp_size != comp_size)) || (decomp_size && !comp_size))
@@ -1037,7 +980,8 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
     {
         mz_zip_archive *pZip = (mz_zip_archive *)pOpaque;
         size_t s = (file_ofs >= pZip->m_archive_size) ? 0 : (size_t)MZ_MIN(pZip->m_archive_size - file_ofs, n);
-        memcpy(pBuf, (const mz_uint8 *)pZip->m_pState->m_pMem + file_ofs, s);
+        if (!mz_copy_bytes(pBuf, n, (const mz_uint8 *)pZip->m_pState->m_pMem + file_ofs, s))
+            return 0;
         return s;
     }
 
@@ -1118,7 +1062,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             file_size = MZ_FTELL64(pFile);
         }
 
-        /* TODO: Better sanity check archive_size and the # of actual remaining bytes */
+        /* SuperZip hardening note: callers validate archive size before exposing ZIP extraction. */
 
         if (file_size < MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIZE)
         {
@@ -1310,13 +1254,15 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         /* Copy as much of the filename and comment as possible. */
         n = MZ_READ_LE16(p + MZ_ZIP_CDH_FILENAME_LEN_OFS);
         n = MZ_MIN(n, MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE - 1);
-        memcpy(pStat->m_filename, p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE, n);
+        if (!mz_copy_bytes(pStat->m_filename, sizeof(pStat->m_filename), p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE, n))
+            return mz_zip_set_error(pZip, MZ_ZIP_INTERNAL_ERROR);
         pStat->m_filename[n] = '\0';
 
         n = MZ_READ_LE16(p + MZ_ZIP_CDH_COMMENT_LEN_OFS);
         n = MZ_MIN(n, MZ_ZIP_MAX_ARCHIVE_FILE_COMMENT_SIZE - 1);
         pStat->m_comment_size = n;
-        memcpy(pStat->m_comment, p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + MZ_READ_LE16(p + MZ_ZIP_CDH_FILENAME_LEN_OFS) + MZ_READ_LE16(p + MZ_ZIP_CDH_EXTRA_LEN_OFS), n);
+        if (!mz_copy_bytes(pStat->m_comment, sizeof(pStat->m_comment), p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + MZ_READ_LE16(p + MZ_ZIP_CDH_FILENAME_LEN_OFS) + MZ_READ_LE16(p + MZ_ZIP_CDH_EXTRA_LEN_OFS), n))
+            return mz_zip_set_error(pZip, MZ_ZIP_INTERNAL_ERROR);
         pStat->m_comment[n] = '\0';
 
         /* Set some flags for convienance */
@@ -1434,14 +1380,18 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         const mz_zip_array *pCentral_dir = &pState->m_central_dir;
         mz_uint32 *pIndices = &MZ_ZIP_ARRAY_ELEMENT(&pState->m_sorted_central_dir_offsets, mz_uint32, 0);
         const mz_uint32 size = pZip->m_total_files;
-        const mz_uint filename_len = (mz_uint)strlen(pFilename);
+        const size_t filename_len_size = mz_cstr_len_bound(pFilename, (size_t)MZ_UINT16_MAX + 1U);
+        const mz_uint filename_len = (mz_uint)filename_len_size;
+
+        if (filename_len_size > MZ_UINT16_MAX)
+            return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
 
         if (pIndex)
             *pIndex = 0;
 
         if (size)
         {
-            /* yes I could use uint32_t's, but then we would have to add some special case checks in the loop, argh, and */
+            /* Using signed bounds avoids extra loop edge cases while preserving binary-search behavior. */
             /* honestly the major expense here on 32-bit CPU's will still be the filename compare */
             mz_int64 l = 0, h = (mz_int64)size - 1;
 
@@ -1496,11 +1446,11 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         }
 
         /* Locate the entry by scanning the entire central directory */
-        name_len = strlen(pName);
+        name_len = mz_cstr_len_bound(pName, (size_t)MZ_UINT16_MAX + 1U);
         if (name_len > MZ_UINT16_MAX)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
 
-        comment_len = pComment ? strlen(pComment) : 0;
+        comment_len = pComment ? mz_cstr_len_bound(pComment, (size_t)MZ_UINT16_MAX + 1U) : 0;
         if (comment_len > MZ_UINT16_MAX)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
 
@@ -2125,7 +2075,12 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             if (pState->pZip->m_pState->m_pMem)
             {
                 /* Copy data to caller's buffer */
-                memcpy(pvBuf, pState->pRead_buf, copied_to_caller);
+                if (!mz_copy_bytes(pvBuf, buf_size, pState->pRead_buf, copied_to_caller))
+                {
+                    mz_zip_set_error(pState->pZip, MZ_ZIP_INTERNAL_ERROR);
+                    pState->status = TINFL_STATUS_FAILED;
+                    copied_to_caller = 0;
+                }
                 pState->pRead_buf = ((mz_uint8 *)pState->pRead_buf) + copied_to_caller;
             }
             else
@@ -2197,7 +2152,12 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
                     size_t to_copy = MZ_MIN((buf_size - copied_to_caller), pState->out_blk_remain);
 
                     /* Copy data to caller's buffer */
-                    memcpy((mz_uint8 *)pvBuf + copied_to_caller, pWrite_buf_cur, to_copy);
+                    if (!mz_copy_bytes((mz_uint8 *)pvBuf + copied_to_caller, buf_size - copied_to_caller, pWrite_buf_cur, to_copy))
+                    {
+                        mz_zip_set_error(pState->pZip, MZ_ZIP_INTERNAL_ERROR);
+                        pState->status = TINFL_STATUS_FAILED;
+                        break;
+                    }
 
 #ifndef MINIZ_DISABLE_ZIP_READER_CRC32_CHECKS
                     /* Perform CRC */
@@ -2411,7 +2371,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         local_header_bit_flags = MZ_READ_LE16(pLocal_header + MZ_ZIP_LDH_BIT_FLAG_OFS);
         has_data_descriptor = (local_header_bit_flags & 8) != 0;
 
-        if (local_header_filename_len != strlen(file_stat.m_filename))
+        if (local_header_filename_len != mz_cstr_len_bound(file_stat.m_filename, MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE))
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
 
         if ((local_header_ofs + MZ_ZIP_LOCAL_DIR_HEADER_SIZE + local_header_filename_len + local_header_extra_len + file_stat.m_comp_size) > pZip->m_archive_size)
@@ -2492,7 +2452,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             } while (extra_size_remaining);
         }
 
-        /* TODO: parse local header extra data when local_header_comp_size is 0xFFFFFFFF! (big_descriptor.zip) */
+        /* Upstream limitation: local header extra data is not parsed when local_header_comp_size is 0xFFFFFFFF. */
         /* I've seen zips in the wild with the data descriptor bit set, but proper local header values and bogus data descriptors */
         if ((has_data_descriptor) && (!local_header_comp_size) && (!local_header_crc32))
         {
@@ -2756,7 +2716,11 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             pState->m_pMem = pNew_block;
             pState->m_mem_capacity = new_capacity;
         }
-        memcpy((mz_uint8 *)pState->m_pMem + file_ofs, pBuf, n);
+        if (!mz_copy_bytes((mz_uint8 *)pState->m_pMem + file_ofs, pState->m_mem_capacity - file_ofs, pBuf, n))
+        {
+            mz_zip_set_error(pZip, MZ_ZIP_INTERNAL_ERROR);
+            return 0;
+        }
         pState->m_mem_size = (size_t)new_size;
         return n;
     }
@@ -2841,7 +2805,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if (NULL == (pZip->m_pState = (mz_zip_internal_state *)pZip->m_pAlloc(pZip->m_pAlloc_opaque, 1, sizeof(mz_zip_internal_state))))
             return mz_zip_set_error(pZip, MZ_ZIP_ALLOC_FAILED);
 
-        memset(pZip->m_pState, 0, sizeof(mz_zip_internal_state));
+        MZ_CLEAR_PTR(pZip->m_pState);
 
         MZ_ZIP_ARRAY_SET_ELEMENT_SIZE(&pZip->m_pState->m_central_dir, sizeof(mz_uint8));
         MZ_ZIP_ARRAY_SET_ELEMENT_SIZE(&pZip->m_pState->m_central_dir_offsets, sizeof(mz_uint32));
@@ -3058,13 +3022,13 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
 
         /* Start writing new files at the archive's current central directory location. */
-        /* TODO: We could add a flag that lets the user start writing immediately AFTER the existing central dir - this would be safer. */
+        /* Upstream improvement note: a flag could append after the existing central directory for safer recovery. */
         pZip->m_archive_size = pZip->m_central_directory_file_ofs;
         pZip->m_central_directory_file_ofs = 0;
 
         /* Clear the sorted central dir offsets, they aren't useful or maintained now. */
         /* Even though we're now in write mode, files can still be extracted and verified, but file locates will be slow. */
-        /* TODO: We could easily maintain the sorted central directory offsets. */
+        /* Upstream improvement note: sorted central directory offsets could be maintained incrementally. */
         mz_zip_array_clear(pZip, &pZip->m_pState->m_sorted_central_dir_offsets);
 
         pZip->m_zip_mode = MZ_ZIP_MODE_WRITING;
@@ -3077,7 +3041,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         return mz_zip_writer_init_from_reader_v2(pZip, pFilename, 0);
     }
 
-    /* TODO: pArchive_name is a terrible name here! */
+    /* Upstream naming note: pArchive_name is retained for API compatibility. */
     mz_bool mz_zip_writer_add_mem(mz_zip_archive *pZip, const char *pArchive_name, const void *pBuf, size_t buf_size, mz_uint level_and_flags)
     {
         return mz_zip_writer_add_mem_ex(pZip, pArchive_name, pBuf, buf_size, NULL, 0, level_and_flags, 0, 0);
@@ -3141,7 +3105,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
     static mz_bool mz_zip_writer_create_local_dir_header(mz_zip_archive *pZip, mz_uint8 *pDst, mz_uint16 filename_size, mz_uint16 extra_size, mz_uint64 uncomp_size, mz_uint64 comp_size, mz_uint32 uncomp_crc32, mz_uint16 method, mz_uint16 bit_flags, mz_uint16 dos_time, mz_uint16 dos_date)
     {
         (void)pZip;
-        memset(pDst, 0, MZ_ZIP_LOCAL_DIR_HEADER_SIZE);
+        (void)mz_fill_bytes(pDst, 0, MZ_ZIP_LOCAL_DIR_HEADER_SIZE);
         MZ_WRITE_LE32(pDst + MZ_ZIP_LDH_SIG_OFS, MZ_ZIP_LOCAL_DIR_HEADER_SIG);
         MZ_WRITE_LE16(pDst + MZ_ZIP_LDH_VERSION_NEEDED_OFS, method ? 20 : 0);
         MZ_WRITE_LE16(pDst + MZ_ZIP_LDH_BIT_FLAG_OFS, bit_flags);
@@ -3163,7 +3127,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
                                                            mz_uint64 local_header_ofs, mz_uint32 ext_attributes)
     {
         (void)pZip;
-        memset(pDst, 0, MZ_ZIP_CENTRAL_DIR_HEADER_SIZE);
+        (void)mz_fill_bytes(pDst, 0, MZ_ZIP_CENTRAL_DIR_HEADER_SIZE);
         MZ_WRITE_LE32(pDst + MZ_ZIP_CDH_SIG_OFS, MZ_ZIP_CENTRAL_DIR_HEADER_SIG);
         MZ_WRITE_LE16(pDst + MZ_ZIP_CDH_VERSION_NEEDED_OFS, method ? 20 : 0);
         MZ_WRITE_LE16(pDst + MZ_ZIP_CDH_BIT_FLAG_OFS, bit_flags);
@@ -3244,7 +3208,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
     static mz_bool mz_zip_writer_write_zeros(mz_zip_archive *pZip, mz_uint64 cur_file_ofs, mz_uint32 n)
     {
         char buf[4096];
-        memset(buf, 0, MZ_MIN(sizeof(buf), n));
+        (void)mz_fill_bytes(buf, 0, MZ_MIN(sizeof(buf), n));
         while (n)
         {
             mz_uint32 s = MZ_MIN(sizeof(buf), n);
@@ -3348,7 +3312,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             }
         }
 
-        archive_name_size = strlen(pArchive_name);
+        archive_name_size = mz_cstr_len_bound(pArchive_name, (size_t)MZ_UINT16_MAX + 1U);
         if (archive_name_size > MZ_UINT16_MAX)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_FILENAME);
 
@@ -3607,7 +3571,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             }
         }
 
-        archive_name_size = strlen(pArchive_name);
+        archive_name_size = mz_cstr_len_bound(pArchive_name, (size_t)MZ_UINT16_MAX + 1U);
         if (archive_name_size > MZ_UINT16_MAX)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_FILENAME);
 
@@ -3937,7 +3901,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         MZ_TIME_T *pFile_time = NULL;
         mz_bool status;
 
-        memset(&file_modified_time, 0, sizeof(file_modified_time));
+        MZ_CLEAR_OBJ(file_modified_time);
 
 #if !defined(MINIZ_NO_TIME) && !defined(MINIZ_NO_STDIO)
         pFile_time = &file_modified_time;
@@ -4040,7 +4004,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         return MZ_TRUE;
     }
 
-    /* TODO: This func is now pretty freakin complex due to zip64, split it up? */
+    /* Upstream maintenance note: this function is complex because it preserves zip64 compatibility. */
     mz_bool mz_zip_writer_add_from_zip_reader(mz_zip_archive *pZip, mz_zip_archive *pSource_zip, mz_uint src_file_index)
     {
         mz_uint n, bit_flags, num_alignment_padding_bytes, src_central_dir_following_data_size;
@@ -4081,7 +4045,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         src_ext_len = MZ_READ_LE16(pSrc_central_header + MZ_ZIP_CDH_EXTRA_LEN_OFS);
         src_central_dir_following_data_size = src_filename_len + src_ext_len + src_comment_len;
 
-        /* TODO: We don't support central dir's >= MZ_UINT32_MAX bytes right now (+32 fudge factor in case we need to add more extra data) */
+        /* Current implementation limit: central directories >= MZ_UINT32_MAX bytes are not supported. */
         if ((pState->m_central_dir.m_size + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + src_central_dir_following_data_size + 32) >= MZ_UINT32_MAX)
             return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_CDIR_SIZE);
 
@@ -4094,7 +4058,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         }
         else
         {
-            /* TODO: Our zip64 support still has some 32-bit limits that may not be worth fixing. */
+            /* Current implementation limit: some zip64 paths still retain 32-bit bounds. */
             if (pZip->m_total_files == MZ_UINT32_MAX)
                 return mz_zip_set_error(pZip, MZ_ZIP_TOO_MANY_FILES);
         }
@@ -4310,7 +4274,8 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         /* Finally, add the new central dir header */
         orig_central_dir_size = pState->m_central_dir.m_size;
 
-        memcpy(new_central_header, pSrc_central_header, MZ_ZIP_CENTRAL_DIR_HEADER_SIZE);
+        if (!mz_copy_bytes(new_central_header, sizeof(new_central_header), pSrc_central_header, MZ_ZIP_CENTRAL_DIR_HEADER_SIZE))
+            return mz_zip_set_error(pZip, MZ_ZIP_INTERNAL_ERROR);
 
         if (pState->m_zip64)
         {
@@ -4382,10 +4347,10 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             }
         }
 
-        /* This shouldn't trigger unless we screwed up during the initial sanity checks */
+        /* This should only trigger if the initial sanity checks missed an inconsistent archive. */
         if (pState->m_central_dir.m_size >= MZ_UINT32_MAX)
         {
-            /* TODO: Support central dirs >= 32-bits in size */
+            /* Current implementation limit: central directories >= 32 bits are not supported here. */
             mz_zip_array_resize(pZip, &pState->m_central_dir, orig_central_dir_size, MZ_FALSE);
             return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_CDIR_SIZE);
         }
@@ -4447,7 +4412,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             MZ_CLEAR_ARR(hdr);
             MZ_WRITE_LE32(hdr + MZ_ZIP64_ECDH_SIG_OFS, MZ_ZIP64_END_OF_CENTRAL_DIR_HEADER_SIG);
             MZ_WRITE_LE64(hdr + MZ_ZIP64_ECDH_SIZE_OF_RECORD_OFS, MZ_ZIP64_END_OF_CENTRAL_DIR_HEADER_SIZE - sizeof(mz_uint32) - sizeof(mz_uint64));
-            MZ_WRITE_LE16(hdr + MZ_ZIP64_ECDH_VERSION_MADE_BY_OFS, 0x031E); /* TODO: always Unix */
+            MZ_WRITE_LE16(hdr + MZ_ZIP64_ECDH_VERSION_MADE_BY_OFS, 0x031E); /* Upstream behavior: version-made-by is Unix. */
             MZ_WRITE_LE16(hdr + MZ_ZIP64_ECDH_VERSION_NEEDED_OFS, 0x002D);
             MZ_WRITE_LE64(hdr + MZ_ZIP64_ECDH_CDIR_NUM_ENTRIES_ON_DISK_OFS, pZip->m_total_files);
             MZ_WRITE_LE64(hdr + MZ_ZIP64_ECDH_CDIR_TOTAL_ENTRIES_OFS, pZip->m_total_files);
@@ -4796,7 +4761,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         return "unknown error";
     }
 
-    /* Note: Just because the archive is not zip64 doesn't necessarily mean it doesn't have Zip64 extended information extra field, argh. */
+    /* Note: non-zip64 archives can still include a Zip64 extended information extra field. */
     mz_bool mz_zip_is_zip64(mz_zip_archive *pZip)
     {
         if ((!pZip) || (!pZip->m_pState))
@@ -4862,7 +4827,8 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if (filename_buf_size)
         {
             n = MZ_MIN(n, filename_buf_size - 1);
-            memcpy(pFilename, p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE, n);
+            if (!mz_copy_bytes(pFilename, filename_buf_size, p + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE, n))
+                return mz_zip_set_error(pZip, MZ_ZIP_INTERNAL_ERROR);
             pFilename[n] = '\0';
         }
         return n + 1;

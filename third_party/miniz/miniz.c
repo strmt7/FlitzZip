@@ -167,7 +167,9 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
 
     MINIZ_EXPORT void *miniz_def_alloc_func(void *opaque, size_t items, size_t size)
     {
-        (void)opaque, (void)items, (void)size;
+        (void)opaque;
+        if (size && (items > (SIZE_MAX / size)))
+            return NULL;
         return MZ_MALLOC(items * size);
     }
     MINIZ_EXPORT void miniz_def_free_func(void *opaque, void *address)
@@ -177,7 +179,9 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
     }
     MINIZ_EXPORT void *miniz_def_realloc_func(void *opaque, void *address, size_t items, size_t size)
     {
-        (void)opaque, (void)address, (void)items, (void)size;
+        (void)opaque;
+        if (size && (items > (SIZE_MAX / size)))
+            return NULL;
         return MZ_REALLOC(address, items * size);
     }
 
@@ -313,7 +317,7 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
     mz_ulong mz_deflateBound(mz_streamp pStream, mz_ulong source_len)
     {
         (void)pStream;
-        /* This is really over conservative. (And lame, but it's actually pretty tricky to compute a true upper bound given the way tdefl's blocking works.) */
+        /* This conservative bound intentionally favors safety over a tighter estimate because tdefl block sizing is complex. */
         return MZ_MAX(128 + (source_len * 110) / 100, 128 + source_len + ((source_len / (31 * 1024)) + 1) * 5);
     }
 
@@ -321,7 +325,7 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
     {
         int status;
         mz_stream stream;
-        memset(&stream, 0, sizeof(stream));
+        MZ_CLEAR_OBJ(stream);
 
 #if ULONG_MAX > 0xFFFFFFFFUL
         /* In case mz_ulong is 64-bits. */
@@ -499,7 +503,11 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
         if (pState->m_dict_avail)
         {
             n = MZ_MIN(pState->m_dict_avail, pStream->avail_out);
-            memcpy(pStream->next_out, pState->m_dict + pState->m_dict_ofs, n);
+            if (!mz_copy_bytes(pStream->next_out, pStream->avail_out, pState->m_dict + pState->m_dict_ofs, n))
+            {
+                pState->m_last_status = TINFL_STATUS_FAILED;
+                return MZ_BUF_ERROR;
+            }
             pStream->next_out += n;
             pStream->avail_out -= n;
             pStream->total_out += n;
@@ -524,7 +532,11 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
             pState->m_dict_avail = (mz_uint)out_bytes;
 
             n = MZ_MIN(pState->m_dict_avail, pStream->avail_out);
-            memcpy(pStream->next_out, pState->m_dict + pState->m_dict_ofs, n);
+            if (!mz_copy_bytes(pStream->next_out, pStream->avail_out, pState->m_dict + pState->m_dict_ofs, n))
+            {
+                pState->m_last_status = TINFL_STATUS_FAILED;
+                return MZ_BUF_ERROR;
+            }
             pStream->next_out += n;
             pStream->avail_out -= n;
             pStream->total_out += n;
@@ -566,7 +578,7 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
     {
         mz_stream stream;
         int status;
-        memset(&stream, 0, sizeof(stream));
+        MZ_CLEAR_OBJ(stream);
 
 #if ULONG_MAX > 0xFFFFFFFFUL
         /* In case mz_ulong is 64-bits. */

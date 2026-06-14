@@ -3,14 +3,6 @@ name: greenbone-openvas-vulnetix
 on:
   push:
   pull_request:
-  schedule:
-    - cron: "47 4 * * 1"
-  workflow_dispatch:
-    inputs:
-      target:
-        description: Optional one-off authorized Greenbone/OpenVAS target
-        required: false
-        default: ""
 
 permissions:
   contents: read # allow checkout and scan artifact collection
@@ -54,7 +46,7 @@ jobs:
           spec.loader.exec_module(module)
           parsed = module.parse_args([
               "openvas_scan.gmp.py",
-              "127.0.0.1",
+              "scan-target.example",
               "reports/openvas",
               module.DEFAULT_SCAN_CONFIG_ID,
               module.DEFAULT_SCANNER_ID,
@@ -62,7 +54,7 @@ jobs:
               "5",
               "true",
           ])
-          if parsed.target != "127.0.0.1" or parsed.max_minutes != 5:
+          if parsed.target != "scan-target.example" or parsed.max_minutes != 5:
               raise SystemExit("OpenVAS parser returned unexpected values.")
           try:
               module.parse_args(["openvas_scan.gmp.py", "bad target with spaces", "reports/openvas"])
@@ -118,7 +110,7 @@ jobs:
               "# Greenbone/OpenVAS integration audit\n\n"
               "The workflow, locked scanner dependencies, and GMP script parsed successfully. "
               "A live network vulnerability scan requires the documented environment secrets "
-              "and runs only for scheduled or manual workflow events.\n",
+              "and runs in the separate `greenbone-openvas-live` workflow.\n",
               encoding="utf-8",
           )
           PY
@@ -126,180 +118,5 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: greenbone-openvas-integration-audit
-          path: reports/openvas
-          if-no-files-found: error
-
-  openvas-greenbone:
-    name: Authorized Greenbone/OpenVAS scan plus Vulnetix
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
-    needs: openvas-integration-audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 390
-    environment:
-      name: greenbone-openvas-security-scanning
-      deployment: false
-    env:
-      GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
-      GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
-      GREENBONE_USERNAME: ${{ secrets.GREENBONE_USERNAME }}
-      GREENBONE_PASSWORD: ${{ secrets.GREENBONE_PASSWORD }}
-      GREENBONE_TARGET_SECRET: ${{ secrets.GREENBONE_TARGET }}
-      GREENBONE_TARGET_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
-      GREENBONE_SCAN_CONFIG_ID: ${{ secrets.GREENBONE_SCAN_CONFIG_ID }}
-      GREENBONE_SCANNER_ID: ${{ secrets.GREENBONE_SCANNER_ID }}
-      GREENBONE_PORT_LIST_ID: ${{ secrets.GREENBONE_PORT_LIST_ID }}
-      GREENBONE_MAX_MINUTES: ${{ secrets.GREENBONE_MAX_MINUTES }}
-      GREENBONE_DELETE_TASK: ${{ secrets.GREENBONE_DELETE_TASK }}
-      VULNETIX_ORG_ID: ${{ secrets.VULNETIX_ORG_ID }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-      - name: Resolve Greenbone configuration
-        id: config
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p reports/openvas
-          target="${GREENBONE_TARGET_INPUT:-${GREENBONE_TARGET_SECRET:-}}"
-          port="${GREENBONE_PORT:-9390}"
-          max_minutes="${GREENBONE_MAX_MINUTES:-180}"
-          delete_task="${GREENBONE_DELETE_TASK:-true}"
-          scan_config_id="${GREENBONE_SCAN_CONFIG_ID:-daba56c8-73ec-11df-a475-002264764cea}"
-          scanner_id="${GREENBONE_SCANNER_ID:-08b69003-5fc2-4037-a479-93b440211c73}"
-          port_list_id="${GREENBONE_PORT_LIST_ID:-}"
-
-          for value_name in target port max_minutes delete_task scan_config_id scanner_id port_list_id; do
-            value="${!value_name}"
-            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-              echo "::error::$value_name must be a single-line value"
-              exit 1
-            fi
-          done
-
-          missing=()
-          [ -n "${GREENBONE_HOST:-}" ] || missing+=("GREENBONE_HOST")
-          [ -n "${GREENBONE_USERNAME:-}" ] || missing+=("GREENBONE_USERNAME")
-          [ -n "${GREENBONE_PASSWORD:-}" ] || missing+=("GREENBONE_PASSWORD")
-          [ -n "$target" ] || missing+=("GREENBONE_TARGET or workflow_dispatch target")
-
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf '{"tool":"Greenbone/OpenVAS","status":"configuration-missing","missing":[' > reports/openvas/openvas-configuration-missing.json
-            for index in "${!missing[@]}"; do
-              if [ "$index" -gt 0 ]; then
-                printf ',' >> reports/openvas/openvas-configuration-missing.json
-              fi
-              printf '"%s"' "${missing[$index]}" >> reports/openvas/openvas-configuration-missing.json
-            done
-            printf ']}\n' >> reports/openvas/openvas-configuration-missing.json
-            cat > reports/openvas/openvas-summary.md <<'EOF'
-          # Greenbone/OpenVAS configuration missing
-
-          The authorized live scan cannot run until the required environment secrets are configured.
-          See `docs/security-code-scanning.md` for the exact secret names and setup commands.
-          EOF
-            echo "::error::Greenbone/OpenVAS required secrets are missing: ${missing[*]}"
-            exit 1
-          fi
-
-          printf 'configured=true\n' >> "$GITHUB_OUTPUT"
-          {
-            printf 'target=%s\n' "$target"
-            printf 'port=%s\n' "$port"
-            printf 'max_minutes=%s\n' "$max_minutes"
-            printf 'delete_task=%s\n' "$delete_task"
-            printf 'scan_config_id=%s\n' "$scan_config_id"
-            printf 'scanner_id=%s\n' "$scanner_id"
-            printf 'port_list_id=%s\n' "$port_list_id"
-          } >> "$GITHUB_OUTPUT"
-      - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: "3.13"
-      - name: Install Greenbone tools
-        shell: bash
-        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-gvm-tools-linux.txt
-      - name: Run Greenbone/OpenVAS scan
-        shell: bash
-        env:
-          GREENBONE_EFFECTIVE_PORT: ${{ steps.config.outputs.port }}
-          GREENBONE_EFFECTIVE_TARGET: ${{ steps.config.outputs.target }}
-          GREENBONE_EFFECTIVE_SCAN_CONFIG_ID: ${{ steps.config.outputs.scan_config_id }}
-          GREENBONE_EFFECTIVE_SCANNER_ID: ${{ steps.config.outputs.scanner_id }}
-          GREENBONE_EFFECTIVE_PORT_LIST_ID: ${{ steps.config.outputs.port_list_id }}
-          GREENBONE_EFFECTIVE_MAX_MINUTES: ${{ steps.config.outputs.max_minutes }}
-          GREENBONE_EFFECTIVE_DELETE_TASK: ${{ steps.config.outputs.delete_task }}
-        run: |
-          set -euo pipefail
-          gvm-script \
-            --gmp-username "$GREENBONE_USERNAME" \
-            --gmp-password "$GREENBONE_PASSWORD" \
-            --timeout -1 \
-            tls \
-            --hostname "$GREENBONE_HOST" \
-            --port "$GREENBONE_EFFECTIVE_PORT" \
-            .github/openvas/openvas_scan.gmp.py \
-            "$GREENBONE_EFFECTIVE_TARGET" \
-            reports/openvas \
-            "$GREENBONE_EFFECTIVE_SCAN_CONFIG_ID" \
-            "$GREENBONE_EFFECTIVE_SCANNER_ID" \
-            "$GREENBONE_EFFECTIVE_PORT_LIST_ID" \
-            "$GREENBONE_EFFECTIVE_MAX_MINUTES" \
-            "$GREENBONE_EFFECTIVE_DELETE_TASK"
-      - name: Enforce Greenbone vulnerability gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          summary_path = Path("reports/openvas/openvas-summary.json")
-          summary = json.loads(summary_path.read_text(encoding="utf-8"))
-          counts = summary.get("severity_counts", {})
-          blocking = {
-              key: int(counts.get(key, 0) or 0)
-              for key in ("critical", "high", "medium", "low")
-          }
-          total = sum(blocking.values())
-          if total:
-              print(f"::error::Greenbone/OpenVAS found blocking vulnerabilities: {blocking}")
-              sys.exit(1)
-          print("Greenbone/OpenVAS reported zero critical, high, medium, or low vulnerabilities.")
-          PY
-      - name: Resolve Vulnetix configuration
-        id: vulnetix
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${VULNETIX_ORG_ID:-}" ]; then
-            printf 'configured=true\n' >> "$GITHUB_OUTPUT"
-            printf '{"tool":"Vulnetix","status":"configured"}\n' > reports/openvas/vulnetix-summary.json
-          else
-            printf 'configured=false\n' >> "$GITHUB_OUTPUT"
-            cat > reports/openvas/vulnetix-summary.json <<'EOF'
-          {"tool":"Vulnetix","status":"not-configured","reason":"VULNETIX_ORG_ID environment secret is absent; OpenVAS artifacts remain attached to the workflow run."}
-          EOF
-            echo "::notice::VULNETIX_ORG_ID is not configured; keeping OpenVAS artifacts in GitHub Actions."
-          fi
-      - name: Vulnetix health check
-        if: steps.vulnetix.outputs.configured == 'true'
-        uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6 # v3.9.1
-        with:
-          org-id: ${{ env.VULNETIX_ORG_ID }}
-      - name: Upload OpenVAS artifacts to Vulnetix
-        if: steps.vulnetix.outputs.configured == 'true'
-        uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6 # v3.9.1
-        with:
-          org-id: ${{ env.VULNETIX_ORG_ID }}
-          task: upload
-          artifact-path: reports/openvas
-      - name: Upload OpenVAS artifact
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: greenbone-openvas-reports
           path: reports/openvas
           if-no-files-found: error

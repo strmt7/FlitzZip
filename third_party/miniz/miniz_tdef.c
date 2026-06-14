@@ -33,6 +33,18 @@ extern "C"
 {
 #endif
 
+    typedef struct
+    {
+        const void *m_pIn_buf;
+        void *m_pOut_buf;
+        size_t *m_pIn_buf_size;
+        size_t *m_pOut_buf_size;
+        tdefl_flush m_flush;
+        const mz_uint8 *m_pSrc;
+        size_t m_src_buf_left;
+        size_t m_out_buf_ofs;
+    } tdefl_compress_state;
+
     /* ------------------- Low-level Compression (independent from all decompression API's) */
 
     /* Purposely making these tables static for faster init and thread safety. */
@@ -352,14 +364,14 @@ extern "C"
             if (d->m_huff_code_sizes[1][num_dist_codes - 1])
                 break;
 
-        memcpy(code_sizes_to_pack, &d->m_huff_code_sizes[0][0], num_lit_codes);
-        memcpy(code_sizes_to_pack + num_lit_codes, &d->m_huff_code_sizes[1][0], num_dist_codes);
+        (void)mz_copy_bytes(code_sizes_to_pack, sizeof(code_sizes_to_pack), &d->m_huff_code_sizes[0][0], (size_t)num_lit_codes);
+        (void)mz_copy_bytes(code_sizes_to_pack + num_lit_codes, sizeof(code_sizes_to_pack) - (size_t)num_lit_codes, &d->m_huff_code_sizes[1][0], (size_t)num_dist_codes);
         total_code_sizes_to_pack = num_lit_codes + num_dist_codes;
         num_packed_code_sizes = 0;
         rle_z_count = 0;
         rle_repeat_count = 0;
 
-        memset(&d->m_huff_count[2][0], 0, sizeof(d->m_huff_count[2][0]) * TDEFL_MAX_HUFF_SYMBOLS_2);
+        (void)mz_fill_bytes(&d->m_huff_count[2][0], 0, sizeof(d->m_huff_count[2][0]) * TDEFL_MAX_HUFF_SYMBOLS_2);
         for (i = 0; i < total_code_sizes_to_pack; i++)
         {
             mz_uint8 code_size = code_sizes_to_pack[i];
@@ -435,7 +447,7 @@ extern "C"
         for (; i <= 287; ++i)
             *p++ = 8;
 
-        memset(d->m_huff_code_sizes[1], 5, 32);
+        (void)mz_fill_bytes(d->m_huff_code_sizes[1], 5, 32);
 
         tdefl_optimize_huffman_table(d, 0, 288, 15, MZ_TRUE);
         tdefl_optimize_huffman_table(d, 1, 32, 15, MZ_TRUE);
@@ -516,7 +528,8 @@ extern "C"
             if (pOutput_buf >= d->m_pOutput_buf_end)
                 return MZ_FALSE;
 
-            memcpy(pOutput_buf, &bit_buffer, sizeof(mz_uint64));
+            if (!mz_copy_bytes(pOutput_buf, (size_t)(d->m_pOutput_buf_end - pOutput_buf), &bit_buffer, sizeof(mz_uint64)))
+                return MZ_FALSE;
             pOutput_buf += (bits_in >> 3);
             bit_buffer >>= (bits_in & ~7);
             bits_in &= 7;
@@ -603,13 +616,13 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
     /* Flush the current LZ code buffer as a raw, static-Huffman, or dynamic-Huffman DEFLATE block. */
     /* Inputs: d is the active compressor state and flush controls final/sync/full flush markers. */
     /* Output: nonzero means bytes remain buffered for the caller; negative status is stored in d on callback failure. */
-    static int tdefl_flush_block(tdefl_compressor *d, int flush)
+    static int tdefl_flush_block(tdefl_compressor *d, tdefl_compress_state *s, int flush)
     {
         mz_uint saved_bit_buf, saved_bits_in;
         mz_uint8 *pSaved_output_buf;
         mz_bool comp_block_succeeded = MZ_FALSE;
         int n, use_raw_block = ((d->m_flags & TDEFL_FORCE_ALL_RAW_BLOCKS) != 0) && (d->m_lookahead_pos - d->m_lz_code_buf_dict_pos) <= d->m_dict_size;
-        mz_uint8 *pOutput_buf_start = ((d->m_pPut_buf_func == NULL) && ((*d->m_pOut_buf_size - d->m_out_buf_ofs) >= TDEFL_OUT_BUF_SIZE)) ? ((mz_uint8 *)d->m_pOut_buf + d->m_out_buf_ofs) : d->m_output_buf;
+        mz_uint8 *pOutput_buf_start = ((d->m_pPut_buf_func == NULL) && ((*s->m_pOut_buf_size - s->m_out_buf_ofs) >= TDEFL_OUT_BUF_SIZE)) ? ((mz_uint8 *)s->m_pOut_buf + s->m_out_buf_ofs) : d->m_output_buf;
 
         d->m_pOutput_buf = pOutput_buf_start;
         d->m_pOutput_buf_end = d->m_pOutput_buf + TDEFL_OUT_BUF_SIZE - 16;
@@ -723,8 +736,8 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
         MZ_ASSERT(d->m_pOutput_buf < d->m_pOutput_buf_end);
 
         /* Reset per-block Huffman/LZ staging while preserving the rolling dictionary. */
-        memset(&d->m_huff_count[0][0], 0, sizeof(d->m_huff_count[0][0]) * TDEFL_MAX_HUFF_SYMBOLS_0);
-        memset(&d->m_huff_count[1][0], 0, sizeof(d->m_huff_count[1][0]) * TDEFL_MAX_HUFF_SYMBOLS_1);
+        (void)mz_fill_bytes(&d->m_huff_count[0][0], 0, sizeof(d->m_huff_count[0][0]) * TDEFL_MAX_HUFF_SYMBOLS_0);
+        (void)mz_fill_bytes(&d->m_huff_count[1][0], 0, sizeof(d->m_huff_count[1][0]) * TDEFL_MAX_HUFF_SYMBOLS_1);
 
         d->m_pLZ_code_buf = d->m_lz_code_buf + 1;
         d->m_pLZ_flags = d->m_lz_code_buf;
@@ -738,15 +751,16 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
         {
             if (d->m_pPut_buf_func)
             {
-                *d->m_pIn_buf_size = d->m_pSrc - (const mz_uint8 *)d->m_pIn_buf;
+                *s->m_pIn_buf_size = s->m_pSrc - (const mz_uint8 *)s->m_pIn_buf;
                 if (!(*d->m_pPut_buf_func)(d->m_output_buf, n, d->m_pPut_buf_user))
                     return (d->m_prev_return_status = TDEFL_STATUS_PUT_BUF_FAILED);
             }
             else if (pOutput_buf_start == d->m_output_buf)
             {
-                int bytes_to_copy = (int)MZ_MIN((size_t)n, (size_t)(*d->m_pOut_buf_size - d->m_out_buf_ofs));
-                memcpy((mz_uint8 *)d->m_pOut_buf + d->m_out_buf_ofs, d->m_output_buf, bytes_to_copy);
-                d->m_out_buf_ofs += bytes_to_copy;
+                int bytes_to_copy = (int)MZ_MIN((size_t)n, (size_t)(*s->m_pOut_buf_size - s->m_out_buf_ofs));
+                if (!mz_copy_bytes((mz_uint8 *)s->m_pOut_buf + s->m_out_buf_ofs, *s->m_pOut_buf_size - s->m_out_buf_ofs, d->m_output_buf, (size_t)bytes_to_copy))
+                    return (d->m_prev_return_status = TDEFL_STATUS_BAD_PARAM);
+                s->m_out_buf_ofs += bytes_to_copy;
                 if ((n -= bytes_to_copy) != 0)
                 {
                     d->m_output_flush_ofs = bytes_to_copy;
@@ -755,7 +769,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
             }
             else
             {
-                d->m_out_buf_ofs += n;
+                s->m_out_buf_ofs += n;
             }
         }
 
@@ -766,14 +780,14 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
 #ifdef MINIZ_UNALIGNED_USE_MEMCPY
     static mz_uint16 TDEFL_READ_UNALIGNED_WORD(const mz_uint8 *p)
     {
-        mz_uint16 ret;
-        memcpy(&ret, p, sizeof(mz_uint16));
+        mz_uint16 ret = 0;
+        (void)mz_copy_bytes(&ret, sizeof(ret), p, sizeof(mz_uint16));
         return ret;
     }
     static mz_uint16 TDEFL_READ_UNALIGNED_WORD2(const mz_uint16 *p)
     {
-        mz_uint16 ret;
-        memcpy(&ret, p, sizeof(mz_uint16));
+        mz_uint16 ret = 0;
+        (void)mz_copy_bytes(&ret, sizeof(ret), p, sizeof(mz_uint16));
         return ret;
     }
 #else
@@ -882,41 +896,41 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
 #ifdef MINIZ_UNALIGNED_USE_MEMCPY
     static mz_uint32 TDEFL_READ_UNALIGNED_WORD32(const mz_uint8 *p)
     {
-        mz_uint32 ret;
-        memcpy(&ret, p, sizeof(mz_uint32));
+        mz_uint32 ret = 0;
+        (void)mz_copy_bytes(&ret, sizeof(ret), p, sizeof(mz_uint32));
         return ret;
     }
 #else
 #define TDEFL_READ_UNALIGNED_WORD32(p) *(const mz_uint32 *)(p)
 #endif
-    static mz_bool tdefl_compress_fast(tdefl_compressor *d)
+    static mz_bool tdefl_compress_fast(tdefl_compressor *d, tdefl_compress_state *s)
     {
         /* Faster, minimally featured LZRW1-style match+parse loop with better register utilization. Intended for applications where raw throughput is valued more highly than ratio. */
         mz_uint lookahead_pos = d->m_lookahead_pos, lookahead_size = d->m_lookahead_size, dict_size = d->m_dict_size, total_lz_bytes = d->m_total_lz_bytes, num_flags_left = d->m_num_flags_left;
         mz_uint8 *pLZ_code_buf = d->m_pLZ_code_buf, *pLZ_flags = d->m_pLZ_flags;
         mz_uint cur_pos = lookahead_pos & TDEFL_LZ_DICT_SIZE_MASK;
 
-        while ((d->m_src_buf_left) || ((d->m_flush) && (lookahead_size)))
+        while ((s->m_src_buf_left) || ((s->m_flush) && (lookahead_size)))
         {
             const mz_uint TDEFL_COMP_FAST_LOOKAHEAD_SIZE = 4096;
             mz_uint dst_pos = (lookahead_pos + lookahead_size) & TDEFL_LZ_DICT_SIZE_MASK;
-            mz_uint num_bytes_to_process = (mz_uint)MZ_MIN(d->m_src_buf_left, TDEFL_COMP_FAST_LOOKAHEAD_SIZE - lookahead_size);
-            d->m_src_buf_left -= num_bytes_to_process;
+            mz_uint num_bytes_to_process = (mz_uint)MZ_MIN(s->m_src_buf_left, TDEFL_COMP_FAST_LOOKAHEAD_SIZE - lookahead_size);
+            s->m_src_buf_left -= num_bytes_to_process;
             lookahead_size += num_bytes_to_process;
 
             while (num_bytes_to_process)
             {
                 mz_uint32 n = MZ_MIN(TDEFL_LZ_DICT_SIZE - dst_pos, num_bytes_to_process);
-                memcpy(d->m_dict + dst_pos, d->m_pSrc, n);
+                (void)mz_copy_bytes(d->m_dict + dst_pos, TDEFL_LZ_DICT_SIZE + TDEFL_MAX_MATCH_LEN - 1 - dst_pos, s->m_pSrc, n);
                 if (dst_pos < (TDEFL_MAX_MATCH_LEN - 1))
-                    memcpy(d->m_dict + TDEFL_LZ_DICT_SIZE + dst_pos, d->m_pSrc, MZ_MIN(n, (TDEFL_MAX_MATCH_LEN - 1) - dst_pos));
-                d->m_pSrc += n;
+                    (void)mz_copy_bytes(d->m_dict + TDEFL_LZ_DICT_SIZE + dst_pos, TDEFL_MAX_MATCH_LEN - 1 - dst_pos, s->m_pSrc, MZ_MIN(n, (TDEFL_MAX_MATCH_LEN - 1) - dst_pos));
+                s->m_pSrc += n;
                 dst_pos = (dst_pos + n) & TDEFL_LZ_DICT_SIZE_MASK;
                 num_bytes_to_process -= n;
             }
 
             dict_size = MZ_MIN(TDEFL_LZ_DICT_SIZE - lookahead_size, dict_size);
-            if ((!d->m_flush) && (lookahead_size < TDEFL_COMP_FAST_LOOKAHEAD_SIZE))
+            if ((!s->m_flush) && (lookahead_size < TDEFL_COMP_FAST_LOOKAHEAD_SIZE))
                 break;
 
             while (lookahead_size >= 4)
@@ -959,7 +973,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
 
                         pLZ_code_buf[0] = (mz_uint8)(cur_match_len - TDEFL_MIN_MATCH_LEN);
 #ifdef MINIZ_UNALIGNED_USE_MEMCPY
-                        memcpy(&pLZ_code_buf[1], &cur_match_dist, sizeof(cur_match_dist));
+                        (void)mz_copy_bytes(&pLZ_code_buf[1], sizeof(cur_match_dist), &cur_match_dist, sizeof(cur_match_dist));
 #else
                         *(mz_uint16 *)(&pLZ_code_buf[1]) = (mz_uint16)cur_match_dist;
 #endif
@@ -1003,7 +1017,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
                     d->m_pLZ_code_buf = pLZ_code_buf;
                     d->m_pLZ_flags = pLZ_flags;
                     d->m_num_flags_left = num_flags_left;
-                    if ((n = tdefl_flush_block(d, 0)) != 0)
+                    if ((n = tdefl_flush_block(d, s, 0)) != 0)
                         return (n < 0) ? MZ_FALSE : MZ_TRUE;
                     total_lz_bytes = d->m_total_lz_bytes;
                     pLZ_code_buf = d->m_pLZ_code_buf;
@@ -1042,7 +1056,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
                     d->m_pLZ_code_buf = pLZ_code_buf;
                     d->m_pLZ_flags = pLZ_flags;
                     d->m_num_flags_left = num_flags_left;
-                    if ((n = tdefl_flush_block(d, 0)) != 0)
+                    if ((n = tdefl_flush_block(d, s, 0)) != 0)
                         return (n < 0) ? MZ_FALSE : MZ_TRUE;
                     total_lz_bytes = d->m_total_lz_bytes;
                     pLZ_code_buf = d->m_pLZ_code_buf;
@@ -1104,11 +1118,11 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         d->m_huff_count[0][s_tdefl_len_sym[match_len - TDEFL_MIN_MATCH_LEN]]++;
     }
 
-    static mz_bool tdefl_compress_normal(tdefl_compressor *d)
+    static mz_bool tdefl_compress_normal(tdefl_compressor *d, tdefl_compress_state *s)
     {
-        const mz_uint8 *pSrc = d->m_pSrc;
-        size_t src_buf_left = d->m_src_buf_left;
-        tdefl_flush flush = d->m_flush;
+        const mz_uint8 *pSrc = s->m_pSrc;
+        size_t src_buf_left = s->m_src_buf_left;
+        tdefl_flush flush = s->m_flush;
 
         while ((src_buf_left) || ((flush) && (d->m_lookahead_size)))
         {
@@ -1237,59 +1251,48 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
                 ((d->m_total_lz_bytes > 31 * 1024) && (((((mz_uint)(d->m_pLZ_code_buf - d->m_lz_code_buf) * 115) >> 7) >= d->m_total_lz_bytes) || (d->m_flags & TDEFL_FORCE_ALL_RAW_BLOCKS))))
             {
                 int n;
-                d->m_pSrc = pSrc;
-                d->m_src_buf_left = src_buf_left;
-                if ((n = tdefl_flush_block(d, 0)) != 0)
+                s->m_pSrc = pSrc;
+                s->m_src_buf_left = src_buf_left;
+                if ((n = tdefl_flush_block(d, s, 0)) != 0)
                     return (n < 0) ? MZ_FALSE : MZ_TRUE;
             }
         }
 
-        d->m_pSrc = pSrc;
-        d->m_src_buf_left = src_buf_left;
+        s->m_pSrc = pSrc;
+        s->m_src_buf_left = src_buf_left;
         return MZ_TRUE;
     }
 
-    static tdefl_status tdefl_flush_output_buffer(tdefl_compressor *d)
+    static tdefl_status tdefl_flush_output_buffer(tdefl_compressor *d, tdefl_compress_state *s)
     {
-        if (d->m_pIn_buf_size)
+        if (s->m_pIn_buf_size)
         {
-            *d->m_pIn_buf_size = d->m_pSrc - (const mz_uint8 *)d->m_pIn_buf;
+            *s->m_pIn_buf_size = s->m_pSrc - (const mz_uint8 *)s->m_pIn_buf;
         }
 
-        if (d->m_pOut_buf_size)
+        if (s->m_pOut_buf_size)
         {
-            size_t n = MZ_MIN(*d->m_pOut_buf_size - d->m_out_buf_ofs, d->m_output_flush_remaining);
-            memcpy((mz_uint8 *)d->m_pOut_buf + d->m_out_buf_ofs, d->m_output_buf + d->m_output_flush_ofs, n);
+            size_t n = MZ_MIN(*s->m_pOut_buf_size - s->m_out_buf_ofs, d->m_output_flush_remaining);
+            if (!mz_copy_bytes((mz_uint8 *)s->m_pOut_buf + s->m_out_buf_ofs, *s->m_pOut_buf_size - s->m_out_buf_ofs, d->m_output_buf + d->m_output_flush_ofs, n))
+                return TDEFL_STATUS_BAD_PARAM;
             d->m_output_flush_ofs += (mz_uint)n;
             d->m_output_flush_remaining -= (mz_uint)n;
-            d->m_out_buf_ofs += n;
+            s->m_out_buf_ofs += n;
 
-            *d->m_pOut_buf_size = d->m_out_buf_ofs;
+            *s->m_pOut_buf_size = s->m_out_buf_ofs;
         }
 
         return (d->m_finished && !d->m_output_flush_remaining) ? TDEFL_STATUS_DONE : TDEFL_STATUS_OKAY;
     }
 
-    /* Clear caller-owned transient buffer pointers after each public compression call. */
-    static void tdefl_clear_transient_io(tdefl_compressor *d)
-    {
-        d->m_pIn_buf = NULL;
-        d->m_pIn_buf_size = NULL;
-        d->m_pOut_buf = NULL;
-        d->m_pOut_buf_size = NULL;
-        d->m_pSrc = NULL;
-        d->m_src_buf_left = 0;
-        d->m_out_buf_ofs = 0;
-    }
-
     /* Compress caller-provided input into either a caller output buffer or the initialized output callback. */
     tdefl_status tdefl_compress(tdefl_compressor *d, const void *pIn_buf, size_t *pIn_buf_size, void *pOut_buf, size_t *pOut_buf_size, tdefl_flush flush)
     {
+        tdefl_compress_state call_state;
 #define TDEFL_COMPRESS_RETURN(status_expr)            \
         do                                            \
         {                                             \
             tdefl_status status_value = (status_expr); \
-            tdefl_clear_transient_io(d);              \
             return status_value;                      \
         }                                             \
         MZ_MACRO_END
@@ -1303,14 +1306,14 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             return TDEFL_STATUS_BAD_PARAM;
         }
 
-        d->m_pIn_buf = pIn_buf;
-        d->m_pIn_buf_size = pIn_buf_size;
-        d->m_pOut_buf = pOut_buf;
-        d->m_pOut_buf_size = pOut_buf_size;
-        d->m_pSrc = (const mz_uint8 *)(pIn_buf);
-        d->m_src_buf_left = pIn_buf_size ? *pIn_buf_size : 0;
-        d->m_out_buf_ofs = 0;
-        d->m_flush = flush;
+        call_state.m_pIn_buf = pIn_buf;
+        call_state.m_pIn_buf_size = pIn_buf_size;
+        call_state.m_pOut_buf = pOut_buf;
+        call_state.m_pOut_buf_size = pOut_buf_size;
+        call_state.m_pSrc = (const mz_uint8 *)(pIn_buf);
+        call_state.m_src_buf_left = pIn_buf_size ? *pIn_buf_size : 0;
+        call_state.m_out_buf_ofs = 0;
+        call_state.m_flush = flush;
 
         if (((d->m_pPut_buf_func != NULL) == ((pOut_buf != NULL) || (pOut_buf_size != NULL))) || (d->m_prev_return_status != TDEFL_STATUS_OKAY) ||
             (d->m_wants_to_finish && (flush != TDEFL_FINISH)) || (pIn_buf_size && *pIn_buf_size && !pIn_buf) || (pOut_buf_size && *pOut_buf_size && !pOut_buf))
@@ -1324,29 +1327,29 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         d->m_wants_to_finish |= (flush == TDEFL_FINISH);
 
         if ((d->m_output_flush_remaining) || (d->m_finished))
-            TDEFL_COMPRESS_RETURN(d->m_prev_return_status = tdefl_flush_output_buffer(d));
+            TDEFL_COMPRESS_RETURN(d->m_prev_return_status = tdefl_flush_output_buffer(d, &call_state));
 
 #if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN
         if (((d->m_flags & TDEFL_MAX_PROBES_MASK) == 1) &&
             ((d->m_flags & TDEFL_GREEDY_PARSING_FLAG) != 0) &&
             ((d->m_flags & (TDEFL_FILTER_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_RLE_MATCHES)) == 0))
         {
-            if (!tdefl_compress_fast(d))
+            if (!tdefl_compress_fast(d, &call_state))
                 TDEFL_COMPRESS_RETURN(d->m_prev_return_status);
         }
         else
 #endif /* #if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN */
         {
-            if (!tdefl_compress_normal(d))
+            if (!tdefl_compress_normal(d, &call_state))
                 TDEFL_COMPRESS_RETURN(d->m_prev_return_status);
         }
 
         if ((d->m_flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) && (pIn_buf))
-            d->m_adler32 = (mz_uint32)mz_adler32(d->m_adler32, (const mz_uint8 *)pIn_buf, d->m_pSrc - (const mz_uint8 *)pIn_buf);
+            d->m_adler32 = (mz_uint32)mz_adler32(d->m_adler32, (const mz_uint8 *)pIn_buf, call_state.m_pSrc - (const mz_uint8 *)pIn_buf);
 
-        if ((flush) && (!d->m_lookahead_size) && (!d->m_src_buf_left) && (!d->m_output_flush_remaining))
+        if ((flush) && (!d->m_lookahead_size) && (!call_state.m_src_buf_left) && (!d->m_output_flush_remaining))
         {
-            if (tdefl_flush_block(d, flush) < 0)
+            if (tdefl_flush_block(d, &call_state, flush) < 0)
                 TDEFL_COMPRESS_RETURN(d->m_prev_return_status);
             d->m_finished = (flush == TDEFL_FINISH);
             if (flush == TDEFL_FULL_FLUSH)
@@ -1357,7 +1360,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             }
         }
 
-        TDEFL_COMPRESS_RETURN(d->m_prev_return_status = tdefl_flush_output_buffer(d));
+        TDEFL_COMPRESS_RETURN(d->m_prev_return_status = tdefl_flush_output_buffer(d, &call_state));
 #undef TDEFL_COMPRESS_RETURN
     }
 
@@ -1388,18 +1391,10 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         d->m_prev_return_status = TDEFL_STATUS_OKAY;
         d->m_saved_match_dist = d->m_saved_match_len = d->m_saved_lit = 0;
         d->m_adler32 = 1;
-        d->m_pIn_buf = NULL;
-        d->m_pOut_buf = NULL;
-        d->m_pIn_buf_size = NULL;
-        d->m_pOut_buf_size = NULL;
-        d->m_flush = TDEFL_NO_FLUSH;
-        d->m_pSrc = NULL;
-        d->m_src_buf_left = 0;
-        d->m_out_buf_ofs = 0;
         if (!(flags & TDEFL_NONDETERMINISTIC_PARSING_FLAG))
             MZ_CLEAR_ARR(d->m_dict);
-        memset(&d->m_huff_count[0][0], 0, sizeof(d->m_huff_count[0][0]) * TDEFL_MAX_HUFF_SYMBOLS_0);
-        memset(&d->m_huff_count[1][0], 0, sizeof(d->m_huff_count[1][0]) * TDEFL_MAX_HUFF_SYMBOLS_1);
+        (void)mz_fill_bytes(&d->m_huff_count[0][0], 0, sizeof(d->m_huff_count[0][0]) * TDEFL_MAX_HUFF_SYMBOLS_0);
+        (void)mz_fill_bytes(&d->m_huff_count[1][0], 0, sizeof(d->m_huff_count[1][0]) * TDEFL_MAX_HUFF_SYMBOLS_1);
         return TDEFL_STATUS_OKAY;
     }
 
@@ -1455,7 +1450,8 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             p->m_pBuf = pNew_buf;
             p->m_capacity = new_capacity;
         }
-        memcpy((mz_uint8 *)p->m_pBuf + p->m_size, pBuf, len);
+        if (!mz_copy_bytes((mz_uint8 *)p->m_pBuf + p->m_size, p->m_capacity - p->m_size, pBuf, len))
+            return MZ_FALSE;
         p->m_size = new_size;
         return MZ_TRUE;
     }
@@ -1577,7 +1573,13 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             c = (mz_uint32)mz_crc32(MZ_CRC32_INIT, pnghdr + 12, 17);
             for (i = 0; i < 4; ++i, c <<= 8)
                 ((mz_uint8 *)(pnghdr + 29))[i] = (mz_uint8)(c >> 24);
-            memcpy(out_buf.m_pBuf, pnghdr, 41);
+            if (!mz_copy_bytes(out_buf.m_pBuf, out_buf.m_capacity, pnghdr, 41))
+            {
+                *pLen_out = 0;
+                MZ_FREE(pComp);
+                MZ_FREE(out_buf.m_pBuf);
+                return NULL;
+            }
         }
         /* write footer (IDAT CRC-32, followed by IEND chunk) */
         if (!tdefl_output_buffer_putter("\0\0\0\0\0\0\0\0\x49\x45\x4e\x44\xae\x42\x60\x82", 16, &out_buf))
