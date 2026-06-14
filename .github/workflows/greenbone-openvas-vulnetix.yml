@@ -24,8 +24,6 @@ jobs:
     name: Greenbone/OpenVAS plus Vulnetix
     runs-on: ubuntu-latest
     timeout-minutes: 390
-    environment:
-      name: openvas-scanning
     env:
       GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
       GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
@@ -109,7 +107,7 @@ jobs:
       - name: Install Greenbone tools
         if: steps.config.outputs.enabled == 'true'
         shell: bash
-        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/gvm-tools-linux.txt
+        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-gvm-tools-linux.txt
       - name: Run Greenbone/OpenVAS scan
         if: steps.config.outputs.enabled == 'true'
         shell: bash

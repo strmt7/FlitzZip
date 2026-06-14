@@ -70,6 +70,9 @@ runs:
         gh api --paginate "repos/$env:GITHUB_REPOSITORY/tags" --jq ".[].name" |
             Sort-Object -Unique |
             Set-Content -LiteralPath out\existing-release-tags.txt
+        if (-not (Test-Path -LiteralPath out\existing-release-tags.txt)) {
+            New-Item -ItemType File -Path out\existing-release-tags.txt | Out-Null
+        }
 
         $requestedVersion = [string]$env:RELEASE_VERSION_INPUT
         $replaceExisting = $env:REPLACE_EXISTING -eq "true"

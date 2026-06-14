@@ -22,14 +22,14 @@ are used, and default to read-only repository permissions.
 | CodeQL C++ | Archive parser, path handling, CLI, Win32 UI, HIP boundary | GitHub code scanning |
 | CodeQL Actions | Workflow injection and Actions misuse | GitHub code scanning |
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
-| zizmor | GitHub Actions security analysis through a hash-locked Python wheel | SARIF upload |
+| zizmor | GitHub Actions security analysis through a hash-locked `requirements-*.txt` wheel install | SARIF upload |
 | Trivy | Filesystem dependency, config, secret, and license scan | SARIF upload |
 | Semgrep | Cross-language SAST through a digest-pinned scanner container | SARIF upload |
 | DevSkim | Microsoft security anti-pattern scanning | SARIF upload |
 | OSV Scanner | Known dependency vulnerability scan | GitHub code scanning |
 | Dependency Review | Blocks vulnerable dependency changes on PRs | PR check |
 | OSSF Scorecard | Repository supply-chain security posture | SARIF upload |
-| Greenbone/OpenVAS | Network/host vulnerability scan through hash-locked GVM tools for authorized targets | XML/JSON artifact and optional Vulnetix upload |
+| Greenbone/OpenVAS | Network/host vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and optional Vulnetix upload |
 | Vulnetix | Optional external vulnerability-management upload | Vulnetix project |
 
 ## Required GitHub Repository Settings
@@ -105,4 +105,7 @@ Each command prompts for the secret value. Do not pass secret values with
   needs a documented false-positive or generated-file rationale.
 - Security findings should be fixed at the root cause. Suppressions are allowed
   only after the evidence is documented in this runbook or an issue.
+- Workflows must not declare GitHub Actions `environment:` blocks unless a
+  maintainer explicitly approves deployments. Security scans must not create
+  deployment records.
 - Refresh GitHub Security tab alerts after every security remediation push.

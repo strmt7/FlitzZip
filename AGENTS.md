@@ -101,6 +101,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, and automatic secrets-gated OpenVAS/Vulnetix lane.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
+- Do not add GitHub Actions `environment:` blocks to workflows unless a maintainer explicitly approves deployment records.
 - Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.
 
 ## GUI Rules
