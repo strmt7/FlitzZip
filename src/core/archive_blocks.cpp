@@ -6,7 +6,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
+#include <cstddef>
 #include <future>
 #include <string>
 #include <utility>
@@ -228,10 +228,10 @@ void materialize_blocks_cpu(
             if (block.kind == BlockKind::Fill) {
                 std::ranges::fill(output.subspan(out_pos, len), static_cast<std::byte>(block.fill_value));
             } else if (block.kind == BlockKind::Raw) {
-                std::memcpy(
-                    output.data() + out_pos,
+                std::copy_n(
                     payload.data() + static_cast<std::size_t>(block.encoded_offset),
-                    len);
+                    len,
+                    output.data() + out_pos);
             } else if (block.kind == BlockKind::Deflate) {
                 inflate_deflate_block(
                     payload,
@@ -326,7 +326,7 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
             for (std::size_t i = begin; i < end; ++i) {
                 const auto offset = i * static_cast<std::size_t>(block_size);
                 const auto len = static_cast<std::size_t>(out.blocks[i].uncompressed_len);
-                std::memcpy(out.payload.data() + offset, input.data() + offset, len);
+                std::copy_n(input.data() + offset, len, out.payload.data() + offset);
             }
         });
         return out;
@@ -340,18 +340,18 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
                 continue;
             }
             if (descriptor.kind == BlockKind::Deflate) {
-                std::memcpy(
-                    out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset),
-                    block_work[i].payload.data(),
-                    block_work[i].payload.size());
+                std::copy(
+                    block_work[i].payload.begin(),
+                    block_work[i].payload.end(),
+                    out.payload.begin() + static_cast<std::ptrdiff_t>(descriptor.encoded_offset));
                 continue;
             }
             const auto source_offset = i * static_cast<std::size_t>(block_size);
             const auto len = static_cast<std::size_t>(descriptor.uncompressed_len);
-            std::memcpy(
-                out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset),
+            std::copy_n(
                 input.data() + source_offset,
-                len);
+                len,
+                out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset));
         }
     });
     return out;
@@ -416,26 +416,26 @@ EncodedChunk deflate_classified_raw_blocks_cpu(
                 continue;
             }
             if (descriptor.kind == BlockKind::Deflate) {
-                std::memcpy(
-                    out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset),
-                    block_work[i].payload.data(),
-                    block_work[i].payload.size());
+                std::copy(
+                    block_work[i].payload.begin(),
+                    block_work[i].payload.end(),
+                    out.payload.begin() + static_cast<std::ptrdiff_t>(descriptor.encoded_offset));
                 continue;
             }
             if (descriptor.kind == BlockKind::Pattern) {
                 const auto& source_descriptor = classified.blocks[i];
-                std::memcpy(
-                    out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset),
+                std::copy_n(
                     classified.payload.data() + static_cast<std::size_t>(source_descriptor.encoded_offset),
-                    static_cast<std::size_t>(source_descriptor.encoded_len));
+                    static_cast<std::size_t>(source_descriptor.encoded_len),
+                    out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset));
                 continue;
             }
             const auto source_offset = i * static_cast<std::size_t>(block_size);
             const auto len = static_cast<std::size_t>(descriptor.uncompressed_len);
-            std::memcpy(
-                out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset),
+            std::copy_n(
                 input.data() + source_offset,
-                len);
+                len,
+                out.payload.data() + static_cast<std::size_t>(descriptor.encoded_offset));
         }
     });
     return out;

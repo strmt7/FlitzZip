@@ -7,6 +7,7 @@
 #include "zip/zip_adapter.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -314,6 +316,173 @@ std::uint32_t resolve_memory_benchmark_workers(std::uint32_t requested) {
         std::max<std::uint32_t>(1U, static_cast<std::uint32_t>(std::max(1U, std::thread::hardware_concurrency()))));
 }
 
+// Purpose: Drain one memory benchmark encode task into the archive table.
+// Inputs: `pending_encode` owns completed or running encode tasks, `archive` stores chunks by index, and `result` accumulates stats.
+// Outputs: Moves one completed encode result into `archive` and updates output byte/GPU counters.
+void flush_one_memory_encode(
+    std::deque<PendingMemoryEncode>& pending_encode,
+    std::vector<MemoryArchiveChunk>& archive,
+    MemoryBenchmarkResult& result) {
+    auto pending = std::move(pending_encode.front());
+    pending_encode.pop_front();
+    auto chunk = pending.result.get();
+    result.stats.gpu_used = result.stats.gpu_used || chunk.encoded.gpu_used;
+    result.stats.output_bytes = checked_add_cli_u64(
+        result.stats.output_bytes,
+        chunk.encoded.payload.size(),
+        "memory benchmark encoded byte count overflows");
+    archive[pending.index] = std::move(chunk);
+}
+
+// Purpose: Encode the synthetic memory workload without writing benchmark data to storage.
+// Inputs: `total_bytes`, `inflight`, `options`, and `codec_options` define generated chunks and backend policy; `result` receives counters.
+// Outputs: Returns an in-memory archive chunk vector with per-chunk CRC data for later verification.
+std::vector<MemoryArchiveChunk> encode_memory_benchmark_archive(
+    std::uint64_t total_bytes,
+    std::uint32_t inflight,
+    const MemoryBenchmarkOptions& options,
+    const superzip::GpuCodecOptions& codec_options,
+    MemoryBenchmarkResult& result) {
+    const auto chunk_count = static_cast<std::size_t>(
+        (total_bytes + superzip::kMaxArchiveChunkBytes - 1U) / superzip::kMaxArchiveChunkBytes);
+    std::vector<MemoryArchiveChunk> archive(chunk_count);
+    std::deque<PendingMemoryEncode> pending_encode;
+    for (std::uint64_t offset = 0, index = 0; offset < total_bytes; ++index) {
+        const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, total_bytes - offset);
+        std::vector<std::byte> input;
+        input.resize(static_cast<std::size_t>(want));
+        fill_memory_benchmark_chunk(input, offset, total_bytes, options.profile);
+        pending_encode.push_back(PendingMemoryEncode{
+            .index = static_cast<std::size_t>(index),
+            .result = std::async(
+                std::launch::async,
+                [input = std::move(input), want, codec_options]() mutable {
+                    auto encoded = superzip::encode_chunk(
+                        std::span<const std::byte>(input.data(), input.size()),
+                        codec_options);
+                    const auto chunk_crc = encoded.source_crc32_available
+                        ? encoded.source_crc32
+                        : superzip::crc32(std::span<const std::byte>(input.data(), input.size()));
+                    return MemoryArchiveChunk{
+                        .encoded = std::move(encoded),
+                        .crc32 = chunk_crc,
+                        .uncompressed_size = want,
+                    };
+                }),
+        });
+        offset += want;
+        if (pending_encode.size() >= inflight) {
+            flush_one_memory_encode(pending_encode, archive, result);
+        }
+    }
+    while (!pending_encode.empty()) {
+        flush_one_memory_encode(pending_encode, archive, result);
+    }
+    return archive;
+}
+
+// Purpose: Drain one decoded-CRC benchmark task and compare it with the original chunk CRC.
+// Inputs: `pending_crc` owns CRC tasks, `archive` is the encoded chunk table, and `result` accumulates backend telemetry.
+// Outputs: Removes one task; throws `ArchiveError` if the decoded payload hash differs from the source hash.
+void flush_one_memory_crc(
+    std::deque<PendingMemoryCrc>& pending_crc,
+    const std::vector<MemoryArchiveChunk>& archive,
+    MemoryBenchmarkResult& result) {
+    auto pending = std::move(pending_crc.front());
+    pending_crc.pop_front();
+    const auto decoded_crc = pending.result.get();
+    const auto& chunk = archive[pending.index];
+    result.stats.gpu_used = result.stats.gpu_used || decoded_crc.gpu_used;
+    if (decoded_crc.crc32 != chunk.crc32) {
+        throw superzip::ArchiveError("memory benchmark verification CRC mismatch");
+    }
+}
+
+// Purpose: Verify encoded chunks by computing decoded CRCs without retaining full decoded buffers.
+// Inputs: `archive`, `inflight`, and `codec_options` define bounded concurrent verification work; `result` receives GPU usage.
+// Outputs: Returns normally when every chunk CRC matches; throws on decode or integrity failure.
+void verify_memory_benchmark_archive(
+    const std::vector<MemoryArchiveChunk>& archive,
+    std::uint32_t inflight,
+    const superzip::GpuCodecOptions& codec_options,
+    MemoryBenchmarkResult& result) {
+    std::deque<PendingMemoryCrc> pending_crc;
+    for (std::size_t index = 0; index < archive.size(); ++index) {
+        pending_crc.push_back(PendingMemoryCrc{
+            .index = index,
+            .result = std::async(
+                std::launch::async,
+                [&archive, index, codec_options] {
+                    const auto& chunk = archive[index];
+                    return superzip::crc_decoded_chunk(
+                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
+                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(), chunk.encoded.blocks.size()),
+                        chunk.uncompressed_size,
+                        codec_options);
+                }),
+        });
+        if (pending_crc.size() >= inflight) {
+            flush_one_memory_crc(pending_crc, archive, result);
+        }
+    }
+    while (!pending_crc.empty()) {
+        flush_one_memory_crc(pending_crc, archive, result);
+    }
+}
+
+// Purpose: Drain one full-decode benchmark task and validate its CRC.
+// Inputs: `pending_decode` owns decode tasks, `archive` is the encoded chunk table, and `result` accumulates backend telemetry.
+// Outputs: Removes one task; throws `ArchiveError` if extraction output differs from the source hash.
+void flush_one_memory_decode(
+    std::deque<PendingMemoryDecode>& pending_decode,
+    const std::vector<MemoryArchiveChunk>& archive,
+    MemoryBenchmarkResult& result) {
+    auto pending = std::move(pending_decode.front());
+    pending_decode.pop_front();
+    const auto decoded = pending.result.get();
+    result.stats.gpu_used = result.stats.gpu_used || decoded.gpu_used;
+    if (decoded.crc32 != archive[pending.index].crc32) {
+        throw superzip::ArchiveError("memory benchmark extraction CRC mismatch");
+    }
+}
+
+// Purpose: Decode every in-memory benchmark chunk to exercise the extraction path without disk writes.
+// Inputs: `archive`, `inflight`, and `codec_options` define bounded concurrent decode work; `result` receives GPU usage.
+// Outputs: Returns normally when every decoded chunk matches the original CRC.
+void extract_memory_benchmark_archive(
+    const std::vector<MemoryArchiveChunk>& archive,
+    std::uint32_t inflight,
+    const superzip::GpuCodecOptions& codec_options,
+    MemoryBenchmarkResult& result) {
+    std::deque<PendingMemoryDecode> pending_decode;
+    for (std::size_t index = 0; index < archive.size(); ++index) {
+        pending_decode.push_back(PendingMemoryDecode{
+            .index = index,
+            .result = std::async(
+                std::launch::async,
+                [&archive, index, codec_options] {
+                    const auto& chunk = archive[index];
+                    std::vector<std::byte> decoded(static_cast<std::size_t>(chunk.uncompressed_size));
+                    const bool decoded_on_gpu = superzip::decode_chunk(
+                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
+                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(), chunk.encoded.blocks.size()),
+                        std::span<std::byte>(decoded.data(), decoded.size()),
+                        codec_options);
+                    return MemoryDecodeResult{
+                        .crc32 = superzip::crc32(std::span<const std::byte>(decoded.data(), decoded.size())),
+                        .gpu_used = decoded_on_gpu,
+                    };
+                }),
+        });
+        if (pending_decode.size() >= inflight) {
+            flush_one_memory_decode(pending_decode, archive, result);
+        }
+    }
+    while (!pending_decode.empty()) {
+        flush_one_memory_decode(pending_decode, archive, result);
+    }
+}
+
 // Purpose: Run a no-filesystem CPU or AMD-HIP benchmark over generated in-memory chunks.
 // Inputs: `options` controls virtual workload size, data profile, backend lane, worker count, and compression level.
 // Outputs: Returns timing, byte counts, GPU telemetry, and correctness-checked phase statistics.
@@ -350,128 +519,18 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.stats.workers = workers;
     result.stats.inflight_chunks = inflight;
     result.codec_workers = codec_workers;
-    std::vector<MemoryArchiveChunk> archive;
-    archive.resize(chunk_count);
 
     const auto total_started = std::chrono::steady_clock::now();
     auto phase_started = std::chrono::steady_clock::now();
-    std::deque<PendingMemoryEncode> pending_encode;
-    auto flush_one_encode = [&]() {
-        auto pending = std::move(pending_encode.front());
-        pending_encode.pop_front();
-        auto chunk = pending.result.get();
-        result.stats.gpu_used = result.stats.gpu_used || chunk.encoded.gpu_used;
-        result.stats.output_bytes = checked_add_cli_u64(
-            result.stats.output_bytes,
-            chunk.encoded.payload.size(),
-            "memory benchmark encoded byte count overflows");
-        archive[pending.index] = std::move(chunk);
-    };
-    for (std::uint64_t offset = 0, index = 0; offset < total_bytes; ++index) {
-        const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, total_bytes - offset);
-        std::vector<std::byte> input;
-        input.resize(static_cast<std::size_t>(want));
-        fill_memory_benchmark_chunk(input, offset, total_bytes, options.profile);
-        pending_encode.push_back(PendingMemoryEncode{
-            .index = static_cast<std::size_t>(index),
-            .result = std::async(
-                std::launch::async,
-                [input = std::move(input), want, codec_options]() mutable {
-                    auto encoded = superzip::encode_chunk(
-                        std::span<const std::byte>(input.data(), input.size()),
-                        codec_options);
-                    const auto chunk_crc = encoded.source_crc32_available
-                        ? encoded.source_crc32
-                        : superzip::crc32(std::span<const std::byte>(input.data(), input.size()));
-                    return MemoryArchiveChunk{
-                        .encoded = std::move(encoded),
-                        .crc32 = chunk_crc,
-                        .uncompressed_size = want,
-                    };
-                }),
-        });
-        offset += want;
-        if (pending_encode.size() >= inflight) {
-            flush_one_encode();
-        }
-    }
-    while (!pending_encode.empty()) {
-        flush_one_encode();
-    }
+    auto archive = encode_memory_benchmark_archive(total_bytes, inflight, options, codec_options, result);
     result.compress_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
     phase_started = std::chrono::steady_clock::now();
-    std::deque<PendingMemoryCrc> pending_crc;
-    auto flush_one_crc = [&]() {
-        auto pending = std::move(pending_crc.front());
-        pending_crc.pop_front();
-        const auto decoded_crc = pending.result.get();
-        const auto& chunk = archive[pending.index];
-        result.stats.gpu_used = result.stats.gpu_used || decoded_crc.gpu_used;
-        if (decoded_crc.crc32 != chunk.crc32) {
-            throw superzip::ArchiveError("memory benchmark verification CRC mismatch");
-        }
-    };
-    for (std::size_t index = 0; index < archive.size(); ++index) {
-        pending_crc.push_back(PendingMemoryCrc{
-            .index = index,
-            .result = std::async(
-                std::launch::async,
-                [&archive, index, codec_options] {
-                    const auto& chunk = archive[index];
-                    return superzip::crc_decoded_chunk(
-                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
-                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(), chunk.encoded.blocks.size()),
-                        chunk.uncompressed_size,
-                        codec_options);
-                }),
-        });
-        if (pending_crc.size() >= inflight) {
-            flush_one_crc();
-        }
-    }
-    while (!pending_crc.empty()) {
-        flush_one_crc();
-    }
+    verify_memory_benchmark_archive(archive, inflight, codec_options, result);
     result.verify_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
     phase_started = std::chrono::steady_clock::now();
-    std::deque<PendingMemoryDecode> pending_decode;
-    auto flush_one_decode = [&]() {
-        auto pending = std::move(pending_decode.front());
-        pending_decode.pop_front();
-        const auto decoded = pending.result.get();
-        result.stats.gpu_used = result.stats.gpu_used || decoded.gpu_used;
-        if (decoded.crc32 != archive[pending.index].crc32) {
-            throw superzip::ArchiveError("memory benchmark extraction CRC mismatch");
-        }
-    };
-    for (std::size_t index = 0; index < archive.size(); ++index) {
-        pending_decode.push_back(PendingMemoryDecode{
-            .index = index,
-            .result = std::async(
-                std::launch::async,
-                [&archive, index, codec_options] {
-                    const auto& chunk = archive[index];
-                    std::vector<std::byte> decoded(static_cast<std::size_t>(chunk.uncompressed_size));
-                    const bool decoded_on_gpu = superzip::decode_chunk(
-                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
-                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(), chunk.encoded.blocks.size()),
-                        std::span<std::byte>(decoded.data(), decoded.size()),
-                        codec_options);
-                    return MemoryDecodeResult{
-                        .crc32 = superzip::crc32(std::span<const std::byte>(decoded.data(), decoded.size())),
-                        .gpu_used = decoded_on_gpu,
-                    };
-                }),
-        });
-        if (pending_decode.size() >= inflight) {
-            flush_one_decode();
-        }
-    }
-    while (!pending_decode.empty()) {
-        flush_one_decode();
-    }
+    extract_memory_benchmark_archive(archive, inflight, codec_options, result);
     result.extract_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
     result.stats.entries = archive.size();
     result.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
@@ -570,9 +629,11 @@ std::string require_arg(const std::vector<std::string>& args, std::size_t& index
 // Outputs: Returns the parsed integer; throws `ArchiveError` when the value is invalid.
 std::uint32_t require_u32_arg(const std::vector<std::string>& args, std::size_t& index, const char* name) {
     const auto text = require_arg(args, index, name);
-    std::size_t parsed = 0;
-    const unsigned long value = std::stoul(text, &parsed, 10);
-    if (parsed != text.size() || value > std::numeric_limits<std::uint32_t>::max()) {
+    std::uint64_t value = 0;
+    const auto* begin = text.data();
+    const auto* end = begin + text.size();
+    const auto parsed = std::from_chars(begin, end, value, 10);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || value > std::numeric_limits<std::uint32_t>::max()) {
         throw superzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
     }
     return static_cast<std::uint32_t>(value);
@@ -583,9 +644,11 @@ std::uint32_t require_u32_arg(const std::vector<std::string>& args, std::size_t&
 // Outputs: Returns the parsed integer; throws `ArchiveError` when the value is invalid or out of range.
 int require_int_arg(const std::vector<std::string>& args, std::size_t& index, const char* name, int minimum, int maximum) {
     const auto text = require_arg(args, index, name);
-    std::size_t parsed = 0;
-    const int value = std::stoi(text, &parsed, 10);
-    if (parsed != text.size() || value < minimum || value > maximum) {
+    int value = 0;
+    const auto* begin = text.data();
+    const auto* end = begin + text.size();
+    const auto parsed = std::from_chars(begin, end, value, 10);
+    if (parsed.ec != std::errc{} || parsed.ptr != end || value < minimum || value > maximum) {
         throw superzip::ArchiveError(std::string("invalid value for ") + name + ": " + text);
     }
     return value;

@@ -18,8 +18,8 @@ are used, and default to read-only repository permissions.
   request only.
 - `.github/workflows/release.yml` is manual-only and runs release build,
   packaging, install smoke tests, repository security scan, and publication.
-  Product releases are HIP-enabled and require the HIP SDK installer checksum
-  secrets plus the WiX v7 EULA acknowledgement variable documented in
+  Product releases are HIP-enabled and require the HIP SDK installer URL,
+  checksum, and WiX v7 EULA acknowledgement variables documented in
   `docs/release.md`.
 - `.github/dependabot.yml` keeps GitHub Actions dependencies visible through
   Dependabot pull requests.
@@ -55,70 +55,100 @@ Enable these in `strmt7/SuperZip`:
 5. Branch protection or rulesets requiring `windows-ci`, `security`, and
    `Greenbone/OpenVAS integration audit` checks before protected-branch updates.
 
-## Greenbone/OpenVAS Secrets
+## Greenbone/OpenVAS OIDC Broker
 
 Greenbone/OpenVAS is a real network scanner. It needs an authorized target and
 a reachable Greenbone GMP endpoint. Do not point it at systems you do not own
 or have explicit permission to scan.
 
-Required repository secrets:
+Direct GitHub repository secrets are intentionally not used by the live scan
+workflow. Zizmor correctly requires secret-consuming jobs to use dedicated
+GitHub Actions environments, and Actions environments create deployment records.
+Deployment records are forbidden in this repository, so private scanner
+credentials must be resolved through an external OIDC broker.
 
-- `GREENBONE_HOST`: Greenbone/GVM host reachable from GitHub Actions.
-- `GREENBONE_USERNAME`: Greenbone user with permission to create targets,
+Required repository variables:
+
+- `GREENBONE_SECRET_PROVIDER_URL`: HTTPS endpoint for the scanner configuration
+  broker. The broker must validate the GitHub OIDC token claims before returning
+  any private scanner settings.
+- `GREENBONE_SECRET_PROVIDER_AUDIENCE`: Optional OIDC audience. Defaults to
+  `superzip-openvas`.
+
+The broker must return this JSON object after validating the OIDC token:
+
+```json
+{
+  "greenbone_host": "scanner.example",
+  "greenbone_username": "superzip-ci",
+  "greenbone_password": "redacted",
+  "greenbone_target": "authorized-target.example",
+  "greenbone_port": "9390",
+  "greenbone_scan_config_id": "daba56c8-73ec-11df-a475-002264764cea",
+  "greenbone_scanner_id": "08b69003-5fc2-4037-a479-93b440211c73",
+  "greenbone_port_list_id": "",
+  "greenbone_max_minutes": "180",
+  "greenbone_delete_task": "true",
+  "vulnetix_org_id": "redacted"
+}
+```
+
+Required returned fields:
+
+- `greenbone_host`: Greenbone/GVM host reachable from GitHub Actions.
+- `greenbone_username`: Greenbone user with permission to create targets,
   create tasks, start tasks, read reports, and delete temporary tasks.
-- `GREENBONE_PASSWORD`: Password for `GREENBONE_USERNAME`.
-- `GREENBONE_TARGET`: Authorized host, IP, or CIDR to scan by default.
-
-Optional repository secrets:
-
-- `GREENBONE_PORT`: GMP TLS port. Defaults to `9390`.
-- `GREENBONE_SCAN_CONFIG_ID`: Scan config UUID. Defaults to the Greenbone
-  "Full and fast" UUID used in the official scripting examples.
-- `GREENBONE_SCANNER_ID`: Scanner UUID. Defaults to the OpenVAS scanner UUID
-  used in the official scripting examples.
-- `GREENBONE_PORT_LIST_ID`: Optional port-list UUID if your Greenbone setup
-  requires an explicit list.
-- `GREENBONE_MAX_MINUTES`: Maximum scan wait time. Defaults to `180`.
-- `GREENBONE_DELETE_TASK`: Whether to delete the temporary scan task after
-  report collection. Defaults to `true`.
-- `VULNETIX_ORG_ID`: Vulnetix organization identifier for uploading OpenVAS
+- `greenbone_password`: Password for `greenbone_username`.
+- `greenbone_target`: Authorized host, IP, or CIDR to scan by default. A
+  manual `workflow_dispatch` target overrides this value for one run.
+- `vulnetix_org_id`: Vulnetix organization identifier for uploading OpenVAS
   artifacts after the scan.
 
-Create the repository secrets through the GitHub UI:
+Optional returned fields:
+
+- `greenbone_port`: GMP TLS port. Defaults to `9390`.
+- `greenbone_scan_config_id`: Scan config UUID. Defaults to the Greenbone
+  "Full and fast" UUID used in the official scripting examples.
+- `greenbone_scanner_id`: Scanner UUID. Defaults to the OpenVAS scanner UUID
+  used in the official scripting examples.
+- `greenbone_port_list_id`: Optional port-list UUID if your Greenbone setup
+  requires an explicit list.
+- `greenbone_max_minutes`: Maximum scan wait time. Defaults to `180`.
+- `greenbone_delete_task`: Whether to delete the temporary scan task after
+  report collection. Defaults to `true`.
+
+Create the repository variables through the GitHub UI:
 
 1. Open `https://github.com/strmt7/SuperZip`.
 2. Go to `Settings > Secrets and variables > Actions`.
-3. Add each required value under `Repository secrets`.
+3. Add each required value under `Variables`.
 
-Do not create a GitHub Actions environment for this workflow. SuperZip workflows
-must never create deployment records, and scanner credentials must stay in
-repository secrets.
+Do not create a GitHub Actions environment for this workflow. SuperZip
+workflows must never create deployment records, and scanner credentials must
+stay outside GitHub Actions.
 
-Create the same repository secrets with GitHub CLI without exposing values in
-shell history:
+Create the same repository variables with GitHub CLI:
 
 ```powershell
-gh secret set GREENBONE_HOST -R strmt7/SuperZip
-gh secret set GREENBONE_USERNAME -R strmt7/SuperZip
-gh secret set GREENBONE_PASSWORD -R strmt7/SuperZip
-gh secret set GREENBONE_TARGET -R strmt7/SuperZip
-gh secret set VULNETIX_ORG_ID -R strmt7/SuperZip
+gh variable set GREENBONE_SECRET_PROVIDER_URL -R strmt7/SuperZip --body https://scanner-broker.example/superzip/openvas
+gh variable set GREENBONE_SECRET_PROVIDER_AUDIENCE -R strmt7/SuperZip --body superzip-openvas
 ```
 
-Each command prompts for the secret value. Do not pass secret values with
-`--body` unless the command itself is run from a secure secret manager.
+The variable values are non-secret broker routing metadata. Do not put
+Greenbone passwords, scanner targets, or Vulnetix organization IDs in GitHub
+variables.
 
 ## Operational Rules
 
 - The push and pull-request lane validates the workflow, hash-locked Greenbone
   tools, and GMP script contract without touching a network target.
 - The scheduled/manual live scan lane fails closed with an explicit report when
-  required Greenbone or Vulnetix secrets are absent. It does not claim a host
-  scan succeeded.
+  the OIDC broker is absent or omits required Greenbone/Vulnetix settings. It
+  does not claim a host scan succeeded.
 - The live scan lane fails when Greenbone reports any critical, high, medium,
   or low vulnerability count.
-- Pull requests from forks do not receive repository secrets. That is expected
-  GitHub Actions behavior.
+- Pull requests do not run the live network scan. The live lane is scheduled
+  and manual-only.
 - Scanner scope must not be narrowed only to silence findings. Any exclusion
   needs a documented false-positive or generated-file rationale.
 - `.semgrepignore` is intentionally present with comments only. It overrides

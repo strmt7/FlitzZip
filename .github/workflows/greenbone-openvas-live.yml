@@ -9,6 +9,7 @@ on:
         description: Optional one-off authorized Greenbone/OpenVAS target
         required: false
         default: ""
+        type: string
 
 permissions:
   contents: read # allow checkout and live scan artifact collection
@@ -22,81 +23,162 @@ jobs:
     name: Authorized Greenbone/OpenVAS scan plus Vulnetix
     runs-on: ubuntu-latest
     timeout-minutes: 390
+    permissions:
+      contents: read # allow checkout and live scan artifact collection
+      id-token: write # allow GitHub OIDC authentication to the external scan-secret broker
     env:
-      GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
-      GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
-      GREENBONE_USERNAME: ${{ secrets.GREENBONE_USERNAME }}
-      GREENBONE_PASSWORD: ${{ secrets.GREENBONE_PASSWORD }}
-      GREENBONE_TARGET_SECRET: ${{ secrets.GREENBONE_TARGET }}
+      GREENBONE_SECRET_PROVIDER_URL: ${{ vars.GREENBONE_SECRET_PROVIDER_URL }}
+      GREENBONE_SECRET_PROVIDER_AUDIENCE: ${{ vars.GREENBONE_SECRET_PROVIDER_AUDIENCE || 'superzip-openvas' }}
       GREENBONE_TARGET_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
-      GREENBONE_SCAN_CONFIG_ID: ${{ secrets.GREENBONE_SCAN_CONFIG_ID }}
-      GREENBONE_SCANNER_ID: ${{ secrets.GREENBONE_SCANNER_ID }}
-      GREENBONE_PORT_LIST_ID: ${{ secrets.GREENBONE_PORT_LIST_ID }}
-      GREENBONE_MAX_MINUTES: ${{ secrets.GREENBONE_MAX_MINUTES }}
-      GREENBONE_DELETE_TASK: ${{ secrets.GREENBONE_DELETE_TASK }}
-      VULNETIX_ORG_ID: ${{ secrets.VULNETIX_ORG_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-      - name: Resolve Greenbone configuration
+      - name: Resolve Greenbone configuration through OIDC
         id: config
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports/openvas
-          target="${GREENBONE_TARGET_INPUT:-${GREENBONE_TARGET_SECRET:-}}"
-          port="${GREENBONE_PORT:-9390}"
-          max_minutes="${GREENBONE_MAX_MINUTES:-180}"
-          delete_task="${GREENBONE_DELETE_TASK:-true}"
-          scan_config_id="${GREENBONE_SCAN_CONFIG_ID:-daba56c8-73ec-11df-a475-002264764cea}"
-          scanner_id="${GREENBONE_SCANNER_ID:-08b69003-5fc2-4037-a479-93b440211c73}"
-          port_list_id="${GREENBONE_PORT_LIST_ID:-}"
 
-          for value_name in target port max_minutes delete_task scan_config_id scanner_id port_list_id; do
+          provider="${GREENBONE_SECRET_PROVIDER_URL:-}"
+          audience="${GREENBONE_SECRET_PROVIDER_AUDIENCE:-superzip-openvas}"
+          target_input="${GREENBONE_TARGET_INPUT:-}"
+
+          for value_name in provider audience target_input; do
             value="${!value_name}"
             if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
               echo "::error::$value_name must be a single-line value"
               exit 1
             fi
           done
+          export GREENBONE_SECRET_PROVIDER_AUDIENCE="$audience"
+          export GREENBONE_TARGET_INPUT="$target_input"
 
-          missing=()
-          [ -n "${GREENBONE_HOST:-}" ] || missing+=("GREENBONE_HOST")
-          [ -n "${GREENBONE_USERNAME:-}" ] || missing+=("GREENBONE_USERNAME")
-          [ -n "${GREENBONE_PASSWORD:-}" ] || missing+=("GREENBONE_PASSWORD")
-          [ -n "$target" ] || missing+=("GREENBONE_TARGET or workflow_dispatch target")
-          [ -n "${VULNETIX_ORG_ID:-}" ] || missing+=("VULNETIX_ORG_ID")
-
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf '{"tool":"Greenbone/OpenVAS","status":"configuration-missing","missing":[' > reports/openvas/openvas-configuration-missing.json
-            for index in "${!missing[@]}"; do
-              if [ "$index" -gt 0 ]; then
-                printf ',' >> reports/openvas/openvas-configuration-missing.json
-              fi
-              printf '"%s"' "${missing[$index]}" >> reports/openvas/openvas-configuration-missing.json
-            done
-            printf ']}\n' >> reports/openvas/openvas-configuration-missing.json
-            cat > reports/openvas/openvas-summary.md <<'EOF'
-          # Greenbone/OpenVAS configuration missing
-
-          The authorized live scan cannot run until the required repository secrets are configured.
-          See `docs/security-code-scanning.md` for the exact secret names and setup commands.
+          if [ -z "$provider" ]; then
+            cat > reports/openvas/openvas-configuration-missing.json <<'EOF'
+          {"tool":"Greenbone/OpenVAS","status":"configuration-missing","missing":["GREENBONE_SECRET_PROVIDER_URL repository variable"]}
           EOF
-            echo "::error::Greenbone/OpenVAS required secrets are missing: ${missing[*]}"
+            cat > reports/openvas/openvas-summary.md <<'EOF'
+          # Greenbone/OpenVAS OIDC configuration missing
+
+          The authorized live scan cannot run until `GREENBONE_SECRET_PROVIDER_URL`
+          points to a broker that accepts GitHub OIDC tokens and returns the
+          Greenbone and Vulnetix scan configuration.
+          EOF
+            echo "::error::GREENBONE_SECRET_PROVIDER_URL repository variable is required for the live scan."
             exit 1
           fi
 
-          {
-            printf 'target=%s\n' "$target"
-            printf 'port=%s\n' "$port"
-            printf 'max_minutes=%s\n' "$max_minutes"
-            printf 'delete_task=%s\n' "$delete_task"
-            printf 'scan_config_id=%s\n' "$scan_config_id"
-            printf 'scanner_id=%s\n' "$scanner_id"
-            printf 'port_list_id=%s\n' "$port_list_id"
-          } >> "$GITHUB_OUTPUT"
+          encoded_audience="$(
+            python - <<'PY'
+          import os
+          import urllib.parse
+
+          print(urllib.parse.quote(os.environ["GREENBONE_SECRET_PROVIDER_AUDIENCE"], safe=""))
+          PY
+          )"
+          oidc_response="$(mktemp)"
+          curl -fsS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${encoded_audience}" \
+            -o "$oidc_response"
+          oidc_token="$(python -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["value"])' "$oidc_response")"
+
+          payload_path="$(mktemp)"
+          export PAYLOAD_PATH="$payload_path"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "ref": os.environ["GITHUB_REF"],
+              "sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "event_name": os.environ["GITHUB_EVENT_NAME"],
+              "target_input": os.environ.get("GREENBONE_TARGET_INPUT", ""),
+          }
+          Path(os.environ["PAYLOAD_PATH"]).write_text(json.dumps(payload), encoding="utf-8")
+          PY
+
+          config_response="$(mktemp)"
+          curl -fsS \
+            -X POST "$provider" \
+            -H "Authorization: Bearer ${oidc_token}" \
+            -H "Content-Type: application/json" \
+            --data @"$payload_path" \
+            -o "$config_response"
+
+          export CONFIG_RESPONSE="$config_response"
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          response_path = Path(os.environ["CONFIG_RESPONSE"])
+          try:
+              config = json.loads(response_path.read_text(encoding="utf-8"))
+          except json.JSONDecodeError as exc:
+              print(f"::error::Greenbone secret broker returned invalid JSON: {exc}")
+              sys.exit(1)
+
+          def get(name: str, default: str = "") -> str:
+              value = config.get(name, default)
+              if value is None:
+                  value = ""
+              value = str(value)
+              if "\n" in value or "\r" in value:
+                  print(f"::error::{name} must be a single-line value")
+                  sys.exit(1)
+              return value
+
+          values = {
+              "host": get("greenbone_host"),
+              "username": get("greenbone_username"),
+              "password": get("greenbone_password"),
+              "target": os.environ.get("GREENBONE_TARGET_INPUT") or get("greenbone_target"),
+              "port": get("greenbone_port", "9390"),
+              "max_minutes": get("greenbone_max_minutes", "180"),
+              "delete_task": get("greenbone_delete_task", "true"),
+              "scan_config_id": get("greenbone_scan_config_id", "daba56c8-73ec-11df-a475-002264764cea"),
+              "scanner_id": get("greenbone_scanner_id", "08b69003-5fc2-4037-a479-93b440211c73"),
+              "port_list_id": get("greenbone_port_list_id"),
+              "vulnetix_org_id": get("vulnetix_org_id"),
+          }
+          missing = [
+              key
+              for key in ("host", "username", "password", "target", "vulnetix_org_id")
+              if not values[key]
+          ]
+          if missing:
+              output_dir = Path("reports/openvas")
+              output_dir.mkdir(parents=True, exist_ok=True)
+              (output_dir / "openvas-configuration-missing.json").write_text(
+                  json.dumps(
+                      {
+                          "tool": "Greenbone/OpenVAS",
+                          "status": "configuration-invalid",
+                          "missing": missing,
+                      },
+                      indent=2,
+                  ),
+                  encoding="utf-8",
+              )
+              print(f"::error::Greenbone secret broker omitted required values: {', '.join(missing)}")
+              sys.exit(1)
+
+          for key in ("host", "username", "password", "target", "vulnetix_org_id"):
+              print(f"::add-mask::{values[key]}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for key, value in values.items():
+                  output.write(f"{key}={value}\n")
+          PY
       - name: Setup Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -107,6 +189,9 @@ jobs:
       - name: Run Greenbone/OpenVAS scan
         shell: bash
         env:
+          GREENBONE_EFFECTIVE_HOST: ${{ steps.config.outputs.host }}
+          GREENBONE_EFFECTIVE_USERNAME: ${{ steps.config.outputs.username }}
+          GREENBONE_EFFECTIVE_PASSWORD: ${{ steps.config.outputs.password }}
           GREENBONE_EFFECTIVE_PORT: ${{ steps.config.outputs.port }}
           GREENBONE_EFFECTIVE_TARGET: ${{ steps.config.outputs.target }}
           GREENBONE_EFFECTIVE_SCAN_CONFIG_ID: ${{ steps.config.outputs.scan_config_id }}
@@ -117,11 +202,11 @@ jobs:
         run: |
           set -euo pipefail
           gvm-script \
-            --gmp-username "$GREENBONE_USERNAME" \
-            --gmp-password "$GREENBONE_PASSWORD" \
+            --gmp-username "$GREENBONE_EFFECTIVE_USERNAME" \
+            --gmp-password "$GREENBONE_EFFECTIVE_PASSWORD" \
             --timeout -1 \
             tls \
-            --hostname "$GREENBONE_HOST" \
+            --hostname "$GREENBONE_EFFECTIVE_HOST" \
             --port "$GREENBONE_EFFECTIVE_PORT" \
             .github/openvas/openvas_scan.gmp.py \
             "$GREENBONE_EFFECTIVE_TARGET" \
@@ -156,11 +241,11 @@ jobs:
       - name: Vulnetix health check
         uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6 # v3.9.1
         with:
-          org-id: ${{ env.VULNETIX_ORG_ID }}
+          org-id: ${{ steps.config.outputs.vulnetix_org_id }}
       - name: Upload OpenVAS artifacts to Vulnetix
         uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6 # v3.9.1
         with:
-          org-id: ${{ env.VULNETIX_ORG_ID }}
+          org-id: ${{ steps.config.outputs.vulnetix_org_id }}
           task: upload
           artifact-path: reports/openvas
       - name: Upload OpenVAS artifact

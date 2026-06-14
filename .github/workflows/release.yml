@@ -54,8 +54,8 @@ jobs:
         uses: ./.github/actions/windows-release
         env:
           GH_TOKEN: ${{ github.token }}
-          HIP_SDK_INSTALLER_URL: ${{ secrets.HIP_SDK_INSTALLER_URL }}
-          HIP_SDK_INSTALLER_SHA256: ${{ secrets.HIP_SDK_INSTALLER_SHA256 }}
+          HIP_SDK_INSTALLER_URL: ${{ vars.HIP_SDK_INSTALLER_URL }}
+          HIP_SDK_INSTALLER_SHA256: ${{ vars.HIP_SDK_INSTALLER_SHA256 }}
           WIX_OSMF_EULA_ID: ${{ vars.WIX_OSMF_EULA_ID }}
         with:
           release_version: ${{ inputs.release_version }}

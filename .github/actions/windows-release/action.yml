@@ -151,10 +151,10 @@ runs:
             return
         }
         if (-not $env:HIP_SDK_INSTALLER_URL) {
-            throw "HIP_SDK_INSTALLER_URL secret is required for HIP-enabled hosted release builds."
+            throw "HIP_SDK_INSTALLER_URL repository variable is required for HIP-enabled hosted release builds."
         }
         if (-not $env:HIP_SDK_INSTALLER_SHA256) {
-            throw "HIP_SDK_INSTALLER_SHA256 secret is required for HIP-enabled hosted release builds."
+            throw "HIP_SDK_INSTALLER_SHA256 repository variable is required for HIP-enabled hosted release builds."
         }
         if ($env:HIP_SDK_INSTALLER_URL -match "[`r`n]" -or $env:HIP_SDK_INSTALLER_SHA256 -match "[`r`n]") {
             throw "HIP SDK installer inputs must be single-line values."

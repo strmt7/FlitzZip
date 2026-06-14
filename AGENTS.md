@@ -20,7 +20,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Non-Negotiable Boundaries
 
 - Do not commit credentials, tokens, personal paths, user profiles, local machine names, build artifacts, archives, crash dumps, `.vs`, or generated binary outputs.
-- Workflows in this repository must never create GitHub deployment records. Do not add GitHub Actions `environment:` blocks or `deployment:` keys; use repository secrets and repository variables for workflow inputs that need protection.
+- Workflows in this repository must never create GitHub deployment records. Do not add GitHub Actions `environment:` blocks or `deployment:` keys. Do not bind private scanner credentials directly in workflow YAML; use the documented OIDC broker pattern for Greenbone/OpenVAS live scan configuration.
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
@@ -130,14 +130,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
-- Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and a secrets-gated authorized live OpenVAS/Vulnetix lane.
+- Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
 - Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; SuperZip delay-loads it and reports missing prerequisites through `dependency-check`.
 - Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
-- Do not add GitHub Actions `environment:` blocks or `deployment:` keys. This repository uses repository secrets and repository variables instead of Actions environments so workflows cannot create deployment records.
-- Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.
+- Do not add GitHub Actions `environment:` blocks or `deployment:` keys. This repository uses repository variables plus an external OIDC broker instead of Actions environments so workflows cannot create deployment records.
+- Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Keep live scanner secrets outside GitHub Actions and return them only from the OIDC broker after claim validation.
 - Preserve the patched/original miniz split: production changes go under `third_party/miniz`, and the upstream archive under `third_party/upstream/miniz/3.1.1` stays unmodified.
 
 ## GUI Rules

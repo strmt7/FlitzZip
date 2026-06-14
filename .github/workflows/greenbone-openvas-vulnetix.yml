@@ -82,22 +82,25 @@ jobs:
               "event_name": os.environ["GITHUB_EVENT_NAME"],
               "head_sha": os.environ["GITHUB_SHA"],
               "live_network_scan": {
-                  "status": "requires-authorized-target-and-repository-secrets",
+                  "status": "requires-authorized-target-and-oidc-broker",
                   "trigger_events": ["workflow_dispatch", "schedule"],
-                  "required_secrets": [
-                      "GREENBONE_HOST",
-                      "GREENBONE_USERNAME",
-                      "GREENBONE_PASSWORD",
-                      "GREENBONE_TARGET or workflow_dispatch target",
+                  "required_variables": [
+                      "GREENBONE_SECRET_PROVIDER_URL",
                   ],
-                  "optional_secrets": [
-                      "GREENBONE_PORT",
-                      "GREENBONE_SCAN_CONFIG_ID",
-                      "GREENBONE_SCANNER_ID",
-                      "GREENBONE_PORT_LIST_ID",
-                      "GREENBONE_MAX_MINUTES",
-                      "GREENBONE_DELETE_TASK",
-                      "VULNETIX_ORG_ID",
+                  "required_broker_fields": [
+                      "greenbone_host",
+                      "greenbone_username",
+                      "greenbone_password",
+                      "greenbone_target or workflow_dispatch target",
+                      "vulnetix_org_id",
+                  ],
+                  "optional_broker_fields": [
+                      "greenbone_port",
+                      "greenbone_scan_config_id",
+                      "greenbone_scanner_id",
+                      "greenbone_port_list_id",
+                      "greenbone_max_minutes",
+                      "greenbone_delete_task",
                   ],
               },
           }
@@ -108,7 +111,7 @@ jobs:
           (output_dir / "openvas-integration-summary.md").write_text(
               "# Greenbone/OpenVAS integration audit\n\n"
               "The workflow, locked scanner dependencies, and GMP script parsed successfully. "
-              "A live network vulnerability scan requires the documented repository secrets "
+              "A live network vulnerability scan requires the documented OIDC broker "
               "and runs in the separate `greenbone-openvas-live` workflow.\n",
               encoding="utf-8",
           )

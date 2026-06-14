@@ -114,7 +114,8 @@ GitHub Actions run build/test validation, CodeQL, Trivy, Semgrep, DevSkim, OSV,
 Dependency Review, OSSF Scorecard, workflow linting, secret scanning, SBOM
 generation, ClusterFuzzLite parser fuzzing, and a Greenbone/OpenVAS integration
 audit. The live OpenVAS/Vulnetix scan is scheduled/manual and requires
-repository secrets.
+an OIDC-backed scanner configuration broker so private scanner credentials are
+never bound directly in workflow YAML.
 
 ## Fuzzing
 

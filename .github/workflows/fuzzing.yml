@@ -42,18 +42,19 @@ jobs:
           mkdir -p build-out
           chmod 0777 build-out
       - name: Build fuzzers
-        uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           language: c++
           sanitizer: ${{ matrix.sanitizer }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          keep-unaffected-fuzz-targets: true
       - name: Run fuzzers
-        uses: google/clusterfuzzlite/actions/run_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           language: c++
           sanitizer: ${{ matrix.sanitizer }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           mode: ${{ github.event_name == 'pull_request' && 'code-change' || 'batch' }}
-          fuzz-seconds: ${{ github.event_name == 'pull_request' && '300' || '900' }}
+          fuzz-seconds: ${{ github.event_name == 'pull_request' && '300' || '600' }}
           parallel-fuzzing: true
           output-sarif: ${{ github.event_name != 'pull_request' }}

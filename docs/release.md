@@ -22,19 +22,21 @@ AMD HIP SDK.
 
 ## Repository Inputs
 
-Before running a HIP-enabled hosted release, configure these repository secrets
-and variables:
+Before running a HIP-enabled hosted release, configure these repository
+variables:
 
-- `HIP_SDK_INSTALLER_URL`: repository secret containing the AMD HIP SDK
-  installer URL accepted from AMD's license-gated download page.
-- `HIP_SDK_INSTALLER_SHA256`: repository secret containing the expected SHA-256
+- `HIP_SDK_INSTALLER_URL`: repository variable containing the AMD HIP SDK
+  installer URL accepted from AMD's download page.
+- `HIP_SDK_INSTALLER_SHA256`: repository variable containing the expected SHA-256
   digest of that installer.
 - `WIX_OSMF_EULA_ID`: repository variable set to `wix7` after the maintainer has
   accepted the WiX v7 OSMF EULA.
 
-Do not use GitHub Actions environments for release secrets in this repository:
+Do not use GitHub Actions environments for release inputs in this repository:
 environment-gated jobs can create deployment records, and SuperZip workflows
-must never create deployments.
+must never create deployments. Do not put the HIP installer values in
+repository secrets; Zizmor requires secrets to be environment-gated, and
+environments are forbidden here.
 
 Do not commit AMD installer URLs, driver packages, credentials, or local
 download paths to the repository.

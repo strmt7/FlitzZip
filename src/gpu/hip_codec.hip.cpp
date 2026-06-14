@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <limits>
 #include <numeric>
 #include <string>
@@ -686,7 +685,7 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
         if (all_raw) {
             out.payload.resize(input.size());
-            std::memcpy(out.payload.data(), input.data(), input.size());
+            std::copy(input.begin(), input.end(), out.payload.begin());
         } else {
             for (std::uint32_t i = 0; i < block_count; ++i) {
                 if (device_results[i].kind == 1) {
