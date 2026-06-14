@@ -230,13 +230,13 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        $args = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+        $buildArgs = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
         if ($env:ENABLE_HIP -eq "true") {
-            $args += @("-HipArch", $env:HIP_ARCH)
+            $buildArgs += @("-HipArch", $env:HIP_ARCH)
         } else {
-            $args += "-CpuOnlyValidation"
+            $buildArgs += "-CpuOnlyValidation"
         }
-        & tools/build.ps1 @args
+        & tools/build.ps1 @buildArgs
 
     - name: Test
       shell: pwsh
@@ -250,14 +250,14 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        $args = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+        $packageArgs = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
         if ($env:ENABLE_HIP -ne "true") {
-            $args += "-AllowCpuValidationPackage"
+            $packageArgs += "-AllowCpuValidationPackage"
         }
         if ($env:CREATE_MSI -eq "true") {
-            $args += "-CreateMsi"
+            $packageArgs += "-CreateMsi"
         }
-        & tools/package.ps1 @args
+        & tools/package.ps1 @packageArgs
 
     - name: Portable install smoke
       shell: pwsh
