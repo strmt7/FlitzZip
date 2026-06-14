@@ -37,6 +37,10 @@ tools/package.ps1 -Configuration Release
 The package script installs the built executables and docs into `out/` and then
 creates a ZIP package. Build/package outputs are ignored by Git.
 
+Manual beta releases are created by `.github/workflows/beta-release.yml`. See
+`docs/release.md` for version inputs, MSI packaging, and the self-hosted AMD HIP
+runner requirement for GPU-enabled release binaries.
+
 ## CLI
 
 ```powershell
@@ -72,6 +76,11 @@ whole large archive entry into RAM for normal operations.
 SuperZip rejects unsafe extraction paths, malformed metadata, CRC mismatches,
 and accidental overwrites by default. Microsoft Defender scanning and SHA-256
 integrity hashing are available as opt-in hooks and are disabled by default.
+GitHub Actions run automatic security scanning with CodeQL, Trivy, Semgrep,
+DevSkim, OSV, Dependency Review, OSSF Scorecard, workflow linting, and an
+optional secrets-gated Greenbone/OpenVAS plus Vulnetix lane.
 
-See `docs/security.md`, `docs/portability.md`, `docs/design.md`, and
-`docs/third-party.md`.
+See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
+`docs/third-party.md`, and `docs/release.md`. See
+`docs/security-code-scanning.md` for the security workflow and repository-secret
+setup.

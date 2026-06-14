@@ -18,6 +18,13 @@ left navigation, queue/work surface, persistent GPU status, Security Review,
 History, AMD GPU, and Preferences pages. It keeps rendering native rather than
 using bitmap UI assets, so the app remains crisp at 4K+ and high DPI.
 
+Iteration 4 is the active acceptance reference for GUI work. Future changes must
+preserve the compact enterprise shell, command bar, icon rail, page-specific
+forms/tables, bottom GPU status strip, and explicit opt-in security controls.
+Visual changes are not complete until `tools/gui_smoke.ps1 -Configuration
+Release` captures every page and those screenshots are reviewed against the
+reference direction.
+
 ## Interaction Rules
 
 - Settings that can change security behavior are explicit toggles.

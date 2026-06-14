@@ -1,0 +1,297 @@
+name: security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-code-scanning-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql-cpp:
+    name: CodeQL C++
+    runs-on: windows-2022
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          languages: c-cpp
+          build-mode: manual
+          dependency-caching: true
+          config-file: ./.github/codeql/codeql-config.yml
+          queries: security-extended,security-and-quality
+      - name: Build C++ database
+        shell: pwsh
+        run: tools/build.ps1 -Configuration Release -PackageVersion 0.1.0-security
+      - name: Analyze C++
+        uses: github/codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          category: /language:c-cpp
+
+  codeql-actions:
+    name: CodeQL GitHub Actions
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          languages: actions
+          config-file: ./.github/codeql/codeql-config.yml
+          queries: security-extended,security-and-quality
+      - name: Analyze GitHub Actions
+        uses: github/codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          category: /language:actions
+
+  workflow-security:
+    name: Workflow lint and injection scan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: "1.25.x"
+          cache: false
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14.4"
+      - name: Audit scan scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Workflow security scan scope"
+          find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort
+          echo "::endgroup::"
+      - name: Run actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$HOME/go/bin/actionlint" -color
+      - name: Run zizmor
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check zizmor==1.25.2
+          zizmor --format sarif --persona auditor .github/workflows > zizmor-results.sarif
+      - name: Upload zizmor SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          sarif_file: zizmor-results.sarif
+          category: zizmor
+
+  trivy-filesystem:
+    name: Trivy filesystem security scan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Audit scan scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Trivy scan scope"
+          find . -maxdepth 5 \( -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.json' -o -name '*.yml' -o -name '*.yaml' -o -name '*.ps1' \) \
+            -not -path './.git/*' -not -path './third_party/*' -not -path './build/*' -not -path './out/*' | sort
+          echo "::endgroup::"
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          format: sarif
+          output: trivy-results.sarif
+          scanners: vuln,misconfig,secret,license
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          skip-dirs: third_party,build,out,reports
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14.4"
+      - name: Audit scan scope
+        run: |
+          echo "::group::Semgrep scan scope"
+          find src tests tools .github -type f \
+            \( -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' -o -name '*.ps1' -o -name '*.yml' -o -name '*.yaml' \) \
+            -not -path './third_party/*' | sort
+          echo "::endgroup::"
+      - name: Install Semgrep
+        run: python -m pip install --disable-pip-version-check semgrep==1.163.0
+      - name: Run Semgrep
+        run: semgrep scan --sarif --config auto --exclude third_party --exclude build --exclude out . > semgrep-results.sarif
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+  devskim:
+    name: DevSkim security lint
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Audit scan scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::DevSkim scan scope"
+          find src tests tools .github -type f \
+            \( -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' -o -name '*.ps1' -o -name '*.yml' -o -name '*.yaml' -o -name '*.md' \) \
+            -not -path './third_party/*' | sort
+          echo "::endgroup::"
+      - name: Run DevSkim
+        uses: microsoft/DevSkim-Action@4b5047945a44163b94642a1cecc0d93a3f428cc6 # v1.0.16
+        with:
+          directory-to-scan: .
+          ignore-globs: "**/.git/**,**/third_party/**,**/build/**,**/out/**,**/reports/**"
+      - name: Upload DevSkim SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          sarif_file: devskim-results.sarif
+          category: devskim
+
+  osv-scanner:
+    name: OSV dependency vulnerability scan
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      scan-args: |-
+        --recursive
+        --skip-git
+        ./
+
+  sbom:
+    name: SBOM generation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          path: .
+          format: spdx-json
+          output-file: superzip-sbom.spdx.json
+          upload-artifact: true
+
+  scorecard:
+    name: OSSF Scorecard supply-chain security
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Run OSSF Scorecard
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        continue-on-error: true
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: true
+      - name: Upload Scorecard SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@f52b05f4acaaa234e44466e66d29050e135ea9ef # v4.36.0
+        with:
+          sarif_file: scorecard-results.sarif
+          category: scorecard
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          warn-only: false

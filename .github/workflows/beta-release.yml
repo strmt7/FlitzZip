@@ -1,0 +1,286 @@
+name: beta-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: SemVer product version without v prefix; leave empty to use CMake project version
+        required: false
+        default: ""
+        type: string
+      replace_existing:
+        description: Delete an existing release/tag with the same version before publishing
+        required: false
+        default: false
+        type: boolean
+      create_msi:
+        description: Build and install-test the MSI in addition to the portable ZIP
+        required: false
+        default: true
+        type: boolean
+      enable_hip:
+        description: Build with AMD HIP; requires a self-hosted Windows runner with HIP SDK
+        required: false
+        default: false
+        type: boolean
+      hip_arch:
+        description: AMD HIP GPU architecture, for example gfx1201
+        required: false
+        default: gfx1201
+        type: string
+      runner_labels_json:
+        description: JSON runs-on value; use ["self-hosted","Windows","X64","AMD","HIP"] for HIP release runners
+        required: true
+        default: '"windows-2022"'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-release-${{ inputs.release_version || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  beta-release:
+    name: Build, package, smoke-test, and publish beta
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ${{ fromJSON(inputs.runner_labels_json) }}
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CREATE_MSI: ${{ inputs.create_msi }}
+      ENABLE_HIP: ${{ inputs.enable_hip }}
+      HIP_ARCH: ${{ inputs.hip_arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14.4"
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          gh api --paginate "repos/${{ github.repository }}/tags" --jq ".[].name" |
+              Sort-Object -Unique |
+              Set-Content -LiteralPath out\existing-release-tags.txt
+          $replaceExisting = "${{ inputs.replace_existing }}" -eq "true"
+          if ($replaceExisting -and -not "${{ inputs.release_version }}".Trim()) {
+              throw "replace_existing requires an explicit release_version."
+          }
+          if ("${{ inputs.hip_arch }}" -notmatch '^gfx[0-9a-z]+$') {
+              throw "hip_arch must look like gfx1201."
+          }
+          $metadataArgs = @(
+              "tools/release_metadata.py",
+              "--requested-version", "${{ inputs.release_version }}",
+              "--existing-tags-file", "out/existing-release-tags.txt",
+              "--repo-root", "$PWD",
+              "--json-output", "out/release-metadata.json"
+          )
+          if ($replaceExisting) {
+              $metadataArgs += "--allow-existing"
+          }
+          python @metadataArgs
+          $metadata = Get-Content -LiteralPath out\release-metadata.json -Raw | ConvertFrom-Json
+          $releaseTag = [string]$metadata.release_tag
+
+          $existingRelease = $false
+          gh release view $releaseTag *> $null
+          if ($LASTEXITCODE -eq 0) {
+              $existingRelease = $true
+          }
+          $existingTag = $false
+          $tagQuery = git ls-remote --tags origin "refs/tags/$releaseTag"
+          if ($tagQuery) {
+              $existingTag = $true
+          }
+
+          if (($existingRelease -or $existingTag) -and -not $replaceExisting) {
+              throw "Release or tag $releaseTag already exists. Re-run with replace_existing=true to replace it."
+          }
+
+          if ($replaceExisting) {
+              if ($existingRelease) {
+                  gh release delete $releaseTag --yes --cleanup-tag
+              }
+              $tagQuery = git ls-remote --tags origin "refs/tags/$releaseTag"
+              if ($tagQuery) {
+                  gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$releaseTag"
+              }
+          }
+
+      - name: Toolchain diagnostics
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Get-Command cmake | Select-Object Source,Version
+          Get-ComputerInfo | Select-Object CsSystemType,OSName,OSDisplayVersion
+          if ($env:ENABLE_HIP -eq "true") {
+              if (-not $env:HIP_PATH) {
+                  throw "enable_hip=true requires HIP_PATH on the selected runner."
+              }
+              Get-Command hipcc -ErrorAction Stop | Select-Object Source,Version
+              hipconfig
+          }
+
+      - name: Setup .NET for WiX
+        if: inputs.create_msi
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install WiX
+        if: inputs.create_msi
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $toolPath = Join-Path $env:RUNNER_TEMP "wix"
+          dotnet tool install --tool-path $toolPath wix --version 7.0.0
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $toolPath
+          & (Join-Path $toolPath "wix.exe") --version
+          & (Join-Path $toolPath "wix.exe") extension add --global WixToolset.UI.wixext/7.0.0
+
+      - name: Build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $args = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+          if ($env:ENABLE_HIP -eq "true") {
+              $args += @("-EnableHip", "-HipArch", $env:HIP_ARCH)
+          }
+          & tools/build.ps1 @args
+
+      - name: Test
+        shell: pwsh
+        run: tools/test.ps1 -Configuration Release
+
+      - name: Repository security scan
+        shell: pwsh
+        run: tools/security_scan.ps1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $args = @("-Configuration", "Release", "-PackageVersion", $env:PACKAGE_VERSION)
+          if ($env:CREATE_MSI -eq "true") {
+              $args += "-CreateMsi"
+          }
+          & tools/package.ps1 @args
+
+      - name: Portable install smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+              $PSNativeCommandUseErrorActionPreference = $false
+          }
+          $root = Join-Path $env:RUNNER_TEMP "superzip-portable-smoke"
+          $input = Join-Path $root "input"
+          $extract = Join-Path $root "extract"
+          New-Item -ItemType Directory -Force -Path $input, $extract | Out-Null
+          Set-Content -LiteralPath (Join-Path $input "alpha.txt") -Value "SuperZip beta smoke $env:RELEASE_TAG"
+          $cli = Join-Path $PWD "out\install-Release\bin\superzip_cli.exe"
+          & $cli gpu-info
+          if ($LASTEXITCODE -ne 0 -and $env:ENABLE_HIP -eq "true") {
+              throw "GPU info failed during HIP-enabled release smoke."
+          }
+          & $cli compress --format zip --output (Join-Path $root "archive.zip") $input
+          & $cli extract --format zip --output $extract (Join-Path $root "archive.zip")
+          if ((Get-Content -LiteralPath (Join-Path $extract "alpha.txt")) -notlike "SuperZip beta smoke*") {
+              throw "Portable ZIP smoke extraction did not preserve payload."
+          }
+          $archive = Join-Path $root "archive.szip"
+          $szipArgs = @("compress", "--format", "szip", "--sha256", "--output", $archive, $input)
+          if ($env:ENABLE_HIP -eq "true") {
+              $szipArgs = @("compress", "--format", "szip", "--require-gpu", "--sha256", "--output", $archive, $input)
+          }
+          & $cli @szipArgs
+          & $cli verify --sha256 $archive
+
+      - name: MSI install smoke
+        if: inputs.create_msi
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+              $PSNativeCommandUseErrorActionPreference = $false
+          }
+          $msi = Join-Path $PWD "out\$env:PACKAGE_BASE.msi"
+          $installLog = Join-Path $PWD "out\msi-install.log"
+          $uninstallLog = Join-Path $PWD "out\msi-uninstall.log"
+          $process = Start-Process msiexec.exe -ArgumentList @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) -PassThru -Wait
+          if ($process.ExitCode -ne 0) {
+              throw "MSI install failed with exit code $($process.ExitCode)."
+          }
+          $cli = Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe"
+          if (-not (Test-Path $cli)) {
+              throw "Installed CLI was not found at $cli."
+          }
+          & $cli gpu-info
+          if ($LASTEXITCODE -ne 0 -and $env:ENABLE_HIP -eq "true") {
+              throw "Installed GPU info failed during HIP-enabled release smoke."
+          }
+          $process = Start-Process msiexec.exe -ArgumentList @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) -PassThru -Wait
+          if ($process.ExitCode -ne 0) {
+              throw "MSI uninstall failed with exit code $($process.ExitCode)."
+          }
+          if (Test-Path $cli) {
+              throw "Installed CLI remained after MSI uninstall."
+          }
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $notes = Join-Path $PWD "out\release-notes.md"
+          $hipLine = if ($env:ENABLE_HIP -eq "true") {
+              "- AMD HIP enabled: yes, architecture $env:HIP_ARCH."
+          } else {
+              "- AMD HIP enabled: no in this GitHub-hosted validation build. Use enable_hip=true on a self-hosted Windows AMD HIP runner for GPU release binaries."
+          }
+          @"
+          # SuperZip $env:RELEASE_TAG
+
+          Beta Windows x64 release generated by the manual GitHub Actions beta-release workflow.
+
+          - 64-bit Windows package only.
+          $hipLine
+          - Portable ZIP smoke-tested after staging install.
+          - MSI built and silent install/uninstall smoke-tested when create_msi=true.
+          - Repository security scan completed before publishing.
+          - SHA-256 checksum files are attached beside each package.
+          "@ | Set-Content -LiteralPath $notes
+
+      - name: Publish prerelease
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $assets = @(
+              "out\$env:PACKAGE_BASE-portable.zip",
+              "out\$env:PACKAGE_BASE-portable.zip.sha256"
+          )
+          if ($env:CREATE_MSI -eq "true") {
+              $assets += @(
+                  "out\$env:PACKAGE_BASE.msi",
+                  "out\$env:PACKAGE_BASE.msi.sha256",
+                  "out\msi-install.log",
+                  "out\msi-uninstall.log"
+              )
+          }
+          gh release create $env:RELEASE_TAG @assets --target $env:GITHUB_SHA --title "SuperZip $env:RELEASE_TAG" --notes-file "out\release-notes.md" --draft --prerelease
+          gh release view $env:RELEASE_TAG --json tagName,isDraft,isPrerelease,assets
+          gh release edit $env:RELEASE_TAG --draft=false --prerelease
+          gh release view $env:RELEASE_TAG --json tagName,isDraft,isPrerelease,assets

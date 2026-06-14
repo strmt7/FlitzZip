@@ -4,13 +4,34 @@ param(
     [switch]$EnableHip,
     [switch]$ConfigureOnly,
     [string]$HipArch = "gfx1201",
-    [string]$VcvarsVersion = "14.44"
+    [string]$VcvarsVersion = "14.44",
+    [string]$PackageVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
 
+# Purpose: Resolve the package display version from an explicit argument or CMake project metadata.
+# Inputs: RequestedVersion is an optional SemVer string supplied by the caller.
+# Outputs: Returns the version string used for CMake package diagnostics and filenames.
+function Resolve-PackageVersion {
+    param([string]$RequestedVersion)
+    if ($RequestedVersion) {
+        return $RequestedVersion
+    }
+    $cmakeLists = Join-Path $repo "CMakeLists.txt"
+    $text = Get-Content -LiteralPath $cmakeLists -Raw
+    $match = [regex]::Match($text, "project\s*\(\s*SuperZip\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)", "IgnoreCase")
+    if (-not $match.Success) {
+        throw "Unable to resolve package version from CMakeLists.txt."
+    }
+    return $match.Groups[1].Value
+}
+
+# Purpose: Find a usable CMake executable on a Windows development or CI host.
+# Inputs: None; probes known install paths and PATH.
+# Outputs: Returns the CMake executable path or throws when CMake is unavailable.
 function Find-CMake {
     $candidates = @(
         "C:\Program Files\CMake\bin\cmake.exe",
@@ -27,6 +48,7 @@ function Find-CMake {
 
 $cmake = Find-CMake
 $hipArg = if ($EnableHip.IsPresent) { "ON" } else { "OFF" }
+$PackageVersion = Resolve-PackageVersion -RequestedVersion $PackageVersion
 $configureArgs = @(
     "-S", $repo,
     "-B", $build,
@@ -35,6 +57,7 @@ $configureArgs = @(
     "-DSUPERZIP_ENABLE_HIP=$hipArg",
     "-DSUPERZIP_HIP_ARCH=$HipArch",
     "-DSUPERZIP_VCVARS_VERSION=$VcvarsVersion",
+    "-DSUPERZIP_PACKAGE_VERSION=$PackageVersion",
     "-DSUPERZIP_BUILD_GUI=ON",
     "-DSUPERZIP_BUILD_TESTS=ON"
 )

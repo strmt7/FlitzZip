@@ -7,6 +7,7 @@ option(SUPERZIP_BUILD_GUI "Build native Windows GUI" ON)
 option(SUPERZIP_BUILD_TESTS "Build C++ test binaries" ON)
 set(SUPERZIP_HIP_ARCH "gfx1201" CACHE STRING "AMD GPU target architecture for HIP kernels")
 set(SUPERZIP_VCVARS_VERSION "14.44" CACHE STRING "MSVC toolset version used by hipcc on Windows")
+set(SUPERZIP_PACKAGE_VERSION "${PROJECT_VERSION}" CACHE STRING "Display version used in package filenames and app diagnostics")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,7 +42,7 @@ target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
     _CRT_SECURE_NO_WARNINGS
-    SUPERZIP_VERSION="${PROJECT_VERSION}"
+    SUPERZIP_VERSION="${SUPERZIP_PACKAGE_VERSION}"
 )
 
 if(MSVC)
@@ -109,7 +110,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
         src/app/main.cpp
         src/app/main_window.cpp
     )
-    target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme)
+    target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme dwmapi ole32)
     target_compile_definitions(SuperZip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     if(MSVC)
         target_link_options(SuperZip PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest")
@@ -147,6 +148,14 @@ set(CPACK_PACKAGE_NAME "SuperZip")
 set(CPACK_PACKAGE_VENDOR "strmt7")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Native Windows AMD HIP archive application")
-set(CPACK_PACKAGE_FILE_NAME "SuperZip-${PROJECT_VERSION}-Windows")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "SuperZip")
+set(CPACK_PACKAGE_EXECUTABLES "SuperZip" "SuperZip")
+set(CPACK_CREATE_DESKTOP_LINKS "SuperZip")
+set(CPACK_PACKAGE_FILE_NAME "SuperZip-${SUPERZIP_PACKAGE_VERSION}-win64")
+set(CPACK_SYSTEM_NAME "win64")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_WIX_VERSION 4)
+set(CPACK_WIX_UPGRADE_GUID "8E0D80F6-859D-4FE9-B082-F0D8048A8B57")
+set(CPACK_WIX_INSTALL_SCOPE "perMachine")
 set(CPACK_GENERATOR "ZIP")
 include(CPack)

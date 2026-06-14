@@ -85,7 +85,7 @@ settings objects, and archive plans.
 
 - Added path traversal and malformed archive tests.
 - Added static no-secret scans.
-- Added CI gates inspired by the user's OMERO repository style: tests, lint-like
+- Added CI gates inspired by the user's reference repository style: tests, lint-like
   checks, security scans, and documentation validation.
 
 ### Iteration 4: UI Surface Contract

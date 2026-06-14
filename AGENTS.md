@@ -36,6 +36,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `tests/cpp/`: focused C++ test harness.
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
 - `.github/workflows/`: CI and opt-in security integrations.
+- `.github/codeql/`: CodeQL scanning configuration.
+- `.github/workflows/beta-release.yml`: manual x64 beta release, installer smoke, and prerelease publishing workflow.
 - `.agents/skills/` and `mcp/`: local helper skills/MCPs for future agents.
 
 ## Build And Test Commands
@@ -59,6 +61,12 @@ Benchmark only after correctness tests pass:
 
 ```powershell
 tools\bench.ps1 -Configuration Release
+```
+
+Package validation:
+
+```powershell
+tools\package.ps1 -Configuration Release
 ```
 
 ## Coding Standards
@@ -90,7 +98,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
-- Keep CI layered: build, tests, secret scan, dependency review/security scanning, and manual OpenVAS/Vulnetix lane.
+- Keep CI layered: build, tests, secret scan, dependency review/security scanning, and automatic secrets-gated OpenVAS/Vulnetix lane.
+- Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
+- Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.
 
 ## GUI Rules
 
@@ -100,6 +110,13 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Progress repaint requests must be coalesced so fast jobs or 200 Hz displays do not flood the message queue.
 - Text must use native DPI fonts and avoid bitmap scaling. Do not render low-resolution assets and stretch them.
 - Check all pages, not only the main queue page, when making visual changes.
+- Treat `resources/design/superzip-ui-iteration-4.png` as the current visual
+  acceptance reference. Do not simplify the compact enterprise shell, command
+  bar, icon rail, page-specific panels, bottom GPU status strip, or explicit
+  settings/security pages.
+- After any GUI rendering change, run `tools/gui_smoke.ps1 -Configuration
+  Release` and inspect the generated screenshots for every page before calling
+  the UI done.
 
 ## Git Workflow
 
@@ -108,6 +125,8 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Never use destructive commands such as `git reset --hard` or `git checkout --` unless a maintainer explicitly requests them.
 - Before pushing, run build/test/security scans and `rg` for token patterns and personal paths.
 - After pushing, verify the remote URL does not contain credentials.
+- Release changes must keep the package x64-only, attach SHA-256 checksum files,
+  and run install/uninstall smoke tests before publishing.
 
 ## Agent Workflow
 

@@ -1,0 +1,140 @@
+name: greenbone-openvas-vulnetix
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "47 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Optional one-off authorized Greenbone/OpenVAS target
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: greenbone-openvas-vulnetix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  openvas-greenbone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 390
+    env:
+      GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
+      GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
+      GREENBONE_USERNAME: ${{ secrets.GREENBONE_USERNAME }}
+      GREENBONE_PASSWORD: ${{ secrets.GREENBONE_PASSWORD }}
+      GREENBONE_TARGET_SECRET: ${{ secrets.GREENBONE_TARGET }}
+      GREENBONE_TARGET_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
+      GREENBONE_SCAN_CONFIG_ID: ${{ secrets.GREENBONE_SCAN_CONFIG_ID }}
+      GREENBONE_SCANNER_ID: ${{ secrets.GREENBONE_SCANNER_ID }}
+      GREENBONE_PORT_LIST_ID: ${{ secrets.GREENBONE_PORT_LIST_ID }}
+      GREENBONE_MAX_MINUTES: ${{ secrets.GREENBONE_MAX_MINUTES }}
+      GREENBONE_DELETE_TASK: ${{ secrets.GREENBONE_DELETE_TASK }}
+      VULNETIX_ORG_ID: ${{ secrets.VULNETIX_ORG_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Resolve Greenbone configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports/openvas
+          target="${GREENBONE_TARGET_INPUT:-${GREENBONE_TARGET_SECRET:-}}"
+          port="${GREENBONE_PORT:-9390}"
+          max_minutes="${GREENBONE_MAX_MINUTES:-180}"
+          delete_task="${GREENBONE_DELETE_TASK:-true}"
+          scan_config_id="${GREENBONE_SCAN_CONFIG_ID:-daba56c8-73ec-11df-a475-002264764cea}"
+          scanner_id="${GREENBONE_SCANNER_ID:-08b69003-5fc2-4037-a479-93b440211c73}"
+          port_list_id="${GREENBONE_PORT_LIST_ID:-}"
+
+          missing=()
+          [ -n "${GREENBONE_HOST:-}" ] || missing+=("GREENBONE_HOST")
+          [ -n "${GREENBONE_USERNAME:-}" ] || missing+=("GREENBONE_USERNAME")
+          [ -n "${GREENBONE_PASSWORD:-}" ] || missing+=("GREENBONE_PASSWORD")
+          [ -n "$target" ] || missing+=("GREENBONE_TARGET or workflow_dispatch target")
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'enabled=false\n' >> "$GITHUB_OUTPUT"
+            printf '{"tool":"Greenbone/OpenVAS","status":"skipped","missing":[' > reports/openvas/openvas-skipped.json
+            for index in "${!missing[@]}"; do
+              if [ "$index" -gt 0 ]; then
+                printf ',' >> reports/openvas/openvas-skipped.json
+              fi
+              printf '"%s"' "${missing[$index]}" >> reports/openvas/openvas-skipped.json
+            done
+            printf ']}\n' >> reports/openvas/openvas-skipped.json
+            cat > reports/openvas/openvas-summary.md <<'EOF'
+          # Greenbone/OpenVAS skipped
+
+          The workflow ran automatically, but Greenbone/OpenVAS was skipped because the required repository secrets are not configured.
+          See `docs/security-code-scanning.md` for the exact secret names and setup commands.
+          EOF
+            exit 0
+          fi
+
+          printf 'enabled=true\n' >> "$GITHUB_OUTPUT"
+          {
+            printf 'target=%s\n' "$target"
+            printf 'port=%s\n' "$port"
+            printf 'max_minutes=%s\n' "$max_minutes"
+            printf 'delete_task=%s\n' "$delete_task"
+            printf 'scan_config_id=%s\n' "$scan_config_id"
+            printf 'scanner_id=%s\n' "$scanner_id"
+            printf 'port_list_id=%s\n' "$port_list_id"
+          } >> "$GITHUB_OUTPUT"
+      - name: Setup Python
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14.4"
+      - name: Install Greenbone tools
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        run: python -m pip install --disable-pip-version-check gvm-tools==26.0.4
+      - name: Run Greenbone/OpenVAS scan
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gvm-script \
+            --gmp-username "$GREENBONE_USERNAME" \
+            --gmp-password "$GREENBONE_PASSWORD" \
+            --timeout -1 \
+            tls \
+            --hostname "$GREENBONE_HOST" \
+            --port "${{ steps.config.outputs.port }}" \
+            .github/openvas/openvas_scan.gmp.py \
+            "${{ steps.config.outputs.target }}" \
+            reports/openvas \
+            "${{ steps.config.outputs.scan_config_id }}" \
+            "${{ steps.config.outputs.scanner_id }}" \
+            "${{ steps.config.outputs.port_list_id }}" \
+            "${{ steps.config.outputs.max_minutes }}" \
+            "${{ steps.config.outputs.delete_task }}"
+      - name: Vulnetix health check
+        if: ${{ env.VULNETIX_ORG_ID != '' }}
+        uses: Vulnetix/cli@a6fb5f993c6404f1d2d2c36542fed67aa2a7738d # main as checked 2026-06-14
+        with:
+          org-id: ${{ secrets.VULNETIX_ORG_ID }}
+      - name: Upload OpenVAS artifacts to Vulnetix
+        if: ${{ env.VULNETIX_ORG_ID != '' }}
+        uses: Vulnetix/cli@a6fb5f993c6404f1d2d2c36542fed67aa2a7738d # main as checked 2026-06-14
+        with:
+          org-id: ${{ secrets.VULNETIX_ORG_ID }}
+          task: upload
+          artifact-path: reports/openvas
+      - name: Upload OpenVAS artifact
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: greenbone-openvas-reports
+          path: reports/openvas
+          if-no-files-found: error

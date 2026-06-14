@@ -3,6 +3,8 @@ build/
 out/
 reports/
 /skills/
+__pycache__/
+*.pyc
 *.user
 *.pdb
 *.ilk
