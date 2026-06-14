@@ -20,6 +20,7 @@ jobs:
   clusterfuzzlite:
     name: ClusterFuzzLite parser fuzzing
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read # allow checkout and ClusterFuzzLite source access
       security-events: write # allow fuzzing SARIF upload when generated
