@@ -1,0 +1,27 @@
+name: windows-ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Configure
+        shell: pwsh
+        run: tools/build.ps1 -ConfigureOnly
+      - name: Build
+        shell: pwsh
+        run: tools/build.ps1
+      - name: Test
+        shell: pwsh
+        run: tools/test.ps1
+      - name: Security scan
+        shell: pwsh
+        run: tools/security_scan.ps1
