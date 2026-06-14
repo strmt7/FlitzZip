@@ -184,6 +184,9 @@ extern "C"
             MZ_CLEAR_ARR(r->m_tree_2);
     }
 
+    /* Incrementally decode one DEFLATE/zlib stream using tinfl's coroutine-style state machine. */
+    /* Inputs: r holds persistent decoder state, input/output spans are caller-owned, and decomp_flags select zlib/raw/wrapping behavior. */
+    /* Outputs: updates consumed/produced byte counts and returns a tinfl status indicating progress, completion, or malformed data. */
     tinfl_status tinfl_decompress(tinfl_decompressor *r, const mz_uint8 *pIn_buf_next, size_t *pIn_buf_size, mz_uint8 *pOut_buf_start, mz_uint8 *pOut_buf_next, size_t *pOut_buf_size, const mz_uint32 decomp_flags)
     {
         static const mz_uint16 s_length_base[31] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0 };
@@ -210,6 +213,7 @@ extern "C"
             return TINFL_STATUS_BAD_PARAM;
         }
 
+        /* Bind local tables to persistent storage before resuming the coroutine. */
         pTrees[0] = r->m_tree_0;
         pTrees[1] = r->m_tree_1;
         pTrees[2] = r->m_tree_2;
@@ -227,6 +231,7 @@ extern "C"
 
         bit_buf = num_bits = dist = counter = num_extra = r->m_zhdr0 = r->m_zhdr1 = 0;
         r->m_z_adler32 = r->m_check_adler32 = 1;
+        /* Validate optional zlib wrapper metadata before DEFLATE block decoding. */
         if (decomp_flags & TINFL_FLAG_PARSE_ZLIB_HEADER)
         {
             TINFL_GET_BYTE(1, r->m_zhdr0);
@@ -244,6 +249,7 @@ extern "C"
         {
             TINFL_GET_BITS(3, r->m_final, 3);
             r->m_type = r->m_final >> 1;
+            /* Block type 0 stores uncompressed bytes after byte alignment. */
             if (r->m_type == 0)
             {
                 TINFL_SKIP_BITS(5, num_bits & 7);

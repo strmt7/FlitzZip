@@ -26,6 +26,8 @@
 
 #include "miniz.h"
 
+#include <limits.h>
+
 typedef unsigned char mz_validate_uint16[sizeof(mz_uint16) == 2 ? 1 : -1];
 typedef unsigned char mz_validate_uint32[sizeof(mz_uint32) == 4 ? 1 : -1];
 typedef unsigned char mz_validate_uint64[sizeof(mz_uint64) == 8 ? 1 : -1];
@@ -321,9 +323,11 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
         mz_stream stream;
         memset(&stream, 0, sizeof(stream));
 
-        /* In case mz_ulong is 64-bits (argh I hate longs). */
+#if ULONG_MAX > 0xFFFFFFFFUL
+        /* In case mz_ulong is 64-bits. */
         if ((mz_uint64)(source_len | *pDest_len) > 0xFFFFFFFFU)
             return MZ_PARAM_ERROR;
+#endif
 
         stream.next_in = pSource;
         stream.avail_in = (mz_uint32)source_len;
@@ -564,9 +568,11 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
         int status;
         memset(&stream, 0, sizeof(stream));
 
-        /* In case mz_ulong is 64-bits (argh I hate longs). */
+#if ULONG_MAX > 0xFFFFFFFFUL
+        /* In case mz_ulong is 64-bits. */
         if ((mz_uint64)(*pSource_len | *pDest_len) > 0xFFFFFFFFU)
             return MZ_PARAM_ERROR;
+#endif
 
         stream.next_in = pSource;
         stream.avail_in = (mz_uint32)*pSource_len;

@@ -600,6 +600,9 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
 
     static const mz_uint s_tdefl_num_probes[11] = { 0, 1, 6, 32, 16, 32, 128, 256, 512, 768, 1500 };
 
+    /* Flush the current LZ code buffer as a raw, static-Huffman, or dynamic-Huffman DEFLATE block. */
+    /* Inputs: d is the active compressor state and flush controls final/sync/full flush markers. */
+    /* Output: nonzero means bytes remain buffered for the caller; negative status is stored in d on callback failure. */
     static int tdefl_flush_block(tdefl_compressor *d, int flush)
     {
         mz_uint saved_bit_buf, saved_bits_in;
@@ -650,6 +653,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
         saved_bit_buf = d->m_bit_buffer;
         saved_bits_in = d->m_bits_in;
 
+        /* Prefer compressed output unless raw output is required or smaller for this block. */
         if (!use_raw_block)
             comp_block_succeeded = tdefl_compress_block(d, (d->m_flags & TDEFL_FORCE_ALL_STATIC_BLOCKS) || (d->m_total_lz_bytes < 48));
 
@@ -682,6 +686,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
             tdefl_compress_block(d, MZ_TRUE);
         }
 
+        /* Write final zlib/adler or empty stored-block markers for explicit flush modes. */
         if (flush)
         {
             if (flush == TDEFL_FINISH)
@@ -717,6 +722,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
 
         MZ_ASSERT(d->m_pOutput_buf < d->m_pOutput_buf_end);
 
+        /* Reset per-block Huffman/LZ staging while preserving the rolling dictionary. */
         memset(&d->m_huff_count[0][0], 0, sizeof(d->m_huff_count[0][0]) * TDEFL_MAX_HUFF_SYMBOLS_0);
         memset(&d->m_huff_count[1][0], 0, sizeof(d->m_huff_count[1][0]) * TDEFL_MAX_HUFF_SYMBOLS_1);
 
@@ -727,6 +733,7 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
         d->m_total_lz_bytes = 0;
         d->m_block_index++;
 
+        /* Either hand the block to the callback or copy as much as the caller's output buffer allows. */
         if ((n = (int)(d->m_pOutput_buf - pOutput_buf_start)) != 0)
         {
             if (d->m_pPut_buf_func)
@@ -1263,8 +1270,30 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         return (d->m_finished && !d->m_output_flush_remaining) ? TDEFL_STATUS_DONE : TDEFL_STATUS_OKAY;
     }
 
+    /* Clear caller-owned transient buffer pointers after each public compression call. */
+    static void tdefl_clear_transient_io(tdefl_compressor *d)
+    {
+        d->m_pIn_buf = NULL;
+        d->m_pIn_buf_size = NULL;
+        d->m_pOut_buf = NULL;
+        d->m_pOut_buf_size = NULL;
+        d->m_pSrc = NULL;
+        d->m_src_buf_left = 0;
+        d->m_out_buf_ofs = 0;
+    }
+
+    /* Compress caller-provided input into either a caller output buffer or the initialized output callback. */
     tdefl_status tdefl_compress(tdefl_compressor *d, const void *pIn_buf, size_t *pIn_buf_size, void *pOut_buf, size_t *pOut_buf_size, tdefl_flush flush)
     {
+#define TDEFL_COMPRESS_RETURN(status_expr)            \
+        do                                            \
+        {                                             \
+            tdefl_status status_value = (status_expr); \
+            tdefl_clear_transient_io(d);              \
+            return status_value;                      \
+        }                                             \
+        MZ_MACRO_END
+
         if (!d)
         {
             if (pIn_buf_size)
@@ -1290,12 +1319,12 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
                 *pIn_buf_size = 0;
             if (pOut_buf_size)
                 *pOut_buf_size = 0;
-            return (d->m_prev_return_status = TDEFL_STATUS_BAD_PARAM);
+            TDEFL_COMPRESS_RETURN(d->m_prev_return_status = TDEFL_STATUS_BAD_PARAM);
         }
         d->m_wants_to_finish |= (flush == TDEFL_FINISH);
 
         if ((d->m_output_flush_remaining) || (d->m_finished))
-            return (d->m_prev_return_status = tdefl_flush_output_buffer(d));
+            TDEFL_COMPRESS_RETURN(d->m_prev_return_status = tdefl_flush_output_buffer(d));
 
 #if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN
         if (((d->m_flags & TDEFL_MAX_PROBES_MASK) == 1) &&
@@ -1303,13 +1332,13 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             ((d->m_flags & (TDEFL_FILTER_MATCHES | TDEFL_FORCE_ALL_RAW_BLOCKS | TDEFL_RLE_MATCHES)) == 0))
         {
             if (!tdefl_compress_fast(d))
-                return d->m_prev_return_status;
+                TDEFL_COMPRESS_RETURN(d->m_prev_return_status);
         }
         else
 #endif /* #if MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN */
         {
             if (!tdefl_compress_normal(d))
-                return d->m_prev_return_status;
+                TDEFL_COMPRESS_RETURN(d->m_prev_return_status);
         }
 
         if ((d->m_flags & (TDEFL_WRITE_ZLIB_HEADER | TDEFL_COMPUTE_ADLER32)) && (pIn_buf))
@@ -1318,7 +1347,7 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
         if ((flush) && (!d->m_lookahead_size) && (!d->m_src_buf_left) && (!d->m_output_flush_remaining))
         {
             if (tdefl_flush_block(d, flush) < 0)
-                return d->m_prev_return_status;
+                TDEFL_COMPRESS_RETURN(d->m_prev_return_status);
             d->m_finished = (flush == TDEFL_FINISH);
             if (flush == TDEFL_FULL_FLUSH)
             {
@@ -1328,7 +1357,8 @@ static MZ_FORCEINLINE void tdefl_find_match(tdefl_compressor *d, mz_uint lookahe
             }
         }
 
-        return (d->m_prev_return_status = tdefl_flush_output_buffer(d));
+        TDEFL_COMPRESS_RETURN(d->m_prev_return_status = tdefl_flush_output_buffer(d));
+#undef TDEFL_COMPRESS_RETURN
     }
 
     tdefl_status tdefl_compress_buffer(tdefl_compressor *d, const void *pIn_buf, size_t in_buf_size, tdefl_flush flush)

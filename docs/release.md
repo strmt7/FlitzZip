@@ -12,15 +12,8 @@ prerelease or a stable GitHub release.
   set to `true`.
 - `release_track`: `beta` publishes a prerelease; `stable` publishes a normal
   release.
-- `runner_profile`: `hosted-windows` validates build/package/release mechanics
-  on GitHub-hosted Windows; `self-hosted-amd-hip` uses fixed self-hosted labels
-  for GPU-enabled release binaries.
 - `create_msi`: builds and smoke-tests an MSI with WiX in addition to the
   portable ZIP.
-- `enable_hip`: builds with AMD HIP. This requires a self-hosted Windows x64
-  runner with AMD HIP SDK, `HIP_PATH`, Visual Studio C++ tools, and a supported
-  AMD GPU when runtime smoke tests use `--require-gpu`.
-- `hip_arch`: HIP architecture such as `gfx1201`.
 
 ## Runner Contract
 
@@ -29,10 +22,18 @@ build, tests, portable ZIP packaging, MSI creation, silent install, silent
 uninstall, checksums, and GitHub release publication. They do not provide an AMD
 GPU and must not publish HIP-enabled binaries.
 
-GPU-enabled release binaries require a maintained self-hosted Windows AMD HIP
-runner. The runner must be 64-bit Windows, have Visual Studio C++ tools and AMD
-ROCm/HIP installed, expose `HIP_PATH`, and be validated with
-`superzip_cli.exe gpu-info` before publishing.
+GitHub Actions in this repository must not use self-hosted runners because the
+workflow-security scanner treats them as a repository security risk. GPU-enabled
+HIP builds remain supported through the Windows-native local build path:
+
+```powershell
+tools\build.ps1 -Configuration Release -EnableHip -HipArch gfx1201
+build\Release\superzip_cli.exe gpu-info
+```
+
+Add a GitHub-hosted AMD HIP release path only after a secure hosted AMD Windows
+runner or deterministic HIP SDK setup is available and the workflow-security
+scanner is clean without suppressions.
 
 ## Triggering
 
@@ -43,7 +44,7 @@ Use the GitHub UI:
 3. Enter a product version such as `0.1.0`.
 4. Choose `release_track=beta` for the first public beta or `stable` for a
    normal release.
-5. Keep `enable_hip=false` on GitHub-hosted Windows runners.
+5. Keep `create_msi=true` unless MSI validation is intentionally being isolated.
 
 Use GitHub CLI for the first beta validation run:
 
@@ -52,22 +53,5 @@ gh workflow run release.yml -R strmt7/SuperZip `
   -f release_version=0.1.0 `
   -f replace_existing=false `
   -f release_track=beta `
-  -f runner_profile=hosted-windows `
-  -f create_msi=true `
-  -f enable_hip=false `
-  -f hip_arch=gfx1201
-```
-
-Use GitHub CLI on a self-hosted AMD HIP runner after that runner is registered
-and selected by repository runner labels:
-
-```powershell
-gh workflow run release.yml -R strmt7/SuperZip `
-  -f release_version=0.1.0 `
-  -f replace_existing=false `
-  -f release_track=beta `
-  -f runner_profile=self-hosted-amd-hip `
-  -f create_msi=true `
-  -f enable_hip=true `
-  -f hip_arch=gfx1201
+  -f create_msi=true
 ```

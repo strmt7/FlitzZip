@@ -1266,7 +1266,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 
         /* Bugfix: This code was also checking if the internal attribute was non-zero, which wasn't correct. */
         /* Most/all zip writers (hopefully) set DOS file/directory attributes in the low 16-bits, so check for the DOS directory flag and ignore the source OS ID in the created by field. */
-        /* FIXME: Remove this check? Is it necessary - we already check the filename. */
+        /* Upstream compatibility note: keep honoring DOS directory attributes in addition to directory suffixes. */
         attribute_mapping_id = MZ_READ_LE16(p + MZ_ZIP_CDH_VERSION_MADE_BY_OFS) >> 8;
         (void)attribute_mapping_id;
 
@@ -3307,12 +3307,12 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             if (pZip->m_total_files == MZ_UINT16_MAX)
             {
                 pState->m_zip64 = MZ_TRUE;
-                /*return mz_zip_set_error(pZip, MZ_ZIP_TOO_MANY_FILES); */
+                /* Zip64 is enabled here instead of failing immediately for too many ZIP32 entries. */
             }
             if (((mz_uint64)buf_size > 0xFFFFFFFF) || (uncomp_size > 0xFFFFFFFF))
             {
                 pState->m_zip64 = MZ_TRUE;
-                /*return mz_zip_set_error(pZip, MZ_ZIP_ARCHIVE_TOO_LARGE); */
+                /* Zip64 is enabled here instead of failing immediately for ZIP32 size limits. */
             }
         }
 
@@ -3365,7 +3365,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
                  pState->m_central_dir.m_size + MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIZE + user_extra_data_central_len + MZ_ZIP_DATA_DESCRIPTER_SIZE32) > 0xFFFFFFFF)
             {
                 pState->m_zip64 = MZ_TRUE;
-                /*return mz_zip_set_error(pZip, MZ_ZIP_ARCHIVE_TOO_LARGE); */
+                /* Zip64 is enabled here instead of failing immediately for projected ZIP32 size limits. */
             }
         }
 
@@ -3582,7 +3582,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if ((!pState->m_zip64) && (max_size > MZ_UINT32_MAX))
         {
             /* Source file is too large for non-zip64 */
-            /*return mz_zip_set_error(pZip, MZ_ZIP_ARCHIVE_TOO_LARGE); */
+            /* Zip64 is enabled here instead of failing immediately for large source files. */
             pState->m_zip64 = MZ_TRUE;
         }
 
@@ -3603,7 +3603,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             if (pZip->m_total_files == MZ_UINT16_MAX)
             {
                 pState->m_zip64 = MZ_TRUE;
-                /*return mz_zip_set_error(pZip, MZ_ZIP_TOO_MANY_FILES); */
+                /* Zip64 is enabled here instead of failing immediately for too many ZIP32 entries. */
             }
         }
 
@@ -3623,7 +3623,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             if ((pZip->m_archive_size + num_alignment_padding_bytes + MZ_ZIP_LOCAL_DIR_HEADER_SIZE + archive_name_size + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + archive_name_size + comment_size + user_extra_data_len + pState->m_central_dir.m_size + MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIZE + 1024 + MZ_ZIP_DATA_DESCRIPTER_SIZE32 + user_extra_data_central_len) > 0xFFFFFFFF)
             {
                 pState->m_zip64 = MZ_TRUE;
-                /*return mz_zip_set_error(pZip, MZ_ZIP_ARCHIVE_TOO_LARGE); */
+                /* Zip64 is enabled here instead of failing immediately for projected ZIP32 size limits. */
             }
         }
 

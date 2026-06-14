@@ -20,6 +20,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Non-Negotiable Boundaries
 
 - Do not commit credentials, tokens, personal paths, user profiles, local machine names, build artifacts, archives, crash dumps, `.vs`, or generated binary outputs.
+- Workflows in this repository must never create GitHub deployment records. Any job that uses a GitHub Actions `environment:` for secret governance must set `deployment: false`, and security scans must verify this before a push.
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
@@ -101,7 +102,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, and automatic secrets-gated OpenVAS/Vulnetix lane.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
-- Do not add GitHub Actions `environment:` blocks to workflows unless a maintainer explicitly approves deployment records.
+- Do not add GitHub Actions `environment:` blocks that can create deployment records. If an environment is necessary for secret governance, use `deployment: false` and document the reason in `docs/security-code-scanning.md`.
 - Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Use GitHub repository secrets.
 
 ## GUI Rules

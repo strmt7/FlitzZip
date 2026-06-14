@@ -13,7 +13,7 @@ on:
         default: ""
 
 permissions:
-  contents: read
+  contents: read # allow checkout and scan artifact collection
 
 concurrency:
   group: greenbone-openvas-vulnetix-${{ github.ref }}
@@ -24,6 +24,9 @@ jobs:
     name: Greenbone/OpenVAS plus Vulnetix
     runs-on: ubuntu-latest
     timeout-minutes: 390
+    environment:
+      name: greenbone-openvas-security-scanning
+      deployment: false
     env:
       GREENBONE_HOST: ${{ secrets.GREENBONE_HOST }}
       GREENBONE_PORT: ${{ secrets.GREENBONE_PORT }}
@@ -71,22 +74,27 @@ jobs:
           [ -n "$target" ] || missing+=("GREENBONE_TARGET or workflow_dispatch target")
 
           if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'enabled=false\n' >> "$GITHUB_OUTPUT"
-            printf '{"tool":"Greenbone/OpenVAS","status":"skipped","missing":[' > reports/openvas/openvas-skipped.json
+            printf '{"tool":"Greenbone/OpenVAS","status":"configuration-missing","missing":[' > reports/openvas/openvas-configuration-missing.json
             for index in "${!missing[@]}"; do
               if [ "$index" -gt 0 ]; then
-                printf ',' >> reports/openvas/openvas-skipped.json
+                printf ',' >> reports/openvas/openvas-configuration-missing.json
               fi
-              printf '"%s"' "${missing[$index]}" >> reports/openvas/openvas-skipped.json
+              printf '"%s"' "${missing[$index]}" >> reports/openvas/openvas-configuration-missing.json
             done
-            printf ']}\n' >> reports/openvas/openvas-skipped.json
+            printf ']}\n' >> reports/openvas/openvas-configuration-missing.json
             cat > reports/openvas/openvas-summary.md <<'EOF'
-          # Greenbone/OpenVAS skipped
+          # Greenbone/OpenVAS configuration missing
 
-          The workflow ran automatically, but Greenbone/OpenVAS was skipped because the required repository secrets are not configured.
+          The workflow is fail-closed: Greenbone/OpenVAS cannot run until the required environment secrets are configured.
           See `docs/security-code-scanning.md` for the exact secret names and setup commands.
           EOF
-            exit 0
+            echo "::error::Greenbone/OpenVAS required secrets are missing: ${missing[*]}"
+            exit 1
+          fi
+
+          if [ -z "${VULNETIX_ORG_ID:-}" ]; then
+            echo "::error::VULNETIX_ORG_ID is required so Vulnetix receives OpenVAS artifacts."
+            exit 1
           fi
 
           printf 'enabled=true\n' >> "$GITHUB_OUTPUT"
@@ -100,16 +108,13 @@ jobs:
             printf 'port_list_id=%s\n' "$port_list_id"
           } >> "$GITHUB_OUTPUT"
       - name: Setup Python
-        if: steps.config.outputs.enabled == 'true'
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.13"
       - name: Install Greenbone tools
-        if: steps.config.outputs.enabled == 'true'
         shell: bash
         run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-gvm-tools-linux.txt
       - name: Run Greenbone/OpenVAS scan
-        if: steps.config.outputs.enabled == 'true'
         shell: bash
         env:
           GREENBONE_EFFECTIVE_PORT: ${{ steps.config.outputs.port }}
@@ -137,13 +142,11 @@ jobs:
             "$GREENBONE_EFFECTIVE_MAX_MINUTES" \
             "$GREENBONE_EFFECTIVE_DELETE_TASK"
       - name: Vulnetix health check
-        if: ${{ env.VULNETIX_ORG_ID != '' }}
-        uses: Vulnetix/cli@788f50663ced622fbc2d1eefd244c9143451ed09 # main as checked 2026-06-14
+        uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6 # v3.9.1
         with:
           org-id: ${{ env.VULNETIX_ORG_ID }}
       - name: Upload OpenVAS artifacts to Vulnetix
-        if: ${{ env.VULNETIX_ORG_ID != '' }}
-        uses: Vulnetix/cli@788f50663ced622fbc2d1eefd244c9143451ed09 # main as checked 2026-06-14
+        uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6 # v3.9.1
         with:
           org-id: ${{ env.VULNETIX_ORG_ID }}
           task: upload

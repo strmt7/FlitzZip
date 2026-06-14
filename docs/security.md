@@ -67,22 +67,22 @@ not claim the target is clean.
 
 GitHub Actions should run the local security script first. Optional external
 upload and vulnerability management lanes are documented in
-`.github/workflows/vulnetix-openvas.yml`.
+`.github/workflows/greenbone-openvas-vulnetix.yml`.
 
 ## Vulnetix / OpenVAS Future Lane
 
-The Vulnetix OpenVAS page requires JavaScript in a static fetch, so the
-integration stub follows the public `Vulnetix/cli` GitHub Action documentation
-checked during implementation. The action documents:
+The Greenbone/OpenVAS and Vulnetix workflow uses a pinned `Vulnetix/cli` action
+after a real authorized OpenVAS scan has produced artifacts. The current pin is:
 
-- `uses: Vulnetix/cli@a6fb5f993c6404f1d2d2c36542fed67aa2a7738d`
+- `uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6`
 - `org-id: ${{ secrets.VULNETIX_ORG_ID }}`
 - optional `task: upload`
 - optional `artifact-path: ./reports/`
 
-The SuperZip workflow keeps this lane manual/optional until repository secrets
-and any external OpenVAS report producer are configured. Do not add hard-coded
-organization IDs, tokens, URLs, scan targets, or credentials to the repository.
+The SuperZip workflow fails closed until the required
+`greenbone-openvas-security-scanning` environment secrets are configured. Do not
+add hard-coded organization IDs, tokens, URLs, scan targets, or credentials to
+the repository.
 
-Note: the action is pinned to the commit observed on June 14, 2026. Re-check the
-upstream action before rotating that pin.
+Note: the action is pinned to the `v3.9.1` commit observed on June 14, 2026.
+Re-check the upstream action before rotating that pin.

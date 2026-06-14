@@ -13,8 +13,7 @@ $excludedRoots = @(
     (Join-Path $repo "build"),
     (Join-Path $repo "out"),
     (Join-Path $repo ".vs"),
-    (Join-Path $repo "skills"),
-    (Join-Path $repo "third_party\miniz")
+    (Join-Path $repo "skills")
 )
 
 $files = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
@@ -39,5 +38,59 @@ $forbidden = Get-ChildItem -Path $repo -Recurse -File -Include *.pdb,*.ilk,*.obj
 if ($forbidden) {
     throw "Build artifacts found outside build directory: $($forbidden[0].FullName)"
 }
+
+# Purpose: Verify workflow policy rules that prevent hidden deployments, suppressed failures, and source-scan blind spots.
+# Inputs: Reads tracked GitHub workflow/configuration files from `.github`.
+# Outputs: Throws when workflow policy is violated; otherwise returns normally.
+function Test-WorkflowSecurityPolicy {
+    $workflowRoots = @(
+        (Join-Path $repo ".github\workflows"),
+        (Join-Path $repo ".github\actions")
+    ) | Where-Object { Test-Path -LiteralPath $_ }
+
+    $workflowFiles = foreach ($root in $workflowRoots) {
+        Get-ChildItem -Path $root -Recurse -File -Include *.yml,*.yaml
+    }
+
+    foreach ($file in $workflowFiles) {
+        $lines = Get-Content -LiteralPath $file.FullName
+        for ($i = 0; $i -lt $lines.Count; ++$i) {
+            $line = $lines[$i]
+            if ($line -match '^\s*environment\s*:') {
+                $window = ($lines[$i..([Math]::Min($i + 6, $lines.Count - 1))] -join "`n")
+                if ($window -notmatch '(?m)^\s*deployment\s*:\s*false\s*(#.*)?$') {
+                    throw "Workflow environment without deployment:false found in $($file.FullName):$($i + 1)"
+                }
+            }
+            if ($line -match 'continue-on-error\s*:\s*true') {
+                throw "Workflow soft-fail behavior is forbidden in $($file.FullName):$($i + 1)"
+            }
+            if ($line -match '(--exclude|skip-dirs|ignore-globs|paths-ignore).*(src|tests|tools|third_party|\.github)') {
+                throw "Workflow scanner exclusion covers source-controlled code in $($file.FullName):$($i + 1)"
+            }
+        }
+    }
+
+    $codeqlConfig = Join-Path $repo ".github\codeql\codeql-config.yml"
+    if (Test-Path -LiteralPath $codeqlConfig) {
+        $text = Get-Content -LiteralPath $codeqlConfig -Raw
+        if ($text -match 'paths-ignore\s*:') {
+            throw "CodeQL paths-ignore is forbidden because it can hide source findings: $codeqlConfig"
+        }
+    }
+
+    $semgrepIgnore = Join-Path $repo ".semgrepignore"
+    if (Test-Path -LiteralPath $semgrepIgnore) {
+        $activePatterns = Get-Content -LiteralPath $semgrepIgnore | Where-Object {
+            $trimmed = $_.Trim()
+            $trimmed -and -not $trimmed.StartsWith("#")
+        }
+        if ($activePatterns) {
+            throw ".semgrepignore must not contain active ignore patterns: $semgrepIgnore"
+        }
+    }
+}
+
+Test-WorkflowSecurityPolicy
 
 Write-Host "Security scan passed."

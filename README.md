@@ -39,8 +39,8 @@ creates a ZIP package. Build/package outputs are ignored by Git.
 
 Manual releases are created by `.github/workflows/release.yml`. See
 `docs/release.md` for version inputs, beta/stable release tracks, MSI
-packaging, and the self-hosted AMD HIP runner requirement for GPU-enabled
-release binaries.
+packaging, and the hosted release validation boundary. AMD HIP builds remain
+available through the Windows-native local build path.
 
 ## CLI
 

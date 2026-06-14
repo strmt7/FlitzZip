@@ -98,7 +98,7 @@ runs:
             throw "hip_arch must look like gfx1201."
         }
         if ($env:ENABLE_HIP -eq "true" -and $env:ALLOW_HIP -ne "true") {
-            throw "enable_hip=true requires the self-hosted AMD HIP runner profile."
+            throw "enable_hip=true is disabled in the hosted GitHub release workflow."
         }
         if ($env:RELEASE_TRACK -eq "stable" -and $requestedVersion -match "-") {
             throw "stable releases must not use a prerelease SemVer suffix."
@@ -150,7 +150,7 @@ runs:
         Get-ComputerInfo | Select-Object CsSystemType,OSName,OSDisplayVersion
         if ($env:ENABLE_HIP -eq "true") {
             if (-not $env:HIP_PATH) {
-                throw "HIP_PATH must be set on the self-hosted AMD HIP runner."
+                throw "HIP_PATH must be set before HIP release validation can run."
             }
             Get-Command hipcc -ErrorAction SilentlyContinue | Select-Object Source,Version
         }
@@ -269,7 +269,7 @@ runs:
         $hipLine = if ($env:ENABLE_HIP -eq "true") {
             "- AMD HIP enabled: yes, architecture $env:HIP_ARCH."
         } else {
-            "- AMD HIP enabled: no in this validation build. Use the self-hosted AMD HIP runner profile for GPU release binaries."
+            "- AMD HIP enabled: no in this hosted validation build. Use the documented Windows-native local HIP build path for GPU-enabled binaries until a secure hosted AMD runner is available."
         }
         @"
         # SuperZip $env:RELEASE_TAG

@@ -5,6 +5,22 @@
 #include <fstream>
 #include <windows.h>
 
+namespace {
+
+// Purpose: Overwrite a little-endian 64-bit field at a fixed archive byte offset.
+// Inputs: `path` identifies the archive, `offset` is the zero-based byte offset, and `value` is the replacement value.
+// Outputs: Mutates the archive in place or throws through the stream state checks in the test body.
+void write_u64_at(const std::filesystem::path& path, std::streamoff offset, std::uint64_t value) {
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(offset, std::ios::beg);
+    for (int i = 0; i < 8; ++i) {
+        const char byte = static_cast<char>((value >> (i * 8)) & 0xFF);
+        file.write(&byte, 1);
+    }
+}
+
+}  // namespace
+
 // Purpose: Verify `.szip` roundtrip behavior for compressible and mixed byte patterns.
 // Inputs: Temporary files with repetitive and randomish content.
 // Outputs: Throws on failed compression/extraction or mismatched restored bytes.
@@ -114,6 +130,81 @@ TEST_CASE(szip_verify_rejects_corrupt_payload) {
     }
     superzip::ExtractOptions extract;
     extract.gpu_required = false;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_szip(archive, extract);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify `.szip` rejects archives that are too small to contain a footer.
+// Inputs: A temporary file shorter than the fixed SuperZip footer.
+// Outputs: Throws if verification does not reject the truncated archive.
+TEST_CASE(szip_verify_rejects_truncated_footer) {
+    const auto root = test_temp_dir("szip-truncated-footer");
+    const auto archive = root / "short.szip";
+    std::ofstream(archive, std::ios::binary) << "not a valid archive";
+    superzip::ExtractOptions extract;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_szip(archive, extract);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify `.szip` rejects a footer whose index offset points outside the archive file.
+// Inputs: A valid archive with the footer index offset overwritten beyond EOF.
+// Outputs: Throws if verification trusts the corrupt footer.
+TEST_CASE(szip_verify_rejects_index_offset_outside_file) {
+    const auto root = test_temp_dir("szip-index-outside");
+    const auto input = root / "file.bin";
+    std::ofstream(input, std::ios::binary) << "payload";
+    const auto archive = root / "archive.szip";
+    superzip::CompressOptions compress;
+    compress.gpu_required = false;
+    (void)superzip::compress_szip({input}, archive, compress);
+    const auto size = std::filesystem::file_size(archive);
+    write_u64_at(archive, static_cast<std::streamoff>(size - 16), size + 1024);
+    superzip::ExtractOptions extract;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_szip(archive, extract);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify `.szip` rejects an archive footer with a corrupt magic value.
+// Inputs: A valid archive whose footer magic byte is modified.
+// Outputs: Throws if verification accepts the corrupt footer.
+TEST_CASE(szip_verify_rejects_corrupt_footer_magic) {
+    const auto root = test_temp_dir("szip-footer-magic");
+    const auto input = root / "file.bin";
+    const std::string payload(4096, 'x');
+    std::ofstream(input, std::ios::binary).write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    const auto archive = root / "archive.szip";
+    superzip::CompressOptions compress;
+    compress.gpu_required = false;
+    (void)superzip::compress_szip({input}, archive, compress);
+    {
+        const auto size = std::filesystem::file_size(archive);
+        std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
+        char byte = 0;
+        file.seekg(static_cast<std::streamoff>(size - 24), std::ios::beg);
+        file.read(&byte, 1);
+        byte ^= 0x7F;
+        file.seekp(static_cast<std::streamoff>(size - 24), std::ios::beg);
+        file.write(&byte, 1);
+    }
+    superzip::ExtractOptions extract;
     bool rejected = false;
     try {
         (void)superzip::verify_szip(archive, extract);

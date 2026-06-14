@@ -2,6 +2,7 @@
 #include "core/result.hpp"
 #include "test_util.hpp"
 
+#include <vector>
 #include <windows.h>
 
 // Purpose: Verify archive path traversal is rejected before extraction.
@@ -31,6 +32,42 @@ TEST_CASE(path_safety_rejects_reserved_windows_names) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify archive path validation rejects Windows absolute, UNC, invalid-character, and trailing-character forms.
+// Inputs: A table of untrusted archive entry names covering Windows path edge cases.
+// Outputs: Throws if any unsafe path is accepted.
+TEST_CASE(path_safety_rejects_windows_unsafe_forms) {
+    const auto root = test_temp_dir("unsafe-forms");
+    const std::vector<std::string> unsafe_paths = {
+        "/absolute.txt",
+        "\\absolute.txt",
+        "\\\\server\\share\\file.txt",
+        "C:drive.txt",
+        "dir/file.",
+        "dir/file ",
+        "dir/a<b.txt",
+        "dir/a>b.txt",
+        "dir/a:b.txt",
+        "dir/a\"b.txt",
+        "dir/a|b.txt",
+        "dir/a?b.txt",
+        "dir/a*b.txt",
+        ".",
+        "./.",
+        "dir/COM9.txt",
+        "dir/LPT1",
+    };
+    for (const auto& path : unsafe_paths) {
+        bool rejected = false;
+        try {
+            (void)superzip::safe_join_archive_path(root, path);
+        } catch (const superzip::SecurityError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
     std::filesystem::remove_all(root);
 }
 

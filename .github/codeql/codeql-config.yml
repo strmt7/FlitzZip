@@ -1,7 +1,1 @@
 name: SuperZip CodeQL
-
-paths-ignore:
-  - build/**
-  - out/**
-  - reports/**
-  - third_party/**

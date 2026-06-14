@@ -1,0 +1,2 @@
+# Intentionally no source-code exclusions.
+# This file overrides Semgrep's default ignore list so tests and third_party are scanned.
