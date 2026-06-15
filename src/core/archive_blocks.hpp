@@ -33,14 +33,6 @@ bool block_kind_has_payload(BlockKind kind);
 // Outputs: Returns encoded descriptors and payload; throws `ArchiveError` on invalid limits.
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options);
 
-// Purpose: Add CPU deflate compression to raw blocks after an AMD HIP classification pass.
-// Inputs: `input` is the original chunk, `classified` is the GPU-emitted block table/payload, and `options` supplies CPU deflate settings.
-// Outputs: Returns a chunk that preserves GPU fill/pattern blocks and converts profitable raw blocks to deflate.
-EncodedChunk deflate_classified_raw_blocks_cpu(
-    std::span<const std::byte> input,
-    EncodedChunk classified,
-    const ArchiveCodecOptions& options);
-
 // Purpose: Detect whether a block table requires CPU deflate inflation after GPU materialization.
 // Inputs: `blocks` is a validated or soon-to-be-validated native SUZIP block table.
 // Outputs: Returns true when any block is deflate-compressed.

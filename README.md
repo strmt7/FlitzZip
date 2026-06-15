@@ -96,11 +96,14 @@ build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
 
 Use `--require-gpu` for `.suzip` operations that must fail instead of falling
-back to the CPU validation path. Extraction refuses to overwrite by default.
-Use `--force-cpu` only for diagnostics and CPU/GPU benchmarks on a HIP-enabled
-build. Optional `--verify-after-write`, `--sha256`, and `--defender-scan` flags
-add post-write archive validation, integrity hashing, and Microsoft Defender
-checks without making those extra passes implicit.
+back to the CPU validation path. In required-GPU mode, native `.suzip` data must
+be encoded with HIP-supported block kinds; archives that require CPU deflate are
+rejected instead of being partially decoded by miniz. Extraction refuses to
+overwrite by default. Use `--force-cpu` only for diagnostics and CPU/GPU
+benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
+and `--defender-scan` flags add post-write archive validation, integrity
+hashing, and Microsoft Defender checks without making those extra passes
+implicit.
 
 ## GUI
 

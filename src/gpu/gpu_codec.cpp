@@ -14,7 +14,7 @@ namespace {
 
 // Purpose: Convert backend-selection options to CPU archive codec options.
 // Inputs: `options` contains GPU requirement flags plus shared codec tuning.
-// Outputs: Returns the CPU codec subset used for fallback and post-GPU deflate handling.
+// Outputs: Returns the CPU codec subset used for forced-CPU operations and optional CPU fallback.
 ArchiveCodecOptions archive_codec_options(const GpuCodecOptions& options) {
     return ArchiveCodecOptions{
         .block_size = options.block_size,
@@ -45,6 +45,16 @@ void reject_oversized_codec_span(std::size_t size, const char* label) {
 }
 
 #if SUPERZIP_ENABLE_HIP
+// Purpose: Reject CPU-deflate block tables before entering the AMD HIP-only decode path.
+// Inputs: `blocks` is the archive chunk block table and `action` labels the failing operation.
+// Outputs: Returns for HIP-supported block kinds; throws `GpuError` for CPU-deflate data.
+void reject_deflate_blocks_for_hip(std::span<const BlockDescriptor> blocks, const char* action) {
+    if (block_table_contains_deflate(blocks)) {
+        throw GpuError(std::string("AMD HIP ") + action +
+            " cannot process CPU-deflate SUZIP blocks; use the CPU codec or recreate the archive with the HIP codec");
+    }
+}
+
 // Purpose: Add one telemetry counter into another without losing concurrent atomic updates.
 // Inputs: `counter` is the destination telemetry field and `value` is the source count.
 // Outputs: Atomically adds nonzero source values to the operation telemetry.
@@ -86,7 +96,7 @@ GpuCodecOptions gpu_attempt_options(
     return attempt;
 }
 
-// Purpose: Publish isolated HIP telemetry after the attempt and CPU post-processing both succeed.
+// Purpose: Publish isolated HIP telemetry after the attempt succeeds as a complete HIP codec operation.
 // Inputs: `target` is the final operation telemetry; `attempt_telemetry` is null for required-GPU or untracked operations.
 // Outputs: Merges temporary counters only for successful optional HIP work.
 void publish_successful_gpu_attempt(
@@ -229,9 +239,8 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
-            auto classified = encode_chunk_hip(input, hip_options);
-            classified.gpu_used = true;
-            auto encoded = deflate_classified_raw_blocks_cpu(input, std::move(classified), cpu_options);
+            auto encoded = encode_chunk_hip(input, hip_options);
+            encoded.gpu_used = true;
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return encoded;
         } catch (const GpuError&) {
@@ -268,10 +277,8 @@ bool decode_chunk(
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
+            reject_deflate_blocks_for_hip(blocks, "decode");
             decode_chunk_hip(payload, blocks, output, hip_options);
-            if (block_table_contains_deflate(blocks)) {
-                decode_deflate_blocks_cpu(payload, blocks, output, cpu_options);
-            }
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return true;
         } catch (const GpuError&) {
@@ -311,23 +318,13 @@ DecodedChunkCrc crc_decoded_chunk(
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
-            if (!block_table_contains_deflate(blocks)) {
-                auto decoded = DecodedChunkCrc{
-                    .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
-                    .gpu_used = true,
-                };
-                publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-                return decoded;
-            }
-            std::vector<std::byte> decoded(static_cast<std::size_t>(output_size));
-            decode_chunk_hip(payload, blocks, decoded, hip_options);
-            decode_deflate_blocks_cpu(payload, blocks, decoded, cpu_options);
-            auto crc = DecodedChunkCrc{
-                .crc32 = crc32(std::span<const std::byte>(decoded.data(), decoded.size())),
+            reject_deflate_blocks_for_hip(blocks, "CRC verification");
+            auto decoded = DecodedChunkCrc{
+                .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
                 .gpu_used = true,
             };
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return crc;
+            return decoded;
         } catch (const GpuError&) {
             if (options.require_gpu) {
                 throw;

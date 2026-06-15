@@ -711,7 +711,7 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
 
 // Purpose: Decode GPU-supported block kinds into a caller-provided host buffer through AMD HIP.
 // Inputs: `payload` and `blocks` are validated archive metadata, `output` is exact decoded storage, and `options` supplies telemetry.
-// Outputs: Writes decoded bytes into `output`; deflate ranges are intentionally left for the CPU miniz path.
+// Outputs: Writes decoded bytes into `output`; throws `GpuError` when CPU-deflate blocks require the CPU codec.
 void decode_chunk_hip(
     std::span<const std::byte> payload,
     std::span<const BlockDescriptor> blocks,
@@ -719,6 +719,11 @@ void decode_chunk_hip(
     const GpuCodecOptions& options) {
     if (output.empty()) {
         return;
+    }
+    for (const auto& block : blocks) {
+        if (block.kind == BlockKind::Deflate) {
+            throw GpuError("AMD HIP decode does not support CPU-deflate blocks");
+        }
     }
     auto* telemetry = options.telemetry.get();
     record_gpu_decode_chunk(telemetry);
@@ -805,6 +810,11 @@ std::uint32_t crc_decoded_chunk_hip(
     if (output_size > kMaxArchiveChunkBytes) {
         throw ArchiveError("decode output exceeds SuperZip resource limit");
     }
+    for (const auto& block : blocks) {
+        if (block.kind == BlockKind::Deflate) {
+            throw GpuError("AMD HIP CRC verification does not support CPU-deflate blocks");
+        }
+    }
     auto* telemetry = options.telemetry.get();
     record_gpu_decode_chunk(telemetry);
     const auto info = query_hip_gpu_info();
@@ -818,9 +828,6 @@ std::uint32_t crc_decoded_chunk_hip(
     host_blocks.reserve(blocks.size());
     std::uint64_t output_offset = 0;
     for (const auto& block : blocks) {
-        if (block.kind == BlockKind::Deflate) {
-            throw GpuError("GPU CRC-only verification does not support deflate blocks");
-        }
         host_blocks.push_back(DeviceBlock{
             .kind = static_cast<std::uint8_t>(block.kind),
             .fill_value = block.fill_value,

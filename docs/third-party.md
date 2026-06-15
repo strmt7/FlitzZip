@@ -9,10 +9,11 @@ SuperZip vendors miniz release `3.1.1` for standards-oriented ZIP compatibility.
 - Commit: `d10b03cc73475af673df40f06e5cefd1d5f940d9`
 - License: MIT, preserved at `third_party/miniz/LICENSE`
 
-SuperZip uses miniz for two bounded purposes: standards-oriented `.zip`
-compatibility and per-block deflate payloads inside native `.suzip` archives.
-The `.suzip` GPU boundary remains AMD HIP-only; miniz does not provide GPU
-acceleration or an alternate archive pipeline.
+SuperZip uses miniz for two bounded CPU-codec purposes: standards-oriented
+`.zip` compatibility and per-block deflate payloads inside CPU-authored native
+`.suzip` archives. The `.suzip` required-GPU boundary remains AMD HIP-only;
+miniz does not provide GPU acceleration, does not finish required-HIP decode
+work, and is not an alternate archive pipeline.
 
 The production copy under `third_party/miniz/` carries narrow local hardening
 patches. The unmodified upstream 3.1.1 source archive and checksum are stored

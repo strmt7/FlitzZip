@@ -87,9 +87,10 @@ release.
 SuperZip now computes source CRC-32 inside the HIP encode path while the source
 chunk is already resident on the AMD GPU. Verification can also compute CRC-32
 over decoded no-deflate chunks in VRAM and copy back only compact CRC segment
-metadata instead of copying the full decoded chunk only to checksum it. Deflate
-payloads still use the CPU miniz inflate path, so those verification chunks
-must return to host memory for correctness.
+metadata instead of copying the full decoded chunk only to checksum it.
+CPU-deflate payloads remain a CPU codec feature. A required-HIP verification or
+extraction rejects those blocks instead of invoking miniz, while optional GPU
+mode may fall back completely to the CPU codec.
 
 The current implementation is intentionally conservative:
 
@@ -108,9 +109,9 @@ carries HIP transfer and launch overhead without finding enough compressible
 structure. That is an optimization finding, not a result to hide or relabel.
 
 This implementation is not a full GPU deflate or hipCOMP-core production codec.
-Deflate blocks still use CPU miniz, and hipCOMP-core remains a research
-candidate until its upstream production-readiness warning and Windows packaging
-risk are resolved.
+Deflate blocks are owned by the CPU codec, required-HIP archives avoid them, and
+hipCOMP-core remains a research candidate until its upstream production-readiness
+warning and Windows packaging risk are resolved.
 
 ## Future Implementation Gate
 

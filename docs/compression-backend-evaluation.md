@@ -60,6 +60,9 @@ compatible with making it the default SuperZip release codec today.
 - Keep HIP as the only production GPU boundary.
 - Keep CPU fallback code explicit and visible in telemetry. `--require-gpu`
   must never fall back silently.
+- Keep CPU-deflate and required-HIP archive codecs separate. Optional GPU use
+  may fall back completely to the CPU codec, but a required-HIP operation must
+  not invoke miniz to finish a GPU operation.
 - Add rocPRIM only when a benchmark proves it reduces code complexity or
   improves real throughput.
 - Do not add OpenCL, SYCL, OpenMP offload, CUDA, or vendor-neutral GPU

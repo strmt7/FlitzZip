@@ -120,9 +120,12 @@ verification, and extraction paths without large filesystem writes. It does not
 claim sustained storage throughput. The benchmark must also report
 `CodecWorkers`, which is resolved with the same per-entry worker allocation rule
 used by production archive operations. Do not introduce benchmark-only
-parallelism that is absent from the product path. Failed optional HIP attempts
-must not be counted as completed GPU encode/decode chunks, kernel launches,
-transfer bytes, or device allocations in CPU-fallback telemetry. Use
+parallelism that is absent from the product path. Required-HIP benchmark lanes
+must use HIP-supported SUZIP block kinds only; CPU-deflate blocks belong to the
+forced-CPU lane and must not be decoded by miniz inside a required-HIP
+operation. Failed optional HIP attempts must not be counted as completed GPU
+encode/decode chunks, kernel launches, transfer bytes, or device allocations in
+CPU-fallback telemetry. Use
 `tools\storage_smoke.ps1`
 for the small filesystem correctness path; it writes a bounded temporary
 payload, verifies the archive, compares SHA-256 hashes after extraction, and

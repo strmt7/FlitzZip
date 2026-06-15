@@ -37,6 +37,43 @@ void write_test_footer(std::ostream& file, std::uint64_t index_offset, std::uint
     superzip::write_u64(file, index_size);
 }
 
+// Purpose: Read a test archive index through the public index serializer contract.
+// Inputs: `path` identifies a native `.suzip` archive produced or handcrafted by a test.
+// Outputs: Returns parsed index metadata so tests can assert block-kind contracts.
+superzip::ArchiveIndex read_test_archive_index(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    REQUIRE_TRUE(file.is_open());
+    file.seekg(0, std::ios::end);
+    const auto end = file.tellg();
+    REQUIRE_TRUE(end != std::streampos(-1));
+    const auto size = static_cast<std::uint64_t>(end);
+    REQUIRE_TRUE(size >= 24U);
+    file.seekg(static_cast<std::streamoff>(size - 24U), std::ios::beg);
+    REQUIRE_EQ(superzip::read_u32(file), kTestFooterMagic);
+    REQUIRE_EQ(superzip::read_u32(file), superzip::kSuperZipVersion);
+    const auto index_offset = superzip::read_u64(file);
+    const auto index_size = superzip::read_u64(file);
+    REQUIRE_TRUE(index_offset <= size);
+    REQUIRE_TRUE(index_size <= size - index_offset);
+    file.seekg(static_cast<std::streamoff>(index_offset), std::ios::beg);
+    std::string index_bytes(static_cast<std::size_t>(index_size), '\0');
+    file.read(index_bytes.data(), static_cast<std::streamsize>(index_bytes.size()));
+    REQUIRE_EQ(static_cast<std::uint64_t>(file.gcount()), index_size);
+    std::istringstream index_stream(index_bytes, std::ios::binary);
+    return superzip::read_archive_index(index_stream);
+}
+
+// Purpose: Detect whether any archive entry contains one block kind.
+// Inputs: `index` is parsed `.suzip` metadata and `kind` is the block kind to find.
+// Outputs: Returns true when any file entry contains at least one matching block.
+bool archive_contains_block_kind(const superzip::ArchiveIndex& index, superzip::BlockKind kind) {
+    return std::ranges::any_of(index.entries, [kind](const superzip::ArchiveEntry& entry) {
+        return std::ranges::any_of(entry.blocks, [kind](const superzip::BlockDescriptor& block) {
+            return block.kind == kind;
+        });
+    });
+}
+
 }  // namespace
 
 // Purpose: Verify `.suzip` roundtrip behavior for compressible and mixed byte patterns.
@@ -219,6 +256,101 @@ TEST_CASE(suzip_compresses_text_heavy_payload) {
     verify.gpu_required = false;
     verify.force_cpu = true;
     (void)superzip::verify_suzip(archive, verify);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify the required-HIP encoder produces GPU-supported SUZIP blocks without CPU deflate.
+// Inputs: A repetitive payload compressed with `gpu_required` on an AMD HIP host.
+// Outputs: Throws if required-HIP compression emits deflate blocks or cannot verify/extract through HIP.
+TEST_CASE(suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+
+    const auto root = test_temp_dir("suzip-required-gpu-no-deflate");
+    const auto input = root / "gpu.txt";
+    {
+        std::ofstream out(input, std::ios::binary);
+        for (int i = 0; i < 32768; ++i) {
+            out << "SuperZip required HIP codec should stay separate from CPU deflate.\n";
+        }
+    }
+    const auto archive = root / "archive.suzip";
+
+    superzip::CompressOptions compress;
+    compress.gpu_required = true;
+    compress.force_cpu = false;
+    compress.chunk_size = 128 * 1024;
+    compress.block_size = 64 * 1024;
+    compress.verify_after_write = true;
+    const auto compressed = superzip::compress_suzip({input}, archive, compress);
+    REQUIRE_TRUE(compressed.gpu_used);
+    REQUIRE_TRUE(compressed.gpu_runtime.encode_chunks > 0);
+    REQUIRE_TRUE(compressed.gpu_runtime.kernel_launches > 0);
+
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_TRUE(!archive_contains_block_kind(index, superzip::BlockKind::Deflate));
+
+    superzip::ExtractOptions verify;
+    verify.gpu_required = true;
+    verify.force_cpu = false;
+    verify.chunk_size = 128 * 1024;
+    verify.block_size = 64 * 1024;
+    const auto verified = superzip::verify_suzip(archive, verify);
+    REQUIRE_TRUE(verified.gpu_used);
+
+    const auto output = root / "out";
+    verify.overwrite = true;
+    const auto extracted = superzip::extract_suzip(archive, output, verify);
+    REQUIRE_TRUE(extracted.gpu_used);
+    REQUIRE_EQ(
+        std::filesystem::file_size(output / "gpu.txt"),
+        std::filesystem::file_size(input));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify required-HIP verification refuses archives that need CPU deflate.
+// Inputs: A force-CPU text archive that intentionally contains miniz deflate blocks.
+// Outputs: Throws if `gpu_required` silently invokes the CPU deflate codec.
+TEST_CASE(suzip_required_gpu_rejects_cpu_deflate_archive) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+
+    const auto root = test_temp_dir("suzip-required-gpu-rejects-deflate");
+    const auto input = root / "cpu-deflate.txt";
+    {
+        std::ofstream out(input, std::ios::binary);
+        for (int i = 0; i < 32768; ++i) {
+            out << "CPU deflate archive block for required HIP rejection.\n";
+        }
+    }
+    const auto archive = root / "archive.suzip";
+
+    superzip::CompressOptions compress;
+    compress.gpu_required = false;
+    compress.force_cpu = true;
+    compress.chunk_size = 128 * 1024;
+    compress.block_size = 64 * 1024;
+    const auto compressed = superzip::compress_suzip({input}, archive, compress);
+    REQUIRE_TRUE(!compressed.gpu_used);
+    REQUIRE_TRUE(compressed.output_bytes < std::filesystem::file_size(input) / 4U);
+
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::Deflate));
+
+    superzip::ExtractOptions verify;
+    verify.gpu_required = true;
+    verify.force_cpu = false;
+    verify.chunk_size = 128 * 1024;
+    verify.block_size = 64 * 1024;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_suzip(archive, verify);
+    } catch (const superzip::GpuError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
     std::filesystem::remove_all(root);
 }
 
