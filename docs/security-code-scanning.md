@@ -119,8 +119,8 @@ Optional returned fields:
 - `greenbone_port_list_id`: Optional port-list UUID if your Greenbone setup
   requires an explicit list.
 - `greenbone_max_minutes`: Maximum scan wait time. Defaults to `180`.
-- `greenbone_delete_task`: Whether to delete the temporary scan task after
-  report collection. Defaults to `true`.
+- `greenbone_delete_task`: Whether to delete the temporary scan task and target
+  after report collection or failure cleanup. Defaults to `true`.
 
 Create the repository variables through the GitHub UI:
 

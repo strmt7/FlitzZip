@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -174,6 +175,41 @@ def wait_for_task(gmp: Any, task_id: str, max_minutes: int) -> dict[str, Any]:
         time.sleep(30)
 
 
+def cleanup_greenbone_resources(
+    gmp: Any,
+    task_id: str | None,
+    target_id: str | None,
+    delete_resources: bool,
+    task_finished: bool,
+) -> list[str]:
+    """Purpose: Remove temporary Greenbone resources created for one CI scan.
+    Inputs: `gmp` is the authenticated GMP session, `task_id` and `target_id` are
+    optional created resource IDs, `delete_resources` reflects workflow policy, and
+    `task_finished` tells whether stopping the task can be skipped.
+    Outputs: List of cleanup failure messages; successful cleanup returns an empty list.
+    """
+    if not delete_resources:
+        return []
+
+    errors: list[str] = []
+    if task_id and not task_finished:
+        try:
+            gmp.stop_task(task_id=task_id)
+        except Exception as exc:  # pragma: no cover - depends on remote scanner state
+            errors.append(f"Unable to stop temporary task {task_id}: {exc}")
+    if task_id:
+        try:
+            gmp.delete_task(task_id=task_id, ultimate=True)
+        except Exception as exc:  # pragma: no cover - depends on remote scanner state
+            errors.append(f"Unable to delete temporary task {task_id}: {exc}")
+    if target_id:
+        try:
+            gmp.delete_target(target_id=target_id, ultimate=True)
+        except Exception as exc:  # pragma: no cover - depends on remote scanner state
+            errors.append(f"Unable to delete temporary target {target_id}: {exc}")
+    return errors
+
+
 def summarize_report(report_xml_path: Path, target: str, task_state: dict[str, Any]) -> dict[str, Any]:
     """Purpose: Build a compact JSON summary from a Greenbone XML report.
     Inputs: `report_xml_path` points to the downloaded XML report, `target` names the
@@ -217,27 +253,44 @@ def main(gmp: Any, args: Any) -> int:
     timestamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     name = f"SuperZip CI {parsed.target} {timestamp}"
 
-    target_id = create_target(gmp, name, parsed.target, parsed.port_list_id)
-    task_id = create_task(
-        gmp,
-        name,
-        target_id,
-        parsed.scan_config_id,
-        parsed.scanner_id,
-    )
-    report_id = start_task(gmp, task_id)
-    task_state = wait_for_task(gmp, task_id, parsed.max_minutes)
-    report = gmp.get_report(report_id=report_id, details=True)
-    xml_path = output_dir / "openvas-report.xml"
-    serialize_xml(report, xml_path)
-    summary = summarize_report(xml_path, parsed.target, task_state)
-    summary["target_id"] = target_id
-    summary["task_id"] = task_id
-    summary["report_id"] = report_id
-    (output_dir / "openvas-summary.json").write_text(
-        json.dumps(summary, indent=2),
-        encoding="utf-8",
-    )
-    if parse_bool(parsed.delete_task):
-        gmp.delete_task(task_id=task_id)
-    return 0
+    target_id: str | None = None
+    task_id: str | None = None
+    task_finished = False
+    scan_succeeded = False
+    try:
+        target_id = create_target(gmp, name, parsed.target, parsed.port_list_id)
+        task_id = create_task(
+            gmp,
+            name,
+            target_id,
+            parsed.scan_config_id,
+            parsed.scanner_id,
+        )
+        report_id = start_task(gmp, task_id)
+        task_state = wait_for_task(gmp, task_id, parsed.max_minutes)
+        task_finished = True
+        report = gmp.get_report(report_id=report_id, details=True)
+        xml_path = output_dir / "openvas-report.xml"
+        serialize_xml(report, xml_path)
+        summary = summarize_report(xml_path, parsed.target, task_state)
+        summary["target_id"] = target_id
+        summary["task_id"] = task_id
+        summary["report_id"] = report_id
+        (output_dir / "openvas-summary.json").write_text(
+            json.dumps(summary, indent=2),
+            encoding="utf-8",
+        )
+        scan_succeeded = True
+        return 0
+    finally:
+        cleanup_errors = cleanup_greenbone_resources(
+            gmp,
+            task_id,
+            target_id,
+            parse_bool(parsed.delete_task),
+            task_finished,
+        )
+        for error in cleanup_errors:
+            print(f"::warning::{error}", file=sys.stderr)
+        if scan_succeeded and cleanup_errors:
+            raise RuntimeError("Greenbone cleanup failed after successful scan.")

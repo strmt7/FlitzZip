@@ -37,6 +37,8 @@ jobs:
           python - <<'PY'
           import importlib.util
           import pathlib
+          import tempfile
+          import xml.etree.ElementTree as ET
 
           script_path = pathlib.Path(".github/openvas/openvas_scan.gmp.py")
           spec = importlib.util.spec_from_file_location("openvas_scan", script_path)
@@ -62,6 +64,77 @@ jobs:
               pass
           else:
               raise SystemExit("OpenVAS parser accepted an invalid target.")
+
+          class FakeGmp:
+              def __init__(self):
+                  self.calls = []
+
+              def create_target(self, **kwargs):
+                  self.calls.append(("create_target", kwargs))
+                  return {"id": "target-1"}
+
+              def create_task(self, **kwargs):
+                  self.calls.append(("create_task", kwargs))
+                  return {"id": "task-1"}
+
+              def start_task(self, task_id):
+                  self.calls.append(("start_task", task_id))
+                  return ET.fromstring("<start_task_response><report_id>report-1</report_id></start_task_response>")
+
+              def get_task(self, task_id):
+                  self.calls.append(("get_task", task_id))
+                  return ET.fromstring("<get_tasks_response><task><status>Done</status><progress>100</progress></task></get_tasks_response>")
+
+              def get_report(self, report_id, details):
+                  self.calls.append(("get_report", report_id, details))
+                  return ET.fromstring("<get_reports_response><report><result><severity>0.0</severity></result></report></get_reports_response>")
+
+              def stop_task(self, task_id):
+                  self.calls.append(("stop_task", task_id))
+
+              def delete_task(self, task_id, ultimate=False):
+                  self.calls.append(("delete_task", task_id, ultimate))
+
+              def delete_target(self, target_id, ultimate=False):
+                  self.calls.append(("delete_target", target_id, ultimate))
+
+          fake = FakeGmp()
+          with tempfile.TemporaryDirectory() as tmpdir:
+              args = type("Args", (), {})()
+              args.argv = [
+                  "openvas_scan.gmp.py",
+                  "scan-target.example",
+                  tmpdir,
+                  module.DEFAULT_SCAN_CONFIG_ID,
+                  module.DEFAULT_SCANNER_ID,
+                  "",
+                  "5",
+                  "true",
+              ]
+              if module.main(fake, args) != 0:
+                  raise SystemExit("OpenVAS fake scan returned a non-zero code.")
+              if not (pathlib.Path(tmpdir) / "openvas-summary.json").exists():
+                  raise SystemExit("OpenVAS fake scan did not write a summary.")
+
+          expected_cleanup = {
+              ("delete_task", "task-1", True),
+              ("delete_target", "target-1", True),
+          }
+          missing_cleanup = [call for call in expected_cleanup if call not in fake.calls]
+          if missing_cleanup:
+              raise SystemExit(f"OpenVAS cleanup calls missing: {missing_cleanup!r}; calls={fake.calls!r}")
+
+          fake.calls.clear()
+          cleanup_errors = module.cleanup_greenbone_resources(fake, "task-2", "target-2", True, False)
+          if cleanup_errors:
+              raise SystemExit(f"OpenVAS unfinished-task cleanup reported errors: {cleanup_errors!r}")
+          expected_unfinished_cleanup = {
+              ("stop_task", "task-2"),
+              ("delete_task", "task-2", True),
+              ("delete_target", "target-2", True),
+          }
+          if set(fake.calls) != expected_unfinished_cleanup:
+              raise SystemExit(f"OpenVAS unfinished-task cleanup calls were wrong: {fake.calls!r}")
           PY
       - name: Write integration audit report
         shell: bash
@@ -100,7 +173,7 @@ jobs:
                       "greenbone_scanner_id",
                       "greenbone_port_list_id",
                       "greenbone_max_minutes",
-                      "greenbone_delete_task",
+                      "greenbone_delete_task (temporary task and target cleanup)",
                   ],
               },
           }
