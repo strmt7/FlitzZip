@@ -5,7 +5,8 @@
 SuperZip is a native Windows x64 archive application written in modern C++20.
 The GPU boundary is AMD HIP only. The native `.suzip` format is the
 GPU-accelerated product path, while standard `.zip` support is compatibility
-only through miniz 3.1.1.
+only through miniz 3.1.1. Uncompressed `.tar` support is compatibility only
+through SuperZip's native bounded TAR adapter.
 
 Portable ZIP and MSI packages must be functionally identical HIP-enabled
 artifacts. CPU-only builds exist only so hosted CI can run static analysis and
@@ -26,6 +27,9 @@ core archive tests where AMD HIP is unavailable.
   bounded, and HIP allocations preflight available VRAM before kernel work.
 - Native `.suzip` blocks may be fill, raw, or bounded miniz-deflate payloads;
   the GPU acceleration boundary remains AMD HIP-only.
+- Compatibility archives must use in-process parsers/writers. Product code must
+  not shell out to host archive tools or silently route through untracked
+  fallback utilities.
 - Extraction must reject traversal, absolute paths, UNC paths, reserved Windows
   device names, malformed metadata, CRC mismatches, and accidental overwrites.
 - Microsoft Defender scanning and SHA-256 hashing remain opt-in.
@@ -40,6 +44,7 @@ src/
   cli/        Command-line automation and dependency checks
   core/       Archive model, safety validation, integrity, progress
   gpu/        AMD HIP device discovery and GPU codec boundary
+  tar/        TAR compatibility adapter with two-pass validation
   zip/        ZIP compatibility adapter using miniz 3.1.1
 tests/       C++ regression tests
 tools/       Build, package, benchmark, and security automation
@@ -96,6 +101,15 @@ archive options, progress snapshots, and errors.
   production block-size autotuning without multi-GB SSD writes.
 - Added refactoring governance and an audit helper so future cleanup is planned,
   measured, and behavior-preserving.
+
+### Iteration 7: Real Archive Compatibility
+
+- Added an archive-format registry and `formats`/`identify` CLI commands.
+- Added native uncompressed TAR create/extract support with archive-wide path
+  validation before any output is written.
+- Kept document/package ZIP containers out of the user-facing format matrix.
+- Updated GUI extraction to auto-route implemented SUZIP, ZIP, and TAR formats
+  while reporting recognized unsupported formats explicitly.
 
 ## Validation Gates
 

@@ -65,6 +65,24 @@ public static class SuperZipNativeUi {
     public static extern bool UpdateWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
+
+    [DllImport("user32.dll")]
     public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
@@ -122,6 +140,46 @@ public static class SuperZipNativeUi {
     }
 }
 "@
+
+# Purpose: Put SuperZip in a stable visible state before PrintWindow capture.
+# Inputs: `Handle` is the SuperZip HWND.
+# Outputs: Requests foreground/top ordering without creating or closing other windows.
+function Set-SuperZipForeground {
+    param([IntPtr]$Handle)
+    [void][SuperZipNativeUi]::ShowWindow($Handle, 5)
+    $swpNoSize = 0x0001
+    $swpNoMove = 0x0002
+    $swpShowWindow = 0x0040
+    $flags = $swpNoSize -bor $swpNoMove -bor $swpShowWindow
+    [void][SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr](-1), 0, 0, 0, 0, $flags)
+    [void][SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr](-2), 0, 0, 0, 0, $flags)
+    [void][SuperZipNativeUi]::BringWindowToTop($Handle)
+    [void][SuperZipNativeUi]::SetForegroundWindow($Handle)
+}
+
+# Purpose: Assert that SuperZip owns visible sample points before screen fallback capture.
+# Inputs: `Handle` is the SuperZip HWND and `Rect` is its screen rectangle.
+# Outputs: Throws when another window covers sampled points inside the capture rectangle.
+function Assert-SuperZipVisibleForCapture {
+    param(
+        [IntPtr]$Handle,
+        [SuperZipNativeUi+RECT]$Rect
+    )
+    $points = @(
+        @([int](($Rect.Left + $Rect.Right) / 2), [int](($Rect.Top + $Rect.Bottom) / 2)),
+        @([int]($Rect.Left + (($Rect.Right - $Rect.Left) / 4)), [int]($Rect.Top + (($Rect.Bottom - $Rect.Top) / 4))),
+        @([int]($Rect.Left + ((3 * ($Rect.Right - $Rect.Left)) / 4)), [int]($Rect.Top + ((3 * ($Rect.Bottom - $Rect.Top)) / 4)))
+    )
+    foreach ($pair in $points) {
+        [SuperZipNativeUi+POINT]$point = New-Object SuperZipNativeUi+POINT
+        $point.X = $pair[0]
+        $point.Y = $pair[1]
+        $owner = [SuperZipNativeUi]::WindowFromPoint($point)
+        if ($owner -ne $Handle -and -not [SuperZipNativeUi]::IsChild($Handle, $owner)) {
+            throw "Refusing GUI smoke screen fallback because another window covers SuperZip at $($point.X),$($point.Y): owner $owner."
+        }
+    }
+}
 
 # Purpose: Build a Win32 mouse-coordinate LPARAM.
 # Inputs: `X` and `Y` are client-area physical pixel coordinates.
@@ -370,16 +428,18 @@ function Get-SampledUniqueColorCount {
     return $unique.Count
 }
 
-# Purpose: Capture the visible window rectangle from the desktop as a fallback for blank `PrintWindow` frames.
+# Purpose: Capture the visible SuperZip window rectangle after foreground validation.
 # Inputs: `Rect` is the current window rectangle and `Width`/`Height` are physical pixel dimensions.
 # Outputs: Returns a bitmap copied from the visible screen.
-function New-ScreenWindowCapture {
+function New-ValidatedScreenWindowCapture {
     param(
+        [IntPtr]$Handle,
         [SuperZipNativeUi+RECT]$Rect,
         [int]$Width,
         [int]$Height
     )
 
+    Assert-SuperZipVisibleForCapture -Handle $Handle -Rect $Rect
     $bitmap = New-Object System.Drawing.Bitmap $Width, $Height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try {
@@ -410,6 +470,7 @@ function Save-SuperZipScreenshot {
 
     $lastUniqueColors = 0
     for ($attempt = 1; $attempt -le 6; ++$attempt) {
+        Set-SuperZipForeground -Handle $Handle
         Request-SuperZipRedraw -Handle $Handle
         Start-Sleep -Milliseconds (60 + ($attempt * 60))
 
@@ -435,7 +496,9 @@ function Save-SuperZipScreenshot {
         $lastUniqueColors = Get-SampledUniqueColorCount -Bitmap $bitmap -Width $width -Height $height
         if ($lastUniqueColors -lt 8) {
             $bitmap.Dispose()
-            $bitmap = New-ScreenWindowCapture -Rect $rect -Width $width -Height $height
+            Set-SuperZipForeground -Handle $Handle
+            Start-Sleep -Milliseconds 120
+            $bitmap = New-ValidatedScreenWindowCapture -Handle $Handle -Rect $rect -Width $width -Height $height
             $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
             $lastUniqueColors = Get-SampledUniqueColorCount -Bitmap $bitmap -Width $width -Height $height
             if ($lastUniqueColors -lt 8) {

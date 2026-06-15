@@ -96,6 +96,8 @@ Archive operations are designed around bounded chunks:
 - `.suzip` compression reads source files in configurable chunks.
 - `.suzip` verification and extraction decode bounded block windows.
 - ZIP compatibility delegates file I/O to miniz file streaming APIs.
+- TAR compatibility streams file payloads and scans archive metadata before
+  output creation.
 
 Large-file benchmarks should be run before changing archive layout, block size,
 or chunk grouping. The default benchmark path is memory-only so routine

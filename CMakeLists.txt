@@ -41,6 +41,7 @@ target_compile_definitions(miniz PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 add_library(superzip_core STATIC
     src/core/archive.cpp
+    src/core/archive_format.cpp
     src/core/archive_blocks.cpp
     src/core/archive_index.cpp
     src/core/checksum.cpp
@@ -52,6 +53,7 @@ add_library(superzip_core STATIC
     src/core/progress.cpp
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
+    src/tar/tar_adapter.cpp
     src/zip/zip_adapter.cpp
 )
 
@@ -170,7 +172,9 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_main.cpp
         tests/cpp/test_archive_roundtrip.cpp
         tests/cpp/test_integrity.cpp
+        tests/cpp/test_archive_format.cpp
         tests/cpp/test_path_safety.cpp
+        tests/cpp/test_tar_compat.cpp
         tests/cpp/test_zip_compat.cpp
     )
     target_link_libraries(superzip_tests PRIVATE superzip_core)

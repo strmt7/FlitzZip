@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -42,6 +42,10 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/performance-block-size-validation.md` and
   `docs/compression-level-and-benchmark-suite.md`, then keep the RAM-only
   benchmark gates intact.
+- Before changing archive-format recognition or compatibility support, read
+  `docs/archive-format-support.md`. Do not add document/package aliases such as
+  DOCX, PPTX, XLSX, JAR, APK, or CBZ as user-facing archive formats unless a
+  maintainer explicitly requests package inspection.
 - Before performing repo-wide refactoring or automatic cleanup, read
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
@@ -50,6 +54,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
+- `src/tar/`: TAR compatibility adapter with two-pass path validation and verified file publication.
 - `src/zip/`: ZIP compatibility using miniz 3.1.1.
 - `src/cli/`: command-line entry point for deterministic automation.
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.
@@ -141,6 +146,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 ## Security Rules
 
 - Validate all archive entry names with `safe_join_archive_path` before extraction.
+- Compatibility archive support must use in-process parsers/writers. Do not
+  shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other
+  host tools from product code.
 - Reject absolute paths, drive-rooted paths, UNC paths, traversal, reserved Windows device names, unsafe trailing dot/space, and invalid characters.
 - Default to no overwrite. Overwrite is an explicit option.
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.

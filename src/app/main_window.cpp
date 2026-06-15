@@ -2,10 +2,12 @@
 
 #include "app/resource.h"
 #include "core/archive.hpp"
+#include "core/archive_format.hpp"
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "tar/tar_adapter.hpp"
 #include "zip/zip_adapter.hpp"
 
 #include <algorithm>
@@ -458,6 +460,17 @@ std::wstring entry_type_text(const std::filesystem::path& path) {
         return L"File";
     }
     return L"Missing";
+}
+
+// Purpose: Return the detected archive format label for the extraction page.
+// Inputs: `paths` is the current queue; only the first path is the extraction archive.
+// Outputs: Returns a display label without throwing for empty queues or unreadable probes.
+std::wstring detected_archive_format_text(const std::vector<std::filesystem::path>& paths) {
+    if (paths.empty()) {
+        return L"Auto detect";
+    }
+    const auto format = detect_archive_format(paths.front());
+    return widen(archive_format_info(format).display_name);
 }
 
 // Purpose: Map a page enum to a navigation label.
@@ -1308,7 +1321,7 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     const auto archive = state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
     draw_field(dc, layout.archive, L"Archive", archive, false);
     draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false);
-    draw_field(dc, layout.path_mode, L"Path mode", L"Full paths", false);
+    draw_field(dc, layout.path_mode, L"Archive format", detected_archive_format_text(state.queued_paths), false);
     draw_field(dc, layout.overwrite_policy, L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", true);
 
     RECT checks = layout.checks;
@@ -1448,7 +1461,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
         : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP compatibility uses miniz streaming file APIs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP uses miniz streaming APIs; TAR uses SuperZip's two-pass native adapter.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
@@ -1592,7 +1605,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from standard .zip compatibility mode. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP and TAR compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -2409,16 +2422,31 @@ void MainWindow::start_extract() {
                 throw SecurityError("Microsoft Defender did not report the archive as clean: " + archive.string());
             }
         }
-        ExtractOptions options;
-        options.gpu_required = gpu_required;
-        options.overwrite = overwrite;
-        auto stats = extract_suzip(archive, output, options, [this](const ProgressSnapshot& snapshot) {
+        auto progress_callback = [this](const ProgressSnapshot& snapshot) {
             std::lock_guard lock(mutex_);
             state_.progress = snapshot;
             request_repaint();
-        });
+        };
+        const auto archive_format = detect_archive_format(archive);
+        OperationStats stats;
+        if (archive_format == ArchiveFormat::SuperZip) {
+            ExtractOptions options;
+            options.gpu_required = gpu_required;
+            options.overwrite = overwrite;
+            stats = extract_suzip(archive, output, options, progress_callback);
+        } else if (archive_format == ArchiveFormat::Zip) {
+            stats = extract_zip(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Tar) {
+            stats = extract_tar(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Unknown) {
+            throw ArchiveError("unable to detect archive format: " + archive.string());
+        } else {
+            throw ArchiveError(
+                std::string("archive format recognized but not implemented for extraction: ") +
+                archive_format_info(archive_format).key);
+        }
         std::ostringstream line;
-        line << "Extracted to " << output.string() << " in " << stats.seconds << "s";
+        line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in " << stats.seconds << "s";
         append_history(line.str());
         if (defender) {
             const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);

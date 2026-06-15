@@ -1,9 +1,11 @@
 #include "core/archive.hpp"
+#include "core/archive_format.hpp"
 #include "core/checksum.hpp"
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "tar/tar_adapter.hpp"
 #include "zip/zip_adapter.hpp"
 
 #include <algorithm>
@@ -124,12 +126,13 @@ void usage() {
         << "  superzip_cli gpu-info\n"
         << "  superzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
         << "  superzip_cli dependency-check\n"
+        << "  superzip_cli formats\n"
+        << "  superzip_cli identify <archive>\n"
         << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile Mixed|Compressible|Incompressible] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
-        << "  superzip_cli compress --format suzip --output <archive.suzip> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
-        << "  superzip_cli compress --format zip --output <archive.zip> [--sha256] [--defender-scan] <path>...\n"
+        << "  superzip_cli compress --format suzip|zip|tar --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format zip --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive.zip>\n"
+        << "  superzip_cli extract --format auto|zip|tar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -186,6 +189,62 @@ void print_stats(const superzip::OperationStats& stats) {
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes)
               << "\n";
+}
+
+// Purpose: Print the archive formats that SuperZip recognizes and whether each is implemented.
+// Inputs: None.
+// Outputs: Writes one parseable line per real archive format.
+void print_format_registry() {
+    for (const auto& info : superzip::archive_format_registry()) {
+        if (info.format == superzip::ArchiveFormat::Unknown || info.format == superzip::ArchiveFormat::Auto) {
+            continue;
+        }
+        std::cout << "format=" << info.key
+                  << " display=\"" << info.display_name << "\""
+                  << " extensions=\"" << info.extensions << "\""
+                  << " can_create=" << (info.can_create ? "true" : "false")
+                  << " can_extract=" << (info.can_extract ? "true" : "false")
+                  << " gpu_native=" << (info.gpu_native ? "true" : "false")
+                  << " bundled_native=" << (info.bundled_native ? "true" : "false")
+                  << "\n";
+    }
+}
+
+// Purpose: Resolve a CLI format token and optional auto-detection into one concrete archive format.
+// Inputs: `format_token` is the user token, `archive_path` is used only for `auto`, and `allow_auto` gates auto-detection.
+// Outputs: Returns a concrete format; throws `ArchiveError` for unknown tokens or unsupported auto-detection.
+superzip::ArchiveFormat resolve_cli_archive_format(
+    const std::string& format_token,
+    const std::filesystem::path& archive_path,
+    bool allow_auto) {
+    const auto parsed = superzip::parse_archive_format_token(format_token);
+    if (!parsed.has_value()) {
+        throw superzip::ArchiveError("unknown archive format: " + format_token);
+    }
+    if (*parsed != superzip::ArchiveFormat::Auto) {
+        return *parsed;
+    }
+    if (!allow_auto) {
+        throw superzip::ArchiveError("archive format auto-detection is only supported for extraction and identify");
+    }
+    const auto detected = superzip::detect_archive_format(archive_path);
+    if (detected == superzip::ArchiveFormat::Unknown) {
+        throw superzip::ArchiveError("unable to detect archive format: " + archive_path.string());
+    }
+    return detected;
+}
+
+// Purpose: Reject recognized archive formats that SuperZip can identify but cannot yet process.
+// Inputs: `format` is a concrete archive format and `operation` is `create` or `extract`.
+// Outputs: Returns normally for implemented formats; throws a clear non-implementation error otherwise.
+void reject_unsupported_cli_format(superzip::ArchiveFormat format, std::string_view operation) {
+    const auto& info = superzip::archive_format_info(format);
+    const bool supported = operation == "create" ? info.can_create : info.can_extract;
+    if (!supported) {
+        throw superzip::ArchiveError(
+            std::string("archive format recognized but not yet implemented for ") +
+            std::string(operation) + ": " + info.key);
+    }
 }
 
 // Purpose: Print memory-only benchmark statistics in the same stable key/value style as archive operations.
@@ -919,6 +978,32 @@ int main(int argc, char** argv) {
             return code;
         }
 
+        if (args[0] == "formats") {
+            if (args.size() != 1) {
+                usage();
+                return 2;
+            }
+            print_format_registry();
+            return 0;
+        }
+
+        if (args[0] == "identify") {
+            if (args.size() != 2) {
+                usage();
+                return 2;
+            }
+            const auto format = resolve_cli_archive_format("auto", args[1], true);
+            const auto& info = superzip::archive_format_info(format);
+            std::cout << "format=" << info.key
+                      << " display=\"" << info.display_name << "\""
+                      << " can_create=" << (info.can_create ? "true" : "false")
+                      << " can_extract=" << (info.can_extract ? "true" : "false")
+                      << " gpu_native=" << (info.gpu_native ? "true" : "false")
+                      << " bundled_native=" << (info.bundled_native ? "true" : "false")
+                      << "\n";
+            return 0;
+        }
+
         if (args[0] == "memory-benchmark") {
             MemoryBenchmarkOptions options;
             for (std::size_t i = 1; i < args.size(); ++i) {
@@ -1040,7 +1125,9 @@ int main(int argc, char** argv) {
             if (require_gpu && force_cpu) {
                 throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
             }
-            if (format == "suzip") {
+            const auto archive_format = resolve_cli_archive_format(format, output, false);
+            reject_unsupported_cli_format(archive_format, "create");
+            if (archive_format == superzip::ArchiveFormat::SuperZip) {
                 superzip::CompressOptions options;
                 options.gpu_required = require_gpu;
                 options.force_cpu = force_cpu;
@@ -1050,13 +1137,16 @@ int main(int argc, char** argv) {
                 options.compression_level = compression_level;
                 options.verify_after_write = verify_after_write;
                 print_stats(superzip::compress_suzip(sources, output, options));
-            } else if (format == "zip") {
+            } else if (archive_format == superzip::ArchiveFormat::Zip) {
                 if (require_gpu || force_cpu || suzip_tuning_requested) {
                     throw superzip::ArchiveError("ZIP compatibility does not support SUZIP GPU, worker, block-size, compression-level, or verify-after-write flags");
                 }
                 print_stats(superzip::compress_zip(sources, output));
-            } else {
-                throw superzip::ArchiveError("unknown archive format: " + format);
+            } else if (archive_format == superzip::ArchiveFormat::Tar) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("TAR compatibility does not support SUZIP GPU, worker, block-size, compression-level, or verify-after-write flags");
+                }
+                print_stats(superzip::compress_tar(sources, output));
             }
             if (sha256) {
                 print_integrity_hash(output);
@@ -1071,7 +1161,7 @@ int main(int argc, char** argv) {
         // writing files, then relies on archive-layer overwrite and path
         // validation for the actual restore operation.
         if (args[0] == "extract") {
-            std::string format = "suzip";
+            std::string format = "auto";
             bool require_gpu = false;
             bool force_cpu = false;
             std::uint32_t workers = 0;
@@ -1120,7 +1210,9 @@ int main(int argc, char** argv) {
             if (defender_scan) {
                 print_defender_scan(archive, true);
             }
-            if (format == "suzip") {
+            const auto archive_format = resolve_cli_archive_format(format, archive, true);
+            reject_unsupported_cli_format(archive_format, "extract");
+            if (archive_format == superzip::ArchiveFormat::SuperZip) {
                 superzip::ExtractOptions options;
                 options.gpu_required = require_gpu;
                 options.force_cpu = force_cpu;
@@ -1128,13 +1220,16 @@ int main(int argc, char** argv) {
                 options.worker_count = workers;
                 options.max_inflight_chunks = inflight;
                 print_stats(superzip::extract_suzip(archive, output, options));
-            } else if (format == "zip") {
+            } else if (archive_format == superzip::ArchiveFormat::Zip) {
                 if (require_gpu || force_cpu || suzip_tuning_requested) {
                     throw superzip::ArchiveError("ZIP compatibility does not support SUZIP GPU, worker, or in-flight flags");
                 }
                 print_stats(superzip::extract_zip(archive, output, overwrite));
-            } else {
-                throw superzip::ArchiveError("unknown archive format: " + format);
+            } else if (archive_format == superzip::ArchiveFormat::Tar) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("TAR compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                }
+                print_stats(superzip::extract_tar(archive, output, overwrite));
             }
             if (defender_scan) {
                 print_defender_scan(output, false);

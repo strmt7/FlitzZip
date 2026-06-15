@@ -16,9 +16,14 @@ Extraction rejects:
 - Existing output files unless overwrite is explicitly enabled.
 
 Regular file extraction uses a same-directory temporary target and publishes the
-final file only after the entry has been decoded and verified. A corrupt ZIP or
-SUZIP entry can therefore fail after writing temporary bytes without exposing a
-partial final file or replacing an existing final file.
+final file only after the entry has been decoded and verified. A corrupt ZIP,
+TAR, or SUZIP entry can therefore fail after writing temporary bytes without
+exposing a partial final file or replacing an existing final file.
+
+TAR extraction is two-pass: SuperZip scans all headers and PAX path metadata,
+validates the complete normalized path set, and only then creates output.
+Symbolic links, hard links, devices, and FIFOs are rejected until a dedicated
+Windows restore policy exists.
 
 The app refuses to archive symbolic links in the current release. That avoids
 ambiguous restore semantics and prevents link-based escape behavior.
@@ -66,6 +71,7 @@ The CLI exposes:
 build/Release/superzip_cli.exe compress --format suzip --verify-after-write --output archive.suzip path\to\folder
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
 build/Release/superzip_cli.exe extract --defender-scan --output restored archive.suzip
+build/Release/superzip_cli.exe extract --defender-scan --output restored archive.tar
 ```
 
 The GUI Preferences page must keep SHA-256 hashing disabled by default and label
