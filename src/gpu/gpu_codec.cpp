@@ -44,6 +44,7 @@ void reject_oversized_codec_span(std::size_t size, const char* label) {
     }
 }
 
+#if SUPERZIP_ENABLE_HIP
 // Purpose: Add one telemetry counter into another without losing concurrent atomic updates.
 // Inputs: `counter` is the destination telemetry field and `value` is the source count.
 // Outputs: Atomically adds nonzero source values to the operation telemetry.
@@ -95,6 +96,7 @@ void publish_successful_gpu_attempt(
         merge_successful_gpu_attempt(target, *attempt_telemetry);
     }
 }
+#endif
 
 }  // namespace
 
