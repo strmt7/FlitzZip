@@ -27,3 +27,8 @@ Rules:
 - Keep `HIP_PATH`, Visual Studio, and architecture configurable.
 - Never commit build output, archives, binaries, logs, or secrets.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.
+- Release/deployment MSIs use the default `perMachine` scope, preselect
+  `C:\Program Files\SuperZip`, and require normal Windows elevation. Local
+  non-admin MSI tests must explicitly configure
+  `tools\build.ps1 -Configuration Release -MsiInstallScope perUser`; never
+  publish that per-user MSI as a product release.

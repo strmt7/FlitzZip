@@ -7,7 +7,7 @@ param(
     [string]$HipArch = "gfx1201",
     [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",
-    [ValidateSet("perUser", "perMachine")] [string]$MsiInstallScope = "perUser"
+    [ValidateSet("perUser", "perMachine")] [string]$MsiInstallScope = "perMachine"
 )
 
 $ErrorActionPreference = "Stop"

@@ -16,10 +16,14 @@ The portable ZIP and MSI are functionally identical:
 The portable ZIP avoids MSI registration and uninstall state. It does not avoid
 or remove GPU requirements.
 
-The MSI defaults to per-user installation for non-admin deployment and
-automated silent smoke tests. Build with `tools\build.ps1 -MsiInstallScope
-perMachine` only for managed per-machine rollout and validate that artifact from
-an elevated/admin runner.
+The product MSI defaults to per-machine installation under
+`C:\Program Files\SuperZip`. Installing that MSI uses the standard Windows
+elevation prompt when the user lacks administrator rights.
+
+For local coding and installer tests that must not require admin rights, build a
+separate per-user MSI with `tools\build.ps1 -MsiInstallScope perUser`. Keep that
+artifact local to development or CI validation; product releases must use the
+default Program Files install path.
 
 ## Runtime Prerequisites
 

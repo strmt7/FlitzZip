@@ -77,10 +77,19 @@ $env:SUPERZIP_ACCEPT_WIX_OSMF_EULA = "wix7"
 tools/package.ps1 -Configuration Release -CreateMsi
 ```
 
-The MSI build defaults to `perUser` install scope so silent install/uninstall
-smoke tests work without elevation. Managed per-machine deployment is available
-by building with `tools/build.ps1 -MsiInstallScope perMachine`, then packaging
-from an elevated/admin validation environment.
+The MSI build defaults to the release deployment scope: per-machine install
+under `C:\Program Files\SuperZip`. Like normal Windows desktop software, that
+installer requires elevation when installed by a non-admin user.
+
+For local coding and non-admin installer tests only, build an explicit per-user
+MSI:
+
+```powershell
+tools/build.ps1 -Configuration Release -MsiInstallScope perUser
+tools/package.ps1 -Configuration Release -CreateMsi
+```
+
+Do not publish a per-user MSI as a product release.
 
 ## CLI
 

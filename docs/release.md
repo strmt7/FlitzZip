@@ -10,11 +10,15 @@ Every product release must be Windows x64 and HIP-enabled. The portable ZIP and
 MSI contain the same application binaries and the same documentation. The
 portable package is installation-free, not feature-reduced.
 
-The MSI defaults to a per-user install scope so silent install/uninstall smoke
-tests work without elevation. Per-machine MSI builds remain supported for
-managed deployment by configuring with
-`tools\build.ps1 -MsiInstallScope perMachine` and running install smoke from an
-elevated/admin validation environment.
+The MSI defaults to the release deployment scope: per-machine install under
+`C:\Program Files\SuperZip`. This matches normal Windows desktop installers and
+requires elevation when the installing user does not already have administrator
+rights.
+
+For local coding and non-admin installer tests only, agents may build an
+explicit per-user MSI with `tools\build.ps1 -MsiInstallScope perUser`, then run
+`tools\package.ps1 -CreateMsi`. Per-user MSI artifacts are development/test
+artifacts and must not be published as product releases.
 
 The release workflow refuses to publish CPU-only artifacts. CPU-only builds are
 reserved for internal CI validation on GitHub-hosted runners that do not have the
@@ -61,7 +65,8 @@ The workflow performs:
 - Local repository security scan.
 - Portable package staging, dependency check, SUZIP/ZIP smoke tests, and
   checksum generation.
-- MSI creation and silent install/uninstall smoke tests when requested.
+- MSI creation and silent install/uninstall smoke tests under the Program Files
+  release install path when requested.
 - GitHub release creation with attached SHA-256 files.
 
 ## Local MSI Tooling
@@ -85,6 +90,11 @@ Then run:
 ```powershell
 tools\package.ps1 -Configuration Release -CreateMsi
 ```
+
+That command packages the currently configured build. If the build was created
+with the default scope, the MSI installs under `C:\Program Files\SuperZip` and
+requires elevation. For a non-admin local MSI smoke, first configure with
+`tools\build.ps1 -Configuration Release -MsiInstallScope perUser`.
 
 ## Installer Dependency Contract
 

@@ -12,6 +12,8 @@ References checked on 2026-06-14:
 - NIST SSDF SP 800-218 v1.1 and v1.2 draft: https://csrc.nist.gov/pubs/sp/800/218/final and https://csrc.nist.gov/pubs/sp/800/218/r1/ipd
 - Microsoft high-DPI Win32 guidance: https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows
 - Microsoft Defender command-line guidance: https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus
+- CMake CPack WiX generator scope guidance: https://cmake.org/cmake/help/latest/cpack_gen/wix.html
+- Microsoft Windows Installer `ProgramFiles64Folder`: https://learn.microsoft.com/en-us/windows/win32/msi/programfiles64folder
 
 ## Mission
 
@@ -134,6 +136,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
+- Product MSI releases must be per-machine installers that preselect
+  `C:\Program Files\SuperZip` and use normal Windows elevation when required.
+  Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
+  coding or installer smoke tests, and never publish that per-user MSI as a
+  product release.
 - Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; SuperZip delay-loads it and reports missing prerequisites through `dependency-check`.
 - Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.

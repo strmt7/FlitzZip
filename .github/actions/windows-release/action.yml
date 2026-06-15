@@ -233,6 +233,7 @@ runs:
         $buildArgs = @{
             Configuration = "Release"
             PackageVersion = $env:PACKAGE_VERSION
+            MsiInstallScope = "perMachine"
         }
         if ($env:ENABLE_HIP -eq "true") {
             $buildArgs.EnableHip = $true
@@ -360,20 +361,15 @@ runs:
         $msi = Join-Path $PWD "out\$env:PACKAGE_BASE.msi"
         $installLog = Join-Path $env:RUNNER_TEMP "superzip-msi-install.log"
         $uninstallLog = Join-Path $env:RUNNER_TEMP "superzip-msi-uninstall.log"
-        $cliCandidates = @(
-            (Join-Path $env:LocalAppData "SuperZip\bin\superzip_cli.exe"),
-            (Join-Path $env:LocalAppData "Programs\SuperZip\bin\superzip_cli.exe"),
-            (Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe")
-        )
+        $expectedCli = Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe"
         $installed = $false
         try {
             Invoke-CheckedMsiExec -Phase "MSI install" -Arguments @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) -LogPath $installLog
             $installed = $true
-            $cli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-            if (-not $cli) {
-                throw "Installed CLI was not found in the per-user or per-machine SuperZip install locations."
+            if (-not (Test-Path -LiteralPath $expectedCli)) {
+                throw "Installed CLI was not found at the release MSI Program Files path: $expectedCli"
             }
-            $dependency = & $cli dependency-check
+            $dependency = & $expectedCli dependency-check
             $dependencyExit = $LASTEXITCODE
             $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-dependency-check.txt")
             if ($env:ENABLE_HIP -eq "true") {
@@ -393,9 +389,8 @@ runs:
         } finally {
             if ($installed) {
                 Invoke-CheckedMsiExec -Phase "MSI uninstall" -Arguments @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) -LogPath $uninstallLog
-                $remainingCli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-                if ($remainingCli) {
-                    throw "Installed CLI remained after MSI uninstall at $remainingCli."
+                if (Test-Path -LiteralPath $expectedCli) {
+                    throw "Installed CLI remained after MSI uninstall at $expectedCli."
                 }
                 $global:LASTEXITCODE = 0
             }
@@ -420,7 +415,7 @@ runs:
         - Release track: $env:RELEASE_TRACK.
         $hipLine
         - Portable ZIP smoke-tested after staging install.
-        - MSI built and silent install/uninstall smoke-tested when create_msi=true.
+        - MSI built for per-machine installation under C:\Program Files\SuperZip and silent install/uninstall smoke-tested when create_msi=true.
         - Repository security scan completed before publishing.
         - SHA-256 checksum files are attached beside each package.
         "@ | Set-Content -LiteralPath $notes

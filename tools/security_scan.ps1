@@ -92,4 +92,32 @@ function Test-WorkflowSecurityPolicy {
 
 Test-WorkflowSecurityPolicy
 
+# Purpose: Verify release MSI defaults remain aligned with the product installer contract.
+# Inputs: Reads CMake, build script, and release workflow text from the repository.
+# Outputs: Throws when the release MSI can drift away from the Program Files per-machine path.
+function Test-InstallerScopePolicy {
+    $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
+    if ($cmakeLists -notmatch 'set\(SUPERZIP_MSI_INSTALL_SCOPE\s+"perMachine"') {
+        throw "CMakeLists.txt must default SUPERZIP_MSI_INSTALL_SCOPE to perMachine for product MSI releases."
+    }
+    if ($cmakeLists -notmatch 'set\(CPACK_WIX_ROOT_FOLDER_ID\s+"ProgramFiles<64>Folder"\)') {
+        throw "CMakeLists.txt must set CPACK_WIX_ROOT_FOLDER_ID to ProgramFiles<64>Folder for release MSIs."
+    }
+
+    $buildScript = Get-Content -LiteralPath (Join-Path $repo "tools\build.ps1") -Raw
+    if ($buildScript -notmatch '\[string\]\$MsiInstallScope\s*=\s*"perMachine"') {
+        throw "tools/build.ps1 must default -MsiInstallScope to perMachine. Use explicit perUser only for local non-admin tests."
+    }
+
+    $releaseAction = Get-Content -LiteralPath (Join-Path $repo ".github\actions\windows-release\action.yml") -Raw
+    if ($releaseAction -notmatch 'MsiInstallScope\s*=\s*"perMachine"') {
+        throw "Release workflow must pass MsiInstallScope=perMachine for published MSI artifacts."
+    }
+    if ($releaseAction -notmatch '\$expectedCli\s*=\s*Join-Path\s+\$env:ProgramFiles\s+"SuperZip\\bin\\superzip_cli\.exe"') {
+        throw "Release workflow must validate the installed CLI under Program Files."
+    }
+}
+
+Test-InstallerScopePolicy
+
 Write-Host "Security scan passed."
