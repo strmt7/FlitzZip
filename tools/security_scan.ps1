@@ -103,6 +103,9 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_ROOT_FOLDER_ID\s+"ProgramFiles<64>Folder"\)') {
         throw "CMakeLists.txt must set CPACK_WIX_ROOT_FOLDER_ID to ProgramFiles<64>Folder for release MSIs."
     }
+    if ($cmakeLists -notmatch 'set\(CPACK_PACKAGE_VENDOR\s+"SuperZip Technologies"\)') {
+        throw "CMakeLists.txt must set the release MSI publisher to SuperZip Technologies."
+    }
     if ($cmakeLists -match 'CPACK_CREATE_DESKTOP_LINKS') {
         throw "Desktop shortcuts must be an optional MSI feature, not unconditional CPACK_CREATE_DESKTOP_LINKS."
     }
@@ -116,6 +119,9 @@ function Test-InstallerScopePolicy {
     $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_desktop_shortcut.wxs") -Raw
     if ($desktopShortcut -notmatch 'CM_SHORTCUT_DESKTOP_OPTIONAL' -or $desktopShortcut -notmatch 'DesktopFolder') {
         throw "Optional desktop shortcut WiX source must define the MSI-owned DesktopFolder shortcut component."
+    }
+    if ($desktopShortcut -notmatch 'Software\\SuperZip Technologies\\SuperZip') {
+        throw "Optional desktop shortcut registry marker must use the SuperZip Technologies publisher key."
     }
     $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
     if ($desktopPatch -notmatch 'Create Desktop shortcut' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"') {

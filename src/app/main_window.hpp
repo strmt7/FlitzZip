@@ -33,6 +33,19 @@ enum class ToggleId {
     GpuRequired,
 };
 
+enum class DropdownId {
+    None,
+    QueueProfile,
+    CompressProfile,
+    CompressMethod,
+    ExtractOverwrite,
+    HistoryOperation,
+    HistoryStatus,
+    PreferencesMemoryPolicy,
+    PreferencesLogLevel,
+    PreferencesLogRetention,
+};
+
 struct UiState {
     Page page = Page::Queue;
     std::vector<std::filesystem::path> queued_paths;
@@ -62,6 +75,7 @@ struct UiState {
     bool integrity_hash_opt_in = false;
     bool defender_scan_opt_in = false;
     bool verify_after_write_opt_in = false;
+    DropdownId active_dropdown = DropdownId::None;
 };
 
 class MainWindow {
@@ -84,6 +98,9 @@ public:
 private:
     struct QueueLayout {
         RECT area{};
+        RECT add_files{};
+        RECT add_folder{};
+        RECT clear{};
         RECT table{};
         RECT destination{};
         RECT profile{};
@@ -163,9 +180,9 @@ private:
     // Outputs: Writes the shell, navigation, active page, and status strip into `dc`.
     void layout_and_draw(HDC dc, const RECT& rect);
 
-    // Purpose: Draw the top command/title strip.
+    // Purpose: Draw the persistent product shell strip.
     // Inputs: `dc` is the target and `rect` is the full client rectangle.
-    // Outputs: Renders brand, command buttons, and the active page title.
+    // Outputs: Renders the brand chrome; page-specific actions stay inside their pages.
     void draw_top_bar(HDC dc, const RECT& rect);
 
     // Purpose: Draw the compact navigation rail.
@@ -263,6 +280,21 @@ private:
     // Outputs: Renders label and bordered field with ellipsized value.
     void draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select);
 
+    // Purpose: Draw the currently expanded select/dropdown menu.
+    // Inputs: `dc` is the target, `content` is the active content area, and `state` is copied UI state.
+    // Outputs: Renders an overlay menu above page content when a dropdown is active.
+    void draw_active_dropdown(HDC dc, const RECT& content, const UiState& state);
+
+    // Purpose: Resolve the owning field rectangle for a dropdown.
+    // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
+    // Outputs: Returns the DPI-scaled field rectangle, or an empty rectangle when inactive.
+    [[nodiscard]] RECT dropdown_anchor_rect(DropdownId id, const RECT& content) const;
+
+    // Purpose: Resolve the overlay menu rectangle for a dropdown.
+    // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
+    // Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
+    [[nodiscard]] RECT dropdown_menu_rect(DropdownId id, const RECT& content) const;
+
     // Purpose: Draw the active page transition affordance.
     // Inputs: `dc` is the target and `rect` is the content area.
     // Outputs: Renders a short accent progress line while a tab transition is active.
@@ -277,6 +309,26 @@ private:
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
     // Outputs: Returns true when a setting was changed and a repaint was queued.
     bool handle_content_click(int x, int y);
+
+    // Purpose: Handle a click while a dropdown menu is expanded.
+    // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
+    // Outputs: Returns true when the click was consumed by dropdown close or selection.
+    bool handle_active_dropdown_click(int x, int y);
+
+    // Purpose: Open one dropdown menu.
+    // Inputs: `id` identifies the dropdown to open.
+    // Outputs: Updates UI state and queues a repaint.
+    void open_dropdown(DropdownId id);
+
+    // Purpose: Close any expanded dropdown menu.
+    // Inputs: None.
+    // Outputs: Clears dropdown state and queues a repaint when needed.
+    void close_active_dropdown();
+
+    // Purpose: Apply a dropdown option selection.
+    // Inputs: `id` identifies the dropdown and `option_index` is the zero-based selected row.
+    // Outputs: Mutates the corresponding UI value, closes the menu, and queues a repaint.
+    void select_dropdown_option(DropdownId id, int option_index);
 
     // Purpose: Change the active application page.
     // Inputs: `page` is the destination page enum value.
@@ -395,6 +447,7 @@ private:
     std::thread worker_;
     std::atomic_bool worker_running_ = false;
     std::atomic_bool repaint_queued_ = false;
+    ULONG_PTR gdiplus_token_ = 0;
     Page transition_from_page_ = Page::Queue;
     Page transition_to_page_ = Page::Queue;
     std::chrono::steady_clock::time_point page_transition_start_{};

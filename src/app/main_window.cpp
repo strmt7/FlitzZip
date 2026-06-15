@@ -13,6 +13,8 @@
 #include <commdlg.h>
 #include <cmath>
 #include <dwmapi.h>
+#include <objidl.h>
+#include <gdiplus.h>
 #include <iomanip>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -42,6 +44,9 @@ constexpr int kRailWidth = 86;
 constexpr int kStatusBar = 34;
 constexpr int kDesignClientWidth = 1200;
 constexpr int kDesignClientHeight = 760;
+constexpr int kPageInsetX = 30;
+constexpr int kPageInsetY = 22;
+constexpr int kPageHeaderHeight = 34;
 constexpr UINT_PTR kAnimationTimer = 7;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
@@ -191,6 +196,62 @@ std::wstring history_status_filter_text(int index) {
         L"Failed",
     };
     return option_text(index, labels);
+}
+
+// Purpose: Return the display options for an expanded dropdown.
+// Inputs: `id` identifies the dropdown control.
+// Outputs: Returns ordered labels matching the selectable rows.
+std::vector<std::wstring> dropdown_options(DropdownId id) {
+    switch (id) {
+    case DropdownId::QueueProfile:
+    case DropdownId::CompressProfile:
+        return {compression_profile_text(0), compression_profile_text(1), compression_profile_text(2)};
+    case DropdownId::CompressMethod:
+        return {L"AMD HIP required", L"AMD HIP preferred"};
+    case DropdownId::ExtractOverwrite:
+        return {L"Ask before overwrite", L"Overwrite enabled"};
+    case DropdownId::HistoryOperation:
+        return {history_operation_filter_text(0), history_operation_filter_text(1), history_operation_filter_text(2), history_operation_filter_text(3)};
+    case DropdownId::HistoryStatus:
+        return {history_status_filter_text(0), history_status_filter_text(1), history_status_filter_text(2)};
+    case DropdownId::PreferencesMemoryPolicy:
+        return {memory_policy_text(0), memory_policy_text(1), memory_policy_text(2)};
+    case DropdownId::PreferencesLogLevel:
+        return {log_level_text(0), log_level_text(1), log_level_text(2)};
+    case DropdownId::PreferencesLogRetention:
+        return {log_retention_text(0), log_retention_text(1), log_retention_text(2)};
+    case DropdownId::None:
+        return {};
+    }
+    return {};
+}
+
+// Purpose: Return the currently selected option row for a dropdown.
+// Inputs: `state` is the copied UI state and `id` identifies the dropdown.
+// Outputs: Returns a zero-based row index, clamped by renderers before use.
+int dropdown_selected_index(const UiState& state, DropdownId id) {
+    switch (id) {
+    case DropdownId::QueueProfile:
+    case DropdownId::CompressProfile:
+        return state.compression_profile_index;
+    case DropdownId::CompressMethod:
+        return state.gpu_required ? 0 : 1;
+    case DropdownId::ExtractOverwrite:
+        return state.overwrite ? 1 : 0;
+    case DropdownId::HistoryOperation:
+        return state.history_operation_filter_index;
+    case DropdownId::HistoryStatus:
+        return state.history_status_filter_index;
+    case DropdownId::PreferencesMemoryPolicy:
+        return state.memory_policy_index;
+    case DropdownId::PreferencesLogLevel:
+        return state.log_level_index;
+    case DropdownId::PreferencesLogRetention:
+        return state.log_retention_index;
+    case DropdownId::None:
+        return 0;
+    }
+    return 0;
 }
 
 // Purpose: Blend two Win32 colors linearly.
@@ -365,144 +426,211 @@ bool contains_point(const RECT& rect, int x, int y) {
 
 // Purpose: Draw the SuperZip stacked archive mark.
 // Inputs: `dc` is the target, `rect` is the logo bounds, and `color` is the stroke color.
-// Outputs: Draws three compact diamond layers.
+// Outputs: Draws three anti-aliased compact diamond layers.
 void draw_logo(HDC dc, const RECT& rect, COLORREF color) {
-    HPEN pen = CreatePen(PS_SOLID, 2, color);
-    HGDIOBJ previous_pen = SelectObject(dc, pen);
-    HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    const int cx = (rect.left + rect.right) / 2;
-    const int w = (rect.right - rect.left) / 2;
-    const int top = rect.top + 2;
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+    const float width = static_cast<float>(rect.right - rect.left);
+    const float height = static_cast<float>(rect.bottom - rect.top);
+    const float size = std::max(1.0f, std::min(width, height));
+    const float origin_x = static_cast<float>(rect.left) + (width - size) / 2.0f;
+    const float origin_y = static_cast<float>(rect.top) + (height - size) / 2.0f;
+    auto px = [origin_x, size](float value) { return origin_x + (value * size / 30.0f); };
+    auto py = [origin_y, size](float value) { return origin_y + (value * size / 30.0f); };
+
+    Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)), std::max(1.6f, size / 12.0f));
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+    pen.SetLineJoin(Gdiplus::LineJoinRound);
+    Gdiplus::SolidBrush fill(Gdiplus::Color(32, GetRValue(color), GetGValue(color), GetBValue(color)));
     for (int i = 0; i < 3; ++i) {
-        const int y = top + i * ((rect.bottom - rect.top) / 4);
-        POINT pts[4] = {
-            {cx, y},
-            {cx + w, y + w / 2},
-            {cx, y + w},
-            {cx - w, y + w / 2},
+        const float y = 5.0f + static_cast<float>(i) * 6.9f;
+        Gdiplus::PointF points[] = {
+            {px(15.0f), py(y)},
+            {px(26.0f), py(y + 4.3f)},
+            {px(15.0f), py(y + 8.6f)},
+            {px(4.0f), py(y + 4.3f)},
         };
-        Polygon(dc, pts, 4);
+        Gdiplus::GraphicsPath layer;
+        layer.AddPolygon(points, 4);
+        layer.CloseFigure();
+        graphics.FillPath(&fill, &layer);
+        graphics.DrawPath(&pen, &layer);
     }
-    SelectObject(dc, previous_brush);
-    SelectObject(dc, previous_pen);
-    DeleteObject(pen);
 }
 
-// Purpose: Draw a compact navigation icon from simple vector primitives.
+// Purpose: Convert a Win32 COLORREF into a GDI+ color.
+// Inputs: `color` is a Win32 RGB value and `alpha` is the target opacity.
+// Outputs: Returns an ARGB GDI+ color with channel order corrected.
+Gdiplus::Color gp_color(COLORREF color, BYTE alpha = 255) {
+    return Gdiplus::Color(alpha, GetRValue(color), GetGValue(color), GetBValue(color));
+}
+
+// Purpose: Configure a GDI+ pen for polished small-icon strokes.
+// Inputs: `pen` is the pen being used for the vector icon.
+// Outputs: Applies rounded caps and joins so high-DPI navigation icons stay smooth.
+void configure_icon_pen(Gdiplus::Pen& pen) {
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+    pen.SetLineJoin(Gdiplus::LineJoinRound);
+}
+
+// Purpose: Append a rounded rectangle to a GDI+ path.
+// Inputs: `path` is the destination path and the remaining values are design-space bounds.
+// Outputs: Adds a closed rounded-rectangle figure.
+void add_rounded_rect_path(Gdiplus::GraphicsPath& path, float x, float y, float width, float height, float radius) {
+    const float r = std::min(radius, std::min(width, height) / 2.0f);
+    path.AddArc(x, y, r * 2.0f, r * 2.0f, 180.0f, 90.0f);
+    path.AddArc(x + width - r * 2.0f, y, r * 2.0f, r * 2.0f, 270.0f, 90.0f);
+    path.AddArc(x + width - r * 2.0f, y + height - r * 2.0f, r * 2.0f, r * 2.0f, 0.0f, 90.0f);
+    path.AddArc(x, y + height - r * 2.0f, r * 2.0f, r * 2.0f, 90.0f, 90.0f);
+    path.CloseFigure();
+}
+
+// Purpose: Draw a compact anti-aliased navigation icon from native vector primitives.
 // Inputs: `dc` is the target, `page` selects the icon, `rect` is the icon box, and `color` is the stroke color.
-// Outputs: Writes a crisp GDI icon without bitmap scaling.
+// Outputs: Writes a crisp GDI+ icon without bitmap scaling.
 void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color) {
-    HPEN pen = CreatePen(PS_SOLID, 2, color);
-    HGDIOBJ previous_pen = SelectObject(dc, pen);
-    HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    const int cx = (rect.left + rect.right) / 2;
-    const int cy = (rect.top + rect.bottom) / 2;
-    const int w = rect.right - rect.left;
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+    // Use one normalized coordinate system so every rail glyph has the same optical size.
+    const float rect_width = static_cast<float>(rect.right - rect.left);
+    const float rect_height = static_cast<float>(rect.bottom - rect.top);
+    const float size = std::max(1.0f, std::min(rect_width, rect_height));
+    const float origin_x = static_cast<float>(rect.left) + (rect_width - size) / 2.0f;
+    const float origin_y = static_cast<float>(rect.top) + (rect_height - size) / 2.0f;
+    auto px = [origin_x, size](float value) { return origin_x + (value * size / 30.0f); };
+    auto py = [origin_y, size](float value) { return origin_y + (value * size / 30.0f); };
+    auto rectf = [&](float left, float top, float right, float bottom) {
+        return Gdiplus::RectF(px(left), py(top), px(right) - px(left), py(bottom) - py(top));
+    };
+
+    // Keep dense icon details legible by separating normal, fine, and emphasis strokes.
+    Gdiplus::Pen pen(gp_color(color), std::max(2.0f, size / 13.5f));
+    configure_icon_pen(pen);
+    Gdiplus::Pen fine_pen(gp_color(color, 220), std::max(1.25f, size / 22.0f));
+    configure_icon_pen(fine_pen);
+    Gdiplus::Pen strong_pen(gp_color(color), std::max(2.3f, size / 11.5f));
+    configure_icon_pen(strong_pen);
+    Gdiplus::SolidBrush soft_fill(gp_color(color, 28));
+    Gdiplus::SolidBrush firm_fill(gp_color(color, 245));
+
+    // Each glyph uses a small number of features so it remains recognizable at high DPI.
     switch (page) {
     case Page::Queue:
         for (int i = 0; i < 5; ++i) {
-            const int y = rect.top + 3 + i * 5;
-            MoveToEx(dc, rect.left + 4, y, nullptr);
-            LineTo(dc, rect.right - 4, y);
+            const float row = 5.7f + static_cast<float>(i) * 4.8f;
+            graphics.FillEllipse(&firm_fill, rectf(6.0f, row - 1.0f, 8.0f, row + 1.0f));
+            graphics.DrawLine(&pen, px(11.0f), py(row), px(24.0f), py(row));
         }
         break;
     case Page::Compress:
-        Rectangle(dc, rect.left + 5, rect.top + 11, rect.right - 5, rect.bottom - 3);
-        MoveToEx(dc, cx, rect.top + 2, nullptr);
-        LineTo(dc, cx, rect.top + 16);
-        LineTo(dc, cx - 5, rect.top + 11);
-        MoveToEx(dc, cx, rect.top + 16, nullptr);
-        LineTo(dc, cx + 5, rect.top + 11);
-        MoveToEx(dc, rect.left + 9, rect.bottom - 8, nullptr);
-        LineTo(dc, rect.right - 9, rect.bottom - 8);
+        {
+            Gdiplus::GraphicsPath tray;
+            add_rounded_rect_path(tray, px(6.2f), py(16.2f), px(23.8f) - px(6.2f), py(24.2f) - py(16.2f), size / 12.0f);
+            graphics.FillPath(&soft_fill, &tray);
+            graphics.DrawPath(&pen, &tray);
+            graphics.DrawLine(&strong_pen, px(15.0f), py(5.2f), px(15.0f), py(15.0f));
+            Gdiplus::PointF arrow[] = {{px(10.4f), py(11.2f)}, {px(15.0f), py(15.8f)}, {px(19.6f), py(11.2f)}};
+            graphics.DrawLines(&strong_pen, arrow, 3);
+            graphics.DrawLine(&fine_pen, px(10.0f), py(20.0f), px(20.0f), py(20.0f));
+        }
         break;
     case Page::Extract:
-        Rectangle(dc, rect.left + 5, rect.top + 11, rect.right - 5, rect.bottom - 3);
-        MoveToEx(dc, cx, rect.top + 16, nullptr);
-        LineTo(dc, cx, rect.top + 2);
-        LineTo(dc, cx - 5, rect.top + 7);
-        MoveToEx(dc, cx, rect.top + 2, nullptr);
-        LineTo(dc, cx + 5, rect.top + 7);
-        MoveToEx(dc, rect.left + 9, rect.bottom - 8, nullptr);
-        LineTo(dc, rect.right - 9, rect.bottom - 8);
+        {
+            Gdiplus::GraphicsPath tray;
+            add_rounded_rect_path(tray, px(6.2f), py(16.2f), px(23.8f) - px(6.2f), py(24.2f) - py(16.2f), size / 12.0f);
+            graphics.FillPath(&soft_fill, &tray);
+            graphics.DrawPath(&pen, &tray);
+            graphics.DrawLine(&strong_pen, px(15.0f), py(15.8f), px(15.0f), py(5.2f));
+            Gdiplus::PointF arrow[] = {{px(10.4f), py(9.8f)}, {px(15.0f), py(5.2f)}, {px(19.6f), py(9.8f)}};
+            graphics.DrawLines(&strong_pen, arrow, 3);
+            graphics.DrawLine(&fine_pen, px(10.0f), py(20.0f), px(20.0f), py(20.0f));
+        }
         break;
     case Page::Security:
         {
-            POINT shield[6] = {
-                {cx, rect.top + 3},
-                {rect.right - 5, rect.top + 7},
-                {rect.right - 6, cy + 4},
-                {cx, rect.bottom - 3},
-                {rect.left + 6, cy + 4},
-                {rect.left + 5, rect.top + 7},
+            Gdiplus::PointF shield[] = {
+                {px(15.0f), py(4.3f)},
+                {px(23.3f), py(7.3f)},
+                {px(22.2f), py(17.3f)},
+                {px(15.0f), py(25.2f)},
+                {px(7.8f), py(17.3f)},
+                {px(6.7f), py(7.3f)},
             };
-            Polygon(dc, shield, 6);
+            Gdiplus::GraphicsPath path;
+            path.AddPolygon(shield, 6);
+            path.CloseFigure();
+            graphics.FillPath(&soft_fill, &path);
+            graphics.DrawPath(&pen, &path);
+            Gdiplus::PointF check[] = {{px(10.7f), py(15.2f)}, {px(14.0f), py(18.5f)}, {px(20.2f), py(11.2f)}};
+            graphics.DrawLines(&strong_pen, check, 3);
         }
-        MoveToEx(dc, cx - 4, cy, nullptr);
-        LineTo(dc, cx - 1, cy + 4);
-        LineTo(dc, cx + 6, cy - 5);
         break;
     case Page::History:
-        Arc(dc, rect.left + 3, rect.top + 3, rect.right - 3, rect.bottom - 3, rect.left + 5, cy, cx, rect.top + 2);
-        MoveToEx(dc, rect.left + 6, cy, nullptr);
-        LineTo(dc, rect.left + 6, cy - 6);
+        {
+            graphics.DrawEllipse(&pen, rectf(5.0f, 5.0f, 25.0f, 25.0f));
+            graphics.DrawLine(&fine_pen, px(15.0f), py(8.0f), px(15.0f), py(10.6f));
+            graphics.DrawLine(&fine_pen, px(15.0f), py(19.4f), px(15.0f), py(22.0f));
+            graphics.DrawLine(&fine_pen, px(8.0f), py(15.0f), px(10.6f), py(15.0f));
+            graphics.DrawLine(&fine_pen, px(19.4f), py(15.0f), px(22.0f), py(15.0f));
+            graphics.DrawLine(&pen, px(15.0f), py(15.0f), px(15.0f), py(10.0f));
+            graphics.DrawLine(&pen, px(15.0f), py(15.0f), px(19.2f), py(17.8f));
+            graphics.FillEllipse(&firm_fill, rectf(13.7f, 13.7f, 16.3f, 16.3f));
+        }
         break;
     case Page::Gpu:
         {
-            RECT card{rect.left + 2, rect.top + 7, rect.right - 2, rect.bottom - 7};
-            Rectangle(dc, card.left, card.top, card.right, card.bottom);
-            MoveToEx(dc, card.left - 2, card.top + 3, nullptr);
-            LineTo(dc, card.left - 2, card.bottom - 3);
-            MoveToEx(dc, card.left - 2, card.top + 3, nullptr);
-            LineTo(dc, card.left + 2, card.top + 3);
-            MoveToEx(dc, card.left - 2, card.bottom - 3, nullptr);
-            LineTo(dc, card.left + 2, card.bottom - 3);
-            Ellipse(dc, cx - 5, cy - 5, cx + 5, cy + 5);
-            Ellipse(dc, cx - 2, cy - 2, cx + 2, cy + 2);
-            MoveToEx(dc, cx, cy - 5, nullptr);
-            LineTo(dc, cx, cy + 5);
-            MoveToEx(dc, cx - 5, cy, nullptr);
-            LineTo(dc, cx + 5, cy);
-            MoveToEx(dc, card.right - 1, card.top + 4, nullptr);
-            LineTo(dc, card.right + 3, card.top + 4);
-            MoveToEx(dc, card.right - 1, card.top + 9, nullptr);
-            LineTo(dc, card.right + 3, card.top + 9);
-            for (int i = 0; i < 5; ++i) {
-                const int x = card.left + 5 + i * 3;
-                MoveToEx(dc, x, card.bottom, nullptr);
-                LineTo(dc, x, card.bottom + 3);
+            // The GPU glyph is intentionally a horizontal add-in card, not a square chip.
+            Gdiplus::GraphicsPath card;
+            add_rounded_rect_path(card, px(7.0f), py(8.3f), px(25.0f) - px(7.0f), py(21.4f) - py(8.3f), size / 12.0f);
+            graphics.FillPath(&soft_fill, &card);
+            graphics.DrawPath(&pen, &card);
+            graphics.DrawLine(&pen, px(4.3f), py(10.5f), px(7.0f), py(10.5f));
+            graphics.DrawLine(&pen, px(4.3f), py(10.5f), px(4.3f), py(19.2f));
+            graphics.DrawLine(&pen, px(4.3f), py(19.2f), px(7.0f), py(19.2f));
+            graphics.DrawEllipse(&pen, rectf(11.0f, 10.6f, 19.8f, 19.4f));
+            graphics.FillEllipse(&firm_fill, rectf(14.0f, 13.6f, 16.8f, 16.4f));
+            graphics.DrawLine(&fine_pen, px(15.4f), py(10.8f), px(15.4f), py(19.2f));
+            graphics.DrawLine(&fine_pen, px(11.2f), py(15.0f), px(19.6f), py(15.0f));
+            graphics.DrawLine(&fine_pen, px(21.8f), py(12.0f), px(24.1f), py(12.0f));
+            graphics.DrawLine(&fine_pen, px(21.8f), py(16.0f), px(24.1f), py(16.0f));
+            for (int i = 0; i < 4; ++i) {
+                const float finger_x = 10.0f + static_cast<float>(i) * 3.0f;
+                graphics.DrawLine(&fine_pen, px(finger_x), py(21.4f), px(finger_x), py(24.3f));
             }
         }
         break;
     case Page::Preferences:
         {
-            const int inner_r = std::max(4, w / 3);
-            const int outer_r = std::max(inner_r + 2, w / 2 - 1);
-            const int hub_r = std::max(2, w / 8);
-            for (int i = 0; i < 8; ++i) {
-                const double angle = (3.14159265358979323846 * 2.0 * static_cast<double>(i)) / 8.0;
-                const int inner_x = cx + static_cast<int>(std::round(std::cos(angle) * static_cast<double>(inner_r)));
-                const int inner_y = cy + static_cast<int>(std::round(std::sin(angle) * static_cast<double>(inner_r)));
-                const int outer_x = cx + static_cast<int>(std::round(std::cos(angle) * static_cast<double>(outer_r)));
-                const int outer_y = cy + static_cast<int>(std::round(std::sin(angle) * static_cast<double>(outer_r)));
-                MoveToEx(dc, inner_x, inner_y, nullptr);
-                LineTo(dc, outer_x, outer_y);
+            std::array<Gdiplus::PointF, 16> teeth{};
+            for (int i = 0; i < static_cast<int>(teeth.size()); ++i) {
+                const double angle = (-3.14159265358979323846 / 2.0) + (3.14159265358979323846 * 2.0 * static_cast<double>(i) / static_cast<double>(teeth.size()));
+                const float radius = (i % 2 == 0) ? 10.8f : 8.4f;
+                teeth[static_cast<std::size_t>(i)] = {
+                    px(15.0f + std::cos(angle) * radius),
+                    py(15.0f + std::sin(angle) * radius),
+                };
             }
-            Ellipse(dc, cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r);
-            Ellipse(dc, cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r);
+            Gdiplus::GraphicsPath gear;
+            gear.AddPolygon(teeth.data(), static_cast<INT>(teeth.size()));
+            gear.CloseFigure();
+            graphics.FillPath(&soft_fill, &gear);
+            graphics.DrawPath(&pen, &gear);
+            graphics.DrawEllipse(&pen, rectf(10.6f, 10.6f, 19.4f, 19.4f));
+            graphics.FillEllipse(&soft_fill, rectf(13.0f, 13.0f, 17.0f, 17.0f));
         }
         break;
     case Page::About:
-        Ellipse(dc, rect.left + 5, rect.top + 5, rect.right - 5, rect.bottom - 5);
-        MoveToEx(dc, cx, cy - 1, nullptr);
-        LineTo(dc, cx, cy + 7);
-        SetPixel(dc, cx, cy - 7, color);
-        SetPixel(dc, cx, cy - 6, color);
+        graphics.DrawEllipse(&pen, rectf(6.0f, 6.0f, 24.0f, 24.0f));
+        graphics.DrawLine(&strong_pen, px(15.0f), py(13.8f), px(15.0f), py(20.2f));
+        graphics.FillEllipse(&firm_fill, rectf(13.7f, 9.4f, 16.3f, 12.0f));
         break;
     }
-    SelectObject(dc, previous_brush);
-    SelectObject(dc, previous_pen);
-    DeleteObject(pen);
 }
 
 // Purpose: Return whether the copied GPU status represents an active AMD HIP backend.
@@ -525,9 +653,19 @@ MainWindow::~MainWindow() {
             DeleteObject(font);
         }
     }
+    if (gdiplus_token_ != 0) {
+        Gdiplus::GdiplusShutdown(gdiplus_token_);
+        gdiplus_token_ = 0;
+    }
 }
 
 int MainWindow::run(HINSTANCE instance, int show_command) {
+    Gdiplus::GdiplusStartupInput gdiplus_startup_input{};
+    if (Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplus_startup_input, nullptr) != Gdiplus::Ok) {
+        gdiplus_token_ = 0;
+        return 1;
+    }
+
     refresh_gpu_status();
     const UINT initial_dpi = GetDpiForSystem();
     const DWORD style = window_style();
@@ -638,21 +776,13 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         const int rail_width = scale(kRailWidth);
         const int top_bar = scale(kTopBar);
         if (y < top_bar) {
-            const RECT add_files_button{rail_width + scale(122), scale(10), rail_width + scale(218), scale(40)};
-            const RECT add_folder_button{rail_width + scale(226), scale(10), rail_width + scale(334), scale(40)};
-            const RECT clear{rail_width + scale(342), scale(10), rail_width + scale(414), scale(40)};
-            if (contains_point(add_files_button, x, y)) {
-                add_files();
-            } else if (contains_point(add_folder_button, x, y)) {
-                add_folder();
-            } else if (contains_point(clear, x, y)) {
-                clear_queue();
-            }
+            close_active_dropdown();
         } else if (x < rail_width) {
             const int nav_top = top_bar + scale(10);
             const int item_height = scale(63);
             const int item = item_height > 0 ? (y - nav_top) / item_height : -1;
             if (item >= 0 && item < 8) {
+                close_active_dropdown();
                 set_page(static_cast<Page>(item));
             }
         } else {
@@ -739,6 +869,7 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     draw_navigation(dc, rail, state);
     draw_content(dc, content, state);
     draw_tab_transition(dc, content);
+    draw_active_dropdown(dc, content, state);
     draw_status_bar(dc, status, state);
 }
 
@@ -751,11 +882,6 @@ void MainWindow::draw_top_bar(HDC dc, const RECT& rect) {
     draw_logo(dc, logo, kAccent);
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{scale(48), rect.top, rail_width + scale(76), rect.bottom}, L"SuperZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    SelectObject(dc, tiny_font_);
-    draw_button(dc, RECT{rail_width + scale(122), scale(10), rail_width + scale(218), scale(40)}, L"+ Add files", false);
-    draw_button(dc, RECT{rail_width + scale(226), scale(10), rail_width + scale(334), scale(40)}, L"+ Add folder", false);
-    draw_button(dc, RECT{rail_width + scale(342), scale(10), rail_width + scale(414), scale(40)}, L"Clear", false);
 }
 
 void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state) {
@@ -781,9 +907,9 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
             fill_rect(dc, RECT{item.left, item.top, item.left + scale(5), item.bottom}, kAccent);
             fill_round_rect(dc, RECT{item.left + scale(8), item.top + scale(5), item.right - scale(8), item.bottom - scale(5)}, RGB(126, 24, 31), scale(4));
         }
-        RECT icon{item.left + scale(31), item.top + scale(11), item.left + scale(55), item.top + scale(35)};
+        RECT icon{item.left + scale(28), item.top + scale(8), item.left + scale(58), item.top + scale(38)};
         draw_nav_icon(dc, page, icon, active ? kText : kMuted);
-        draw_text(dc, RECT{item.left + scale(4), item.top + scale(37), item.right - scale(4), item.bottom - scale(3)}, page_name(page), active ? kText : kMuted, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, RECT{item.left + scale(4), item.top + scale(40), item.right - scale(4), item.bottom - scale(3)}, page_name(page), active ? kText : kMuted, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
         y += item_height;
     }
 }
@@ -842,8 +968,13 @@ void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
 
 MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
     QueueLayout layout{};
-    layout.area = inset_rect(rect, scale(24), scale(20));
-    layout.table = RECT{layout.area.left, layout.area.top + scale(48), layout.area.right, layout.area.bottom - scale(124)};
+    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    const int header_top = layout.area.top;
+    const int header_bottom = header_top + scale(kPageHeaderHeight);
+    layout.clear = RECT{layout.area.right - scale(72), header_top, layout.area.right, header_bottom};
+    layout.add_folder = RECT{layout.clear.left - scale(12) - scale(108), header_top, layout.clear.left - scale(12), header_bottom};
+    layout.add_files = RECT{layout.add_folder.left - scale(12) - scale(96), header_top, layout.add_folder.left - scale(12), header_bottom};
+    layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom - scale(124)};
     layout.destination = RECT{layout.area.left, layout.area.bottom - scale(88), layout.area.right - scale(182), layout.area.bottom - scale(44)};
     layout.start = RECT{layout.area.right - scale(168), layout.area.bottom - scale(64), layout.area.right - scale(20), layout.area.bottom - scale(24)};
     layout.profile = RECT{layout.area.left, layout.area.bottom - scale(40), layout.area.left + scale(264), layout.area.bottom};
@@ -852,7 +983,7 @@ MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
 
 MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
     CompressLayout layout{};
-    layout.area = inset_rect(rect, scale(30), scale(22));
+    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right, layout.area.bottom - scale(18)};
     const int left = layout.area.left;
     const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
@@ -876,7 +1007,7 @@ MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
 
 MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
     ExtractLayout layout{};
-    layout.area = inset_rect(rect, scale(30), scale(22));
+    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right, layout.area.bottom - scale(18)};
     layout.archive = RECT{layout.area.left, layout.area.top + scale(58), layout.area.right, layout.area.top + scale(108)};
     layout.destination = RECT{layout.area.left, layout.area.top + scale(128), layout.area.right, layout.area.top + scale(178)};
@@ -892,7 +1023,7 @@ MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
 
 MainWindow::PreferencesLayout MainWindow::preferences_layout(const RECT& rect) const {
     PreferencesLayout layout{};
-    layout.area = inset_rect(rect, scale(30), scale(22));
+    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54), layout.area.right - scale(126), layout.area.bottom - scale(18)};
     layout.apply = RECT{layout.area.right - scale(110), layout.area.bottom - scale(54), layout.area.right, layout.area.bottom - scale(18)};
     layout.general = RECT{layout.area.left, layout.area.top + scale(56), layout.area.left + scale(470), layout.area.top + scale(224)};
@@ -918,10 +1049,14 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
     const auto layout = queue_layout(rect);
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right - scale(180), area.top + scale(34)}, L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, layout.add_files.left - scale(18), area.top + scale(kPageHeaderHeight)}, L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, tiny_font_);
+    draw_button(dc, layout.add_files, L"+ Add files", false);
+    draw_button(dc, layout.add_folder, L"+ Add folder", false);
+    draw_button(dc, layout.clear, L"Clear", false);
     SelectObject(dc, tiny_font_);
     const auto count_text = std::to_wstring(state.queued_paths.size()) + L" item" + (state.queued_paths.size() == 1 ? L"" : L"s");
-    draw_text(dc, RECT{area.right - scale(180), area.top, area.right, area.top + scale(34)}, count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{layout.add_files.left - scale(120), area.top, layout.add_files.left - scale(18), area.top + scale(kPageHeaderHeight)}, count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
     RECT table = layout.table;
     fill_round_rect(dc, table, kPanel, scale(4));
@@ -1025,7 +1160,7 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
 }
 
 void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Security Review", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)}, L"Verify", true);
@@ -1073,7 +1208,7 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
 }
 
 void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"History", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(142), area.top, area.right, area.top + scale(34)}, L"Clear History", false);
@@ -1112,7 +1247,7 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
 }
 
 void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"AMD GPU Diagnostics", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(110), area.top, area.right, area.top + scale(34)}, L"Refresh", false);
@@ -1199,7 +1334,7 @@ void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& 
 }
 
 void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     RECT card{area.left, area.top + scale(56), area.right, area.bottom - scale(60)};
     fill_round_rect(dc, card, kPanel, scale(4));
     stroke_rect(dc, card, kBorder);
@@ -1275,6 +1410,97 @@ void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, cons
     }
 }
 
+void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState& state) {
+    if (state.active_dropdown == DropdownId::None) {
+        return;
+    }
+    const auto options = dropdown_options(state.active_dropdown);
+    if (options.empty()) {
+        return;
+    }
+    const RECT menu = dropdown_menu_rect(state.active_dropdown, content);
+    if (menu.right <= menu.left || menu.bottom <= menu.top) {
+        return;
+    }
+    const RECT shadow{menu.left + scale(3), menu.top + scale(3), menu.right + scale(3), menu.bottom + scale(3)};
+    fill_round_rect(dc, shadow, RGB(6, 10, 12), scale(4));
+    fill_round_rect(dc, menu, kPanel2, scale(4));
+    stroke_rect(dc, menu, kAccent);
+
+    const int row_height = scale(32);
+    const int selected = dropdown_selected_index(state, state.active_dropdown);
+    SelectObject(dc, tiny_font_);
+    for (int index = 0; index < static_cast<int>(options.size()); ++index) {
+        const RECT row{menu.left + scale(1), menu.top + scale(1) + (index * row_height), menu.right - scale(1), menu.top + scale(1) + ((index + 1) * row_height)};
+        const bool is_selected = index == selected;
+        fill_rect(dc, row, is_selected ? RGB(126, 24, 31) : ((index % 2 == 0) ? kPanel2 : kPanel));
+        if (index > 0) {
+            draw_line(dc, menu.left + scale(8), row.top, menu.right - scale(8), row.top, kBorder);
+        }
+        if (is_selected) {
+            const int check_mid = (row.top + row.bottom) / 2;
+            draw_line(dc, row.left + scale(12), check_mid, row.left + scale(17), check_mid + scale(5), kText);
+            draw_line(dc, row.left + scale(17), check_mid + scale(5), row.left + scale(27), check_mid - scale(6), kText);
+        }
+        draw_text(dc, RECT{row.left + scale(36), row.top, row.right - scale(12), row.bottom}, options[static_cast<std::size_t>(index)], is_selected ? kText : kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+}
+
+RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const {
+    switch (id) {
+    case DropdownId::QueueProfile:
+        return queue_layout(content).profile;
+    case DropdownId::CompressProfile:
+        return compress_layout(content).profile;
+    case DropdownId::CompressMethod:
+        return compress_layout(content).method;
+    case DropdownId::ExtractOverwrite:
+        return extract_layout(content).overwrite_policy;
+    case DropdownId::HistoryOperation: {
+        const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+        return RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
+    }
+    case DropdownId::HistoryStatus: {
+        const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+        return RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
+    }
+    case DropdownId::PreferencesMemoryPolicy:
+        return preferences_layout(content).memory_policy;
+    case DropdownId::PreferencesLogLevel:
+        return preferences_layout(content).log_level;
+    case DropdownId::PreferencesLogRetention:
+        return preferences_layout(content).log_retention;
+    case DropdownId::None:
+        return RECT{};
+    }
+    return RECT{};
+}
+
+RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
+    const auto options = dropdown_options(id);
+    if (options.empty()) {
+        return RECT{};
+    }
+    RECT anchor = dropdown_anchor_rect(id, content);
+    if (anchor.right <= anchor.left || anchor.bottom <= anchor.top) {
+        return RECT{};
+    }
+    const int gap = scale(4);
+    const int row_height = scale(32);
+    const int menu_height = row_height * static_cast<int>(options.size()) + scale(2);
+    int top = anchor.bottom + gap;
+    int bottom = top + menu_height;
+    if (bottom > content.bottom - scale(8)) {
+        bottom = anchor.top - gap;
+        top = bottom - menu_height;
+    }
+    if (top < content.top + scale(8)) {
+        top = content.top + scale(8);
+        bottom = top + menu_height;
+    }
+    return RECT{anchor.left, top, anchor.right, bottom};
+}
+
 void MainWindow::draw_tab_transition(HDC dc, const RECT& rect) {
     const double progress = page_transition_progress();
     if (progress >= 1.0) {
@@ -1302,6 +1528,7 @@ bool MainWindow::handle_content_click(int x, int y) {
     }
     const RECT content = content_rect();
 
+    // Local mutators centralize repaint and animation behavior for repeated control rows.
     const auto toggle_bool = [this](bool UiState::*member, ToggleId id) {
         bool previous = false;
         bool next = false;
@@ -1325,8 +1552,24 @@ bool MainWindow::handle_content_click(int x, int y) {
         return true;
     };
 
+    // Queue clicks cover the table, destination picker, profile dropdown, and primary start action.
     if (page == Page::Queue) {
         const auto layout = queue_layout(content);
+        if (handle_active_dropdown_click(x, y)) {
+            return true;
+        }
+        if (contains_point(layout.add_files, x, y)) {
+            add_files();
+            return true;
+        }
+        if (contains_point(layout.add_folder, x, y)) {
+            add_folder();
+            return true;
+        }
+        if (contains_point(layout.clear, x, y)) {
+            clear_queue();
+            return true;
+        }
         if (contains_point(layout.start, x, y)) {
             start_compress();
             return true;
@@ -1336,7 +1579,7 @@ bool MainWindow::handle_content_click(int x, int y) {
             return true;
         }
         if (contains_point(layout.profile, x, y)) {
-            cycle_compression_profile();
+            open_dropdown(DropdownId::QueueProfile);
             return true;
         }
         const int header_bottom = layout.table.top + scale(36);
@@ -1353,8 +1596,12 @@ bool MainWindow::handle_content_click(int x, int y) {
         return false;
     }
 
+    // Compress keeps dropdowns ahead of toggles so expanded menus consume their own option clicks.
     if (page == Page::Compress) {
         const auto layout = compress_layout(content);
+        if (handle_active_dropdown_click(x, y)) {
+            return true;
+        }
         if (contains_point(layout.start, x, y)) {
             start_compress();
             return true;
@@ -1364,11 +1611,12 @@ bool MainWindow::handle_content_click(int x, int y) {
             return true;
         }
         if (contains_point(layout.profile, x, y)) {
-            cycle_compression_profile();
+            open_dropdown(DropdownId::CompressProfile);
             return true;
         }
         if (contains_point(layout.method, x, y)) {
-            return toggle_bool(&UiState::gpu_required, ToggleId::GpuRequired);
+            open_dropdown(DropdownId::CompressMethod);
+            return true;
         }
         if (contains_point(layout.solid_archive, x, y)) {
             return checkbox_bool(&UiState::solid_archive, "Solid archive setting changed");
@@ -1391,8 +1639,12 @@ bool MainWindow::handle_content_click(int x, int y) {
         return false;
     }
 
+    // Extract routes the overwrite policy through the dropdown model instead of hidden cycling.
     if (page == Page::Extract) {
         const auto layout = extract_layout(content);
+        if (handle_active_dropdown_click(x, y)) {
+            return true;
+        }
         if (contains_point(layout.start, x, y)) {
             start_extract();
             return true;
@@ -1402,12 +1654,7 @@ bool MainWindow::handle_content_click(int x, int y) {
             return true;
         }
         if (contains_point(layout.overwrite_policy, x, y)) {
-            {
-                std::lock_guard lock(mutex_);
-                state_.overwrite = !state_.overwrite;
-                state_.status = "Overwrite policy changed";
-            }
-            request_repaint();
+            open_dropdown(DropdownId::ExtractOverwrite);
             return true;
         }
         if (contains_point(layout.verify_metadata, x, y)) {
@@ -1425,23 +1672,21 @@ bool MainWindow::handle_content_click(int x, int y) {
         return false;
     }
 
+    // History filter controls use the same dropdown path as settings for consistent testing.
     if (page == Page::History) {
-        RECT area = inset_rect(content, scale(30), scale(22));
+        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
         const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
         const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
         const RECT clear{area.right - scale(142), area.top, area.right, area.top + scale(34)};
+        if (handle_active_dropdown_click(x, y)) {
+            return true;
+        }
         if (contains_point(operation, x, y)) {
-            std::lock_guard lock(mutex_);
-            state_.history_operation_filter_index = (state_.history_operation_filter_index + 1) % 4;
-            state_.status = "History operation filter changed";
-            request_repaint();
+            open_dropdown(DropdownId::HistoryOperation);
             return true;
         }
         if (contains_point(status, x, y)) {
-            std::lock_guard lock(mutex_);
-            state_.history_status_filter_index = (state_.history_status_filter_index + 1) % 3;
-            state_.status = "History status filter changed";
-            request_repaint();
+            open_dropdown(DropdownId::HistoryStatus);
             return true;
         }
         if (contains_point(clear, x, y)) {
@@ -1452,7 +1697,7 @@ bool MainWindow::handle_content_click(int x, int y) {
     }
 
     if (page == Page::Security) {
-        RECT area = inset_rect(content, scale(30), scale(22));
+        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
         const RECT verify_button{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
         if (contains_point(verify_button, x, y)) {
             append_history("Security review completed");
@@ -1467,7 +1712,7 @@ bool MainWindow::handle_content_click(int x, int y) {
     }
 
     if (page == Page::Gpu) {
-        RECT area = inset_rect(content, scale(30), scale(22));
+        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
         const RECT refresh{area.right - scale(110), area.top, area.right, area.top + scale(34)};
         if (contains_point(refresh, x, y)) {
             refresh_gpu_status();
@@ -1477,8 +1722,12 @@ bool MainWindow::handle_content_click(int x, int y) {
         return false;
     }
 
+    // Preferences mixes persistent defaults, opt-in security toggles, and dropdown policy fields.
     if (page == Page::Preferences) {
         const auto layout = preferences_layout(content);
+        if (handle_active_dropdown_click(x, y)) {
+            return true;
+        }
         if (contains_point(layout.restore_defaults, x, y)) {
             restore_defaults();
             return true;
@@ -1514,26 +1763,116 @@ bool MainWindow::handle_content_click(int x, int y) {
             return checkbox_bool(&UiState::show_operation_summary, "Operation summary setting changed");
         }
         if (contains_point(layout.memory_policy, x, y)) {
-            std::lock_guard lock(mutex_);
-            state_.memory_policy_index = (state_.memory_policy_index + 1) % 3;
-            request_repaint();
+            open_dropdown(DropdownId::PreferencesMemoryPolicy);
             return true;
         }
         if (contains_point(layout.log_level, x, y)) {
-            std::lock_guard lock(mutex_);
-            state_.log_level_index = (state_.log_level_index + 1) % 3;
-            request_repaint();
+            open_dropdown(DropdownId::PreferencesLogLevel);
             return true;
         }
         if (contains_point(layout.log_retention, x, y)) {
-            std::lock_guard lock(mutex_);
-            state_.log_retention_index = (state_.log_retention_index + 1) % 3;
-            request_repaint();
+            open_dropdown(DropdownId::PreferencesLogRetention);
             return true;
         }
         return false;
     }
     return false;
+}
+
+bool MainWindow::handle_active_dropdown_click(int x, int y) {
+    DropdownId active = DropdownId::None;
+    {
+        std::lock_guard lock(mutex_);
+        active = state_.active_dropdown;
+    }
+    if (active == DropdownId::None) {
+        return false;
+    }
+
+    const RECT content = content_rect();
+    const RECT menu = dropdown_menu_rect(active, content);
+    const RECT anchor = dropdown_anchor_rect(active, content);
+    if (contains_point(menu, x, y)) {
+        const int row_height = scale(32);
+        const int option_index = row_height > 0 ? (y - menu.top - scale(1)) / row_height : -1;
+        const auto options = dropdown_options(active);
+        if (option_index >= 0 && option_index < static_cast<int>(options.size())) {
+            select_dropdown_option(active, option_index);
+            return true;
+        }
+    }
+    if (contains_point(anchor, x, y)) {
+        close_active_dropdown();
+        return true;
+    }
+    close_active_dropdown();
+    return true;
+}
+
+void MainWindow::open_dropdown(DropdownId id) {
+    {
+        std::lock_guard lock(mutex_);
+        state_.active_dropdown = id;
+        state_.status = "Dropdown opened";
+    }
+    request_repaint();
+}
+
+void MainWindow::close_active_dropdown() {
+    bool changed = false;
+    {
+        std::lock_guard lock(mutex_);
+        changed = state_.active_dropdown != DropdownId::None;
+        state_.active_dropdown = DropdownId::None;
+    }
+    if (changed) {
+        request_repaint();
+    }
+}
+
+void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
+    {
+        std::lock_guard lock(mutex_);
+        switch (id) {
+        case DropdownId::QueueProfile:
+        case DropdownId::CompressProfile:
+            state_.compression_profile_index = std::clamp(option_index, 0, 2);
+            state_.status = "Compression profile changed";
+            break;
+        case DropdownId::CompressMethod:
+            state_.gpu_required = option_index == 0;
+            state_.status = "Compression method changed";
+            break;
+        case DropdownId::ExtractOverwrite:
+            state_.overwrite = option_index == 1;
+            state_.status = "Overwrite policy changed";
+            break;
+        case DropdownId::HistoryOperation:
+            state_.history_operation_filter_index = std::clamp(option_index, 0, 3);
+            state_.status = "History operation filter changed";
+            break;
+        case DropdownId::HistoryStatus:
+            state_.history_status_filter_index = std::clamp(option_index, 0, 2);
+            state_.status = "History status filter changed";
+            break;
+        case DropdownId::PreferencesMemoryPolicy:
+            state_.memory_policy_index = std::clamp(option_index, 0, 2);
+            state_.status = "Memory policy changed";
+            break;
+        case DropdownId::PreferencesLogLevel:
+            state_.log_level_index = std::clamp(option_index, 0, 2);
+            state_.status = "Log level changed";
+            break;
+        case DropdownId::PreferencesLogRetention:
+            state_.log_retention_index = std::clamp(option_index, 0, 2);
+            state_.status = "Log retention changed";
+            break;
+        case DropdownId::None:
+            break;
+        }
+        state_.active_dropdown = DropdownId::None;
+    }
+    request_repaint();
 }
 
 void MainWindow::set_page(Page page) {
@@ -1545,6 +1884,7 @@ void MainWindow::set_page(Page page) {
             return;
         }
         state_.page = page;
+        state_.active_dropdown = DropdownId::None;
     }
     start_page_transition(previous, page);
     request_repaint();

@@ -74,6 +74,32 @@ function Ensure-WixUiExtension {
     }
 }
 
+# Purpose: Read one MSI Property table value through the Windows Installer API.
+# Inputs: `MsiPath` is the generated MSI path and `Name` is the property key.
+# Outputs: Returns the property value, or throws when the property cannot be queried.
+function Read-MsiProperty {
+    param(
+        [string]$MsiPath,
+        [string]$Name
+    )
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $database = $installer.GetType().InvokeMember("OpenDatabase", "InvokeMethod", $null, $installer, @($MsiPath, 0))
+    $query = "SELECT ``Value`` FROM ``Property`` WHERE ``Property``='$Name'"
+    $view = $database.GetType().InvokeMember("OpenView", "InvokeMethod", $null, $database, @($query))
+    try {
+        $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null) | Out-Null
+        $record = $view.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $view, $null)
+        if (-not $record) {
+            throw "MSI property '$Name' was not found in $MsiPath."
+        }
+        return $record.GetType().InvokeMember("StringData", "GetProperty", $null, $record, @(1))
+    } finally {
+        if ($view) {
+            $view.GetType().InvokeMember("Close", "InvokeMethod", $null, $view, $null) | Out-Null
+        }
+    }
+}
+
 if (-not (Test-Path $build)) {
     throw "Build directory not found. Run tools/build.ps1 first."
 }
@@ -147,6 +173,10 @@ if ($CreateMsi) {
     $msi = Join-Path $repo "out\$packageBase.msi"
     if (-not (Test-Path $msi)) {
         throw "Expected MSI was not produced: $msi"
+    }
+    $manufacturer = Read-MsiProperty -MsiPath $msi -Name "Manufacturer"
+    if ($manufacturer -ne "SuperZip Technologies") {
+        throw "MSI Manufacturer was '$manufacturer'; expected 'SuperZip Technologies'."
     }
     $msiHash = Get-FileHash -Algorithm SHA256 -LiteralPath $msi
     Set-Content -LiteralPath "$msi.sha256" -Value "$($msiHash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $msi)"

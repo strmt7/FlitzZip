@@ -152,7 +152,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
         src/app/main_window.cpp
         src/app/SuperZip.rc
     )
-    target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme dwmapi ole32)
+    target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme dwmapi ole32 gdiplus)
     target_compile_definitions(SuperZip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     if(MSVC)
         target_link_options(SuperZip PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest")
@@ -213,7 +213,7 @@ if(SUPERZIP_ENABLE_HIP)
 endif()
 
 set(CPACK_PACKAGE_NAME "SuperZip")
-set(CPACK_PACKAGE_VENDOR "strmt7")
+set(CPACK_PACKAGE_VENDOR "SuperZip Technologies")
 set(CPACK_PACKAGE_VERSION "${SUPERZIP_PACKAGE_NUMERIC_VERSION}")
 set(CPACK_PACKAGE_VERSION_MAJOR "${SUPERZIP_PACKAGE_VERSION_MAJOR}")
 set(CPACK_PACKAGE_VERSION_MINOR "${SUPERZIP_PACKAGE_VERSION_MINOR}")

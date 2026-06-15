@@ -33,6 +33,12 @@ public static class SuperZipNativeUi {
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct DROPFILES {
         public uint pFiles;
         public int x;
@@ -53,7 +59,16 @@ public static class SuperZipNativeUi {
     public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, int flags);
 
     [DllImport("user32.dll")]
+    public static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UpdateWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
     public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
 
     [DllImport("user32.dll")]
     public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
@@ -96,14 +111,11 @@ public static class SuperZipNativeUi {
         if (memory == IntPtr.Zero) {
             throw new InvalidOperationException("GlobalLock failed for HDROP payload.");
         }
-        DROPFILES drop = new DROPFILES {
-            pFiles = (uint)headerSize,
-            x = 0,
-            y = 0,
-            fNC = false,
-            fWide = true
-        };
-        Marshal.StructureToPtr(drop, memory, false);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "pFiles"), headerSize);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "x"), 0);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "y"), 0);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fNC"), 0);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fWide"), 1);
         Marshal.Copy(pathBytes, 0, IntPtr.Add(memory, headerSize), pathBytes.Length);
         GlobalUnlock(handle);
         return handle;
@@ -182,6 +194,163 @@ function Assert-FixedWindowStyle {
     }
 }
 
+# Purpose: Return the client area's origin inside the full-window screenshot.
+# Inputs: `Handle` is the SuperZip HWND.
+# Outputs: Returns `X` and `Y` offsets in physical pixels.
+function Get-ClientCaptureOffset {
+    param([IntPtr]$Handle)
+    [SuperZipNativeUi+RECT]$window = New-Object SuperZipNativeUi+RECT
+    if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window)) {
+        throw "Could not read SuperZip window rectangle for client offset."
+    }
+    [SuperZipNativeUi+POINT]$point = New-Object SuperZipNativeUi+POINT
+    $point.X = 0
+    $point.Y = 0
+    if (-not [SuperZipNativeUi]::ClientToScreen($Handle, [ref]$point)) {
+        throw "Could not map SuperZip client origin to screen coordinates."
+    }
+    return [pscustomobject]@{
+        X = $point.X - $window.Left
+        Y = $point.Y - $window.Top
+    }
+}
+
+# Purpose: Return whether a pixel is near an expected RGB color.
+# Inputs: `Color` is the sampled pixel, RGB components define the target, and `Tolerance` is per-channel slack.
+# Outputs: Returns true when all channels are within tolerance.
+function Test-ColorNear {
+    param(
+        [System.Drawing.Color]$Color,
+        [int]$Red,
+        [int]$Green,
+        [int]$Blue,
+        [int]$Tolerance = 8
+    )
+    return ([Math]::Abs([int]$Color.R - $Red) -le $Tolerance) -and
+        ([Math]::Abs([int]$Color.G - $Green) -le $Tolerance) -and
+        ([Math]::Abs([int]$Color.B - $Blue) -le $Tolerance)
+}
+
+# Purpose: Assert that the fixed shell still has crisp, aligned structural bands.
+# Inputs: `Bitmap` is a client-area screenshot and `Dpi` is the window DPI.
+# Outputs: Throws when dimensions or primary separator lines drift.
+function Assert-VisualStructure {
+    param(
+        [System.Drawing.Bitmap]$Bitmap,
+        [int]$Dpi,
+        [int]$ClientOffsetX,
+        [int]$ClientOffsetY,
+        [int]$ClientWidth,
+        [int]$ClientHeight
+    )
+    $scale = [double]$Dpi / 96.0
+    $expectedWidth = [int][Math]::Round(1200 * $scale)
+    $expectedHeight = [int][Math]::Round(760 * $scale)
+    if ([Math]::Abs($ClientWidth - $expectedWidth) -gt 2 -or [Math]::Abs($ClientHeight - $expectedHeight) -gt 2) {
+        throw "Client dimensions drifted from the fixed design grid: ${ClientWidth}x${ClientHeight}, expected about ${expectedWidth}x${expectedHeight}."
+    }
+
+    $clientLeft = $ClientOffsetX
+    $clientTop = $ClientOffsetY
+    $clientRight = $ClientOffsetX + $ClientWidth
+    $topSeparatorY = [Math]::Max(0, $clientTop + [int][Math]::Round(52 * $scale) - 1)
+    $railSeparatorX = [Math]::Max(0, $clientLeft + [int][Math]::Round(86 * $scale) - 1)
+    $statusSeparatorY = [Math]::Min($Bitmap.Height - 1, $clientTop + [int][Math]::Round((760 - 34) * $scale))
+    $border = @{ Red = 54; Green = 72; Blue = 78 }
+
+    $topMatches = 0
+    $topTotal = 0
+    for ($x = $clientLeft; $x -lt $clientRight; $x += [Math]::Max(1, [int]($ClientWidth / 60))) {
+        ++$topTotal
+        if (Test-ColorNear -Color $Bitmap.GetPixel($x, $topSeparatorY) -Red $border.Red -Green $border.Green -Blue $border.Blue) {
+            ++$topMatches
+        }
+    }
+
+    $railMatches = 0
+    $railTotal = 0
+    for ($y = $topSeparatorY + 1; $y -lt $statusSeparatorY; $y += [Math]::Max(1, [int](($statusSeparatorY - $topSeparatorY) / 40))) {
+        ++$railTotal
+        if (Test-ColorNear -Color $Bitmap.GetPixel($railSeparatorX, $y) -Red $border.Red -Green $border.Green -Blue $border.Blue) {
+            ++$railMatches
+        }
+    }
+
+    $statusMatches = 0
+    $statusTotal = 0
+    for ($x = $clientLeft; $x -lt $clientRight; $x += [Math]::Max(1, [int]($ClientWidth / 60))) {
+        ++$statusTotal
+        if (Test-ColorNear -Color $Bitmap.GetPixel($x, $statusSeparatorY) -Red $border.Red -Green $border.Green -Blue $border.Blue) {
+            ++$statusMatches
+        }
+    }
+
+    if (($topMatches / [double]$topTotal) -lt 0.75) {
+        throw "Top command-bar separator is not visually continuous enough for the fixed design grid."
+    }
+    if (($railMatches / [double]$railTotal) -lt 0.75) {
+        throw "Navigation rail separator is not visually continuous enough for the fixed design grid."
+    }
+    if (($statusMatches / [double]$statusTotal) -lt 0.75) {
+        throw "Status-bar separator is not visually continuous enough for the fixed design grid."
+    }
+}
+
+# Purpose: Assert that a design-space rectangle contains rendered detail.
+# Inputs: `Path` is a PNG screenshot, `Dpi` maps design pixels to physical pixels, and the rectangle is in 96-DPI design coordinates.
+# Outputs: Throws when the region is flat or blank.
+function Assert-DesignRectHasDetail {
+    param(
+        [string]$Path,
+        [int]$Dpi,
+        [int]$Left,
+        [int]$Top,
+        [int]$Right,
+        [int]$Bottom,
+        [int]$ClientOffsetX = 0,
+        [int]$ClientOffsetY = 0,
+        [int]$MinUniqueColors = 5
+    )
+    $scale = [double]$Dpi / 96.0
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $leftPx = [Math]::Max(0, $ClientOffsetX + [int][Math]::Round($Left * $scale))
+        $topPx = [Math]::Max(0, $ClientOffsetY + [int][Math]::Round($Top * $scale))
+        $rightPx = [Math]::Min($bitmap.Width, $ClientOffsetX + [int][Math]::Round($Right * $scale))
+        $bottomPx = [Math]::Min($bitmap.Height, $ClientOffsetY + [int][Math]::Round($Bottom * $scale))
+        if ($rightPx -le $leftPx -or $bottomPx -le $topPx) {
+            throw "Invalid visual-detail rectangle in $Path."
+        }
+        $unique = New-Object 'System.Collections.Generic.HashSet[int]'
+        $stepX = [Math]::Max(1, [int](($rightPx - $leftPx) / 24))
+        $stepY = [Math]::Max(1, [int](($bottomPx - $topPx) / 16))
+        for ($x = $leftPx; $x -lt $rightPx; $x += $stepX) {
+            for ($y = $topPx; $y -lt $bottomPx; $y += $stepY) {
+                [void]$unique.Add($bitmap.GetPixel($x, $y).ToArgb())
+            }
+        }
+        if ($unique.Count -lt $MinUniqueColors) {
+            throw "Expected rendered dropdown/detail region in $Path, but sampled only $($unique.Count) unique colors."
+        }
+    } finally {
+        $bitmap.Dispose()
+    }
+}
+
+# Purpose: Force a pending SuperZip repaint before capturing visual assertions.
+# Inputs: `Handle` is the SuperZip HWND to invalidate and update.
+# Outputs: Requests synchronous client repaint; throws only if Win32 capture validation later fails.
+function Request-SuperZipRedraw {
+    param(
+        [IntPtr]$Handle
+    )
+    $rdwInvalidate = 0x0001
+    $rdwAllChildren = 0x0080
+    $rdwUpdateNow = 0x0100
+    [void][SuperZipNativeUi]::RedrawWindow($Handle, [IntPtr]::Zero, [IntPtr]::Zero, ($rdwInvalidate -bor $rdwAllChildren -bor $rdwUpdateNow))
+    [void][SuperZipNativeUi]::UpdateWindow($Handle)
+}
+
 # Purpose: Capture and validate the current SuperZip window pixels.
 # Inputs: `Handle` is the SuperZip HWND and `Path` is the PNG output path.
 # Outputs: Writes a screenshot and returns width, height, and sampled-color metadata.
@@ -200,36 +369,90 @@ function Save-SuperZipScreenshot {
         throw "SuperZip window is unexpectedly small: ${width}x${height}."
     }
 
-    $bitmap = New-Object System.Drawing.Bitmap $width, $height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $hdc = $graphics.GetHdc()
-    try {
-        $rendered = [SuperZipNativeUi]::PrintWindow($Handle, $hdc, 2)
-    } finally {
-        $graphics.ReleaseHdc($hdc)
-        $graphics.Dispose()
-    }
-    if (-not $rendered) {
-        throw "PrintWindow failed for SuperZip."
-    }
-    $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $lastUniqueColors = 0
+    for ($attempt = 1; $attempt -le 6; ++$attempt) {
+        Request-SuperZipRedraw -Handle $Handle
+        Start-Sleep -Milliseconds (60 + ($attempt * 60))
 
-    $unique = New-Object 'System.Collections.Generic.HashSet[int]'
-    for ($x = 0; $x -lt $width; $x += [Math]::Max(1, [int]($width / 40))) {
-        for ($y = 0; $y -lt $height; $y += [Math]::Max(1, [int]($height / 30))) {
-            [void]$unique.Add($bitmap.GetPixel($x, $y).ToArgb())
+        $bitmap = New-Object System.Drawing.Bitmap $width, $height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $hdc = $graphics.GetHdc()
+        try {
+            $rendered = [SuperZipNativeUi]::PrintWindow($Handle, $hdc, 2)
+        } finally {
+            $graphics.ReleaseHdc($hdc)
+            $graphics.Dispose()
+        }
+
+        if (-not $rendered) {
+            $bitmap.Dispose()
+            if ($attempt -eq 6) {
+                throw "PrintWindow failed for SuperZip."
+            }
+            continue
+        }
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+
+        $unique = New-Object 'System.Collections.Generic.HashSet[int]'
+        for ($x = 0; $x -lt $width; $x += [Math]::Max(1, [int]($width / 40))) {
+            for ($y = 0; $y -lt $height; $y += [Math]::Max(1, [int]($height / 30))) {
+                [void]$unique.Add($bitmap.GetPixel($x, $y).ToArgb())
+            }
+        }
+        $lastUniqueColors = $unique.Count
+        if ($unique.Count -lt 8) {
+            $bitmap.Dispose()
+            continue
+        }
+
+        try {
+            [SuperZipNativeUi+RECT]$client = New-Object SuperZipNativeUi+RECT
+            if (-not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client)) {
+                throw "Could not read SuperZip client rectangle."
+            }
+            $offset = Get-ClientCaptureOffset -Handle $Handle
+            Assert-VisualStructure -Bitmap $bitmap -Dpi ([int][SuperZipNativeUi]::GetDpiForWindow($Handle)) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ClientWidth ($client.Right - $client.Left) -ClientHeight ($client.Bottom - $client.Top)
+            return [pscustomobject]@{
+                Path = $Path
+                Width = $width
+                Height = $height
+                UniqueColors = $unique.Count
+            }
+        } finally {
+            $bitmap.Dispose()
         }
     }
-    $bitmap.Dispose()
-    if ($unique.Count -lt 8) {
-        throw "SuperZip screenshot appears blank or visually invalid."
-    }
-    return [pscustomobject]@{
-        Path = $Path
-        Width = $width
-        Height = $height
-        UniqueColors = $unique.Count
-    }
+    throw "SuperZip screenshot appears blank or visually invalid after redraw attempts; last sampled $lastUniqueColors unique colors."
+}
+
+# Purpose: Open a dropdown, capture its expanded menu, verify it rendered, and select an option.
+# Inputs: Coordinates are 96-DPI client design pixels; `BasePath`/`Extension` define the screenshot name.
+# Outputs: Returns the dropdown screenshot capture metadata.
+function Invoke-DropdownExercise {
+    param(
+        [IntPtr]$Handle,
+        [int]$Dpi,
+        [string]$Name,
+        [int]$OpenX,
+        [int]$OpenY,
+        [int]$SelectX,
+        [int]$SelectY,
+        [int]$MenuLeft,
+        [int]$MenuTop,
+        [int]$MenuRight,
+        [int]$MenuBottom,
+        [string]$BasePath,
+        [string]$Extension
+    )
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $OpenX -DesignY $OpenY
+    Start-Sleep -Milliseconds 180
+    $path = "${BasePath}-Dropdown-$Name$Extension"
+    $capture = Save-SuperZipScreenshot -Handle $Handle -Path $path
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left $MenuLeft -Top $MenuTop -Right $MenuRight -Bottom $MenuBottom -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $SelectX -DesignY $SelectY
+    Start-Sleep -Milliseconds 180
+    return $capture
 }
 
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
@@ -279,14 +502,17 @@ try {
     }
     Assert-FixedWindowStyle -Handle $windowHandle
     $captures = @()
+    $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "GPU", "Preferences", "About")
+    $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
+    $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $ScreenshotPath
 
-    # Top command bar: exercise Add files, Add folder, and Clear without modal dialogs.
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 256 -DesignY 25
+    # Queue header actions: exercise Add files, Add folder, and Clear without modal dialogs.
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
     Start-Sleep -Milliseconds 150
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 366 -DesignY 25
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
     Start-Sleep -Milliseconds 150
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 464 -DesignY 25
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
 
     # Queue: exercise drag/drop, row selection, destination, profile, and Start.
@@ -296,8 +522,7 @@ try {
     Start-Sleep -Milliseconds 120
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 280 -DesignY 640
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 180 -DesignY 690
-    Start-Sleep -Milliseconds 120
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Queue-Profile" -OpenX 180 -OpenY 690 -SelectX 180 -SelectY 634 -MenuLeft 116 -MenuTop 562 -MenuRight 380 -MenuBottom 660 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1085 -DesignY 648
     Start-Sleep -Seconds 2
 
@@ -306,10 +531,8 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 294
-    Start-Sleep -Milliseconds 120
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Profile" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 296 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 350 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 406
     Start-Sleep -Milliseconds 80
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 438
@@ -338,8 +561,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 520 -DesignY 227
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 540 -DesignY 296
-    Start-Sleep -Milliseconds 120
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite" -OpenX 540 -OpenY 296 -SelectX 540 -SelectY 370 -MenuLeft 458 -MenuTop 326 -MenuRight 778 -MenuBottom 392 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 417
     Start-Sleep -Milliseconds 80
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 449
@@ -363,10 +585,8 @@ try {
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 4
     Start-Sleep -Milliseconds 250
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 220 -DesignY 145
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 390 -DesignY 145
-    Start-Sleep -Milliseconds 120
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Operation" -OpenX 220 -OpenY 145 -SelectX 220 -SelectY 246 -MenuLeft 116 -MenuTop 170 -MenuRight 336 -MenuBottom 300 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Status" -OpenX 390 -OpenY 145 -SelectX 390 -SelectY 214 -MenuLeft 354 -MenuTop 170 -MenuRight 574 -MenuBottom 268 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 90
     Start-Sleep -Milliseconds 250
 
@@ -382,22 +602,19 @@ try {
         @(175, 227),
         @(175, 261),
         @(650, 193),
-        @(700, 265),
         @(175, 376),
         @(175, 412),
         @(175, 448),
-        @(700, 384),
-        @(700, 442),
         @(985, 666),
         @(1110, 666)
     )) {
         Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX $point[0] -DesignY $point[1]
         Start-Sleep -Milliseconds 140
     }
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Preferences-MemoryPolicy" -OpenX 700 -OpenY 247 -SelectX 700 -SelectY 318 -MenuLeft 622 -MenuTop 274 -MenuRight 887 -MenuBottom 372 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Preferences-LogLevel" -OpenX 700 -OpenY 384 -SelectX 700 -SelectY 456 -MenuLeft 622 -MenuTop 412 -MenuRight 887 -MenuBottom 510 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Preferences-LogRetention" -OpenX 700 -OpenY 442 -SelectX 700 -SelectY 514 -MenuLeft 622 -MenuTop 470 -MenuRight 887 -MenuBottom 568 -BasePath $basePath -Extension $extension
 
-    $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "GPU", "Preferences", "About")
-    $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
-    $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
     for ($index = 0; $index -lt $pageNames.Count; ++$index) {
         Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex $index
         Start-Sleep -Milliseconds 300

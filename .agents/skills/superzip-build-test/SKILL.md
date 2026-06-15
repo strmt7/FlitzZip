@@ -43,6 +43,7 @@ Rules:
   Clear, drag/drop, destination selection, Queue/Compress/Extract/Security/GPU/
   History/Settings actions, then inspect every generated page screenshot.
 - Visual changes must preserve the compact enterprise design reference in
-  `resources/design/superzip-ui-iteration-4.png`. Do not simplify or remove the
-  command bar, left navigation, bottom GPU status strip, or dedicated settings
-  pages.
+  `resources/design/superzip-ui-iteration-4.png` and the polish reference in
+  `resources/design/superzip-ui-imagegen-polish-20260615.png`. Do not simplify
+  or remove the brand-only top bar, Queue-local Add files/Add folder/Clear
+  actions, left navigation, bottom GPU status strip, or dedicated settings pages.
