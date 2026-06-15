@@ -48,6 +48,26 @@ function Find-CMake {
     throw "CMake was not found."
 }
 
+# Purpose: Invoke a native executable and promote non-zero process exits to PowerShell failures.
+# Inputs: FilePath is the executable; Arguments is the argv array; Operation is the diagnostic label.
+# Outputs: Returns no value; throws when the native executable reports failure.
+function Invoke-NativeTool {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Operation
+    )
+
+    & $FilePath @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "$Operation failed with exit code $exitCode."
+    }
+}
+
 $cmake = Find-CMake
 if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
@@ -67,8 +87,9 @@ $configureArgs = @(
     "-DSUPERZIP_BUILD_GUI=ON",
     "-DSUPERZIP_BUILD_TESTS=ON"
 )
-& $cmake @configureArgs
+Invoke-NativeTool -FilePath $cmake -Arguments $configureArgs -Operation "CMake configure"
 
 if (-not $ConfigureOnly) {
-    & $cmake --build $build --config $Configuration --parallel
+    $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel")
+    Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
 }

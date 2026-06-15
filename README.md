@@ -52,6 +52,12 @@ tools/test.ps1 -Configuration Release
 CPU-only validation artifacts must not be published as SuperZip product
 releases.
 
+When building HIP objects on Windows, `tools/build.ps1` leaves
+`-VcvarsVersion` empty by default. The HIP compile helper then discovers the
+Visual Studio C++ toolsets installed on the host and prefers a compatible MSVC
+toolset for HIP before falling back to Visual Studio's default environment.
+Pass `-VcvarsVersion <major.minor>` only when validating a specific toolset.
+
 ## Package
 
 Package the current HIP build:
@@ -143,6 +149,18 @@ This proof generates a tiny temporary filesystem workload, runs compress, compre
 `--verify-after-write`, verify, and extract with `--require-gpu`, then fails
 unless backend HIP telemetry reports kernel launches, HIP event time, transfer
 bytes, device allocations, and matching restored file hashes.
+
+For a HIP-runtime-only stress test that isolates the AMD device from archive
+format and codec policy, run:
+
+```powershell
+tools/gpu_diagnostic.ps1 -Configuration Release -Seconds 8 -BufferMiB 256 -InnerIterations 2048 -SampleIntervalMs 50
+```
+
+Use this diagnostic to distinguish a broken HIP/runtime path from an archive
+codec optimization issue. A valid archive benchmark still has to use
+`--require-gpu` or `tools/bench.ps1`; the diagnostic is not a compression
+throughput result.
 
 `tools/storage_smoke.ps1` is the only normal filesystem smoke for the archive
 write/read path. It defaults to an 8 MiB bounded workload and deletes the

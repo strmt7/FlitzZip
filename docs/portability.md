@@ -44,6 +44,13 @@ Build scripts discover:
 - `amdhip64.lib` from `%HIP_PATH%\lib`.
 - A compatible Visual Studio toolset through `vcvarsall.bat`.
 
+If `tools\build.ps1 -VcvarsVersion` is empty, the HIP object compile helper
+enumerates installed MSVC toolsets under the discovered Visual Studio instance,
+prefers a HIP-compatible toolset when one is present, and falls back to the
+Visual Studio default only when no preferred toolset is installed. Use an
+explicit `-VcvarsVersion` for toolchain qualification or reproducing a compiler
+issue; do not hardcode developer-machine paths.
+
 The default HIP architecture is `gfx1201` for the current workstation. Use
 `tools/build.ps1 -HipArch <gfx...>` for another supported target. Distribution
 should either build per target architecture or add a validated fat-binary matrix
@@ -138,3 +145,8 @@ submitted HIP kernels. A valid required-GPU proof must show nonzero
 `gpu_kernel_launches`, `gpu_kernel_ms`, `gpu_h2d_bytes`, and
 `gpu_device_allocation_bytes`; verification and extraction must also show
 nonzero `gpu_d2h_bytes`.
+
+Use `tools\gpu_diagnostic.ps1` when the question is whether the host can execute
+sustained HIP work at all. That script runs a HIP-only kernel workload and
+independently samples Windows GPU engine counters. It proves runtime execution;
+it does not replace the forced-CPU versus required-HIP archive benchmark.

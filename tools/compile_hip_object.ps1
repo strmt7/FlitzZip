@@ -77,6 +77,95 @@ function Find-VcvarsAll {
     throw "vcvarsall.bat was not found. Install Visual Studio with the Microsoft.VisualStudio.Component.VC.Tools.x86.x64 component."
 }
 
+# Purpose: Enumerate MSVC toolsets available under the Visual Studio instance that owns vcvarsall.bat.
+# Inputs: VcvarsAll is the resolved path to Visual Studio's vcvarsall.bat.
+# Outputs: Returns installed MSVC toolset directory names sorted from newest to oldest.
+function Get-MsvcToolsetVersions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VcvarsAll
+    )
+
+    $buildDir = Split-Path -Parent $VcvarsAll
+    $auxiliaryDir = Split-Path -Parent $buildDir
+    $vcDir = Split-Path -Parent $auxiliaryDir
+    $toolsetRoot = Join-Path $vcDir "Tools\MSVC"
+    if (-not (Test-Path -LiteralPath $toolsetRoot)) {
+        return @()
+    }
+
+    return @(
+        Get-ChildItem -LiteralPath $toolsetRoot -Directory |
+            Where-Object { $_.Name -match '^[0-9]+(\.[0-9]+){1,3}$' } |
+            Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { $_.Name }
+    )
+}
+
+# Purpose: Choose a HIP-compatible MSVC toolset prefix when the caller did not provide one.
+# Inputs: AvailableVersions is the installed MSVC list; RequestedVersion is the optional caller override.
+# Outputs: Returns candidate vcvars versions in preferred order, with an empty string meaning Visual Studio default.
+function Resolve-VcvarsVersionCandidates {
+    param(
+        [string[]]$AvailableVersions,
+        [AllowEmptyString()]
+        [string]$RequestedVersion
+    )
+
+    if ($RequestedVersion) {
+        return @($RequestedVersion)
+    }
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    foreach ($prefix in @("14.44", "14.42")) {
+        $match = @(
+            $AvailableVersions |
+                Where-Object { $_ -eq $prefix -or $_.StartsWith("$prefix.") } |
+                Sort-Object { [version]$_ } -Descending |
+                Select-Object -First 1
+        )
+        if ($match.Count -gt 0) {
+            $candidates.Add($prefix)
+            break
+        }
+    }
+
+    $candidates.Add("")
+    return @($candidates.ToArray())
+}
+
+# Purpose: Build the HIP object with one Visual Studio environment candidate.
+# Inputs: CandidateVersion is a vcvars toolset prefix or empty for default Visual Studio; other values come from script parameters.
+# Outputs: Returns hipcc's native process exit code.
+function Invoke-HipCompile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VcvarsAll,
+        [AllowEmptyString()]
+        [string]$CandidateVersion,
+        [Parameter(Mandatory = $true)]
+        [string]$HipccPath,
+        [Parameter(Mandatory = $true)]
+        [string]$IncludePath
+    )
+
+    $vcvarsArgs = "amd64"
+    if ($CandidateVersion) {
+        $vcvarsArgs += " -vcvars_ver=$CandidateVersion"
+        Write-Host "Compiling HIP object with MSVC toolset $CandidateVersion."
+    } else {
+        Write-Host "Compiling HIP object with the Visual Studio default MSVC toolset."
+    }
+
+    if (Test-Path -LiteralPath $Output) {
+        Remove-Item -LiteralPath $Output -Force
+    }
+
+    $cmd = "call `"$VcvarsAll`" $vcvarsArgs >nul && `"$HipccPath`" --offload-arch=$Arch -std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$IncludePath`" -c `"$Source`" -o `"$Output`""
+    cmd /c $cmd
+    return $LASTEXITCODE
+}
+
 if (-not $env:HIP_PATH) {
     throw "HIP_PATH is not set."
 }
@@ -105,12 +194,17 @@ $outputDir = Split-Path -Parent $Output
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $include = Join-Path $RepoRoot "src"
-$vcvarsArgs = "amd64"
-if ($VcvarsVersion) {
-    $vcvarsArgs += " -vcvars_ver=$VcvarsVersion"
+$availableToolsets = @(Get-MsvcToolsetVersions -VcvarsAll $vcvars)
+$vcvarsCandidates = @(Resolve-VcvarsVersionCandidates -AvailableVersions $availableToolsets -RequestedVersion $VcvarsVersion)
+
+$attempts = New-Object System.Collections.Generic.List[string]
+foreach ($candidate in $vcvarsCandidates) {
+    $label = if ($candidate) { $candidate } else { "default" }
+    $exitCode = Invoke-HipCompile -VcvarsAll $vcvars -CandidateVersion $candidate -HipccPath $hipcc -IncludePath $include
+    if ($exitCode -eq 0) {
+        return
+    }
+    $attempts.Add("${label}: exit code $exitCode")
 }
-$cmd = "call `"$vcvars`" $vcvarsArgs >nul && `"$hipcc`" --offload-arch=$Arch -std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$include`" -c `"$Source`" -o `"$Output`""
-cmd /c $cmd
-if ($LASTEXITCODE -ne 0) {
-    throw "hipcc failed with exit code $LASTEXITCODE"
-}
+
+throw "hipcc failed for all MSVC toolset candidates ($($attempts -join '; '))."
