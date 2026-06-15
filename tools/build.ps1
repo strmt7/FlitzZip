@@ -5,7 +5,7 @@ param(
     [switch]$CpuOnlyValidation,
     [switch]$ConfigureOnly,
     [string]$HipArch = "gfx1201",
-    [string]$VcvarsVersion = "14.44",
+    [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",
     [ValidateSet("perUser", "perMachine")] [string]$MsiInstallScope = "perUser"
 )

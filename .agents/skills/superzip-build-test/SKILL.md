@@ -16,7 +16,7 @@ Use one of two lanes:
 
 2. Local AMD HIP lane:
    ```powershell
-   tools/build.ps1 -Configuration Release -EnableHip -HipArch gfx1201 -VcvarsVersion 14.44
+   tools/build.ps1 -Configuration Release -EnableHip -HipArch gfx1201
    build/Release/superzip_cli.exe gpu-info
    ```
 

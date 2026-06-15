@@ -36,7 +36,7 @@ Development systems additionally need:
 The normal local build is HIP-enabled:
 
 ```powershell
-tools/build.ps1 -Configuration Release -HipArch gfx1201 -VcvarsVersion 14.44
+tools/build.ps1 -Configuration Release -HipArch gfx1201
 tools/test.ps1 -Configuration Release
 build/Release/superzip_cli.exe dependency-check
 ```
