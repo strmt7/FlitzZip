@@ -188,6 +188,48 @@ TEST_CASE(suzip_force_cpu_roundtrip_reports_no_gpu_usage) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Verify extraction handles archives whose encoded block size is larger than the runtime chunk preference.
+// Inputs: A force-CPU archive written with 64 KiB blocks and extracted with 4 KiB runtime chunks.
+// Outputs: Throws if decode memory budgeting rejects the archive or restores different bytes.
+TEST_CASE(suzip_extract_supports_smaller_runtime_chunk_than_archive_block) {
+    const auto root = test_temp_dir("suzip-small-runtime-chunk");
+    const auto input = root / "input.bin";
+    std::vector<char> payload(96 * 1024);
+    std::uint32_t state = 0x31415926U;
+    for (auto& byte : payload) {
+        state = (state * 1664525U) + 1013904223U;
+        byte = static_cast<char>((state >> 24U) & 0xFFU);
+    }
+    std::ofstream(input, std::ios::binary).write(payload.data(), static_cast<std::streamsize>(payload.size()));
+
+    const auto archive = root / "archive.suzip";
+    superzip::CompressOptions compress;
+    compress.gpu_required = false;
+    compress.force_cpu = true;
+    compress.chunk_size = 128 * 1024;
+    compress.block_size = 64 * 1024;
+    (void)superzip::compress_suzip({input}, archive, compress);
+
+    superzip::ExtractOptions extract;
+    extract.gpu_required = false;
+    extract.force_cpu = true;
+    extract.overwrite = true;
+    extract.chunk_size = superzip::kMinArchiveBlockBytes;
+    extract.block_size = superzip::kMinArchiveBlockBytes;
+    const auto verified = superzip::verify_suzip(archive, extract);
+    REQUIRE_EQ(verified.output_bytes, static_cast<std::uint64_t>(payload.size()));
+
+    const auto output = root / "out";
+    (void)superzip::extract_suzip(archive, output, extract);
+    std::ifstream restored(output / "input.bin", std::ios::binary);
+    std::vector<char> actual(payload.size());
+    restored.read(actual.data(), static_cast<std::streamsize>(actual.size()));
+    REQUIRE_EQ(restored.gcount(), static_cast<std::streamsize>(payload.size()));
+    restored.close();
+    REQUIRE_TRUE(actual == payload);
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify optional GPU fallback does not publish failed HIP attempts as completed GPU telemetry.
 // Inputs: A small source file compressed with optional GPU use on hosts with no available AMD GPU.
 // Outputs: Throws if CPU fallback reports GPU usage, chunks, kernels, transfer bytes, or device allocations.
@@ -584,6 +626,50 @@ TEST_CASE(suzip_verify_rejects_corrupt_footer_magic) {
     try {
         (void)superzip::verify_suzip(archive, extract);
     } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify `.suzip` rejects Win32-disallowed control characters in entry paths before extraction.
+// Inputs: A handcrafted archive with one raw entry whose name contains ASCII 0x1F.
+// Outputs: Throws `SecurityError` before decoding or writing any file.
+TEST_CASE(suzip_verify_rejects_control_character_entry_path) {
+    const auto root = test_temp_dir("suzip-control-char-path");
+    const auto archive = root / "archive.suzip";
+    const std::string payload = "payload";
+    {
+        std::ofstream file(archive, std::ios::binary | std::ios::trunc);
+        file.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+
+        superzip::ArchiveIndex index;
+        superzip::ArchiveEntry entry;
+        entry.path = std::string("dir/control") + static_cast<char>(0x1F) + ".txt";
+        entry.uncompressed_size = payload.size();
+        entry.payload_offset = 0;
+        entry.payload_size = payload.size();
+        entry.crc32 = superzip::crc32(std::as_bytes(std::span<const char>(payload.data(), payload.size())));
+        entry.blocks.push_back(superzip::BlockDescriptor{
+            .kind = superzip::BlockKind::Raw,
+            .fill_value = 0,
+            .uncompressed_len = static_cast<std::uint32_t>(payload.size()),
+            .encoded_offset = 0,
+            .encoded_len = static_cast<std::uint32_t>(payload.size()),
+        });
+        index.entries.push_back(std::move(entry));
+        const auto index_offset = static_cast<std::uint64_t>(file.tellp());
+        superzip::write_archive_index(file, index);
+        const auto index_size = static_cast<std::uint64_t>(file.tellp()) - index_offset;
+        write_test_footer(file, index_offset, index_size);
+    }
+
+    superzip::ExtractOptions verify;
+    verify.gpu_required = false;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_suzip(archive, verify);
+    } catch (const superzip::SecurityError&) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);

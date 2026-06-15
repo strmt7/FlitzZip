@@ -175,6 +175,7 @@ TEST_CASE(zip_extract_rejects_windows_unsafe_entries) {
         "dir/file.",
         "dir/file ",
         "dir/a?b.txt",
+        std::string("dir/control") + static_cast<char>(0x1F) + ".txt",
     };
     for (const auto& name : names) {
         const auto root = test_temp_dir("zip-unsafe-entry");

@@ -36,6 +36,15 @@ bool has_drive_prefix(const std::string& path) {
     return path.size() >= 2 && std::isalpha(static_cast<unsigned char>(path[0])) != 0 && path[1] == ':';
 }
 
+// Purpose: Detect Win32-disallowed control characters in one archive path component.
+// Inputs: `component` is an untrusted path component after separator splitting.
+// Outputs: Returns true when any byte is below ASCII space, including embedded NUL.
+bool contains_windows_control_character(const std::string& component) {
+    return std::ranges::any_of(component, [](unsigned char ch) {
+        return ch < 0x20U;
+    });
+}
+
 // Purpose: Verify that a normalized child path remains under a normalized root.
 // Inputs: `child` and `root` are filesystem paths after normalization.
 // Outputs: Returns true when `root` is a path-component prefix of `child`.
@@ -74,8 +83,8 @@ std::filesystem::path safe_join_archive_path(
         if (component == "..") {
             throw SecurityError("archive entry attempts path traversal: " + archive_path);
         }
-        if (component.find('\0') != std::string::npos) {
-            throw SecurityError("archive entry contains a NUL byte");
+        if (contains_windows_control_character(component)) {
+            throw SecurityError("archive entry component contains a Windows control character");
         }
         if (component.back() == ' ' || component.back() == '.') {
             throw SecurityError("archive entry component has unsafe trailing characters: " + component);

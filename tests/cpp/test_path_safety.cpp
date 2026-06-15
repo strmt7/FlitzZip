@@ -2,6 +2,7 @@
 #include "core/result.hpp"
 #include "test_util.hpp"
 
+#include <string>
 #include <vector>
 #include <windows.h>
 
@@ -58,6 +59,7 @@ TEST_CASE(path_safety_rejects_windows_unsafe_forms) {
         "./.",
         "dir/COM9.txt",
         "dir/LPT1",
+        std::string("dir/control") + static_cast<char>(0x1F) + ".txt",
     };
     for (const auto& path : unsafe_paths) {
         bool rejected = false;

@@ -83,6 +83,11 @@ struct DecodeStreamResult {
     std::uint32_t crc32 = 0;
 };
 
+struct ArchiveValidationSummary {
+    std::uint64_t total_uncompressed_bytes = 0;
+    std::uint64_t largest_decoded_block_bytes = 1;
+};
+
 // Purpose: Identify block kinds that carry bytes in the archive payload.
 // Inputs: `kind` is a native SUZIP block encoding kind.
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
@@ -143,6 +148,19 @@ std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs, const c
         throw ArchiveError(message);
     }
     return lhs * rhs;
+}
+
+// Purpose: Count bounded streaming windows for a byte total without overflowing.
+// Inputs: `bytes` is a file or entry length and `window_bytes` is the nonzero processing window size.
+// Outputs: Returns at least one window; throws `ArchiveError` when the window size is invalid.
+std::uint64_t count_stream_windows(std::uint64_t bytes, std::uint64_t window_bytes) {
+    if (window_bytes == 0) {
+        throw ArchiveError("streaming window size must be greater than zero");
+    }
+    if (bytes == 0) {
+        return 1;
+    }
+    return ((bytes - 1U) / window_bytes) + 1U;
 }
 
 // Purpose: Compute the host RAM budget available to the archive pipeline.
@@ -362,17 +380,17 @@ std::vector<std::byte> read_payload_window(
 }
 
 // Purpose: Process one entry's block stream in bounded memory chunks.
-// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads, `options` controls chunk/GPU behavior, and `consume` receives decoded bytes.
+// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads, `decode_window_bytes` is the memory-accounted decode window, `gpu_options` controls codec behavior, and `consume` receives decoded bytes.
 // Outputs: Returns true if any chunk used AMD HIP; throws on malformed block windows, decode errors, or callback failures.
 DecodeStreamResult decode_entry_streaming(
     std::ifstream& input,
     const ArchiveEntry& entry,
     std::uint64_t archive_size,
-    const ExtractOptions& options,
+    std::uint64_t decode_window_bytes,
     const GpuCodecOptions& gpu_options,
     const PipelineBudget& budget,
     const std::function<void(std::span<const std::byte>)>& consume) {
-    const auto chunk_limit = options.chunk_size;
+    const auto chunk_limit = decode_window_bytes;
     DecodeStreamResult stream_result;
     std::size_t block_index = 0;
     std::deque<PendingDecode> pending;
@@ -451,17 +469,17 @@ DecodeStreamResult decode_entry_streaming(
 }
 
 // Purpose: Verify one entry's block stream by computing decoded CRCs in bounded chunks.
-// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads, `options` controls chunk/GPU behavior, and `consume_bytes` receives decoded byte counts.
+// Inputs: `input` is the archive stream, `entry` is validated metadata, `archive_size` bounds reads, `decode_window_bytes` is the memory-accounted decode window, `gpu_options` controls codec behavior, and `consume_bytes` receives decoded byte counts.
 // Outputs: Returns GPU-use and CRC state for the entry; throws on malformed block windows, CRC decode errors, or callback failures.
 DecodeStreamResult verify_entry_streaming(
     std::ifstream& input,
     const ArchiveEntry& entry,
     std::uint64_t archive_size,
-    const ExtractOptions& options,
+    std::uint64_t decode_window_bytes,
     const GpuCodecOptions& gpu_options,
     const PipelineBudget& budget,
     const std::function<void(std::uint64_t)>& consume_bytes) {
-    const auto chunk_limit = options.chunk_size;
+    const auto chunk_limit = decode_window_bytes;
     DecodeStreamResult stream_result;
     std::size_t block_index = 0;
     std::deque<PendingDecodedCrc> pending;
@@ -643,6 +661,33 @@ void validate_entry_metadata(const ArchiveEntry& entry) {
     }
 }
 
+// Purpose: Validate an archive index and summarize decode memory requirements.
+// Inputs: `index` is parsed untrusted archive metadata from a SUZIP archive.
+// Outputs: Returns total decoded bytes and largest decoded block size; throws before any extraction output is created.
+ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& index) {
+    ArchiveValidationSummary summary;
+    for (const auto& entry : index.entries) {
+        validate_entry_metadata(entry);
+        summary.total_uncompressed_bytes = checked_add_u64(
+            summary.total_uncompressed_bytes,
+            entry.uncompressed_size,
+            "archive uncompressed size overflows");
+        for (const auto& block : entry.blocks) {
+            summary.largest_decoded_block_bytes = std::max<std::uint64_t>(
+                summary.largest_decoded_block_bytes,
+                block.uncompressed_len);
+        }
+    }
+    return summary;
+}
+
+// Purpose: Resolve the decode window used for memory budgeting and block grouping.
+// Inputs: `options` contains the caller-requested chunk size and `summary` contains validated archive block requirements.
+// Outputs: Returns a window large enough for any single block while honoring larger caller chunk sizes.
+std::uint64_t resolve_decode_window_bytes(const ExtractOptions& options, const ArchiveValidationSummary& summary) {
+    return std::max<std::uint64_t>(options.chunk_size, summary.largest_decoded_block_bytes);
+}
+
 }  // namespace
 
 OperationStats compress_suzip(
@@ -703,9 +748,7 @@ OperationStats compress_suzip(
             throw ArchiveError("cannot open source file: " + manifest_entry.source_path.string());
         }
 
-        const auto entry_chunks = manifest_entry.size == 0
-            ? 1U
-            : (manifest_entry.size + options.chunk_size - 1U) / options.chunk_size;
+        const auto entry_chunks = count_stream_windows(manifest_entry.size, options.chunk_size);
         const GpuCodecOptions gpu_options{
             .require_gpu = options.gpu_required,
             .force_cpu = options.force_cpu,
@@ -828,7 +871,6 @@ OperationStats extract_suzip(
     const ExtractOptions& options,
     const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
-    const auto budget = resolve_pipeline_budget(options.chunk_size, options.worker_count, options.max_inflight_chunks);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
     const auto started = std::chrono::steady_clock::now();
     auto archive_input_buffer = make_file_stream_buffer();
@@ -842,17 +884,15 @@ OperationStats extract_suzip(
     auto index = read_index_from_file(input);
 
     // Validate the complete index up front so extraction cannot create files for malformed metadata.
-    std::uint64_t total_bytes = 0;
-    for (const auto& entry : index.entries) {
-        validate_entry_metadata(entry);
-        total_bytes = checked_add_u64(total_bytes, entry.uncompressed_size, "archive uncompressed size overflows");
-    }
+    const auto validation = validate_archive_index_metadata(index);
+    const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
+    const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
     std::filesystem::create_directories(destination);
     ProgressState progress;
-    progress.start(OperationKind::Extract, total_bytes, index.entries.size());
+    progress.start(OperationKind::Extract, validation.total_uncompressed_bytes, index.entries.size());
     OperationStats stats;
     stats.input_bytes = archive_size;
-    stats.output_bytes = total_bytes;
+    stats.output_bytes = validation.total_uncompressed_bytes;
     stats.entries = index.entries.size();
     stats.workers = budget.workers;
     stats.inflight_chunks = budget.inflight_chunks;
@@ -873,9 +913,7 @@ OperationStats extract_suzip(
         if (!options.overwrite && std::filesystem::exists(target)) {
             throw SecurityError("refusing to overwrite existing file: " + target.string());
         }
-        const auto entry_windows = entry.uncompressed_size == 0
-            ? 1U
-            : (entry.uncompressed_size + options.chunk_size - 1U) / options.chunk_size;
+        const auto entry_windows = count_stream_windows(entry.uncompressed_size, decode_window_bytes);
         const GpuCodecOptions gpu_options{
             .require_gpu = options.gpu_required,
             .force_cpu = options.force_cpu,
@@ -901,7 +939,7 @@ OperationStats extract_suzip(
                 input,
                 entry,
                 archive_size,
-                options,
+                decode_window_bytes,
                 gpu_options,
                 budget,
                 [&](std::span<const std::byte> bytes) {
@@ -944,7 +982,6 @@ OperationStats verify_suzip(
     const ExtractOptions& options,
     const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
-    const auto budget = resolve_pipeline_budget(options.chunk_size, options.worker_count, options.max_inflight_chunks);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
     const auto started = std::chrono::steady_clock::now();
     auto archive_input_buffer = make_file_stream_buffer();
@@ -956,16 +993,14 @@ OperationStats verify_suzip(
     }
     const auto archive_size = std::filesystem::file_size(archive_path);
     auto index = read_index_from_file(input);
-    std::uint64_t total_bytes = 0;
-    for (const auto& entry : index.entries) {
-        validate_entry_metadata(entry);
-        total_bytes = checked_add_u64(total_bytes, entry.uncompressed_size, "archive uncompressed size overflows");
-    }
+    const auto validation = validate_archive_index_metadata(index);
+    const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
+    const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
     ProgressState progress;
-    progress.start(OperationKind::Verify, total_bytes, index.entries.size());
+    progress.start(OperationKind::Verify, validation.total_uncompressed_bytes, index.entries.size());
     OperationStats stats;
     stats.input_bytes = archive_size;
-    stats.output_bytes = total_bytes;
+    stats.output_bytes = validation.total_uncompressed_bytes;
     stats.entries = index.entries.size();
     stats.workers = budget.workers;
     stats.inflight_chunks = budget.inflight_chunks;
@@ -975,9 +1010,7 @@ OperationStats verify_suzip(
             continue;
         }
         progress.set_current(entry.path);
-        const auto entry_windows = entry.uncompressed_size == 0
-            ? 1U
-            : (entry.uncompressed_size + options.chunk_size - 1U) / options.chunk_size;
+        const auto entry_windows = count_stream_windows(entry.uncompressed_size, decode_window_bytes);
         const GpuCodecOptions gpu_options{
             .require_gpu = options.gpu_required,
             .force_cpu = options.force_cpu,
@@ -989,7 +1022,7 @@ OperationStats verify_suzip(
             input,
             entry,
             archive_size,
-            options,
+            decode_window_bytes,
             gpu_options,
             budget,
             [&](std::uint64_t bytes) {
