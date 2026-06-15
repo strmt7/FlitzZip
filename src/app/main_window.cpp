@@ -13,6 +13,7 @@
 #include <commdlg.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cmath>
 #include <dwmapi.h>
 #include <objidl.h>
@@ -51,6 +52,8 @@ constexpr int kPageInsetX = 30;
 constexpr int kPageInsetY = 22;
 constexpr int kPageHeaderHeight = 34;
 constexpr UINT_PTR kAnimationTimer = 7;
+constexpr UINT_PTR kSmokeAutoCloseTimer = 9;
+constexpr UINT_PTR kSmokeClosePollTimer = 10;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
 
@@ -79,6 +82,49 @@ constexpr UINT kGpuMemorySampleMs = 1000;
 // Outputs: Returns a non-resizable Win32 overlapped-window style.
 DWORD window_style() {
     return WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+}
+
+// Purpose: Read the optional GUI-smoke auto-close timeout.
+// Inputs: Uses `SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS` from the process environment.
+// Outputs: Returns a bounded timer interval in milliseconds, or zero when disabled.
+UINT smoke_auto_close_ms() {
+    wchar_t buffer[32]{};
+    constexpr DWORD capacity = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+    const DWORD length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", buffer, capacity);
+    if (length == 0 || length >= capacity) {
+        return 0;
+    }
+    wchar_t* end = nullptr;
+    const unsigned long parsed = std::wcstoul(buffer, &end, 10);
+    if (end == buffer || parsed == 0) {
+        return 0;
+    }
+    return static_cast<UINT>(std::clamp<unsigned long>(parsed, 5000UL, 300000UL));
+}
+
+// Purpose: Read the optional GUI-smoke close-marker file path.
+// Inputs: Uses `SUPERZIP_GUI_SMOKE_CLOSE_FILE` from the process environment.
+// Outputs: Returns the marker path, or an empty path when smoke close polling is disabled.
+std::filesystem::path smoke_close_marker_path() {
+    wchar_t buffer[32768]{};
+    constexpr DWORD capacity = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+    const DWORD length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_CLOSE_FILE", buffer, capacity);
+    if (length == 0 || length >= capacity) {
+        return {};
+    }
+    return std::filesystem::path(buffer);
+}
+
+// Purpose: Check whether the GUI smoke harness requested in-process shutdown.
+// Inputs: Uses the smoke close-marker path from the process environment.
+// Outputs: Returns true only when the configured marker file exists.
+bool smoke_close_requested() {
+    const auto marker = smoke_close_marker_path();
+    if (marker.empty()) {
+        return false;
+    }
+    std::error_code ec;
+    return std::filesystem::exists(marker, ec);
 }
 
 // Purpose: Return the default working directory without throwing into paint code.
@@ -131,6 +177,34 @@ std::wstring compression_profile_text(int index) {
     };
     const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
     return std::wstring(labels[normalized]);
+}
+
+// Purpose: Return the compression block-size labels shown in the Compress page.
+// Inputs: `index` is the mutable block-size selection in UI state.
+// Outputs: Returns a meaningful tuning label that maps to a supported archive block size.
+std::wstring compression_block_size_text(int index) {
+    constexpr std::array<std::wstring_view, 4> labels{
+        L"256 KiB blocks",
+        L"1 MiB blocks",
+        L"4 MiB blocks",
+        L"16 MiB blocks",
+    };
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
+    return std::wstring(labels[normalized]);
+}
+
+// Purpose: Map a compression block-size selection to bytes accepted by the archive core.
+// Inputs: `index` is the mutable block-size selection in UI state.
+// Outputs: Returns a block size between `kMinArchiveBlockBytes` and `kMaxArchiveBlockBytes`.
+std::uint32_t compression_block_size_bytes(int index) {
+    constexpr std::array<std::uint32_t, 4> sizes{
+        256U * 1024U,
+        superzip::kDefaultArchiveBlockBytes,
+        4U * 1024U * 1024U,
+        superzip::kMaxArchiveBlockBytes,
+    };
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(sizes.size()) + static_cast<int>(sizes.size())) % static_cast<int>(sizes.size()));
+    return sizes[normalized];
 }
 
 // Purpose: Return a label from a circular option list.
@@ -213,6 +287,13 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
         return {compression_profile_text(0), compression_profile_text(1), compression_profile_text(2)};
     case DropdownId::CompressMethod:
         return {L"AMD HIP required", L"AMD HIP preferred"};
+    case DropdownId::CompressBlockSize:
+        return {
+            compression_block_size_text(0),
+            compression_block_size_text(1),
+            compression_block_size_text(2),
+            compression_block_size_text(3),
+        };
     case DropdownId::ExtractOverwrite:
         return {L"Ask before overwrite", L"Overwrite enabled"};
     case DropdownId::HistoryOperation:
@@ -240,6 +321,8 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
         return state.compression_profile_index;
     case DropdownId::CompressMethod:
         return state.gpu_required ? 0 : 1;
+    case DropdownId::CompressBlockSize:
+        return state.compression_block_size_index;
     case DropdownId::ExtractOverwrite:
         return state.overwrite ? 1 : 0;
     case DropdownId::HistoryOperation:
@@ -845,6 +928,12 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         initialize_performance_monitor();
         update_performance_sample();
         SetTimer(hwnd_, kPerformanceTimer, kPerformanceSampleMs, nullptr);
+        if (const UINT auto_close_ms = smoke_auto_close_ms(); auto_close_ms > 0) {
+            SetTimer(hwnd_, kSmokeAutoCloseTimer, auto_close_ms, nullptr);
+        }
+        if (!smoke_close_marker_path().empty()) {
+            SetTimer(hwnd_, kSmokeClosePollTimer, 250, nullptr);
+        }
         return 0;
     case WM_APP + 1:
         repaint_queued_ = false;
@@ -860,10 +949,22 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             request_repaint();
             return 0;
         }
+        if (wparam == kSmokeAutoCloseTimer) {
+            DestroyWindow(hwnd_);
+            return 0;
+        }
+        if (wparam == kSmokeClosePollTimer) {
+            if (smoke_close_requested()) {
+                DestroyWindow(hwnd_);
+            }
+            return 0;
+        }
         return DefWindowProcW(hwnd_, message, wparam, lparam);
     case WM_DESTROY:
         KillTimer(hwnd_, kAnimationTimer);
         KillTimer(hwnd_, kPerformanceTimer);
+        KillTimer(hwnd_, kSmokeAutoCloseTimer);
+        KillTimer(hwnd_, kSmokeClosePollTimer);
         shutdown_performance_monitor();
         PostQuitMessage(0);
         return 0;
@@ -1144,7 +1245,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.format, L"Archive format", L"SuperZip GPU (.suzip)", false);
     draw_field(dc, layout.profile, L"Compression profile", compression_profile_text(state.compression_profile_index), true);
     draw_field(dc, layout.method, L"Compression method", state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred", true);
-    draw_field(dc, layout.block_size, L"Block size", L"1 MiB blocks / 128 MiB chunks", false);
+    draw_field(dc, layout.block_size, L"Block size", compression_block_size_text(state.compression_block_size_index), true);
 
     RECT advanced = layout.advanced;
     fill_round_rect(dc, advanced, kPanel, scale(4));
@@ -1568,6 +1669,8 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
         return compress_layout(content).profile;
     case DropdownId::CompressMethod:
         return compress_layout(content).method;
+    case DropdownId::CompressBlockSize:
+        return compress_layout(content).block_size;
     case DropdownId::ExtractOverwrite:
         return extract_layout(content).overwrite_policy;
     case DropdownId::HistoryOperation: {
@@ -1718,6 +1821,10 @@ bool MainWindow::handle_content_click(int x, int y) {
         }
         if (contains_point(layout.method, x, y)) {
             open_dropdown(DropdownId::CompressMethod);
+            return true;
+        }
+        if (contains_point(layout.block_size, x, y)) {
+            open_dropdown(DropdownId::CompressBlockSize);
             return true;
         }
         if (contains_point(layout.solid_archive, x, y)) {
@@ -1944,6 +2051,10 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
             state_.gpu_required = option_index == 0;
             state_.status = "Compression method changed";
             break;
+        case DropdownId::CompressBlockSize:
+            state_.compression_block_size_index = std::clamp(option_index, 0, 3);
+            state_.status = "Block size changed";
+            break;
         case DropdownId::ExtractOverwrite:
             state_.overwrite = option_index == 1;
             state_.status = "Overwrite policy changed";
@@ -2156,6 +2267,7 @@ void MainWindow::restore_defaults() {
         state_.destination_directory.clear();
         state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
         state_.compression_profile_index = 0;
+        state_.compression_block_size_index = 1;
         state_.memory_policy_index = 0;
         state_.log_level_index = 0;
         state_.log_retention_index = 0;
@@ -2185,6 +2297,7 @@ void MainWindow::start_compress() {
     bool integrity = false;
     bool defender = false;
     bool verify_after_write = false;
+    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     std::filesystem::path output;
     {
         std::lock_guard lock(mutex_);
@@ -2193,6 +2306,7 @@ void MainWindow::start_compress() {
         integrity = state_.integrity_hash_opt_in;
         defender = state_.defender_scan_opt_in;
         verify_after_write = state_.verify_after_write_opt_in;
+        block_size = compression_block_size_bytes(state_.compression_block_size_index);
         output = compression_output_path_for(state_);
     }
     if (sources.empty()) {
@@ -2203,9 +2317,10 @@ void MainWindow::start_compress() {
         request_repaint();
         return;
     }
-    run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write] {
+    run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write, block_size] {
         CompressOptions options;
         options.gpu_required = gpu_required;
+        options.block_size = block_size;
         options.verify_after_write = verify_after_write;
         auto stats = compress_suzip(sources, output, options, [this](const ProgressSnapshot& snapshot) {
             std::lock_guard lock(mutex_);

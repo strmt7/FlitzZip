@@ -37,6 +37,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/compression-backend-evaluation.md`. rocPRIM can be used as a HIP
   building block; rocSPARSE, OpenCL, SYCL, and OpenMP offload are not approved
   replacement archive-codec paths for this repository.
+- Before changing block-size options, benchmark policy, or CPU/GPU performance
+  claims, read `docs/performance-block-size-validation.md` and keep the
+  RAM-only benchmark gates intact.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
 ## Project Map
@@ -83,13 +86,15 @@ Benchmark only after correctness tests pass:
 ```powershell
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
 ```
 
 `tools\bench.ps1` is memory-only by default and must report
-`memory_only=true` and `disk_write_bytes=0`. Do not run large generated
-filesystem benchmarks unless a maintainer explicitly accepts storage wear and
-passes both `-Mode Filesystem` and `-AllowLargeDiskWrites`.
+`memory_only=true` and `disk_write_bytes=0` for every CPU and GPU lane. During
+development, CPU/GPU benchmarking must stay RAM-only to avoid unnecessary SSD
+wear. Do not run multi-GB generated filesystem benchmarks. The only normal
+storage validation is `tools\storage_smoke.ps1` or `tools\bench.ps1 -Mode
+Filesystem` with a bounded smoke payload of at most 64 MiB.
 
 Parser fuzzing is automatic in GitHub Actions. Local sanitizer fuzzing requires
 Docker and uses ClusterFuzzLite's Clang/libFuzzer toolchain:
@@ -136,6 +141,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
+- Product benchmark claims must sweep the production SUZIP block-size choices:
+  256 KiB, 1 MiB, 4 MiB, and 16 MiB. The benchmark harness must compare
+  forced-CPU and required-AMD-HIP lanes in RAM and must not write multi-GB
+  generated workloads to SSDs.
 - Product MSI releases must be per-machine installers that preselect
   `C:\Program Files\SuperZip` and use normal Windows elevation when required.
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
@@ -174,6 +183,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Queue, Compress, Extract, Security, History, GPU, Preferences, and About page
   controls must remain clickable; fix the shared geometry instead of adding
   page-specific click offsets that can drift from rendering.
+- Never add or redesign a GUI feature by breaking an existing interaction.
+  File-picker queueing, folder-picker queueing, drag/drop queueing, row
+  selection, destination selection, dropdowns, toggles, tab changes, and primary
+  actions are regression boundaries and must keep working unless a maintainer
+  explicitly removes that capability.
 - Dropdown arrows must be vertically centered in their value boxes and use one
   consistent shape and inset throughout the app.
 - Toggle rows must rely on the switch state itself. Do not add redundant
@@ -188,8 +202,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   button, toggle, dropdown/select field, and main action path at least once,
   exercise Add files, Add folder, Clear, drag/drop, destination selection,
   Queue/Compress/Extract/Security/GPU/History/Settings actions, and close
-  without leaving modal dialogs or windows open. Inspect the generated
-  screenshots for every page before calling the UI done.
+  without leaving modal dialogs or windows open. The smoke must assert that
+  queued items are visibly rendered after file picker, folder picker, and native
+  drag/drop injection; clicking a control without verifying its effect is not
+  enough. Inspect the generated screenshots for every page before calling the UI
+  done.
 
 ## Git Workflow
 

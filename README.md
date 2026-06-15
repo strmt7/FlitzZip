@@ -115,6 +115,10 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
+ZIP compatibility is deliberately separate from SUZIP tuning. `--require-gpu`,
+`--force-cpu`, worker controls, block-size controls, compression-level controls,
+and `--verify-after-write` are accepted only on native `.suzip` commands because
+standard `.zip` is the miniz compatibility path.
 
 ## GUI
 
@@ -191,21 +195,25 @@ RAM, verifies/extracts from RAM, and reports `memory_only=true` plus
 `disk_write_bytes=0` from both the forced-CPU and required-GPU benchmark lanes:
 
 ```powershell
-tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
+tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
 ```
 
 Use `-Profile Mixed`, `-Profile Compressible`, and `-Profile Incompressible`
 when characterizing a release candidate. The script refuses workloads smaller
-than 10 GiB and reports production-aligned worker allocation (`Workers`,
-`InflightChunks`, and `CodecWorkers`) plus backend HIP event counters, kernel
-time, transfer bytes, and allocation bytes emitted by the SuperZip GPU backend
-itself. Do not treat a GPU-only timing as a product benchmark; if required HIP
-is slower than forced CPU, record it as an optimization finding. Full filesystem
-benchmarks are opt-in only through `-Mode Filesystem -AllowLargeDiskWrites` and
-should be used only on storage intentionally reserved for destructive benchmark
-wear.
+than 10 GiB in memory mode and sweeps the production block-size choices:
+256 KiB, 1 MiB, 4 MiB, and 16 MiB. It reports production-aligned worker
+allocation (`Workers`, `InflightChunks`, and `CodecWorkers`) plus backend HIP
+event counters, kernel time, transfer bytes, and allocation bytes emitted by the
+SuperZip GPU backend itself. Do not treat a GPU-only timing as a product
+benchmark; if required HIP is slower than forced CPU, record it as an
+optimization finding. Multi-GB filesystem benchmarks are intentionally blocked
+during development to avoid SSD wear. Filesystem mode is limited to a bounded
+smoke payload of at most 64 MiB; use `tools/storage_smoke.ps1` for the normal
+archive write/read path.
 
 See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
-`docs/compression-backend-evaluation.md`, `docs/third-party.md`,
-`docs/release.md`, and
+`docs/compression-backend-evaluation.md`,
+`docs/performance-block-size-validation.md`,
+`docs/benchmarks/2026-06-15-ram-block-size-sweep.md`,
+`docs/third-party.md`, `docs/release.md`, and
 `docs/security-code-scanning.md`.

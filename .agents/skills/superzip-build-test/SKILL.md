@@ -26,6 +26,14 @@ Rules:
 - Use CLI smoke tests for archive validation.
 - Keep `HIP_PATH`, Visual Studio, and architecture configurable.
 - Never commit build output, archives, binaries, logs, or secrets.
+- CPU/GPU performance benchmarks must use `tools/bench.ps1` in its default
+  memory-only mode. Required proof fields are `memory_only=true` and
+  `disk_write_bytes=0` for both forced-CPU and required-AMD-HIP lanes. Do not
+  run multi-GB filesystem benchmarks during development; use
+  `tools/storage_smoke.ps1` or the 64 MiB-capped filesystem smoke only for the
+  archive write/read path.
+- Block-size changes must validate every product option:
+  `-BlockSizeKiB 256,1024,4096,16384`.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.
 - Release/deployment MSIs use the default `perMachine` scope, preselect
   `C:\Program Files\SuperZip`, and require normal Windows elevation. Local
@@ -41,7 +49,9 @@ Rules:
   open every tab and click/use every visible button, toggle, dropdown/select
   field, and main action path at least once, including Add files, Add folder,
   Clear, drag/drop, destination selection, Queue/Compress/Extract/Security/GPU/
-  History/Settings actions, then inspect every generated page screenshot.
+  History/Settings actions, then inspect every generated page screenshot. It
+  must visibly verify Add files, Add folder, native drag/drop, and every
+  dropdown menu instead of only clicking controls.
 - Visual changes must preserve the compact enterprise design reference in
   `resources/design/superzip-ui-iteration-4.png` and the polish reference in
   `resources/design/superzip-ui-imagegen-polish-20260615.png`. Do not simplify

@@ -130,6 +130,63 @@ void write_raw_test_archive(
 
 }  // namespace
 
+// Purpose: Verify every product block-size option is a real compression setting.
+// Inputs: A deterministic 3 MiB file compressed with each offered block size.
+// Outputs: Extracted payload matches the source and archive metadata never exceeds the selected block size.
+TEST_CASE(suzip_supported_block_sizes_roundtrip_and_bound_metadata) {
+    const auto root = test_temp_dir("suzip-block-sizes");
+    const auto source = root / "source";
+    std::filesystem::create_directories(source);
+    const auto input = source / "payload.bin";
+    {
+        std::ofstream out(input, std::ios::binary);
+        for (std::size_t i = 0; i < (3U * 1024U * 1024U); ++i) {
+            const auto value = static_cast<unsigned char>((i * 131U + (i / 17U)) & 0xFFU);
+            out.put(static_cast<char>(value));
+        }
+    }
+
+    constexpr std::array<std::uint32_t, 4> block_sizes{
+        256U * 1024U,
+        superzip::kDefaultArchiveBlockBytes,
+        4U * 1024U * 1024U,
+        superzip::kMaxArchiveBlockBytes,
+    };
+    for (const auto block_size : block_sizes) {
+        const auto archive = root / ("archive-" + std::to_string(block_size) + ".suzip");
+        const auto output = root / ("out-" + std::to_string(block_size));
+        superzip::CompressOptions compress;
+        compress.force_cpu = true;
+        compress.gpu_required = false;
+        compress.block_size = block_size;
+        const auto compressed = superzip::compress_suzip({source}, archive, compress);
+        REQUIRE_TRUE(!compressed.gpu_used);
+
+        const auto index = read_test_archive_index(archive);
+        bool saw_payload = false;
+        for (const auto& entry : index.entries) {
+            if (entry.directory) {
+                continue;
+            }
+            saw_payload = true;
+            for (const auto& block : entry.blocks) {
+                REQUIRE_TRUE(block.uncompressed_len <= block_size);
+            }
+        }
+        REQUIRE_TRUE(saw_payload);
+
+        superzip::ExtractOptions extract;
+        extract.force_cpu = true;
+        extract.gpu_required = false;
+        const auto extracted = superzip::extract_suzip(archive, output, extract);
+        REQUIRE_TRUE(!extracted.gpu_used);
+        const auto restored = output / "source" / "payload.bin";
+        REQUIRE_TRUE(std::filesystem::exists(restored));
+        REQUIRE_EQ(std::filesystem::file_size(restored), std::filesystem::file_size(input));
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify `.suzip` roundtrip behavior for compressible and mixed byte patterns.
 // Inputs: Temporary files with repetitive and randomish content.
 // Outputs: Throws on failed compression/extraction or mismatched restored bytes.

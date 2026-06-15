@@ -40,6 +40,7 @@ enum class DropdownId {
     None,
     CompressProfile,
     CompressMethod,
+    CompressBlockSize,
     ExtractOverwrite,
     HistoryOperation,
     HistoryStatus,
@@ -75,6 +76,7 @@ struct UiState {
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
     int compression_profile_index = 0;
+    int compression_block_size_index = 1;
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;

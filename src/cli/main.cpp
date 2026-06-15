@@ -44,6 +44,7 @@ struct MemoryBenchmarkOptions {
     bool require_gpu = false;
     bool force_cpu = false;
     std::uint32_t workers = 0;
+    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = 1;
 };
 
@@ -76,6 +77,7 @@ struct PendingMemoryDecode {
 struct MemoryBenchmarkResult {
     superzip::OperationStats stats;
     std::uint32_t codec_workers = 1;
+    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     double compress_seconds = 0.0;
     double verify_seconds = 0.0;
     double extract_seconds = 0.0;
@@ -91,9 +93,11 @@ void usage() {
         << "  superzip_cli gpu-info\n"
         << "  superzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
         << "  superzip_cli dependency-check\n"
-        << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--compression-level <1-9>]\n"
-        << "  superzip_cli compress --format suzip|zip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
-        << "  superzip_cli extract --format suzip|zip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>]\n"
+        << "  superzip_cli compress --format suzip --output <archive.suzip> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
+        << "  superzip_cli compress --format zip --output <archive.zip> [--sha256] [--defender-scan] <path>...\n"
+        << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
+        << "  superzip_cli extract --format zip --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive.zip>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -138,6 +142,7 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " workers=" << stats.workers
               << " inflight_chunks=" << stats.inflight_chunks
               << " codec_workers=" << result.codec_workers
+              << " block_size_bytes=" << result.block_size
               << " gpu_used=" << (stats.gpu_used ? "true" : "false")
               << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
               << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
@@ -494,6 +499,12 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     if (options.compression_level < 1 || options.compression_level > 9) {
         throw superzip::ArchiveError("compression level must be between 1 and 9");
     }
+    if (options.block_size < superzip::kMinArchiveBlockBytes || options.block_size > superzip::kMaxArchiveBlockBytes) {
+        throw superzip::ArchiveError("memory benchmark block size is outside SuperZip resource limits");
+    }
+    if ((superzip::kMaxArchiveChunkBytes % options.block_size) != 0) {
+        throw superzip::ArchiveError("memory benchmark block size must divide the 128 MiB chunk size");
+    }
     if (options.require_gpu && options.force_cpu) {
         throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
@@ -509,7 +520,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     const superzip::GpuCodecOptions codec_options{
         .require_gpu = options.require_gpu,
         .force_cpu = options.force_cpu,
-        .block_size = superzip::kDefaultArchiveBlockBytes,
+        .block_size = options.block_size,
         .worker_count = codec_workers,
         .compression_level = options.compression_level,
         .telemetry = telemetry,
@@ -520,6 +531,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.stats.workers = workers;
     result.stats.inflight_chunks = inflight;
     result.codec_workers = codec_workers;
+    result.block_size = options.block_size;
 
     const auto total_started = std::chrono::steady_clock::now();
     auto phase_started = std::chrono::steady_clock::now();
@@ -655,6 +667,22 @@ int require_int_arg(const std::vector<std::string>& args, std::size_t& index, co
     return value;
 }
 
+// Purpose: Parse a supported SUZIP block size in KiB for compression and benchmarking.
+// Inputs: `args` is the full argument vector, `index` is the current flag index and is advanced, and `name` labels diagnostics.
+// Outputs: Returns a production-supported block size in bytes; throws `ArchiveError` for unsupported values.
+std::uint32_t require_block_size_kib_arg(const std::vector<std::string>& args, std::size_t& index, const char* name) {
+    const auto kib = require_u32_arg(args, index, name);
+    switch (kib) {
+    case 256U:
+    case 1024U:
+    case 4096U:
+    case 16384U:
+        return kib * 1024U;
+    default:
+        throw superzip::ArchiveError("unsupported block size; use 256, 1024, 4096, or 16384 KiB");
+    }
+}
+
 }  // namespace
 
 // Purpose: Execute the SuperZip command-line interface.
@@ -716,6 +744,8 @@ int main(int argc, char** argv) {
                     options.force_cpu = true;
                 } else if (args[i] == "--workers") {
                     options.workers = require_u32_arg(args, i, "--workers");
+                } else if (args[i] == "--block-size-kib") {
+                    options.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
                 } else if (args[i] == "--compression-level") {
                     options.compression_level = require_int_arg(args, i, "--compression-level", 1, 9);
                 } else {
@@ -734,6 +764,8 @@ int main(int argc, char** argv) {
             bool force_cpu = false;
             std::uint32_t workers = 0;
             std::uint32_t inflight = 0;
+            std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
+            bool suzip_tuning_requested = false;
             int compression_level = 1;
             bool verify_after_write = false;
             bool sha256 = false;
@@ -751,12 +783,19 @@ int main(int argc, char** argv) {
                     force_cpu = true;
                 } else if (args[i] == "--workers") {
                     workers = require_u32_arg(args, i, "--workers");
+                    suzip_tuning_requested = true;
                 } else if (args[i] == "--inflight") {
                     inflight = require_u32_arg(args, i, "--inflight");
+                    suzip_tuning_requested = true;
+                } else if (args[i] == "--block-size-kib") {
+                    block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
+                    suzip_tuning_requested = true;
                 } else if (args[i] == "--compression-level") {
                     compression_level = require_int_arg(args, i, "--compression-level", 1, 9);
+                    suzip_tuning_requested = true;
                 } else if (args[i] == "--verify-after-write") {
                     verify_after_write = true;
+                    suzip_tuning_requested = true;
                 } else if (args[i] == "--sha256") {
                     sha256 = true;
                 } else if (args[i] == "--defender-scan") {
@@ -778,10 +817,14 @@ int main(int argc, char** argv) {
                 options.force_cpu = force_cpu;
                 options.worker_count = workers;
                 options.max_inflight_chunks = inflight;
+                options.block_size = block_size;
                 options.compression_level = compression_level;
                 options.verify_after_write = verify_after_write;
                 print_stats(superzip::compress_suzip(sources, output, options));
             } else if (format == "zip") {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("ZIP compatibility does not support SUZIP GPU, worker, block-size, compression-level, or verify-after-write flags");
+                }
                 print_stats(superzip::compress_zip(sources, output));
             } else {
                 throw superzip::ArchiveError("unknown archive format: " + format);
@@ -804,6 +847,7 @@ int main(int argc, char** argv) {
             bool force_cpu = false;
             std::uint32_t workers = 0;
             std::uint32_t inflight = 0;
+            bool suzip_tuning_requested = false;
             bool overwrite = false;
             bool sha256 = false;
             bool defender_scan = false;
@@ -820,8 +864,10 @@ int main(int argc, char** argv) {
                     force_cpu = true;
                 } else if (args[i] == "--workers") {
                     workers = require_u32_arg(args, i, "--workers");
+                    suzip_tuning_requested = true;
                 } else if (args[i] == "--inflight") {
                     inflight = require_u32_arg(args, i, "--inflight");
+                    suzip_tuning_requested = true;
                 } else if (args[i] == "--overwrite") {
                     overwrite = true;
                 } else if (args[i] == "--sha256") {
@@ -854,6 +900,9 @@ int main(int argc, char** argv) {
                 options.max_inflight_chunks = inflight;
                 print_stats(superzip::extract_suzip(archive, output, options));
             } else if (format == "zip") {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("ZIP compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                }
                 print_stats(superzip::extract_zip(archive, output, overwrite));
             } else {
                 throw superzip::ArchiveError("unknown archive format: " + format);

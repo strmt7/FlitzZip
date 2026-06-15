@@ -460,10 +460,12 @@ New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
 $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
+$smokeCloseFile = Join-Path $smokeRoot "close.request"
 Set-Content -LiteralPath $smokeInput -Value "SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
 Remove-Item -LiteralPath $smokeArchive -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
 & (Join-Path $repo "build\$Configuration\superzip_cli.exe") compress --format suzip --output $smokeArchive --force-cpu $smokeInput | Out-Null
 if (-not (Test-Path -LiteralPath $smokeArchive)) {
     throw "Could not create valid SUZIP archive for GUI extract smoke."
@@ -471,9 +473,13 @@ if (-not (Test-Path -LiteralPath $smokeArchive)) {
 $previousSmokeDestination = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", "Process")
 $previousSmokeFiles = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", "Process")
 $previousSmokeFolder = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", "Process")
+$previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
+$previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeRoot, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", (Resolve-Path -LiteralPath $smokeInput).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "90000", "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
 
 $previousDpiContext = [SuperZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = Start-Process -FilePath $exe -PassThru
@@ -512,12 +518,20 @@ try {
     Start-Sleep -Milliseconds 150
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
     Start-Sleep -Milliseconds 150
+    $pickerQueuePath = "${basePath}-Queue-AfterPickers$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $pickerQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
 
     # Queue: exercise drag/drop and row selection only. Destination, profile, and Start belong to Compress/Extract.
     Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
     Start-Sleep -Milliseconds 350
+    $dropQueuePath = "${basePath}-Queue-AfterDragDrop$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $dropQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $dropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 240 -DesignY 172
     Start-Sleep -Milliseconds 120
 
@@ -528,6 +542,7 @@ try {
     Start-Sleep -Milliseconds 120
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Profile" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 296 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 350 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 426 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 452 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 406
     Start-Sleep -Milliseconds 80
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 438
@@ -554,6 +569,10 @@ try {
     Start-Sleep -Milliseconds 150
     Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeArchive).Path)
     Start-Sleep -Milliseconds 250
+    $archiveDropQueuePath = "${basePath}-Queue-ArchiveAfterDragDrop$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $archiveDropQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $archiveDropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 560 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 520 -DesignY 227
@@ -619,13 +638,23 @@ try {
     }
     $captures | ConvertTo-Json
 } finally {
+    $launchedProcessId = if ($process) { $process.Id } else { 0 }
+    $cleanupFailure = $null
+    Set-Content -LiteralPath $smokeCloseFile -Value "close" -NoNewline
     if ($process -and -not $process.HasExited) {
         if ($windowHandle -ne [IntPtr]::Zero) {
             [void][SuperZipNativeUi]::PostMessage($windowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
         }
-        if (-not $process.WaitForExit(5000)) {
-            Stop-Process -Id $process.Id -Force
+        if (-not $process.WaitForExit(10000)) {
+            try {
+                Stop-Process -Id $process.Id -Force
+            } catch {
+                Write-Warning "Could not force-stop SuperZip process $($process.Id): $($_.Exception.Message)"
+            }
         }
+    }
+    if ($launchedProcessId -ne 0 -and (Get-Process -Id $launchedProcessId -ErrorAction SilentlyContinue)) {
+        $cleanupFailure = "SuperZip GUI smoke process $launchedProcessId did not exit cleanly."
     }
     if ($previousDpiContext -ne [IntPtr]::Zero) {
         [void][SuperZipNativeUi]::SetThreadDpiAwarenessContext($previousDpiContext)
@@ -633,4 +662,10 @@ try {
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $previousSmokeDestination, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", $previousSmokeFiles, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", $previousSmokeFolder, "Process")
+    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", $previousSmokeAutoClose, "Process")
+    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $previousSmokeCloseFile, "Process")
+    Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
+    if ($cleanupFailure) {
+        throw $cleanupFailure
+    }
 }

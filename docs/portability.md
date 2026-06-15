@@ -106,7 +106,7 @@ same generated data set:
 ```powershell
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
 ```
 
 Record the workload size, iteration count, GPU model, driver/runtime version,
@@ -114,9 +114,11 @@ sampled CPU/GPU utilization, process I/O transfer bytes, backend HIP chunk
 counts, HIP kernel launches, HIP event time, GPU transfer bytes, compression
 level, and whether the system was thermally or power limited. Run mixed,
 compressible, and incompressible profiles before making release performance
-claims. Do not publish a GPU-only number as a product benchmark. Low GPU engine
-utilization or a required-HIP lane slower than forced CPU is an engineering
-optimization finding, not a number to hide.
+claims. Sweep every production block-size choice, currently 256 KiB, 1 MiB,
+4 MiB, and 16 MiB, before changing archive layout or performance defaults. Do
+not publish a GPU-only number as a product benchmark. Low GPU engine utilization
+or a required-HIP lane slower than forced CPU is an engineering optimization
+finding, not a number to hide.
 
 The memory-only benchmark command must report `memory_only=true` and
 `disk_write_bytes=0`. It exercises the codec, in-memory archive representation,
@@ -130,20 +132,12 @@ forced-CPU lane and must not be decoded by miniz inside a required-HIP
 operation. Failed optional HIP attempts must not be counted as completed GPU
 encode/decode chunks, kernel launches, transfer bytes, or device allocations in
 CPU-fallback telemetry. Use
-`tools\storage_smoke.ps1`
-for the small filesystem correctness path; it writes a bounded temporary
-payload, verifies the archive, compares SHA-256 hashes after extraction, and
-deletes the temporary data.
-
-Full filesystem benchmarks remain available only for storage devices reserved
-for benchmark wear:
-
-```powershell
-tools\bench.ps1 -Configuration Release -Mode Filesystem -AllowLargeDiskWrites -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
-```
-
-When using the explicit filesystem mode, additionally record logical-disk
-active time, disk read/write throughput, and process I/O transfer bytes.
+`tools\storage_smoke.ps1` for the small filesystem correctness path; it writes a
+bounded temporary payload, verifies the archive, compares SHA-256 hashes after
+extraction, and deletes the temporary data. Multi-GB filesystem benchmarks are
+not part of the development workflow because they create unnecessary SSD wear.
+If the filesystem mode in `tools\bench.ps1` is used at all, it is capped to a
+64 MiB smoke payload and must not be used for CPU/GPU performance claims.
 
 Windows Task Manager and `\GPU Engine(*)\Utilization Percentage` can miss or
 understate short AMD HIP bursts. Use `tools\gpu_proof.ps1` and the `gpu_*`
