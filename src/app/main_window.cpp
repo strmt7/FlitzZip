@@ -1321,7 +1321,35 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP compatibility uses miniz streaming file APIs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
-    RECT monitor{area.left, area.top + scale(342), area.right, area.bottom};
+    draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
+}
+
+void MainWindow::draw_performance_monitor_card(
+    HDC dc,
+    const RECT& graph,
+    const wchar_t* label,
+    const std::wstring& value,
+    const std::wstring& detail,
+    double ratio,
+    COLORREF color) {
+    fill_round_rect(dc, graph, kPanel2, scale(4));
+    stroke_rect(dc, graph, kBorder);
+    RECT value_rect{graph.left + scale(12), graph.top + scale(10), graph.right - scale(12), graph.top + scale(42)};
+    RECT detail_rect{graph.left + scale(12), graph.top + scale(44), graph.right - scale(12), graph.bottom - scale(28)};
+    RECT bar_track{graph.left + scale(12), graph.bottom - scale(20), graph.right - scale(12), graph.bottom - scale(12)};
+    const int bar_width = std::max(0, static_cast<int>(bar_track.right - bar_track.left));
+    RECT bar_fill = bar_track;
+    bar_fill.right = bar_fill.left + static_cast<int>(std::round(static_cast<double>(bar_width) * std::clamp(ratio, 0.0, 1.0)));
+    fill_round_rect(dc, bar_track, RGB(35, 50, 56), scale(4));
+    if (bar_fill.right > bar_fill.left) {
+        fill_round_rect(dc, bar_fill, color, scale(4));
+    }
+    draw_text(dc, value_rect, value, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{graph.left, graph.bottom + scale(4), graph.right, graph.bottom + scale(24)}, label, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const PerformanceMonitorSample& sample) {
     fill_round_rect(dc, monitor, kPanel, scale(4));
     stroke_rect(dc, monitor, kBorder);
     SelectObject(dc, small_font_);
@@ -1330,33 +1358,16 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     const int graph_top = monitor.top + scale(60);
     const int graph_bottom = monitor.bottom - scale(42);
     const int graph_w = (monitor.right - monitor.left - scale(86)) / 4;
-    const auto draw_monitor_card = [this, dc](const RECT& graph, const wchar_t* label, const std::wstring& value, const std::wstring& detail, double ratio, COLORREF color) {
-        fill_round_rect(dc, graph, kPanel2, scale(4));
-        stroke_rect(dc, graph, kBorder);
-        RECT value_rect{graph.left + scale(12), graph.top + scale(10), graph.right - scale(12), graph.top + scale(42)};
-        RECT detail_rect{graph.left + scale(12), graph.top + scale(44), graph.right - scale(12), graph.bottom - scale(28)};
-        RECT bar_track{graph.left + scale(12), graph.bottom - scale(20), graph.right - scale(12), graph.bottom - scale(12)};
-        const int bar_width = std::max(0, static_cast<int>(bar_track.right - bar_track.left));
-        RECT bar_fill = bar_track;
-        bar_fill.right = bar_fill.left + static_cast<int>(std::round(static_cast<double>(bar_width) * std::clamp(ratio, 0.0, 1.0)));
-        fill_round_rect(dc, bar_track, RGB(35, 50, 56), scale(4));
-        if (bar_fill.right > bar_fill.left) {
-            fill_round_rect(dc, bar_fill, color, scale(4));
-        }
-        draw_text(dc, value_rect, value, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
-        draw_text(dc, RECT{graph.left, graph.bottom + scale(4), graph.right, graph.bottom + scale(24)}, label, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    };
-    const auto& sample = state.performance;
     const double io_total = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
     for (int i = 0; i < 4; ++i) {
         RECT graph{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top, monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
         if (!sample.live) {
-            draw_monitor_card(graph, i == 0 ? L"CPU" : i == 1 ? L"Memory" : i == 2 ? L"I/O" : L"GPU", L"Collecting", L"Waiting for the first live sample.", 0.0, kSubtle);
+            draw_performance_monitor_card(dc, graph, i == 0 ? L"CPU" : i == 1 ? L"Memory" : i == 2 ? L"I/O" : L"GPU", L"Collecting", L"Waiting for the first live sample.", 0.0, kSubtle);
             continue;
         }
         if (i == 0) {
-            draw_monitor_card(
+            draw_performance_monitor_card(
+                dc,
                 graph,
                 L"CPU",
                 percentage_text(sample.cpu_percent),
@@ -1365,7 +1376,8 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
                 kInfo);
         } else if (i == 1) {
             const auto detail = std::wstring(L"Private ") + widen(human_bytes(static_cast<double>(sample.private_bytes))) + L"\nSystem " + percentage_text(sample.system_memory_percent);
-            draw_monitor_card(
+            draw_performance_monitor_card(
+                dc,
                 graph,
                 L"Memory",
                 widen(human_bytes(static_cast<double>(sample.private_bytes))),
@@ -1374,7 +1386,8 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
                 kOk);
         } else if (i == 2) {
             const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " + rate_text(sample.io_write_bytes_per_second);
-            draw_monitor_card(
+            draw_performance_monitor_card(
+                dc,
                 graph,
                 L"I/O",
                 rate_text(io_total),
@@ -1390,7 +1403,8 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
             const std::wstring detail = has_vram
                 ? (std::wstring(L"VRAM free ") + widen(human_bytes(static_cast<double>(sample.vram_free_bytes))) + L"\nTotal " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))))
                 : L"Windows GPU counter or HIP VRAM is not exposed.";
-            draw_monitor_card(
+            draw_performance_monitor_card(
+                dc,
                 graph,
                 L"GPU",
                 gpu_value,

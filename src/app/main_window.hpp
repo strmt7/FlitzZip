@@ -266,6 +266,23 @@ private:
     // Outputs: Renders HIP status, device metadata, acceleration mode, and monitoring panels.
     void draw_gpu_page(HDC dc, const RECT& rect, const UiState& state);
 
+    // Purpose: Draw the live performance monitor section on the GPU diagnostics page.
+    // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `sample` is the latest live counter snapshot.
+    // Outputs: Renders CPU, memory, process I/O, and GPU/VRAM cards with bounded bars.
+    void draw_performance_monitor(HDC dc, const RECT& monitor, const PerformanceMonitorSample& sample);
+
+    // Purpose: Draw one metric card inside the live performance monitor.
+    // Inputs: `dc` is the target; text/value fields are preformatted; `ratio` controls the normalized bar fill.
+    // Outputs: Renders a bordered metric card without overflowing text.
+    void draw_performance_monitor_card(
+        HDC dc,
+        const RECT& graph,
+        const wchar_t* label,
+        const std::wstring& value,
+        const std::wstring& detail,
+        double ratio,
+        COLORREF color);
+
     // Purpose: Draw the preferences page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
     // Outputs: Renders general, security, performance, and logging settings.
