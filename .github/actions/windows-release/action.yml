@@ -318,43 +318,87 @@ runs:
         if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
+
+        # Purpose: Print the end of a verbose Windows Installer log for actionable CI failures.
+        # Inputs: Path is the log file to read; Label identifies the install phase in output.
+        # Outputs: Writes a bounded log tail to stdout and returns no value.
+        function Write-MsiLogTail {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$Path,
+                [Parameter(Mandatory = $true)]
+                [string]$Label
+            )
+            if (Test-Path -LiteralPath $Path) {
+                Write-Host "----- $Label log tail -----"
+                Get-Content -LiteralPath $Path -Tail 160
+                Write-Host "----- end $Label log tail -----"
+            } else {
+                Write-Host "$Label log was not produced at $Path"
+            }
+        }
+
+        # Purpose: Run msiexec and fail with the corresponding verbose log tail.
+        # Inputs: Phase names the operation; Arguments are passed to msiexec.exe; LogPath is the verbose log location.
+        # Outputs: Returns no value when msiexec exits 0; throws with diagnostics on any non-zero exit code.
+        function Invoke-CheckedMsiExec {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$Phase,
+                [Parameter(Mandatory = $true)]
+                [string[]]$Arguments,
+                [Parameter(Mandatory = $true)]
+                [string]$LogPath
+            )
+            $process = Start-Process msiexec.exe -ArgumentList $Arguments -PassThru -Wait
+            if ($process.ExitCode -ne 0) {
+                Write-MsiLogTail -Path $LogPath -Label $Phase
+                throw "$Phase failed with exit code $($process.ExitCode)."
+            }
+        }
+
         $msi = Join-Path $PWD "out\$env:PACKAGE_BASE.msi"
         $installLog = Join-Path $env:RUNNER_TEMP "superzip-msi-install.log"
         $uninstallLog = Join-Path $env:RUNNER_TEMP "superzip-msi-uninstall.log"
-        $process = Start-Process msiexec.exe -ArgumentList @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) -PassThru -Wait
-        if ($process.ExitCode -ne 0) {
-            throw "MSI install failed with exit code $($process.ExitCode)."
-        }
         $cliCandidates = @(
             (Join-Path $env:LocalAppData "SuperZip\bin\superzip_cli.exe"),
             (Join-Path $env:LocalAppData "Programs\SuperZip\bin\superzip_cli.exe"),
             (Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe")
         )
-        $cli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-        if (-not $cli) {
-            throw "Installed CLI was not found in the per-user or per-machine SuperZip install locations."
-        }
-        $dependency = & $cli dependency-check
-        $dependencyExit = $LASTEXITCODE
-        $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-dependency-check.txt")
-        if ($env:ENABLE_HIP -eq "true") {
-            if ($dependency -notcontains "hip_compiled=true") {
-                throw "Installed release artifact is not HIP-enabled."
+        $installed = $false
+        try {
+            Invoke-CheckedMsiExec -Phase "MSI install" -Arguments @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) -LogPath $installLog
+            $installed = $true
+            $cli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if (-not $cli) {
+                throw "Installed CLI was not found in the per-user or per-machine SuperZip install locations."
             }
-            if ($dependency -notcontains "hip_runtime_loadable=true") {
-                throw "Installed release artifact cannot load the AMD HIP runtime."
-            }
-            if ($dependencyExit -notin @(0, 12)) {
+            $dependency = & $cli dependency-check
+            $dependencyExit = $LASTEXITCODE
+            $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-dependency-check.txt")
+            if ($env:ENABLE_HIP -eq "true") {
+                if ($dependency -notcontains "hip_compiled=true") {
+                    throw "Installed release artifact is not HIP-enabled."
+                }
+                if ($dependency -notcontains "hip_runtime_loadable=true") {
+                    throw "Installed release artifact cannot load the AMD HIP runtime."
+                }
+                if ($dependencyExit -notin @(0, 12)) {
+                    throw "Installed dependency check failed with exit code $dependencyExit."
+                }
+            } elseif ($dependencyExit -ne 0) {
                 throw "Installed dependency check failed with exit code $dependencyExit."
             }
-        }
-        $process = Start-Process msiexec.exe -ArgumentList @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) -PassThru -Wait
-        if ($process.ExitCode -ne 0) {
-            throw "MSI uninstall failed with exit code $($process.ExitCode)."
-        }
-        $remainingCli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-        if ($remainingCli) {
-            throw "Installed CLI remained after MSI uninstall at $remainingCli."
+            $global:LASTEXITCODE = 0
+        } finally {
+            if ($installed) {
+                Invoke-CheckedMsiExec -Phase "MSI uninstall" -Arguments @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) -LogPath $uninstallLog
+                $remainingCli = $cliCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+                if ($remainingCli) {
+                    throw "Installed CLI remained after MSI uninstall at $remainingCli."
+                }
+                $global:LASTEXITCODE = 0
+            }
         }
 
     - name: Generate release notes
