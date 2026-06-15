@@ -10,26 +10,10 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
 $stage = Join-Path $repo "out\install-$Configuration"
+. (Join-Path $PSScriptRoot "version.ps1")
 
-# Purpose: Resolve the package display version from an explicit argument or CMake project metadata.
-# Inputs: RequestedVersion is an optional SemVer string supplied by the caller.
-# Outputs: Returns the version string used in portable ZIP and MSI filenames.
-function Resolve-PackageVersion {
-    param([string]$RequestedVersion)
-    if ($RequestedVersion) {
-        return $RequestedVersion
-    }
-    $cmakeLists = Join-Path $repo "CMakeLists.txt"
-    $text = Get-Content -LiteralPath $cmakeLists -Raw
-    $match = [regex]::Match($text, "project\s*\(\s*SuperZip\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)", "IgnoreCase")
-    if (-not $match.Success) {
-        throw "Unable to resolve package version from CMakeLists.txt."
-    }
-    return $match.Groups[1].Value
-}
-
-$PackageVersion = Resolve-PackageVersion -RequestedVersion $PackageVersion
-$packageBase = "SuperZip-$PackageVersion-win64"
+$PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
+$packageBase = Get-SuperZipPackageBase -PackageVersion $PackageVersion
 $package = Join-Path $repo "out\$packageBase-portable.zip"
 $wixUiExtension = "WixToolset.UI.wixext/7.0.0"
 
@@ -99,6 +83,7 @@ if (-not (Test-Path -LiteralPath $cachePath)) {
     throw "CMake cache not found. Run tools/build.ps1 first."
 }
 $cacheLines = Get-Content -LiteralPath $cachePath
+Assert-SuperZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $PackageVersion
 $hipEntry = $cacheLines | Where-Object { $_ -match '^SUPERZIP_ENABLE_HIP:[^=]+=.+$' } | Select-Object -First 1
 $hipEnabled = $hipEntry -match '=ON$'
 if (-not $hipEnabled -and -not $AllowCpuValidationPackage) {

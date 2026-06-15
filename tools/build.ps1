@@ -13,23 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
-
-# Purpose: Resolve the package display version from an explicit argument or CMake project metadata.
-# Inputs: RequestedVersion is an optional SemVer string supplied by the caller.
-# Outputs: Returns the version string used for CMake package diagnostics and filenames.
-function Resolve-PackageVersion {
-    param([string]$RequestedVersion)
-    if ($RequestedVersion) {
-        return $RequestedVersion
-    }
-    $cmakeLists = Join-Path $repo "CMakeLists.txt"
-    $text = Get-Content -LiteralPath $cmakeLists -Raw
-    $match = [regex]::Match($text, "project\s*\(\s*SuperZip\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)", "IgnoreCase")
-    if (-not $match.Success) {
-        throw "Unable to resolve package version from CMakeLists.txt."
-    }
-    return $match.Groups[1].Value
-}
+. (Join-Path $PSScriptRoot "version.ps1")
 
 # Purpose: Find a usable CMake executable on a Windows development or CI host.
 # Inputs: None; probes known install paths and PATH.
@@ -73,7 +57,7 @@ if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
 }
 $hipArg = if ($CpuOnlyValidation.IsPresent) { "OFF" } else { "ON" }
-$PackageVersion = Resolve-PackageVersion -RequestedVersion $PackageVersion
+$PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
 $configureArgs = @(
     "-S", $repo,
     "-B", $build,
