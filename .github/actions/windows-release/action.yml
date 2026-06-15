@@ -262,6 +262,10 @@ runs:
             $packageArgs.AllowCpuValidationPackage = $true
         }
         if ($env:CREATE_MSI -eq "true") {
+            if ($env:WIX_OSMF_EULA_ID -ne "wix7") {
+                throw "Set repository variable WIX_OSMF_EULA_ID to wix7 after accepting the WiX v7 OSMF EULA."
+            }
+            $env:SUPERZIP_ACCEPT_WIX_OSMF_EULA = $env:WIX_OSMF_EULA_ID
             $packageArgs.CreateMsi = $true
         }
         & tools/package.ps1 @packageArgs
