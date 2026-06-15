@@ -82,3 +82,10 @@ TEST_CASE(path_safety_accepts_nested_relative_path) {
     REQUIRE_EQ(target.filename().string(), "file.txt");
     std::filesystem::remove_all(root);
 }
+
+// Purpose: Verify archive path key normalization collapses harmless separators and current-directory components.
+// Inputs: A path with redundant separators and `.` components.
+// Outputs: Throws if the normalized key is not the deterministic archive key used for collision checks.
+TEST_CASE(path_safety_normalizes_archive_path_key) {
+    REQUIRE_EQ(superzip::normalize_archive_path_key("dir//./nested/file.txt"), std::string("dir/nested/file.txt"));
+}

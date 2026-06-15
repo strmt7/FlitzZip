@@ -64,6 +64,20 @@ bool starts_with_path(const std::filesystem::path& child, const std::filesystem:
 std::filesystem::path safe_join_archive_path(
     const std::filesystem::path& destination_root,
     const std::string& archive_path) {
+    const auto normalized_archive_path = normalize_archive_path_key(archive_path);
+    std::error_code ec;
+    const auto root = std::filesystem::weakly_canonical(destination_root, ec);
+    if (ec) {
+        throw SecurityError("destination root cannot be canonicalized: " + ec.message());
+    }
+    const auto target = (root / std::filesystem::path(normalized_archive_path)).lexically_normal();
+    if (!starts_with_path(target, root)) {
+        throw SecurityError("archive entry resolves outside destination root: " + archive_path);
+    }
+    return target;
+}
+
+std::string normalize_archive_path_key(const std::string& archive_path) {
     if (archive_path.empty()) {
         throw SecurityError("archive entry path is empty");
     }
@@ -73,7 +87,7 @@ std::filesystem::path safe_join_archive_path(
         throw SecurityError("archive entry uses an absolute or drive-rooted path: " + archive_path);
     }
 
-    std::filesystem::path relative;
+    std::string normalized;
     std::string component;
     auto flush_component = [&]() {
         if (component.empty() || component == ".") {
@@ -95,7 +109,10 @@ std::filesystem::path safe_join_archive_path(
         if (is_windows_reserved_name(component)) {
             throw SecurityError("archive entry component uses a reserved Windows name: " + component);
         }
-        relative /= std::filesystem::path(component);
+        if (!normalized.empty()) {
+            normalized.push_back('/');
+        }
+        normalized.append(component);
         component.clear();
     };
 
@@ -108,20 +125,10 @@ std::filesystem::path safe_join_archive_path(
     }
     flush_component();
 
-    if (relative.empty()) {
+    if (normalized.empty()) {
         throw SecurityError("archive entry path normalizes to empty");
     }
-
-    std::error_code ec;
-    const auto root = std::filesystem::weakly_canonical(destination_root, ec);
-    if (ec) {
-        throw SecurityError("destination root cannot be canonicalized: " + ec.message());
-    }
-    const auto target = (root / relative).lexically_normal();
-    if (!starts_with_path(target, root)) {
-        throw SecurityError("archive entry resolves outside destination root: " + archive_path);
-    }
-    return target;
+    return normalized;
 }
 
 std::string normalize_entry_name(const std::filesystem::path& relative_path) {
@@ -142,8 +149,7 @@ std::string normalize_entry_name(const std::filesystem::path& relative_path) {
     if (out.empty()) {
         throw SecurityError("source relative path is empty");
     }
-    (void)safe_join_archive_path(std::filesystem::current_path(), out);
-    return out;
+    return normalize_archive_path_key(out);
 }
 
 }  // namespace superzip
