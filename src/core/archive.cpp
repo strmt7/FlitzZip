@@ -3,6 +3,7 @@
 #include "core/archive_index.hpp"
 #include "core/checksum.hpp"
 #include "core/file_manifest.hpp"
+#include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/result.hpp"
 
@@ -82,11 +83,6 @@ struct DecodeStreamResult {
     std::uint32_t crc32 = 0;
 };
 
-struct ReservedExtractionTarget {
-    std::filesystem::path directory;
-    std::filesystem::path file;
-};
-
 // Purpose: Identify block kinds that carry bytes in the archive payload.
 // Inputs: `kind` is a native SUZIP block encoding kind.
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
@@ -99,80 +95,6 @@ bool block_has_payload(BlockKind kind) {
 // Outputs: Returns a caller-owned buffer that must outlive the configured stream.
 std::vector<char> make_file_stream_buffer() {
     return std::vector<char>(kFileStreamBufferBytes);
-}
-
-// Purpose: Return a short process-unique token for temporary extraction filenames.
-// Inputs: None.
-// Outputs: Returns a decimal process identifier on Windows or a thread-hash fallback elsewhere.
-std::string current_process_token() {
-#ifdef _WIN32
-    return std::to_string(GetCurrentProcessId());
-#else
-    return std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-#endif
-}
-
-// Purpose: Create a unique temporary extraction target beside the final file.
-// Inputs: `target` is the final extracted file path.
-// Outputs: Atomically reserves a same-directory temporary directory and returns its payload file path.
-ReservedExtractionTarget reserve_extract_temp_target(const std::filesystem::path& target) {
-    const auto process_token = current_process_token();
-    for (std::uint32_t attempt = 0; attempt < 1024U; ++attempt) {
-        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        auto directory = target;
-        directory += ".sztmp-";
-        directory += process_token;
-        directory += "-";
-        directory += std::to_string(stamp);
-        directory += "-";
-        directory += std::to_string(attempt);
-
-        std::error_code create_error;
-        if (std::filesystem::create_directory(directory, create_error)) {
-            return ReservedExtractionTarget{
-                .directory = directory,
-                .file = directory / "payload.tmp",
-            };
-        }
-        std::error_code exists_error;
-        const bool directory_exists = std::filesystem::exists(directory, exists_error);
-        if (create_error && !directory_exists) {
-            throw ArchiveError("unable to reserve temporary extraction path: " + target.string());
-        }
-    }
-    throw ArchiveError("unable to reserve temporary extraction path: " + target.string());
-}
-
-// Purpose: Remove the private temporary extraction target after failure or commit.
-// Inputs: `temporary` identifies the reserved temporary directory and payload file.
-// Outputs: Best-effort removal of only the known payload file and its immediate directory.
-void cleanup_extract_temp_target(const ReservedExtractionTarget& temporary) {
-    std::error_code ignored;
-    std::filesystem::remove(temporary.file, ignored);
-    std::filesystem::remove(temporary.directory, ignored);
-}
-
-// Purpose: Move a fully verified temporary extraction file into its final location.
-// Inputs: `temporary` is the decoded file, `target` is the final path, and `overwrite` controls replacement.
-// Outputs: Renames/replaces the final file or throws with the temporary file left for caller cleanup.
-void commit_extracted_file(
-    const std::filesystem::path& temporary,
-    const std::filesystem::path& target,
-    bool overwrite) {
-#ifdef _WIN32
-    auto flags = MOVEFILE_WRITE_THROUGH;
-    if (overwrite) {
-        flags |= MOVEFILE_REPLACE_EXISTING;
-    }
-    if (MoveFileExW(temporary.wstring().c_str(), target.wstring().c_str(), flags) == 0) {
-        throw ArchiveError("failed to finalize extracted file: " + target.string());
-    }
-#else
-    if (overwrite && std::filesystem::exists(target)) {
-        std::filesystem::remove(target);
-    }
-    std::filesystem::rename(temporary, target);
-#endif
 }
 
 // Purpose: Attach a caller-owned buffer before opening a file stream.
@@ -933,7 +855,7 @@ OperationStats extract_suzip(
     stats.output_bytes = total_bytes;
     stats.entries = index.entries.size();
     stats.workers = budget.workers;
-        stats.inflight_chunks = budget.inflight_chunks;
+    stats.inflight_chunks = budget.inflight_chunks;
 
     for (const auto& entry : index.entries) {
         // Directory entries are materialized directly; file entries follow the temp-publish path below.
@@ -963,7 +885,7 @@ OperationStats extract_suzip(
         };
         std::filesystem::create_directories(target.parent_path());
         // Decode into a private same-directory temporary target so failures never expose partial output.
-        const auto temporary_target = reserve_extract_temp_target(target);
+        const auto temporary_target = reserve_file_publish_target(target);
         bool temporary_active = false;
         DecodeStreamResult decoded;
         try {
@@ -998,13 +920,13 @@ OperationStats extract_suzip(
                 throw ArchiveError("CRC mismatch while extracting: " + entry.path);
             }
             // The final path is touched only after stream close and CRC verification have both succeeded.
-            commit_extracted_file(temporary_target.file, target, options.overwrite);
-            cleanup_extract_temp_target(temporary_target);
+            commit_verified_file(temporary_target.file, target, options.overwrite);
+            cleanup_file_publish_target(temporary_target);
             temporary_active = false;
         } catch (...) {
             if (temporary_active) {
                 // Keep cleanup narrow: remove only the known temp payload and its immediate directory.
-                cleanup_extract_temp_target(temporary_target);
+                cleanup_file_publish_target(temporary_target);
             }
             throw;
         }

@@ -17,7 +17,7 @@ OperationStats compress_zip(
 
 // Purpose: Extract a standard ZIP archive with SuperZip path-safety checks.
 // Inputs: `archive_path` is the ZIP file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns operation statistics; throws on malformed ZIP data, unsafe entry paths, refused overwrite, or filesystem writes.
+// Outputs: Returns operation statistics; throws on malformed ZIP data, unsafe entry paths, refused overwrite, or verified-file publication failures.
 OperationStats extract_zip(
     const std::filesystem::path& archive_path,
     const std::filesystem::path& destination,

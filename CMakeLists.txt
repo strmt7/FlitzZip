@@ -39,6 +39,7 @@ add_library(superzip_core STATIC
     src/core/checksum.cpp
     src/core/defender_scan.cpp
     src/core/file_manifest.cpp
+    src/core/file_publish.cpp
     src/core/integrity.cpp
     src/core/path_safety.cpp
     src/core/progress.cpp

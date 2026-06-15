@@ -15,6 +15,11 @@ Extraction rejects:
   mismatches.
 - Existing output files unless overwrite is explicitly enabled.
 
+Regular file extraction uses a same-directory temporary target and publishes the
+final file only after the entry has been decoded and verified. A corrupt ZIP or
+SUZIP entry can therefore fail after writing temporary bytes without exposing a
+partial final file or replacing an existing final file.
+
 The app refuses to archive symbolic links in the current release. That avoids
 ambiguous restore semantics and prevents link-based escape behavior.
 

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <string>
 #include <vector>
 #include <windows.h>
 
@@ -87,6 +88,36 @@ void write_stored_zip_with_name(const std::filesystem::path& archive, const std:
     zip_write_u32(out, central_size);
     zip_write_u32(out, central_offset);
     zip_write_u16(out, 0);
+}
+
+// Purpose: Flip one byte in the local-file payload of a handcrafted stored ZIP.
+// Inputs: `archive` is a ZIP written by `write_stored_zip_with_name`, and `entry_name` gives the local name length.
+// Outputs: Mutates the payload in place so extraction fails CRC validation after writing decoded bytes.
+void corrupt_stored_zip_payload(const std::filesystem::path& archive, const std::string& entry_name) {
+    constexpr std::streamoff local_header_bytes = 30;
+    std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
+    char value = 0;
+    file.seekg(local_header_bytes + static_cast<std::streamoff>(entry_name.size()), std::ios::beg);
+    file.read(&value, 1);
+    value ^= 0x7F;
+    file.seekp(local_header_bytes + static_cast<std::streamoff>(entry_name.size()), std::ios::beg);
+    file.write(&value, 1);
+}
+
+// Purpose: Count files left under an extraction destination after a failed ZIP operation.
+// Inputs: `root` is the extraction directory that may or may not exist.
+// Outputs: Returns the number of regular files visible under `root`.
+std::uint64_t count_regular_files(const std::filesystem::path& root) {
+    if (!std::filesystem::exists(root)) {
+        return 0;
+    }
+    std::uint64_t count = 0;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(root)) {
+        if (item.is_regular_file()) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 }  // namespace
@@ -182,5 +213,56 @@ TEST_CASE(zip_extract_rejects_overwrite_by_default) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify failed ZIP extraction removes temporary data before publishing a final file.
+// Inputs: A stored ZIP with a corrupted payload byte that fails miniz CRC validation.
+// Outputs: Throws if extraction succeeds, leaves a partial file, or replaces an existing target.
+TEST_CASE(zip_extract_removes_partial_file_after_crc_failure) {
+    const auto root = test_temp_dir("zip-crc-cleanup");
+    const auto archive = root / "corrupt.zip";
+    const std::string entry_name = "file.bin";
+    std::string payload(64 * 1024, '\0');
+    std::uint32_t state = 0x87654321U;
+    for (auto& byte : payload) {
+        state = (state * 1664525U) + 1013904223U;
+        byte = static_cast<char>((state >> 24U) & 0xFFU);
+    }
+    write_stored_zip_with_name(archive, entry_name, payload);
+    corrupt_stored_zip_payload(archive, entry_name);
+
+    const auto output = root / "out";
+    bool rejected = false;
+    try {
+        (void)superzip::extract_zip(archive, output, true);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(output / entry_name));
+    REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+
+    const auto overwrite_output = root / "overwrite-out";
+    std::filesystem::create_directories(overwrite_output);
+    const std::string preserved_text = "existing zip output should survive failed extraction";
+    {
+        std::ofstream preserved(overwrite_output / entry_name, std::ios::binary);
+        preserved << preserved_text;
+    }
+    rejected = false;
+    try {
+        (void)superzip::extract_zip(archive, overwrite_output, true);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(overwrite_output), static_cast<std::uint64_t>(1));
+    REQUIRE_EQ(std::filesystem::file_size(overwrite_output / entry_name), static_cast<std::uintmax_t>(preserved_text.size()));
+    std::ifstream preserved(overwrite_output / entry_name, std::ios::binary);
+    std::string actual(preserved_text.size(), '\0');
+    preserved.read(actual.data(), static_cast<std::streamsize>(actual.size()));
+    preserved.close();
+    REQUIRE_EQ(actual, preserved_text);
     std::filesystem::remove_all(root);
 }

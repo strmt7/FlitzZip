@@ -1,6 +1,7 @@
 #include "zip/zip_adapter.hpp"
 
 #include "core/file_manifest.hpp"
+#include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/result.hpp"
 
@@ -10,6 +11,9 @@
 
 namespace superzip {
 
+// Purpose: Create a standard ZIP archive from one or more source paths.
+// Inputs: `sources`, `output_archive`, and optional `progress_callback` describe the compatibility archive run.
+// Outputs: Writes a ZIP archive and returns operation telemetry, or throws on source/read/write failure.
 OperationStats compress_zip(
     const std::vector<std::filesystem::path>& sources,
     const std::filesystem::path& output_archive,
@@ -69,6 +73,9 @@ OperationStats compress_zip(
     return stats;
 }
 
+// Purpose: Extract a standard ZIP archive with SuperZip path safety and verified final-file publication.
+// Inputs: `archive_path`, `destination`, `overwrite`, and optional `progress_callback` describe the extraction run.
+// Outputs: Restores verified ZIP entries into `destination` and returns operation telemetry, or throws on validation failure.
 OperationStats extract_zip(
     const std::filesystem::path& archive_path,
     const std::filesystem::path& destination,
@@ -82,6 +89,7 @@ OperationStats extract_zip(
     try {
         const auto file_count = mz_zip_reader_get_num_files(&zip);
         std::uint64_t total_bytes = 0;
+        // Validate every entry path before any filesystem output is created.
         for (mz_uint i = 0; i < file_count; ++i) {
             mz_zip_archive_file_stat stat{};
             if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
@@ -114,8 +122,22 @@ OperationStats extract_zip(
                 throw SecurityError("refusing to overwrite existing ZIP extraction target: " + target.string());
             }
             std::filesystem::create_directories(target.parent_path());
-            if (!mz_zip_reader_extract_to_file(&zip, i, target.string().c_str(), 0)) {
-                throw ArchiveError("failed to extract ZIP entry: " + std::string(stat.m_filename));
+            // Miniz extracts to a private same-directory target first; only verified output is published.
+            const auto temporary_target = reserve_file_publish_target(target);
+            bool temporary_active = true;
+            try {
+                if (!mz_zip_reader_extract_to_file(&zip, i, temporary_target.file.string().c_str(), 0)) {
+                    throw ArchiveError("failed to extract ZIP entry: " + std::string(stat.m_filename));
+                }
+                commit_verified_file(temporary_target.file, target, overwrite);
+                cleanup_file_publish_target(temporary_target);
+                temporary_active = false;
+            } catch (...) {
+                if (temporary_active) {
+                    // Remove only SuperZip's known temporary payload and its private directory.
+                    cleanup_file_publish_target(temporary_target);
+                }
+                throw;
             }
             progress.add_bytes(stat.m_uncomp_size);
             progress.finish_entry();
