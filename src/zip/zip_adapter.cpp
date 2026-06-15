@@ -6,10 +6,24 @@
 #include "core/result.hpp"
 
 #include <chrono>
+#include <limits>
 
 #include "miniz.h"
 
 namespace superzip {
+namespace {
+
+// Purpose: Add ZIP metadata byte counters while detecting overflow.
+// Inputs: `lhs` and `rhs` are uncompressed byte counters from ZIP central directory metadata.
+// Outputs: Returns the sum or throws `ArchiveError` before wraparound.
+std::uint64_t checked_add_zip_bytes(std::uint64_t lhs, std::uint64_t rhs) {
+    if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) {
+        throw ArchiveError("ZIP uncompressed size overflows");
+    }
+    return lhs + rhs;
+}
+
+}  // namespace
 
 // Purpose: Create a standard ZIP archive from one or more source paths.
 // Inputs: `sources`, `output_archive`, and optional `progress_callback` describe the compatibility archive run.
@@ -88,18 +102,28 @@ OperationStats extract_zip(
     }
     try {
         const auto file_count = mz_zip_reader_get_num_files(&zip);
+        if (file_count > kMaxArchiveEntries) {
+            throw ArchiveError("ZIP entry count exceeds SuperZip resource limit");
+        }
         std::uint64_t total_bytes = 0;
+        std::vector<ArchivePathValidationEntry> path_entries;
+        path_entries.reserve(file_count);
         // Validate every entry path before any filesystem output is created.
         for (mz_uint i = 0; i < file_count; ++i) {
             mz_zip_archive_file_stat stat{};
             if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
                 throw ArchiveError("failed to read ZIP entry metadata");
             }
-            if (!mz_zip_reader_is_file_a_directory(&zip, i)) {
-                total_bytes += stat.m_uncomp_size;
+            const bool directory = mz_zip_reader_is_file_a_directory(&zip, i) != 0;
+            if (!directory) {
+                total_bytes = checked_add_zip_bytes(total_bytes, stat.m_uncomp_size);
             }
-            (void)safe_join_archive_path(destination, stat.m_filename);
+            path_entries.push_back(ArchivePathValidationEntry{
+                .path = stat.m_filename,
+                .directory = directory,
+            });
         }
+        validate_archive_path_set(path_entries);
 
         std::filesystem::create_directories(destination);
         ProgressState progress;

@@ -8,7 +8,6 @@
 #include "core/result.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <deque>
 #include <fstream>
@@ -87,12 +86,6 @@ struct DecodeStreamResult {
 struct ArchiveValidationSummary {
     std::uint64_t total_uncompressed_bytes = 0;
     std::uint64_t largest_decoded_block_bytes = 1;
-};
-
-struct ArchiveEntryPathShape {
-    std::string normalized_key;
-    std::string original_path;
-    bool directory = false;
 };
 
 // Purpose: Identify block kinds that carry bytes in the archive payload.
@@ -595,56 +588,16 @@ std::uint64_t sum_block_sizes(const std::vector<BlockDescriptor>& blocks) {
     return total;
 }
 
-// Purpose: Normalize an archive entry path into the key used for archive-wide collision checks.
-// Inputs: `path` is untrusted archive metadata.
-// Outputs: Returns a normalized relative key; on Windows the key is ASCII-folded for case-insensitive collision detection.
-std::string normalize_archive_collision_key(const std::string& path) {
-    auto key = normalize_archive_path_key(path);
-#ifdef _WIN32
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-#endif
-    return key;
-}
-
-// Purpose: Detect whether one normalized archive path is below another normalized archive path.
-// Inputs: `child` and `parent` are slash-separated normalized archive path keys.
-// Outputs: Returns true only for strict descendants such as `dir/file` under `dir`.
-bool is_archive_path_descendant(const std::string& child, const std::string& parent) {
-    return child.size() > parent.size() &&
-        child.compare(0, parent.size(), parent) == 0 &&
-        child[parent.size()] == '/';
-}
-
-// Purpose: Reject archive-wide path collisions before verification or extraction can process payload bytes.
-// Inputs: `paths` contains normalized keys for all entries in the archive index.
-// Outputs: Returns normally for a deterministic extraction tree; throws `SecurityError` for duplicate paths or file/child conflicts.
-void validate_archive_entry_path_conflicts(std::vector<ArchiveEntryPathShape>& paths) {
-    std::sort(paths.begin(), paths.end(), [](const ArchiveEntryPathShape& lhs, const ArchiveEntryPathShape& rhs) {
-        return lhs.normalized_key < rhs.normalized_key;
-    });
-    for (std::size_t i = 0; i < paths.size(); ++i) {
-        if (i > 0 && paths[i - 1].normalized_key == paths[i].normalized_key) {
-            throw SecurityError("archive contains duplicate entry path: " + paths[i].original_path);
-        }
-        if (!paths[i].directory && (i + 1U) < paths.size() &&
-            is_archive_path_descendant(paths[i + 1U].normalized_key, paths[i].normalized_key)) {
-            throw SecurityError("archive file entry conflicts with child entry: " + paths[i].original_path);
-        }
-    }
-}
-
 // Purpose: Validate archive entry metadata before decoding or extraction.
 // Inputs: `entry` is parsed archive metadata.
-// Outputs: Returns the normalized collision key when metadata is safe and consistent; throws `ArchiveError` or `SecurityError` otherwise.
-std::string validate_entry_metadata(const ArchiveEntry& entry) {
-    const auto normalized_key = normalize_archive_collision_key(entry.path);
+// Outputs: Returns normally when metadata is safe and consistent; throws `ArchiveError` or `SecurityError` otherwise.
+void validate_entry_metadata(const ArchiveEntry& entry) {
+    (void)normalize_archive_path_key(entry.path);
     if (entry.directory) {
         if (entry.uncompressed_size != 0 || entry.payload_size != 0 || !entry.blocks.empty()) {
             throw ArchiveError("directory entry has payload metadata: " + entry.path);
         }
-        return normalized_key;
+        return;
     }
     std::uint64_t raw_payload_cursor = 0;
     for (std::size_t i = 0; i < entry.blocks.size(); ++i) {
@@ -706,7 +659,6 @@ std::string validate_entry_metadata(const ArchiveEntry& entry) {
     if (raw_payload_cursor != entry.payload_size) {
         throw ArchiveError("entry payload size does not match raw block metadata: " + entry.path);
     }
-    return normalized_key;
 }
 
 // Purpose: Validate an archive index and summarize decode memory requirements.
@@ -714,12 +666,12 @@ std::string validate_entry_metadata(const ArchiveEntry& entry) {
 // Outputs: Returns total decoded bytes and largest decoded block size; throws before any extraction output is created.
 ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& index) {
     ArchiveValidationSummary summary;
-    std::vector<ArchiveEntryPathShape> path_shapes;
-    path_shapes.reserve(index.entries.size());
+    std::vector<ArchivePathValidationEntry> path_entries;
+    path_entries.reserve(index.entries.size());
     for (const auto& entry : index.entries) {
-        path_shapes.push_back(ArchiveEntryPathShape{
-            .normalized_key = validate_entry_metadata(entry),
-            .original_path = entry.path,
+        validate_entry_metadata(entry);
+        path_entries.push_back(ArchivePathValidationEntry{
+            .path = entry.path,
             .directory = entry.directory,
         });
         summary.total_uncompressed_bytes = checked_add_u64(
@@ -732,7 +684,7 @@ ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& ind
                 block.uncompressed_len);
         }
     }
-    validate_archive_entry_path_conflicts(path_shapes);
+    validate_archive_path_set(path_entries);
     return summary;
 }
 

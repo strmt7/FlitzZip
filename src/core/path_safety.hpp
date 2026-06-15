@@ -1,14 +1,26 @@
 #pragma once
 
 #include <filesystem>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace superzip {
+
+struct ArchivePathValidationEntry {
+    std::string path;
+    bool directory = false;
+};
 
 // Purpose: Validate and normalize an archive entry name without joining it to the host filesystem.
 // Inputs: `archive_path` is untrusted metadata from an archive.
 // Outputs: Returns a slash-separated relative path key; throws `SecurityError` for traversal, absolute paths, reserved names, or invalid Windows path forms.
 std::string normalize_archive_path_key(const std::string& archive_path);
+
+// Purpose: Reject archive-wide path collisions before payload decode or extraction can create output.
+// Inputs: `entries` contains all archive paths and their directory/file kind.
+// Outputs: Throws `SecurityError` for duplicate normalized paths or file entries that conflict with descendants.
+void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entries);
 
 // Purpose: Resolve an archive entry name safely below a destination root.
 // Inputs: `destination_root` is the extraction root and `archive_path` is untrusted metadata from an archive.

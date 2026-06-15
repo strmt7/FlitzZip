@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <span>
 #include <cwctype>
+#include <vector>
 
 namespace superzip {
 namespace {
@@ -57,6 +59,34 @@ bool starts_with_path(const std::filesystem::path& child, const std::filesystem:
         }
     }
     return true;
+}
+
+struct NormalizedArchivePath {
+    std::string key;
+    std::string original_path;
+    bool directory = false;
+};
+
+// Purpose: Normalize an archive entry path into the key used for archive-wide collision checks.
+// Inputs: `path` is untrusted archive metadata.
+// Outputs: Returns a normalized relative key; on Windows the key is ASCII-folded for case-insensitive collision detection.
+std::string normalize_archive_collision_key(const std::string& path) {
+    auto key = normalize_archive_path_key(path);
+#ifdef _WIN32
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+#endif
+    return key;
+}
+
+// Purpose: Detect whether one normalized archive path is below another normalized archive path.
+// Inputs: `child` and `parent` are slash-separated normalized archive path keys.
+// Outputs: Returns true only for strict descendants such as `dir/file` under `dir`.
+bool is_archive_path_descendant(const std::string& child, const std::string& parent) {
+    return child.size() > parent.size() &&
+        child.compare(0, parent.size(), parent) == 0 &&
+        child[parent.size()] == '/';
 }
 
 }  // namespace
@@ -129,6 +159,30 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
         throw SecurityError("archive entry path normalizes to empty");
     }
     return normalized;
+}
+
+void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entries) {
+    std::vector<NormalizedArchivePath> paths;
+    paths.reserve(entries.size());
+    for (const auto& entry : entries) {
+        paths.push_back(NormalizedArchivePath{
+            .key = normalize_archive_collision_key(entry.path),
+            .original_path = entry.path,
+            .directory = entry.directory,
+        });
+    }
+    std::sort(paths.begin(), paths.end(), [](const NormalizedArchivePath& lhs, const NormalizedArchivePath& rhs) {
+        return lhs.key < rhs.key;
+    });
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        if (i > 0 && paths[i - 1].key == paths[i].key) {
+            throw SecurityError("archive contains duplicate entry path: " + paths[i].original_path);
+        }
+        if (!paths[i].directory && (i + 1U) < paths.size() &&
+            is_archive_path_descendant(paths[i + 1U].key, paths[i].key)) {
+            throw SecurityError("archive file entry conflicts with child entry: " + paths[i].original_path);
+        }
+    }
 }
 
 std::string normalize_entry_name(const std::filesystem::path& relative_path) {

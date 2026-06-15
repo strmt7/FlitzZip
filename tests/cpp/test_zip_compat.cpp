@@ -36,58 +36,89 @@ void zip_write_u32(std::ofstream& out, std::uint32_t value) {
     out.write(bytes, sizeof(bytes));
 }
 
-// Purpose: Create a minimal stored ZIP with an arbitrary raw entry name for hostile metadata tests.
-// Inputs: `archive` is the output ZIP path, `entry_name` is written verbatim, and `payload` is stored uncompressed.
-// Outputs: Writes a one-entry ZIP archive or throws through stream failure in the test body.
-void write_stored_zip_with_name(const std::filesystem::path& archive, const std::string& entry_name, const std::string& payload) {
-    std::ofstream out(archive, std::ios::binary | std::ios::trunc);
-    const auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const unsigned char*>(payload.data()), payload.size()));
-    const auto name_size = static_cast<std::uint16_t>(entry_name.size());
-    const auto payload_size = static_cast<std::uint32_t>(payload.size());
+struct StoredZipEntry {
+    std::string name;
+    std::string payload;
+};
 
-    zip_write_u32(out, 0x04034B50U);
-    zip_write_u16(out, 20);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u32(out, crc);
-    zip_write_u32(out, payload_size);
-    zip_write_u32(out, payload_size);
-    zip_write_u16(out, name_size);
-    zip_write_u16(out, 0);
-    out.write(entry_name.data(), static_cast<std::streamsize>(entry_name.size()));
-    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+// Purpose: Create a minimal stored ZIP with arbitrary raw entry names for hostile metadata tests.
+// Inputs: `archive` is the output ZIP path and `entries` are written verbatim as stored file entries.
+// Outputs: Writes a ZIP archive or throws through stream failure in the test body.
+void write_stored_zip_with_entries(const std::filesystem::path& archive, const std::vector<StoredZipEntry>& entries) {
+    std::ofstream out(archive, std::ios::binary | std::ios::trunc);
+    struct CentralEntry {
+        StoredZipEntry entry;
+        std::uint32_t crc = 0;
+        std::uint32_t local_offset = 0;
+    };
+    std::vector<CentralEntry> central_entries;
+    central_entries.reserve(entries.size());
+    for (const auto& entry : entries) {
+        const auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const unsigned char*>(entry.payload.data()), entry.payload.size()));
+        const auto name_size = static_cast<std::uint16_t>(entry.name.size());
+        const auto payload_size = static_cast<std::uint32_t>(entry.payload.size());
+        const auto local_offset = static_cast<std::uint32_t>(out.tellp());
+
+        zip_write_u32(out, 0x04034B50U);
+        zip_write_u16(out, 20);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u32(out, crc);
+        zip_write_u32(out, payload_size);
+        zip_write_u32(out, payload_size);
+        zip_write_u16(out, name_size);
+        zip_write_u16(out, 0);
+        out.write(entry.name.data(), static_cast<std::streamsize>(entry.name.size()));
+        out.write(entry.payload.data(), static_cast<std::streamsize>(entry.payload.size()));
+        central_entries.push_back(CentralEntry{
+            .entry = entry,
+            .crc = crc,
+            .local_offset = local_offset,
+        });
+    }
 
     const auto central_offset = static_cast<std::uint32_t>(out.tellp());
-    zip_write_u32(out, 0x02014B50U);
-    zip_write_u16(out, 20);
-    zip_write_u16(out, 20);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u32(out, crc);
-    zip_write_u32(out, payload_size);
-    zip_write_u32(out, payload_size);
-    zip_write_u16(out, name_size);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u16(out, 0);
-    zip_write_u32(out, 0);
-    zip_write_u32(out, 0);
-    out.write(entry_name.data(), static_cast<std::streamsize>(entry_name.size()));
+    for (const auto& central_entry : central_entries) {
+        const auto name_size = static_cast<std::uint16_t>(central_entry.entry.name.size());
+        const auto payload_size = static_cast<std::uint32_t>(central_entry.entry.payload.size());
+        zip_write_u32(out, 0x02014B50U);
+        zip_write_u16(out, 20);
+        zip_write_u16(out, 20);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u32(out, central_entry.crc);
+        zip_write_u32(out, payload_size);
+        zip_write_u32(out, payload_size);
+        zip_write_u16(out, name_size);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u16(out, 0);
+        zip_write_u32(out, 0);
+        zip_write_u32(out, central_entry.local_offset);
+        out.write(central_entry.entry.name.data(), static_cast<std::streamsize>(central_entry.entry.name.size()));
+    }
 
     const auto central_size = static_cast<std::uint32_t>(static_cast<std::uint64_t>(out.tellp()) - central_offset);
     zip_write_u32(out, 0x06054B50U);
     zip_write_u16(out, 0);
     zip_write_u16(out, 0);
-    zip_write_u16(out, 1);
-    zip_write_u16(out, 1);
+    zip_write_u16(out, static_cast<std::uint16_t>(entries.size()));
+    zip_write_u16(out, static_cast<std::uint16_t>(entries.size()));
     zip_write_u32(out, central_size);
     zip_write_u32(out, central_offset);
     zip_write_u16(out, 0);
+}
+
+// Purpose: Create a minimal stored ZIP with one arbitrary raw entry name for hostile metadata tests.
+// Inputs: `archive` is the output ZIP path, `entry_name` is written verbatim, and `payload` is stored uncompressed.
+// Outputs: Writes a one-entry ZIP archive or throws through stream failure in the test body.
+void write_stored_zip_with_name(const std::filesystem::path& archive, const std::string& entry_name, const std::string& payload) {
+    write_stored_zip_with_entries(archive, {StoredZipEntry{.name = entry_name, .payload = payload}});
 }
 
 // Purpose: Flip one byte in the local-file payload of a handcrafted stored ZIP.
@@ -191,6 +222,54 @@ TEST_CASE(zip_extract_rejects_windows_unsafe_entries) {
         REQUIRE_TRUE(rejected);
         std::filesystem::remove_all(root);
     }
+}
+
+// Purpose: Verify ZIP extraction rejects duplicate normalized entry paths before filesystem output.
+// Inputs: A handcrafted ZIP containing `dir/file.txt` and equivalent `dir//file.txt` entries.
+// Outputs: Throws if ZIP extraction accepts ambiguous duplicate metadata.
+TEST_CASE(zip_extract_rejects_duplicate_normalized_entry_paths) {
+    const auto root = test_temp_dir("zip-duplicate-paths");
+    const auto archive = root / "duplicate.zip";
+    write_stored_zip_with_entries(
+        archive,
+        {
+            StoredZipEntry{.name = "dir/file.txt", .payload = "first"},
+            StoredZipEntry{.name = "dir//file.txt", .payload = "second"},
+        });
+
+    bool rejected = false;
+    try {
+        (void)superzip::extract_zip(archive, root / "out", true);
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify ZIP extraction rejects a file entry that conflicts with a child entry path.
+// Inputs: A handcrafted ZIP containing file `dir` and child file `dir/child.txt`.
+// Outputs: Throws before extraction creates either output file.
+TEST_CASE(zip_extract_rejects_file_entry_with_child_entry) {
+    const auto root = test_temp_dir("zip-file-child-conflict");
+    const auto archive = root / "conflict.zip";
+    write_stored_zip_with_entries(
+        archive,
+        {
+            StoredZipEntry{.name = "dir", .payload = "parent"},
+            StoredZipEntry{.name = "dir/child.txt", .payload = "child"},
+        });
+
+    bool rejected = false;
+    try {
+        (void)superzip::extract_zip(archive, root / "out", true);
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Verify ZIP extraction refuses overwriting existing files unless explicitly allowed.
