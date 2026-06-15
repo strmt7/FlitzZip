@@ -349,14 +349,15 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_archive(
     std::deque<PendingMemoryEncode> pending_encode;
     for (std::uint64_t offset = 0, index = 0; offset < total_bytes; ++index) {
         const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, total_bytes - offset);
-        std::vector<std::byte> input;
-        input.resize(static_cast<std::size_t>(want));
-        fill_memory_benchmark_chunk(input, offset, total_bytes, options.profile);
+        const auto chunk_offset = offset;
+        const auto profile = options.profile;
         pending_encode.push_back(PendingMemoryEncode{
             .index = static_cast<std::size_t>(index),
             .result = std::async(
                 std::launch::async,
-                [input = std::move(input), want, codec_options]() mutable {
+                [chunk_offset, total_bytes, profile, want, codec_options]() {
+                    std::vector<std::byte> input(static_cast<std::size_t>(want));
+                    fill_memory_benchmark_chunk(input, chunk_offset, total_bytes, profile);
                     auto encoded = superzip::encode_chunk(
                         std::span<const std::byte>(input.data(), input.size()),
                         codec_options);
