@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -11,6 +12,8 @@
 #include <thread>
 #include <vector>
 #include <windows.h>
+#include <pdh.h>
+#include <pdhmsg.h>
 
 namespace superzip::app {
 
@@ -35,7 +38,6 @@ enum class ToggleId {
 
 enum class DropdownId {
     None,
-    QueueProfile,
     CompressProfile,
     CompressMethod,
     ExtractOverwrite,
@@ -46,13 +48,30 @@ enum class DropdownId {
     PreferencesLogRetention,
 };
 
+struct PerformanceMonitorSample {
+    bool live = false;
+    bool gpu_utilization_available = false;
+    double cpu_percent = 0.0;
+    double gpu_utilization_percent = 0.0;
+    double system_memory_percent = 0.0;
+    double io_read_bytes_per_second = 0.0;
+    double io_write_bytes_per_second = 0.0;
+    std::uint64_t private_bytes = 0;
+    std::uint64_t vram_total_bytes = 0;
+    std::uint64_t vram_free_bytes = 0;
+};
+
 struct UiState {
     Page page = Page::Queue;
     std::vector<std::filesystem::path> queued_paths;
     std::vector<std::string> history;
     std::string status = "Ready";
     std::string gpu_status;
+    std::string gpu_runtime_name;
+    std::string gpu_device_name;
+    std::string gpu_arch;
     ProgressSnapshot progress;
+    PerformanceMonitorSample performance;
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
     int compression_profile_index = 0;
@@ -102,9 +121,6 @@ private:
         RECT add_folder{};
         RECT clear{};
         RECT table{};
-        RECT destination{};
-        RECT profile{};
-        RECT start{};
     };
 
     struct CompressLayout {
@@ -220,9 +236,9 @@ private:
     // Outputs: Returns DPI-scaled Preferences page control rectangles.
     [[nodiscard]] PreferencesLayout preferences_layout(const RECT& rect) const;
 
-    // Purpose: Draw the queue page with command table, destination, profile, and progress controls.
+    // Purpose: Draw the queue page with the file/folder selection table only.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
-    // Outputs: Renders the active queue and start controls.
+    // Outputs: Renders queue selection controls; operation configuration remains on later pages.
     void draw_queue_page(HDC dc, const RECT& rect, const UiState& state);
 
     // Purpose: Draw the compression settings page.
@@ -395,6 +411,26 @@ private:
     // Outputs: Mutates GPU status state using `query_gpu_info`.
     void refresh_gpu_status();
 
+    // Purpose: Initialize optional Windows performance counters for live monitoring.
+    // Inputs: None; uses the current process and Windows PDH provider.
+    // Outputs: Opens best-effort GPU engine counters without failing app startup.
+    void initialize_performance_monitor();
+
+    // Purpose: Release optional Windows performance counters.
+    // Inputs: None.
+    // Outputs: Closes PDH handles and clears monitor state.
+    void shutdown_performance_monitor();
+
+    // Purpose: Collect one live performance sample for the GPU diagnostics page.
+    // Inputs: None; reads process, memory, I/O, optional PDH, and throttled HIP memory state.
+    // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
+    void update_performance_sample();
+
+    // Purpose: Sample Windows GPU engine utilization for this process when PDH exposes it.
+    // Inputs: None; uses initialized PDH wildcard counters.
+    // Outputs: Returns a process GPU percentage or a negative value when unavailable.
+    [[nodiscard]] double sample_gpu_utilization();
+
     // Purpose: Start a bounded non-blocking page transition animation.
     // Inputs: `from` and `to` identify the tab change.
     // Outputs: Arms the animation timer and queues repaint frames.
@@ -452,9 +488,19 @@ private:
     Page transition_to_page_ = Page::Queue;
     std::chrono::steady_clock::time_point page_transition_start_{};
     std::chrono::steady_clock::time_point toggle_transition_start_{};
+    std::chrono::steady_clock::time_point last_performance_sample_time_{};
+    std::chrono::steady_clock::time_point last_gpu_memory_sample_time_{};
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
     bool transition_toggle_to_ = false;
+    FILETIME last_process_kernel_time_{};
+    FILETIME last_process_user_time_{};
+    ULONGLONG last_io_read_bytes_ = 0;
+    ULONGLONG last_io_write_bytes_ = 0;
+    std::uint64_t cached_vram_total_bytes_ = 0;
+    std::uint64_t cached_vram_free_bytes_ = 0;
+    PDH_HQUERY gpu_query_ = nullptr;
+    PDH_HCOUNTER gpu_counter_ = nullptr;
 };
 
 }  // namespace superzip::app

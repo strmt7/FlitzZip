@@ -200,9 +200,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - After pushing, verify the remote URL does not contain credentials.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
   and run install/uninstall smoke tests before publishing.
-- `0.1.0` is the first beta release. Later GitHub releases should advance
-  SemVer, for example `0.1.1`, and their release notes must list the actual
-  fixes, created assets, validation work, and known limitations.
+- `0.1.0` is the current beta release. Until a maintainer explicitly opens the
+  next version line, GitHub release runs should replace the existing `0.1.0`
+  release/tag and their release notes must list the actual fixes, created
+  assets, validation work, and known limitations.
 
 ## Agent Workflow
 

@@ -54,9 +54,9 @@ download paths to the repository.
 
 - `release_version`: SemVer product version without a `v` prefix, for example
   `0.1.0`. Leave it empty to use the version declared in `CMakeLists.txt`.
-  `0.1.0` is the first beta release; subsequent GitHub releases should advance
-  SemVer normally, for example `0.1.1`, unless a maintainer explicitly requests
-  replacing an existing release.
+  `0.1.0` is the current beta release. Until a maintainer explicitly opens the
+  next version line, use `0.1.0` with `replace_existing=true` so the workflow
+  replaces the existing release/tag instead of publishing a new version.
 - `replace_existing`: deletes the existing release/tag before publishing when
   set to `true`.
 - `release_track`: `beta` publishes a prerelease; `stable` publishes a normal

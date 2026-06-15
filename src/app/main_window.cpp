@@ -11,11 +11,14 @@
 #include <algorithm>
 #include <array>
 #include <commdlg.h>
+#include <cstddef>
+#include <cstdint>
 #include <cmath>
 #include <dwmapi.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <iomanip>
+#include <psapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <sstream>
@@ -67,6 +70,9 @@ constexpr COLORREF kOk = RGB(83, 210, 101);
 constexpr COLORREF kWarn = RGB(237, 179, 61);
 constexpr COLORREF kInfo = RGB(63, 181, 221);
 constexpr COLORREF kDanger = RGB(236, 73, 73);
+constexpr UINT_PTR kPerformanceTimer = 8;
+constexpr UINT kPerformanceSampleMs = 250;
+constexpr UINT kGpuMemorySampleMs = 1000;
 
 // Purpose: Return the fixed release window style.
 // Inputs: None.
@@ -203,7 +209,6 @@ std::wstring history_status_filter_text(int index) {
 // Outputs: Returns ordered labels matching the selectable rows.
 std::vector<std::wstring> dropdown_options(DropdownId id) {
     switch (id) {
-    case DropdownId::QueueProfile:
     case DropdownId::CompressProfile:
         return {compression_profile_text(0), compression_profile_text(1), compression_profile_text(2)};
     case DropdownId::CompressMethod:
@@ -231,7 +236,6 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
 // Outputs: Returns a zero-based row index, clamped by renderers before use.
 int dropdown_selected_index(const UiState& state, DropdownId id) {
     switch (id) {
-    case DropdownId::QueueProfile:
     case DropdownId::CompressProfile:
         return state.compression_profile_index;
     case DropdownId::CompressMethod:
@@ -299,6 +303,32 @@ std::string human_bytes(double value) {
     std::ostringstream out;
     out << std::fixed << std::setprecision(unit == 0 ? 0 : 1) << value << ' ' << units[unit];
     return out.str();
+}
+
+// Purpose: Convert a Windows FILETIME into 100 ns ticks.
+// Inputs: `value` is a FILETIME returned by a Win32 process-time API.
+// Outputs: Returns the unsigned 64-bit tick value used for interval math.
+std::uint64_t filetime_ticks(const FILETIME& value) {
+    ULARGE_INTEGER ticks{};
+    ticks.LowPart = value.dwLowDateTime;
+    ticks.HighPart = value.dwHighDateTime;
+    return ticks.QuadPart;
+}
+
+// Purpose: Format a percentage for compact monitor cards.
+// Inputs: `value` is a percent value already clamped by the caller when needed.
+// Outputs: Returns a one-decimal UTF-16 percentage string.
+std::wstring percentage_text(double value) {
+    std::wostringstream out;
+    out << std::fixed << std::setprecision(1) << value << L"%";
+    return out.str();
+}
+
+// Purpose: Format a throughput value for compact monitor cards.
+// Inputs: `bytes_per_second` is a nonnegative byte rate.
+// Outputs: Returns a UTF-16 string with `/s` suffix.
+std::wstring rate_text(double bytes_per_second) {
+    return widen(human_bytes(bytes_per_second) + "/s");
 }
 
 // Purpose: Safely format a filesystem entry size for the queue table.
@@ -648,6 +678,7 @@ MainWindow::~MainWindow() {
     if (worker_.joinable()) {
         worker_.join();
     }
+    shutdown_performance_monitor();
     for (HFONT font : {title_font_, body_font_, small_font_, tiny_font_, mono_font_}) {
         if (font != nullptr) {
             DeleteObject(font);
@@ -811,6 +842,9 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     }
     case WM_CREATE:
         DragAcceptFiles(hwnd_, TRUE);
+        initialize_performance_monitor();
+        update_performance_sample();
+        SetTimer(hwnd_, kPerformanceTimer, kPerformanceSampleMs, nullptr);
         return 0;
     case WM_APP + 1:
         repaint_queued_ = false;
@@ -821,9 +855,16 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             tick_animation();
             return 0;
         }
+        if (wparam == kPerformanceTimer) {
+            update_performance_sample();
+            request_repaint();
+            return 0;
+        }
         return DefWindowProcW(hwnd_, message, wparam, lparam);
     case WM_DESTROY:
         KillTimer(hwnd_, kAnimationTimer);
+        KillTimer(hwnd_, kPerformanceTimer);
+        shutdown_performance_monitor();
         PostQuitMessage(0);
         return 0;
     default:
@@ -974,10 +1015,7 @@ MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
     layout.clear = RECT{layout.area.right - scale(72), header_top, layout.area.right, header_bottom};
     layout.add_folder = RECT{layout.clear.left - scale(12) - scale(108), header_top, layout.clear.left - scale(12), header_bottom};
     layout.add_files = RECT{layout.add_folder.left - scale(12) - scale(96), header_top, layout.add_folder.left - scale(12), header_bottom};
-    layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom - scale(124)};
-    layout.destination = RECT{layout.area.left, layout.area.bottom - scale(88), layout.area.right - scale(182), layout.area.bottom - scale(44)};
-    layout.start = RECT{layout.area.right - scale(168), layout.area.bottom - scale(64), layout.area.right - scale(20), layout.area.bottom - scale(24)};
-    layout.profile = RECT{layout.area.left, layout.area.bottom - scale(40), layout.area.left + scale(264), layout.area.bottom};
+    layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom};
     return layout;
 }
 
@@ -1092,10 +1130,6 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
             }
         }
     }
-
-    draw_field(dc, layout.destination, L"Destination", compression_output_path_for(state).wstring(), false);
-    draw_button(dc, layout.start, L"Start", true);
-    draw_field(dc, layout.profile, L"Profile", compression_profile_text(state.compression_profile_index), true);
 }
 
 void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& state) {
@@ -1277,7 +1311,13 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(12), memory.right, memory.top + scale(36)}, L"Memory", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(12), accel.right, accel.top + scale(36)}, L"Acceleration", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, ready ? L"Backend: AMD HIP\nTarget: configured at build time\nDevice: reported by HIP runtime" : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    const std::wstring gpu_detail = ready
+        ? (std::wstring(L"Backend: AMD HIP\nDevice: ") +
+              (state.gpu_device_name.empty() ? L"Detected by HIP runtime" : widen(state.gpu_device_name)) +
+              L"\nArchitecture: " +
+              (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
+        : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
+    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP compatibility uses miniz streaming file APIs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
@@ -1290,12 +1330,74 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     const int graph_top = monitor.top + scale(60);
     const int graph_bottom = monitor.bottom - scale(42);
     const int graph_w = (monitor.right - monitor.left - scale(86)) / 4;
+    const auto draw_monitor_card = [this, dc](const RECT& graph, const wchar_t* label, const std::wstring& value, const std::wstring& detail, double ratio, COLORREF color) {
+        fill_round_rect(dc, graph, kPanel2, scale(4));
+        stroke_rect(dc, graph, kBorder);
+        RECT value_rect{graph.left + scale(12), graph.top + scale(10), graph.right - scale(12), graph.top + scale(42)};
+        RECT detail_rect{graph.left + scale(12), graph.top + scale(44), graph.right - scale(12), graph.bottom - scale(28)};
+        RECT bar_track{graph.left + scale(12), graph.bottom - scale(20), graph.right - scale(12), graph.bottom - scale(12)};
+        const int bar_width = std::max(0, static_cast<int>(bar_track.right - bar_track.left));
+        RECT bar_fill = bar_track;
+        bar_fill.right = bar_fill.left + static_cast<int>(std::round(static_cast<double>(bar_width) * std::clamp(ratio, 0.0, 1.0)));
+        fill_round_rect(dc, bar_track, RGB(35, 50, 56), scale(4));
+        if (bar_fill.right > bar_fill.left) {
+            fill_round_rect(dc, bar_fill, color, scale(4));
+        }
+        draw_text(dc, value_rect, value, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+        draw_text(dc, RECT{graph.left, graph.bottom + scale(4), graph.right, graph.bottom + scale(24)}, label, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    };
+    const auto& sample = state.performance;
+    const double io_total = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
     for (int i = 0; i < 4; ++i) {
         RECT graph{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top, monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
-        stroke_rect(dc, graph, kBorder);
-        const wchar_t* label = i == 0 ? L"GPU utilization" : i == 1 ? L"Memory bandwidth" : i == 2 ? L"Temperature" : L"Power";
-        draw_text(dc, RECT{graph.left, graph.bottom + scale(4), graph.right, graph.bottom + scale(24)}, label, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, inset_rect(graph, scale(14), scale(12)), L"No live sample", kSubtle, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (!sample.live) {
+            draw_monitor_card(graph, i == 0 ? L"CPU" : i == 1 ? L"Memory" : i == 2 ? L"I/O" : L"GPU", L"Collecting", L"Waiting for the first live sample.", 0.0, kSubtle);
+            continue;
+        }
+        if (i == 0) {
+            draw_monitor_card(
+                graph,
+                L"CPU",
+                percentage_text(sample.cpu_percent),
+                L"Process utilization across logical CPUs.",
+                sample.cpu_percent / 100.0,
+                kInfo);
+        } else if (i == 1) {
+            const auto detail = std::wstring(L"Private ") + widen(human_bytes(static_cast<double>(sample.private_bytes))) + L"\nSystem " + percentage_text(sample.system_memory_percent);
+            draw_monitor_card(
+                graph,
+                L"Memory",
+                widen(human_bytes(static_cast<double>(sample.private_bytes))),
+                detail,
+                sample.system_memory_percent / 100.0,
+                kOk);
+        } else if (i == 2) {
+            const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " + rate_text(sample.io_write_bytes_per_second);
+            draw_monitor_card(
+                graph,
+                L"I/O",
+                rate_text(io_total),
+                detail,
+                std::min(1.0, io_total / (1024.0 * 1024.0 * 1024.0)),
+                kWarn);
+        } else {
+            const bool has_vram = sample.vram_total_bytes > 0;
+            const double vram_ratio = has_vram
+                ? static_cast<double>(sample.vram_total_bytes - sample.vram_free_bytes) / static_cast<double>(sample.vram_total_bytes)
+                : 0.0;
+            const std::wstring gpu_value = sample.gpu_utilization_available ? percentage_text(sample.gpu_utilization_percent) : L"Unavailable";
+            const std::wstring detail = has_vram
+                ? (std::wstring(L"VRAM free ") + widen(human_bytes(static_cast<double>(sample.vram_free_bytes))) + L"\nTotal " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))))
+                : L"Windows GPU counter or HIP VRAM is not exposed.";
+            draw_monitor_card(
+                graph,
+                L"GPU",
+                gpu_value,
+                detail,
+                sample.gpu_utilization_available ? sample.gpu_utilization_percent / 100.0 : vram_ratio,
+                kAccent);
+        }
     }
 }
 
@@ -1448,8 +1550,6 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
 
 RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const {
     switch (id) {
-    case DropdownId::QueueProfile:
-        return queue_layout(content).profile;
     case DropdownId::CompressProfile:
         return compress_layout(content).profile;
     case DropdownId::CompressMethod:
@@ -1552,7 +1652,7 @@ bool MainWindow::handle_content_click(int x, int y) {
         return true;
     };
 
-    // Queue clicks cover the table, destination picker, profile dropdown, and primary start action.
+    // Queue clicks cover only file/folder selection and row selection; job controls live on later pages.
     if (page == Page::Queue) {
         const auto layout = queue_layout(content);
         if (handle_active_dropdown_click(x, y)) {
@@ -1568,18 +1668,6 @@ bool MainWindow::handle_content_click(int x, int y) {
         }
         if (contains_point(layout.clear, x, y)) {
             clear_queue();
-            return true;
-        }
-        if (contains_point(layout.start, x, y)) {
-            start_compress();
-            return true;
-        }
-        if (contains_point(layout.destination, x, y)) {
-            choose_destination();
-            return true;
-        }
-        if (contains_point(layout.profile, x, y)) {
-            open_dropdown(DropdownId::QueueProfile);
             return true;
         }
         const int header_bottom = layout.table.top + scale(36);
@@ -1834,7 +1922,6 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     {
         std::lock_guard lock(mutex_);
         switch (id) {
-        case DropdownId::QueueProfile:
         case DropdownId::CompressProfile:
             state_.compression_profile_index = std::clamp(option_index, 0, 2);
             state_.status = "Compression profile changed";
@@ -2215,6 +2302,165 @@ void MainWindow::refresh_gpu_status() {
     const auto info = query_gpu_info();
     std::lock_guard lock(mutex_);
     state_.gpu_status = info.status;
+    state_.gpu_runtime_name = info.runtime_name;
+    state_.gpu_device_name = info.device_name;
+    state_.gpu_arch = info.gcn_arch;
+}
+
+void MainWindow::initialize_performance_monitor() {
+    if (gpu_query_ != nullptr) {
+        return;
+    }
+    if (PdhOpenQueryW(nullptr, 0, &gpu_query_) != ERROR_SUCCESS) {
+        gpu_query_ = nullptr;
+        gpu_counter_ = nullptr;
+        return;
+    }
+    const PDH_STATUS status = PdhAddEnglishCounterW(gpu_query_, L"\\GPU Engine(*)\\Utilization Percentage", 0, &gpu_counter_);
+    if (status != ERROR_SUCCESS) {
+        PdhCloseQuery(gpu_query_);
+        gpu_query_ = nullptr;
+        gpu_counter_ = nullptr;
+        return;
+    }
+    PdhCollectQueryData(gpu_query_);
+}
+
+void MainWindow::shutdown_performance_monitor() {
+    if (gpu_query_ != nullptr) {
+        PdhCloseQuery(gpu_query_);
+        gpu_query_ = nullptr;
+        gpu_counter_ = nullptr;
+    }
+}
+
+double MainWindow::sample_gpu_utilization() {
+    if (gpu_query_ == nullptr || gpu_counter_ == nullptr) {
+        return -1.0;
+    }
+    if (PdhCollectQueryData(gpu_query_) != ERROR_SUCCESS) {
+        return -1.0;
+    }
+
+    DWORD buffer_size = 0;
+    DWORD item_count = 0;
+    PDH_STATUS status = PdhGetFormattedCounterArrayW(gpu_counter_, PDH_FMT_DOUBLE, &buffer_size, &item_count, nullptr);
+    if (status != PDH_MORE_DATA || buffer_size == 0 || item_count == 0) {
+        return -1.0;
+    }
+    std::vector<std::byte> buffer(buffer_size);
+    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+    status = PdhGetFormattedCounterArrayW(gpu_counter_, PDH_FMT_DOUBLE, &buffer_size, &item_count, items);
+    if (status != ERROR_SUCCESS) {
+        return -1.0;
+    }
+
+    const std::wstring pid_marker = L"pid_" + std::to_wstring(GetCurrentProcessId()) + L"_";
+    double process_total = 0.0;
+    double system_total = 0.0;
+    bool found_process_sample = false;
+    for (DWORD index = 0; index < item_count; ++index) {
+        const auto& item = items[index];
+        if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr) {
+            continue;
+        }
+        const double value = std::max(0.0, item.FmtValue.doubleValue);
+        system_total += value;
+        if (std::wstring_view(item.szName).find(pid_marker) != std::wstring_view::npos) {
+            process_total += value;
+            found_process_sample = true;
+        }
+    }
+    const double value = found_process_sample ? process_total : system_total;
+    return std::clamp(value, 0.0, 100.0);
+}
+
+void MainWindow::update_performance_sample() {
+    const auto now = std::chrono::steady_clock::now();
+    double elapsed_seconds = 0.0;
+    if (last_performance_sample_time_ != std::chrono::steady_clock::time_point{}) {
+        elapsed_seconds = std::chrono::duration<double>(now - last_performance_sample_time_).count();
+    }
+
+    double cpu_percent = 0.0;
+    FILETIME creation_time{};
+    FILETIME exit_time{};
+    FILETIME kernel_time{};
+    FILETIME user_time{};
+    if (GetProcessTimes(GetCurrentProcess(), &creation_time, &exit_time, &kernel_time, &user_time)) {
+        if (elapsed_seconds > 0.0) {
+            const std::uint64_t previous_ticks = filetime_ticks(last_process_kernel_time_) + filetime_ticks(last_process_user_time_);
+            const std::uint64_t current_ticks = filetime_ticks(kernel_time) + filetime_ticks(user_time);
+            const auto logical_processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+            if (current_ticks >= previous_ticks) {
+                cpu_percent = (static_cast<double>(current_ticks - previous_ticks) / (elapsed_seconds * 10000000.0 * static_cast<double>(logical_processors))) * 100.0;
+                cpu_percent = std::clamp(cpu_percent, 0.0, 100.0);
+            }
+        }
+        last_process_kernel_time_ = kernel_time;
+        last_process_user_time_ = user_time;
+    }
+
+    double io_read_rate = 0.0;
+    double io_write_rate = 0.0;
+    IO_COUNTERS io_counters{};
+    if (GetProcessIoCounters(GetCurrentProcess(), &io_counters)) {
+        if (elapsed_seconds > 0.0) {
+            if (io_counters.ReadTransferCount >= last_io_read_bytes_) {
+                io_read_rate = static_cast<double>(io_counters.ReadTransferCount - last_io_read_bytes_) / elapsed_seconds;
+            }
+            if (io_counters.WriteTransferCount >= last_io_write_bytes_) {
+                io_write_rate = static_cast<double>(io_counters.WriteTransferCount - last_io_write_bytes_) / elapsed_seconds;
+            }
+        }
+        last_io_read_bytes_ = io_counters.ReadTransferCount;
+        last_io_write_bytes_ = io_counters.WriteTransferCount;
+    }
+
+    std::uint64_t private_bytes = 0;
+    PROCESS_MEMORY_COUNTERS_EX memory_counters{};
+    memory_counters.cb = sizeof(memory_counters);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory_counters), sizeof(memory_counters))) {
+        private_bytes = static_cast<std::uint64_t>(memory_counters.PrivateUsage);
+    }
+
+    double system_memory_percent = 0.0;
+    MEMORYSTATUSEX memory_status{};
+    memory_status.dwLength = sizeof(memory_status);
+    if (GlobalMemoryStatusEx(&memory_status)) {
+        system_memory_percent = static_cast<double>(memory_status.dwMemoryLoad);
+    }
+
+    if (last_gpu_memory_sample_time_ == std::chrono::steady_clock::time_point{} ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_gpu_memory_sample_time_).count() >= kGpuMemorySampleMs) {
+        const auto info = query_gpu_info();
+        cached_vram_total_bytes_ = info.vram_total_bytes;
+        cached_vram_free_bytes_ = info.vram_free_bytes;
+        last_gpu_memory_sample_time_ = now;
+        std::lock_guard lock(mutex_);
+        state_.gpu_status = info.status;
+        state_.gpu_runtime_name = info.runtime_name;
+        state_.gpu_device_name = info.device_name;
+        state_.gpu_arch = info.gcn_arch;
+    }
+
+    const double gpu_percent = sample_gpu_utilization();
+    PerformanceMonitorSample sample;
+    sample.live = true;
+    sample.gpu_utilization_available = gpu_percent >= 0.0;
+    sample.cpu_percent = cpu_percent;
+    sample.gpu_utilization_percent = sample.gpu_utilization_available ? gpu_percent : 0.0;
+    sample.system_memory_percent = system_memory_percent;
+    sample.io_read_bytes_per_second = std::max(0.0, io_read_rate);
+    sample.io_write_bytes_per_second = std::max(0.0, io_write_rate);
+    sample.private_bytes = private_bytes;
+    sample.vram_total_bytes = cached_vram_total_bytes_;
+    sample.vram_free_bytes = cached_vram_free_bytes_;
+    {
+        std::lock_guard lock(mutex_);
+        state_.performance = sample;
+    }
+    last_performance_sample_time_ = now;
 }
 
 void MainWindow::start_page_transition(Page from, Page to) {

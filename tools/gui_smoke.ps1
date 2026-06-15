@@ -515,16 +515,11 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
 
-    # Queue: exercise drag/drop, row selection, destination, profile, and Start.
+    # Queue: exercise drag/drop and row selection only. Destination, profile, and Start belong to Compress/Extract.
     Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
     Start-Sleep -Milliseconds 350
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 240 -DesignY 172
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 280 -DesignY 640
-    Start-Sleep -Milliseconds 120
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Queue-Profile" -OpenX 180 -OpenY 690 -SelectX 180 -SelectY 634 -MenuLeft 116 -MenuTop 562 -MenuRight 380 -MenuBottom 660 -BasePath $basePath -Extension $extension
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1085 -DesignY 648
-    Start-Sleep -Seconds 2
 
     # Compress: exercise fields, dropdowns, checkboxes, toggles, and Start.
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 1
@@ -552,8 +547,10 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     Start-Sleep -Seconds 2
 
-    # Extract: clear queue, drop a valid archive, then exercise destination/options/toggles/Start.
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 464 -DesignY 25
+    # Extract: return to Queue, clear inputs, drop a valid archive, then exercise extract controls.
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
+    Start-Sleep -Milliseconds 150
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
     Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeArchive).Path)
     Start-Sleep -Milliseconds 250
