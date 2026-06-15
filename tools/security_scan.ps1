@@ -12,8 +12,7 @@ $excludedRoots = @(
     (Join-Path $repo ".git"),
     (Join-Path $repo "build"),
     (Join-Path $repo "out"),
-    (Join-Path $repo ".vs"),
-    (Join-Path $repo "skills")
+    (Join-Path $repo ".vs")
 )
 
 $files = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
