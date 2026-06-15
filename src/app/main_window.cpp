@@ -858,6 +858,8 @@ LRESULT CALLBACK MainWindow::window_proc(HWND hwnd, UINT message, WPARAM wparam,
 LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_DPICHANGED: {
+        // Keep the fixed design client area while honoring Windows' suggested
+        // monitor position for the new DPI.
         dpi_ = HIWORD(wparam);
         rebuild_fonts();
         const auto* suggested = reinterpret_cast<RECT*>(lparam);
@@ -885,6 +887,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     case WM_LBUTTONDOWN: {
+        // Use the same scaled geometry for hit testing that the renderer uses,
+        // so high-DPI displays do not create visual/click drift.
         const int x = GET_X_LPARAM(lparam);
         const int y = GET_Y_LPARAM(lparam);
         const int rail_width = scale(kRailWidth);
@@ -905,6 +909,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     case WM_DROPFILES: {
+        // Native shell drag/drop is a queue regression boundary and is covered
+        // by the GUI smoke harness with an injected HDROP payload.
         auto drop = reinterpret_cast<HDROP>(wparam);
         const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         std::lock_guard lock(mutex_);
@@ -929,6 +935,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         update_performance_sample();
         SetTimer(hwnd_, kPerformanceTimer, kPerformanceSampleMs, nullptr);
         if (const UINT auto_close_ms = smoke_auto_close_ms(); auto_close_ms > 0) {
+            // Smoke-only auto-close prevents orphaned GUI windows if the
+            // harness exits before it can post WM_CLOSE.
             SetTimer(hwnd_, kSmokeAutoCloseTimer, auto_close_ms, nullptr);
         }
         if (!smoke_close_marker_path().empty()) {
@@ -954,6 +962,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             return 0;
         }
         if (wparam == kSmokeClosePollTimer) {
+            // The marker file gives the smoke harness a second shutdown path
+            // that does not depend on external window activation.
             if (smoke_close_requested()) {
                 DestroyWindow(hwnd_);
             }
@@ -961,6 +971,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         }
         return DefWindowProcW(hwnd_, message, wparam, lparam);
     case WM_DESTROY:
+        // Kill every timer owned by this window before shutdown so repaint,
+        // telemetry sampling, and smoke cleanup cannot outlive the HWND.
         KillTimer(hwnd_, kAnimationTimer);
         KillTimer(hwnd_, kPerformanceTimer);
         KillTimer(hwnd_, kSmokeAutoCloseTimer);
