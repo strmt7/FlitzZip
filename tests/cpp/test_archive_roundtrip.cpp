@@ -4,6 +4,7 @@
 #include "core/result.hpp"
 #include "test_util.hpp"
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <span>
@@ -72,6 +73,22 @@ bool archive_contains_block_kind(const superzip::ArchiveIndex& index, superzip::
             return block.kind == kind;
         });
     });
+}
+
+// Purpose: Count files left under an extraction destination after a failed operation.
+// Inputs: `root` is the extraction directory that may or may not exist.
+// Outputs: Returns the number of regular files visible under `root`.
+std::uint64_t count_regular_files(const std::filesystem::path& root) {
+    if (!std::filesystem::exists(root)) {
+        return 0;
+    }
+    std::uint64_t count = 0;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(root)) {
+        if (item.is_regular_file()) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 }  // namespace
@@ -351,6 +368,18 @@ TEST_CASE(suzip_required_gpu_rejects_cpu_deflate_archive) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+
+    const auto output = root / "out";
+    verify.overwrite = true;
+    rejected = false;
+    try {
+        (void)superzip::extract_suzip(archive, output, verify);
+    } catch (const superzip::GpuError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(output / "cpu-deflate.txt"));
+    REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
     std::filesystem::remove_all(root);
 }
 
@@ -410,6 +439,79 @@ TEST_CASE(suzip_verify_rejects_corrupt_payload) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify failed extraction removes decoded temporary data before publishing a final file.
+// Inputs: A raw-payload archive with one payload byte modified to force a CRC mismatch after decode.
+// Outputs: Throws if extraction succeeds or leaves a partial target file behind.
+TEST_CASE(suzip_extract_removes_partial_file_after_crc_failure) {
+    const auto root = test_temp_dir("suzip-extract-crc-cleanup");
+    const auto input = root / "file.bin";
+    {
+        std::vector<char> payload(64 * 1024);
+        std::uint32_t state = 0x12345678U;
+        for (std::size_t i = 0; i < payload.size(); ++i) {
+            state = (state * 1664525U) + 1013904223U;
+            payload[i] = static_cast<char>((state >> 24U) & 0xFFU);
+        }
+        std::ofstream(input, std::ios::binary).write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    }
+    const auto archive = root / "archive.suzip";
+    superzip::CompressOptions compress;
+    compress.gpu_required = false;
+    compress.force_cpu = true;
+    compress.chunk_size = 64 * 1024;
+    compress.block_size = 16 * 1024;
+    (void)superzip::compress_suzip({input}, archive, compress);
+
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::Raw));
+    {
+        std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
+        char value = 0;
+        file.seekg(0, std::ios::beg);
+        file.read(&value, 1);
+        value ^= 0x7F;
+        file.seekp(0, std::ios::beg);
+        file.write(&value, 1);
+    }
+
+    const auto output = root / "out";
+    superzip::ExtractOptions extract;
+    extract.gpu_required = false;
+    extract.force_cpu = true;
+    extract.overwrite = true;
+    extract.chunk_size = 64 * 1024;
+    extract.block_size = 16 * 1024;
+    bool rejected = false;
+    try {
+        (void)superzip::extract_suzip(archive, output, extract);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(output / "file.bin"));
+    REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+
+    const auto overwrite_output = root / "overwrite-out";
+    std::filesystem::create_directories(overwrite_output);
+    const std::string preserved_text = "existing output should survive failed extraction";
+    std::ofstream(overwrite_output / "file.bin", std::ios::binary) << preserved_text;
+    rejected = false;
+    try {
+        (void)superzip::extract_suzip(archive, overwrite_output, extract);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(overwrite_output), static_cast<std::uint64_t>(1));
+    REQUIRE_EQ(std::filesystem::file_size(overwrite_output / "file.bin"), static_cast<std::uintmax_t>(preserved_text.size()));
+    std::ifstream preserved(overwrite_output / "file.bin", std::ios::binary);
+    std::string actual(preserved_text.size(), '\0');
+    preserved.read(actual.data(), static_cast<std::streamsize>(actual.size()));
+    preserved.close();
+    REQUIRE_EQ(actual, preserved_text);
     std::filesystem::remove_all(root);
 }
 
