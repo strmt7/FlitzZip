@@ -6,8 +6,11 @@ are used, and default to read-only repository permissions.
 
 ## Automatic Workflows
 
-- `.github/workflows/security-code-scanning.yml` runs on push, weekly schedule,
-  and manual dispatch.
+- `.github/workflows/security-code-scanning.yml` runs source and dependency
+  security scans on push, weekly schedule, and manual dispatch.
+- `.github/workflows/scorecard.yml` runs OSSF Scorecard on the default branch,
+  weekly schedule, and manual dispatch. Scorecard is isolated because the action
+  rejects non-default branch push refs.
 - `.github/workflows/greenbone-openvas-vulnetix.yml` runs a Greenbone/OpenVAS
   integration audit on push and pull request.
 - `.github/workflows/greenbone-openvas-live.yml` runs the authorized live
@@ -40,7 +43,7 @@ are used, and default to read-only repository permissions.
 | Gitleaks | Full git history and working-tree secret scan | JSON artifact |
 | TruffleHog | Independent full git history secret scan | JSONL artifact |
 | Dependency Review | Blocks vulnerable dependency changes on PRs | PR-only workflow |
-| OSSF Scorecard | Repository supply-chain security posture | SARIF upload |
+| OSSF Scorecard | Default-branch repository supply-chain security posture | SARIF upload |
 | Greenbone/OpenVAS | Always-on scanner integration audit plus scheduled/manual network vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and Vulnetix upload |
 | Vulnetix | External vulnerability-management upload for authorized live OpenVAS results | Vulnetix project |
 
@@ -54,6 +57,8 @@ Enable these in `strmt7/SuperZip`:
 4. `Settings > Code security and analysis > Private vulnerability reporting`.
 5. Branch protection or rulesets requiring `windows-ci`, `security`, and
    `Greenbone/OpenVAS integration audit` checks before protected-branch updates.
+   The `scorecard` workflow is repository-level and runs on the default branch,
+   not on pull-request refs.
 
 ## Greenbone/OpenVAS OIDC Broker
 

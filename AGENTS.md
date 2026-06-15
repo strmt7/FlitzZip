@@ -54,6 +54,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `.github/codeql/`: CodeQL scanning configuration.
 - `.github/requirements/`: hash-locked Python scanner requirements for GitHub-hosted Linux jobs.
 - `.github/workflows/release.yml`: manual x64 release, installer smoke, beta/stable track selection, and publishing workflow.
+- `.github/workflows/scorecard.yml`: default-branch OSSF Scorecard workflow.
 - `.agents/skills/` and `mcp/`: local helper skills/MCPs for future agents.
 
 ## Build And Test Commands

@@ -86,7 +86,7 @@ The Greenbone/OpenVAS and Vulnetix live workflow resolves scanner credentials
 through an external OIDC broker, then uses a pinned `Vulnetix/cli` action after
 a real authorized OpenVAS scan has produced artifacts. The current pin is:
 
-- `uses: Vulnetix/cli@73cb68c775c215b12261b1a72e5cd45e5b3aeac6`
+- `uses: Vulnetix/cli@7b1ca5050e6d55a0fa29752b5e779018a5f2aa5f`
 - `org-id: ${{ steps.config.outputs.vulnetix_org_id }}`
 - optional `task: upload`
 - optional `artifact-path: ./reports/`
@@ -96,5 +96,6 @@ to a broker that validates GitHub OIDC claims and returns the authorized
 Greenbone and Vulnetix settings. Do not add hard-coded organization IDs,
 tokens, URLs, scan targets, or credentials to the repository.
 
-Note: the action is pinned to the `v3.9.1` commit observed on June 14, 2026.
-Re-check the upstream action before rotating that pin.
+Note: the action is pinned to the `v3.21.0` commit verified against the
+annotated upstream tag on June 15, 2026. Re-check the upstream action before
+rotating that pin.

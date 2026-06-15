@@ -17,6 +17,11 @@ jobs:
   codeql-cpp:
     name: CodeQL C++
     runs-on: windows-2022
+    env:
+      # CodeQL overlay databases require build-mode none for traced languages.
+      # SuperZip keeps a manual C++ build for accurate MSVC extraction, so ask
+      # CodeQL to use the normal full database directly instead of falling back.
+      CODEQL_OVERLAY_DATABASE_MODE: none
     # CodeQL needs action metadata for analysis, repository contents to build,
     # and security-events write permission to upload SARIF.
     permissions:
@@ -33,7 +38,7 @@ jobs:
         with:
           languages: c-cpp
           build-mode: manual
-          dependency-caching: true
+          dependency-caching: false
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
       - name: Build C++ database
@@ -331,31 +336,3 @@ jobs:
           format: spdx-json
           output-file: superzip-sbom.spdx.json
           upload-artifact: true
-
-  scorecard:
-    name: OSSF Scorecard supply-chain security
-    runs-on: ubuntu-latest
-    # Scorecard reads repository metadata, uses OIDC for result signing, and
-    # uploads SARIF to code scanning.
-    permissions:
-      actions: read # allow Scorecard workflow policy checks
-      contents: read # allow repository metadata/content checks
-      id-token: write # allow Scorecard result signing
-      security-events: write # allow Scorecard SARIF upload to code scanning
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-      - name: Run OSSF Scorecard
-        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
-        with:
-          results_file: scorecard-results.sarif
-          results_format: sarif
-          publish_results: true
-      - name: Upload Scorecard SARIF
-        if: always() && hashFiles('scorecard-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
-        with:
-          sarif_file: scorecard-results.sarif
-          category: scorecard
