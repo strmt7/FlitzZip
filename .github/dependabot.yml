@@ -12,3 +12,15 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: deps(actions)
+  - package-ecosystem: pip
+    directory: /.github/requirements
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:20"
+      timezone: UTC
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps(python)

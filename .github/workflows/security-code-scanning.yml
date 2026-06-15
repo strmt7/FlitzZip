@@ -187,7 +187,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check --only-binary=:all: semgrep==1.163.0
+          python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-semgrep-linux.txt
           semgrep scan --error --sarif --metrics=off --no-git-ignore --max-target-bytes 100000000 --config p/default --config p/github-actions . > semgrep-results.sarif
       - name: Upload Semgrep SARIF
         if: always() && hashFiles('semgrep-results.sarif') != ''
