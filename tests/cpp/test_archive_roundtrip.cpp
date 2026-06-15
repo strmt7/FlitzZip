@@ -134,6 +134,66 @@ TEST_CASE(suzip_force_cpu_roundtrip_reports_no_gpu_usage) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Verify optional GPU fallback does not publish failed HIP attempts as completed GPU telemetry.
+// Inputs: A small source file compressed with optional GPU use on hosts with no available AMD GPU.
+// Outputs: Throws if CPU fallback reports GPU usage, chunks, kernels, transfer bytes, or device allocations.
+TEST_CASE(suzip_optional_gpu_fallback_reports_zero_gpu_telemetry_without_device) {
+    if (superzip::query_gpu_info().available) {
+        return;
+    }
+
+    const auto root = test_temp_dir("suzip-optional-gpu-fallback-telemetry");
+    const auto input = root / "input.bin";
+    {
+        std::ofstream out(input, std::ios::binary);
+        for (int i = 0; i < 8192; ++i) {
+            out << "optional gpu fallback telemetry should stay CPU-visible only\n";
+        }
+    }
+    const auto archive = root / "archive.suzip";
+
+    superzip::CompressOptions compress;
+    compress.gpu_required = false;
+    compress.force_cpu = false;
+    compress.verify_after_write = true;
+    const auto compressed = superzip::compress_suzip({input}, archive, compress);
+    REQUIRE_TRUE(!compressed.gpu_used);
+    REQUIRE_EQ(compressed.gpu_runtime.encode_chunks, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(compressed.gpu_runtime.decode_chunks, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(compressed.gpu_runtime.kernel_launches, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(compressed.gpu_runtime.h2d_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(compressed.gpu_runtime.d2h_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(compressed.gpu_runtime.device_allocation_bytes, static_cast<std::uint64_t>(0));
+
+    superzip::ExtractOptions verify;
+    verify.gpu_required = false;
+    verify.force_cpu = false;
+    const auto verified = superzip::verify_suzip(archive, verify);
+    REQUIRE_TRUE(!verified.gpu_used);
+    REQUIRE_EQ(verified.gpu_runtime.encode_chunks, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(verified.gpu_runtime.decode_chunks, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(verified.gpu_runtime.kernel_launches, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(verified.gpu_runtime.h2d_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(verified.gpu_runtime.d2h_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(verified.gpu_runtime.device_allocation_bytes, static_cast<std::uint64_t>(0));
+
+    const auto output = root / "out";
+    superzip::ExtractOptions extract;
+    extract.gpu_required = false;
+    extract.force_cpu = false;
+    extract.overwrite = true;
+    const auto extracted = superzip::extract_suzip(archive, output, extract);
+    REQUIRE_TRUE(!extracted.gpu_used);
+    REQUIRE_EQ(extracted.gpu_runtime.encode_chunks, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(extracted.gpu_runtime.decode_chunks, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(extracted.gpu_runtime.kernel_launches, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(extracted.gpu_runtime.h2d_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(extracted.gpu_runtime.d2h_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(extracted.gpu_runtime.device_allocation_bytes, static_cast<std::uint64_t>(0));
+
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify native SUZIP uses deflated blocks for text-heavy data instead of storing everything raw.
 // Inputs: A repetitive log-like file large enough to amortize archive metadata.
 // Outputs: Throws if the archive is not smaller than the source data or if verification fails.

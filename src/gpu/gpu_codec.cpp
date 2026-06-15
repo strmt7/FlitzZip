@@ -5,6 +5,7 @@
 #include "core/result.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -40,6 +41,58 @@ void validate_gpu_codec_options(const GpuCodecOptions& options) {
 void reject_oversized_codec_span(std::size_t size, const char* label) {
     if (size > kMaxArchiveChunkBytes) {
         throw ArchiveError(std::string(label) + " exceeds SuperZip codec resource limit");
+    }
+}
+
+// Purpose: Add one telemetry counter into another without losing concurrent atomic updates.
+// Inputs: `counter` is the destination telemetry field and `value` is the source count.
+// Outputs: Atomically adds nonzero source values to the operation telemetry.
+void merge_gpu_counter(std::atomic<std::uint64_t>& counter, std::uint64_t value) {
+    if (value != 0U) {
+        counter.fetch_add(value, std::memory_order_relaxed);
+    }
+}
+
+// Purpose: Merge a successful isolated HIP attempt into operation-level telemetry.
+// Inputs: `target` is the caller-visible telemetry; `source` is an attempt-local telemetry set.
+// Outputs: Adds only successful HIP execution counters to final operation statistics.
+void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& source) {
+    if (!target) {
+        return;
+    }
+    merge_gpu_counter(target->encode_chunks, source.encode_chunks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->decode_chunks, source.decode_chunks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->kernel_launches, source.kernel_launches.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->h2d_bytes, source.h2d_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->d2h_bytes, source.d2h_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->kernel_microseconds, source.kernel_microseconds.load(std::memory_order_relaxed));
+}
+
+// Purpose: Route optional HIP work through temporary telemetry so failed attempts do not pollute CPU fallback stats.
+// Inputs: `options` is the requested codec configuration; `attempt_telemetry` receives temporary counters when needed.
+// Outputs: Returns codec options for the HIP attempt.
+GpuCodecOptions gpu_attempt_options(
+    const GpuCodecOptions& options,
+    std::shared_ptr<GpuTelemetry>& attempt_telemetry) {
+    if (options.require_gpu || !options.telemetry) {
+        return options;
+    }
+    attempt_telemetry = std::make_shared<GpuTelemetry>();
+    GpuCodecOptions attempt = options;
+    attempt.telemetry = attempt_telemetry;
+    return attempt;
+}
+
+// Purpose: Publish isolated HIP telemetry after the attempt and CPU post-processing both succeed.
+// Inputs: `target` is the final operation telemetry; `attempt_telemetry` is null for required-GPU or untracked operations.
+// Outputs: Merges temporary counters only for successful optional HIP work.
+void publish_successful_gpu_attempt(
+    GpuTelemetry* target,
+    const std::shared_ptr<GpuTelemetry>& attempt_telemetry) {
+    if (attempt_telemetry) {
+        merge_successful_gpu_attempt(target, *attempt_telemetry);
     }
 }
 
@@ -171,10 +224,14 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
 
 #if SUPERZIP_ENABLE_HIP
     if (!options.force_cpu) {
+        std::shared_ptr<GpuTelemetry> attempt_telemetry;
+        const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
-            auto encoded = encode_chunk_hip(input, options);
-            encoded.gpu_used = true;
-            return deflate_classified_raw_blocks_cpu(input, std::move(encoded), cpu_options);
+            auto classified = encode_chunk_hip(input, hip_options);
+            classified.gpu_used = true;
+            auto encoded = deflate_classified_raw_blocks_cpu(input, std::move(classified), cpu_options);
+            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+            return encoded;
         } catch (const GpuError&) {
             if (options.require_gpu) {
                 throw;
@@ -206,11 +263,14 @@ bool decode_chunk(
 
 #if SUPERZIP_ENABLE_HIP
     if (!options.force_cpu) {
+        std::shared_ptr<GpuTelemetry> attempt_telemetry;
+        const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
-            decode_chunk_hip(payload, blocks, output, options);
+            decode_chunk_hip(payload, blocks, output, hip_options);
             if (block_table_contains_deflate(blocks)) {
                 decode_deflate_blocks_cpu(payload, blocks, output, cpu_options);
             }
+            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return true;
         } catch (const GpuError&) {
             if (options.require_gpu) {
@@ -246,20 +306,26 @@ DecodedChunkCrc crc_decoded_chunk(
 
 #if SUPERZIP_ENABLE_HIP
     if (!options.force_cpu) {
+        std::shared_ptr<GpuTelemetry> attempt_telemetry;
+        const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
             if (!block_table_contains_deflate(blocks)) {
-                return DecodedChunkCrc{
-                    .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, options),
+                auto decoded = DecodedChunkCrc{
+                    .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
                     .gpu_used = true,
                 };
+                publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+                return decoded;
             }
             std::vector<std::byte> decoded(static_cast<std::size_t>(output_size));
-            decode_chunk_hip(payload, blocks, decoded, options);
+            decode_chunk_hip(payload, blocks, decoded, hip_options);
             decode_deflate_blocks_cpu(payload, blocks, decoded, cpu_options);
-            return DecodedChunkCrc{
+            auto crc = DecodedChunkCrc{
                 .crc32 = crc32(std::span<const std::byte>(decoded.data(), decoded.size())),
                 .gpu_used = true,
             };
+            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+            return crc;
         } catch (const GpuError&) {
             if (options.require_gpu) {
                 throw;
