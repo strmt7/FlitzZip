@@ -51,7 +51,7 @@ struct GpuCodecOptions {
     bool force_cpu = false;
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
     std::uint32_t worker_count = 1;
-    int compression_level = 1;
+    int compression_level = kDefaultCompressionLevel;
     std::shared_ptr<GpuTelemetry> telemetry;
 };
 

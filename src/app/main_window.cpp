@@ -166,17 +166,28 @@ std::filesystem::path extraction_output_path_for(const UiState& state) {
     return safe_current_path() / L"SuperZip-extracted";
 }
 
-// Purpose: Return the user-facing compression profile label.
-// Inputs: `index` is the mutable profile index in UI state.
-// Outputs: Returns a stable label for the profile field.
-std::wstring compression_profile_text(int index) {
-    constexpr std::array<std::wstring_view, 3> labels{
-        L"Balanced (AMD GPU)",
-        L"Maximum speed",
-        L"Maximum compression",
+// Purpose: Return the user-facing compression-level label.
+// Inputs: `index` is the mutable compression-level selection in UI state.
+// Outputs: Returns a stable label that maps to a zlib/miniz compression level.
+std::wstring compression_level_text(int index) {
+    constexpr std::array<std::wstring_view, 5> labels{
+        L"Fastest (level 1)",
+        L"Fast (level 3)",
+        L"Balanced (level 5)",
+        L"Strong (level 7)",
+        L"Maximum (level 9)",
     };
     const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
     return std::wstring(labels[normalized]);
+}
+
+// Purpose: Map the visible compression-level selection to a miniz level.
+// Inputs: `index` is the mutable compression-level selection in UI state.
+// Outputs: Returns one of the supported non-store compression levels: 1, 3, 5, 7, or 9.
+int compression_level_value(int index) {
+    constexpr std::array<int, 5> levels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(levels.size()) + static_cast<int>(levels.size())) % static_cast<int>(levels.size()));
+    return levels[normalized];
 }
 
 // Purpose: Return the compression block-size labels shown in the Compress page.
@@ -283,8 +294,14 @@ std::wstring history_status_filter_text(int index) {
 // Outputs: Returns ordered labels matching the selectable rows.
 std::vector<std::wstring> dropdown_options(DropdownId id) {
     switch (id) {
-    case DropdownId::CompressProfile:
-        return {compression_profile_text(0), compression_profile_text(1), compression_profile_text(2)};
+    case DropdownId::CompressLevel:
+        return {
+            compression_level_text(0),
+            compression_level_text(1),
+            compression_level_text(2),
+            compression_level_text(3),
+            compression_level_text(4),
+        };
     case DropdownId::CompressMethod:
         return {L"AMD HIP required", L"AMD HIP preferred"};
     case DropdownId::CompressBlockSize:
@@ -317,8 +334,8 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
 // Outputs: Returns a zero-based row index, clamped by renderers before use.
 int dropdown_selected_index(const UiState& state, DropdownId id) {
     switch (id) {
-    case DropdownId::CompressProfile:
-        return state.compression_profile_index;
+    case DropdownId::CompressLevel:
+        return state.compression_level_index;
     case DropdownId::CompressMethod:
         return state.gpu_required ? 0 : 1;
     case DropdownId::CompressBlockSize:
@@ -1142,7 +1159,7 @@ MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
     layout.archive_name = RECT{left, layout.area.top + scale(54), left + field_w, layout.area.top + scale(104)};
     layout.destination = RECT{mid, layout.area.top + scale(54), mid + field_w, layout.area.top + scale(104)};
     layout.format = RECT{left, layout.area.top + scale(124), left + field_w, layout.area.top + scale(174)};
-    layout.profile = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
+    layout.compression_level = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
     layout.method = RECT{left, layout.area.top + scale(194), left + field_w, layout.area.top + scale(244)};
     layout.block_size = RECT{mid, layout.area.top + scale(194), mid + field_w, layout.area.top + scale(244)};
     layout.advanced = RECT{left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(390)};
@@ -1255,7 +1272,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.archive_name, L"Archive name", L"SuperZip-output.suzip", false);
     draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false);
     draw_field(dc, layout.format, L"Archive format", L"SuperZip GPU (.suzip)", false);
-    draw_field(dc, layout.profile, L"Compression profile", compression_profile_text(state.compression_profile_index), true);
+    draw_field(dc, layout.compression_level, L"Compression level", compression_level_text(state.compression_level_index), true);
     draw_field(dc, layout.method, L"Compression method", state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred", true);
     draw_field(dc, layout.block_size, L"Block size", compression_block_size_text(state.compression_block_size_index), true);
 
@@ -1677,8 +1694,8 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
 
 RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const {
     switch (id) {
-    case DropdownId::CompressProfile:
-        return compress_layout(content).profile;
+    case DropdownId::CompressLevel:
+        return compress_layout(content).compression_level;
     case DropdownId::CompressMethod:
         return compress_layout(content).method;
     case DropdownId::CompressBlockSize:
@@ -1827,8 +1844,8 @@ bool MainWindow::handle_content_click(int x, int y) {
             choose_destination();
             return true;
         }
-        if (contains_point(layout.profile, x, y)) {
-            open_dropdown(DropdownId::CompressProfile);
+        if (contains_point(layout.compression_level, x, y)) {
+            open_dropdown(DropdownId::CompressLevel);
             return true;
         }
         if (contains_point(layout.method, x, y)) {
@@ -2055,9 +2072,9 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     {
         std::lock_guard lock(mutex_);
         switch (id) {
-        case DropdownId::CompressProfile:
-            state_.compression_profile_index = std::clamp(option_index, 0, 2);
-            state_.status = "Compression profile changed";
+        case DropdownId::CompressLevel:
+            state_.compression_level_index = std::clamp(option_index, 0, 4);
+            state_.status = "Compression level changed";
             break;
         case DropdownId::CompressMethod:
             state_.gpu_required = option_index == 0;
@@ -2264,11 +2281,11 @@ void MainWindow::choose_destination() {
     request_repaint();
 }
 
-void MainWindow::cycle_compression_profile() {
+void MainWindow::cycle_compression_level() {
     {
         std::lock_guard lock(mutex_);
-        state_.compression_profile_index = (state_.compression_profile_index + 1) % 3;
-        state_.status = "Compression profile changed";
+        state_.compression_level_index = (state_.compression_level_index + 1) % 5;
+        state_.status = "Compression level changed";
     }
     request_repaint();
 }
@@ -2278,7 +2295,7 @@ void MainWindow::restore_defaults() {
         std::lock_guard lock(mutex_);
         state_.destination_directory.clear();
         state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
-        state_.compression_profile_index = 0;
+        state_.compression_level_index = 2;
         state_.compression_block_size_index = 1;
         state_.memory_policy_index = 0;
         state_.log_level_index = 0;
@@ -2310,6 +2327,7 @@ void MainWindow::start_compress() {
     bool defender = false;
     bool verify_after_write = false;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
+    int compression_level = superzip::kDefaultCompressionLevel;
     std::filesystem::path output;
     {
         std::lock_guard lock(mutex_);
@@ -2319,6 +2337,7 @@ void MainWindow::start_compress() {
         defender = state_.defender_scan_opt_in;
         verify_after_write = state_.verify_after_write_opt_in;
         block_size = compression_block_size_bytes(state_.compression_block_size_index);
+        compression_level = compression_level_value(state_.compression_level_index);
         output = compression_output_path_for(state_);
     }
     if (sources.empty()) {
@@ -2329,10 +2348,11 @@ void MainWindow::start_compress() {
         request_repaint();
         return;
     }
-    run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write, block_size] {
+    run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write, block_size, compression_level] {
         CompressOptions options;
         options.gpu_required = gpu_required;
         options.block_size = block_size;
+        options.compression_level = compression_level;
         options.verify_after_write = verify_after_write;
         auto stats = compress_suzip(sources, output, options, [this](const ProgressSnapshot& snapshot) {
             std::lock_guard lock(mutex_);

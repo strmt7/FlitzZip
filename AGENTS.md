@@ -37,9 +37,13 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/compression-backend-evaluation.md`. rocPRIM can be used as a HIP
   building block; rocSPARSE, OpenCL, SYCL, and OpenMP offload are not approved
   replacement archive-codec paths for this repository.
-- Before changing block-size options, benchmark policy, or CPU/GPU performance
-  claims, read `docs/performance-block-size-validation.md` and keep the
-  RAM-only benchmark gates intact.
+- Before changing block-size options, compression levels, benchmark policy, or
+  CPU/GPU performance claims, read
+  `docs/performance-block-size-validation.md` and
+  `docs/compression-level-and-benchmark-suite.md`, then keep the RAM-only
+  benchmark gates intact.
+- Before performing repo-wide refactoring or automatic cleanup, read
+  `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
 ## Project Map
@@ -86,7 +90,8 @@ Benchmark only after correctness tests pass:
 ```powershell
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 `tools\bench.ps1` is memory-only by default and must report
@@ -117,6 +122,9 @@ tools\package.ps1 -Configuration Release
 - Keep dependencies minimal and pinned. New runtime dependencies require maintainer approval and a security rationale.
 - Keep public errors actionable without revealing private paths beyond the user-selected path that failed.
 - Keep comments concise and useful. Avoid restating syntax.
+- Treat refactoring as behavior-preserving work. Use small, reviewable steps,
+  measure before/after when performance is involved, and never combine broad
+  cleanup with functional changes unless the coupling is documented.
 
 ## Required Function Documentation
 
@@ -145,6 +153,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   256 KiB, 1 MiB, 4 MiB, and 16 MiB. The benchmark harness must compare
   forced-CPU and required-AMD-HIP lanes in RAM and must not write multi-GB
   generated workloads to SSDs.
+- Product benchmark claims must compare CPU and GPU at the same compression
+  level and report compression ratio. Level 5 is the balanced release baseline;
+  the exposed non-store tuning levels are 1, 3, 5, 7, and 9.
 - Product MSI releases must be per-machine installers that preselect
   `C:\Program Files\SuperZip` and use normal Windows elevation when required.
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin

@@ -32,6 +32,9 @@ Rules:
   run multi-GB filesystem benchmarks during development; use
   `tools/storage_smoke.ps1` or the 64 MiB-capped filesystem smoke only for the
   archive write/read path.
+- CPU/GPU performance benchmarks must compare the same compression level and
+  report compression ratio. Use level 5 as the balanced release baseline unless
+  the task is explicitly a level sweep.
 - Block-size changes must validate every product option:
   `-BlockSizeKiB 256,1024,4096,16384`.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.

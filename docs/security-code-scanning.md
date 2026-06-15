@@ -37,7 +37,7 @@ are used, and default to read-only repository permissions.
 | zizmor | GitHub Actions security analysis through a hash-locked `requirements-*.txt` wheel install | SARIF upload |
 | Trivy | Filesystem dependency, config, secret, and license scan | SARIF upload |
 | Semgrep | Cross-language SAST through a hash-locked `requirements-*.txt` wheel install with full repository scan scope | SARIF upload |
-| DevSkim | Microsoft security anti-pattern scanning | SARIF upload |
+| DevSkim | Microsoft security anti-pattern scanning through the pinned `Microsoft.CST.DevSkim.CLI` .NET tool | SARIF upload |
 | OSV Scanner | Known dependency vulnerability scan | GitHub code scanning |
 | Grype | Independent filesystem dependency vulnerability scan | SARIF upload |
 | Gitleaks | Full git history and working-tree secret scan | JSON artifact |
@@ -156,6 +156,10 @@ variables.
   and manual-only.
 - Scanner scope must not be narrowed only to silence findings. Any exclusion
   needs a documented false-positive or generated-file rationale.
+- DevSkim runs through the .NET CLI package instead of the container action so
+  security CI does not depend on building the action image from Microsoft
+  Container Registry during every run. This is a scanner execution hardening,
+  not a scan-scope reduction.
 - `.semgrepignore` is intentionally present with comments only. It overrides
   Semgrep's default ignore list so tests and vendored code are scanned.
 - Security findings should be fixed at the root cause. Suppressions are allowed

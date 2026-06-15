@@ -4,7 +4,7 @@ param(
     [int]$Iterations = 3,
     [ValidateSet("Memory", "Filesystem")] [string]$Mode = "Memory",
     [ValidateSet("Mixed", "Compressible", "Incompressible")] [string]$Profile = "Mixed",
-    [ValidateRange(1, 9)] [int]$CompressionLevel = 1,
+    [ValidateRange(1, 9)] [int]$CompressionLevel = 5,
     [ValidateSet(256, 1024, 4096, 16384)] [int[]]$BlockSizeKiB = @(256, 1024, 4096, 16384),
     [ValidateRange(50, 5000)] [int]$SampleIntervalMs = 100,
     [string]$WorkRoot = $env:TEMP,
@@ -663,6 +663,7 @@ function Invoke-BenchmarkLane {
             CompressMiBs = [double]$compress["throughput_mib_s"]
             VerifyMiBs = [double]$verify["throughput_mib_s"]
             ExtractMiBs = [double]$extract["throughput_mib_s"]
+            CompressionRatio = [double]$compress["compression_ratio"]
             CpuAvgPct = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["cpu_avg_pct"] })
             CpuPeakPct = Get-OptionalMaximum -Values ($operationStats | ForEach-Object { $_["cpu_peak_pct"] })
             GpuAvgPct = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["gpu_avg_pct"] })
@@ -739,6 +740,7 @@ function Invoke-MemoryBenchmarkLane {
         CompressMiBs = [double]$stats["compress_mib_s"]
         VerifyMiBs = [double]$stats["verify_mib_s"]
         ExtractMiBs = [double]$stats["extract_mib_s"]
+        CompressionRatio = [double]$stats["compression_ratio"]
         CpuAvgPct = $stats["cpu_avg_pct"]
         CpuPeakPct = $stats["cpu_peak_pct"]
         GpuAvgPct = $stats["gpu_avg_pct"]
@@ -808,6 +810,7 @@ if ($Mode -eq "Memory") {
             CompressMiBs = ($group | Measure-Object CompressMiBs -Average).Average
             VerifyMiBs = ($group | Measure-Object VerifyMiBs -Average).Average
             ExtractMiBs = ($group | Measure-Object ExtractMiBs -Average).Average
+            CompressionRatio = ($group | Measure-Object CompressionRatio -Average).Average
             TotalSeconds = $totalSeconds
             CpuAvgPct = Get-OptionalAverage -Values ($group | ForEach-Object { $_.CpuAvgPct })
             CpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.CpuPeakPct })
@@ -843,7 +846,7 @@ if ($Mode -eq "Memory") {
     Write-Host "Performance:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, Iterations, TotalSeconds, Workers, InflightChunks, CodecWorkers, MemoryOnly, DiskWriteBytes, CompressMiBs, VerifyMiBs, ExtractMiBs |
+        Select-Object Lane, BlockSizeKiB, Iterations, TotalSeconds, Workers, InflightChunks, CodecWorkers, MemoryOnly, DiskWriteBytes, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs |
         Format-Table -AutoSize |
         Out-String -Width 320 |
         Write-Host
@@ -925,6 +928,7 @@ try {
             CompressMiBs = ($group | Measure-Object CompressMiBs -Average).Average
             VerifyMiBs = ($group | Measure-Object VerifyMiBs -Average).Average
             ExtractMiBs = ($group | Measure-Object ExtractMiBs -Average).Average
+            CompressionRatio = ($group | Measure-Object CompressionRatio -Average).Average
             TotalSeconds = $totalSeconds
             CpuAvgPct = Get-OptionalAverage -Values ($group | ForEach-Object { $_.CpuAvgPct })
             CpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.CpuPeakPct })
@@ -961,7 +965,7 @@ try {
     Write-Host "Performance:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, Iterations, Workers, InflightChunks, CompressMiBs, VerifyMiBs, ExtractMiBs, TotalSeconds |
+        Select-Object Lane, BlockSizeKiB, Iterations, Workers, InflightChunks, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs, TotalSeconds |
         Format-Table -AutoSize |
         Out-String -Width 220 |
         Write-Host

@@ -3,6 +3,10 @@
 This run validates the production SUZIP block-size options without writing the
 10 GiB generated workload to storage.
 
+This is a historical fastest-level run. Current release benchmarking uses
+compression level 5 as the balanced baseline and reports compression ratio; see
+`docs/compression-level-and-benchmark-suite.md`.
+
 ## Command
 
 ```powershell

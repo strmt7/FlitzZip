@@ -26,7 +26,7 @@ void validate_encode_options(const ArchiveCodecOptions& options) {
     if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
         throw ArchiveError("codec block size is outside SuperZip resource limits");
     }
-    if (options.compression_level < 1 || options.compression_level > 9) {
+    if (options.compression_level < kMinCompressionLevel || options.compression_level > kMaxCompressionLevel) {
         throw ArchiveError("codec compression level must be between 1 and 9");
     }
 }

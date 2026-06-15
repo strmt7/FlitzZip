@@ -7,8 +7,10 @@
 #include "zip/zip_adapter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -37,6 +39,13 @@ namespace {
 
 constexpr std::uint64_t kCliMiB = 1024ULL * 1024ULL;
 constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL;
+constexpr std::array<int, 5> kBenchmarkCompressionLevels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
+constexpr std::array<std::uint32_t, 4> kBenchmarkBlockSizes{
+    256U * 1024U,
+    1024U * 1024U,
+    4096U * 1024U,
+    16384U * 1024U,
+};
 
 struct MemoryBenchmarkOptions {
     std::uint64_t size_mib = 10240;
@@ -45,7 +54,7 @@ struct MemoryBenchmarkOptions {
     bool force_cpu = false;
     std::uint32_t workers = 0;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
-    int compression_level = 1;
+    int compression_level = superzip::kDefaultCompressionLevel;
 };
 
 struct MemoryArchiveChunk {
@@ -78,9 +87,31 @@ struct MemoryBenchmarkResult {
     superzip::OperationStats stats;
     std::uint32_t codec_workers = 1;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
+    int compression_level = superzip::kDefaultCompressionLevel;
     double compress_seconds = 0.0;
     double verify_seconds = 0.0;
     double extract_seconds = 0.0;
+};
+
+struct BenchmarkSuiteOptions {
+    std::uint64_t size_mib = 10240;
+    std::string profile = "Mixed";
+    std::uint32_t workers = 0;
+    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
+    int compression_level = superzip::kDefaultCompressionLevel;
+    bool tune = false;
+    bool tune_levels = false;
+};
+
+struct BenchmarkSuiteCase {
+    int compression_level = superzip::kDefaultCompressionLevel;
+    std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
+    MemoryBenchmarkResult cpu;
+    MemoryBenchmarkResult gpu;
+    double cpu_score = 0.0;
+    double gpu_score = 0.0;
+    double speedup = 0.0;
+    double compression_ratio = 1.0;
 };
 
 // Purpose: Print command-line help for supported SuperZip operations.
@@ -94,6 +125,7 @@ void usage() {
         << "  superzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
         << "  superzip_cli dependency-check\n"
         << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>]\n"
+        << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile Mixed|Compressible|Incompressible] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
         << "  superzip_cli compress --format suzip --output <archive.suzip> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format zip --output <archive.zip> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
@@ -106,6 +138,30 @@ void usage() {
 // Outputs: Returns MiB per second, or zero when elapsed time is zero.
 double mib_per_second(std::uint64_t bytes, double seconds) {
     return seconds > 0.0 ? (static_cast<double>(bytes) / (1024.0 * 1024.0)) / seconds : 0.0;
+}
+
+// Purpose: Compute an archive size ratio for benchmark records.
+// Inputs: `input_bytes` and `output_bytes` are uncompressed and compressed byte counters.
+// Outputs: Returns output/input, or zero when no input bytes exist.
+double compression_ratio(std::uint64_t input_bytes, std::uint64_t output_bytes) {
+    return input_bytes == 0 ? 0.0 : static_cast<double>(output_bytes) / static_cast<double>(input_bytes);
+}
+
+// Purpose: Compute a single throughput metric from benchmark phase throughput.
+// Inputs: `result` contains measured compress, verify, and extract timings.
+// Outputs: Returns a weighted MiB/s value favoring compression while retaining full roundtrip cost.
+double benchmark_composite_mib_s(const MemoryBenchmarkResult& result) {
+    const auto input_bytes = result.stats.input_bytes;
+    return (mib_per_second(input_bytes, result.compress_seconds) * 0.50)
+        + (mib_per_second(input_bytes, result.verify_seconds) * 0.25)
+        + (mib_per_second(input_bytes, result.extract_seconds) * 0.25);
+}
+
+// Purpose: Convert the composite benchmark throughput into a stable user-facing score.
+// Inputs: `result` is one completed CPU or GPU memory benchmark lane.
+// Outputs: Returns a rounded score; higher is better for the same profile, level, and workload size.
+double benchmark_score(const MemoryBenchmarkResult& result) {
+    return std::round(benchmark_composite_mib_s(result) * 10.0);
 }
 
 // Purpose: Print archive operation statistics in a stable key/value format.
@@ -128,6 +184,7 @@ void print_stats(const superzip::OperationStats& stats) {
               << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
               << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
+              << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes)
               << "\n";
 }
 
@@ -143,6 +200,7 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " inflight_chunks=" << stats.inflight_chunks
               << " codec_workers=" << result.codec_workers
               << " block_size_bytes=" << result.block_size
+              << " compression_level=" << result.compression_level
               << " gpu_used=" << (stats.gpu_used ? "true" : "false")
               << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
               << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
@@ -160,6 +218,7 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
               << " verify_mib_s=" << mib_per_second(stats.input_bytes, result.verify_seconds)
               << " extract_mib_s=" << mib_per_second(stats.input_bytes, result.extract_seconds)
+              << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes)
               << " memory_only=true"
               << " disk_write_bytes=0"
               << "\n";
@@ -496,7 +555,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     if (options.size_mib < 10240U) {
         throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
     }
-    if (options.compression_level < 1 || options.compression_level > 9) {
+    if (options.compression_level < superzip::kMinCompressionLevel || options.compression_level > superzip::kMaxCompressionLevel) {
         throw superzip::ArchiveError("compression level must be between 1 and 9");
     }
     if (options.block_size < superzip::kMinArchiveBlockBytes || options.block_size > superzip::kMaxArchiveBlockBytes) {
@@ -532,6 +591,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.stats.inflight_chunks = inflight;
     result.codec_workers = codec_workers;
     result.block_size = options.block_size;
+    result.compression_level = options.compression_level;
 
     const auto total_started = std::chrono::steady_clock::now();
     auto phase_started = std::chrono::steady_clock::now();
@@ -549,6 +609,134 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
     result.stats.gpu_runtime = superzip::snapshot_gpu_telemetry(*telemetry);
     return result;
+}
+
+// Purpose: Execute one benchmark-suite candidate with separate forced-CPU and required-GPU lanes.
+// Inputs: `options` supplies shared workload settings, `level` is the compression level, and `block_size` is the SUZIP block size.
+// Outputs: Returns CPU/GPU timings, scores, speedup, and compression ratio; throws if required HIP is unavailable.
+BenchmarkSuiteCase run_benchmark_suite_case(
+    const BenchmarkSuiteOptions& options,
+    int level,
+    std::uint32_t block_size) {
+    MemoryBenchmarkOptions cpu_options;
+    cpu_options.size_mib = options.size_mib;
+    cpu_options.profile = options.profile;
+    cpu_options.force_cpu = true;
+    cpu_options.workers = options.workers;
+    cpu_options.block_size = block_size;
+    cpu_options.compression_level = level;
+
+    MemoryBenchmarkOptions gpu_options = cpu_options;
+    gpu_options.force_cpu = false;
+    gpu_options.require_gpu = true;
+
+    auto cpu = run_memory_benchmark(cpu_options);
+    auto gpu = run_memory_benchmark(gpu_options);
+    const auto cpu_total = cpu.compress_seconds + cpu.verify_seconds + cpu.extract_seconds;
+    const auto gpu_total = gpu.compress_seconds + gpu.verify_seconds + gpu.extract_seconds;
+    const auto cpu_score = benchmark_score(cpu);
+    const auto gpu_score = benchmark_score(gpu);
+    const auto ratio = compression_ratio(gpu.stats.input_bytes, gpu.stats.output_bytes);
+    return BenchmarkSuiteCase{
+        .compression_level = level,
+        .block_size = block_size,
+        .cpu = std::move(cpu),
+        .gpu = std::move(gpu),
+        .cpu_score = cpu_score,
+        .gpu_score = gpu_score,
+        .speedup = gpu_total > 0.0 ? cpu_total / gpu_total : 0.0,
+        .compression_ratio = ratio,
+    };
+}
+
+// Purpose: Print one benchmark-suite candidate in a stable key/value format.
+// Inputs: `candidate` is the completed CPU/GPU benchmark pair.
+// Outputs: Writes a single parseable `suite_case` line to stdout.
+void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
+    std::cout << "suite_case"
+              << " compression_level=" << candidate.compression_level
+              << " block_size_kib=" << (candidate.block_size / 1024U)
+              << " cpu_score=" << candidate.cpu_score
+              << " gpu_score=" << candidate.gpu_score
+              << " speedup_vs_cpu=" << candidate.speedup
+              << " compression_ratio=" << candidate.compression_ratio
+              << " cpu_compress_mib_s=" << mib_per_second(candidate.cpu.stats.input_bytes, candidate.cpu.compress_seconds)
+              << " gpu_compress_mib_s=" << mib_per_second(candidate.gpu.stats.input_bytes, candidate.gpu.compress_seconds)
+              << " gpu_encode_chunks=" << candidate.gpu.stats.gpu_runtime.encode_chunks
+              << " gpu_decode_chunks=" << candidate.gpu.stats.gpu_runtime.decode_chunks
+              << " gpu_kernel_launches=" << candidate.gpu.stats.gpu_runtime.kernel_launches
+              << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms
+              << " memory_only=true"
+              << " disk_write_bytes=0"
+              << "\n";
+}
+
+// Purpose: Select the best autotune candidate without silently degrading compression below the balanced baseline.
+// Inputs: `candidates` is a non-empty set of measured benchmark-suite cases and `tune_levels` controls ratio guarding.
+// Outputs: Returns a reference to the recommended candidate.
+const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(
+    const std::vector<BenchmarkSuiteCase>& candidates,
+    bool tune_levels) {
+    const BenchmarkSuiteCase* baseline = nullptr;
+    for (const auto& candidate : candidates) {
+        if (candidate.compression_level == superzip::kDefaultCompressionLevel
+            && candidate.block_size == superzip::kDefaultArchiveBlockBytes) {
+            baseline = &candidate;
+            break;
+        }
+    }
+    if (baseline == nullptr) {
+        baseline = &candidates.front();
+    }
+    const auto max_ratio = tune_levels ? baseline->compression_ratio * 1.02 : std::numeric_limits<double>::infinity();
+    const BenchmarkSuiteCase* best = nullptr;
+    for (const auto& candidate : candidates) {
+        if (candidate.compression_ratio > max_ratio) {
+            continue;
+        }
+        if (best == nullptr || candidate.gpu_score > best->gpu_score) {
+            best = &candidate;
+        }
+    }
+    return *(best == nullptr ? baseline : best);
+}
+
+// Purpose: Run the built-in RAM-only scoring and autotuning suite.
+// Inputs: `options` selects workload size, profile, worker count, block-size sweep, and compression-level sweep.
+// Outputs: Prints candidate results and one recommendation; throws on invalid settings, CPU/GPU mismatch, or hidden CPU fallback.
+void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
+    std::vector<std::uint32_t> block_sizes;
+    if (options.tune) {
+        block_sizes.assign(kBenchmarkBlockSizes.begin(), kBenchmarkBlockSizes.end());
+    } else {
+        block_sizes.push_back(options.block_size);
+    }
+
+    std::vector<int> levels;
+    if (options.tune_levels) {
+        levels.assign(kBenchmarkCompressionLevels.begin(), kBenchmarkCompressionLevels.end());
+    } else {
+        levels.push_back(options.compression_level);
+    }
+
+    std::vector<BenchmarkSuiteCase> candidates;
+    for (const auto level : levels) {
+        for (const auto block_size : block_sizes) {
+            auto candidate = run_benchmark_suite_case(options, level, block_size);
+            print_benchmark_suite_case(candidate);
+            candidates.push_back(std::move(candidate));
+        }
+    }
+    const auto& recommendation = choose_benchmark_suite_recommendation(candidates, options.tune_levels);
+    std::cout << "suite_recommendation"
+              << " compression_level=" << recommendation.compression_level
+              << " block_size_kib=" << (recommendation.block_size / 1024U)
+              << " gpu_score=" << recommendation.gpu_score
+              << " speedup_vs_cpu=" << recommendation.speedup
+              << " compression_ratio=" << recommendation.compression_ratio
+              << " memory_only=true"
+              << " disk_write_bytes=0"
+              << "\n";
 }
 
 // Purpose: Print SHA-256 integrity data for an archive.
@@ -747,12 +935,48 @@ int main(int argc, char** argv) {
                 } else if (args[i] == "--block-size-kib") {
                     options.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
                 } else if (args[i] == "--compression-level") {
-                    options.compression_level = require_int_arg(args, i, "--compression-level", 1, 9);
+                    options.compression_level = require_int_arg(
+                        args,
+                        i,
+                        "--compression-level",
+                        superzip::kMinCompressionLevel,
+                        superzip::kMaxCompressionLevel);
                 } else {
                     throw superzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
                 }
             }
             print_memory_benchmark_stats(run_memory_benchmark(options));
+            return 0;
+        }
+
+        if (args[0] == "benchmark-suite") {
+            BenchmarkSuiteOptions options;
+            for (std::size_t i = 1; i < args.size(); ++i) {
+                if (args[i] == "--size-mib") {
+                    options.size_mib = require_u32_arg(args, i, "--size-mib");
+                } else if (args[i] == "--profile") {
+                    options.profile = require_arg(args, i, "--profile");
+                } else if (args[i] == "--workers") {
+                    options.workers = require_u32_arg(args, i, "--workers");
+                } else if (args[i] == "--block-size-kib") {
+                    options.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
+                } else if (args[i] == "--compression-level") {
+                    options.compression_level = require_int_arg(
+                        args,
+                        i,
+                        "--compression-level",
+                        superzip::kMinCompressionLevel,
+                        superzip::kMaxCompressionLevel);
+                } else if (args[i] == "--tune") {
+                    options.tune = true;
+                } else if (args[i] == "--tune-levels") {
+                    options.tune = true;
+                    options.tune_levels = true;
+                } else {
+                    throw superzip::ArchiveError("unknown benchmark-suite argument: " + args[i]);
+                }
+            }
+            run_benchmark_suite(options);
             return 0;
         }
 
@@ -766,7 +990,7 @@ int main(int argc, char** argv) {
             std::uint32_t inflight = 0;
             std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
             bool suzip_tuning_requested = false;
-            int compression_level = 1;
+            int compression_level = superzip::kDefaultCompressionLevel;
             bool verify_after_write = false;
             bool sha256 = false;
             bool defender_scan = false;
@@ -791,7 +1015,12 @@ int main(int argc, char** argv) {
                     block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
                     suzip_tuning_requested = true;
                 } else if (args[i] == "--compression-level") {
-                    compression_level = require_int_arg(args, i, "--compression-level", 1, 9);
+                    compression_level = require_int_arg(
+                        args,
+                        i,
+                        "--compression-level",
+                        superzip::kMinCompressionLevel,
+                        superzip::kMaxCompressionLevel);
                     suzip_tuning_requested = true;
                 } else if (args[i] == "--verify-after-write") {
                     verify_after_write = true;

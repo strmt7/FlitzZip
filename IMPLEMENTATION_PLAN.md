@@ -86,6 +86,17 @@ archive options, progress snapshots, and errors.
 - Kept the patched production copy under `third_party/miniz/`.
 - Removed static-analysis findings without changing ZIP compatibility behavior.
 
+### Iteration 6: Benchmarking And Tuning
+
+- Exposed native `.suzip` compression levels 1, 3, 5, 7, and 9 in the GUI and
+  CLI, with level 5 as the balanced default.
+- Added RAM-only compression-ratio reporting so CPU and GPU throughput is
+  compared at equivalent compression strength.
+- Added the built-in `benchmark-suite` command for numerical system scoring and
+  production block-size autotuning without multi-GB SSD writes.
+- Added refactoring governance and an audit helper so future cleanup is planned,
+  measured, and behavior-preserving.
+
 ## Validation Gates
 
 For HIP-capable Windows hosts:
@@ -96,7 +107,8 @@ tools\test.ps1 -Configuration Release
 build\Release\superzip_cli.exe dependency-check
 tools\gpu_proof.ps1 -Configuration Release -SizeMiB 512
 tools\package.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1
+build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 For hosted CI without HIP:

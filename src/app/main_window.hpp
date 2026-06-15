@@ -38,7 +38,7 @@ enum class ToggleId {
 
 enum class DropdownId {
     None,
-    CompressProfile,
+    CompressLevel,
     CompressMethod,
     CompressBlockSize,
     ExtractOverwrite,
@@ -75,7 +75,7 @@ struct UiState {
     PerformanceMonitorSample performance;
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
-    int compression_profile_index = 0;
+    int compression_level_index = 2;
     int compression_block_size_index = 1;
     int memory_policy_index = 0;
     int log_level_index = 0;
@@ -130,7 +130,7 @@ private:
         RECT archive_name{};
         RECT destination{};
         RECT format{};
-        RECT profile{};
+        RECT compression_level{};
         RECT method{};
         RECT block_size{};
         RECT advanced{};
@@ -245,7 +245,7 @@ private:
 
     // Purpose: Draw the compression settings page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains opt-in settings.
-    // Outputs: Renders archive destination, format/profile, advanced options, integrity toggles, and start control.
+    // Outputs: Renders archive destination, format, compression level, advanced options, integrity toggles, and start control.
     void draw_compress_page(HDC dc, const RECT& rect, const UiState& state);
 
     // Purpose: Draw the extraction settings page.
@@ -395,14 +395,14 @@ private:
     // Outputs: Updates the destination directory and queues a repaint when selected.
     void choose_destination();
 
-    // Purpose: Advance the visible compression profile selection.
-    // Inputs: None; reads and mutates UI profile state.
-    // Outputs: Queues a repaint with the next profile.
-    void cycle_compression_profile();
+    // Purpose: Advance the visible compression level selection.
+    // Inputs: None; reads and mutates UI compression-level state.
+    // Outputs: Queues a repaint with the next compression level.
+    void cycle_compression_level();
 
     // Purpose: Restore safe default visible preferences.
     // Inputs: None.
-    // Outputs: Resets opt-in settings, destination, profile, and selection state.
+    // Outputs: Resets opt-in settings, destination, compression level, and selection state.
     void restore_defaults();
 
     // Purpose: Start a background SuperZip compression job from queued paths.

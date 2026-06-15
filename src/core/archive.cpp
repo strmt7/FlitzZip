@@ -270,7 +270,7 @@ void validate_archive_options(
 // Inputs: `compression_level` is the caller-selected miniz level.
 // Outputs: Returns normally for levels accepted by miniz; throws `ArchiveError` otherwise.
 void validate_compression_level(int compression_level) {
-    if (compression_level < 1 || compression_level > 9) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
         throw ArchiveError("compression level must be between 1 and 9");
     }
 }

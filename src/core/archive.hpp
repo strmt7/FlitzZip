@@ -16,7 +16,7 @@ struct CompressOptions {
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
     std::uint32_t worker_count = 0;
     std::uint32_t max_inflight_chunks = 0;
-    int compression_level = 1;
+    int compression_level = kDefaultCompressionLevel;
     bool verify_after_write = false;
 };
 

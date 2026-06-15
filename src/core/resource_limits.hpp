@@ -29,4 +29,9 @@ constexpr std::uint64_t kDeviceMemoryReserveFloorBytes = 64ULL * 1024ULL * 1024U
 // GPU pattern blocks store only short repeating motifs found by the HIP classifier.
 constexpr std::uint32_t kMaxGpuPatternBytes = 256U;
 
+// SUZIP deflate levels mirror zlib/miniz levels while avoiding store-only mode.
+constexpr int kMinCompressionLevel = 1;
+constexpr int kDefaultCompressionLevel = 5;
+constexpr int kMaxCompressionLevel = 9;
+
 }  // namespace superzip

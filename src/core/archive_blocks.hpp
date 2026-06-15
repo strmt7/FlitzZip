@@ -20,7 +20,7 @@ struct EncodedChunk {
 struct ArchiveCodecOptions {
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
     std::uint32_t worker_count = 1;
-    int compression_level = 1;
+    int compression_level = kDefaultCompressionLevel;
 };
 
 // Purpose: Identify block kinds that carry bytes in the encoded payload stream.

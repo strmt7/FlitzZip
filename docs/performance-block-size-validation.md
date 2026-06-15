@@ -10,6 +10,7 @@ CLI arguments, and archive-core resource limits.
 - Compare forced-CPU and required-AMD-HIP lanes on the same generated data.
 - Keep development benchmarks RAM-only for both lanes.
 - Exercise every production SUZIP block-size option.
+- Compare CPU and GPU at the same compression level and record compression ratio.
 - Preserve a tiny filesystem smoke only to prove archive write/read wiring.
 - Prevent benchmark-only behavior from diverging from production code paths.
 
@@ -63,7 +64,7 @@ layout regressions are visible in screenshots.
 Use the default RAM-only mode for performance work:
 
 ```powershell
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 1 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
 ```
 
 Run `Mixed`, `Compressible`, and `Incompressible` profiles before making release
@@ -76,6 +77,11 @@ diagnostic that explicitly isolates one lane:
 The required-GPU lane must fail if HIP is unavailable. A hidden CPU fallback is
 not an acceptable benchmark result.
 
+The standard release baseline is compression level 5. Use explicit level sweeps
+only when validating compression-strength tradeoffs; do not compare a faster
+CPU run at one compression ratio with a GPU run at a different compression
+ratio.
+
 ## Required Telemetry
 
 Record these fields for every block size:
@@ -83,6 +89,7 @@ Record these fields for every block size:
 | Field | Reason |
 | --- | --- |
 | `CompressMiBs`, `VerifyMiBs`, `ExtractMiBs` | End-to-end archive throughput. |
+| `CompressionRatio` | Confirms CPU/GPU speed comparisons use equivalent compression strength. |
 | `Workers`, `InflightChunks`, `CodecWorkers` | Confirms production worker allocation. |
 | `GpuEncodeChunks`, `GpuDecodeChunks` | Proves the GPU lane processed archive work. |
 | `GpuKernelLaunches`, `GpuKernelMs` | Proves HIP kernels were submitted and timed. |
@@ -121,4 +128,5 @@ A block-size or performance change is not complete until:
 - `tools\security_scan.ps1` passes.
 - `tools\bench.ps1` runs in memory mode for all four block sizes on a HIP host,
   or the result is explicitly recorded as not run with the reason.
+- Benchmark records include compression ratio for both CPU and GPU lanes.
 - No benchmark or test writes a multi-GB generated workload to SSD.

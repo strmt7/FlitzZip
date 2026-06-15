@@ -351,6 +351,45 @@ function Request-SuperZipRedraw {
     [void][SuperZipNativeUi]::UpdateWindow($Handle)
 }
 
+# Purpose: Count sampled unique colors in a captured bitmap.
+# Inputs: `Bitmap` is the screenshot and `Width`/`Height` bound the sampled area.
+# Outputs: Returns the sampled unique ARGB count.
+function Get-SampledUniqueColorCount {
+    param(
+        [System.Drawing.Bitmap]$Bitmap,
+        [int]$Width,
+        [int]$Height
+    )
+
+    $unique = New-Object 'System.Collections.Generic.HashSet[int]'
+    for ($x = 0; $x -lt $Width; $x += [Math]::Max(1, [int]($Width / 40))) {
+        for ($y = 0; $y -lt $Height; $y += [Math]::Max(1, [int]($Height / 30))) {
+            [void]$unique.Add($Bitmap.GetPixel($x, $y).ToArgb())
+        }
+    }
+    return $unique.Count
+}
+
+# Purpose: Capture the visible window rectangle from the desktop as a fallback for blank `PrintWindow` frames.
+# Inputs: `Rect` is the current window rectangle and `Width`/`Height` are physical pixel dimensions.
+# Outputs: Returns a bitmap copied from the visible screen.
+function New-ScreenWindowCapture {
+    param(
+        [SuperZipNativeUi+RECT]$Rect,
+        [int]$Width,
+        [int]$Height
+    )
+
+    $bitmap = New-Object System.Drawing.Bitmap $Width, $Height
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($Rect.Left, $Rect.Top, 0, 0, [System.Drawing.Size]::new($Width, $Height))
+    } finally {
+        $graphics.Dispose()
+    }
+    return $bitmap
+}
+
 # Purpose: Capture and validate the current SuperZip window pixels.
 # Inputs: `Handle` is the SuperZip HWND and `Path` is the PNG output path.
 # Outputs: Writes a screenshot and returns width, height, and sampled-color metadata.
@@ -393,16 +432,16 @@ function Save-SuperZipScreenshot {
         }
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
 
-        $unique = New-Object 'System.Collections.Generic.HashSet[int]'
-        for ($x = 0; $x -lt $width; $x += [Math]::Max(1, [int]($width / 40))) {
-            for ($y = 0; $y -lt $height; $y += [Math]::Max(1, [int]($height / 30))) {
-                [void]$unique.Add($bitmap.GetPixel($x, $y).ToArgb())
-            }
-        }
-        $lastUniqueColors = $unique.Count
-        if ($unique.Count -lt 8) {
+        $lastUniqueColors = Get-SampledUniqueColorCount -Bitmap $bitmap -Width $width -Height $height
+        if ($lastUniqueColors -lt 8) {
             $bitmap.Dispose()
-            continue
+            $bitmap = New-ScreenWindowCapture -Rect $rect -Width $width -Height $height
+            $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+            $lastUniqueColors = Get-SampledUniqueColorCount -Bitmap $bitmap -Width $width -Height $height
+            if ($lastUniqueColors -lt 8) {
+                $bitmap.Dispose()
+                continue
+            }
         }
 
         try {
@@ -416,7 +455,7 @@ function Save-SuperZipScreenshot {
                 Path = $Path
                 Width = $width
                 Height = $height
-                UniqueColors = $unique.Count
+                UniqueColors = $lastUniqueColors
             }
         } finally {
             $bitmap.Dispose()
@@ -525,7 +564,7 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
 
-    # Queue: exercise drag/drop and row selection only. Destination, profile, and Start belong to Compress/Extract.
+    # Queue: exercise drag/drop and row selection only. Destination, level, and Start belong to Compress/Extract.
     Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
     Start-Sleep -Milliseconds 350
     $dropQueuePath = "${basePath}-Queue-AfterDragDrop$extension"
@@ -540,7 +579,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
     Start-Sleep -Milliseconds 120
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Profile" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 296 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 350 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 426 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 452 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 406

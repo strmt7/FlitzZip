@@ -217,13 +217,22 @@ jobs:
           find . -type f \
             \( -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' -o -name '*.ps1' -o -name '*.py' -o -name '*.yml' -o -name '*.yaml' -o -name '*.md' -o -name 'CMakeLists.txt' \) | sort
           echo "::endgroup::"
-      - name: Run DevSkim
-        uses: microsoft/DevSkim-Action@4b5047945a44163b94642a1cecc0d93a3f428cc6 # v1.0.16
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
         with:
-          directory-to-scan: .
-          ignore-globs: "**/.git/**"
+          dotnet-version: "8.0.x"
+      - name: Install DevSkim CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet tool install --tool-path "$RUNNER_TEMP/devskim" Microsoft.CST.DevSkim.CLI --version 1.0.70
+      - name: Run DevSkim
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/devskim/devskim" analyze -I . -O devskim-results.sarif -f sarif -g "**/.git/**"
       - name: Upload DevSkim SARIF
-        if: always()
+        if: always() && hashFiles('devskim-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: devskim-results.sarif

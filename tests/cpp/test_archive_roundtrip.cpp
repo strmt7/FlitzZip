@@ -187,6 +187,37 @@ TEST_CASE(suzip_supported_block_sizes_roundtrip_and_bound_metadata) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Verify the production default compression level is balanced, not fastest-only.
+// Inputs: A repetitive temporary payload compressed with explicit level 1 and default options.
+// Outputs: Default compression must not produce a larger archive than explicit fastest mode.
+TEST_CASE(suzip_default_compression_level_is_balanced) {
+    const auto root = test_temp_dir("suzip-default-level");
+    const auto input = root / "repetitive.txt";
+    {
+        std::ofstream out(input, std::ios::binary);
+        for (int i = 0; i < 120000; ++i) {
+            out << "SuperZip compression level regression payload " << (i % 17) << "\n";
+        }
+    }
+
+    superzip::CompressOptions fastest;
+    fastest.force_cpu = true;
+    fastest.gpu_required = false;
+    fastest.compression_level = superzip::kMinCompressionLevel;
+    const auto fastest_archive = root / "fastest.suzip";
+    const auto fastest_stats = superzip::compress_suzip({input}, fastest_archive, fastest);
+
+    superzip::CompressOptions balanced;
+    balanced.force_cpu = true;
+    balanced.gpu_required = false;
+    const auto balanced_archive = root / "balanced.suzip";
+    const auto balanced_stats = superzip::compress_suzip({input}, balanced_archive, balanced);
+
+    REQUIRE_TRUE(balanced.compression_level == superzip::kDefaultCompressionLevel);
+    REQUIRE_TRUE(balanced_stats.output_bytes <= fastest_stats.output_bytes);
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify `.suzip` roundtrip behavior for compressible and mixed byte patterns.
 // Inputs: Temporary files with repetitive and randomish content.
 // Outputs: Throws on failed compression/extraction or mismatched restored bytes.
