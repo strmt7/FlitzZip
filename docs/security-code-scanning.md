@@ -36,7 +36,7 @@ are used, and default to read-only repository permissions.
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
 | zizmor | GitHub Actions security analysis through a hash-locked `requirements-*.txt` wheel install | SARIF upload |
 | Trivy | Filesystem dependency, config, secret, and license scan | SARIF upload |
-| Semgrep | Cross-language SAST through a digest-pinned scanner container | SARIF upload |
+| Semgrep | Cross-language SAST through a pinned CLI install with full repository scan scope | SARIF upload |
 | DevSkim | Microsoft security anti-pattern scanning | SARIF upload |
 | OSV Scanner | Known dependency vulnerability scan | GitHub code scanning |
 | Grype | Independent filesystem dependency vulnerability scan | SARIF upload |
