@@ -1,0 +1,11 @@
+<CPackWiXPatch>
+  <CPackWiXFragment Id="#PRODUCTFEATURE">
+    <Feature Id="DesktopShortcutFeature"
+             Title="Create Desktop shortcut"
+             Description="Create a SuperZip shortcut on the desktop."
+             Level="1"
+             AllowAbsent="yes">
+      <ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"/>
+    </Feature>
+  </CPackWiXFragment>
+</CPackWiXPatch>

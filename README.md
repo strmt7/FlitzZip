@@ -80,6 +80,8 @@ tools/package.ps1 -Configuration Release -CreateMsi
 The MSI build defaults to the release deployment scope: per-machine install
 under `C:\Program Files\SuperZip`. Like normal Windows desktop software, that
 installer requires elevation when installed by a non-admin user.
+The installer offers `Create Desktop shortcut` as an optional MSI feature rather
+than silently creating a desktop shortcut.
 
 For local coding and non-admin installer tests only, build an explicit per-user
 MSI:

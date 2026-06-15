@@ -32,3 +32,17 @@ Rules:
   non-admin MSI tests must explicitly configure
   `tools\build.ps1 -Configuration Release -MsiInstallScope perUser`; never
   publish that per-user MSI as a product release.
+- Product installers must expose a user-visible `Create Desktop shortcut`
+  option. Treat silent shortcut creation as an installer bug.
+- The GUI is intentionally fixed-size for release until responsive resizing is
+  deliberately rebuilt and tested. Keep PerMonitorV2 DPI behavior, crisp vector
+  or multi-resolution icons, and no stretched bitmap assets.
+- For GUI changes, run `tools/gui_smoke.ps1 -Configuration Release`. It must
+  open every tab and click/use every visible button, toggle, dropdown/select
+  field, and main action path at least once, including Add files, Add folder,
+  Clear, drag/drop, destination selection, Queue/Compress/Extract/Security/GPU/
+  History/Settings actions, then inspect every generated page screenshot.
+- Visual changes must preserve the compact enterprise design reference in
+  `resources/design/superzip-ui-iteration-4.png`. Do not simplify or remove the
+  command bar, left navigation, bottom GPU status strip, or dedicated settings
+  pages.

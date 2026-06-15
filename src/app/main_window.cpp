@@ -1,5 +1,6 @@
 #include "app/main_window.hpp"
 
+#include "app/resource.h"
 #include "core/archive.hpp"
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <commdlg.h>
+#include <cmath>
 #include <dwmapi.h>
 #include <iomanip>
 #include <shellapi.h>
@@ -38,6 +40,11 @@ namespace {
 constexpr int kTopBar = 52;
 constexpr int kRailWidth = 86;
 constexpr int kStatusBar = 34;
+constexpr int kDesignClientWidth = 1200;
+constexpr int kDesignClientHeight = 760;
+constexpr UINT_PTR kAnimationTimer = 7;
+constexpr int kPageTransitionMs = 120;
+constexpr int kToggleTransitionMs = 105;
 
 constexpr COLORREF kBg = RGB(12, 17, 20);
 constexpr COLORREF kShell = RGB(15, 22, 26);
@@ -55,6 +62,155 @@ constexpr COLORREF kOk = RGB(83, 210, 101);
 constexpr COLORREF kWarn = RGB(237, 179, 61);
 constexpr COLORREF kInfo = RGB(63, 181, 221);
 constexpr COLORREF kDanger = RGB(236, 73, 73);
+
+// Purpose: Return the fixed release window style.
+// Inputs: None.
+// Outputs: Returns a non-resizable Win32 overlapped-window style.
+DWORD window_style() {
+    return WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+}
+
+// Purpose: Return the default working directory without throwing into paint code.
+// Inputs: None.
+// Outputs: Returns the process current directory, or `.` if Windows reports an error.
+std::filesystem::path safe_current_path() {
+    std::error_code ec;
+    auto path = std::filesystem::current_path(ec);
+    if (ec) {
+        return L".";
+    }
+    return path;
+}
+
+// Purpose: Resolve the selected destination directory or the process directory.
+// Inputs: `state` is the copied UI state.
+// Outputs: Returns a usable destination folder path for display and jobs.
+std::filesystem::path destination_directory_or_default(const UiState& state) {
+    if (!state.destination_directory.empty()) {
+        return state.destination_directory;
+    }
+    return safe_current_path();
+}
+
+// Purpose: Resolve the visible compression output path.
+// Inputs: `state` is the copied UI state.
+// Outputs: Returns the destination archive path using the native `.suzip` extension.
+std::filesystem::path compression_output_path_for(const UiState& state) {
+    return destination_directory_or_default(state) / L"SuperZip-output.suzip";
+}
+
+// Purpose: Resolve the visible extraction output path.
+// Inputs: `state` is the copied UI state.
+// Outputs: Returns the selected destination, or a default extraction folder when none is selected.
+std::filesystem::path extraction_output_path_for(const UiState& state) {
+    if (!state.destination_directory.empty()) {
+        return state.destination_directory;
+    }
+    return safe_current_path() / L"SuperZip-extracted";
+}
+
+// Purpose: Return the user-facing compression profile label.
+// Inputs: `index` is the mutable profile index in UI state.
+// Outputs: Returns a stable label for the profile field.
+std::wstring compression_profile_text(int index) {
+    constexpr std::array<std::wstring_view, 3> labels{
+        L"Balanced (AMD GPU)",
+        L"Maximum speed",
+        L"Maximum compression",
+    };
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
+    return std::wstring(labels[normalized]);
+}
+
+// Purpose: Return a label from a circular option list.
+// Inputs: `index` is the current selection and `labels` contains display choices.
+// Outputs: Returns the normalized display label.
+template <std::size_t Count>
+std::wstring option_text(int index, const std::array<std::wstring_view, Count>& labels) {
+    static_assert(Count > 0);
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(Count) + static_cast<int>(Count)) % static_cast<int>(Count));
+    return std::wstring(labels[normalized]);
+}
+
+// Purpose: Return the visible memory-policy label.
+// Inputs: `index` is the mutable preferences selection.
+// Outputs: Returns a session preference label.
+std::wstring memory_policy_text(int index) {
+    constexpr std::array<std::wstring_view, 3> labels{
+        L"Bounded chunk windows",
+        L"Throughput priority",
+        L"Conservative RAM cap",
+    };
+    return option_text(index, labels);
+}
+
+// Purpose: Return the visible log-level label.
+// Inputs: `index` is the mutable preferences selection.
+// Outputs: Returns a session preference label.
+std::wstring log_level_text(int index) {
+    constexpr std::array<std::wstring_view, 3> labels{
+        L"Information",
+        L"Warnings",
+        L"Verbose diagnostics",
+    };
+    return option_text(index, labels);
+}
+
+// Purpose: Return the visible log-retention label.
+// Inputs: `index` is the mutable preferences selection.
+// Outputs: Returns a session preference label.
+std::wstring log_retention_text(int index) {
+    constexpr std::array<std::wstring_view, 3> labels{
+        L"Session only",
+        L"7 days",
+        L"30 days",
+    };
+    return option_text(index, labels);
+}
+
+// Purpose: Return the visible history operation filter label.
+// Inputs: `index` is the mutable history filter selection.
+// Outputs: Returns a session filter label.
+std::wstring history_operation_filter_text(int index) {
+    constexpr std::array<std::wstring_view, 4> labels{
+        L"All operations",
+        L"Compress",
+        L"Extract",
+        L"Security",
+    };
+    return option_text(index, labels);
+}
+
+// Purpose: Return the visible history status filter label.
+// Inputs: `index` is the mutable history filter selection.
+// Outputs: Returns a session filter label.
+std::wstring history_status_filter_text(int index) {
+    constexpr std::array<std::wstring_view, 3> labels{
+        L"All statuses",
+        L"Success",
+        L"Failed",
+    };
+    return option_text(index, labels);
+}
+
+// Purpose: Blend two Win32 colors linearly.
+// Inputs: `from` and `to` are colors and `t` is clamped interpolation progress.
+// Outputs: Returns the blended color.
+COLORREF blend_color(COLORREF from, COLORREF to, double t) {
+    const double clamped = std::clamp(t, 0.0, 1.0);
+    const auto blend = [clamped](int a, int b) {
+        return static_cast<int>(std::round(static_cast<double>(a) + (static_cast<double>(b - a) * clamped)));
+    };
+    return RGB(blend(GetRValue(from), GetRValue(to)), blend(GetGValue(from), GetGValue(to)), blend(GetBValue(from), GetBValue(to)));
+}
+
+// Purpose: Ease a short UI animation without changing duration.
+// Inputs: `t` is normalized progress.
+// Outputs: Returns a smooth normalized progress value.
+double ease_out(double t) {
+    const double clamped = std::clamp(t, 0.0, 1.0);
+    return 1.0 - ((1.0 - clamped) * (1.0 - clamped));
+}
 
 // Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
 // Inputs: `value` is UTF-8 text.
@@ -123,7 +279,7 @@ std::wstring page_name(Page page) {
     case Page::Extract: return L"Extract";
     case Page::Security: return L"Security";
     case Page::History: return L"History";
-    case Page::Gpu: return L"AMD GPU";
+    case Page::Gpu: return L"GPU";
     case Page::Preferences: return L"Settings";
     case Page::About: return L"About";
     }
@@ -244,30 +400,44 @@ void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color) {
     const int w = rect.right - rect.left;
     switch (page) {
     case Page::Queue:
-        for (int i = 0; i < 3; ++i) {
-            const int y = rect.top + 4 + i * 7;
+        for (int i = 0; i < 5; ++i) {
+            const int y = rect.top + 3 + i * 5;
             MoveToEx(dc, rect.left + 4, y, nullptr);
             LineTo(dc, rect.right - 4, y);
         }
         break;
     case Page::Compress:
-        Rectangle(dc, rect.left + 5, rect.top + 5, rect.right - 5, rect.bottom - 5);
+        Rectangle(dc, rect.left + 5, rect.top + 11, rect.right - 5, rect.bottom - 3);
         MoveToEx(dc, cx, rect.top + 2, nullptr);
-        LineTo(dc, cx, rect.bottom - 2);
-        LineTo(dc, cx - 5, rect.bottom - 8);
-        MoveToEx(dc, cx, rect.bottom - 2, nullptr);
-        LineTo(dc, cx + 5, rect.bottom - 8);
+        LineTo(dc, cx, rect.top + 16);
+        LineTo(dc, cx - 5, rect.top + 11);
+        MoveToEx(dc, cx, rect.top + 16, nullptr);
+        LineTo(dc, cx + 5, rect.top + 11);
+        MoveToEx(dc, rect.left + 9, rect.bottom - 8, nullptr);
+        LineTo(dc, rect.right - 9, rect.bottom - 8);
         break;
     case Page::Extract:
-        Rectangle(dc, rect.left + 5, rect.top + 5, rect.right - 5, rect.bottom - 5);
-        MoveToEx(dc, cx, rect.bottom - 2, nullptr);
+        Rectangle(dc, rect.left + 5, rect.top + 11, rect.right - 5, rect.bottom - 3);
+        MoveToEx(dc, cx, rect.top + 16, nullptr);
         LineTo(dc, cx, rect.top + 2);
-        LineTo(dc, cx - 5, rect.top + 8);
+        LineTo(dc, cx - 5, rect.top + 7);
         MoveToEx(dc, cx, rect.top + 2, nullptr);
-        LineTo(dc, cx + 5, rect.top + 8);
+        LineTo(dc, cx + 5, rect.top + 7);
+        MoveToEx(dc, rect.left + 9, rect.bottom - 8, nullptr);
+        LineTo(dc, rect.right - 9, rect.bottom - 8);
         break;
     case Page::Security:
-        Ellipse(dc, rect.left + 5, rect.top + 4, rect.right - 5, rect.bottom - 4);
+        {
+            POINT shield[6] = {
+                {cx, rect.top + 3},
+                {rect.right - 5, rect.top + 7},
+                {rect.right - 6, cy + 4},
+                {cx, rect.bottom - 3},
+                {rect.left + 6, cy + 4},
+                {rect.left + 5, rect.top + 7},
+            };
+            Polygon(dc, shield, 6);
+        }
         MoveToEx(dc, cx - 4, cy, nullptr);
         LineTo(dc, cx - 1, cy + 4);
         LineTo(dc, cx + 6, cy - 5);
@@ -278,18 +448,49 @@ void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color) {
         LineTo(dc, rect.left + 6, cy - 6);
         break;
     case Page::Gpu:
-        Rectangle(dc, rect.left + 5, rect.top + 5, rect.right - 5, rect.bottom - 5);
-        for (int i = 0; i < 3; ++i) {
-            const int x = rect.left + 2 + i * (w / 3);
-            MoveToEx(dc, x, rect.top + 1, nullptr);
-            LineTo(dc, x, rect.top + 5);
-            MoveToEx(dc, x, rect.bottom - 1, nullptr);
-            LineTo(dc, x, rect.bottom - 5);
+        {
+            RECT card{rect.left + 2, rect.top + 7, rect.right - 2, rect.bottom - 7};
+            Rectangle(dc, card.left, card.top, card.right, card.bottom);
+            MoveToEx(dc, card.left - 2, card.top + 3, nullptr);
+            LineTo(dc, card.left - 2, card.bottom - 3);
+            MoveToEx(dc, card.left - 2, card.top + 3, nullptr);
+            LineTo(dc, card.left + 2, card.top + 3);
+            MoveToEx(dc, card.left - 2, card.bottom - 3, nullptr);
+            LineTo(dc, card.left + 2, card.bottom - 3);
+            Ellipse(dc, cx - 5, cy - 5, cx + 5, cy + 5);
+            Ellipse(dc, cx - 2, cy - 2, cx + 2, cy + 2);
+            MoveToEx(dc, cx, cy - 5, nullptr);
+            LineTo(dc, cx, cy + 5);
+            MoveToEx(dc, cx - 5, cy, nullptr);
+            LineTo(dc, cx + 5, cy);
+            MoveToEx(dc, card.right - 1, card.top + 4, nullptr);
+            LineTo(dc, card.right + 3, card.top + 4);
+            MoveToEx(dc, card.right - 1, card.top + 9, nullptr);
+            LineTo(dc, card.right + 3, card.top + 9);
+            for (int i = 0; i < 5; ++i) {
+                const int x = card.left + 5 + i * 3;
+                MoveToEx(dc, x, card.bottom, nullptr);
+                LineTo(dc, x, card.bottom + 3);
+            }
         }
         break;
     case Page::Preferences:
-        Ellipse(dc, rect.left + 5, rect.top + 5, rect.right - 5, rect.bottom - 5);
-        Ellipse(dc, cx - 3, cy - 3, cx + 3, cy + 3);
+        {
+            const int inner_r = std::max(4, w / 3);
+            const int outer_r = std::max(inner_r + 2, w / 2 - 1);
+            const int hub_r = std::max(2, w / 8);
+            for (int i = 0; i < 8; ++i) {
+                const double angle = (3.14159265358979323846 * 2.0 * static_cast<double>(i)) / 8.0;
+                const int inner_x = cx + static_cast<int>(std::round(std::cos(angle) * static_cast<double>(inner_r)));
+                const int inner_y = cy + static_cast<int>(std::round(std::sin(angle) * static_cast<double>(inner_r)));
+                const int outer_x = cx + static_cast<int>(std::round(std::cos(angle) * static_cast<double>(outer_r)));
+                const int outer_y = cy + static_cast<int>(std::round(std::sin(angle) * static_cast<double>(outer_r)));
+                MoveToEx(dc, inner_x, inner_y, nullptr);
+                LineTo(dc, outer_x, outer_y);
+            }
+            Ellipse(dc, cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r);
+            Ellipse(dc, cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r);
+        }
         break;
     case Page::About:
         Ellipse(dc, rect.left + 5, rect.top + 5, rect.right - 5, rect.bottom - 5);
@@ -329,21 +530,28 @@ MainWindow::~MainWindow() {
 int MainWindow::run(HINSTANCE instance, int show_command) {
     refresh_gpu_status();
     const UINT initial_dpi = GetDpiForSystem();
-    const int initial_width = MulDiv(1200, static_cast<int>(initial_dpi), 96);
-    const int initial_height = MulDiv(760, static_cast<int>(initial_dpi), 96);
-    WNDCLASSW wc{};
+    const DWORD style = window_style();
+    RECT initial_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(initial_dpi), 96), MulDiv(kDesignClientHeight, static_cast<int>(initial_dpi), 96)};
+    AdjustWindowRectExForDpi(&initial_window, style, FALSE, 0, initial_dpi);
+    const int initial_width = initial_window.right - initial_window.left;
+    const int initial_height = initial_window.bottom - initial_window.top;
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = MainWindow::window_proc;
     wc.hInstance = instance;
     wc.lpszClassName = L"SuperZipMainWindow";
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP), IMAGE_ICON, MulDiv(16, static_cast<int>(initial_dpi), 96), MulDiv(16, static_cast<int>(initial_dpi), 96), LR_DEFAULTCOLOR));
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-    RegisterClassW(&wc);
+    RegisterClassExW(&wc);
 
     hwnd_ = CreateWindowExW(
         0,
         wc.lpszClassName,
         L"SuperZip",
-        WS_OVERLAPPEDWINDOW,
+        style,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         initial_width,
@@ -401,13 +609,15 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         dpi_ = HIWORD(wparam);
         rebuild_fonts();
         const auto* suggested = reinterpret_cast<RECT*>(lparam);
+        RECT fixed_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(dpi_), 96), MulDiv(kDesignClientHeight, static_cast<int>(dpi_), 96)};
+        AdjustWindowRectExForDpi(&fixed_window, window_style(), FALSE, 0, dpi_);
         SetWindowPos(
             hwnd_,
             nullptr,
             suggested->left,
             suggested->top,
-            suggested->right - suggested->left,
-            suggested->bottom - suggested->top,
+            fixed_window.right - fixed_window.left,
+            fixed_window.bottom - fixed_window.top,
             SWP_NOZORDER | SWP_NOACTIVATE);
         request_repaint();
         return 0;
@@ -454,12 +664,16 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         auto drop = reinterpret_cast<HDROP>(wparam);
         const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         std::lock_guard lock(mutex_);
+        const bool was_empty = state_.queued_paths.empty();
         for (UINT i = 0; i < count; ++i) {
             const UINT length = DragQueryFileW(drop, i, nullptr, 0);
             std::wstring path(length + 1, L'\0');
             DragQueryFileW(drop, i, path.data(), length + 1);
             path.resize(length);
             state_.queued_paths.emplace_back(path);
+        }
+        if (was_empty && !state_.queued_paths.empty()) {
+            state_.selected_queue_index = 0;
         }
         DragFinish(drop);
         request_repaint();
@@ -472,7 +686,14 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         repaint_queued_ = false;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+    case WM_TIMER:
+        if (wparam == kAnimationTimer) {
+            tick_animation();
+            return 0;
+        }
+        return DefWindowProcW(hwnd_, message, wparam, lparam);
     case WM_DESTROY:
+        KillTimer(hwnd_, kAnimationTimer);
         PostQuitMessage(0);
         return 0;
     default:
@@ -517,6 +738,7 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     draw_top_bar(dc, top);
     draw_navigation(dc, rail, state);
     draw_content(dc, content, state);
+    draw_tab_transition(dc, content);
     draw_status_bar(dc, status, state);
 }
 
@@ -618,15 +840,90 @@ void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
     }
 }
 
+MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
+    QueueLayout layout{};
+    layout.area = inset_rect(rect, scale(24), scale(20));
+    layout.table = RECT{layout.area.left, layout.area.top + scale(48), layout.area.right, layout.area.bottom - scale(124)};
+    layout.destination = RECT{layout.area.left, layout.area.bottom - scale(88), layout.area.right - scale(182), layout.area.bottom - scale(44)};
+    layout.start = RECT{layout.area.right - scale(168), layout.area.bottom - scale(64), layout.area.right - scale(20), layout.area.bottom - scale(24)};
+    layout.profile = RECT{layout.area.left, layout.area.bottom - scale(40), layout.area.left + scale(264), layout.area.bottom};
+    return layout;
+}
+
+MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
+    CompressLayout layout{};
+    layout.area = inset_rect(rect, scale(30), scale(22));
+    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right, layout.area.bottom - scale(18)};
+    const int left = layout.area.left;
+    const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
+    const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
+    layout.archive_name = RECT{left, layout.area.top + scale(54), left + field_w, layout.area.top + scale(104)};
+    layout.destination = RECT{mid, layout.area.top + scale(54), mid + field_w, layout.area.top + scale(104)};
+    layout.format = RECT{left, layout.area.top + scale(124), left + field_w, layout.area.top + scale(174)};
+    layout.profile = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
+    layout.method = RECT{left, layout.area.top + scale(194), left + field_w, layout.area.top + scale(244)};
+    layout.block_size = RECT{mid, layout.area.top + scale(194), mid + field_w, layout.area.top + scale(244)};
+    layout.advanced = RECT{left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(390)};
+    layout.solid_archive = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(48), layout.advanced.left + scale(310), layout.advanced.top + scale(76)};
+    layout.store_timestamps = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(80), layout.advanced.left + scale(310), layout.advanced.top + scale(108)};
+    layout.delete_after_compression = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(48), layout.advanced.left + scale(680), layout.advanced.top + scale(76)};
+    layout.verify = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(80), layout.advanced.left + scale(710), layout.advanced.top + scale(108)};
+    layout.security = RECT{left, layout.area.top + scale(410), layout.area.right, layout.area.top + scale(528)};
+    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(46), layout.security.left + scale(420), layout.security.top + scale(78)};
+    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(82), layout.security.left + scale(420), layout.security.top + scale(114)};
+    return layout;
+}
+
+MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
+    ExtractLayout layout{};
+    layout.area = inset_rect(rect, scale(30), scale(22));
+    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right, layout.area.bottom - scale(18)};
+    layout.archive = RECT{layout.area.left, layout.area.top + scale(58), layout.area.right, layout.area.top + scale(108)};
+    layout.destination = RECT{layout.area.left, layout.area.top + scale(128), layout.area.right, layout.area.top + scale(178)};
+    layout.path_mode = RECT{layout.area.left, layout.area.top + scale(198), layout.area.left + scale(320), layout.area.top + scale(248)};
+    layout.overwrite_policy = RECT{layout.area.left + scale(342), layout.area.top + scale(198), layout.area.left + scale(662), layout.area.top + scale(248)};
+    layout.checks = RECT{layout.area.left, layout.area.top + scale(280), layout.area.right, layout.area.top + scale(412)};
+    layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48), layout.checks.left + scale(420), layout.checks.top + scale(78)};
+    layout.open_destination_after_extract = RECT{layout.checks.left + scale(18), layout.checks.top + scale(80), layout.checks.left + scale(420), layout.checks.top + scale(110)};
+    layout.sha = RECT{layout.checks.left + scale(470), layout.checks.top + scale(48), layout.checks.right - scale(20), layout.checks.top + scale(80)};
+    layout.defender = RECT{layout.checks.left + scale(470), layout.checks.top + scale(84), layout.checks.right - scale(20), layout.checks.top + scale(116)};
+    return layout;
+}
+
+MainWindow::PreferencesLayout MainWindow::preferences_layout(const RECT& rect) const {
+    PreferencesLayout layout{};
+    layout.area = inset_rect(rect, scale(30), scale(22));
+    layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54), layout.area.right - scale(126), layout.area.bottom - scale(18)};
+    layout.apply = RECT{layout.area.right - scale(110), layout.area.bottom - scale(54), layout.area.right, layout.area.bottom - scale(18)};
+    layout.general = RECT{layout.area.left, layout.area.top + scale(56), layout.area.left + scale(470), layout.area.top + scale(224)};
+    layout.security = RECT{layout.general.left, layout.general.bottom + scale(16), layout.general.right, layout.general.bottom + scale(176)};
+    layout.performance = RECT{layout.general.right + scale(18), layout.general.top, layout.area.right, layout.area.top + scale(224)};
+    layout.logging = RECT{layout.performance.left, layout.performance.bottom + scale(16), layout.area.right, layout.performance.bottom + scale(176)};
+    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(48), layout.security.right - scale(16), layout.security.top + scale(80)};
+    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(84), layout.security.right - scale(16), layout.security.top + scale(116)};
+    layout.gpu = RECT{layout.security.left + scale(18), layout.security.top + scale(120), layout.security.right - scale(16), layout.security.top + scale(152)};
+    layout.verify = RECT{layout.performance.left + scale(18), layout.performance.top + scale(48), layout.performance.right - scale(18), layout.performance.top + scale(80)};
+    const int performance_half_right = layout.performance.left + (layout.performance.right - layout.performance.left) / 2;
+    const int logging_half_right = layout.logging.left + (layout.logging.right - layout.logging.left) / 2;
+    layout.memory_policy = RECT{layout.performance.left + scale(18), layout.performance.top + scale(94), performance_half_right, layout.performance.top + scale(140)};
+    layout.log_level = RECT{layout.logging.left + scale(18), layout.logging.top + scale(48), logging_half_right, layout.logging.top + scale(94)};
+    layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right, layout.logging.top + scale(152)};
+    layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48), layout.general.right - scale(16), layout.general.top + scale(78)};
+    layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82), layout.general.right - scale(16), layout.general.top + scale(112)};
+    layout.show_operation_summary = RECT{layout.general.left + scale(18), layout.general.top + scale(116), layout.general.right - scale(16), layout.general.top + scale(146)};
+    return layout;
+}
+
 void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(24), scale(20));
+    const auto layout = queue_layout(rect);
+    const RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right - scale(180), area.top + scale(34)}, L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     const auto count_text = std::to_wstring(state.queued_paths.size()) + L" item" + (state.queued_paths.size() == 1 ? L"" : L"s");
     draw_text(dc, RECT{area.right - scale(180), area.top, area.right, area.top + scale(34)}, count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
-    RECT table{area.left, area.top + scale(48), area.right, area.bottom - scale(124)};
+    RECT table = layout.table;
     fill_round_rect(dc, table, kPanel, scale(4));
     stroke_rect(dc, table, kBorder);
     SelectObject(dc, tiny_font_);
@@ -643,87 +940,88 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
         SelectObject(dc, body_font_);
         draw_text(dc, RECT{table.left + scale(22), y + scale(28), table.right - scale(22), y + scale(86)}, L"Drop files or folders here, or use Add files / Add folder. Work runs in a background thread so the interface stays responsive.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else {
+        int row_index = 0;
         for (const auto& path : state.queued_paths) {
             const int row_bottom = y + scale(34);
-            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom}, ((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel);
+            const bool selected = row_index == state.selected_queue_index;
+            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom}, selected ? kPanel3 : (((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel));
             draw_checkbox(dc, RECT{table.left + scale(12), y + scale(6), table.left + scale(64), row_bottom - scale(4)}, L"", true);
             draw_text(dc, RECT{table.left + scale(82), y, table.left + scale(330), row_bottom}, path.filename().wstring(), kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             draw_text(dc, RECT{table.left + scale(340), y, table.left + scale(450), row_bottom}, entry_size_text(path), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             draw_text(dc, RECT{table.left + scale(462), y, table.left + scale(560), row_bottom}, entry_type_text(path), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             draw_text(dc, RECT{table.left + scale(572), y, table.right - scale(12), row_bottom}, path.wstring(), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             y = row_bottom;
+            ++row_index;
             if (y > table.bottom - scale(34)) {
                 break;
             }
         }
     }
 
-    RECT destination{area.left, area.bottom - scale(88), area.right - scale(182), area.bottom - scale(44)};
-    draw_field(dc, destination, L"Destination", (std::filesystem::current_path() / "SuperZip-output.suzip").wstring(), false);
-    draw_button(dc, RECT{area.right - scale(168), area.bottom - scale(64), area.right - scale(20), area.bottom - scale(24)}, L"Start", true);
-    draw_field(dc, RECT{area.left, area.bottom - scale(40), area.left + scale(264), area.bottom}, L"Profile", L"Balanced (AMD GPU)", true);
+    draw_field(dc, layout.destination, L"Destination", compression_output_path_for(state).wstring(), false);
+    draw_button(dc, layout.start, L"Start", true);
+    draw_field(dc, layout.profile, L"Profile", compression_profile_text(state.compression_profile_index), true);
 }
 
 void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    const auto layout = compress_layout(rect);
+    const RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Compress", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, RECT{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)}, L"Start", true);
+    draw_button(dc, layout.start, L"Start", true);
 
-    const int left = area.left;
-    const int mid = area.left + (area.right - area.left) / 2 + scale(14);
-    const int field_w = (area.right - area.left) / 2 - scale(26);
-    draw_field(dc, RECT{left, area.top + scale(54), left + field_w, area.top + scale(104)}, L"Archive name", L"SuperZip-output.suzip", false);
-    draw_field(dc, RECT{mid, area.top + scale(54), mid + field_w, area.top + scale(104)}, L"Destination", std::filesystem::current_path().wstring(), false);
-    draw_field(dc, RECT{left, area.top + scale(124), left + field_w, area.top + scale(174)}, L"Archive format", L"SuperZip GPU (.suzip)", true);
-    draw_field(dc, RECT{mid, area.top + scale(124), mid + field_w, area.top + scale(174)}, L"Compression profile", L"Balanced (default)", true);
-    draw_field(dc, RECT{left, area.top + scale(194), left + field_w, area.top + scale(244)}, L"Compression method", state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred", true);
-    draw_field(dc, RECT{mid, area.top + scale(194), mid + field_w, area.top + scale(244)}, L"Block size", L"1 MiB blocks / 128 MiB chunks", true);
+    draw_field(dc, layout.archive_name, L"Archive name", L"SuperZip-output.suzip", false);
+    draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false);
+    draw_field(dc, layout.format, L"Archive format", L"SuperZip GPU (.suzip)", false);
+    draw_field(dc, layout.profile, L"Compression profile", compression_profile_text(state.compression_profile_index), true);
+    draw_field(dc, layout.method, L"Compression method", state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred", true);
+    draw_field(dc, layout.block_size, L"Block size", L"1 MiB blocks / 128 MiB chunks", false);
 
-    RECT advanced{left, area.top + scale(270), area.right, area.top + scale(390)};
+    RECT advanced = layout.advanced;
     fill_round_rect(dc, advanced, kPanel, scale(4));
     stroke_rect(dc, advanced, kBorder);
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{advanced.left + scale(16), advanced.top + scale(12), advanced.right, advanced.top + scale(36)}, L"Advanced", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, RECT{advanced.left + scale(18), advanced.top + scale(48), advanced.left + scale(310), advanced.top + scale(76)}, L"Solid archive", true);
-    draw_checkbox(dc, RECT{advanced.left + scale(18), advanced.top + scale(80), advanced.left + scale(310), advanced.top + scale(108)}, L"Store timestamps", true);
-    draw_checkbox(dc, RECT{advanced.left + scale(342), advanced.top + scale(48), advanced.left + scale(680), advanced.top + scale(76)}, L"Delete files after compression", false);
-    draw_toggle(dc, RECT{advanced.left + scale(342), advanced.top + scale(80), advanced.left + scale(710), advanced.top + scale(108)}, L"Verify archive after write", state.verify_after_write_opt_in);
+    draw_checkbox(dc, layout.solid_archive, L"Solid archive", state.solid_archive);
+    draw_checkbox(dc, layout.store_timestamps, L"Store timestamps", state.store_timestamps);
+    draw_checkbox(dc, layout.delete_after_compression, L"Delete files after compression", state.delete_after_compression);
+    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
 
-    RECT security{left, area.top + scale(410), area.right, area.top + scale(528)};
+    RECT security = layout.security;
     fill_round_rect(dc, security, kPanel, scale(4));
     stroke_rect(dc, security, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)}, L"Integrity and Security (opt-in)", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)}, L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(46), security.left + scale(420), security.top + scale(78)}, L"SHA-256 integrity check", state.integrity_hash_opt_in);
-    draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(82), security.left + scale(420), security.top + scale(114)}, L"Microsoft Defender scan", state.defender_scan_opt_in);
+    draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
+    draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
     draw_text(dc, RECT{security.left + scale(448), security.top + scale(46), security.right - scale(16), security.top + scale(114)}, L"Security checks remain disabled until explicitly enabled for the job or as a default in Settings.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    const auto layout = extract_layout(rect);
+    const RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Extract", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, RECT{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)}, L"Start", true);
+    draw_button(dc, layout.start, L"Start", true);
 
     const auto archive = state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
-    draw_field(dc, RECT{area.left, area.top + scale(58), area.right, area.top + scale(108)}, L"Archive", archive, false);
-    draw_field(dc, RECT{area.left, area.top + scale(128), area.right, area.top + scale(178)}, L"Destination", (std::filesystem::current_path() / "SuperZip-extracted").wstring(), false);
-    draw_field(dc, RECT{area.left, area.top + scale(198), area.left + scale(320), area.top + scale(248)}, L"Path mode", L"Full paths", true);
-    draw_field(dc, RECT{area.left + scale(342), area.top + scale(198), area.left + scale(662), area.top + scale(248)}, L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", true);
+    draw_field(dc, layout.archive, L"Archive", archive, false);
+    draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false);
+    draw_field(dc, layout.path_mode, L"Path mode", L"Full paths", false);
+    draw_field(dc, layout.overwrite_policy, L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", true);
 
-    RECT checks{area.left, area.top + scale(280), area.right, area.top + scale(412)};
+    RECT checks = layout.checks;
     fill_round_rect(dc, checks, kPanel, scale(4));
     stroke_rect(dc, checks, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{checks.left + scale(16), checks.top + scale(12), checks.right, checks.top + scale(36)}, L"Integrity and Security (opt-in)", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{checks.left + scale(16), checks.top + scale(12), checks.right, checks.top + scale(36)}, L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, RECT{checks.left + scale(18), checks.top + scale(48), checks.left + scale(420), checks.top + scale(78)}, L"Verify archive metadata before extraction", true);
-    draw_checkbox(dc, RECT{checks.left + scale(18), checks.top + scale(80), checks.left + scale(420), checks.top + scale(110)}, L"Open destination folder after extraction", false);
-    draw_toggle(dc, RECT{checks.left + scale(470), checks.top + scale(48), checks.right - scale(20), checks.top + scale(80)}, L"SHA-256 integrity check", state.integrity_hash_opt_in);
-    draw_toggle(dc, RECT{checks.left + scale(470), checks.top + scale(84), checks.right - scale(20), checks.top + scale(116)}, L"Microsoft Defender scan", state.defender_scan_opt_in);
+    draw_checkbox(dc, layout.verify_metadata, L"Verify archive metadata before extraction", state.verify_metadata_before_extract);
+    draw_checkbox(dc, layout.open_destination_after_extract, L"Open destination folder after extraction", state.open_destination_after_extract);
+    draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
+    draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
 }
 
 void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& state) {
@@ -747,9 +1045,9 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     const Row rows[] = {
         {L"Path safety", L"Safe", kOk},
         {L"CRC metadata", L"Verified", kOk},
-        {L"Post-write verify", state.verify_after_write_opt_in ? L"Enabled" : L"Not selected", state.verify_after_write_opt_in ? kOk : kWarn},
-        {L"SHA-256 optional", state.integrity_hash_opt_in ? L"Enabled" : L"Not selected", state.integrity_hash_opt_in ? kOk : kWarn},
-        {L"Defender optional", state.defender_scan_opt_in ? L"Enabled" : L"Not selected", state.defender_scan_opt_in ? kOk : kWarn},
+        {L"Post-write verify", state.verify_after_write_opt_in ? L"Selected" : L"Not selected", state.verify_after_write_opt_in ? kOk : kWarn},
+        {L"SHA-256 optional", state.integrity_hash_opt_in ? L"Selected" : L"Not selected", state.integrity_hash_opt_in ? kOk : kWarn},
+        {L"Defender optional", state.defender_scan_opt_in ? L"Selected" : L"Not selected", state.defender_scan_opt_in ? kOk : kWarn},
         {L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", state.overwrite ? kWarn : kOk},
         {L"GPU requirement", state.gpu_required ? L"AMD HIP required" : L"Fallback allowed", state.gpu_required ? kInfo : kWarn},
     };
@@ -779,8 +1077,8 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"History", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(142), area.top, area.right, area.top + scale(34)}, L"Clear History", false);
-    draw_field(dc, RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)}, L"Operation", L"All operations", true);
-    draw_field(dc, RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)}, L"Status", L"All statuses", true);
+    draw_field(dc, RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)}, L"Operation", history_operation_filter_text(state.history_operation_filter_index), true);
+    draw_field(dc, RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)}, L"Status", history_status_filter_text(state.history_status_filter_index), true);
 
     RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
     fill_round_rect(dc, table, kPanel, scale(4));
@@ -867,36 +1165,37 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
 }
 
 void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(30), scale(22));
+    const auto layout = preferences_layout(rect);
+    RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Preferences", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, RECT{area.right - scale(260), area.bottom - scale(54), area.right - scale(126), area.bottom - scale(18)}, L"Restore Defaults", false);
-    draw_button(dc, RECT{area.right - scale(110), area.bottom - scale(54), area.right, area.bottom - scale(18)}, L"Apply", true);
+    draw_button(dc, layout.restore_defaults, L"Restore Defaults", false);
+    draw_button(dc, layout.apply, L"Apply", true);
 
-    RECT general{area.left, area.top + scale(56), area.left + scale(470), area.top + scale(224)};
-    RECT security{general.left, general.bottom + scale(16), general.right, general.bottom + scale(176)};
-    RECT performance{general.right + scale(18), general.top, area.right, area.top + scale(224)};
-    RECT logging{performance.left, performance.bottom + scale(16), area.right, performance.bottom + scale(176)};
+    RECT general = layout.general;
+    RECT security = layout.security;
+    RECT performance = layout.performance;
+    RECT logging = layout.logging;
     for (RECT panel : {general, security, performance, logging}) {
         fill_round_rect(dc, panel, kPanel, scale(4));
         stroke_rect(dc, panel, kBorder);
     }
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{general.left + scale(16), general.top + scale(12), general.right, general.top + scale(36)}, L"General", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)}, L"Security (opt-in)", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)}, L"Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{performance.left + scale(16), performance.top + scale(12), performance.right, performance.top + scale(36)}, L"Performance", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{logging.left + scale(16), logging.top + scale(12), logging.right, logging.top + scale(36)}, L"Logging", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, RECT{general.left + scale(18), general.top + scale(48), general.right - scale(16), general.top + scale(78)}, L"Open destination folder after operation", false);
-    draw_checkbox(dc, RECT{general.left + scale(18), general.top + scale(82), general.right - scale(16), general.top + scale(112)}, L"Confirm before deleting files", true);
-    draw_checkbox(dc, RECT{general.left + scale(18), general.top + scale(116), general.right - scale(16), general.top + scale(146)}, L"Show operation summary", true);
-    draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(48), security.right - scale(16), security.top + scale(80)}, L"SHA-256 integrity check", state.integrity_hash_opt_in);
-    draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(84), security.right - scale(16), security.top + scale(116)}, L"Microsoft Defender scan", state.defender_scan_opt_in);
-    draw_toggle(dc, RECT{security.left + scale(18), security.top + scale(120), security.right - scale(16), security.top + scale(152)}, L"Require AMD GPU acceleration", state.gpu_required);
-    draw_toggle(dc, RECT{performance.left + scale(18), performance.top + scale(48), performance.right - scale(18), performance.top + scale(80)}, L"Verify archive after write", state.verify_after_write_opt_in);
-    draw_field(dc, RECT{performance.left + scale(18), performance.top + scale(94), performance.right - scale(18), performance.top + scale(140)}, L"Memory policy", L"Bounded chunk windows", true);
-    draw_field(dc, RECT{logging.left + scale(18), logging.top + scale(48), logging.right - scale(18), logging.top + scale(94)}, L"Log level", L"Information", true);
-    draw_field(dc, RECT{logging.left + scale(18), logging.top + scale(106), logging.right - scale(18), logging.top + scale(152)}, L"Log retention", L"Session only", true);
+    draw_checkbox(dc, layout.open_destination_after_operation, L"Open destination folder after operation", state.open_destination_after_operation);
+    draw_checkbox(dc, layout.confirm_before_deleting, L"Confirm before deleting files", state.confirm_before_deleting);
+    draw_checkbox(dc, layout.show_operation_summary, L"Show operation summary", state.show_operation_summary);
+    draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
+    draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
+    draw_toggle(dc, layout.gpu, L"Require AMD GPU acceleration", state.gpu_required, ToggleId::GpuRequired);
+    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
+    draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
+    draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
+    draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
 }
 
 void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
@@ -923,17 +1222,21 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
     draw_text(dc, inset_rect(rect, scale(12), 0), text, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
-void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled) {
-    draw_text(dc, RECT{rect.left + scale(54), rect.top, rect.right - scale(86), rect.bottom}, text, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    RECT track{rect.left, rect.top + scale(7), rect.left + scale(42), rect.bottom - scale(7)};
-    fill_round_rect(dc, track, enabled ? RGB(43, 111, 72) : RGB(57, 69, 75), scale(14));
-    HBRUSH knob = CreateSolidBrush(enabled ? kOk : kMuted);
+void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id) {
+    draw_text(dc, RECT{rect.left + scale(54), rect.top, rect.right, rect.bottom}, text, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    const int cy = (rect.top + rect.bottom) / 2;
+    const int track_height = scale(18);
+    RECT track{rect.left, cy - track_height / 2, rect.left + scale(42), cy + track_height / 2};
+    const double position = toggle_visual_position(id, enabled);
+    fill_round_rect(dc, track, blend_color(RGB(57, 69, 75), RGB(43, 111, 72), position), scale(14));
+    HBRUSH knob = CreateSolidBrush(blend_color(kMuted, kOk, position));
     HGDIOBJ previous = SelectObject(dc, knob);
-    const int knob_left = enabled ? track.right - scale(17) : track.left + scale(3);
-    Ellipse(dc, knob_left, track.top + scale(3), knob_left + scale(14), track.bottom - scale(3));
+    const int knob_size = scale(14);
+    const int knob_travel = (track.right - track.left) - knob_size - scale(6);
+    const int knob_left = track.left + scale(3) + static_cast<int>(std::round(position * static_cast<double>(std::max(0, knob_travel))));
+    Ellipse(dc, knob_left, cy - knob_size / 2, knob_left + knob_size, cy + knob_size / 2);
     SelectObject(dc, previous);
     DeleteObject(knob);
-    draw_text(dc, RECT{rect.right - scale(78), rect.top, rect.right, rect.bottom}, enabled ? L"Enabled" : L"Disabled", enabled ? kOk : kWarn, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 }
 
 void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool enabled) {
@@ -957,10 +1260,12 @@ void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, cons
     stroke_rect(dc, box, kBorder);
     draw_text(dc, RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom}, value, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (select) {
+        const int arrow_cx = box.right - scale(15);
+        const int arrow_cy = (box.top + box.bottom) / 2;
         POINT arrow[3] = {
-            {box.right - scale(18), box.top + scale(14)},
-            {box.right - scale(10), box.top + scale(14)},
-            {box.right - scale(14), box.top + scale(20)},
+            {arrow_cx - scale(5), arrow_cy - scale(2)},
+            {arrow_cx + scale(5), arrow_cy - scale(2)},
+            {arrow_cx, arrow_cy + scale(4)},
         };
         HBRUSH brush = CreateSolidBrush(kMuted);
         HGDIOBJ previous = SelectObject(dc, brush);
@@ -970,112 +1275,309 @@ void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, cons
     }
 }
 
-bool MainWindow::handle_content_click(int x, int y) {
+void MainWindow::draw_tab_transition(HDC dc, const RECT& rect) {
+    const double progress = page_transition_progress();
+    if (progress >= 1.0) {
+        return;
+    }
+    const int width = rect.right - rect.left;
+    const int line_width = static_cast<int>(std::round(static_cast<double>(width) * ease_out(progress)));
+    fill_rect(dc, RECT{rect.left, rect.top, rect.left + std::max(scale(12), line_width), rect.top + scale(2)}, kAccent);
+}
+
+RECT MainWindow::content_rect() const {
     RECT client{};
     GetClientRect(hwnd_, &client);
     const int top_bar = scale(kTopBar);
     const int rail_width = scale(kRailWidth);
     const int status_bar = scale(kStatusBar);
-    RECT content{rail_width, top_bar, client.right, client.bottom - status_bar};
-    RECT area = inset_rect(content, scale(30), scale(22));
-    RECT start{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
+    return RECT{rail_width, top_bar, client.right, client.bottom - status_bar};
+}
 
+bool MainWindow::handle_content_click(int x, int y) {
     Page page;
     {
         std::lock_guard lock(mutex_);
         page = state_.page;
     }
+    const RECT content = content_rect();
 
-    if (contains_point(start, x, y)) {
-        if (page == Page::Queue || page == Page::Compress) {
+    const auto toggle_bool = [this](bool UiState::*member, ToggleId id) {
+        bool previous = false;
+        bool next = false;
+        {
+            std::lock_guard lock(mutex_);
+            previous = state_.*member;
+            state_.*member = !previous;
+            next = state_.*member;
+        }
+        start_toggle_animation(id, previous, next);
+        request_repaint();
+        return true;
+    };
+    const auto checkbox_bool = [this](bool UiState::*member, const char* status) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.*member = !(state_.*member);
+            state_.status = status;
+        }
+        request_repaint();
+        return true;
+    };
+
+    if (page == Page::Queue) {
+        const auto layout = queue_layout(content);
+        if (contains_point(layout.start, x, y)) {
             start_compress();
             return true;
         }
-        if (page == Page::Extract) {
+        if (contains_point(layout.destination, x, y)) {
+            choose_destination();
+            return true;
+        }
+        if (contains_point(layout.profile, x, y)) {
+            cycle_compression_profile();
+            return true;
+        }
+        const int header_bottom = layout.table.top + scale(36);
+        const int row_height = scale(34);
+        if (y >= header_bottom && y < layout.table.bottom && row_height > 0) {
+            const int index = (y - header_bottom) / row_height;
+            std::lock_guard lock(mutex_);
+            if (index >= 0 && index < static_cast<int>(state_.queued_paths.size())) {
+                state_.selected_queue_index = index;
+                request_repaint();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (page == Page::Compress) {
+        const auto layout = compress_layout(content);
+        if (contains_point(layout.start, x, y)) {
+            start_compress();
+            return true;
+        }
+        if (contains_point(layout.destination, x, y)) {
+            choose_destination();
+            return true;
+        }
+        if (contains_point(layout.profile, x, y)) {
+            cycle_compression_profile();
+            return true;
+        }
+        if (contains_point(layout.method, x, y)) {
+            return toggle_bool(&UiState::gpu_required, ToggleId::GpuRequired);
+        }
+        if (contains_point(layout.solid_archive, x, y)) {
+            return checkbox_bool(&UiState::solid_archive, "Solid archive setting changed");
+        }
+        if (contains_point(layout.store_timestamps, x, y)) {
+            return checkbox_bool(&UiState::store_timestamps, "Timestamp setting changed");
+        }
+        if (contains_point(layout.delete_after_compression, x, y)) {
+            return checkbox_bool(&UiState::delete_after_compression, "Delete-after-compression setting changed");
+        }
+        if (contains_point(layout.verify, x, y)) {
+            return toggle_bool(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
+        }
+        if (contains_point(layout.sha, x, y)) {
+            return toggle_bool(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
+        }
+        if (contains_point(layout.defender, x, y)) {
+            return toggle_bool(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
+        }
+        return false;
+    }
+
+    if (page == Page::Extract) {
+        const auto layout = extract_layout(content);
+        if (contains_point(layout.start, x, y)) {
             start_extract();
             return true;
         }
-        if (page == Page::Security) {
-            append_history("Security review completed");
+        if (contains_point(layout.destination, x, y)) {
+            choose_destination();
+            return true;
+        }
+        if (contains_point(layout.overwrite_policy, x, y)) {
+            {
+                std::lock_guard lock(mutex_);
+                state_.overwrite = !state_.overwrite;
+                state_.status = "Overwrite policy changed";
+            }
             request_repaint();
             return true;
         }
+        if (contains_point(layout.verify_metadata, x, y)) {
+            return checkbox_bool(&UiState::verify_metadata_before_extract, "Extraction metadata verification setting changed");
+        }
+        if (contains_point(layout.open_destination_after_extract, x, y)) {
+            return checkbox_bool(&UiState::open_destination_after_extract, "Open destination after extraction setting changed");
+        }
+        if (contains_point(layout.sha, x, y)) {
+            return toggle_bool(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
+        }
+        if (contains_point(layout.defender, x, y)) {
+            return toggle_bool(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
+        }
+        return false;
     }
 
     if (page == Page::History) {
+        RECT area = inset_rect(content, scale(30), scale(22));
+        const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
+        const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
         const RECT clear{area.right - scale(142), area.top, area.right, area.top + scale(34)};
+        if (contains_point(operation, x, y)) {
+            std::lock_guard lock(mutex_);
+            state_.history_operation_filter_index = (state_.history_operation_filter_index + 1) % 4;
+            state_.status = "History operation filter changed";
+            request_repaint();
+            return true;
+        }
+        if (contains_point(status, x, y)) {
+            std::lock_guard lock(mutex_);
+            state_.history_status_filter_index = (state_.history_status_filter_index + 1) % 3;
+            state_.status = "History status filter changed";
+            request_repaint();
+            return true;
+        }
         if (contains_point(clear, x, y)) {
             clear_history();
             return true;
         }
+        return false;
     }
 
-    std::lock_guard lock(mutex_);
-    bool changed = false;
+    if (page == Page::Security) {
+        RECT area = inset_rect(content, scale(30), scale(22));
+        const RECT verify_button{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
+        if (contains_point(verify_button, x, y)) {
+            append_history("Security review completed");
+            {
+                std::lock_guard lock(mutex_);
+                state_.status = "Security review completed";
+            }
+            request_repaint();
+            return true;
+        }
+        return false;
+    }
+
+    if (page == Page::Gpu) {
+        RECT area = inset_rect(content, scale(30), scale(22));
+        const RECT refresh{area.right - scale(110), area.top, area.right, area.top + scale(34)};
+        if (contains_point(refresh, x, y)) {
+            refresh_gpu_status();
+            request_repaint();
+            return true;
+        }
+        return false;
+    }
+
     if (page == Page::Preferences) {
-        const RECT security{area.left, area.top + scale(240), area.left + scale(470), area.top + scale(400)};
-        const RECT sha{security.left + scale(18), security.top + scale(48), security.right - scale(16), security.top + scale(80)};
-        const RECT defender{security.left + scale(18), security.top + scale(84), security.right - scale(16), security.top + scale(116)};
-        const RECT gpu{security.left + scale(18), security.top + scale(120), security.right - scale(16), security.top + scale(152)};
-        const RECT general{area.left, area.top + scale(56), area.left + scale(470), area.top + scale(224)};
-        const RECT performance{general.right + scale(18), general.top, area.right, area.top + scale(224)};
-        const RECT verify{performance.left + scale(18), performance.top + scale(48), performance.right - scale(18), performance.top + scale(80)};
-        if (contains_point(sha, x, y)) {
-            state_.integrity_hash_opt_in = !state_.integrity_hash_opt_in;
-            changed = true;
-        } else if (contains_point(defender, x, y)) {
-            state_.defender_scan_opt_in = !state_.defender_scan_opt_in;
-            changed = true;
-        } else if (contains_point(gpu, x, y)) {
-            state_.gpu_required = !state_.gpu_required;
-            changed = true;
-        } else if (contains_point(verify, x, y)) {
-            state_.verify_after_write_opt_in = !state_.verify_after_write_opt_in;
-            changed = true;
+        const auto layout = preferences_layout(content);
+        if (contains_point(layout.restore_defaults, x, y)) {
+            restore_defaults();
+            return true;
         }
-    } else if (page == Page::Compress) {
-        const RECT advanced{area.left, area.top + scale(270), area.right, area.top + scale(390)};
-        const RECT security{area.left, area.top + scale(410), area.right, area.top + scale(528)};
-        const RECT verify{advanced.left + scale(342), advanced.top + scale(80), advanced.left + scale(710), advanced.top + scale(108)};
-        const RECT sha{security.left + scale(18), security.top + scale(46), security.left + scale(420), security.top + scale(78)};
-        const RECT defender{security.left + scale(18), security.top + scale(82), security.left + scale(420), security.top + scale(114)};
-        if (contains_point(verify, x, y)) {
-            state_.verify_after_write_opt_in = !state_.verify_after_write_opt_in;
-            changed = true;
-        } else if (contains_point(sha, x, y)) {
-            state_.integrity_hash_opt_in = !state_.integrity_hash_opt_in;
-            changed = true;
-        } else if (contains_point(defender, x, y)) {
-            state_.defender_scan_opt_in = !state_.defender_scan_opt_in;
-            changed = true;
+        if (contains_point(layout.apply, x, y)) {
+            append_history("Preferences applied for current session");
+            {
+                std::lock_guard lock(mutex_);
+                state_.status = "Preferences applied";
+            }
+            request_repaint();
+            return true;
         }
-    } else if (page == Page::Extract) {
-        const RECT checks{area.left, area.top + scale(280), area.right, area.top + scale(412)};
-        const RECT sha{checks.left + scale(470), checks.top + scale(48), checks.right - scale(20), checks.top + scale(80)};
-        const RECT defender{checks.left + scale(470), checks.top + scale(84), checks.right - scale(20), checks.top + scale(116)};
-        if (contains_point(sha, x, y)) {
-            state_.integrity_hash_opt_in = !state_.integrity_hash_opt_in;
-            changed = true;
-        } else if (contains_point(defender, x, y)) {
-            state_.defender_scan_opt_in = !state_.defender_scan_opt_in;
-            changed = true;
+        if (contains_point(layout.sha, x, y)) {
+            return toggle_bool(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
         }
+        if (contains_point(layout.defender, x, y)) {
+            return toggle_bool(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
+        }
+        if (contains_point(layout.gpu, x, y)) {
+            return toggle_bool(&UiState::gpu_required, ToggleId::GpuRequired);
+        }
+        if (contains_point(layout.verify, x, y)) {
+            return toggle_bool(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
+        }
+        if (contains_point(layout.open_destination_after_operation, x, y)) {
+            return checkbox_bool(&UiState::open_destination_after_operation, "Open destination setting changed");
+        }
+        if (contains_point(layout.confirm_before_deleting, x, y)) {
+            return checkbox_bool(&UiState::confirm_before_deleting, "Delete confirmation setting changed");
+        }
+        if (contains_point(layout.show_operation_summary, x, y)) {
+            return checkbox_bool(&UiState::show_operation_summary, "Operation summary setting changed");
+        }
+        if (contains_point(layout.memory_policy, x, y)) {
+            std::lock_guard lock(mutex_);
+            state_.memory_policy_index = (state_.memory_policy_index + 1) % 3;
+            request_repaint();
+            return true;
+        }
+        if (contains_point(layout.log_level, x, y)) {
+            std::lock_guard lock(mutex_);
+            state_.log_level_index = (state_.log_level_index + 1) % 3;
+            request_repaint();
+            return true;
+        }
+        if (contains_point(layout.log_retention, x, y)) {
+            std::lock_guard lock(mutex_);
+            state_.log_retention_index = (state_.log_retention_index + 1) % 3;
+            request_repaint();
+            return true;
+        }
+        return false;
     }
-    if (changed) {
-        request_repaint();
-    }
-    return changed;
+    return false;
 }
 
 void MainWindow::set_page(Page page) {
+    Page previous;
     {
         std::lock_guard lock(mutex_);
+        previous = state_.page;
+        if (previous == page) {
+            return;
+        }
         state_.page = page;
     }
+    start_page_transition(previous, page);
     request_repaint();
 }
 
 void MainWindow::add_files() {
+    wchar_t smoke_paths[32768]{};
+    constexpr DWORD smoke_paths_capacity = static_cast<DWORD>(sizeof(smoke_paths) / sizeof(smoke_paths[0]));
+    const DWORD smoke_length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
+    if (smoke_length > 0 && smoke_length < smoke_paths_capacity) {
+        std::lock_guard lock(mutex_);
+        const bool was_empty = state_.queued_paths.empty();
+        std::wstring_view paths(smoke_paths, smoke_length);
+        std::size_t start = 0;
+        while (start <= paths.size()) {
+            const std::size_t end = paths.find(L';', start);
+            const auto part = paths.substr(start, end == std::wstring_view::npos ? std::wstring_view::npos : end - start);
+            if (!part.empty()) {
+                state_.queued_paths.emplace_back(std::wstring(part));
+            }
+            if (end == std::wstring_view::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+        if (was_empty && !state_.queued_paths.empty()) {
+            state_.selected_queue_index = 0;
+        }
+        state_.status = "Smoke files added";
+        request_repaint();
+        return;
+    }
+
     OPENFILENAMEW ofn{};
     wchar_t files[8192]{};
     ofn.lStructSize = sizeof(ofn);
@@ -1090,6 +1592,7 @@ void MainWindow::add_files() {
     std::lock_guard lock(mutex_);
     std::filesystem::path dir(files);
     wchar_t* cursor = files + dir.wstring().size() + 1;
+    const bool was_empty = state_.queued_paths.empty();
     if (*cursor == L'\0') {
         state_.queued_paths.push_back(dir);
     } else {
@@ -1099,10 +1602,28 @@ void MainWindow::add_files() {
             cursor += name.wstring().size() + 1;
         }
     }
+    if (was_empty && !state_.queued_paths.empty()) {
+        state_.selected_queue_index = 0;
+    }
     request_repaint();
 }
 
 void MainWindow::add_folder() {
+    wchar_t smoke_path[32768]{};
+    constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
+    const DWORD smoke_length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
+    if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
+        std::lock_guard lock(mutex_);
+        const bool was_empty = state_.queued_paths.empty();
+        state_.queued_paths.emplace_back(smoke_path);
+        if (was_empty) {
+            state_.selected_queue_index = 0;
+        }
+        state_.status = "Smoke folder added";
+        request_repaint();
+        return;
+    }
+
     BROWSEINFOW browse{};
     browse.hwndOwner = hwnd_;
     browse.lpszTitle = L"Add folder to SuperZip";
@@ -1119,7 +1640,11 @@ void MainWindow::add_folder() {
     }
     {
         std::lock_guard lock(mutex_);
+        const bool was_empty = state_.queued_paths.empty();
         state_.queued_paths.emplace_back(path);
+        if (was_empty) {
+            state_.selected_queue_index = 0;
+        }
     }
     request_repaint();
 }
@@ -1128,6 +1653,7 @@ void MainWindow::clear_queue() {
     {
         std::lock_guard lock(mutex_);
         state_.queued_paths.clear();
+        state_.selected_queue_index = -1;
     }
     request_repaint();
 }
@@ -1140,12 +1666,85 @@ void MainWindow::clear_history() {
     request_repaint();
 }
 
+void MainWindow::choose_destination() {
+    wchar_t smoke_path[32768]{};
+    constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
+    const DWORD smoke_length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_DESTINATION", smoke_path, smoke_path_capacity);
+    if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
+        std::lock_guard lock(mutex_);
+        state_.destination_directory = smoke_path;
+        state_.status = "Destination selected";
+        request_repaint();
+        return;
+    }
+
+    BROWSEINFOW browse{};
+    browse.hwndOwner = hwnd_;
+    browse.lpszTitle = L"Choose SuperZip destination";
+    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&browse);
+    if (pidl == nullptr) {
+        return;
+    }
+    wchar_t path[MAX_PATH]{};
+    const BOOL ok = SHGetPathFromIDListW(pidl, path);
+    CoTaskMemFree(pidl);
+    if (!ok || path[0] == L'\0') {
+        return;
+    }
+    {
+        std::lock_guard lock(mutex_);
+        state_.destination_directory = path;
+        state_.status = "Destination selected";
+    }
+    request_repaint();
+}
+
+void MainWindow::cycle_compression_profile() {
+    {
+        std::lock_guard lock(mutex_);
+        state_.compression_profile_index = (state_.compression_profile_index + 1) % 3;
+        state_.status = "Compression profile changed";
+    }
+    request_repaint();
+}
+
+void MainWindow::restore_defaults() {
+    {
+        std::lock_guard lock(mutex_);
+        state_.destination_directory.clear();
+        state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
+        state_.compression_profile_index = 0;
+        state_.memory_policy_index = 0;
+        state_.log_level_index = 0;
+        state_.log_retention_index = 0;
+        state_.history_operation_filter_index = 0;
+        state_.history_status_filter_index = 0;
+        state_.open_destination_after_operation = false;
+        state_.confirm_before_deleting = true;
+        state_.show_operation_summary = true;
+        state_.solid_archive = true;
+        state_.store_timestamps = true;
+        state_.delete_after_compression = false;
+        state_.verify_metadata_before_extract = true;
+        state_.open_destination_after_extract = false;
+        state_.gpu_required = true;
+        state_.overwrite = false;
+        state_.integrity_hash_opt_in = false;
+        state_.defender_scan_opt_in = false;
+        state_.verify_after_write_opt_in = false;
+        state_.status = "Defaults restored";
+    }
+    request_repaint();
+}
+
 void MainWindow::start_compress() {
     std::vector<std::filesystem::path> sources;
     bool gpu_required = true;
     bool integrity = false;
     bool defender = false;
     bool verify_after_write = false;
+    std::filesystem::path output;
     {
         std::lock_guard lock(mutex_);
         sources = state_.queued_paths;
@@ -1153,11 +1752,16 @@ void MainWindow::start_compress() {
         integrity = state_.integrity_hash_opt_in;
         defender = state_.defender_scan_opt_in;
         verify_after_write = state_.verify_after_write_opt_in;
+        output = compression_output_path_for(state_);
     }
     if (sources.empty()) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "Add files or folders before starting compression";
+        }
+        request_repaint();
         return;
     }
-    const auto output = std::filesystem::current_path() / "SuperZip-output.suzip";
     run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write] {
         CompressOptions options;
         options.gpu_required = gpu_required;
@@ -1187,6 +1791,7 @@ void MainWindow::start_extract() {
     bool overwrite = false;
     bool integrity = false;
     bool defender = false;
+    std::filesystem::path output;
     {
         std::lock_guard lock(mutex_);
         sources = state_.queued_paths;
@@ -1194,11 +1799,16 @@ void MainWindow::start_extract() {
         overwrite = state_.overwrite;
         integrity = state_.integrity_hash_opt_in;
         defender = state_.defender_scan_opt_in;
+        output = extraction_output_path_for(state_);
     }
     if (sources.empty()) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "Select an archive before starting extraction";
+        }
+        request_repaint();
         return;
     }
-    const auto output = std::filesystem::current_path() / "SuperZip-extracted";
     run_job([this, archive = sources.front(), output, gpu_required, overwrite, integrity, defender] {
         if (integrity) {
             const auto hash = hash_file(archive, IntegrityMode::Sha256);
@@ -1265,6 +1875,65 @@ void MainWindow::refresh_gpu_status() {
     const auto info = query_gpu_info();
     std::lock_guard lock(mutex_);
     state_.gpu_status = info.status;
+}
+
+void MainWindow::start_page_transition(Page from, Page to) {
+    transition_from_page_ = from;
+    transition_to_page_ = to;
+    page_transition_start_ = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kAnimationTimer, 8, nullptr);
+}
+
+void MainWindow::start_toggle_animation(ToggleId id, bool from, bool to) {
+    transition_toggle_ = id;
+    transition_toggle_from_ = from;
+    transition_toggle_to_ = to;
+    toggle_transition_start_ = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kAnimationTimer, 8, nullptr);
+}
+
+double MainWindow::page_transition_progress() const {
+    if (page_transition_start_ == std::chrono::steady_clock::time_point{}) {
+        return 1.0;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - page_transition_start_).count();
+    return std::clamp(static_cast<double>(elapsed) / static_cast<double>(kPageTransitionMs), 0.0, 1.0);
+}
+
+double MainWindow::toggle_visual_position(ToggleId id, bool enabled) const {
+    const double final_position = enabled ? 1.0 : 0.0;
+    if (id == ToggleId::None || id != transition_toggle_ || toggle_transition_start_ == std::chrono::steady_clock::time_point{}) {
+        return final_position;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - toggle_transition_start_).count();
+    const double progress = std::clamp(static_cast<double>(elapsed) / static_cast<double>(kToggleTransitionMs), 0.0, 1.0);
+    if (progress >= 1.0) {
+        return final_position;
+    }
+    const double start = transition_toggle_from_ ? 1.0 : 0.0;
+    const double end = transition_toggle_to_ ? 1.0 : 0.0;
+    return start + ((end - start) * ease_out(progress));
+}
+
+void MainWindow::tick_animation() {
+    const bool page_active = page_transition_progress() < 1.0;
+    const bool toggle_active =
+        transition_toggle_ != ToggleId::None &&
+        toggle_transition_start_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - toggle_transition_start_).count() < kToggleTransitionMs;
+    if (!page_active) {
+        page_transition_start_ = {};
+    }
+    if (!toggle_active) {
+        transition_toggle_ = ToggleId::None;
+        toggle_transition_start_ = {};
+    }
+    if (page_active || toggle_active) {
+        request_repaint();
+        return;
+    }
+    KillTimer(hwnd_, kAnimationTimer);
+    request_repaint();
 }
 
 void MainWindow::rebuild_fonts() {

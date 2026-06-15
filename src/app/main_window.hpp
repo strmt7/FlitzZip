@@ -25,6 +25,14 @@ enum class Page {
     About,
 };
 
+enum class ToggleId {
+    None,
+    VerifyAfterWrite,
+    IntegrityHash,
+    DefenderScan,
+    GpuRequired,
+};
+
 struct UiState {
     Page page = Page::Queue;
     std::vector<std::filesystem::path> queued_paths;
@@ -32,6 +40,22 @@ struct UiState {
     std::string status = "Ready";
     std::string gpu_status;
     ProgressSnapshot progress;
+    std::filesystem::path destination_directory;
+    int selected_queue_index = -1;
+    int compression_profile_index = 0;
+    int memory_policy_index = 0;
+    int log_level_index = 0;
+    int log_retention_index = 0;
+    int history_operation_filter_index = 0;
+    int history_status_filter_index = 0;
+    bool open_destination_after_operation = false;
+    bool confirm_before_deleting = true;
+    bool show_operation_summary = true;
+    bool solid_archive = true;
+    bool store_timestamps = true;
+    bool delete_after_compression = false;
+    bool verify_metadata_before_extract = true;
+    bool open_destination_after_extract = false;
     bool prefer_suzip = true;
     bool gpu_required = true;
     bool overwrite = false;
@@ -58,6 +82,67 @@ public:
     int run(HINSTANCE instance, int show_command);
 
 private:
+    struct QueueLayout {
+        RECT area{};
+        RECT table{};
+        RECT destination{};
+        RECT profile{};
+        RECT start{};
+    };
+
+    struct CompressLayout {
+        RECT area{};
+        RECT archive_name{};
+        RECT destination{};
+        RECT format{};
+        RECT profile{};
+        RECT method{};
+        RECT block_size{};
+        RECT advanced{};
+        RECT solid_archive{};
+        RECT store_timestamps{};
+        RECT delete_after_compression{};
+        RECT verify{};
+        RECT security{};
+        RECT sha{};
+        RECT defender{};
+        RECT start{};
+    };
+
+    struct ExtractLayout {
+        RECT area{};
+        RECT archive{};
+        RECT destination{};
+        RECT path_mode{};
+        RECT overwrite_policy{};
+        RECT checks{};
+        RECT verify_metadata{};
+        RECT open_destination_after_extract{};
+        RECT sha{};
+        RECT defender{};
+        RECT start{};
+    };
+
+    struct PreferencesLayout {
+        RECT area{};
+        RECT general{};
+        RECT security{};
+        RECT performance{};
+        RECT logging{};
+        RECT restore_defaults{};
+        RECT apply{};
+        RECT sha{};
+        RECT defender{};
+        RECT gpu{};
+        RECT verify{};
+        RECT memory_policy{};
+        RECT log_level{};
+        RECT log_retention{};
+        RECT open_destination_after_operation{};
+        RECT confirm_before_deleting{};
+        RECT show_operation_summary{};
+    };
+
     // Purpose: Route Win32 messages from the static window procedure to the C++ instance.
     // Inputs: Standard Win32 `hwnd`, `message`, `wparam`, and `lparam` arguments.
     // Outputs: Returns the message result expected by Win32.
@@ -97,6 +182,26 @@ private:
     // Inputs: `dc` is the target device context and `rect` is the content rectangle in physical pixels.
     // Outputs: Dispatches to the active page renderer.
     void draw_content(HDC dc, const RECT& rect, const UiState& state);
+
+    // Purpose: Compute Queue page rectangles shared by rendering and hit testing.
+    // Inputs: `rect` is the content area in physical pixels.
+    // Outputs: Returns DPI-scaled Queue page control rectangles.
+    [[nodiscard]] QueueLayout queue_layout(const RECT& rect) const;
+
+    // Purpose: Compute Compress page rectangles shared by rendering and hit testing.
+    // Inputs: `rect` is the content area in physical pixels.
+    // Outputs: Returns DPI-scaled Compress page control rectangles.
+    [[nodiscard]] CompressLayout compress_layout(const RECT& rect) const;
+
+    // Purpose: Compute Extract page rectangles shared by rendering and hit testing.
+    // Inputs: `rect` is the content area in physical pixels.
+    // Outputs: Returns DPI-scaled Extract page control rectangles.
+    [[nodiscard]] ExtractLayout extract_layout(const RECT& rect) const;
+
+    // Purpose: Compute Preferences page rectangles shared by rendering and hit testing.
+    // Inputs: `rect` is the content area in physical pixels.
+    // Outputs: Returns DPI-scaled Preferences page control rectangles.
+    [[nodiscard]] PreferencesLayout preferences_layout(const RECT& rect) const;
 
     // Purpose: Draw the queue page with command table, destination, profile, and progress controls.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
@@ -146,7 +251,7 @@ private:
     // Purpose: Draw a DPI-scaled opt-in settings toggle row.
     // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked styling.
     // Outputs: Renders the toggle and label into `dc`.
-    void draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled);
+    void draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id);
 
     // Purpose: Draw a DPI-scaled checkbox row.
     // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked styling.
@@ -158,7 +263,17 @@ private:
     // Outputs: Renders label and bordered field with ellipsized value.
     void draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select);
 
-    // Purpose: Handle clicks inside the settings/security content area.
+    // Purpose: Draw the active page transition affordance.
+    // Inputs: `dc` is the target and `rect` is the content area.
+    // Outputs: Renders a short accent progress line while a tab transition is active.
+    void draw_tab_transition(HDC dc, const RECT& rect);
+
+    // Purpose: Return the current content rectangle used by renderers and hit tests.
+    // Inputs: None; reads the HWND client rectangle and DPI-scaled chrome sizes.
+    // Outputs: Returns the content area in client physical pixels.
+    [[nodiscard]] RECT content_rect() const;
+
+    // Purpose: Handle clicks inside the content area.
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
     // Outputs: Returns true when a setting was changed and a repaint was queued.
     bool handle_content_click(int x, int y);
@@ -188,6 +303,21 @@ private:
     // Outputs: Empties the session history and queues a repaint.
     void clear_history();
 
+    // Purpose: Open the Windows folder picker for destination selection.
+    // Inputs: None; user selection comes from the shell dialog or smoke-test environment override.
+    // Outputs: Updates the destination directory and queues a repaint when selected.
+    void choose_destination();
+
+    // Purpose: Advance the visible compression profile selection.
+    // Inputs: None; reads and mutates UI profile state.
+    // Outputs: Queues a repaint with the next profile.
+    void cycle_compression_profile();
+
+    // Purpose: Restore safe default visible preferences.
+    // Inputs: None.
+    // Outputs: Resets opt-in settings, destination, profile, and selection state.
+    void restore_defaults();
+
     // Purpose: Start a background SuperZip compression job from queued paths.
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
@@ -212,6 +342,31 @@ private:
     // Inputs: None.
     // Outputs: Mutates GPU status state using `query_gpu_info`.
     void refresh_gpu_status();
+
+    // Purpose: Start a bounded non-blocking page transition animation.
+    // Inputs: `from` and `to` identify the tab change.
+    // Outputs: Arms the animation timer and queues repaint frames.
+    void start_page_transition(Page from, Page to);
+
+    // Purpose: Start a bounded non-blocking toggle animation.
+    // Inputs: `id` identifies the toggle and `from`/`to` are logical states.
+    // Outputs: Arms the animation timer and queues repaint frames.
+    void start_toggle_animation(ToggleId id, bool from, bool to);
+
+    // Purpose: Return normalized active page-transition progress.
+    // Inputs: None; reads the steady animation clock.
+    // Outputs: Returns 1.0 when no page transition is active.
+    [[nodiscard]] double page_transition_progress() const;
+
+    // Purpose: Return a toggle's visual knob position.
+    // Inputs: `id` identifies the toggle and `enabled` is the final logical state.
+    // Outputs: Returns a normalized knob position from 0.0 to 1.0.
+    [[nodiscard]] double toggle_visual_position(ToggleId id, bool enabled) const;
+
+    // Purpose: Advance active UI animations.
+    // Inputs: None.
+    // Outputs: Queues another repaint while animation is active or stops the timer.
+    void tick_animation();
 
     // Purpose: Recreate native fonts at the current monitor DPI.
     // Inputs: None; reads `dpi_`.
@@ -240,6 +395,13 @@ private:
     std::thread worker_;
     std::atomic_bool worker_running_ = false;
     std::atomic_bool repaint_queued_ = false;
+    Page transition_from_page_ = Page::Queue;
+    Page transition_to_page_ = Page::Queue;
+    std::chrono::steady_clock::time_point page_transition_start_{};
+    std::chrono::steady_clock::time_point toggle_transition_start_{};
+    ToggleId transition_toggle_ = ToggleId::None;
+    bool transition_toggle_from_ = false;
+    bool transition_toggle_to_ = false;
 };
 
 }  // namespace superzip::app

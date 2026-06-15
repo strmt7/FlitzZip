@@ -141,6 +141,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
+- Installer UI must offer an explicit `Create Desktop shortcut` choice. Keep
+  the option visible to the user instead of silently creating or suppressing the
+  shortcut.
 - Do not redistribute AMD's HIP runtime DLL from a developer SDK. AMD documents that runtime as supplied by the AMD GPU driver; SuperZip delay-loads it and reports missing prerequisites through `dependency-check`.
 - Keep event-specific checks in event-specific workflows. Do not add jobs that are expected to show as skipped in normal push CI.
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
@@ -152,17 +155,41 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 
 - Maintain `PerMonitorV2` DPI behavior in both manifest and startup code.
 - All layout geometry must pass through DPI scaling or a DPI-aware layout helper.
+- Keep the release GUI fixed-size and non-resizable until resizing is
+  deliberately re-enabled. Do not ship a resizable window until every page has a
+  responsive layout pass, high-DPI screenshot coverage, and click-hit regression
+  coverage at small, default, 4K, and high-refresh display settings.
 - Rendering must be double-buffered or otherwise flicker-free.
 - Progress repaint requests must be coalesced so fast jobs or 200 Hz displays do not flood the message queue.
-- Text must use native DPI fonts and avoid bitmap scaling. Do not render low-resolution assets and stretch them.
+- Tab transitions and toggle changes may use short non-blocking animations, but
+  they must run on bounded timers, never block archive work, never grow memory
+  usage, and remain visually stable when repaint cadence exceeds 200 Hz.
+- Text must use native DPI fonts and avoid bitmap scaling. Do not render
+  low-resolution assets and stretch them.
+- Icons must be crisp DPI-aware vector drawing or multi-resolution resources.
+  The application icon must use the same SuperZip stacked-logo mark as the
+  in-app brand mark, and navigation icons must have consistent optical size,
+  stroke weight, and alignment.
+- Visible controls must share drawing and hit-test geometry. After drag/drop,
+  Queue, Compress, Extract, Security, History, GPU, Preferences, and About page
+  controls must remain clickable; fix the shared geometry instead of adding
+  page-specific click offsets that can drift from rendering.
+- Dropdown arrows must be vertically centered in their value boxes and use one
+  consistent shape and inset throughout the app.
+- Toggle rows must rely on the switch state itself. Do not add redundant
+  `Enabled` or `Disabled` text labels next to settings toggles.
 - Check all pages, not only the main queue page, when making visual changes.
 - Treat `resources/design/superzip-ui-iteration-4.png` as the current visual
   acceptance reference. Do not simplify the compact enterprise shell, command
   bar, icon rail, page-specific panels, bottom GPU status strip, or explicit
   settings/security pages.
-- After any GUI rendering change, run `tools/gui_smoke.ps1 -Configuration
-  Release` and inspect the generated screenshots for every page before calling
-  the UI done.
+- After any GUI rendering or interaction change, run `tools/gui_smoke.ps1
+  -Configuration Release`. The smoke must open every tab, click every visible
+  button, toggle, dropdown/select field, and main action path at least once,
+  exercise Add files, Add folder, Clear, drag/drop, destination selection,
+  Queue/Compress/Extract/Security/GPU/History/Settings actions, and close
+  without leaving modal dialogs or windows open. Inspect the generated
+  screenshots for every page before calling the UI done.
 
 ## Git Workflow
 
@@ -173,6 +200,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - After pushing, verify the remote URL does not contain credentials.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
   and run install/uninstall smoke tests before publishing.
+- `0.1.0` is the first beta release. Later GitHub releases should advance
+  SemVer, for example `0.1.1`, and their release notes must list the actual
+  fixes, created assets, validation work, and known limitations.
 
 ## Agent Workflow
 

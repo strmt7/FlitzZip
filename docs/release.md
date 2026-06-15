@@ -15,6 +15,11 @@ The MSI defaults to the release deployment scope: per-machine install under
 requires elevation when the installing user does not already have administrator
 rights.
 
+The MSI exposes `Create Desktop shortcut` as an optional installer feature. Do
+not use CPack's unconditional `CPACK_CREATE_DESKTOP_LINKS`; the desktop shortcut
+must be an MSI-owned component selected through the installer UI so uninstall can
+remove it cleanly.
+
 For local coding and non-admin installer tests only, agents may build an
 explicit per-user MSI with `tools\build.ps1 -MsiInstallScope perUser`, then run
 `tools\package.ps1 -CreateMsi`. Per-user MSI artifacts are development/test
@@ -49,6 +54,9 @@ download paths to the repository.
 
 - `release_version`: SemVer product version without a `v` prefix, for example
   `0.1.0`. Leave it empty to use the version declared in `CMakeLists.txt`.
+  `0.1.0` is the first beta release; subsequent GitHub releases should advance
+  SemVer normally, for example `0.1.1`, unless a maintainer explicitly requests
+  replacing an existing release.
 - `replace_existing`: deletes the existing release/tag before publishing when
   set to `true`.
 - `release_track`: `beta` publishes a prerelease; `stable` publishes a normal
@@ -68,6 +76,10 @@ The workflow performs:
 - MSI creation and silent install/uninstall smoke tests under the Program Files
   release install path when requested.
 - GitHub release creation with attached SHA-256 files.
+
+Release notes must list the actual fixes, created assets, validation work, and
+known limitations for that release. Do not publish vague notes that hide what
+changed.
 
 ## Local MSI Tooling
 

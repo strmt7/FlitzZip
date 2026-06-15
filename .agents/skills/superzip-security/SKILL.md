@@ -32,3 +32,15 @@ Add or update tests for:
 
 Do not store credentials, PATs, org IDs, scan targets, or Defender results in
 tracked files.
+
+Workflow and release hardening rules:
+
+- Do not add GitHub Actions `environment:` blocks, `deployment:` keys, or any
+  workflow mechanism that creates deployment records.
+- Do not hide scanner findings with broad exclusions, placeholder tests, or
+  event-specific jobs that normally show as skipped. A narrow generated-output
+  skip is acceptable only when the skipped path is documented and not product
+  source.
+- Keep release artifacts HIP-enabled, Windows x64-only, and equivalent between
+  MSI and portable ZIP. CPU-only artifacts are validation-only and must not be
+  published.

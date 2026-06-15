@@ -103,6 +103,24 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_ROOT_FOLDER_ID\s+"ProgramFiles<64>Folder"\)') {
         throw "CMakeLists.txt must set CPACK_WIX_ROOT_FOLDER_ID to ProgramFiles<64>Folder for release MSIs."
     }
+    if ($cmakeLists -match 'CPACK_CREATE_DESKTOP_LINKS') {
+        throw "Desktop shortcuts must be an optional MSI feature, not unconditional CPACK_CREATE_DESKTOP_LINKS."
+    }
+    if ($cmakeLists -notmatch 'set\(CPACK_WIX_UI_REF\s+"WixUI_FeatureTree"\)') {
+        throw "CMakeLists.txt must use the WiX feature tree so Create Desktop shortcut is user-selectable."
+    }
+    if ($cmakeLists -notmatch 'superzip_desktop_shortcut\.wxs' -or $cmakeLists -notmatch 'superzip_wix_patch\.xml') {
+        throw "CMakeLists.txt must include the optional desktop shortcut WiX source and patch files."
+    }
+
+    $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_desktop_shortcut.wxs") -Raw
+    if ($desktopShortcut -notmatch 'CM_SHORTCUT_DESKTOP_OPTIONAL' -or $desktopShortcut -notmatch 'DesktopFolder') {
+        throw "Optional desktop shortcut WiX source must define the MSI-owned DesktopFolder shortcut component."
+    }
+    $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
+    if ($desktopPatch -notmatch 'Create Desktop shortcut' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"') {
+        throw "WiX patch must expose the Create Desktop shortcut feature and reference its component."
+    }
 
     $buildScript = Get-Content -LiteralPath (Join-Path $repo "tools\build.ps1") -Raw
     if ($buildScript -notmatch '\[string\]\$MsiInstallScope\s*=\s*"perMachine"') {

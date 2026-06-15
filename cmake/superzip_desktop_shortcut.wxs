@@ -1,0 +1,10 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="CM_SHORTCUT_DESKTOP_OPTIONAL" Guid="*">
+        <Shortcut Id="CM_DSP_OPTIONAL_bin.SuperZip.exe" Name="SuperZip" Target="[#CM_FP_bin.SuperZip.exe]" WorkingDirectory="CM_DP_bin"/>
+        <RegistryValue Root="HKCU" Key="Software\strmt7\SuperZip" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+    </StandardDirectory>
+  </Fragment>
+</Wix>
