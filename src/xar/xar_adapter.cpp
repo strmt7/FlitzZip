@@ -31,6 +31,9 @@ constexpr std::size_t kXarBufferBytes = 64U * 1024U;
 constexpr std::uint64_t kMaxXarTocBytes = kMaxArchiveIndexBytes;
 constexpr std::uint64_t kMaxXarTotalFileBytes = kMaxPipelineMemoryBytes;
 
+static_assert(kMaxXarTocBytes <= static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()));
+static_assert(kMaxXarTocBytes <= static_cast<std::uint64_t>(std::numeric_limits<mz_ulong>::max()));
+
 enum class XarEncoding {
     Stored,
     Zlib,
@@ -151,9 +154,11 @@ std::string decode_xml_text(std::string_view text) {
     text = trim_ascii(text);
     std::string output;
     output.reserve(text.size());
-    for (std::size_t index = 0; index < text.size(); ++index) {
+    std::size_t index = 0;
+    while (index < text.size()) {
         if (text[index] != '&') {
             output.push_back(text[index]);
+            ++index;
             continue;
         }
         const auto semicolon = text.find(';', index + 1U);
@@ -174,7 +179,7 @@ std::string decode_xml_text(std::string_view text) {
         } else {
             append_utf8(output, parse_xml_numeric_entity(entity));
         }
-        index = semicolon;
+        index = semicolon + 1U;
     }
     return output;
 }
@@ -270,7 +275,7 @@ std::vector<unsigned char> read_range(
     std::uint64_t offset,
     std::uint64_t size,
     const char* context) {
-    if (size > kMaxXarTocBytes || size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    if (size > kMaxXarTocBytes) {
         throw ArchiveError(std::string("XAR ") + context + " exceeds resource limits");
     }
     input.clear();
@@ -295,13 +300,8 @@ std::vector<unsigned char> inflate_zlib_buffer(
     std::span<const unsigned char> compressed,
     std::uint64_t expected_size,
     const char* context) {
-    if (expected_size == 0U || expected_size > kMaxXarTocBytes ||
-        expected_size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    if (expected_size == 0U || expected_size > kMaxXarTocBytes) {
         throw ArchiveError(std::string("XAR ") + context + " uncompressed size exceeds resource limits");
-    }
-    if (compressed.size() > static_cast<std::size_t>(std::numeric_limits<mz_ulong>::max()) ||
-        expected_size > static_cast<std::uint64_t>(std::numeric_limits<mz_ulong>::max())) {
-        throw ArchiveError(std::string("XAR ") + context + " exceeds miniz size limits");
     }
     std::vector<unsigned char> output(static_cast<std::size_t>(expected_size));
     auto output_size = static_cast<mz_ulong>(output.size());

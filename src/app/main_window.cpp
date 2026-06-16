@@ -273,6 +273,74 @@ std::filesystem::path extraction_output_path_for(const UiState& state) {
     return safe_current_path() / L"SuperZip-extracted";
 }
 
+// Purpose: Dispatch one detected archive to the matching extraction adapter.
+// Inputs: `archive_format` is the already detected format, `archive` is the input file, `output` is the extraction root, `gpu_required` controls only SUZIP, `overwrite` controls existing targets, and `progress_callback` receives progress updates.
+// Outputs: Returns extraction statistics, or throws when the format is unknown, unsupported, unsafe, or corrupt.
+OperationStats extract_detected_archive(
+    ArchiveFormat archive_format,
+    const std::filesystem::path& archive,
+    const std::filesystem::path& output,
+    bool gpu_required,
+    bool overwrite,
+    const ProgressCallback& progress_callback) {
+    if (archive_format == ArchiveFormat::SuperZip) {
+        ExtractOptions options;
+        options.gpu_required = gpu_required;
+        options.overwrite = overwrite;
+        return extract_suzip(archive, output, options, progress_callback);
+    }
+
+    // Compatibility adapters never consume SUZIP GPU tuning; they share the
+    // same overwrite and progress contract at the GUI boundary.
+    switch (archive_format) {
+    case ArchiveFormat::Zip:
+        return extract_zip(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::SevenZip:
+        return extract_7z(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Tar:
+        return extract_tar(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::TarGzip:
+        return extract_tar_gzip(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::TarBzip2:
+        return extract_tar_bzip2(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::TarXz:
+        return extract_tar_xz(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::TarZstd:
+        return extract_tar_zstd(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Gzip:
+        return extract_gzip_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Bzip2:
+        return extract_bzip2_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Xz:
+        return extract_xz_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Zstd:
+        return extract_zstd_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::UnixCompress:
+        return extract_unix_compress_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Cab:
+        return extract_cab(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Iso:
+        return extract_iso(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Cpio:
+        return extract_cpio(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Ar:
+    case ArchiveFormat::Deb:
+        return extract_ar(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Rpm:
+        return extract_rpm(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Lha:
+        return extract_lha(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Xar:
+        return extract_xar(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Unknown:
+        throw ArchiveError("unable to detect archive format: " + archive.string());
+    default:
+        throw ArchiveError(
+            std::string("archive format recognized but not implemented for extraction: ") +
+            archive_format_info(archive_format).key);
+    }
+}
+
 // Purpose: Return the user-facing compression-level label.
 // Inputs: `index` is the mutable compression-level selection in UI state.
 // Outputs: Returns a stable label that maps to a zlib/miniz compression level.
@@ -2684,57 +2752,7 @@ void MainWindow::start_extract() {
             request_repaint();
         };
         const auto archive_format = detect_archive_format(archive);
-        OperationStats stats;
-        if (archive_format == ArchiveFormat::SuperZip) {
-            ExtractOptions options;
-            options.gpu_required = gpu_required;
-            options.overwrite = overwrite;
-            stats = extract_suzip(archive, output, options, progress_callback);
-        } else if (archive_format == ArchiveFormat::Zip) {
-            stats = extract_zip(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::SevenZip) {
-            stats = extract_7z(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Tar) {
-            stats = extract_tar(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarGzip) {
-            stats = extract_tar_gzip(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarBzip2) {
-            stats = extract_tar_bzip2(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarXz) {
-            stats = extract_tar_xz(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarZstd) {
-            stats = extract_tar_zstd(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Gzip) {
-            stats = extract_gzip_file(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Bzip2) {
-            stats = extract_bzip2_file(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Xz) {
-            stats = extract_xz_file(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Zstd) {
-            stats = extract_zstd_file(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::UnixCompress) {
-            stats = extract_unix_compress_file(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Cab) {
-            stats = extract_cab(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Iso) {
-            stats = extract_iso(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Cpio) {
-            stats = extract_cpio(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Ar || archive_format == ArchiveFormat::Deb) {
-            stats = extract_ar(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Rpm) {
-            stats = extract_rpm(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Lha) {
-            stats = extract_lha(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Xar) {
-            stats = extract_xar(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Unknown) {
-            throw ArchiveError("unable to detect archive format: " + archive.string());
-        } else {
-            throw ArchiveError(
-                std::string("archive format recognized but not implemented for extraction: ") +
-                archive_format_info(archive_format).key);
-        }
+        const auto stats = extract_detected_archive(archive_format, archive, output, gpu_required, overwrite, progress_callback);
         std::ostringstream line;
         line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in " << stats.seconds << "s";
         append_history(line.str());
