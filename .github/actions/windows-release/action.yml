@@ -393,6 +393,18 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $rpmExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable RPM smoke extraction did not preserve CPIO payload."
         }
+        $cabExtract = Join-Path $root "extract-cab"
+        New-Item -ItemType Directory -Force -Path $cabExtract | Out-Null
+        $cabArchive = Join-Path $root "archive.cab"
+        & .\tools\new_cab_smoke_fixture.ps1 -OutputPath $cabArchive -EntryName "input\alpha.txt" -Payload "SuperZip release smoke $env:RELEASE_TAG"
+        $cabIdentity = & $cli identify $cabArchive
+        if ($cabIdentity -notmatch 'format=cab') {
+            throw "Portable CAB smoke did not identify the CAB archive: $cabIdentity"
+        }
+        & $cli extract --format cab --output $cabExtract $cabArchive
+        if ((Get-Content -LiteralPath (Join-Path $cabExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable CAB smoke extraction did not preserve payload."
+        }
         $arExtract = Join-Path $root "extract-ar"
         New-Item -ItemType Directory -Force -Path $arExtract | Out-Null
         & $cli compress --format ar --output (Join-Path $root "archive.ar") $input

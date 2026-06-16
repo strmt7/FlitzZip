@@ -20,17 +20,19 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/rpm
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
 printf 'safe/nested/file.txt' > /out/corpus/path_safety/safe-relative
 printf 'CD001' > /out/corpus/iso/tiny-cd001
+printf 'MSCF' > /out/corpus/cab/tiny-mscf
 printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
 if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_archive_index_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/archive_index
   /out/superzip_path_safety_fuzzer -runs=$fuzzRuns -max_len=4096 /out/corpus/path_safety
   /out/superzip_iso_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/iso
+  /out/superzip_cab_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/cab
   /out/superzip_rpm_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/rpm
 fi
 "@

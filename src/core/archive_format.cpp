@@ -29,7 +29,7 @@ constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, true, false, true},
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst,.zstd", true, true, false, true},
-    {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, false, false, false},
+    {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},

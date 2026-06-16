@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -76,6 +76,7 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 
 - `src/ar/`: Unix AR and AR-based Debian outer-container compatibility adapter for regular-file members with two-pass path validation and verified file publication.
 - `src/bzip2/`: Bzip2 compatibility streams and `.bz2` single-file adapter using vendored libbzip2 1.0.8.
+- `src/cab/`: Read-only CAB adapter with native metadata validation and Windows FDI streaming decompression.
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
 - `src/cpio/`: CPIO compatibility adapter for SVR4 new ASCII archives with two-pass path validation and verified file publication.
 - `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
@@ -202,6 +203,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   execute scripts, trust package names as extraction paths, or support payload
   formats other than CPIO without a dedicated requirement and tests. Keep
   compressed and decoded temporary payload spooling explicitly capped.
+- CAB compatibility is extraction-only and uses the native CAB metadata scanner
+  plus Windows FDI for streaming decompression. Reject spanned cabinets, validate
+  names and sizes before FDI output is accepted, and publish only through the
+  verified temporary-file path.
 - Unix Compress `.Z` compatibility is single-file only. Keep the LZW dictionary
   bounded by the stream-declared maxbits, validate magic/header flags, and
   publish extraction output only through the verified temporary-file path.

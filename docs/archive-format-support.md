@@ -28,6 +28,7 @@ Primary and project-owned sources reviewed:
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - Zstandard/libzstd: https://github.com/facebook/zstd
 - Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
+- Microsoft Cabinet SDK/FDI API: https://learn.microsoft.com/en-us/windows/win32/devnotes/fdi
 - RPM package format v4: https://rpm-software-management.github.io/rpm/manual/format_v4.html
 - NanaZip: https://github.com/M2Team/NanaZip
 - GNOME File Roller: https://gitlab.gnome.org/GNOME/file-roller
@@ -100,11 +101,12 @@ already real archive/package formats in SuperZip's matrix.
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.iso` | No | Yes | Extract-only compatibility format | native basic ISO 9660 adapter |
 | `.rpm` | No | Yes | Extract-only compatibility format | native RPM package adapter over CPIO payloads |
+| `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.cab`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar` | No | No | Recognized only | pending format-specific security review |
+| `.arj`, `.lha`, `.lzh`, `.wim`, `.xar` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -180,6 +182,12 @@ compression through existing bounded stream adapters. It never installs
 packages, executes scripts, or trusts package metadata as an extraction path;
 the decoded CPIO payload is passed through the native CPIO adapter before files
 are published.
+
+CAB support is intentionally extract-only. SuperZip parses the cabinet header,
+folder table, file records, and declared data-block extents before invoking the
+Windows Cabinet FDI engine. Spanned cabinet sets are rejected, every CAB member
+path is normalized and validated before output, and FDI may only publish files
+whose names and sizes match the prevalidated metadata table.
 
 ## ZIP-Container Alias Policy
 
@@ -299,6 +307,32 @@ flowchart TD
     E --> F["Use CPIO scanner and path validation"]
     F --> G["Publish verified files"]
     D -->|"no"| H["Reject package"]
+```
+
+## CAB Security Contract
+
+The CAB path combines a SuperZip metadata scanner with Windows FDI streaming
+decompression:
+
+1. Validate the CAB magic, version, declared cabinet size, folder records, file
+   table, data-block extents, and resource limits before FDI is invoked.
+2. Reject previous/next-cabinet spanning flags, unsafe names, duplicate
+   normalized paths, file/child conflicts, and unbounded total output.
+3. Run a validation decompression pass to `NUL` so corrupt compressed data fails
+   before destination files are created.
+4. Run the extraction pass only for FDI callbacks whose normalized names and
+   sizes match the scanner-approved table.
+5. Publish each output through the standard private temporary file and atomic
+   overwrite-safe commit path.
+
+```mermaid
+flowchart TD
+    A["Open CAB archive"] --> B["Validate CAB metadata and paths"]
+    B --> C{"Spanned or unsafe?"}
+    C -->|"yes"| D["Reject archive"]
+    C -->|"no"| E["FDI validation pass to NUL"]
+    E --> F["FDI extraction pass with name/size lookup"]
+    F --> G["Publish verified files through temp path"]
 ```
 
 ## Unix Compress Security Contract
@@ -432,7 +466,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only 7z, CAB, and RAR after backend
-selection and licensing review. Write support for RAR is not planned because
-the common RAR creation tooling is not a permissive open format writer suitable
-for this repo.
+Preferred next increments are read-only 7z, RAR, and the remaining
+recognized-only legacy/container formats after backend selection and licensing
+review. Write support for RAR is not planned because the common RAR creation
+tooling is not a permissive open format writer suitable for this repo.

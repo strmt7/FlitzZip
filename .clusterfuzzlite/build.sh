@@ -33,6 +33,13 @@ COMMON_FLAGS=(
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+  fuzz/cab_header_fuzzer.cpp \
+  src/cab/cab_format.cpp \
+  src/core/path_safety.cpp \
+  -o "$OUT/superzip_cab_header_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/rpm_header_fuzzer.cpp \
   src/rpm/rpm_format.cpp \
   -o "$OUT/superzip_rpm_header_fuzzer" \
@@ -41,5 +48,6 @@ COMMON_FLAGS=(
 cp fuzz/superzip.dict "$OUT/superzip_archive_index_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_path_safety_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_iso_fuzzer.dict"
+cp fuzz/superzip.dict "$OUT/superzip_cab_header_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_rpm_header_fuzzer.dict"
 cp fuzz/*.options "$OUT/"

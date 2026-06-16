@@ -111,6 +111,8 @@ add_library(superzip_core STATIC
     src/ar/ar_adapter.cpp
     src/bzip2/bzip2_adapter.cpp
     src/bzip2/bzip2_stream.cpp
+    src/cab/cab_adapter.cpp
+    src/cab/cab_format.cpp
     src/core/archive.cpp
     src/core/archive_format.cpp
     src/core/archive_blocks.cpp
@@ -249,7 +251,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
 endif()
 
 if(WIN32)
-    target_link_libraries(superzip_core PUBLIC bcrypt)
+    target_link_libraries(superzip_core PUBLIC bcrypt cabinet)
 endif()
 
 if(SUPERZIP_BUILD_TESTS)
@@ -261,6 +263,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_archive_format.cpp
         tests/cpp/test_ar_compat.cpp
         tests/cpp/test_bzip2_compat.cpp
+        tests/cpp/test_cab_compat.cpp
         tests/cpp/test_cpio_compat.cpp
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_iso_compat.cpp
@@ -305,6 +308,14 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_include_directories(superzip_iso_fuzzer PRIVATE src)
     target_compile_definitions(superzip_iso_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_cab_header_fuzzer
+        fuzz/cab_header_fuzzer.cpp
+        src/cab/cab_format.cpp
+        src/core/path_safety.cpp
+    )
+    target_include_directories(superzip_cab_header_fuzzer PRIVATE src)
+    target_compile_definitions(superzip_cab_header_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     add_executable(superzip_rpm_header_fuzzer
         fuzz/rpm_header_fuzzer.cpp
         src/rpm/rpm_format.cpp
@@ -318,10 +329,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
