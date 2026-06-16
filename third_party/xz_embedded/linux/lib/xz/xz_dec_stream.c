@@ -428,6 +428,40 @@ static bool check_skip(struct xz_dec *s, struct xz_buf *b)
 }
 #endif
 
+static enum xz_ret dec_block_check(struct xz_dec *s, struct xz_buf *b)
+{
+	enum xz_ret ret;
+
+	if (s->check_type == XZ_CHECK_CRC32) {
+		ret = crc_validate(s, b, 32);
+		if (ret != XZ_STREAM_END)
+			return ret;
+	} else if (IS_CRC64(s->check_type)) {
+		ret = crc_validate(s, b, 64);
+		if (ret != XZ_STREAM_END)
+			return ret;
+	}
+#ifdef XZ_USE_SHA256
+	else if (s->check_type == XZ_CHECK_SHA256) {
+		s->temp.size = 32;
+		if (!fill_temp(s, b))
+			return XZ_OK;
+
+		if (!xz_sha256_validate(s->temp.buf, &s->sha256))
+			return XZ_DATA_ERROR;
+
+		s->pos = 0;
+	}
+#endif
+#ifdef XZ_DEC_ANY_CHECK
+	else if (!check_skip(s, b)) {
+		return XZ_OK;
+	}
+#endif
+
+	return XZ_STREAM_END;
+}
+
 /* Decode the Stream Header field (the first 12 bytes of the .xz Stream). */
 static enum xz_ret dec_stream_header(struct xz_dec *s)
 {
@@ -706,34 +740,9 @@ static enum xz_ret dec_main(struct xz_dec *s, struct xz_buf *b)
 			fallthrough;
 
 		case SEQ_BLOCK_CHECK:
-			if (s->check_type == XZ_CHECK_CRC32) {
-				ret = crc_validate(s, b, 32);
-				if (ret != XZ_STREAM_END)
-					return ret;
-			}
-			else if (IS_CRC64(s->check_type)) {
-				ret = crc_validate(s, b, 64);
-				if (ret != XZ_STREAM_END)
-					return ret;
-			}
-#ifdef XZ_USE_SHA256
-			else if (s->check_type == XZ_CHECK_SHA256) {
-				s->temp.size = 32;
-				if (!fill_temp(s, b))
-					return XZ_OK;
-
-				if (!xz_sha256_validate(s->temp.buf,
-							&s->sha256))
-					return XZ_DATA_ERROR;
-
-				s->pos = 0;
-			}
-#endif
-#ifdef XZ_DEC_ANY_CHECK
-			else if (!check_skip(s, b)) {
-				return XZ_OK;
-			}
-#endif
+			ret = dec_block_check(s, b);
+			if (ret != XZ_STREAM_END)
+				return ret;
 
 			s->sequence = SEQ_BLOCK_START;
 			break;

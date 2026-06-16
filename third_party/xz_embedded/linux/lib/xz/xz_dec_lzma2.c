@@ -956,6 +956,76 @@ static bool lzma2_lzma(struct xz_dec_lzma2 *s, struct xz_buf *b)
 	return true;
 }
 
+static enum xz_ret lzma2_decode_control(struct xz_dec_lzma2 *s,
+					struct xz_buf *b)
+{
+	uint32_t tmp = b->in[b->in_pos++];
+
+	if (tmp == 0x00)
+		return XZ_STREAM_END;
+
+	if (tmp >= 0xE0 || tmp == 0x01) {
+		s->lzma2.need_props = true;
+		s->lzma2.need_dict_reset = false;
+		dict_reset(&s->dict, b);
+	} else if (s->lzma2.need_dict_reset) {
+		return XZ_DATA_ERROR;
+	}
+
+	if (tmp >= 0x80) {
+		s->lzma2.uncompressed = (tmp & 0x1F) << 16;
+		s->lzma2.sequence = SEQ_UNCOMPRESSED_1;
+
+		if (tmp >= 0xC0) {
+			s->lzma2.need_props = false;
+			s->lzma2.next_sequence = SEQ_PROPERTIES;
+		} else if (s->lzma2.need_props) {
+			return XZ_DATA_ERROR;
+		} else {
+			s->lzma2.next_sequence = SEQ_LZMA_PREPARE;
+			if (tmp >= 0xA0)
+				lzma_reset(s);
+		}
+	} else {
+		if (tmp > 0x02)
+			return XZ_DATA_ERROR;
+
+		s->lzma2.sequence = SEQ_COMPRESSED_0;
+		s->lzma2.next_sequence = SEQ_COPY;
+	}
+
+	return XZ_OK;
+}
+
+static enum xz_ret lzma2_decode_lzma_run(struct xz_dec_lzma2 *s,
+					 struct xz_buf *b, bool *needs_more)
+{
+	*needs_more = false;
+
+	dict_limit(&s->dict, min_t(size_t,
+			b->out_size - b->out_pos,
+			s->lzma2.uncompressed));
+	if (!lzma2_lzma(s, b))
+		return XZ_DATA_ERROR;
+
+	s->lzma2.uncompressed -= dict_flush(&s->dict, b);
+
+	if (s->lzma2.uncompressed == 0) {
+		if (s->lzma2.compressed > 0 || s->lzma.len > 0
+				|| !rc_is_finished(&s->rc))
+			return XZ_DATA_ERROR;
+
+		rc_reset(&s->rc);
+		s->lzma2.sequence = SEQ_CONTROL;
+	} else if (b->out_pos == b->out_size
+			|| (b->in_pos == b->in_size
+				&& s->temp.size < s->lzma2.compressed)) {
+		*needs_more = true;
+	}
+
+	return XZ_OK;
+}
+
 /*
  * Take care of the LZMA2 control layer, and forward the job of actual LZMA
  * decoding or copying of uncompressed chunks to other functions.
@@ -963,86 +1033,15 @@ static bool lzma2_lzma(struct xz_dec_lzma2 *s, struct xz_buf *b)
 XZ_EXTERN enum xz_ret xz_dec_lzma2_run(struct xz_dec_lzma2 *s,
 				       struct xz_buf *b)
 {
-	uint32_t tmp;
+	enum xz_ret ret;
+	bool needs_more;
 
 	while (b->in_pos < b->in_size || s->lzma2.sequence == SEQ_LZMA_RUN) {
 		switch (s->lzma2.sequence) {
 		case SEQ_CONTROL:
-			/*
-			 * LZMA2 control byte
-			 *
-			 * Exact values:
-			 *   0x00   End marker
-			 *   0x01   Dictionary reset followed by
-			 *          an uncompressed chunk
-			 *   0x02   Uncompressed chunk (no dictionary reset)
-			 *
-			 * Highest three bits (s->control & 0xE0):
-			 *   0xE0   Dictionary reset, new properties and state
-			 *          reset, followed by LZMA compressed chunk
-			 *   0xC0   New properties and state reset, followed
-			 *          by LZMA compressed chunk (no dictionary
-			 *          reset)
-			 *   0xA0   State reset using old properties,
-			 *          followed by LZMA compressed chunk (no
-			 *          dictionary reset)
-			 *   0x80   LZMA chunk (no dictionary or state reset)
-			 *
-			 * For LZMA compressed chunks, the lowest five bits
-			 * (s->control & 1F) are the highest bits of the
-			 * uncompressed size (bits 16-20).
-			 *
-			 * A new LZMA2 stream must begin with a dictionary
-			 * reset. The first LZMA chunk must set new
-			 * properties and reset the LZMA state.
-			 *
-			 * Values that don't match anything described above
-			 * are invalid and we return XZ_DATA_ERROR.
-			 */
-			tmp = b->in[b->in_pos++];
-
-			if (tmp == 0x00)
-				return XZ_STREAM_END;
-
-			if (tmp >= 0xE0 || tmp == 0x01) {
-				s->lzma2.need_props = true;
-				s->lzma2.need_dict_reset = false;
-				dict_reset(&s->dict, b);
-			} else if (s->lzma2.need_dict_reset) {
-				return XZ_DATA_ERROR;
-			}
-
-			if (tmp >= 0x80) {
-				s->lzma2.uncompressed = (tmp & 0x1F) << 16;
-				s->lzma2.sequence = SEQ_UNCOMPRESSED_1;
-
-				if (tmp >= 0xC0) {
-					/*
-					 * When there are new properties,
-					 * state reset is done at
-					 * SEQ_PROPERTIES.
-					 */
-					s->lzma2.need_props = false;
-					s->lzma2.next_sequence
-							= SEQ_PROPERTIES;
-
-				} else if (s->lzma2.need_props) {
-					return XZ_DATA_ERROR;
-
-				} else {
-					s->lzma2.next_sequence
-							= SEQ_LZMA_PREPARE;
-					if (tmp >= 0xA0)
-						lzma_reset(s);
-				}
-			} else {
-				if (tmp > 0x02)
-					return XZ_DATA_ERROR;
-
-				s->lzma2.sequence = SEQ_COMPRESSED_0;
-				s->lzma2.next_sequence = SEQ_COPY;
-			}
-
+			ret = lzma2_decode_control(s, b);
+			if (ret != XZ_OK)
+				return ret;
 			break;
 
 		case SEQ_UNCOMPRESSED_1:
@@ -1090,38 +1089,11 @@ XZ_EXTERN enum xz_ret xz_dec_lzma2_run(struct xz_dec_lzma2 *s,
 			fallthrough;
 
 		case SEQ_LZMA_RUN:
-			/*
-			 * Set dictionary limit to indicate how much we want
-			 * to be encoded at maximum. Decode new data into the
-			 * dictionary. Flush the new data from dictionary to
-			 * b->out. Check if we finished decoding this chunk.
-			 * In case the dictionary got full but we didn't fill
-			 * the output buffer yet, we may run this loop
-			 * multiple times without changing s->lzma2.sequence.
-			 */
-			dict_limit(&s->dict, min_t(size_t,
-					b->out_size - b->out_pos,
-					s->lzma2.uncompressed));
-			if (!lzma2_lzma(s, b))
-				return XZ_DATA_ERROR;
-
-			s->lzma2.uncompressed -= dict_flush(&s->dict, b);
-
-			if (s->lzma2.uncompressed == 0) {
-				if (s->lzma2.compressed > 0 || s->lzma.len > 0
-						|| !rc_is_finished(&s->rc))
-					return XZ_DATA_ERROR;
-
-				rc_reset(&s->rc);
-				s->lzma2.sequence = SEQ_CONTROL;
-
-			} else if (b->out_pos == b->out_size
-					|| (b->in_pos == b->in_size
-						&& s->temp.size
-						< s->lzma2.compressed)) {
+			ret = lzma2_decode_lzma_run(s, b, &needs_more);
+			if (ret != XZ_OK)
+				return ret;
+			if (needs_more)
 				return XZ_OK;
-			}
-
 			break;
 
 		case SEQ_COPY:
