@@ -32,6 +32,7 @@ enum class ArchiveFormat {
     Arj,
     Lha,
     Wim,
+    SplitWim,
     Xar,
     Deb,
     Rpm,

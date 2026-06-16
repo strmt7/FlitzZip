@@ -69,3 +69,9 @@ Rules:
   rejection, parent-directory rejection, and symbolic-link rejection. Keep the
   decoder in process through the vendored Lhasa 0.5.0 library and preserve the
   original upstream release archive/checksum under `third_party/upstream/lhasa/`.
+- WIM compatibility changes must exercise successful standalone WIM extraction,
+  overwrite refusal, corrupt payload rejection, app-local `libwim-15.dll`
+  loading, and documentation/runtime-manifest updates. Keep extraction
+  in-process through the bundled wimlib 1.14.5 DLL, preserve the original
+  upstream package/checksums under `third_party/upstream/wimlib/`, and do not
+  call `wimlib-imagex.exe`, DISM, PowerShell, Explorer, or host WIM tools.

@@ -126,6 +126,35 @@ patches documented in `third_party/lhasa/README.SUPERZIP.md`. The unmodified
 upstream source archive and checksum are stored under
 `third_party/upstream/lhasa/0.5.0/` for provenance.
 
+## wimlib 1.14.5
+
+SuperZip bundles the official wimlib release `1.14.5` Windows x64 runtime for
+extract-only standalone WIM compatibility.
+
+- Upstream: <https://wimlib.net/>
+- Release package: <https://wimlib.net/downloads/wimlib-1.14.5-windows-x86_64-bin.zip>
+- Win64 runtime package SHA-256: `2f446d6fa3866582175f1a22a7be198eeee0aec7aba5b4e04ad25c99eae2d265`
+- Extracted DLL SHA-256: `ba853ee1e3fc5f5798581f02e8e066ba07a0a2375f0bf444fe981431fd508495`
+- Active header SHA-256: `76ff273fb0c89fd2fd084f0467b1146afb3228db9372d4193432f13c2871f67e`
+- License: LGPLv3 for the library, preserved at
+  `third_party/wimlib/COPYING.LGPL.txt`; bundled libdivsufsort-lite notice
+  preserved at `third_party/wimlib/COPYING.libdivsufsort-lite.txt`
+
+SuperZip uses wimlib only through an app-local dynamically loaded
+`libwim-15.dll` and does not call `wimlib-imagex.exe`, DISM, PowerShell, shell
+handlers, or host-installed WIM utilities. CMake verifies the official runtime
+package, extracts only the runtime DLL into the build tree, verifies the DLL
+checksum, and copies the DLL beside each SuperZip executable. The adapter opens
+WIM files read-only, rejects split WIM sets, validates all paths and unsupported
+entry kinds before staging, extracts into a private temporary directory, then
+publishes approved regular files through SuperZip's verified temporary-file
+path.
+
+The active header under `third_party/wimlib/wimlib.h` carries a local
+scanner-neutral comment/member-name normalization for declarations SuperZip
+does not use as security primitives. The original upstream header remains
+unchanged inside the pinned upstream package recorded above.
+
 ## AMD HIP SDK
 
 SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment

@@ -18,6 +18,7 @@
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 #include "unix_compress/unix_compress_adapter.hpp"
+#include "wim/wim_adapter.hpp"
 #include "xar/xar_adapter.hpp"
 #include "xz/xz_adapter.hpp"
 #include "zstd/zstd_adapter.hpp"
@@ -330,6 +331,8 @@ OperationStats extract_detected_archive(
         return extract_rpm(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Lha:
         return extract_lha(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Wim:
+        return extract_wim(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Xar:
         return extract_xar(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Unknown:

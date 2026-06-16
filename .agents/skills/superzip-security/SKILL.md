@@ -55,6 +55,12 @@ Workflow and release hardening rules:
   vendored Lhasa 0.5.0 decoder. Keep SuperZip's two-pass path/payload
   validation around Lhasa and preserve the unmodified upstream archive under
   `third_party/upstream/lhasa/0.5.0/`.
+- WIM support must stay extraction-only for standalone WIMs, in-process, and
+  backed by the bundled app-local wimlib 1.14.5 DLL. Keep split WIMs rejected
+  until multipart handling is deliberately implemented, reject reparse points,
+  hard links, alternate data streams, device entries, encrypted/offline/virtual
+  files, and publish only rechecked staged regular files through SuperZip's
+  verified temporary-file path.
 - The only acceptable open code-scanning findings are Scorecard
   `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
   `CIIBestPracticesID`.

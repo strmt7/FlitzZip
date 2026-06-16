@@ -34,6 +34,9 @@ and the same pre-write path validation used by other extraction adapters.
 LHA/LZH `.lha` and `.lzh` archives are extracted with the vendored in-process
 Lhasa 0.5.0 decoder while SuperZip keeps ownership of path validation and
 verified output publication.
+Standalone Windows Imaging `.wim` archives are extracted through the bundled
+app-local wimlib 1.14.5 runtime after SuperZip validates all image paths,
+entry kinds, and decoded-size limits before destination writes.
 XAR `.xar` archives are extracted by a native read-only parser for the current
 safe subset: no TOC checksum mode, zlib-compressed TOCs, regular files,
 directories, and stored or zlib-compressed file payloads.
@@ -172,6 +175,7 @@ build/Release/superzip_cli.exe extract --format rpm --output restored package.rp
 build/Release/superzip_cli.exe extract --format cab --output restored package.cab
 build/Release/superzip_cli.exe extract --format 7z --output restored archive.7z
 build/Release/superzip_cli.exe extract --format lha --output restored archive.lzh
+build/Release/superzip_cli.exe extract --format wim --output restored image.wim
 build/Release/superzip_cli.exe extract --format xar --output restored archive.xar
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
@@ -185,7 +189,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, Unix Compress, CAB, 7z, LHA/LZH, XAR, CPIO, AR, DEB, ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, Unix Compress, CAB, 7z, LHA/LZH, WIM, XAR, CPIO, AR, DEB, ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP

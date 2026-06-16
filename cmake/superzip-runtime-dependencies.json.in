@@ -8,7 +8,22 @@
     "enabled": true,
     "arch": "@SUPERZIP_HIP_ARCH@"
   },
-  "packaged_runtime_files": [],
+  "packaged_runtime_files": [
+    {
+      "name": "libzstd.dll",
+      "version": "1.5.7",
+      "sha256": "@SUPERZIP_ZSTD_RUNTIME_DLL_SHA256@",
+      "source_package_sha256": "@SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256@",
+      "reason": "Bundled app-local Zstandard runtime for .zst/.zstd and .tar.zst/.tzst compatibility."
+    },
+    {
+      "name": "libwim-15.dll",
+      "version": "1.14.5",
+      "sha256": "@SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256@",
+      "source_package_sha256": "@SUPERZIP_WIMLIB_RUNTIME_PACKAGE_SHA256@",
+      "reason": "Bundled app-local wimlib runtime for standalone .wim extraction compatibility."
+    }
+  ],
   "host_prerequisites": [
     {
       "name": "AMD GPU driver with HIP-capable runtime support",

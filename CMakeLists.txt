@@ -136,6 +136,11 @@ set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "acb4e8111511749dc7a3ebedca9b04190e37a1
 set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 "8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b")
 set(SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR "${CMAKE_CURRENT_BINARY_DIR}/zstd-v1.5.7-win64-runtime")
 set(SUPERZIP_ZSTD_RUNTIME_DLL "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}/zstd-v1.5.7-win64/dll/libzstd.dll")
+set(SUPERZIP_WIMLIB_RUNTIME_PACKAGE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/upstream/wimlib/1.14.5/wimlib-1.14.5-windows-x86_64-bin.zip")
+set(SUPERZIP_WIMLIB_RUNTIME_PACKAGE_SHA256 "2f446d6fa3866582175f1a22a7be198eeee0aec7aba5b4e04ad25c99eae2d265")
+set(SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256 "ba853ee1e3fc5f5798581f02e8e066ba07a0a2375f0bf444fe981431fd508495")
+set(SUPERZIP_WIMLIB_RUNTIME_EXTRACT_DIR "${CMAKE_CURRENT_BINARY_DIR}/wimlib-1.14.5-win64-runtime")
+set(SUPERZIP_WIMLIB_RUNTIME_DLL "${SUPERZIP_WIMLIB_RUNTIME_EXTRACT_DIR}/libwim-15.dll")
 if(WIN32)
     if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
         message(FATAL_ERROR "Bundled Zstandard runtime package is missing: ${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
@@ -155,6 +160,24 @@ if(WIN32)
     if(NOT SUPERZIP_ZSTD_RUNTIME_DLL_ACTUAL_SHA256 STREQUAL SUPERZIP_ZSTD_RUNTIME_DLL_SHA256)
         message(FATAL_ERROR "Bundled Zstandard runtime DLL checksum mismatch: ${SUPERZIP_ZSTD_RUNTIME_DLL}")
     endif()
+    if(NOT EXISTS "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
+        message(FATAL_ERROR "Bundled wimlib runtime package is missing: ${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
+    endif()
+    file(SHA256 "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}" SUPERZIP_WIMLIB_RUNTIME_PACKAGE_ACTUAL_SHA256)
+    if(NOT SUPERZIP_WIMLIB_RUNTIME_PACKAGE_ACTUAL_SHA256 STREQUAL SUPERZIP_WIMLIB_RUNTIME_PACKAGE_SHA256)
+        message(FATAL_ERROR "Bundled wimlib runtime package checksum mismatch: ${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
+    endif()
+    if(NOT EXISTS "${SUPERZIP_WIMLIB_RUNTIME_DLL}")
+        file(MAKE_DIRECTORY "${SUPERZIP_WIMLIB_RUNTIME_EXTRACT_DIR}")
+        file(ARCHIVE_EXTRACT INPUT "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}" DESTINATION "${SUPERZIP_WIMLIB_RUNTIME_EXTRACT_DIR}")
+    endif()
+    if(NOT EXISTS "${SUPERZIP_WIMLIB_RUNTIME_DLL}")
+        message(FATAL_ERROR "Bundled wimlib runtime DLL was not found after extraction: ${SUPERZIP_WIMLIB_RUNTIME_DLL}")
+    endif()
+    file(SHA256 "${SUPERZIP_WIMLIB_RUNTIME_DLL}" SUPERZIP_WIMLIB_RUNTIME_DLL_ACTUAL_SHA256)
+    if(NOT SUPERZIP_WIMLIB_RUNTIME_DLL_ACTUAL_SHA256 STREQUAL SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)
+        message(FATAL_ERROR "Bundled wimlib runtime DLL checksum mismatch: ${SUPERZIP_WIMLIB_RUNTIME_DLL}")
+    endif()
 endif()
 
 function(superzip_copy_zstd_runtime target_name)
@@ -165,6 +188,19 @@ function(superzip_copy_zstd_runtime target_name)
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${SUPERZIP_ZSTD_RUNTIME_DLL}"
                 "$<TARGET_FILE_DIR:${target_name}>/libzstd.dll"
+            VERBATIM
+        )
+    endif()
+endfunction()
+
+function(superzip_copy_wimlib_runtime target_name)
+    if(WIN32)
+        add_custom_command(
+            TARGET "${target_name}"
+            POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SUPERZIP_WIMLIB_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:${target_name}>/libwim-15.dll"
             VERBATIM
         )
     endif()
@@ -199,6 +235,7 @@ add_library(superzip_core STATIC
     src/sevenzip/sevenzip_adapter.cpp
     src/tar/tar_adapter.cpp
     src/unix_compress/unix_compress_adapter.cpp
+    src/wim/wim_adapter.cpp
     src/xar/xar_adapter.cpp
     src/xz/xz_adapter.cpp
     src/xz/xz_stream.cpp
@@ -208,7 +245,7 @@ add_library(superzip_core STATIC
     src/zip/zip_adapter.cpp
 )
 
-target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C third_party/lhasa/lib/public)
+target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C third_party/lhasa/lib/public third_party/wimlib)
 target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z lhasa)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
@@ -299,6 +336,7 @@ endif()
 add_executable(superzip_cli src/cli/main.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
 superzip_copy_zstd_runtime(superzip_cli)
+superzip_copy_wimlib_runtime(superzip_cli)
 install(TARGETS superzip_cli RUNTIME DESTINATION bin)
 
 if(SUPERZIP_BUILD_GUI AND WIN32)
@@ -310,6 +348,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
     target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme dwmapi ole32 gdiplus pdh psapi)
     target_compile_definitions(SuperZip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     superzip_copy_zstd_runtime(SuperZip)
+    superzip_copy_wimlib_runtime(SuperZip)
     if(MSVC)
         target_link_options(SuperZip PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest")
     endif()
@@ -343,6 +382,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_tar_xz_compat.cpp
         tests/cpp/test_tar_zstd_compat.cpp
         tests/cpp/test_unix_compress_compat.cpp
+        tests/cpp/test_wim_compat.cpp
         tests/cpp/test_xar_compat.cpp
         tests/cpp/test_xz_compat.cpp
         tests/cpp/test_zstd_compat.cpp
@@ -350,6 +390,8 @@ if(SUPERZIP_BUILD_TESTS)
     )
     target_link_libraries(superzip_tests PRIVATE superzip_core)
     superzip_copy_zstd_runtime(superzip_tests)
+    superzip_copy_wimlib_runtime(superzip_tests)
+    target_compile_definitions(superzip_tests PRIVATE SUPERZIP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     add_test(NAME superzip_tests COMMAND superzip_tests)
 endif()
 
@@ -440,6 +482,7 @@ install(FILES
 )
 if(WIN32)
     install(FILES "${SUPERZIP_ZSTD_RUNTIME_DLL}" DESTINATION bin)
+    install(FILES "${SUPERZIP_WIMLIB_RUNTIME_DLL}" DESTINATION bin)
 endif()
 install(DIRECTORY docs DESTINATION .)
 if(SUPERZIP_ENABLE_HIP)

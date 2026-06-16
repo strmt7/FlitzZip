@@ -12,7 +12,7 @@ namespace {
 
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
 
-constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 27> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -35,7 +35,8 @@ constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, false, false, false},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
-    {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim,.swm", false, false, false, false},
+    {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
+    {ArchiveFormat::SplitWim, "swm", "Split Windows Imaging part (.swm)", ".swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, true, false, true},
     {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
@@ -159,6 +160,10 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         return ArchiveFormat::Lha;
     }
     if (starts_with_signature(bytes, {'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00})) {
+        const auto lower_name = ascii_lower(path.filename().string());
+        if (ends_with_lower(lower_name, ".swm")) {
+            return ArchiveFormat::SplitWim;
+        }
         return ArchiveFormat::Wim;
     }
     if (starts_with_signature(bytes, {'x', 'a', 'r', '!'})) {
@@ -246,8 +251,11 @@ ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
     if (ends_with_lower(name, ".lha") || ends_with_lower(name, ".lzh")) {
         return ArchiveFormat::Lha;
     }
-    if (ends_with_lower(name, ".wim") || ends_with_lower(name, ".swm")) {
+    if (ends_with_lower(name, ".wim")) {
         return ArchiveFormat::Wim;
+    }
+    if (ends_with_lower(name, ".swm")) {
+        return ArchiveFormat::SplitWim;
     }
     if (ends_with_lower(name, ".xar")) {
         return ArchiveFormat::Xar;

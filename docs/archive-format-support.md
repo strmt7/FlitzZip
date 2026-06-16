@@ -30,6 +30,7 @@ Primary and project-owned sources reviewed:
 - Zstandard/libzstd: https://github.com/facebook/zstd
 - Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
 - Lhasa LHA/LZH library: https://github.com/fragglet/lhasa
+- wimlib Windows Imaging library: https://wimlib.net/
 - XAR/libxar project: https://github.com/mackyle/xar
 - Microsoft Cabinet SDK/FDI API: https://learn.microsoft.com/en-us/windows/win32/devnotes/fdi
 - RPM package format v4: https://rpm-software-management.github.io/rpm/manual/format_v4.html
@@ -107,11 +108,13 @@ already real archive/package formats in SuperZip's matrix.
 | `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
 | `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.01 ANSI-C decoder |
 | `.lha`, `.lzh` | No | Yes | Extract-only compatibility format | vendored Lhasa 0.5.0 decoder with SuperZip path/publish pipeline |
+| `.wim` | No | Yes | Extract-only standalone WIM compatibility format | bundled app-local wimlib 1.14.5 runtime with SuperZip path/publish pipeline |
+| `.swm` | No | No | Recognized split-WIM part | rejected until multipart reference handling is implemented and tested |
 | `.xar` | No | Yes | Extract-only compatibility format | native bounded XAR subset parser over vendored miniz 3.1.1 zlib inflate |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.arj`, `.wim` | No | No | Recognized only | pending format-specific security review |
+| `.arj` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -218,6 +221,18 @@ PowerShell, or host shell handlers. Archives declaring TOC checksum modes,
 signatures, symlinks, hard links, special files, Bzip2/LZMA/XZ heap encodings,
 or arbitrary digest styles fail closed until the adapter implements and tests
 those exact variants.
+
+WIM support is intentionally extract-only and limited to standalone `.wim`
+images through the bundled app-local wimlib 1.14.5 runtime. SuperZip does not
+call `wimlib-imagex.exe`, DISM, PowerShell, Explorer, or host-installed WIM
+tools. `.swm` split-WIM parts are recognized for diagnostics but rejected by the
+standalone-open path until multipart reference handling is implemented with
+tests. The adapter validates every image tree first, rejects reparse points,
+hard links, alternate data streams, device entries, encrypted/offline/virtual
+files, excessive image counts, excessive entries, and excessive decoded bytes,
+then stages each image in a private temporary directory and publishes only the
+validated regular files and directories through SuperZip's verified output
+path.
 
 ## ZIP-Container Alias Policy
 
@@ -448,6 +463,39 @@ flowchart TD
     D -->|"unsafe or unsupported"| G
     E -->|"unsafe or unsupported"| G
     F -->|"decode or size failure"| G
+```
+
+## WIM Security Contract
+
+The WIM path uses the bundled official wimlib 1.14.5 DLL from the executable
+directory:
+
+1. CMake verifies the pinned upstream package and extracted `libwim-15.dll`
+   checksums before any executable is built or installed.
+2. Runtime loading is restricted to the executable directory and checks
+   wimlib version `1062917` (`1.14.5`).
+3. Archives are opened read-only with integrity checking enabled and split-WIM
+   rejection enabled.
+4. Every image tree is scanned before extraction. Paths are normalized through
+   SuperZip path-safety logic and multi-image archives are isolated under
+   `image-N/` output prefixes.
+5. Reparse points, hard links, alternate data streams, device entries,
+   encrypted/offline/virtual files, missing resources, excessive image counts,
+   excessive entry counts, and excessive decoded byte totals are rejected.
+6. wimlib extracts only into a private SuperZip staging directory. Final output
+   publication rechecks staged files for regular-file type, reparse-point
+   absence, and exact size, then uses the standard temporary-file commit path.
+
+```mermaid
+flowchart TD
+    A["Open WIM with app-local wimlib"] --> B["Scan every image tree"]
+    B --> C["Validate paths, attributes, streams, links, and size totals"]
+    C --> D{"Standalone safe WIM?"}
+    D -->|"no"| G["Reject archive"]
+    D -->|"yes"| E["Stage image contents in private directory"]
+    E --> F["Recheck staged regular files"]
+    F --> H["Publish through verified temp-file path"]
+    F -->|"type or size mismatch"| G
 ```
 
 ## Unix Compress Security Contract
