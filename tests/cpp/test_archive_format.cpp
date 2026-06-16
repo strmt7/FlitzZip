@@ -56,7 +56,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
 }
 
-TEST_CASE(archive_format_tokens_exclude_non_archive_zip_container_aliases) {
+TEST_CASE(archive_format_rejects_zip_based_non_archive_containers) {
     const auto root = test_temp_dir("archive-format-excluded-aliases");
     write_fixture(root / "document.docx", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
 

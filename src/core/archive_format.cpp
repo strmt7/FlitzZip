@@ -57,9 +57,9 @@ bool ends_with_lower(const std::string& value, std::string_view suffix) {
         value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// Purpose: Detect ZIP-container aliases that are intentionally not archive formats.
+// Purpose: Detect ZIP-based container files that are intentionally not archive formats.
 // Inputs: `path` is the candidate archive path.
-// Outputs: Returns true for known ZIP-based aliases that SuperZip should not expose as archive formats.
+// Outputs: Returns true for document/app package extensions that must stay outside archive support.
 bool has_excluded_zip_container_extension(const std::filesystem::path& path) {
     const auto name = ascii_lower(path.filename().string());
     constexpr std::array excluded = {

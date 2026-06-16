@@ -152,11 +152,75 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
     return safe_current_path();
 }
 
+// Purpose: Map the visible compression-format selection to an archive format.
+// Inputs: `index` is the mutable compression-format selection in UI state.
+// Outputs: Returns one implemented create-capable archive format.
+ArchiveFormat compression_format_value(int index) {
+    constexpr std::array<ArchiveFormat, 5> formats{
+        ArchiveFormat::SuperZip,
+        ArchiveFormat::Zip,
+        ArchiveFormat::Tar,
+        ArchiveFormat::TarGzip,
+        ArchiveFormat::Gzip,
+    };
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(formats.size()) + static_cast<int>(formats.size())) % static_cast<int>(formats.size()));
+    return formats[normalized];
+}
+
+// Purpose: Return the user-facing compression-format label.
+// Inputs: `index` is the mutable compression-format selection in UI state.
+// Outputs: Returns a stable label matching the implemented GUI create backends.
+std::wstring compression_format_text(int index) {
+    constexpr std::array<std::wstring_view, 5> labels{
+        L"SuperZip GPU (.suzip)",
+        L"ZIP compatibility (.zip)",
+        L"TAR compatibility (.tar)",
+        L"TAR.GZ compatibility (.tar.gz)",
+        L"Gzip single file (.gz)",
+    };
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
+    return std::wstring(labels[normalized]);
+}
+
+// Purpose: Return the default output extension for a selected compression format.
+// Inputs: `format` is an implemented create-capable archive format.
+// Outputs: Returns the extension used for the default GUI archive name.
+std::wstring compression_format_extension(ArchiveFormat format) {
+    switch (format) {
+    case ArchiveFormat::SuperZip:
+        return L".suzip";
+    case ArchiveFormat::Zip:
+        return L".zip";
+    case ArchiveFormat::Tar:
+        return L".tar";
+    case ArchiveFormat::TarGzip:
+        return L".tar.gz";
+    case ArchiveFormat::Gzip:
+        return L".gz";
+    default:
+        return L".suzip";
+    }
+}
+
+// Purpose: Return whether a compression format uses native SUZIP tuning controls.
+// Inputs: `format` is a selected create format.
+// Outputs: Returns true only for the GPU-first `.suzip` format.
+bool compression_format_uses_suzip_tuning(ArchiveFormat format) {
+    return format == ArchiveFormat::SuperZip;
+}
+
+// Purpose: Resolve the visible compression output filename.
+// Inputs: `state` is the copied UI state.
+// Outputs: Returns the default archive filename for the selected compression format.
+std::wstring compression_output_filename_for(const UiState& state) {
+    return L"SuperZip-output" + compression_format_extension(compression_format_value(state.compression_format_index));
+}
+
 // Purpose: Resolve the visible compression output path.
 // Inputs: `state` is the copied UI state.
-// Outputs: Returns the destination archive path using the native `.suzip` extension.
+// Outputs: Returns the destination archive path using the selected archive extension.
 std::filesystem::path compression_output_path_for(const UiState& state) {
-    return destination_directory_or_default(state) / L"SuperZip-output.suzip";
+    return destination_directory_or_default(state) / compression_output_filename_for(state);
 }
 
 // Purpose: Resolve the visible extraction output path.
@@ -297,6 +361,14 @@ std::wstring history_status_filter_text(int index) {
 // Outputs: Returns ordered labels matching the selectable rows.
 std::vector<std::wstring> dropdown_options(DropdownId id) {
     switch (id) {
+    case DropdownId::CompressFormat:
+        return {
+            compression_format_text(0),
+            compression_format_text(1),
+            compression_format_text(2),
+            compression_format_text(3),
+            compression_format_text(4),
+        };
     case DropdownId::CompressLevel:
         return {
             compression_level_text(0),
@@ -337,6 +409,8 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
 // Outputs: Returns a zero-based row index, clamped by renderers before use.
 int dropdown_selected_index(const UiState& state, DropdownId id) {
     switch (id) {
+    case DropdownId::CompressFormat:
+        return state.compression_format_index;
     case DropdownId::CompressLevel:
         return state.compression_level_index;
     case DropdownId::CompressMethod:
@@ -1283,12 +1357,14 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Compress", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, layout.start, L"Start", true);
 
-    draw_field(dc, layout.archive_name, L"Archive name", L"SuperZip-output.suzip", false);
+    const auto format = compression_format_value(state.compression_format_index);
+    const bool suzip_tuning = compression_format_uses_suzip_tuning(format);
+    draw_field(dc, layout.archive_name, L"Archive name", compression_output_filename_for(state), false);
     draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false);
-    draw_field(dc, layout.format, L"Archive format", L"SuperZip GPU (.suzip)", false);
-    draw_field(dc, layout.compression_level, L"Compression level", compression_level_text(state.compression_level_index), true);
-    draw_field(dc, layout.method, L"Compression method", state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred", true);
-    draw_field(dc, layout.block_size, L"Block size", compression_block_size_text(state.compression_block_size_index), true);
+    draw_field(dc, layout.format, L"Archive format", compression_format_text(state.compression_format_index), true);
+    draw_field(dc, layout.compression_level, L"Compression level", suzip_tuning ? compression_level_text(state.compression_level_index) : L"Compatibility default", suzip_tuning);
+    draw_field(dc, layout.method, L"Compression method", suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"CPU compatibility stream", suzip_tuning);
+    draw_field(dc, layout.block_size, L"Block size", suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"Format-managed", suzip_tuning);
 
     RECT advanced = layout.advanced;
     fill_round_rect(dc, advanced, kPanel, scale(4));
@@ -1606,7 +1682,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP and TAR compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, TAR.GZ, and Gzip compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -1708,6 +1784,8 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
 
 RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const {
     switch (id) {
+    case DropdownId::CompressFormat:
+        return compress_layout(content).format;
     case DropdownId::CompressLevel:
         return compress_layout(content).compression_level;
     case DropdownId::CompressMethod:
@@ -1858,16 +1936,32 @@ bool MainWindow::handle_content_click(int x, int y) {
             choose_destination();
             return true;
         }
+        if (contains_point(layout.format, x, y)) {
+            open_dropdown(DropdownId::CompressFormat);
+            return true;
+        }
         if (contains_point(layout.compression_level, x, y)) {
-            open_dropdown(DropdownId::CompressLevel);
+            std::lock_guard lock(mutex_);
+            if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
+                state_.active_dropdown = DropdownId::CompressLevel;
+                request_repaint();
+            }
             return true;
         }
         if (contains_point(layout.method, x, y)) {
-            open_dropdown(DropdownId::CompressMethod);
+            std::lock_guard lock(mutex_);
+            if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
+                state_.active_dropdown = DropdownId::CompressMethod;
+                request_repaint();
+            }
             return true;
         }
         if (contains_point(layout.block_size, x, y)) {
-            open_dropdown(DropdownId::CompressBlockSize);
+            std::lock_guard lock(mutex_);
+            if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
+                state_.active_dropdown = DropdownId::CompressBlockSize;
+                request_repaint();
+            }
             return true;
         }
         if (contains_point(layout.solid_archive, x, y)) {
@@ -2086,6 +2180,10 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     {
         std::lock_guard lock(mutex_);
         switch (id) {
+        case DropdownId::CompressFormat:
+            state_.compression_format_index = std::clamp(option_index, 0, 4);
+            state_.status = "Archive format changed";
+            break;
         case DropdownId::CompressLevel:
             state_.compression_level_index = std::clamp(option_index, 0, 4);
             state_.status = "Compression level changed";
@@ -2310,6 +2408,7 @@ void MainWindow::restore_defaults() {
         state_.destination_directory.clear();
         state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
         state_.compression_level_index = 2;
+        state_.compression_format_index = 0;
         state_.compression_block_size_index = 1;
         state_.memory_policy_index = 0;
         state_.log_level_index = 0;
@@ -2342,6 +2441,7 @@ void MainWindow::start_compress() {
     bool verify_after_write = false;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
+    ArchiveFormat archive_format = ArchiveFormat::SuperZip;
     std::filesystem::path output;
     {
         std::lock_guard lock(mutex_);
@@ -2352,6 +2452,7 @@ void MainWindow::start_compress() {
         verify_after_write = state_.verify_after_write_opt_in;
         block_size = compression_block_size_bytes(state_.compression_block_size_index);
         compression_level = compression_level_value(state_.compression_level_index);
+        archive_format = compression_format_value(state_.compression_format_index);
         output = compression_output_path_for(state_);
     }
     if (sources.empty()) {
@@ -2362,19 +2463,35 @@ void MainWindow::start_compress() {
         request_repaint();
         return;
     }
-    run_job([this, sources, output, gpu_required, integrity, defender, verify_after_write, block_size, compression_level] {
-        CompressOptions options;
-        options.gpu_required = gpu_required;
-        options.block_size = block_size;
-        options.compression_level = compression_level;
-        options.verify_after_write = verify_after_write;
-        auto stats = compress_suzip(sources, output, options, [this](const ProgressSnapshot& snapshot) {
+    run_job([this, sources, output, archive_format, gpu_required, integrity, defender, verify_after_write, block_size, compression_level] {
+        auto progress_callback = [this](const ProgressSnapshot& snapshot) {
             std::lock_guard lock(mutex_);
             state_.progress = snapshot;
             request_repaint();
-        });
+        };
+        OperationStats stats;
+        if (archive_format == ArchiveFormat::SuperZip) {
+            CompressOptions options;
+            options.gpu_required = gpu_required;
+            options.block_size = block_size;
+            options.compression_level = compression_level;
+            options.verify_after_write = verify_after_write;
+            stats = compress_suzip(sources, output, options, progress_callback);
+        } else if (archive_format == ArchiveFormat::Zip) {
+            stats = compress_zip(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Tar) {
+            stats = compress_tar(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarGzip) {
+            stats = compress_tar_gzip(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Gzip) {
+            stats = compress_gzip(sources, output, progress_callback);
+        } else {
+            throw ArchiveError(
+                std::string("archive format recognized but not implemented for compression: ") +
+                archive_format_info(archive_format).key);
+        }
         std::ostringstream line;
-        line << "Compressed to " << output.string() << " in " << stats.seconds << "s";
+        line << "Compressed " << archive_format_info(archive_format).key << " to " << output.string() << " in " << stats.seconds << "s";
         append_history(line.str());
         if (integrity) {
             const auto hash = hash_file(output, IntegrityMode::Sha256);

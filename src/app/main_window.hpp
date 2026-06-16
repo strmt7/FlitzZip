@@ -38,6 +38,7 @@ enum class ToggleId {
 
 enum class DropdownId {
     None,
+    CompressFormat,
     CompressLevel,
     CompressMethod,
     CompressBlockSize,
@@ -75,6 +76,7 @@ struct UiState {
     PerformanceMonitorSample performance;
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
+    int compression_format_index = 0;
     int compression_level_index = 2;
     int compression_block_size_index = 1;
     int memory_policy_index = 0;
