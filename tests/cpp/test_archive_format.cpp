@@ -36,6 +36,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.iso"), superzip::ArchiveFormat::Iso);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ar"), superzip::ArchiveFormat::Ar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzh"), superzip::ArchiveFormat::Lha);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.xar"), superzip::ArchiveFormat::Xar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.deb"), superzip::ArchiveFormat::Deb);
 }
 
@@ -52,6 +53,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "cab.bin", std::array<unsigned char, 4>{'M', 'S', 'C', 'F'});
     write_fixture(root / "ar.bin", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
     write_fixture(root / "rpm.bin", std::array<unsigned char, 4>{0xED, 0xAB, 0xEE, 0xDB});
+    write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
 
     REQUIRE_EQ(superzip::detect_archive_format(root / "zip.bin"), superzip::ArchiveFormat::Zip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "seven.bin"), superzip::ArchiveFormat::SevenZip);
@@ -64,6 +66,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "cab.bin"), superzip::ArchiveFormat::Cab);
     REQUIRE_EQ(superzip::detect_archive_format(root / "ar.bin"), superzip::ArchiveFormat::Ar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
 
     write_fixture(root / "package.deb", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
     REQUIRE_EQ(superzip::detect_archive_format(root / "package.deb"), superzip::ArchiveFormat::Deb);

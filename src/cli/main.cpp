@@ -16,6 +16,7 @@
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 #include "unix_compress/unix_compress_adapter.hpp"
+#include "xar/xar_adapter.hpp"
 #include "xz/xz_adapter.hpp"
 #include "zstd/zstd_adapter.hpp"
 #include "zip/zip_adapter.hpp"
@@ -145,7 +146,7 @@ void usage() {
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format auto|zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|zst|zstd|z|compress|cab|iso|cpio|ar|deb|rpm|7z|lha|lzh --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli extract --format auto|zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|zst|zstd|z|compress|cab|iso|cpio|ar|deb|rpm|7z|lha|lzh|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -1369,6 +1370,11 @@ int main(int argc, char** argv) {
                     throw superzip::ArchiveError("LHA compatibility does not support SUZIP GPU, worker, or in-flight flags");
                 }
                 print_stats(superzip::extract_lha(archive, output, overwrite));
+            } else if (archive_format == superzip::ArchiveFormat::Xar) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("XAR compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                }
+                print_stats(superzip::extract_xar(archive, output, overwrite));
             }
             if (defender_scan) {
                 print_defender_scan(output, false);

@@ -18,6 +18,7 @@
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 #include "unix_compress/unix_compress_adapter.hpp"
+#include "xar/xar_adapter.hpp"
 #include "xz/xz_adapter.hpp"
 #include "zstd/zstd_adapter.hpp"
 #include "zip/zip_adapter.hpp"
@@ -2725,6 +2726,8 @@ void MainWindow::start_extract() {
             stats = extract_rpm(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Lha) {
             stats = extract_lha(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Xar) {
+            stats = extract_xar(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Unknown) {
             throw ArchiveError("unable to detect archive format: " + archive.string());
         } else {

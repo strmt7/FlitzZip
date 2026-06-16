@@ -30,6 +30,7 @@ Primary and project-owned sources reviewed:
 - Zstandard/libzstd: https://github.com/facebook/zstd
 - Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
 - Lhasa LHA/LZH library: https://github.com/fragglet/lhasa
+- XAR/libxar project: https://github.com/mackyle/xar
 - Microsoft Cabinet SDK/FDI API: https://learn.microsoft.com/en-us/windows/win32/devnotes/fdi
 - RPM package format v4: https://rpm-software-management.github.io/rpm/manual/format_v4.html
 - NanaZip: https://github.com/M2Team/NanaZip
@@ -106,10 +107,11 @@ already real archive/package formats in SuperZip's matrix.
 | `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
 | `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.01 ANSI-C decoder |
 | `.lha`, `.lzh` | No | Yes | Extract-only compatibility format | vendored Lhasa 0.5.0 decoder with SuperZip path/publish pipeline |
+| `.xar` | No | Yes | Extract-only compatibility format | native bounded XAR subset parser over vendored miniz 3.1.1 zlib inflate |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.arj`, `.wim`, `.xar` | No | No | Recognized only | pending format-specific security review |
+| `.arj`, `.wim` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -207,6 +209,15 @@ only; SuperZip performs the path validation and verified output publication.
 Symlinks are rejected, and decoded parent-directory path components are
 preserved so the SuperZip validator can reject malicious entries instead of
 accepting rewritten paths.
+
+XAR support is intentionally extract-only and limited to the verified subset
+implemented in `src/xar/`: archives with header checksum algorithm `none`,
+zlib-compressed TOCs, directory entries, regular files, and stored or
+zlib-compressed file payloads. SuperZip does not call `xar`, `libarchive`,
+PowerShell, or host shell handlers. Archives declaring TOC checksum modes,
+signatures, symlinks, hard links, special files, Bzip2/LZMA/XZ heap encodings,
+or arbitrary digest styles fail closed until the adapter implements and tests
+those exact variants.
 
 ## ZIP-Container Alias Policy
 
@@ -406,6 +417,39 @@ flowchart TD
     D -->|"decode, size, or CRC failure"| G
 ```
 
+## XAR Security Contract
+
+The XAR path is a native, read-only parser for a bounded subset of
+eXtensible ARchiver files:
+
+1. Validate the binary `xar!` header, version, TOC sizes, heap offset, and
+   checksum mode before parsing XML.
+2. Inflate the TOC with miniz and parse only the metadata fields required for
+   directories, regular files, payload offsets, payload sizes, and payload
+   encoding styles.
+3. Reject TOC comments, DTDs, declarations, links, hard links, special files,
+   unsupported payload encodings, duplicate paths, traversal, and file/child
+   conflicts before output.
+4. Decode every file payload once before destination writes start, then reopen
+   and publish only verified regular files through the standard temporary-file
+   path.
+5. Fail closed on declared TOC checksum algorithms until checksum verification
+   is implemented for that exact XAR variant.
+
+```mermaid
+flowchart TD
+    A["Open XAR archive"] --> B["Validate header and TOC bounds"]
+    B --> C{"Checksum mode none?"}
+    C -->|"no"| G["Reject archive"]
+    C -->|"yes"| D["Inflate and parse bounded XML TOC"]
+    D --> E["Validate paths, entry kinds, sizes, and heap ranges"]
+    E --> F["Validation decode pass for payloads"]
+    F --> H["Publish directories and verified files"]
+    D -->|"unsafe or unsupported"| G
+    E -->|"unsafe or unsupported"| G
+    F -->|"decode or size failure"| G
+```
+
 ## Unix Compress Security Contract
 
 The Unix Compress adapter is in-process and treats the LZW stream as untrusted
@@ -538,7 +582,9 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - Documentation update in this file, README, AGENTS, and release notes.
 
 Preferred next increments are read-only RAR and the remaining recognized-only
-legacy/container formats after backend selection and licensing review. Write
+legacy/container formats after backend selection and licensing review. XAR
+checksum/signature validation is also a future hardening increment before
+SuperZip can claim broad XAR compatibility. Write
 support for RAR is not planned because the common RAR creation tooling is not a
 permissive open format writer suitable for this repo. 7z creation also remains
 disabled until a vetted in-process writer path passes the same gates.

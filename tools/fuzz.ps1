@@ -20,7 +20,7 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lha
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lha /out/corpus/xar
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
@@ -30,8 +30,11 @@ printf 'MSCF' > /out/corpus/cab/tiny-mscf
 printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
 printf '7z\274\257\047\034\000\003' > /out/corpus/sevenzip/tiny-sevenzip-signature
 printf '\031\216-lhd-' > /out/corpus/lha/tiny-lha-signature
+printf 'xar!' > /out/corpus/xar/tiny-xar-signature
 python3 - <<'PY'
 from pathlib import Path
+import struct
+import zlib
 Path('/out/corpus/sevenzip/nested-payload.7z').write_bytes(bytes([
     55, 122, 188, 175, 39, 28, 0, 3, 61, 67, 90, 149, 110, 0, 0, 0,
     0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 83, 152, 7, 164,
@@ -60,6 +63,17 @@ Path('/out/corpus/lha/nested-payload.lzh').write_bytes(bytes([
     115, 117, 98, 100, 105, 114, 50, 255, 7, 0, 84, 0, 59, 61, 75, 0,
     0, 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 10, 0,
 ]))
+payload = b'hello xar\n'
+encoded = zlib.compress(payload)
+toc = (
+    b'<xar><toc><file id="1"><name>payload.txt</name><type>file</type>'
+    + b'<data><length>' + str(len(payload)).encode() + b'</length><offset>0</offset>'
+    + b'<size>' + str(len(encoded)).encode() + b'</size>'
+    + b'<encoding style="application/x-gzip"/></data></file></toc></xar>'
+)
+toc_encoded = zlib.compress(toc)
+header = b'xar!' + struct.pack('>HHQQI', 28, 1, len(toc_encoded), len(toc), 0)
+Path('/out/corpus/xar/nested-payload.xar').write_bytes(header + toc_encoded + encoded)
 PY
 if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_archive_index_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/archive_index
@@ -69,6 +83,7 @@ if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_rpm_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/rpm
   /out/superzip_sevenzip_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/sevenzip
   /out/superzip_lha_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/lha
+  /out/superzip_xar_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/xar
 fi
 "@
 
