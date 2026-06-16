@@ -37,56 +37,6 @@
 
 
 /*---------------------------------------------------*/
-#ifndef BZ_NO_STDIO
-void BZ2_bz__AssertH__fail ( int errcode )
-{
-   fprintf(stderr,
-      "\n\nbzip2/libbzip2: internal error number %d.\n"
-      "This is a bug in bzip2/libbzip2, %s.\n"
-      "Please report it to: bzip2-devel@sourceware.org.  If this happened\n"
-      "when you were using some program which uses libbzip2 as a\n"
-      "component, you should also report this bug to the author(s)\n"
-      "of that program.  Please make an effort to report this bug;\n"
-      "timely and accurate bug reports eventually lead to higher\n"
-      "quality software.  Thanks.\n\n",
-      errcode,
-      BZ2_bzlibVersion()
-   );
-
-   if (errcode == 1007) {
-   fprintf(stderr,
-      "\n*** A special note about internal error number 1007 ***\n"
-      "\n"
-      "Experience suggests that a common cause of i.e. 1007\n"
-      "is unreliable memory or other hardware.  The 1007 assertion\n"
-      "just happens to cross-check the results of huge numbers of\n"
-      "memory reads/writes, and so acts (unintendedly) as a stress\n"
-      "test of your memory system.\n"
-      "\n"
-      "I suggest the following: try compressing the file again,\n"
-      "possibly monitoring progress in detail with the -vv flag.\n"
-      "\n"
-      "* If the error cannot be reproduced, and/or happens at different\n"
-      "  points in compression, you may have a flaky memory system.\n"
-      "  Try a memory-test program.  I have used Memtest86\n"
-      "  (www.memtest86.com).  At the time of writing it is free (GPLd).\n"
-      "  Memtest86 tests memory much more thorougly than your BIOSs\n"
-      "  power-on test, and may find failures that the BIOS doesn't.\n"
-      "\n"
-      "* If the error can be repeatably reproduced, this is a bug in\n"
-      "  bzip2, and I would very much like to hear about it.  Please\n"
-      "  let me know, and, ideally, save a copy of the file causing the\n"
-      "  problem -- without which I will be unable to investigate it.\n"
-      "\n"
-   );
-   }
-
-   exit(3);
-}
-#endif
-
-
-/*---------------------------------------------------*/
 static
 int bz_config_ok ( void )
 {
@@ -101,14 +51,42 @@ int bz_config_ok ( void )
 static
 void* default_bzalloc ( void* opaque, Int32 items, Int32 size )
 {
-   void* v = malloc ( items * size );
-   return v;
+   size_t item_count;
+   size_t item_size;
+
+   if (items <= 0 || size <= 0) return NULL;
+   item_count = (size_t)items;
+   item_size = (size_t)size;
+   if (item_count > ((size_t)-1) / item_size) return NULL;
+   return calloc ( item_count, item_size );
 }
 
 static
 void default_bzfree ( void* opaque, void* addr )
 {
-   if (addr != NULL) free ( addr );
+   free ( addr );
+}
+
+/* Copy caller-supplied stream fields into libbzip2-owned state.
+   Inputs: internal points to the state-owned stream snapshot; external is the caller stream.
+   Outputs: Updates the internal snapshot while preserving the private state pointer. */
+static
+void import_stream_state ( bz_stream* internal, const bz_stream* external )
+{
+   void* internal_state = internal->state;
+   *internal = *external;
+   internal->state = internal_state;
+}
+
+/* Copy libbzip2-owned stream fields back to the caller.
+   Inputs: external is the caller stream; internal points to the state-owned stream snapshot.
+   Outputs: Updates the caller-visible fields while preserving the public state pointer. */
+static
+void export_stream_state ( bz_stream* external, const bz_stream* internal )
+{
+   void* external_state = external->state;
+   *external = *internal;
+   external->state = external_state;
 }
 
 
@@ -167,7 +145,9 @@ int BZ_API(BZ2_bzCompressInit)
 
    s = BZALLOC( sizeof(EState) );
    if (s == NULL) return BZ_MEM_ERROR;
-   s->strm = strm;
+   s->strm_copy = *strm;
+   s->strm = &(s->strm_copy);
+   s->strm->state = s;
 
    s->arr1 = NULL;
    s->arr2 = NULL;
@@ -200,11 +180,12 @@ int BZ_API(BZ2_bzCompressInit)
    s->zbits             = NULL;
    s->ptr               = (UInt32*)s->arr1;
 
-   strm->state          = s;
-   strm->total_in_lo32  = 0;
-   strm->total_in_hi32  = 0;
-   strm->total_out_lo32 = 0;
-   strm->total_out_hi32 = 0;
+   s->strm->total_in_lo32  = 0;
+   s->strm->total_in_hi32  = 0;
+   s->strm->total_out_lo32 = 0;
+   s->strm->total_out_hi32 = 0;
+   strm->state             = s;
+   export_stream_state ( strm, s->strm );
    init_RL ( s );
    prepare_new_block ( s );
    return BZ_OK;
@@ -358,11 +339,10 @@ Bool copy_output_until_stop ( EState* s )
 
 /*---------------------------------------------------*/
 static
-Bool handle_compress ( bz_stream* strm )
+Bool handle_compress ( EState* s )
 {
    Bool progress_in  = False;
    Bool progress_out = False;
-   EState* s = strm->state;
 
    while (True) {
 
@@ -408,21 +388,28 @@ int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
 {
    Bool progress;
    EState* s;
+#define RETURN_COMPRESS(status)                  \
+   do {                                          \
+      export_stream_state ( strm, s->strm );     \
+      return status;                             \
+   } while (0)
+
    if (strm == NULL) return BZ_PARAM_ERROR;
    s = strm->state;
    if (s == NULL) return BZ_PARAM_ERROR;
-   if (s->strm != strm) return BZ_PARAM_ERROR;
+   if (s->strm != &(s->strm_copy)) return BZ_PARAM_ERROR;
+   import_stream_state ( s->strm, strm );
 
    preswitch:
    switch (s->mode) {
 
       case BZ_M_IDLE:
-         return BZ_SEQUENCE_ERROR;
+         RETURN_COMPRESS(BZ_SEQUENCE_ERROR);
 
       case BZ_M_RUNNING:
          if (action == BZ_RUN) {
-            progress = handle_compress ( strm );
-            return progress ? BZ_RUN_OK : BZ_PARAM_ERROR;
+            progress = handle_compress ( s );
+            RETURN_COMPRESS(progress ? BZ_RUN_OK : BZ_PARAM_ERROR);
          }
          else
 	 if (action == BZ_FLUSH) {
@@ -437,30 +424,31 @@ int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
             goto preswitch;
          }
          else
-            return BZ_PARAM_ERROR;
+            RETURN_COMPRESS(BZ_PARAM_ERROR);
 
       case BZ_M_FLUSHING:
-         if (action != BZ_FLUSH) return BZ_SEQUENCE_ERROR;
+         if (action != BZ_FLUSH) RETURN_COMPRESS(BZ_SEQUENCE_ERROR);
          if (s->avail_in_expect != s->strm->avail_in)
-            return BZ_SEQUENCE_ERROR;
-         progress = handle_compress ( strm );
+            RETURN_COMPRESS(BZ_SEQUENCE_ERROR);
+         progress = handle_compress ( s );
          if (s->avail_in_expect > 0 || !isempty_RL(s) ||
-             s->state_out_pos < s->numZ) return BZ_FLUSH_OK;
+             s->state_out_pos < s->numZ) RETURN_COMPRESS(BZ_FLUSH_OK);
          s->mode = BZ_M_RUNNING;
-         return BZ_RUN_OK;
+         RETURN_COMPRESS(BZ_RUN_OK);
 
       case BZ_M_FINISHING:
-         if (action != BZ_FINISH) return BZ_SEQUENCE_ERROR;
+         if (action != BZ_FINISH) RETURN_COMPRESS(BZ_SEQUENCE_ERROR);
          if (s->avail_in_expect != s->strm->avail_in)
-            return BZ_SEQUENCE_ERROR;
-         progress = handle_compress ( strm );
-         if (!progress) return BZ_SEQUENCE_ERROR;
+            RETURN_COMPRESS(BZ_SEQUENCE_ERROR);
+         progress = handle_compress ( s );
+         if (!progress) RETURN_COMPRESS(BZ_SEQUENCE_ERROR);
          if (s->avail_in_expect > 0 || !isempty_RL(s) ||
-             s->state_out_pos < s->numZ) return BZ_FINISH_OK;
+             s->state_out_pos < s->numZ) RETURN_COMPRESS(BZ_FINISH_OK);
          s->mode = BZ_M_IDLE;
-         return BZ_STREAM_END;
+         RETURN_COMPRESS(BZ_STREAM_END);
    }
-   return BZ_OK; /*--not reached--*/
+   RETURN_COMPRESS(BZ_OK); /*--not reached--*/
+#undef RETURN_COMPRESS
 }
 
 
@@ -471,7 +459,7 @@ int BZ_API(BZ2_bzCompressEnd)  ( bz_stream *strm )
    if (strm == NULL) return BZ_PARAM_ERROR;
    s = strm->state;
    if (s == NULL) return BZ_PARAM_ERROR;
-   if (s->strm != strm) return BZ_PARAM_ERROR;
+   if (s->strm != &(s->strm_copy)) return BZ_PARAM_ERROR;
 
    if (s->arr1 != NULL) BZFREE(s->arr1);
    if (s->arr2 != NULL) BZFREE(s->arr2);
@@ -507,16 +495,19 @@ int BZ_API(BZ2_bzDecompressInit)
 
    s = BZALLOC( sizeof(DState) );
    if (s == NULL) return BZ_MEM_ERROR;
-   s->strm                  = strm;
+   s->strm_copy             = *strm;
+   s->strm                  = &(s->strm_copy);
+   s->strm->state           = s;
    strm->state              = s;
    s->state                 = BZ_X_MAGIC_1;
    s->bsLive                = 0;
    s->bsBuff                = 0;
    s->calculatedCombinedCRC = 0;
-   strm->total_in_lo32      = 0;
-   strm->total_in_hi32      = 0;
-   strm->total_out_lo32     = 0;
-   strm->total_out_hi32     = 0;
+   s->strm->total_in_lo32   = 0;
+   s->strm->total_in_hi32   = 0;
+   s->strm->total_out_lo32  = 0;
+   s->strm->total_out_hi32  = 0;
+   export_stream_state ( strm, s->strm );
    s->smallDecompress       = (Bool)small;
    s->ll4                   = NULL;
    s->ll16                  = NULL;
@@ -809,33 +800,40 @@ int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
 {
    Bool    corrupt;
    DState* s;
+#define RETURN_DECOMPRESS(status)                \
+   do {                                          \
+      export_stream_state ( strm, s->strm );     \
+      return status;                             \
+   } while (0)
+
    if (strm == NULL) return BZ_PARAM_ERROR;
    s = strm->state;
    if (s == NULL) return BZ_PARAM_ERROR;
-   if (s->strm != strm) return BZ_PARAM_ERROR;
+   if (s->strm != &(s->strm_copy)) return BZ_PARAM_ERROR;
+   import_stream_state ( s->strm, strm );
 
    while (True) {
-      if (s->state == BZ_X_IDLE) return BZ_SEQUENCE_ERROR;
+      if (s->state == BZ_X_IDLE) RETURN_DECOMPRESS(BZ_SEQUENCE_ERROR);
       if (s->state == BZ_X_OUTPUT) {
          if (s->smallDecompress)
             corrupt = unRLE_obuf_to_output_SMALL ( s ); else
             corrupt = unRLE_obuf_to_output_FAST  ( s );
-         if (corrupt) return BZ_DATA_ERROR;
+         if (corrupt) RETURN_DECOMPRESS(BZ_DATA_ERROR);
          if (s->nblock_used == s->save_nblock+1 && s->state_out_len == 0) {
             BZ_FINALISE_CRC ( s->calculatedBlockCRC );
             if (s->verbosity >= 3)
                VPrintf2 ( " {0x%08x, 0x%08x}", s->storedBlockCRC,
-                          s->calculatedBlockCRC );
+                           s->calculatedBlockCRC );
             if (s->verbosity >= 2) VPrintf0 ( "]" );
             if (s->calculatedBlockCRC != s->storedBlockCRC)
-               return BZ_DATA_ERROR;
+               RETURN_DECOMPRESS(BZ_DATA_ERROR);
             s->calculatedCombinedCRC
                = (s->calculatedCombinedCRC << 1) |
-                    (s->calculatedCombinedCRC >> 31);
+                     (s->calculatedCombinedCRC >> 31);
             s->calculatedCombinedCRC ^= s->calculatedBlockCRC;
             s->state = BZ_X_BLKHDR_1;
          } else {
-            return BZ_OK;
+            RETURN_DECOMPRESS(BZ_OK);
          }
       }
       if (s->state >= BZ_X_MAGIC_1) {
@@ -845,16 +843,17 @@ int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
                VPrintf2 ( "\n    combined CRCs: stored = 0x%08x, computed = 0x%08x",
                           s->storedCombinedCRC, s->calculatedCombinedCRC );
             if (s->calculatedCombinedCRC != s->storedCombinedCRC)
-               return BZ_DATA_ERROR;
-            return r;
+               RETURN_DECOMPRESS(BZ_DATA_ERROR);
+            RETURN_DECOMPRESS(r);
          }
-         if (s->state != BZ_X_OUTPUT) return r;
+         if (s->state != BZ_X_OUTPUT) RETURN_DECOMPRESS(r);
       }
    }
 
    AssertH ( 0, 6001 );
 
-   return 0;  /*NOTREACHED*/
+   RETURN_DECOMPRESS(0);  /*NOTREACHED*/
+#undef RETURN_DECOMPRESS
 }
 
 
@@ -865,7 +864,7 @@ int BZ_API(BZ2_bzDecompressEnd)  ( bz_stream *strm )
    if (strm == NULL) return BZ_PARAM_ERROR;
    s = strm->state;
    if (s == NULL) return BZ_PARAM_ERROR;
-   if (s->strm != strm) return BZ_PARAM_ERROR;
+   if (s->strm != &(s->strm_copy)) return BZ_PARAM_ERROR;
 
    if (s->tt   != NULL) BZFREE(s->tt);
    if (s->ll16 != NULL) BZFREE(s->ll16);
@@ -934,7 +933,7 @@ BZFILE* BZ_API(BZ2_bzWriteOpen)
    if (ferror(f))
       { BZ_SETERR(BZ_IO_ERROR); return NULL; };
 
-   bzf = malloc ( sizeof(bzFile) );
+   bzf = calloc ( 1U, sizeof(bzFile) );
    if (bzf == NULL)
       { BZ_SETERR(BZ_MEM_ERROR); return NULL; };
 
@@ -1107,7 +1106,7 @@ BZFILE* BZ_API(BZ2_bzReadOpen)
    if (ferror(f))
       { BZ_SETERR(BZ_IO_ERROR); return NULL; };
 
-   bzf = malloc ( sizeof(bzFile) );
+   bzf = calloc ( 1U, sizeof(bzFile) );
    if (bzf == NULL)
       { BZ_SETERR(BZ_MEM_ERROR); return NULL; };
 
@@ -1414,15 +1413,20 @@ BZFILE * bzopen_or_bzdopen
       }
       mode++;
    }
-   strcat(mode2, writing ? "w" : "r" );
-   strcat(mode2,"b");   /* binary mode */
+   mode2[0] = writing ? 'w' : 'r';
+   mode2[1] = 'b';   /* binary mode */
+   mode2[2] = '\0';
 
    if (open_mode==0) {
       if (path==NULL || strcmp(path,"")==0) {
         fp = (writing ? stdout : stdin);
         SET_BINARY_MODE(fp);
       } else {
-        fp = fopen(path,mode2);
+#if defined(_MSC_VER)
+        if (fopen_s(&fp,path,mode2) != 0) fp = NULL;
+#else
+        fp = NULL;
+#endif
       }
    } else {
 #ifdef BZ_STRICT_ANSI

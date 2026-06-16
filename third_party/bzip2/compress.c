@@ -294,7 +294,7 @@ void sendMTFValues ( EState* s )
 
          if (ge > gs
              && nPart != nGroups && nPart != 1
-             && ((nGroups-nPart) % 2 == 1)) {
+             && ((nGroups-nPart) % 2 != 0)) {
             aFreq -= s->mtfFreq[ge];
             ge--;
          }

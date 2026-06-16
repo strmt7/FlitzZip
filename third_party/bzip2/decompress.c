@@ -40,8 +40,12 @@ void makeMaps_d ( DState* s )
 #define RETURN(rrr)                               \
    { retVal = rrr; goto save_state_and_return; };
 
+#define BZ_CONCAT_INNER(aaa,bbb) aaa##bbb
+#define BZ_CONCAT(aaa,bbb) BZ_CONCAT_INNER(aaa,bbb)
+#define BZ_STATE_LABEL(lll) BZ_CONCAT(bz_state_,lll)
+
 #define GET_BITS(lll,vvv,nnn)                     \
-   case lll: s->state = lll;                      \
+   BZ_STATE_LABEL(lll): s->state = lll;           \
    while (True) {                                 \
       if (s->bsLive >= nnn) {                     \
          UInt32 v;                                \
@@ -193,6 +197,49 @@ Int32 BZ2_decompress ( DState* s )
    retVal = BZ_OK;
 
    switch (s->state) {
+      case BZ_X_MAGIC_1: goto BZ_STATE_LABEL(BZ_X_MAGIC_1);
+      case BZ_X_MAGIC_2: goto BZ_STATE_LABEL(BZ_X_MAGIC_2);
+      case BZ_X_MAGIC_3: goto BZ_STATE_LABEL(BZ_X_MAGIC_3);
+      case BZ_X_MAGIC_4: goto BZ_STATE_LABEL(BZ_X_MAGIC_4);
+      case BZ_X_BLKHDR_1: goto BZ_STATE_LABEL(BZ_X_BLKHDR_1);
+      case BZ_X_BLKHDR_2: goto BZ_STATE_LABEL(BZ_X_BLKHDR_2);
+      case BZ_X_BLKHDR_3: goto BZ_STATE_LABEL(BZ_X_BLKHDR_3);
+      case BZ_X_BLKHDR_4: goto BZ_STATE_LABEL(BZ_X_BLKHDR_4);
+      case BZ_X_BLKHDR_5: goto BZ_STATE_LABEL(BZ_X_BLKHDR_5);
+      case BZ_X_BLKHDR_6: goto BZ_STATE_LABEL(BZ_X_BLKHDR_6);
+      case BZ_X_BCRC_1: goto BZ_STATE_LABEL(BZ_X_BCRC_1);
+      case BZ_X_BCRC_2: goto BZ_STATE_LABEL(BZ_X_BCRC_2);
+      case BZ_X_BCRC_3: goto BZ_STATE_LABEL(BZ_X_BCRC_3);
+      case BZ_X_BCRC_4: goto BZ_STATE_LABEL(BZ_X_BCRC_4);
+      case BZ_X_RANDBIT: goto BZ_STATE_LABEL(BZ_X_RANDBIT);
+      case BZ_X_ORIGPTR_1: goto BZ_STATE_LABEL(BZ_X_ORIGPTR_1);
+      case BZ_X_ORIGPTR_2: goto BZ_STATE_LABEL(BZ_X_ORIGPTR_2);
+      case BZ_X_ORIGPTR_3: goto BZ_STATE_LABEL(BZ_X_ORIGPTR_3);
+      case BZ_X_MAPPING_1: goto BZ_STATE_LABEL(BZ_X_MAPPING_1);
+      case BZ_X_MAPPING_2: goto BZ_STATE_LABEL(BZ_X_MAPPING_2);
+      case BZ_X_SELECTOR_1: goto BZ_STATE_LABEL(BZ_X_SELECTOR_1);
+      case BZ_X_SELECTOR_2: goto BZ_STATE_LABEL(BZ_X_SELECTOR_2);
+      case BZ_X_SELECTOR_3: goto BZ_STATE_LABEL(BZ_X_SELECTOR_3);
+      case BZ_X_CODING_1: goto BZ_STATE_LABEL(BZ_X_CODING_1);
+      case BZ_X_CODING_2: goto BZ_STATE_LABEL(BZ_X_CODING_2);
+      case BZ_X_CODING_3: goto BZ_STATE_LABEL(BZ_X_CODING_3);
+      case BZ_X_MTF_1: goto BZ_STATE_LABEL(BZ_X_MTF_1);
+      case BZ_X_MTF_2: goto BZ_STATE_LABEL(BZ_X_MTF_2);
+      case BZ_X_MTF_3: goto BZ_STATE_LABEL(BZ_X_MTF_3);
+      case BZ_X_MTF_4: goto BZ_STATE_LABEL(BZ_X_MTF_4);
+      case BZ_X_MTF_5: goto BZ_STATE_LABEL(BZ_X_MTF_5);
+      case BZ_X_MTF_6: goto BZ_STATE_LABEL(BZ_X_MTF_6);
+      case BZ_X_ENDHDR_2: goto BZ_STATE_LABEL(BZ_X_ENDHDR_2);
+      case BZ_X_ENDHDR_3: goto BZ_STATE_LABEL(BZ_X_ENDHDR_3);
+      case BZ_X_ENDHDR_4: goto BZ_STATE_LABEL(BZ_X_ENDHDR_4);
+      case BZ_X_ENDHDR_5: goto BZ_STATE_LABEL(BZ_X_ENDHDR_5);
+      case BZ_X_ENDHDR_6: goto BZ_STATE_LABEL(BZ_X_ENDHDR_6);
+      case BZ_X_CCRC_1: goto BZ_STATE_LABEL(BZ_X_CCRC_1);
+      case BZ_X_CCRC_2: goto BZ_STATE_LABEL(BZ_X_CCRC_2);
+      case BZ_X_CCRC_3: goto BZ_STATE_LABEL(BZ_X_CCRC_3);
+      case BZ_X_CCRC_4: goto BZ_STATE_LABEL(BZ_X_CCRC_4);
+      default: RETURN(BZ_DATA_ERROR);
+   }
 
       GET_UCHAR(BZ_X_MAGIC_1, uc);
       if (uc != BZ_HDR_B) RETURN(BZ_DATA_ERROR_MAGIC);
@@ -308,7 +355,7 @@ Int32 BZ2_decompress ( DState* s )
       /*--- Undo the MTF values for the selectors. ---*/
       {
          UChar pos[BZ_N_GROUPS], tmp, v;
-         for (v = 0; v < nGroups; v++) pos[v] = v;
+         for (v = 0; v < (UChar)nGroups; v++) pos[v] = v;
 
          for (i = 0; i < nSelectors; i++) {
             v = s->selectorMtf[i];
@@ -610,9 +657,6 @@ Int32 BZ2_decompress ( DState* s )
 
       s->state = BZ_X_IDLE;
       RETURN(BZ_STREAM_END);
-
-      default: AssertH ( False, 4001 );
-   }
 
    AssertH ( False, 4002 );
 

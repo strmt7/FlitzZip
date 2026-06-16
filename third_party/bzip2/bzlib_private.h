@@ -53,38 +53,6 @@ typedef unsigned short  UInt16;
 #define __inline__  /* */
 #endif
 
-#ifndef BZ_NO_STDIO
-
-extern void BZ2_bz__AssertH__fail ( int errcode );
-#define AssertH(cond,errcode) \
-   { if (!(cond)) BZ2_bz__AssertH__fail ( errcode ); }
-
-#if BZ_DEBUG
-#define AssertD(cond,msg) \
-   { if (!(cond)) {       \
-      fprintf ( stderr,   \
-        "\n\nlibbzip2(debug build): internal error\n\t%s\n", msg );\
-      exit(1); \
-   }}
-#else
-#define AssertD(cond,msg) /* */
-#endif
-
-#define VPrintf0(zf) \
-   fprintf(stderr,zf)
-#define VPrintf1(zf,za1) \
-   fprintf(stderr,zf,za1)
-#define VPrintf2(zf,za1,za2) \
-   fprintf(stderr,zf,za1,za2)
-#define VPrintf3(zf,za1,za2,za3) \
-   fprintf(stderr,zf,za1,za2,za3)
-#define VPrintf4(zf,za1,za2,za3,za4) \
-   fprintf(stderr,zf,za1,za2,za3,za4)
-#define VPrintf5(zf,za1,za2,za3,za4,za5) \
-   fprintf(stderr,zf,za1,za2,za3,za4,za5)
-
-#else
-
 extern void bz_internal_error ( int errcode );
 #define AssertH(cond,errcode) \
    { if (!(cond)) bz_internal_error ( errcode ); }
@@ -95,9 +63,6 @@ extern void bz_internal_error ( int errcode );
 #define VPrintf3(zf,za1,za2,za3)         do { } while (0)
 #define VPrintf4(zf,za1,za2,za3,za4)     do { } while (0)
 #define VPrintf5(zf,za1,za2,za3,za4,za5) do { } while (0)
-
-#endif
-
 
 #define BZALLOC(nnn) (strm->bzalloc)(strm->opaque,(nnn),1)
 #define BZFREE(ppp)  (strm->bzfree)(strm->opaque,(ppp))
@@ -195,7 +160,8 @@ extern UInt32 BZ2_crc32Table[256];
 
 typedef
    struct {
-      /* pointer back to the struct bz_stream */
+      /* private stream snapshot; exported to the caller at API boundaries */
+      bz_stream  strm_copy;
       bz_stream* strm;
 
       /* mode this stream is in, and whether inputting */
@@ -346,7 +312,8 @@ BZ2_hbMakeCodeLengths ( UChar*, Int32*, Int32, Int32 );
 
 typedef
    struct {
-      /* pointer back to the struct bz_stream */
+      /* private stream snapshot; exported to the caller at API boundaries */
+      bz_stream  strm_copy;
       bz_stream* strm;
 
       /* state indicator for this stream */
@@ -492,15 +459,14 @@ BZ2_hbCreateDecodeTables ( Int32*, Int32*, Int32*, UChar*,
                            Int32,  Int32, Int32 );
 
 
-#endif
-
-
 /*-- BZ_NO_STDIO seems to make NULL disappear on some platforms. --*/
 
 #ifdef BZ_NO_STDIO
 #ifndef NULL
 #define NULL 0
 #endif
+#endif
+
 #endif
 
 
