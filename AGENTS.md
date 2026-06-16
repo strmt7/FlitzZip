@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.gz` remains single-file compatibility-only through miniz raw deflate, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.gz` remains single-file compatibility-only through miniz raw deflate, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -53,9 +53,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Project Map
 
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
-- `src/gzip/`: single-file Gzip compatibility using miniz raw deflate with CRC32/ISIZE verification.
+- `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
-- `src/tar/`: TAR compatibility adapter with two-pass path validation and verified file publication.
+- `src/tar/`: TAR and TAR.GZ compatibility adapter with two-pass path validation and verified file publication.
 - `src/zip/`: ZIP compatibility using miniz 3.1.1.
 - `src/cli/`: command-line entry point for deterministic automation.
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.

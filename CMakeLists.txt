@@ -52,6 +52,7 @@ add_library(superzip_core STATIC
     src/core/path_safety.cpp
     src/core/progress.cpp
     src/gzip/gzip_adapter.cpp
+    src/gzip/gzip_stream.cpp
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
     src/tar/tar_adapter.cpp
@@ -176,6 +177,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_archive_format.cpp
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_path_safety.cpp
+        tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
         tests/cpp/test_zip_compat.cpp
     )

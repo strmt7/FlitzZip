@@ -1462,7 +1462,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
         : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP and Gzip use miniz streaming APIs; TAR uses SuperZip's two-pass native adapter.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP, Gzip, and TAR.GZ use streaming APIs; TAR uses SuperZip's two-pass native adapter.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
@@ -2439,6 +2439,8 @@ void MainWindow::start_extract() {
             stats = extract_zip(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Tar) {
             stats = extract_tar(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarGzip) {
+            stats = extract_tar_gzip(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Gzip) {
             stats = extract_gzip_file(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Unknown) {

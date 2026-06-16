@@ -79,10 +79,10 @@ already real archive/package formats in SuperZip's matrix.
 | `.suzip` | Yes | Yes | Native GPU-first product format | SuperZip AMD HIP codec |
 | `.zip` | Yes | Yes | Compatibility format | vendored miniz 3.1.1 |
 | `.tar` | Yes | Yes | Compatibility format | native bounded TAR adapter |
+| `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
-| `.tar.gz`, `.tgz` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.bz2`, `.tbz2` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.xz`, `.txz` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.zst`, `.tzst` | No | No | Recognized only | pending stream compressor layer |
@@ -101,9 +101,12 @@ with a clear "recognized but not yet implemented" error. SuperZip does not
 silently shell out to external archive utilities and does not fall back between
 formats.
 
-Gzip support is intentionally single-file. It does not represent a multi-entry
-archive, and extraction derives the output filename from the `.gz` archive path
-rather than trusting optional embedded original-name metadata.
+Gzip support is intentionally single-file when used as `.gz`. It does not
+represent a multi-entry archive, and extraction derives the output filename
+from the `.gz` archive path rather than trusting optional embedded original-name
+metadata. TAR+Gzip support is multi-entry because the TAR stream supplies the
+entry table; SuperZip validates that TAR stream in one decompression pass before
+extracting in a second pass.
 
 ## ZIP-Container Alias Policy
 
@@ -152,7 +155,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are compressed TAR streams, then read-only 7z and RAR
-after backend selection and licensing review. Write support for RAR is not
-planned because the common RAR creation tooling is not a permissive open format
-writer suitable for this repo.
+Preferred next increments are `.tar.bz2`, `.tar.xz`, and `.tar.zst` stream
+filters, then read-only 7z and RAR after backend selection and licensing
+review. Write support for RAR is not planned because the common RAR creation
+tooling is not a permissive open format writer suitable for this repo.

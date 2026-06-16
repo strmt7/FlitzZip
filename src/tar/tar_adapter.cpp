@@ -5,6 +5,7 @@
 #include "core/path_safety.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
+#include "gzip/gzip_stream.hpp"
 
 #include <algorithm>
 #include <array>
@@ -39,6 +40,11 @@ struct TarEntryMetadata {
 struct TarScanResult {
     std::vector<TarEntryMetadata> entries;
     std::uint64_t total_file_bytes = 0;
+};
+
+struct TarWriteStats {
+    std::uint64_t input_bytes = 0;
+    std::uint64_t entries = 0;
 };
 
 struct PendingTarExtensions {
@@ -83,6 +89,22 @@ void write_tar_padding(std::ostream& output, std::uint64_t size) {
     }
     std::array<char, kTarBlockSize> zeros{};
     write_bytes(output, zeros.data(), static_cast<std::size_t>(padding));
+}
+
+// Purpose: Consume an exact byte count from a possibly non-seekable input stream.
+// Inputs: `input` is the source stream, `size` is the byte count, and `label` names the consumed region.
+// Outputs: Reads and discards exactly `size` bytes, or throws on truncation/read failure.
+void discard_stream_bytes(std::istream& input, std::uint64_t size, const char* label) {
+    std::array<char, kTarIoBufferBytes> buffer{};
+    std::uint64_t remaining = size;
+    while (remaining > 0) {
+        const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
+        input.read(buffer.data(), static_cast<std::streamsize>(chunk));
+        if (input.gcount() != static_cast<std::streamsize>(chunk)) {
+            throw ArchiveError(std::string(label) + " is truncated");
+        }
+        remaining -= chunk;
+    }
 }
 
 // Purpose: Copy a bounded file payload into a TAR output stream.
@@ -377,10 +399,14 @@ std::string tar_entry_path(const std::array<char, kTarBlockSize>& header, Pendin
 }
 
 // Purpose: Advance an input stream past a TAR payload and its padding.
-// Inputs: `input` is positioned at payload start and `size` is the payload byte count.
+// Inputs: `input` is positioned at payload start, `size` is the payload byte count, and `seekable` selects seek or discard mode.
 // Outputs: Moves to the next header or throws on invalid seek.
-void skip_tar_payload(std::istream& input, std::uint64_t size) {
+void skip_tar_payload(std::istream& input, std::uint64_t size, bool seekable) {
     const auto padded = checked_add_tar_bytes(size, tar_padding(size), "TAR payload size overflows");
+    if (!seekable) {
+        discard_stream_bytes(input, padded, "TAR payload");
+        return;
+    }
     if (padded > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError("TAR payload is too large to seek");
     }
@@ -404,10 +430,7 @@ std::string read_tar_metadata_payload(std::istream& input, std::uint64_t size) {
     }
     const auto padding = tar_padding(size);
     if (padding > 0) {
-        input.seekg(static_cast<std::streamoff>(padding), std::ios::cur);
-        if (!input) {
-            throw ArchiveError("TAR metadata padding is truncated");
-        }
+        discard_stream_bytes(input, padding, "TAR metadata padding");
     }
     return payload;
 }
@@ -464,15 +487,11 @@ std::string parse_gnu_long_name(std::string payload) {
     return payload;
 }
 
-// Purpose: Scan a TAR file and validate metadata before any extraction writes occur.
-// Inputs: `archive_path` is the TAR file to scan.
+// Purpose: Scan a TAR stream and validate metadata before any extraction writes occur.
+// Inputs: `input` is positioned at the TAR start, `source_label` names diagnostics, and `seekable` controls payload skipping strategy.
 // Outputs: Returns validated entry metadata and total file bytes; throws on malformed or unsafe TAR records.
-TarScanResult scan_tar(const std::filesystem::path& archive_path) {
-    std::ifstream input(archive_path, std::ios::binary);
-    if (!input) {
-        throw ArchiveError("cannot open TAR archive: " + archive_path.string());
-    }
-
+TarScanResult scan_tar_stream(std::istream& input, const std::string& source_label, bool seekable) {
+    (void)source_label;
     TarScanResult result;
     PendingTarExtensions pending;
     for (;;) {
@@ -490,7 +509,14 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
         validate_tar_checksum(header);
         const auto size = parse_tar_number(header, 124, 12, "size");
         const auto typeflag = header[156] == '\0' ? '0' : header[156];
-        const auto payload_offset = static_cast<std::uint64_t>(input.tellg());
+        std::uint64_t payload_offset = 0;
+        if (seekable) {
+            const auto position = input.tellg();
+            if (position < 0) {
+                throw ArchiveError("TAR payload offset is invalid");
+            }
+            payload_offset = static_cast<std::uint64_t>(position);
+        }
 
         if (typeflag == 'x') {
             pending = parse_pax_payload(read_tar_metadata_payload(input, size));
@@ -519,7 +545,7 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
                 .size = directory ? 0 : size,
                 .payload_offset = payload_offset,
             });
-            skip_tar_payload(input, size);
+            skip_tar_payload(input, size, seekable);
             continue;
         }
         if (typeflag == '1' || typeflag == '2') {
@@ -541,6 +567,158 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
     }
     validate_archive_path_set(validation_entries);
     return result;
+}
+
+// Purpose: Scan a seekable TAR file and validate metadata before any extraction writes occur.
+// Inputs: `archive_path` is the TAR file to scan.
+// Outputs: Returns validated entry metadata and total file bytes; throws on malformed or unsafe TAR records.
+TarScanResult scan_tar(const std::filesystem::path& archive_path) {
+    std::ifstream input(archive_path, std::ios::binary);
+    if (!input) {
+        throw ArchiveError("cannot open TAR archive: " + archive_path.string());
+    }
+    return scan_tar_stream(input, archive_path.string(), true);
+}
+
+// Purpose: Copy one already-positioned TAR payload from a stream to a verified temporary file.
+// Inputs: `input` is positioned at payload start, `entry` supplies size/path, `target` is the final extraction path, and `overwrite` controls replacement.
+// Outputs: Publishes the verified file atomically and consumes payload padding, or throws.
+void extract_tar_stream_file_payload(
+    std::istream& input,
+    const TarEntryMetadata& entry,
+    const std::filesystem::path& target,
+    bool overwrite) {
+    if (!overwrite && std::filesystem::exists(target)) {
+        throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
+    }
+    std::filesystem::create_directories(target.parent_path());
+    const auto temporary_target = reserve_file_publish_target(target);
+    bool temporary_active = true;
+    try {
+        std::ofstream output(temporary_target.file, std::ios::binary);
+        if (!output) {
+            throw ArchiveError("cannot create TAR extraction target: " + temporary_target.file.string());
+        }
+        std::array<char, kTarIoBufferBytes> buffer{};
+        std::uint64_t remaining = entry.size;
+        while (remaining > 0) {
+            const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
+            input.read(buffer.data(), static_cast<std::streamsize>(chunk));
+            if (input.gcount() != static_cast<std::streamsize>(chunk)) {
+                throw ArchiveError("TAR payload is truncated");
+            }
+            write_bytes(output, buffer.data(), chunk);
+            remaining -= chunk;
+        }
+        const auto padding = tar_padding(entry.size);
+        if (padding > 0) {
+            discard_stream_bytes(input, padding, "TAR payload padding");
+        }
+        output.close();
+        if (!output) {
+            throw ArchiveError("failed to flush TAR extraction target: " + temporary_target.file.string());
+        }
+        commit_verified_file(temporary_target.file, target, overwrite);
+        cleanup_file_publish_target(temporary_target);
+        temporary_active = false;
+    } catch (...) {
+        if (temporary_active) {
+            cleanup_file_publish_target(temporary_target);
+        }
+        throw;
+    }
+}
+
+// Purpose: Verify that a second-pass TAR record matches the first validated scan.
+// Inputs: `actual` is metadata read during extraction and `expected` is first-pass validated metadata.
+// Outputs: Returns normally when path, kind, and size match; throws on changed or inconsistent streams.
+void require_matching_scanned_entry(const TarEntryMetadata& actual, const TarEntryMetadata& expected) {
+    if (actual.path != expected.path || actual.directory != expected.directory || actual.size != expected.size) {
+        throw ArchiveError("TAR stream changed between validation and extraction passes");
+    }
+}
+
+// Purpose: Extract a non-seekable TAR stream after a separate validation pass has succeeded.
+// Inputs: `input` is positioned at the TAR start, `scanned` is the validated metadata, `destination` is the extraction root, and `overwrite` controls replacement.
+// Outputs: Restores entries into `destination` while re-checking second-pass metadata against `scanned`.
+void extract_validated_tar_stream(
+    std::istream& input,
+    const TarScanResult& scanned,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback) {
+    ProgressState progress;
+    progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
+    PendingTarExtensions pending;
+    std::size_t entry_index = 0;
+    for (;;) {
+        std::array<char, kTarBlockSize> header{};
+        input.read(header.data(), static_cast<std::streamsize>(header.size()));
+        if (input.gcount() == 0) {
+            break;
+        }
+        if (input.gcount() != static_cast<std::streamsize>(header.size())) {
+            throw ArchiveError("TAR header is truncated");
+        }
+        if (is_zero_block(header)) {
+            break;
+        }
+        validate_tar_checksum(header);
+        const auto size = parse_tar_number(header, 124, 12, "size");
+        const auto typeflag = header[156] == '\0' ? '0' : header[156];
+
+        if (typeflag == 'x') {
+            pending = parse_pax_payload(read_tar_metadata_payload(input, size));
+            continue;
+        }
+        if (typeflag == 'g') {
+            static_cast<void>(read_tar_metadata_payload(input, size));
+            continue;
+        }
+        if (typeflag == 'L') {
+            pending.path = parse_gnu_long_name(read_tar_metadata_payload(input, size));
+            continue;
+        }
+        const auto entry_path = tar_entry_path(header, pending);
+        if (typeflag == '0' || typeflag == '5') {
+            const bool directory = typeflag == '5';
+            if (entry_index >= scanned.entries.size()) {
+                throw ArchiveError("TAR stream contains entries not present during validation");
+            }
+            const TarEntryMetadata actual{
+                .path = entry_path,
+                .directory = directory,
+                .size = directory ? 0 : size,
+                .payload_offset = 0,
+            };
+            const auto& expected = scanned.entries[entry_index];
+            require_matching_scanned_entry(actual, expected);
+            progress.set_current(expected.path);
+            publish_progress(progress, progress_callback);
+            const auto target = safe_join_archive_path(destination, expected.path);
+            if (expected.directory) {
+                std::filesystem::create_directories(target);
+                skip_tar_payload(input, size, false);
+                progress.finish_entry();
+            } else {
+                extract_tar_stream_file_payload(input, expected, target, overwrite);
+                progress.add_bytes(expected.size);
+                progress.finish_entry();
+            }
+            ++entry_index;
+            continue;
+        }
+        if (typeflag == '1' || typeflag == '2') {
+            throw SecurityError("refusing to extract TAR link entry: " + entry_path);
+        }
+        if (typeflag == '3' || typeflag == '4' || typeflag == '6') {
+            throw SecurityError("refusing to extract TAR device or FIFO entry: " + entry_path);
+        }
+        throw ArchiveError("unsupported TAR entry type");
+    }
+    if (entry_index != scanned.entries.size()) {
+        throw ArchiveError("TAR stream ended before all validated entries were extracted");
+    }
 }
 
 // Purpose: Copy one scanned TAR file payload to a verified temporary file.
@@ -592,21 +770,17 @@ void extract_tar_file_payload(
     }
 }
 
-}  // namespace
-
-OperationStats compress_tar(
+// Purpose: Write a TAR stream to any output stream using shared compatibility semantics.
+// Inputs: `sources` are existing files/directories, `output` receives TAR bytes, and `progress_callback` receives synchronous snapshots.
+// Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
+TarWriteStats write_tar_stream(
     const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
+    std::ostream& output,
     const ProgressCallback& progress_callback) {
-    const auto started = std::chrono::steady_clock::now();
     const auto manifest = build_manifest(sources);
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
 
-    std::ofstream output(output_archive, std::ios::binary);
-    if (!output) {
-        throw ArchiveError("cannot create TAR archive: " + output_archive.string());
-    }
     std::uint64_t ordinal = 0;
     for (const auto& entry : manifest.entries) {
         progress.set_current(entry.archive_path);
@@ -622,15 +796,51 @@ OperationStats compress_tar(
     std::array<char, kTarBlockSize> zero{};
     write_bytes(output, zero.data(), zero.size());
     write_bytes(output, zero.data(), zero.size());
+    return TarWriteStats{
+        .input_bytes = manifest.total_file_bytes,
+        .entries = static_cast<std::uint64_t>(manifest.entries.size()),
+    };
+}
+
+}  // namespace
+
+OperationStats compress_tar(
+    const std::vector<std::filesystem::path>& sources,
+    const std::filesystem::path& output_archive,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    std::ofstream output(output_archive, std::ios::binary);
+    if (!output) {
+        throw ArchiveError("cannot create TAR archive: " + output_archive.string());
+    }
+    const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
     if (!output) {
         throw ArchiveError("failed to finalize TAR archive: " + output_archive.string());
     }
 
     OperationStats stats;
-    stats.input_bytes = manifest.total_file_bytes;
+    stats.input_bytes = write_stats.input_bytes;
     stats.output_bytes = std::filesystem::file_size(output_archive);
-    stats.entries = manifest.entries.size();
+    stats.entries = write_stats.entries;
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
+}
+
+OperationStats compress_tar_gzip(
+    const std::vector<std::filesystem::path>& sources,
+    const std::filesystem::path& output_archive,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    GzipOutputStream output(output_archive);
+    const auto write_stats = write_tar_stream(sources, output, progress_callback);
+    output.close();
+
+    OperationStats stats;
+    stats.input_bytes = write_stats.input_bytes;
+    stats.output_bytes = output.output_bytes();
+    stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return stats;
@@ -668,6 +878,30 @@ OperationStats extract_tar(
 
     OperationStats stats;
     stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.output_bytes = scanned.total_file_bytes;
+    stats.entries = scanned.entries.size();
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
+}
+
+OperationStats extract_tar_gzip(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    GzipInputStream scan_input(archive_path);
+    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    scan_input.finish();
+    std::filesystem::create_directories(destination);
+
+    GzipInputStream extract_input(archive_path);
+    extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
+    extract_input.finish();
+
+    OperationStats stats;
+    stats.input_bytes = extract_input.input_bytes();
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = scanned.entries.size();
     stats.gpu_used = false;
