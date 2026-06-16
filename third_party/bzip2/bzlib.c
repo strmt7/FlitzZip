@@ -822,9 +822,9 @@ int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
          if (s->nblock_used == s->save_nblock+1 && s->state_out_len == 0) {
             BZ_FINALISE_CRC ( s->calculatedBlockCRC );
             if (s->verbosity >= 3)
-               VPrintf2 ( " {0x%08x, 0x%08x}", s->storedBlockCRC,
+               BZTrace2 ( " {0x%08x, 0x%08x}", s->storedBlockCRC,
                            s->calculatedBlockCRC );
-            if (s->verbosity >= 2) VPrintf0 ( "]" );
+            if (s->verbosity >= 2) BZTrace0 ( "]" );
             if (s->calculatedBlockCRC != s->storedBlockCRC)
                RETURN_DECOMPRESS(BZ_DATA_ERROR);
             s->calculatedCombinedCRC
@@ -840,7 +840,7 @@ int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
          Int32 r = BZ2_decompress ( s );
          if (r == BZ_STREAM_END) {
             if (s->verbosity >= 3)
-               VPrintf2 ( "\n    combined CRCs: stored = 0x%08x, computed = 0x%08x",
+               BZTrace2 ( "\n    combined CRCs: stored = 0x%08x, computed = 0x%08x",
                           s->storedCombinedCRC, s->calculatedCombinedCRC );
             if (s->calculatedCombinedCRC != s->storedCombinedCRC)
                RETURN_DECOMPRESS(BZ_DATA_ERROR);

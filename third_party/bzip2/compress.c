@@ -259,7 +259,7 @@ void sendMTFValues ( EState* s )
    UInt16* mtfv = s->mtfv;
 
    if (s->verbosity >= 3)
-      VPrintf3( "      %d in block, %d after MTF & 1-2 coding, "
+      BZTrace3( "      %d in block, %d after MTF & 1-2 coding, "
                 "%d+2 syms in use\n",
                 s->nblock, s->nMTF, s->nInUse );
 
@@ -300,7 +300,7 @@ void sendMTFValues ( EState* s )
          }
 
          if (s->verbosity >= 3)
-            VPrintf5( "      initial group %d, [%d .. %d], "
+            BZTrace5( "      initial group %d, [%d .. %d], "
                       "has %d syms (%4.1f%%)\n",
                       nPart, gs, ge, aFreq,
                       (100.0 * (float)aFreq) / (float)(s->nMTF) );
@@ -434,11 +434,11 @@ void sendMTFValues ( EState* s )
          gs = ge+1;
       }
       if (s->verbosity >= 3) {
-         VPrintf2 ( "      pass %d: size is %d, grp uses are ",
+         BZTrace2 ( "      pass %d: size is %d, grp uses are ",
                    iter+1, totc/8 );
          for (t = 0; t < nGroups; t++)
-            VPrintf1 ( "%d ", fave[t] );
-         VPrintf0 ( "\n" );
+            BZTrace1 ( "%d ", fave[t] );
+         BZTrace0 ( "\n" );
       }
 
       /*--
@@ -511,7 +511,7 @@ void sendMTFValues ( EState* s )
             }
 
       if (s->verbosity >= 3)
-         VPrintf1( "      bytes: mapping %d, ", s->numZ-nBytes );
+         BZTrace1( "      bytes: mapping %d, ", s->numZ-nBytes );
    }
 
    /*--- Now the selectors. ---*/
@@ -523,7 +523,7 @@ void sendMTFValues ( EState* s )
       bsW(s,1,0);
    }
    if (s->verbosity >= 3)
-      VPrintf1( "selectors %d, ", s->numZ-nBytes );
+      BZTrace1( "selectors %d, ", s->numZ-nBytes );
 
    /*--- Now the coding tables. ---*/
    nBytes = s->numZ;
@@ -539,7 +539,7 @@ void sendMTFValues ( EState* s )
    }
 
    if (s->verbosity >= 3)
-      VPrintf1 ( "code lengths %d, ", s->numZ-nBytes );
+      BZTrace1 ( "code lengths %d, ", s->numZ-nBytes );
 
    /*--- And finally, the block data proper ---*/
    nBytes = s->numZ;
@@ -594,7 +594,7 @@ void sendMTFValues ( EState* s )
    AssertH( selCtr == nSelectors, 3007 );
 
    if (s->verbosity >= 3)
-      VPrintf1( "codes %d\n", s->numZ-nBytes );
+      BZTrace1( "codes %d\n", s->numZ-nBytes );
 }
 
 
@@ -609,7 +609,7 @@ void BZ2_compressBlock ( EState* s, Bool is_last_block )
       if (s->blockNo > 1) s->numZ = 0;
 
       if (s->verbosity >= 2)
-         VPrintf4( "    block %d: crc = 0x%08x, "
+         BZTrace4( "    block %d: crc = 0x%08x, "
                    "combined CRC = 0x%08x, size = %d\n",
                    s->blockNo, s->blockCRC, s->combinedCRC, s->nblock );
 
@@ -661,7 +661,7 @@ void BZ2_compressBlock ( EState* s, Bool is_last_block )
       bsPutUChar ( s, 0x50 ); bsPutUChar ( s, 0x90 );
       bsPutUInt32 ( s, s->combinedCRC );
       if (s->verbosity >= 2)
-         VPrintf1( "    final combined CRC = 0x%08x\n   ", s->combinedCRC );
+         BZTrace1( "    final combined CRC = 0x%08x\n   ", s->combinedCRC );
       bsFinishWrite ( s );
    }
 }

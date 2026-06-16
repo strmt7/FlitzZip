@@ -57,12 +57,12 @@ extern void bz_internal_error ( int errcode );
 #define AssertH(cond,errcode) \
    { if (!(cond)) bz_internal_error ( errcode ); }
 #define AssertD(cond,msg)                do { } while (0)
-#define VPrintf0(zf)                     do { } while (0)
-#define VPrintf1(zf,za1)                 do { } while (0)
-#define VPrintf2(zf,za1,za2)             do { } while (0)
-#define VPrintf3(zf,za1,za2,za3)         do { } while (0)
-#define VPrintf4(zf,za1,za2,za3,za4)     do { } while (0)
-#define VPrintf5(zf,za1,za2,za3,za4,za5) do { } while (0)
+#define BZTrace0(zf)                     do { } while (0)
+#define BZTrace1(zf,za1)                 do { } while (0)
+#define BZTrace2(zf,za1,za2)             do { } while (0)
+#define BZTrace3(zf,za1,za2,za3)         do { } while (0)
+#define BZTrace4(zf,za1,za2,za3,za4)     do { } while (0)
+#define BZTrace5(zf,za1,za2,za3,za4,za5) do { } while (0)
 
 #define BZALLOC(nnn) (strm->bzalloc)(strm->opaque,(nnn),1)
 #define BZFREE(ppp)  (strm->bzfree)(strm->opaque,(ppp))

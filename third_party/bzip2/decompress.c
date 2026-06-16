@@ -283,7 +283,7 @@ Int32 BZ2_decompress ( DState* s )
 
       s->currBlockNo++;
       if (s->verbosity >= 2)
-         VPrintf1 ( "\n    [%d: huff+mtf ", s->currBlockNo );
+         BZTrace1 ( "\n    [%d: huff+mtf ", s->currBlockNo );
 
       s->storedBlockCRC = 0;
       GET_UCHAR(BZ_X_BCRC_1, uc);
@@ -572,7 +572,7 @@ Int32 BZ2_decompress ( DState* s )
       s->state_out_ch  = 0;
       BZ_INITIALISE_CRC ( s->calculatedBlockCRC );
       s->state = BZ_X_OUTPUT;
-      if (s->verbosity >= 2) VPrintf0 ( "rt+rld" );
+      if (s->verbosity >= 2) BZTrace0 ( "rt+rld" );
 
       if (s->smallDecompress) {
 
