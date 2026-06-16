@@ -380,6 +380,8 @@ OperationStats compress_unix_compress_file(
     progress.set_current(source_file.filename().string());
     publish_progress(progress, progress_callback);
 
+    // Write to a verified temporary path first; a malformed stream or I/O error
+    // must not replace an existing archive target.
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open Unix Compress source file: " + source_file.string());
@@ -391,6 +393,7 @@ OperationStats compress_unix_compress_file(
         if (!output) {
             throw ArchiveError("cannot create Unix Compress archive: " + output_archive.string());
         }
+        // SuperZip emits block-mode 16-bit streams for broad `.Z` compatibility.
         const std::array<unsigned char, 3> header{kMagic0, kMagic1, static_cast<unsigned char>(kBlockModeFlag | kMaxBits)};
         write_exact(output, header);
 
@@ -403,6 +406,8 @@ OperationStats compress_unix_compress_file(
         bool have_current = false;
         std::uint32_t current_code = 0;
 
+        // The encoder mirrors Unix Compress width growth: the width is advanced
+        // before reading the next byte and only at the format's packed boundary.
         std::array<unsigned char, kIoBufferBytes> buffer{};
         for (;;) {
             input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
@@ -452,6 +457,8 @@ OperationStats compress_unix_compress_file(
         if (have_current) {
             writer.write_code(current_code);
         }
+        // The final partial byte is zero-padded, then the archive is atomically
+        // published only after the stream has flushed successfully.
         writer.finish();
         output.close();
         if (!output) {
@@ -522,6 +529,8 @@ OperationStats extract_unix_compress_file(
         throw ArchiveError("Unix Compress header has unsupported maxbits");
     }
 
+    // `.Z` streams have no embedded trusted filename; derive one safe member
+    // name from the host archive path and validate it through the shared join.
     const auto entry_name = unix_compress_output_entry_name(archive_path);
     std::filesystem::create_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name);
@@ -554,6 +563,8 @@ OperationStats extract_unix_compress_file(
         std::uint32_t max_code = decoder_max_code_for_width(code_width, max_bits);
         std::uint64_t reported_input = 0;
 
+        // Progress reports consumed compressed payload bytes, including any
+        // alignment padding consumed during width changes.
         auto report_input_progress = [&]() {
             const auto consumed = reader.consumed_bytes();
             if (consumed > reported_input) {
@@ -593,6 +604,8 @@ OperationStats extract_unix_compress_file(
         std::uint32_t old_code = *first_code;
         unsigned char first_char = first_byte;
 
+        // Decode codes into a bounded prefix/suffix dictionary. The special
+        // KwKwK case is accepted only when it references the next dictionary slot.
         while (true) {
             auto maybe_code = reader.read_code();
             report_input_progress();
@@ -622,6 +635,8 @@ OperationStats extract_unix_compress_file(
                 continue;
             }
 
+            // Expand first, then add the previous-code/current-first-byte entry
+            // exactly as LZW requires.
             std::vector<unsigned char> sequence;
             if (code == next_code) {
                 sequence = expand_code(old_code, next_code, prefix, suffix);
@@ -648,6 +663,8 @@ OperationStats extract_unix_compress_file(
             }
             old_code = code;
 
+            // Unix Compress changes width before reading the next code, with
+            // padding discarded at the old width boundary.
             while (next_code > max_code && code_width < max_bits) {
                 reader.set_width(code_width + 1);
                 ++code_width;
@@ -659,6 +676,8 @@ OperationStats extract_unix_compress_file(
         if (!output) {
             throw ArchiveError("failed to finalize Unix Compress extraction target: " + target.string());
         }
+        // Publish only after the whole LZW stream has decoded without dictionary
+        // violations.
         commit_verified_file(temporary.file, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;

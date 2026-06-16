@@ -175,9 +175,7 @@ GzipHeader parse_gzip_header(std::ifstream& input, std::uint64_t file_size) {
     if ((flags & kGzipReservedFlags) != 0U) {
         throw ArchiveError("Gzip header uses reserved flags");
     }
-    if ((flags & kGzipFlagText) != 0U) {
-        // FTEXT is advisory and does not affect binary-safe extraction.
-    }
+    // FTEXT is advisory only; extraction remains binary-safe regardless of it.
 
     std::uint64_t offset = header.size();
     if ((flags & kGzipFlagExtra) != 0U) {
@@ -265,6 +263,8 @@ OperationStats compress_gzip_file(
     progress.set_current(source_file.filename().string());
     publish_progress(progress, progress_callback);
 
+    // Reserve the final path up front, but write only to a private temporary file
+    // until the raw deflate stream and trailer are complete.
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open Gzip source file: " + source_file.string());
@@ -282,6 +282,8 @@ OperationStats compress_gzip_file(
         const std::array<unsigned char, 10> header{0x1F, 0x8B, 8U, 0U, 0U, 0U, 0U, 0U, 0U, 255U};
         write_exact(output, header.data(), header.size());
 
+        // Use miniz as a raw-deflate engine so this adapter controls the Gzip
+        // wrapper, CRC32, and ISIZE verification contract explicitly.
         if (mz_deflateInit2(
                 &stream,
                 MZ_BEST_COMPRESSION,
@@ -298,6 +300,8 @@ OperationStats compress_gzip_file(
         auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, nullptr, 0));
         std::uint64_t processed = 0;
 
+        // Pump output until miniz consumes each bounded input chunk; this avoids
+        // retaining whole source files in memory.
         auto pump_deflate = [&](int flush) {
             int status = MZ_OK;
             do {
@@ -335,6 +339,8 @@ OperationStats compress_gzip_file(
             }
         }
 
+        // The trailer is emitted only after miniz reports end-of-stream so
+        // partially encoded archives never publish as successful outputs.
         int status = MZ_OK;
         do {
             status = pump_deflate(MZ_FINISH);
@@ -404,6 +410,8 @@ OperationStats extract_gzip_file(
     }
     std::filesystem::create_directories(target.parent_path());
 
+    // Progress is measured against the compressed payload because wrapper and
+    // trailer bytes are parsed separately before extraction starts.
     ProgressState progress;
     progress.start(OperationKind::Extract, header.compressed_size, 1);
     progress.set_current(entry_name);
@@ -431,6 +439,8 @@ OperationStats extract_gzip_file(
         std::uint64_t remaining = header.compressed_size;
         int status = MZ_OK;
 
+        // Inflate only the bounded payload range described by the parsed wrapper.
+        // Any leftover deflate bytes before the trailer are treated as malformed.
         while (remaining > 0U && status != MZ_STREAM_END) {
             const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer.size(), remaining));
             input.read(reinterpret_cast<char*>(input_buffer.data()), static_cast<std::streamsize>(to_read));
@@ -475,6 +485,7 @@ OperationStats extract_gzip_file(
         if (static_cast<std::uint32_t>(output_size & 0xFFFFFFFFULL) != header.expected_isize) {
             throw ArchiveError("Gzip uncompressed-size verification failed");
         }
+        // Publish only after CRC32 and ISIZE match the trailer.
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize Gzip extraction target: " + target.string());

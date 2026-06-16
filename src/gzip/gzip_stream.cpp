@@ -174,9 +174,7 @@ ParsedGzipHeader parse_gzip_stream_header(std::ifstream& input, std::uint64_t fi
     if ((flags & kGzipReservedFlags) != 0U) {
         throw ArchiveError("Gzip header uses reserved flags");
     }
-    if ((flags & kGzipFlagText) != 0U) {
-        // FTEXT is advisory and does not affect binary-safe extraction.
-    }
+    // FTEXT is advisory only; stream extraction remains binary-safe regardless of it.
 
     std::uint64_t offset = header.size();
     if ((flags & kGzipFlagExtra) != 0U) {
@@ -325,8 +323,9 @@ private:
         checked_add_stream_bytes(input_bytes_, size, "Gzip input");
         std::size_t offset = 0;
         while (offset < size) {
-            const auto chunk = std::min<std::size_t>(size - offset, static_cast<std::size_t>(UINT_MAX));
-            stream_.next_in = const_cast<unsigned char*>(data + offset);
+            const auto chunk = std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
+            std::copy_n(data + offset, chunk, input_buffer_.data());
+            stream_.next_in = input_buffer_.data();
             stream_.avail_in = static_cast<unsigned int>(chunk);
             while (stream_.avail_in > 0U) {
                 stream_.next_out = output_buffer_.data();
@@ -346,6 +345,7 @@ private:
     mz_stream stream_{};
     bool stream_active_ = false;
     bool closed_ = false;
+    std::array<unsigned char, kGzipStreamBufferBytes> input_buffer_{};
     std::array<unsigned char, kGzipStreamBufferBytes> output_buffer_{};
     std::uint32_t crc32_ = 0;
     std::uint64_t input_bytes_ = 0;
