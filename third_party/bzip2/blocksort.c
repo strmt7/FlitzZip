@@ -891,7 +891,7 @@ void mainSort ( UInt32* ptr,
                Int32 hi = (ftab[sb+1] & CLEARMASK) - 1;
                if (hi > lo) {
                   if (verb >= 4)
-                     BZTrace4 ( "        qsort [0x%x, 0x%x]   "
+                     BZTrace4 ( "        quick sort [0x%x, 0x%x]   "
                                 "done %d   this %d\n",
                                 ss, j, numQSorted, hi - lo + 1 );
                   mainQSort3 (
