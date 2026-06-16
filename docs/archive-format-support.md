@@ -1,6 +1,6 @@
 # Archive Format Support And Research
 
-Research checked on 2026-06-16.
+Research checked on 2026-06-17.
 
 SuperZip is first a native AMD HIP `.suzip` application. Compatibility formats
 must not change that boundary. A compatibility format is accepted only when it
@@ -41,6 +41,8 @@ Primary and project-owned sources reviewed:
 - BetterZip: https://betterzip.app/library/betterzip/docs/archive-types/
 - Xarchiver: https://xarchiver.sourceforge.net/
 - Microsoft Windows archive support: https://support.microsoft.com/en-us/windows/zip-and-unzip-files-8d28fa72-f2f9-712f-67df-f80cf89fd4e5
+- Express Zip: https://www.nchsoftware.com/zip/index.html
+- Ashampoo ZIP Free: https://www.ashampoo.com/en-us/zip-free/detail
 
 Secondary sources were used only where a current vendor page did not publish a
 complete format matrix:
@@ -57,7 +59,7 @@ engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, Zstandard, CAB, ISO, AR, CPIO, ARJ,
-LHA/LZH, WIM, XAR, DEB, RPM, and legacy Unix Compress `.Z`. SuperZip's
+LHA/LZH, WIM, XAR, DEB, RPM, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
 
@@ -87,6 +89,8 @@ already real archive/package formats in SuperZip's matrix.
 | BetterZip | ZIP, TAR, TGZ, TBZ, TXZ, 7-ZIP, DMG, Zstandard, Brotli, optional external RAR | Adds ARJ, LHA/LZH, ISO, CHM, CAB, CPIO/CPGZ, DEB, RPM, StuffIt-family, BinHex, MacBinary, GZip, BZip2, WIM | Confirms Zstandard/Brotli interest, but external RAR is not a SuperZip model |
 | Xarchiver | Frontend over installed tools for common archive formats | 7z, ARJ, BZIP2, GZIP, RAR, LHA/LZH, LZMA, LZOP, DEB, RPM, TAR, ZIP | Wrapper design is explicitly rejected for production support |
 | Windows 11 Explorer | Built-in shell compression/decompression for selected formats; encrypted archive handling is limited | ZIP and newer built-in support for additional formats such as 7z, with encryption limitations | SuperZip must be clearer and safer than shell support, especially for encrypted/unsupported cases |
+| Express Zip | ZIP-focused creation with compression-level controls | ZIP, RAR, CAB, TAR, 7Z, ISO, GZIP, ZIPX, LZH, ARJ and related formats | Confirms that compression-level UX must not be confused with unsupported format methods |
+| Ashampoo ZIP Free | ZIP, 7-ZIP, CAB, TAR variants, LHA/LZH | Broad extraction set including RAR, ZIPX, ARJ, ARC, ACE, MSI, NSIS, CHM, DMG, RPM, CPIO, VHD, XAR, LZMA, LZH, SquashFS, CramFS, Z, ZOO, WIM, ISO/UDF | Confirms that broad legacy claims require backend-by-backend proof and recognition-only honesty |
 | jZip | 7Z, BZ2, GZ, TAR, ZIP | 7Z, ARJ, BZ2, CAB, CPIO, DEB, GZ, ISO, LHA/LZH, RAR, RPM, TAR, WIM, Z, ZIP and more | Legacy reference only; no backend or UX copying |
 
 ## Current Product Matrix
@@ -95,6 +99,7 @@ already real archive/package formats in SuperZip's matrix.
 | --- | --- | --- | --- | --- |
 | `.suzip` | Yes | Yes | Native GPU-first product format | SuperZip AMD HIP codec |
 | `.zip` | Yes | Yes | Compatibility format | vendored miniz 3.1.1 |
+| `.zipx` | No | Yes | Extract-only for ZIP-compatible records and supported methods | vendored miniz 3.1.1 ZIP reader; unsupported ZIPX methods fail explicitly |
 | `.tar` | Yes | Yes | Compatibility format | native bounded TAR adapter |
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.tar.bz2`, `.tbz`, `.tbz2` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored libbzip2 1.0.8 |
@@ -104,6 +109,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.xz` | No | Yes | Extract-only single-file compatibility stream | vendored XZ Embedded |
 | `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.01 decoder with SuperZip path/publish pipeline |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
+| `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
@@ -131,6 +137,13 @@ build\Release\superzip_cli.exe identify archive.tar
 with a clear "recognized but not yet implemented" error. SuperZip does not
 silently shell out to external archive utilities and does not fall back between
 formats.
+
+ZIPX support is intentionally extract-only and honest about backend coverage.
+The `.zipx` extension is detected separately because users see it as a distinct
+archive family, but the current implementation routes only ZIP-compatible
+container records through the miniz ZIP reader. ZIPX archives that require
+compression methods outside the vendored backend fail explicitly instead of
+being reinterpreted as native SUZIP or silently decoded by a host utility.
 
 Gzip support is intentionally single-file when used as `.gz`. It does not
 represent a multi-entry archive, and extraction derives the output filename
@@ -174,6 +187,15 @@ SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
 non-block-mode streams with declared widths from 9 through 16 bits. Extraction
 derives the output filename from the `.Z` archive path and never treats `.Z` as a
 directory archive.
+
+UUencode support is intentionally single-file when used as `.uue` or `.uu`.
+SuperZip writes strict `begin 644 <name>` streams and extracts one file from the
+begin-line filename only after that name passes the same path-safety validation
+used by archive entries. The adapter tolerates a bounded mail-style preamble,
+rejects overlong lines, malformed payload data, missing end markers, unsafe
+paths, and non-whitespace trailing data, and publishes output only through the
+verified temporary-file path. UUencode has no intrinsic checksum, so optional
+SHA-256 remains the strong end-to-end archive-file integrity check.
 
 CPIO support covers the SVR4 new ASCII formats with magic values `070701` and
 `070702`. Creation writes `070701`. Extraction accepts both variants and verifies
@@ -532,6 +554,31 @@ flowchart TD
     D -->|"no"| G["Reject stream and remove temp output"]
 ```
 
+## UUE Security Contract
+
+The UUE path is an in-process single-file text decoder and writer:
+
+1. Accept only a bounded preamble followed by a strict `begin <octal-mode>
+   <filename>` line.
+2. Validate the begin-line filename through `safe_join_archive_path` before any
+   destination file is reserved.
+3. Bound every encoded line and reject declared decoded line lengths above the
+   UUE maximum of 45 bytes.
+4. Require a zero-length line followed by `end`, then reject non-whitespace
+   trailing data.
+5. Publish the decoded file only after the complete stream has been decoded
+   into a private temporary file.
+
+```mermaid
+flowchart TD
+    A["Open UUE stream"] --> B["Scan bounded preamble"]
+    B --> C["Parse begin line and validate filename"]
+    C --> D["Decode bounded payload lines"]
+    D --> E{"Zero line and end marker valid?"}
+    E -->|"yes"| F["Atomically publish verified file"]
+    E -->|"no"| G["Reject stream and remove temp output"]
+```
+
 ## Bzip2 Security Contract
 
 The Bzip2 path is in-process through vendored libbzip2 1.0.8 and follows the
@@ -669,7 +716,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only RAR, ARJ extraction, ZIPX method
+Preferred next increments are read-only RAR, ARJ extraction, deeper ZIPX method
 coverage, and the remaining recognized-only legacy/container formats after
 backend selection and licensing review. XAR checksum/signature validation is
 also a future hardening increment before SuperZip can claim broad XAR compatibility. Write

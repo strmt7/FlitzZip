@@ -41,6 +41,15 @@ The reviewed help corpus covered 77 same-site pages. The topics clustered into:
 - Archive testing is a first-class behavior: format parsers need corrupt input,
   truncation, oversized metadata, unsafe path, duplicate path, and overwrite
   refusal tests.
+- Format support must be described by actual backend capability, not by file
+  extension familiarity. A format may be recognized, extract-only, create-only,
+  or fully supported; documentation and UI labels must preserve that distinction.
+- Single-file encodings and compression streams must not be presented as
+  multi-entry archives. Their output filename policy, integrity limitations, and
+  overwrite behavior need to be explicit.
+- Split archives, package containers, self-extracting wrappers, and shell
+  integrations require separate security policies before they become visible
+  product features.
 - Troubleshooting output should be actionable: slow performance, unavailable AMD
   HIP, missing driver runtime, filesystem access failures, mapped-drive issues,
   installer privilege requirements, and unsupported split archives should have

@@ -19,6 +19,7 @@
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 #include "unix_compress/unix_compress_adapter.hpp"
+#include "uue/uue_adapter.hpp"
 #include "wim/wim_adapter.hpp"
 #include "xar/xar_adapter.hpp"
 #include "xz/xz_adapter.hpp"
@@ -171,7 +172,7 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 12> formats{
+    constexpr std::array<ArchiveFormat, 13> formats{
         ArchiveFormat::SuperZip,
         ArchiveFormat::Zip,
         ArchiveFormat::Tar,
@@ -182,6 +183,7 @@ ArchiveFormat compression_format_value(int index) {
         ArchiveFormat::Bzip2,
         ArchiveFormat::Zstd,
         ArchiveFormat::UnixCompress,
+        ArchiveFormat::Uue,
         ArchiveFormat::Cpio,
         ArchiveFormat::Ar,
     };
@@ -193,7 +195,7 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 12> labels{
+    constexpr std::array<std::wstring_view, 13> labels{
         L"SuperZip GPU (.suzip)",
         L"ZIP compatibility (.zip)",
         L"TAR compatibility (.tar)",
@@ -204,6 +206,7 @@ std::wstring compression_format_text(int index) {
         L"Bzip2 single file (.bz2)",
         L"Zstandard single file (.zst)",
         L"Unix Compress single file (.Z)",
+        L"UUencoded single file (.uue)",
         L"CPIO compatibility (.cpio)",
         L"AR compatibility (.ar)",
     };
@@ -236,6 +239,8 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".zst";
     case ArchiveFormat::UnixCompress:
         return L".Z";
+    case ArchiveFormat::Uue:
+        return L".uue";
     case ArchiveFormat::Cpio:
         return L".cpio";
     case ArchiveFormat::Ar:
@@ -297,6 +302,7 @@ OperationStats extract_detected_archive(
     // same overwrite and progress contract at the GUI boundary.
     switch (archive_format) {
     case ArchiveFormat::Zip:
+    case ArchiveFormat::Zipx:
         return extract_zip(archive, output, overwrite, progress_callback);
     case ArchiveFormat::SevenZip:
         return extract_7z(archive, output, overwrite, progress_callback);
@@ -322,6 +328,8 @@ OperationStats extract_detected_archive(
         return extract_zstd_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::UnixCompress:
         return extract_unix_compress_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Uue:
+        return extract_uue_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Cab:
         return extract_cab(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Iso:
@@ -490,6 +498,7 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             compression_format_text(9),
             compression_format_text(10),
             compression_format_text(11),
+            compression_format_text(12),
         };
     case DropdownId::CompressLevel:
         return {
@@ -2629,6 +2638,9 @@ void MainWindow::restore_defaults() {
     request_repaint();
 }
 
+// Purpose: Start a background compression job from the current GUI queue.
+// Inputs: None; reads queued paths and compression options from synchronized UI state.
+// Outputs: Launches a worker job, updates progress/history/status, or requests repaint when the queue is empty.
 void MainWindow::start_compress() {
     std::vector<std::filesystem::path> sources;
     bool gpu_required = true;
@@ -2691,6 +2703,8 @@ void MainWindow::start_compress() {
             stats = compress_zstd(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::UnixCompress) {
             stats = compress_unix_compress(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Uue) {
+            stats = compress_uue(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
             stats = compress_cpio(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Ar) {

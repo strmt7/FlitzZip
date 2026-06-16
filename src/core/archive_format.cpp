@@ -8,6 +8,7 @@
 #include <exception>
 #include <fstream>
 #include <sstream>
+#include <string_view>
 #include <vector>
 
 namespace superzip {
@@ -16,11 +17,17 @@ namespace {
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
 constexpr std::uint64_t kSuperZipFooterBytes = 24U;
 
-constexpr std::array<ArchiveFormatInfo, 28> kFormatRegistry{{
+struct ExtensionFormatMapping {
+    std::string_view extension;
+    ArchiveFormat format = ArchiveFormat::Unknown;
+};
+
+constexpr std::array<ArchiveFormatInfo, 30> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
     {ArchiveFormat::Zip, "zip", "ZIP (.zip)", ".zip", true, true, false, true},
+    {ArchiveFormat::Zipx, "zipx", "ZIPX (.zipx)", ".zipx", false, true, false, true},
     {ArchiveFormat::SevenZip, "7z", "7-Zip (.7z)", ".7z", false, true, false, true},
     {ArchiveFormat::Rar, "rar", "RAR (.rar)", ".rar", false, false, false, false},
     {ArchiveFormat::Tar, "tar", "TAR (.tar)", ".tar", true, true, false, true},
@@ -39,12 +46,52 @@ constexpr std::array<ArchiveFormatInfo, 28> kFormatRegistry{{
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, false, false, false},
+    {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
     {ArchiveFormat::SplitWim, "swm", "Split Windows Imaging part (.swm)", ".swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, true, false, true},
     {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
+}};
+
+constexpr std::array<ExtensionFormatMapping, 36> kExtensionFormats{{
+    {".suzip", ArchiveFormat::SuperZip},
+    {".zip", ArchiveFormat::Zip},
+    {".zipx", ArchiveFormat::Zipx},
+    {".7z", ArchiveFormat::SevenZip},
+    {".rar", ArchiveFormat::Rar},
+    {".tar.gz", ArchiveFormat::TarGzip},
+    {".tgz", ArchiveFormat::TarGzip},
+    {".tar.bz2", ArchiveFormat::TarBzip2},
+    {".tbz", ArchiveFormat::TarBzip2},
+    {".tbz2", ArchiveFormat::TarBzip2},
+    {".tar.xz", ArchiveFormat::TarXz},
+    {".txz", ArchiveFormat::TarXz},
+    {".tar.zst", ArchiveFormat::TarZstd},
+    {".tzst", ArchiveFormat::TarZstd},
+    {".tar", ArchiveFormat::Tar},
+    {".gz", ArchiveFormat::Gzip},
+    {".z", ArchiveFormat::UnixCompress},
+    {".bz2", ArchiveFormat::Bzip2},
+    {".xz", ArchiveFormat::Xz},
+    {".lzma", ArchiveFormat::Lzma},
+    {".zst", ArchiveFormat::Zstd},
+    {".zstd", ArchiveFormat::Zstd},
+    {".cab", ArchiveFormat::Cab},
+    {".iso", ArchiveFormat::Iso},
+    {".cpio", ArchiveFormat::Cpio},
+    {".ar", ArchiveFormat::Ar},
+    {".arj", ArchiveFormat::Arj},
+    {".uue", ArchiveFormat::Uue},
+    {".uu", ArchiveFormat::Uue},
+    {".lha", ArchiveFormat::Lha},
+    {".lzh", ArchiveFormat::Lha},
+    {".wim", ArchiveFormat::Wim},
+    {".swm", ArchiveFormat::SplitWim},
+    {".xar", ArchiveFormat::Xar},
+    {".deb", ArchiveFormat::Deb},
+    {".rpm", ArchiveFormat::Rpm},
 }};
 
 // Purpose: Convert a string to lowercase ASCII for extension and token matching.
@@ -142,6 +189,37 @@ bool starts_with_signature(std::span<const unsigned char> bytes, std::initialize
     return std::equal(signature.begin(), signature.end(), bytes.begin());
 }
 
+// Purpose: Detect a UUencode begin line in a bounded text probe.
+// Inputs: `bytes` contains the file prefix; preamble lines are ignored only within the probe.
+// Outputs: Returns true when a line starts with the strict `begin <mode> <name>` shape.
+bool has_uue_begin_line(std::span<const unsigned char> bytes) {
+    std::size_t line_start = 0;
+    while (line_start < bytes.size()) {
+        std::size_t line_end = line_start;
+        while (line_end < bytes.size() && bytes[line_end] != '\n') {
+            ++line_end;
+        }
+        auto line_size = line_end - line_start;
+        if (line_size > 0U && bytes[line_start + line_size - 1U] == '\r') {
+            --line_size;
+        }
+        constexpr std::string_view prefix = "begin ";
+        if (line_size > prefix.size() &&
+            std::equal(prefix.begin(), prefix.end(), bytes.begin() + static_cast<std::ptrdiff_t>(line_start))) {
+            auto cursor = line_start + prefix.size();
+            const auto end = line_start + line_size;
+            while (cursor < end && bytes[cursor] >= '0' && bytes[cursor] <= '7') {
+                ++cursor;
+            }
+            if (cursor > line_start + prefix.size() && cursor + 1U < end && bytes[cursor] == ' ') {
+                return true;
+            }
+        }
+        line_start = line_end == bytes.size() ? bytes.size() : line_end + 1U;
+    }
+    return false;
+}
+
 // Purpose: Match a fixed byte signature at an arbitrary offset.
 // Inputs: `bytes` is the file probe, `offset` is the byte offset, and `signature` is the magic sequence.
 // Outputs: Returns true when all signature bytes match at `offset`.
@@ -162,7 +240,8 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
     if (starts_with_signature(bytes, {'P', 'K', 0x03, 0x04}) ||
         starts_with_signature(bytes, {'P', 'K', 0x05, 0x06}) ||
         starts_with_signature(bytes, {'P', 'K', 0x07, 0x08})) {
-        return ArchiveFormat::Zip;
+        const auto lower_name = ascii_lower(path.filename().string());
+        return ends_with_lower(lower_name, ".zipx") ? ArchiveFormat::Zipx : ArchiveFormat::Zip;
     }
     if (starts_with_signature(bytes, {0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C})) {
         return ArchiveFormat::SevenZip;
@@ -224,6 +303,9 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         matches_signature_at(bytes, 0x8801U, {'C', 'D', '0', '0', '1'})) {
         return ArchiveFormat::Iso;
     }
+    if (has_uue_begin_line(bytes)) {
+        return ArchiveFormat::Uue;
+    }
     return ArchiveFormat::Unknown;
 }
 
@@ -232,83 +314,10 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
 // Outputs: Returns a recognized extension format or unknown.
 ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
     const auto name = ascii_lower(path.filename().string());
-    if (ends_with_lower(name, ".suzip")) {
-        return ArchiveFormat::SuperZip;
-    }
-    if (ends_with_lower(name, ".zip")) {
-        return ArchiveFormat::Zip;
-    }
-    if (ends_with_lower(name, ".7z")) {
-        return ArchiveFormat::SevenZip;
-    }
-    if (ends_with_lower(name, ".rar")) {
-        return ArchiveFormat::Rar;
-    }
-    if (ends_with_lower(name, ".tar")) {
-        return ArchiveFormat::Tar;
-    }
-    if (ends_with_lower(name, ".tar.gz") || ends_with_lower(name, ".tgz")) {
-        return ArchiveFormat::TarGzip;
-    }
-    if (ends_with_lower(name, ".tar.bz2") || ends_with_lower(name, ".tbz") || ends_with_lower(name, ".tbz2")) {
-        return ArchiveFormat::TarBzip2;
-    }
-    if (ends_with_lower(name, ".tar.xz") || ends_with_lower(name, ".txz")) {
-        return ArchiveFormat::TarXz;
-    }
-    if (ends_with_lower(name, ".tar.zst") || ends_with_lower(name, ".tzst")) {
-        return ArchiveFormat::TarZstd;
-    }
-    if (ends_with_lower(name, ".gz")) {
-        return ArchiveFormat::Gzip;
-    }
-    if (ends_with_lower(name, ".z")) {
-        return ArchiveFormat::UnixCompress;
-    }
-    if (ends_with_lower(name, ".bz2")) {
-        return ArchiveFormat::Bzip2;
-    }
-    if (ends_with_lower(name, ".xz")) {
-        return ArchiveFormat::Xz;
-    }
-    if (ends_with_lower(name, ".lzma")) {
-        return ArchiveFormat::Lzma;
-    }
-    if (ends_with_lower(name, ".zst") || ends_with_lower(name, ".zstd")) {
-        return ArchiveFormat::Zstd;
-    }
-    if (ends_with_lower(name, ".cab")) {
-        return ArchiveFormat::Cab;
-    }
-    if (ends_with_lower(name, ".iso")) {
-        return ArchiveFormat::Iso;
-    }
-    if (ends_with_lower(name, ".cpio")) {
-        return ArchiveFormat::Cpio;
-    }
-    if (ends_with_lower(name, ".ar")) {
-        return ArchiveFormat::Ar;
-    }
-    if (ends_with_lower(name, ".arj")) {
-        return ArchiveFormat::Arj;
-    }
-    if (ends_with_lower(name, ".lha") || ends_with_lower(name, ".lzh")) {
-        return ArchiveFormat::Lha;
-    }
-    if (ends_with_lower(name, ".wim")) {
-        return ArchiveFormat::Wim;
-    }
-    if (ends_with_lower(name, ".swm")) {
-        return ArchiveFormat::SplitWim;
-    }
-    if (ends_with_lower(name, ".xar")) {
-        return ArchiveFormat::Xar;
-    }
-    if (ends_with_lower(name, ".deb")) {
-        return ArchiveFormat::Deb;
-    }
-    if (ends_with_lower(name, ".rpm")) {
-        return ArchiveFormat::Rpm;
+    for (const auto& mapping : kExtensionFormats) {
+        if (ends_with_lower(name, mapping.extension)) {
+            return mapping.format;
+        }
     }
     return ArchiveFormat::Unknown;
 }
@@ -326,6 +335,9 @@ const ArchiveFormatInfo& archive_format_info(ArchiveFormat format) {
     return it == kFormatRegistry.end() ? kFormatRegistry.front() : *it;
 }
 
+// Purpose: Parse a CLI/user format token without inspecting a file.
+// Inputs: `token` is a case-insensitive value such as `suzip`, `zip`, `zipx`, or `auto`.
+// Outputs: Returns the matching format or empty when the token is not a known archive format.
 std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) {
     auto lowered = ascii_lower(std::string(token));
     if (lowered == "tgz") {
@@ -346,6 +358,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "z";
     } else if (lowered == "lzh") {
         lowered = "lha";
+    } else if (lowered == "uu" || lowered == "uuencode") {
+        lowered = "uue";
     }
     const auto it = std::ranges::find_if(kFormatRegistry, [&](const ArchiveFormatInfo& info) {
         return lowered == info.key;

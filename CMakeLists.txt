@@ -236,6 +236,7 @@ add_library(superzip_core STATIC
     src/sevenzip/sevenzip_adapter.cpp
     src/tar/tar_adapter.cpp
     src/unix_compress/unix_compress_adapter.cpp
+    src/uue/uue_adapter.cpp
     src/wim/wim_adapter.cpp
     src/xar/xar_adapter.cpp
     src/xz/xz_adapter.cpp
@@ -403,6 +404,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_tar_xz_compat.cpp
         tests/cpp/test_tar_zstd_compat.cpp
         tests/cpp/test_unix_compress_compat.cpp
+        tests/cpp/test_uue_compat.cpp
         tests/cpp/test_wim_compat.cpp
         tests/cpp/test_xar_compat.cpp
         tests/cpp/test_xz_compat.cpp

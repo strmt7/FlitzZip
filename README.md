@@ -4,7 +4,10 @@
 
 SuperZip is a Windows x64 archive application built around AMD HIP acceleration.
 Its native `.suzip` format is the GPU-first path. Standard `.zip` support exists
-for compatibility and is handled by the vendored miniz 3.1.1 codebase.
+for compatibility and is handled by the vendored miniz 3.1.1 codebase. `.zipx`
+files are recognized separately and extracted through the same ZIP
+compatibility reader when they use ZIP records and compression methods that the
+vendored backend supports; unsupported ZIPX methods fail explicitly.
 `.suzip` is a native SuperZip format, not a renamed ZIP file: it has its own
 footer/index magic, versioned metadata, block descriptors, AMD HIP boundary, and
 resource-limited verification path. See `docs/native-suzip-format.md`.
@@ -45,8 +48,10 @@ XAR `.xar` archives are extracted by a native read-only parser for the current
 safe subset: no TOC checksum mode, zlib-compressed TOCs, regular files,
 directories, and stored or zlib-compressed file payloads.
 Legacy Unix Compress `.Z` streams are implemented with a native bounded LZW
-reader/writer for single files. Other common archive
-formats are recognized for clear diagnostics and are tracked in
+reader/writer for single files. UUencoded `.uue`/`.uu` files are implemented as
+single-file compatibility streams with strict begin-line parsing, bounded line
+lengths, path-safe header filenames, and verified output publication. Other
+common archive formats are recognized for clear diagnostics and are tracked in
 `docs/archive-format-support.md`.
 
 The product ships as two equivalent Windows packages:
@@ -151,6 +156,7 @@ build/Release/superzip_cli.exe compress --format suzip --require-gpu --verify-af
 build/Release/superzip_cli.exe extract --format suzip --require-gpu --output restored archive.suzip
 build/Release/superzip_cli.exe compress --format zip --output archive.zip path\to\folder
 build/Release/superzip_cli.exe extract --format zip --output restored archive.zip
+build/Release/superzip_cli.exe extract --format zipx --output restored archive.zipx
 build/Release/superzip_cli.exe compress --format tar --output archive.tar path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.tar
 build/Release/superzip_cli.exe compress --format tar.gz --output archive.tar.gz path\to\folder
@@ -170,6 +176,8 @@ build/Release/superzip_cli.exe compress --format zst --output file.txt.zst file.
 build/Release/superzip_cli.exe extract --output restored file.txt.zst
 build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.Z
+build/Release/superzip_cli.exe compress --format uue --output file.txt.uue file.txt
+build/Release/superzip_cli.exe extract --output restored file.txt.uue
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.cpio
 build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\folder
@@ -194,7 +202,9 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, LZMA, Unix Compress, CAB, 7z, LHA/LZH, WIM, XAR, CPIO, AR, DEB, ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
+ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, LZMA,
+Unix Compress, UUE, CAB, 7z, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
+ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP

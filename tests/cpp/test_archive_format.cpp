@@ -39,6 +39,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     const auto root = test_temp_dir("archive-format-extensions");
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.suzip"), superzip::ArchiveFormat::SuperZip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.zip"), superzip::ArchiveFormat::Zip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.zipx"), superzip::ArchiveFormat::Zipx);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.7z"), superzip::ArchiveFormat::SevenZip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.rar"), superzip::ArchiveFormat::Rar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar"), superzip::ArchiveFormat::Tar);
@@ -53,6 +54,8 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cab"), superzip::ArchiveFormat::Cab);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.iso"), superzip::ArchiveFormat::Iso);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ar"), superzip::ArchiveFormat::Ar);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uue"), superzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uu"), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzh"), superzip::ArchiveFormat::Lha);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.wim"), superzip::ArchiveFormat::Wim);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.swm"), superzip::ArchiveFormat::SplitWim);
@@ -63,6 +66,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
 TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     const auto root = test_temp_dir("archive-format-magic");
     write_fixture(root / "zip.bin", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
+    write_fixture(root / "zipx.zipx", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
     write_fixture(root / "seven.bin", std::array<unsigned char, 6>{0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C});
     write_fixture(root / "rar.bin", std::array<unsigned char, 7>{'R', 'a', 'r', '!', 0x1A, 0x07, 0x00});
     write_fixture(root / "gz.bin", std::array<unsigned char, 2>{0x1F, 0x8B});
@@ -76,8 +80,12 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "wim.bin", std::array<unsigned char, 8>{'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00});
     write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
     write_minimal_suzip_fixture(root / "renamed-native.bin");
+    const auto uue_begin = std::array<unsigned char, 24>{
+        'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '`', '\n'};
+    write_fixture(root / "uue.bin", uue_begin);
 
     REQUIRE_EQ(superzip::detect_archive_format(root / "zip.bin"), superzip::ArchiveFormat::Zip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "zipx.zipx"), superzip::ArchiveFormat::Zipx);
     REQUIRE_EQ(superzip::detect_archive_format(root / "seven.bin"), superzip::ArchiveFormat::SevenZip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "rar.bin"), superzip::ArchiveFormat::Rar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "gz.bin"), superzip::ArchiveFormat::Gzip);
@@ -91,6 +99,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "wim.bin"), superzip::ArchiveFormat::Wim);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native.bin"), superzip::ArchiveFormat::SuperZip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "uue.bin"), superzip::ArchiveFormat::Uue);
 
     write_fixture(root / "package.deb", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
     REQUIRE_EQ(superzip::detect_archive_format(root / "package.deb"), superzip::ArchiveFormat::Deb);
@@ -114,8 +123,11 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("bzip2").value(), superzip::ArchiveFormat::Bzip2);
     REQUIRE_EQ(superzip::parse_archive_format_token("lzma").value(), superzip::ArchiveFormat::Lzma);
     REQUIRE_EQ(superzip::parse_archive_format_token("zstd").value(), superzip::ArchiveFormat::Zstd);
+    REQUIRE_EQ(superzip::parse_archive_format_token("zipx").value(), superzip::ArchiveFormat::Zipx);
     REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(superzip::parse_archive_format_token("uu").value(), superzip::ArchiveFormat::Uue);
+    REQUIRE_EQ(superzip::parse_archive_format_token("uuencode").value(), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::parse_archive_format_token("swm").value(), superzip::ArchiveFormat::SplitWim);
 }
 

@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "core/archive_format.hpp"
 #include "zip/zip_adapter.hpp"
 #include "core/result.hpp"
 
@@ -166,6 +167,26 @@ TEST_CASE(zip_compat_roundtrip) {
     REQUIRE_TRUE(stats.output_bytes > 0);
     const auto output = root / "out";
     (void)superzip::extract_zip(archive, output, true);
+    REQUIRE_TRUE(std::filesystem::exists(output / "input" / "hello.txt"));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify `.zipx` files route through the ZIP-compatible reader without being treated as plain `.zip` in detection.
+// Inputs: A standard ZIP archive copied to a `.zipx` path.
+// Outputs: Throws if ZIPX detection or extraction regresses.
+TEST_CASE(zipx_extracts_zip_compatible_records) {
+    const auto root = test_temp_dir("zipx-compatible");
+    const auto input = root / "input";
+    std::filesystem::create_directories(input);
+    std::ofstream(input / "hello.txt") << "hello zipx";
+    const auto zip_archive = root / "archive.zip";
+    const auto zipx_archive = root / "archive.zipx";
+    (void)superzip::compress_zip({input}, zip_archive);
+    std::filesystem::copy_file(zip_archive, zipx_archive);
+
+    REQUIRE_EQ(superzip::detect_archive_format(zipx_archive), superzip::ArchiveFormat::Zipx);
+    const auto output = root / "out";
+    (void)superzip::extract_zip(zipx_archive, output, false);
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "hello.txt"));
     std::filesystem::remove_all(root);
 }
