@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -55,23 +56,25 @@ struct CabFdiContext {
     std::filesystem::path destination;
     CabFdiPass pass = CabFdiPass::Validate;
     bool overwrite = false;
-    ProgressState* progress = nullptr;
-    const ProgressCallback* progress_callback = nullptr;
+    bool progress_enabled = false;
+    ProgressState progress;
+    ProgressCallback progress_callback;
     std::unordered_map<std::string, CabValidatedEntry> entries;
     std::unordered_map<INT_PTR, CabOutputTarget> outputs;
     std::string error_message;
     bool security_error = false;
 };
 
-thread_local CabFdiContext* g_cab_fdi_context = nullptr;
+thread_local std::shared_ptr<CabFdiContext> g_cab_fdi_context;
 
 class ScopedCabFdiContextBinding {
 public:
     // Purpose: Bind one CAB FDI context to the current thread for callback path remapping.
-    // Inputs: `context` is the stack-owned CAB pass context used by callbacks.
+    // Inputs: `context` is the heap-owned CAB pass context used by callbacks.
     // Outputs: Restores the previous thread-local context when destroyed.
-    explicit ScopedCabFdiContextBinding(CabFdiContext* context) : previous_(g_cab_fdi_context) {
-        g_cab_fdi_context = context;
+    explicit ScopedCabFdiContextBinding(std::shared_ptr<CabFdiContext> context)
+        : previous_(std::move(g_cab_fdi_context)) {
+        g_cab_fdi_context = std::move(context);
     }
 
     ScopedCabFdiContextBinding(const ScopedCabFdiContextBinding&) = delete;
@@ -81,11 +84,11 @@ public:
     // Inputs: None.
     // Outputs: Leaves the thread in its prior callback-binding state.
     ~ScopedCabFdiContextBinding() {
-        g_cab_fdi_context = previous_;
+        g_cab_fdi_context = std::move(previous_);
     }
 
 private:
-    CabFdiContext* previous_ = nullptr;
+    std::shared_ptr<CabFdiContext> previous_;
 };
 
 // Purpose: Set a callback error once without throwing through the C FDI ABI.
@@ -111,8 +114,8 @@ std::string cab_fdi_error_message(const ERF& perf) {
 // Inputs: `context` owns optional progress state and callback.
 // Outputs: Calls the user's progress callback when progress tracking is active.
 void publish_cab_progress(CabFdiContext& context) {
-    if (context.progress != nullptr && context.progress_callback != nullptr) {
-        publish_progress(*context.progress, *context.progress_callback);
+    if (context.progress_enabled && context.progress_callback) {
+        publish_progress(context.progress, context.progress_callback);
     }
 }
 
@@ -128,9 +131,10 @@ std::string normalize_fdi_cab_name(const char* name) {
 
 // Purpose: Allocate memory for the Windows FDI engine.
 // Inputs: `cb` is the requested byte count.
-// Outputs: Returns a malloc-compatible allocation or null.
+// Outputs: Returns a C-heap allocation or null.
 FNALLOC(cab_fdi_alloc) {
-    return std::malloc(cb);
+    const auto bytes = static_cast<std::size_t>(cb == 0 ? 1 : cb);
+    return std::calloc(1U, bytes);
 }
 
 // Purpose: Free memory allocated by the Windows FDI engine.
@@ -192,8 +196,8 @@ INT_PTR open_cab_discard_sink() {
 // Outputs: Returns a writable FDI file descriptor or -1 after recording callback error.
 INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path, std::uint64_t size) {
     try {
-        if (context.progress != nullptr) {
-            context.progress->set_current(path);
+        if (context.progress_enabled) {
+            context.progress.set_current(path);
             publish_cab_progress(context);
         }
         const auto target = safe_join_archive_path(context.destination, path);
@@ -250,9 +254,9 @@ bool close_and_publish_cab_output(CabFdiContext& context, INT_PTR hf) {
     try {
         commit_verified_file(output.temporary.file, output.final_path, context.overwrite);
         cleanup_file_publish_target(output.temporary);
-        if (context.progress != nullptr) {
-            context.progress->add_bytes(output.size);
-            context.progress->finish_entry();
+        if (context.progress_enabled) {
+            context.progress.add_bytes(output.size);
+            context.progress.finish_entry();
             publish_cab_progress(context);
         }
         return true;
@@ -355,17 +359,17 @@ public:
     // Purpose: Run one FDI copy/decompression pass.
     // Inputs: `context` carries pass-specific state and receives callback errors.
     // Outputs: Returns normally on success or throws on callback/FDI failure.
-    void copy(CabFdiContext& context) {
-        ScopedCabFdiContextBinding binding(&context);
+    void copy(const std::shared_ptr<CabFdiContext>& context) {
+        ScopedCabFdiContextBinding binding(context);
         char cabinet_name[] = "superzip-input.cab";
         char cabinet_path[] = "";
-        const BOOL ok = FDICopy(handle_, cabinet_name, cabinet_path, 0, cab_fdi_notify, nullptr, &context);
-        cleanup_pending_outputs(context);
-        if (!context.error_message.empty()) {
-            if (context.security_error) {
-                throw SecurityError(context.error_message);
+        const BOOL ok = FDICopy(handle_, cabinet_name, cabinet_path, 0, cab_fdi_notify, nullptr, context.get());
+        cleanup_pending_outputs(*context);
+        if (!context->error_message.empty()) {
+            if (context->security_error) {
+                throw SecurityError(context->error_message);
             }
-            throw ArchiveError(context.error_message);
+            throw ArchiveError(context->error_message);
         }
         if (ok == FALSE) {
             throw ArchiveError(cab_fdi_error_message(error_));
@@ -409,16 +413,18 @@ void run_cab_fdi_pass(
     const CabMetadata& metadata,
     CabFdiPass pass,
     bool overwrite,
-    ProgressState* progress,
-    const ProgressCallback* progress_callback) {
-    CabFdiContext context;
-    context.archive_path = archive_path;
-    context.destination = destination;
-    context.pass = pass;
-    context.overwrite = overwrite;
-    context.progress = progress;
-    context.progress_callback = progress_callback;
-    context.entries = build_cab_entry_map(metadata);
+    ProgressCallback progress_callback) {
+    auto context = std::make_shared<CabFdiContext>();
+    context->archive_path = archive_path;
+    context->destination = destination;
+    context->pass = pass;
+    context->overwrite = overwrite;
+    context->entries = build_cab_entry_map(metadata);
+    if (progress_callback) {
+        context->progress_enabled = true;
+        context->progress_callback = std::move(progress_callback);
+        context->progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
+    }
 
     ScopedFdiContext fdi;
     fdi.copy(context);
@@ -443,12 +449,10 @@ OperationStats extract_cab(
     const auto started = std::chrono::steady_clock::now();
     const auto metadata = scan_cab_metadata(archive_path);
 
-    run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Validate, overwrite, nullptr, nullptr);
+    run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Validate, overwrite, {});
     std::filesystem::create_directories(destination);
 
-    ProgressState progress;
-    progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
-    run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Extract, overwrite, &progress, &progress_callback);
+    run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Extract, overwrite, progress_callback);
 
     OperationStats stats;
     stats.input_bytes = std::filesystem::file_size(archive_path);
