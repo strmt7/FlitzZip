@@ -97,11 +97,12 @@ already real archive/package formats in SuperZip's matrix.
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
+| `.iso` | No | Yes | Extract-only compatibility format | native basic ISO 9660 adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
+| `.cab`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -360,6 +361,28 @@ flowchart TD
     F --> G["Pass 2: decode and publish verified TAR files"]
 ```
 
+## ISO Security Contract
+
+The ISO path is a native, read-only parser for basic ISO 9660 directory records:
+
+1. `.iso` extraction reads the Primary Volume Descriptor and root directory from
+   the image; it does not shell out to system tools.
+2. Directory records are scanned and validated before any output is written.
+3. Every extracted path goes through the same SuperZip path-safety and
+   archive-wide collision checks as ZIP, TAR, CPIO, and AR.
+4. Interleaved and multi-extent records are rejected until an explicit policy
+   and tests exist for them.
+5. Rock Ridge, Joliet, UDF, boot catalog metadata, and filesystem attributes
+   are not exposed as implemented features by this adapter.
+
+```mermaid
+flowchart TD
+    A["Open ISO image"] --> B["Read Primary Volume Descriptor"]
+    B --> C["Scan ISO 9660 directory records"]
+    C --> D["Reject unsupported extents or unsafe paths"]
+    D --> E["Publish verified regular files"]
+```
+
 ## Future Backend Gates
 
 Before adding a new compatibility backend, the implementation must satisfy:
@@ -374,7 +397,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only 7z, ISO, CAB, and RAR after backend
+Preferred next increments are read-only 7z, CAB, and RAR after backend
 selection and licensing review. Write support for RAR is not planned because
 the common RAR creation tooling is not a permissive open format writer suitable
 for this repo.

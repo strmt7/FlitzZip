@@ -22,8 +22,10 @@ extraction. Portable `.cpio` archives are
 implemented with a native SVR4 new ASCII parser/writer for regular files and
 directories. Unix `.ar` archives are implemented with a native parser/writer for
 regular-file members. Debian `.deb` package files are extracted as native
-AR-based outer containers. Legacy Unix Compress `.Z` streams are implemented
-with a native bounded LZW reader/writer for single files. Other common archive
+AR-based outer containers. Basic ISO 9660 `.iso` images are extracted by a
+native read-only parser with the same pre-write path validation. Legacy Unix
+Compress `.Z` streams are implemented with a native bounded LZW reader/writer
+for single files. Other common archive
 formats are recognized for clear diagnostics and are tracked in
 `docs/archive-format-support.md`.
 
@@ -152,6 +154,7 @@ build/Release/superzip_cli.exe extract --output restored archive.cpio
 build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.ar
 build/Release/superzip_cli.exe extract --format deb --output restored package.deb
+build/Release/superzip_cli.exe extract --format iso --output restored image.iso
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
 

@@ -23,6 +23,16 @@ COMMON_FLAGS=(
   -o "$OUT/superzip_path_safety_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+  fuzz/iso_fuzzer.cpp \
+  src/iso/iso_adapter.cpp \
+  src/core/file_publish.cpp \
+  src/core/path_safety.cpp \
+  src/core/progress.cpp \
+  -o "$OUT/superzip_iso_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
 cp fuzz/superzip.dict "$OUT/superzip_archive_index_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_path_safety_fuzzer.dict"
+cp fuzz/superzip.dict "$OUT/superzip_iso_fuzzer.dict"
 cp fuzz/*.options "$OUT/"

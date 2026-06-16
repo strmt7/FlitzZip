@@ -642,7 +642,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
     Start-Sleep -Milliseconds 120
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 654 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 638 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 426 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 452 -BasePath $basePath -Extension $extension
@@ -662,6 +662,46 @@ try {
     Start-Sleep -Milliseconds 140
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 583
     Start-Sleep -Milliseconds 140
+    $expectedZstd = Join-Path $smokeRoot "SuperZip-output.zst"
+    Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 524
+    Start-Sleep -Milliseconds 160
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
+    $createdZstd = $false
+    foreach ($attempt in 1..50) {
+        Start-Sleep -Milliseconds 100
+        if ((Test-Path -LiteralPath $expectedZstd) -and ((Get-Item -LiteralPath $expectedZstd).Length -gt 0)) {
+            $createdZstd = $true
+            break
+        }
+    }
+    if (-not $createdZstd) {
+        throw "GUI compression did not create expected non-empty Zstandard archive at $expectedZstd."
+    }
+    Start-Sleep -Milliseconds 300
+
+    $expectedTarZstd = Join-Path $smokeRoot "SuperZip-output.tar.zst"
+    Remove-Item -LiteralPath $expectedTarZstd -Force -ErrorAction SilentlyContinue
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 428
+    Start-Sleep -Milliseconds 160
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
+    $createdTarZstd = $false
+    foreach ($attempt in 1..50) {
+        Start-Sleep -Milliseconds 100
+        if ((Test-Path -LiteralPath $expectedTarZstd) -and ((Get-Item -LiteralPath $expectedTarZstd).Length -gt 0)) {
+            $createdTarZstd = $true
+            break
+        }
+    }
+    if (-not $createdTarZstd) {
+        throw "GUI compression did not create expected non-empty TAR.ZST archive at $expectedTarZstd."
+    }
+    Start-Sleep -Milliseconds 300
+
     $expectedTarGz = Join-Path $smokeRoot "SuperZip-output.tar.gz"
     Remove-Item -LiteralPath $expectedTarGz -Force -ErrorAction SilentlyContinue
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224

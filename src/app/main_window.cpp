@@ -11,8 +11,11 @@
 #include "core/result.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "iso/iso_adapter.hpp"
 #include "tar/tar_adapter.hpp"
 #include "unix_compress/unix_compress_adapter.hpp"
+#include "xz/xz_adapter.hpp"
+#include "zstd/zstd_adapter.hpp"
 #include "zip/zip_adapter.hpp"
 
 #include <algorithm>
@@ -160,14 +163,16 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 10> formats{
+    constexpr std::array<ArchiveFormat, 12> formats{
         ArchiveFormat::SuperZip,
         ArchiveFormat::Zip,
         ArchiveFormat::Tar,
         ArchiveFormat::TarGzip,
         ArchiveFormat::TarBzip2,
+        ArchiveFormat::TarZstd,
         ArchiveFormat::Gzip,
         ArchiveFormat::Bzip2,
+        ArchiveFormat::Zstd,
         ArchiveFormat::UnixCompress,
         ArchiveFormat::Cpio,
         ArchiveFormat::Ar,
@@ -180,14 +185,16 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 10> labels{
+    constexpr std::array<std::wstring_view, 12> labels{
         L"SuperZip GPU (.suzip)",
         L"ZIP compatibility (.zip)",
         L"TAR compatibility (.tar)",
         L"TAR.GZ compatibility (.tar.gz)",
         L"TAR.BZ2 compatibility (.tar.bz2)",
+        L"TAR.ZST compatibility (.tar.zst)",
         L"Gzip single file (.gz)",
         L"Bzip2 single file (.bz2)",
+        L"Zstandard single file (.zst)",
         L"Unix Compress single file (.Z)",
         L"CPIO compatibility (.cpio)",
         L"AR compatibility (.ar)",
@@ -211,10 +218,14 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".tar.gz";
     case ArchiveFormat::TarBzip2:
         return L".tar.bz2";
+    case ArchiveFormat::TarZstd:
+        return L".tar.zst";
     case ArchiveFormat::Gzip:
         return L".gz";
     case ArchiveFormat::Bzip2:
         return L".bz2";
+    case ArchiveFormat::Zstd:
+        return L".zst";
     case ArchiveFormat::UnixCompress:
         return L".Z";
     case ArchiveFormat::Cpio:
@@ -397,6 +408,8 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             compression_format_text(7),
             compression_format_text(8),
             compression_format_text(9),
+            compression_format_text(10),
+            compression_format_text(11),
         };
     case DropdownId::CompressLevel:
         return {
@@ -2252,7 +2265,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
         std::lock_guard lock(mutex_);
         switch (id) {
         case DropdownId::CompressFormat:
-            state_.compression_format_index = std::clamp(option_index, 0, 9);
+            state_.compression_format_index = std::clamp(option_index, 0, 11);
             state_.status = "Archive format changed";
             break;
         case DropdownId::CompressLevel:
@@ -2556,10 +2569,14 @@ void MainWindow::start_compress() {
             stats = compress_tar_gzip(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::TarBzip2) {
             stats = compress_tar_bzip2(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarZstd) {
+            stats = compress_tar_zstd(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Gzip) {
             stats = compress_gzip(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Bzip2) {
             stats = compress_bzip2(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Zstd) {
+            stats = compress_zstd(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::UnixCompress) {
             stats = compress_unix_compress(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
@@ -2641,12 +2658,22 @@ void MainWindow::start_extract() {
             stats = extract_tar_gzip(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::TarBzip2) {
             stats = extract_tar_bzip2(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarXz) {
+            stats = extract_tar_xz(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarZstd) {
+            stats = extract_tar_zstd(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Gzip) {
             stats = extract_gzip_file(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Bzip2) {
             stats = extract_bzip2_file(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Xz) {
+            stats = extract_xz_file(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Zstd) {
+            stats = extract_zstd_file(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::UnixCompress) {
             stats = extract_unix_compress_file(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Iso) {
+            stats = extract_iso(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
             stats = extract_cpio(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Ar || archive_format == ArchiveFormat::Deb) {

@@ -127,6 +127,7 @@ add_library(superzip_core STATIC
     src/gzip/gzip_stream.cpp
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
+    src/iso/iso_adapter.cpp
     src/tar/tar_adapter.cpp
     src/unix_compress/unix_compress_adapter.cpp
     src/xz/xz_adapter.cpp
@@ -260,6 +261,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_bzip2_compat.cpp
         tests/cpp/test_cpio_compat.cpp
         tests/cpp/test_gzip_compat.cpp
+        tests/cpp/test_iso_compat.cpp
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_tar_bzip2_compat.cpp
         tests/cpp/test_tar_gzip_compat.cpp
@@ -290,13 +292,25 @@ if(SUPERZIP_BUILD_FUZZERS)
     )
     target_include_directories(superzip_path_safety_fuzzer PRIVATE src)
 
+    add_executable(superzip_iso_fuzzer
+        fuzz/iso_fuzzer.cpp
+        src/iso/iso_adapter.cpp
+        src/core/file_publish.cpp
+        src/core/path_safety.cpp
+        src/core/progress.cpp
+    )
+    target_include_directories(superzip_iso_fuzzer PRIVATE src)
+    target_compile_definitions(superzip_iso_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
     endif()
     target_compile_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 install(FILES

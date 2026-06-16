@@ -325,6 +325,17 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $tarBz2Extract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable TAR.BZ2 smoke extraction did not preserve payload."
         }
+        $tarZstdExtract = Join-Path $root "extract-tar-zst"
+        New-Item -ItemType Directory -Force -Path $tarZstdExtract | Out-Null
+        & $cli compress --format tar.zst --output (Join-Path $root "archive.tar.zst") $input
+        $tarZstdIdentity = & $cli identify (Join-Path $root "archive.tar.zst")
+        if ($tarZstdIdentity -notmatch 'format=tar.zst') {
+            throw "Portable TAR.ZST smoke did not identify the .tar.zst archive: $tarZstdIdentity"
+        }
+        & $cli extract --format tar.zst --output $tarZstdExtract (Join-Path $root "archive.tar.zst")
+        if ((Get-Content -LiteralPath (Join-Path $tarZstdExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable TAR.ZST smoke extraction did not preserve payload."
+        }
         $gzipExtract = Join-Path $root "extract-gzip"
         New-Item -ItemType Directory -Force -Path $gzipExtract | Out-Null
         & $cli compress --format gz --output (Join-Path $root "alpha.txt.gz") (Join-Path $input "alpha.txt")
@@ -342,6 +353,17 @@ runs:
         & $cli extract --format bz2 --output $bzip2Extract (Join-Path $root "alpha.txt.bz2")
         if ((Get-Content -LiteralPath (Join-Path $bzip2Extract "alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable Bzip2 smoke extraction did not preserve payload."
+        }
+        $zstdExtract = Join-Path $root "extract-zstd"
+        New-Item -ItemType Directory -Force -Path $zstdExtract | Out-Null
+        & $cli compress --format zst --output (Join-Path $root "alpha.txt.zst") (Join-Path $input "alpha.txt")
+        $zstdIdentity = & $cli identify (Join-Path $root "alpha.txt.zst")
+        if ($zstdIdentity -notmatch 'format=zst') {
+            throw "Portable Zstandard smoke did not identify the .zst stream: $zstdIdentity"
+        }
+        & $cli extract --format zst --output $zstdExtract (Join-Path $root "alpha.txt.zst")
+        if ((Get-Content -LiteralPath (Join-Path $zstdExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable Zstandard smoke extraction did not preserve payload."
         }
         $unixCompressExtract = Join-Path $root "extract-unix-compress"
         New-Item -ItemType Directory -Force -Path $unixCompressExtract | Out-Null
@@ -376,6 +398,18 @@ runs:
         & $cli extract --format deb --output $debExtract (Join-Path $root "package.deb")
         if ((Get-Content -LiteralPath (Join-Path $debExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable DEB smoke extraction did not preserve outer AR payload."
+        }
+        $isoExtract = Join-Path $root "extract-iso"
+        New-Item -ItemType Directory -Force -Path $isoExtract | Out-Null
+        $isoArchive = Join-Path $root "archive.iso"
+        & .\tools\new_iso_smoke_fixture.ps1 -OutputPath $isoArchive -Payload "SuperZip release smoke $env:RELEASE_TAG"
+        $isoIdentity = & $cli identify $isoArchive
+        if ($isoIdentity -notmatch 'format=iso') {
+            throw "Portable ISO smoke did not identify the .iso image: $isoIdentity"
+        }
+        & $cli extract --format iso --output $isoExtract $isoArchive
+        if ((Get-Content -LiteralPath (Join-Path $isoExtract "ALPHA.TXT")) -notlike "SuperZip release smoke*") {
+            throw "Portable ISO smoke extraction did not preserve payload."
         }
         $archive = Join-Path $root "archive.suzip"
         $suzipArgs = @("compress", "--format", "suzip", "--sha256", "--output", $archive, $input)
