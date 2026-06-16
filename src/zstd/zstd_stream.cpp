@@ -1,6 +1,7 @@
 #include "zstd/zstd_stream.hpp"
 
 #include "core/result.hpp"
+#include "zstd/zstd_runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,8 +11,6 @@
 #include <streambuf>
 #include <string>
 
-#include "zstd.h"
-
 namespace superzip {
 namespace {
 
@@ -19,12 +18,12 @@ constexpr std::size_t kZstdStreamBufferBytes = 64U * 1024U;
 constexpr int kZstdCompressionLevel = 5;
 constexpr int kZstdMaxWindowLog = 26;
 
-// Purpose: Convert a libzstd result into a stable SuperZip error when needed.
-// Inputs: `code` is a size_t returned by a libzstd API and `context` names the failed operation.
+// Purpose: Convert a Zstandard runtime result into a stable SuperZip error when needed.
+// Inputs: `runtime` is the loaded Zstandard API, `code` is a runtime result, and `context` names the failed operation.
 // Outputs: Returns normally when `code` is not an error; otherwise throws `ArchiveError`.
-void require_zstd_ok(std::size_t code, const char* context) {
-    if (ZSTD_isError(code) != 0U) {
-        throw ArchiveError(std::string(context) + ": " + ZSTD_getErrorName(code));
+void require_zstd_ok(const ZstdRuntime& runtime, std::size_t code, const char* context) {
+    if (runtime.is_error(code)) {
+        throw ArchiveError(std::string(context) + ": " + runtime.error_name(code));
     }
 }
 
@@ -75,15 +74,17 @@ public:
         if (!output_) {
             throw ArchiveError("cannot create Zstandard stream: " + output_path.string());
         }
-        context_ = ZSTD_createCCtx();
+        context_ = zstd_.create_compression_context();
         if (context_ == nullptr) {
             throw ArchiveError("failed to initialize Zstandard compressor");
         }
         require_zstd_ok(
-            ZSTD_CCtx_setParameter(context_, ZSTD_c_compressionLevel, kZstdCompressionLevel),
+            zstd_,
+            zstd_.set_compression_parameter(context_, kZstdCompressionLevelParameter, kZstdCompressionLevel),
             "failed to set Zstandard compression level");
         require_zstd_ok(
-            ZSTD_CCtx_setParameter(context_, ZSTD_c_checksumFlag, 1),
+            zstd_,
+            zstd_.set_compression_parameter(context_, kZstdContentChecksumParameter, 1),
             "failed to enable Zstandard content checksum");
     }
 
@@ -92,7 +93,7 @@ public:
             close();
         } catch (...) {
             if (context_ != nullptr) {
-                ZSTD_freeCCtx(context_);
+                zstd_.free_compression_context(context_);
                 context_ = nullptr;
             }
         }
@@ -105,15 +106,15 @@ public:
         if (closed_) {
             return;
         }
-        ZSTD_inBuffer input{nullptr, 0U, 0U};
+        ZstdInputBuffer input{nullptr, 0U, 0U};
         std::size_t remaining = 0;
         do {
-            ZSTD_outBuffer output{output_buffer_.data(), output_buffer_.size(), 0U};
-            remaining = ZSTD_compressStream2(context_, &output, &input, ZSTD_e_end);
-            require_zstd_ok(remaining, "Zstandard compression finalization failed");
+            ZstdOutputBuffer output{output_buffer_.data(), output_buffer_.size(), 0U};
+            remaining = zstd_.compress_stream(context_, &output, &input, ZstdEndDirective::End);
+            require_zstd_ok(zstd_, remaining, "Zstandard compression finalization failed");
             write_counted(output_, output_buffer_.data(), output.pos, output_bytes_);
         } while (remaining != 0U);
-        ZSTD_freeCCtx(context_);
+        zstd_.free_compression_context(context_);
         context_ = nullptr;
         output_.close();
         if (!output_) {
@@ -167,17 +168,18 @@ private:
             throw ArchiveError("cannot write to a closed Zstandard stream");
         }
         checked_add_stream_bytes(input_bytes_, size, "Zstandard input");
-        ZSTD_inBuffer input{data, size, 0U};
+        ZstdInputBuffer input{data, size, 0U};
         while (input.pos < input.size) {
-            ZSTD_outBuffer output{output_buffer_.data(), output_buffer_.size(), 0U};
-            const auto status = ZSTD_compressStream2(context_, &output, &input, ZSTD_e_continue);
-            require_zstd_ok(status, "Zstandard compression failed");
+            ZstdOutputBuffer output{output_buffer_.data(), output_buffer_.size(), 0U};
+            const auto status = zstd_.compress_stream(context_, &output, &input, ZstdEndDirective::Continue);
+            require_zstd_ok(zstd_, status, "Zstandard compression failed");
             write_counted(output_, output_buffer_.data(), output.pos, output_bytes_);
         }
     }
 
+    const ZstdRuntime& zstd_ = zstd_runtime();
     std::ofstream output_;
-    ZSTD_CCtx* context_ = nullptr;
+    ZstdCompressionContext* context_ = nullptr;
     bool closed_ = false;
     std::array<char, kZstdStreamBufferBytes> output_buffer_{};
     std::uint64_t input_bytes_ = 0;
@@ -191,19 +193,20 @@ public:
         if (!file_) {
             throw ArchiveError("cannot open Zstandard stream: " + archive_path.string());
         }
-        context_ = ZSTD_createDStream();
+        context_ = zstd_.create_decompression_stream();
         if (context_ == nullptr) {
             throw ArchiveError("failed to initialize Zstandard decompressor");
         }
         require_zstd_ok(
-            ZSTD_DCtx_setParameter(context_, ZSTD_d_windowLogMax, kZstdMaxWindowLog),
+            zstd_,
+            zstd_.set_decompression_parameter(context_, kZstdWindowLogMaxParameter, kZstdMaxWindowLog),
             "failed to set Zstandard window limit");
         setg(output_buffer_.data(), output_buffer_.data(), output_buffer_.data());
     }
 
     ~Buffer() override {
         if (context_ != nullptr) {
-            ZSTD_freeDStream(context_);
+            zstd_.free_decompression_stream(context_);
             context_ = nullptr;
         }
     }
@@ -259,7 +262,7 @@ private:
             throw ArchiveError("Zstandard compressed payload is truncated");
         }
         compressed_remaining_ -= to_read;
-        input_ = ZSTD_inBuffer{input_buffer_.data(), to_read, 0U};
+        input_ = ZstdInputBuffer{input_buffer_.data(), to_read, 0U};
     }
 
     // Purpose: Fill the get area with newly decompressed bytes or finish validation.
@@ -279,9 +282,9 @@ private:
                 throw ArchiveError("Zstandard stream ended before decoder completion");
             }
 
-            ZSTD_outBuffer output{output_buffer_.data(), output_buffer_.size(), 0U};
-            const auto status = ZSTD_decompressStream(context_, &output, &input_);
-            require_zstd_ok(status, "Zstandard decompression failed");
+            ZstdOutputBuffer output{output_buffer_.data(), output_buffer_.size(), 0U};
+            const auto status = zstd_.decompress_stream(context_, &output, &input_);
+            require_zstd_ok(zstd_, status, "Zstandard decompression failed");
             if (status == 0U) {
                 frame_complete_ = true;
             } else {
@@ -296,11 +299,12 @@ private:
     }
 
     std::ifstream file_;
+    const ZstdRuntime& zstd_ = zstd_runtime();
     std::uint64_t archive_size_ = 0;
     std::uint64_t output_bytes_ = 0;
     std::uint64_t compressed_remaining_ = 0;
-    ZSTD_DStream* context_ = nullptr;
-    ZSTD_inBuffer input_{nullptr, 0U, 0U};
+    ZstdDecompressionStream* context_ = nullptr;
+    ZstdInputBuffer input_{nullptr, 0U, 0U};
     bool frame_complete_ = false;
     bool finished_ = false;
     std::array<char, kZstdStreamBufferBytes> input_buffer_{};

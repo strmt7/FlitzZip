@@ -24,6 +24,8 @@ Rules:
 
 - Refactoring must preserve behavior unless a maintainer explicitly requests a
   functional change in the same task.
+- Keep refactors aligned with secure-by-design defaults: fail closed, preserve
+  explicit opt-ins, and keep trust boundaries documented.
 - Do not refactor vendored upstream code under `third_party/upstream`.
 - Do not combine broad cleanup with benchmark claims unless the benchmark is
   rerun and recorded.

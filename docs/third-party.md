@@ -64,12 +64,14 @@ for provenance.
 
 ## Zstandard 1.5.7
 
-SuperZip vendors Zstandard/libzstd release `v1.5.7` for standards-oriented
-Zstandard compatibility.
+SuperZip bundles the official Zstandard/libzstd release `v1.5.7` Win64 runtime
+for standards-oriented Zstandard compatibility.
 
 - Upstream: <https://github.com/facebook/zstd>
 - Release tag: `v1.5.7`
 - Source archive SHA-256: `7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4`
+- Win64 runtime package SHA-256: `acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9`
+- Extracted DLL SHA-256: `8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b`
 - License: BSD, preserved at `third_party/zstd/LICENSE`
 
 SuperZip uses libzstd for two bounded CPU-codec purposes: single-file
@@ -77,10 +79,13 @@ SuperZip uses libzstd for two bounded CPU-codec purposes: single-file
 TAR adapter. It does not provide GPU acceleration and is not an alternate
 SUZIP codec path.
 
-The production copy under `third_party/zstd/` contains the public headers plus
-the `lib/common`, `lib/compress`, and `lib/decompress` C sources required for a
-single-threaded static libzstd build. The upstream source archive and checksum
-are stored under `third_party/upstream/zstd/v1.5.7/` for provenance.
+The production copy under `third_party/zstd/` contains only license files and
+SuperZip runtime notes. CMake verifies the official Win64 runtime package,
+extracts `libzstd.dll` into the build directory, and copies it beside each
+SuperZip executable. SuperZip loads that DLL only from the executable directory,
+validates runtime version `10507` (`1.5.7`), and never shells out to `zstd.exe`.
+The original source archive, official Win64 package, and checksums are stored
+under `third_party/upstream/zstd/v1.5.7/` for provenance.
 
 ## AMD HIP SDK
 

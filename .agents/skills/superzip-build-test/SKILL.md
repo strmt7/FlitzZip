@@ -12,6 +12,7 @@ Use one of two lanes:
    tools/build.ps1 -Configuration Release
    tools/test.ps1
    tools/security_scan.ps1
+   tools/github_post_push_audit.ps1
    ```
 
 2. Local AMD HIP lane:
@@ -26,6 +27,9 @@ Rules:
 - Use CLI smoke tests for archive validation.
 - Keep `HIP_PATH`, Visual Studio, and architecture configurable.
 - Never commit build output, archives, binaries, logs, or secrets.
+- Pinned upstream provenance archives under `third_party/upstream/**` are the
+  only source-controlled archive exception. Do not commit extracted `.dll`,
+  `.exe`, `.obj`, or package staging output.
 - CPU/GPU performance benchmarks must use `tools/bench.ps1` in its default
   memory-only mode. Required proof fields are `memory_only=true` and
   `disk_write_bytes=0` for both forced-CPU and required-AMD-HIP lanes. Do not

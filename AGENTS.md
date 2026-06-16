@@ -17,11 +17,11 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over vendored libzstd 1.5.7, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through vendored libzstd 1.5.7, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
-- Do not commit credentials, tokens, personal paths, user profiles, local machine names, build artifacts, archives, crash dumps, `.vs`, or generated binary outputs.
+- Do not commit credentials, tokens, personal paths, user profiles, local machine names, build artifacts, crash dumps, `.vs`, or generated binary outputs. The only archive files allowed in source control are pinned upstream provenance artifacts under `third_party/upstream/**` with recorded checksums and licensing notes.
 - Workflows in this repository must never create GitHub deployment records. Do not add GitHub Actions `environment:` blocks or `deployment:` keys. Do not bind private scanner credentials directly in workflow YAML; use the documented OIDC broker pattern for Greenbone/OpenVAS live scan configuration.
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
@@ -50,6 +50,28 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
+## Engineering Quality Baseline
+
+These rules were checked against official guidance on 2026-06-16: NIST SSDF,
+CISA Secure by Design, OWASP Secure Coding Practices, Microsoft SDL, GitHub
+Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
+
+- Keep changes small, reviewable, and behavior-preserving unless the task
+  explicitly asks for a behavior change.
+- Design secure-by-default paths: fail closed, make risky behavior opt-in, and
+  keep trust boundaries visible in code comments and tests.
+- Use least privilege everywhere: workflow permissions, filesystem writes,
+  process creation, GPU/device access, and installer actions.
+- Prefer pinned, provenance-recorded dependencies. Do not track extracted
+  runtime binaries such as `.dll` or `.exe`; extract them from pinned upstream
+  packages during build and verify checksums before use.
+- Fix scanner findings at root cause. Suppressions need documented evidence and
+  maintainer approval; they are not a default remediation strategy.
+- Preserve supply-chain evidence: checksums, third-party notices, SBOM output,
+  release notes, and reproducible build inputs.
+- After every pushed remediation, verify workflows, deployments, and open
+  code-scanning alerts with `tools\github_post_push_audit.ps1`.
+
 ## Project Map
 
 - `src/ar/`: Unix AR and AR-based Debian outer-container compatibility adapter for regular-file members with two-pass path validation and verified file publication.
@@ -61,7 +83,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
 - `src/unix_compress/`: Unix Compress `.Z` single-file compatibility adapter with bounded LZW dictionaries and verified file publication.
 - `src/xz/`: Extract-only XZ compatibility stream and `.xz` single-file adapter using vendored XZ Embedded.
-- `src/zstd/`: Zstandard compatibility streams and `.zst`/`.zstd` single-file adapter using vendored libzstd 1.5.7.
+- `src/zstd/`: Zstandard compatibility streams, runtime-DLL loader, and `.zst`/`.zstd` single-file adapter using the bundled app-local libzstd 1.5.7 runtime.
 - `src/zip/`: ZIP compatibility using miniz 3.1.1.
 - `src/cli/`: command-line entry point for deterministic automation.
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.
@@ -74,8 +96,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `third_party/xz_embedded/`: production XZ Embedded decoder copy used for extract-only `.xz` and `.tar.xz` compatibility.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
-- `third_party/zstd/`: production libzstd 1.5.7 copy used for `.zst` and `.tar.zst` compatibility.
-- `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive and checksum for provenance.
+- `third_party/zstd/`: production Zstandard runtime metadata and license files. Do not track extracted runtime DLLs here.
+- `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive, official Win64 runtime package, and checksums for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
@@ -93,6 +115,7 @@ requires `HIP_PATH`:
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
 tools\security_scan.ps1
+tools\github_post_push_audit.ps1
 ```
 
 Use CPU-only validation only for hosted CI or static-analysis jobs that cannot
@@ -185,8 +208,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   reject unsupported filters/checks instead of skipping verification, and do not
   advertise XZ creation until an encoder path is deliberately added with tests.
 - Zstandard compatibility is single-file for `.zst`/`.zstd` and TAR-stream-only
-  for `.tar.zst`/`.tzst`. Keep libzstd in-process, keep the decoder window cap,
-  keep SuperZip-created frame checksums enabled, and reject malformed streams or
+  for `.tar.zst`/`.tzst`. Keep libzstd in-process through the app-local DLL
+  loader, keep the decoder window cap, validate runtime version `10507`, keep
+  SuperZip-created frame checksums enabled, and reject malformed streams or
   trailing garbage before publishing output.
 - Reject absolute paths, drive-rooted paths, UNC paths, traversal, reserved Windows device names, unsafe trailing dot/space, and invalid characters.
 - Default to no overwrite. Overwrite is an explicit option.

@@ -99,8 +99,8 @@ already real archive/package formats in SuperZip's matrix.
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
-| `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored libzstd 1.5.7 |
-| `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | vendored libzstd 1.5.7 |
+| `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
+| `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
 | `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
@@ -136,11 +136,13 @@ through the native TAR scanner, so all TAR paths are validated before output is
 published. XZ creation remains disabled until SuperZip has a vetted in-process
 encoder path that passes the same dependency and scanner gates.
 
-Zstandard support is single-file when used as `.zst` or `.zstd`. SuperZip
-creates frames with the libzstd content checksum enabled and extracts through a
-bounded-window streaming decoder. `.tar.zst`/`.tzst` is multi-entry because the
-TAR stream supplies the entry table; SuperZip validates the decompressed TAR
-metadata in one Zstandard pass before extracting in a second pass.
+Zstandard support is single-file when used as `.zst` or `.zstd`. SuperZip loads
+the bundled official libzstd 1.5.7 DLL from the executable directory, validates
+the runtime version, creates frames with the libzstd content checksum enabled,
+and extracts through a bounded-window streaming decoder. `.tar.zst`/`.tzst` is
+multi-entry because the TAR stream supplies the entry table; SuperZip validates
+the decompressed TAR metadata in one Zstandard pass before extracting in a
+second pass.
 
 Unix Compress support is intentionally single-file when used as `.Z`.
 SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
@@ -335,8 +337,8 @@ flowchart TD
 
 ## Zstandard Security Contract
 
-The Zstandard path is in-process through vendored libzstd 1.5.7 and follows the
-same publication rules as the other stream adapters:
+The Zstandard path is in-process through the bundled official libzstd 1.5.7 DLL
+and follows the same publication rules as the other stream adapters:
 
 1. `.zst`/`.zstd` accepts exactly one source file and derives one safe output
    filename from the archive path.
@@ -351,7 +353,7 @@ same publication rules as the other stream adapters:
 ```mermaid
 flowchart TD
     A["Open Zstandard stream"] --> B{"Single-file ZST or TAR.ZST?"}
-    B -->|".zst"| C["Decode bounded libzstd stream"]
+    B -->|".zst"| C["Load app-local libzstd and decode bounded stream"]
     C --> D["Publish one safe output file"]
     B -->|".tar.zst"| E["Pass 1: decode and scan TAR metadata"]
     E --> F["Validate all TAR paths and entry kinds"]

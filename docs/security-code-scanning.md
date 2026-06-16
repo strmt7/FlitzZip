@@ -145,6 +145,19 @@ variables.
 
 ## Operational Rules
 
+- The only acceptable open code-scanning alerts are the current residual OSSF
+  Scorecard findings for `MaintainedID`, `CodeReviewID`, `BranchProtectionID`,
+  and `CIIBestPracticesID`. `BinaryArtifactsID`, SAST alerts, dependency
+  alerts, secrets, and scanner policy findings must be fixed.
+- After every push that changes security, workflows, dependencies, packaging, or
+  release artifacts, run:
+
+  ```powershell
+  tools\github_post_push_audit.ps1
+  ```
+
+  The audit checks that no GitHub deployment records exist and that open
+  code-scanning alerts are limited to the approved residual Scorecard findings.
 - The push and pull-request lane validates the workflow, hash-locked Greenbone
   tools, and GMP script contract without touching a network target.
 - The scheduled/manual live scan lane fails closed with an explicit report when

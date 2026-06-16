@@ -68,40 +68,44 @@ target_include_directories(xz_embedded
 )
 target_compile_definitions(xz_embedded PRIVATE XZ_DEC_DYNALLOC _CRT_SECURE_NO_WARNINGS)
 
-add_library(zstd STATIC
-    third_party/zstd/common/debug.c
-    third_party/zstd/common/entropy_common.c
-    third_party/zstd/common/error_private.c
-    third_party/zstd/common/fse_decompress.c
-    third_party/zstd/common/xxhash.c
-    third_party/zstd/common/zstd_common.c
-    third_party/zstd/compress/fse_compress.c
-    third_party/zstd/compress/hist.c
-    third_party/zstd/compress/huf_compress.c
-    third_party/zstd/compress/zstd_compress.c
-    third_party/zstd/compress/zstd_compress_literals.c
-    third_party/zstd/compress/zstd_compress_sequences.c
-    third_party/zstd/compress/zstd_compress_superblock.c
-    third_party/zstd/compress/zstd_double_fast.c
-    third_party/zstd/compress/zstd_fast.c
-    third_party/zstd/compress/zstd_lazy.c
-    third_party/zstd/compress/zstd_ldm.c
-    third_party/zstd/compress/zstd_opt.c
-    third_party/zstd/compress/zstd_preSplit.c
-    third_party/zstd/decompress/huf_decompress.c
-    third_party/zstd/decompress/zstd_ddict.c
-    third_party/zstd/decompress/zstd_decompress.c
-    third_party/zstd/decompress/zstd_decompress_block.c
-)
-target_include_directories(zstd
-    PUBLIC
-        third_party/zstd
-    PRIVATE
-        third_party/zstd/common
-        third_party/zstd/compress
-        third_party/zstd/decompress
-)
-target_compile_definitions(zstd PRIVATE ZSTD_LEGACY_SUPPORT=0 ZSTD_DISABLE_ASM _CRT_SECURE_NO_WARNINGS)
+set(SUPERZIP_ZSTD_RUNTIME_PACKAGE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/upstream/zstd/v1.5.7/zstd-v1.5.7-win64.zip")
+set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9")
+set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 "8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b")
+set(SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR "${CMAKE_CURRENT_BINARY_DIR}/zstd-v1.5.7-win64-runtime")
+set(SUPERZIP_ZSTD_RUNTIME_DLL "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}/zstd-v1.5.7-win64/dll/libzstd.dll")
+if(WIN32)
+    if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
+        message(FATAL_ERROR "Bundled Zstandard runtime package is missing: ${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
+    endif()
+    file(SHA256 "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}" SUPERZIP_ZSTD_RUNTIME_PACKAGE_ACTUAL_SHA256)
+    if(NOT SUPERZIP_ZSTD_RUNTIME_PACKAGE_ACTUAL_SHA256 STREQUAL SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256)
+        message(FATAL_ERROR "Bundled Zstandard runtime package checksum mismatch: ${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
+    endif()
+    if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_DLL}")
+        file(MAKE_DIRECTORY "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}")
+        file(ARCHIVE_EXTRACT INPUT "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}" DESTINATION "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}")
+    endif()
+    if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_DLL}")
+        message(FATAL_ERROR "Bundled Zstandard runtime DLL was not found after extraction: ${SUPERZIP_ZSTD_RUNTIME_DLL}")
+    endif()
+    file(SHA256 "${SUPERZIP_ZSTD_RUNTIME_DLL}" SUPERZIP_ZSTD_RUNTIME_DLL_ACTUAL_SHA256)
+    if(NOT SUPERZIP_ZSTD_RUNTIME_DLL_ACTUAL_SHA256 STREQUAL SUPERZIP_ZSTD_RUNTIME_DLL_SHA256)
+        message(FATAL_ERROR "Bundled Zstandard runtime DLL checksum mismatch: ${SUPERZIP_ZSTD_RUNTIME_DLL}")
+    endif()
+endif()
+
+function(superzip_copy_zstd_runtime target_name)
+    if(WIN32)
+        add_custom_command(
+            TARGET "${target_name}"
+            POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${SUPERZIP_ZSTD_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:${target_name}>/libzstd.dll"
+            VERBATIM
+        )
+    endif()
+endfunction()
 
 add_library(superzip_core STATIC
     src/ar/ar_adapter.cpp
@@ -128,12 +132,13 @@ add_library(superzip_core STATIC
     src/xz/xz_adapter.cpp
     src/xz/xz_stream.cpp
     src/zstd/zstd_adapter.cpp
+    src/zstd/zstd_runtime.cpp
     src/zstd/zstd_stream.cpp
     src/zip/zip_adapter.cpp
 )
 
-target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/zstd)
-target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded zstd)
+target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2)
+target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
@@ -222,6 +227,7 @@ endif()
 
 add_executable(superzip_cli src/cli/main.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
+superzip_copy_zstd_runtime(superzip_cli)
 install(TARGETS superzip_cli RUNTIME DESTINATION bin)
 
 if(SUPERZIP_BUILD_GUI AND WIN32)
@@ -232,6 +238,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
     )
     target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme dwmapi ole32 gdiplus pdh psapi)
     target_compile_definitions(SuperZip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    superzip_copy_zstd_runtime(SuperZip)
     if(MSVC)
         target_link_options(SuperZip PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest")
     endif()
@@ -265,6 +272,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_zip_compat.cpp
     )
     target_link_libraries(superzip_tests PRIVATE superzip_core)
+    superzip_copy_zstd_runtime(superzip_tests)
     add_test(NAME superzip_tests COMMAND superzip_tests)
 endif()
 
@@ -298,6 +306,9 @@ install(FILES
     CONTRIBUTING.md
     DESTINATION .
 )
+if(WIN32)
+    install(FILES "${SUPERZIP_ZSTD_RUNTIME_DLL}" DESTINATION bin)
+endif()
 install(DIRECTORY docs DESTINATION .)
 if(SUPERZIP_ENABLE_HIP)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json" DESTINATION .)

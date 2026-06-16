@@ -5,12 +5,17 @@ and verified without changing product behavior accidentally.
 
 ## References Checked
 
-Checked on 2026-06-15:
+Checked on 2026-06-16:
 
 - Martin Fowler, Refactoring: https://refactoring.com/
 - Google Engineering Practices, Small CLs: https://google.github.io/eng-practices/review/developer/small-cls.html
 - Microsoft Visual Studio refactoring documentation: https://learn.microsoft.com/en-us/visualstudio/ide/refactoring-in-visual-studio
 - NIST Secure Software Development Framework SP 800-218: https://csrc.nist.gov/pubs/sp/800/218/final
+- CISA Secure by Design: https://www.cisa.gov/securebydesign
+- OWASP Secure Coding Practices Quick Reference Guide: https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/
+- GitHub Actions secure use: https://docs.github.com/actions/security-guides/security-hardening-for-github-actions
+- OpenSSF Scorecard checks: https://github.com/ossf/scorecard
+- SLSA specification v1.2: https://slsa.dev/spec/v1.2/
 
 The common rule is that refactoring changes structure while preserving behavior.
 For SuperZip, that means tests, benchmark baselines, and security gates are part

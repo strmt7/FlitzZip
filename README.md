@@ -13,11 +13,11 @@ is validated before output without staging a full intermediate TAR on disk.
 adapter over vendored libbzip2 1.0.8. `.tar.xz`/`.txz` extraction is
 implemented through the same validated TAR stream path over vendored XZ
 Embedded. `.tar.zst`/`.tzst` archives are implemented with the same TAR stream
-adapter over vendored libzstd 1.5.7. Single-file `.gz` streams are implemented
+adapter over the bundled app-local libzstd 1.5.7 runtime. Single-file `.gz` streams are implemented
 through miniz raw deflate with CRC32/ISIZE verification, single-file `.bz2`
 streams are implemented through libbzip2, single-file `.xz` streams are
 extracted through XZ Embedded, and single-file `.zst`/`.zstd` streams are
-implemented through libzstd with frame checksum creation and bounded-window
+implemented through the app-local libzstd DLL with frame checksum creation and bounded-window
 extraction. Portable `.cpio` archives are
 implemented with a native SVR4 new ASCII parser/writer for regular files and
 directories. Unix `.ar` archives are implemented with a native parser/writer for

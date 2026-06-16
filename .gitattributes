@@ -41,3 +41,4 @@ third_party/xz_embedded/README text eol=lf
 
 third_party/zstd/COPYING text eol=lf
 third_party/zstd/LICENSE text eol=lf
+third_party/upstream/zstd/**/SHA256SUMS text eol=lf

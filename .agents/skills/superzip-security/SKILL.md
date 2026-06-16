@@ -20,6 +20,7 @@ Required checks:
 tools/build.ps1 -Configuration Release
 tools/test.ps1
 tools/security_scan.ps1
+tools/github_post_push_audit.ps1
 ```
 
 Add or update tests for:
@@ -44,3 +45,9 @@ Workflow and release hardening rules:
 - Keep release artifacts HIP-enabled, Windows x64-only, and equivalent between
   MSI and portable ZIP. CPU-only artifacts are validation-only and must not be
   published.
+- Do not track extracted runtime binaries. Keep upstream packages under
+  `third_party/upstream/**`, record checksums and license notes, and extract
+  runtime DLLs into the build tree only after checksum verification.
+- The only acceptable open code-scanning findings are Scorecard
+  `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
+  `CIIBestPracticesID`.
