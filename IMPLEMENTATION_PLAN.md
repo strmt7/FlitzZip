@@ -110,6 +110,8 @@ archive options, progress snapshots, and errors.
 - Kept document/package ZIP containers out of the user-facing format matrix.
 - Updated GUI extraction to auto-route implemented SUZIP, ZIP, and TAR formats
   while reporting recognized unsupported formats explicitly.
+- Added extract-only XZ and TAR.XZ compatibility through vendored XZ Embedded,
+  preserving two-pass TAR validation and bounded decoder memory.
 
 ## Validation Gates
 

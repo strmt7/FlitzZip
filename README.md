@@ -10,9 +10,12 @@ same extraction path-safety checks. `.tar.gz`/`.tgz` archives are implemented
 with a two-pass streaming TAR reader over miniz raw-deflate Gzip, so extraction
 is validated before output without staging a full intermediate TAR on disk.
 `.tar.bz2`/`.tbz`/`.tbz2` archives are implemented with the same TAR stream
-adapter over vendored libbzip2 1.0.8. Single-file `.gz` streams are implemented
-through miniz raw deflate with CRC32/ISIZE verification, and single-file `.bz2`
-streams are implemented through libbzip2. Portable `.cpio` archives are
+adapter over vendored libbzip2 1.0.8. `.tar.xz`/`.txz` extraction is
+implemented through the same validated TAR stream path over vendored XZ
+Embedded. Single-file `.gz` streams are implemented through miniz raw deflate
+with CRC32/ISIZE verification, single-file `.bz2` streams are implemented
+through libbzip2, and single-file `.xz` streams are extracted through XZ
+Embedded. Portable `.cpio` archives are
 implemented with a native SVR4 new ASCII parser/writer for regular files and
 directories. Unix `.ar` archives are implemented with a native parser/writer for
 regular-file members. Debian `.deb` package files are extracted as native
@@ -129,10 +132,12 @@ build/Release/superzip_cli.exe compress --format tar.gz --output archive.tar.gz 
 build/Release/superzip_cli.exe extract --output restored archive.tar.gz
 build/Release/superzip_cli.exe compress --format tar.bz2 --output archive.tar.bz2 path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.tar.bz2
+build/Release/superzip_cli.exe extract --output restored archive.tar.xz
 build/Release/superzip_cli.exe compress --format gz --output file.txt.gz file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.gz
 build/Release/superzip_cli.exe compress --format bz2 --output file.txt.bz2 file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.bz2
+build/Release/superzip_cli.exe extract --output restored file.txt.xz
 build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.Z
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
@@ -152,7 +157,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, TAR.BZ2, Gzip, Bzip2, Unix Compress, CPIO, AR, and DEB compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, Unix Compress, CPIO, AR, and DEB compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP

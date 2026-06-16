@@ -42,6 +42,26 @@ upstream. The only SuperZip-owned file in that directory is
 unmodified upstream 1.0.8 source archive and checksum are stored under
 `third_party/upstream/bzip2/1.0.8/` for provenance.
 
+## XZ Embedded
+
+SuperZip vendors the XZ Embedded decoder at upstream commit
+`ae63ae3a36ed01724674e8f3d750dc47bf125410` for extract-only XZ compatibility.
+
+- Upstream: <https://github.com/tukaani-project/xz-embedded>
+- Commit date: 2024-12-30
+- Source archive SHA-256: `def1cc76f59db117245670f334599d70406c5f8a3ea99fb79763a84803420abf`
+- License: 0BSD, preserved at `third_party/xz_embedded/COPYING`
+
+SuperZip uses XZ Embedded only for single-file `.xz` extraction and
+`.tar.xz`/`.txz` stream filters over the native TAR adapter. It is decode-only,
+does not provide GPU acceleration, and is not an alternate SUZIP codec path.
+
+The production copy under `third_party/xz_embedded/` contains only the
+upstream-documented userspace embedding files plus narrow SuperZip integration
+hardening. The upstream source archive and checksum are stored under
+`third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`
+for provenance.
+
 ## AMD HIP SDK
 
 SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment

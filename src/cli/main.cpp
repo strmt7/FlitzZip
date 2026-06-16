@@ -11,6 +11,7 @@
 #include "gpu/gpu_codec.hpp"
 #include "tar/tar_adapter.hpp"
 #include "unix_compress/unix_compress_adapter.hpp"
+#include "xz/xz_adapter.hpp"
 #include "zip/zip_adapter.hpp"
 
 #include <algorithm>
@@ -138,7 +139,7 @@ void usage() {
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|gz|gzip|bz2|bzip2|z|compress|cpio|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format auto|zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|gz|gzip|bz2|bzip2|z|compress|cpio|ar|deb --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli extract --format auto|zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|gz|gzip|bz2|bzip2|xz|z|compress|cpio|ar|deb --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -1281,6 +1282,11 @@ int main(int argc, char** argv) {
                     throw superzip::ArchiveError("TAR.BZ2 compatibility does not support SUZIP GPU, worker, or in-flight flags");
                 }
                 print_stats(superzip::extract_tar_bzip2(archive, output, overwrite));
+            } else if (archive_format == superzip::ArchiveFormat::TarXz) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("TAR.XZ compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                }
+                print_stats(superzip::extract_tar_xz(archive, output, overwrite));
             } else if (archive_format == superzip::ArchiveFormat::Gzip) {
                 if (require_gpu || force_cpu || suzip_tuning_requested) {
                     throw superzip::ArchiveError("Gzip compatibility does not support SUZIP GPU, worker, or in-flight flags");
@@ -1291,6 +1297,11 @@ int main(int argc, char** argv) {
                     throw superzip::ArchiveError("Bzip2 compatibility does not support SUZIP GPU, worker, or in-flight flags");
                 }
                 print_stats(superzip::extract_bzip2_file(archive, output, overwrite));
+            } else if (archive_format == superzip::ArchiveFormat::Xz) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("XZ compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                }
+                print_stats(superzip::extract_xz_file(archive, output, overwrite));
             } else if (archive_format == superzip::ArchiveFormat::UnixCompress) {
                 if (require_gpu || force_cpu || suzip_tuning_requested) {
                     throw superzip::ArchiveError("Unix Compress compatibility does not support SUZIP GPU, worker, or in-flight flags");

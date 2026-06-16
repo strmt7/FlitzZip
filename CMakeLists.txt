@@ -53,6 +53,21 @@ target_include_directories(bzip2 PUBLIC third_party/bzip2)
 target_compile_definitions(bzip2 PUBLIC BZ_NO_STDIO)
 target_compile_definitions(bzip2 PRIVATE _CRT_SECURE_NO_WARNINGS)
 
+add_library(xz_embedded STATIC
+    third_party/xz_embedded/linux/lib/xz/xz_crc32.c
+    third_party/xz_embedded/linux/lib/xz/xz_crc64.c
+    third_party/xz_embedded/linux/lib/xz/xz_dec_lzma2.c
+    third_party/xz_embedded/linux/lib/xz/xz_dec_stream.c
+)
+target_include_directories(xz_embedded
+    PUBLIC
+        third_party/xz_embedded/linux/include/linux
+        third_party/xz_embedded/userspace
+    PRIVATE
+        third_party/xz_embedded/linux/lib/xz
+)
+target_compile_definitions(xz_embedded PRIVATE XZ_DEC_DYNALLOC _CRT_SECURE_NO_WARNINGS)
+
 add_library(superzip_core STATIC
     src/ar/ar_adapter.cpp
     src/bzip2/bzip2_adapter.cpp
@@ -75,17 +90,20 @@ add_library(superzip_core STATIC
     src/gpu/hip_device.cpp
     src/tar/tar_adapter.cpp
     src/unix_compress/unix_compress_adapter.cpp
+    src/xz/xz_adapter.cpp
+    src/xz/xz_stream.cpp
     src/zip/zip_adapter.cpp
 )
 
 target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2)
-target_link_libraries(superzip_core PUBLIC miniz bzip2)
+target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
     _CRT_SECURE_NO_WARNINGS
     SUPERZIP_VERSION="${SUPERZIP_PACKAGE_VERSION}"
 )
+target_compile_definitions(superzip_core PRIVATE XZ_DEC_CONCATENATED XZ_USE_CRC64)
 
 if(MSVC)
     target_compile_options(superzip_core PRIVATE /W4 /permissive- /EHsc /wd4201)
@@ -202,7 +220,9 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_tar_bzip2_compat.cpp
         tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
+        tests/cpp/test_tar_xz_compat.cpp
         tests/cpp/test_unix_compress_compat.cpp
+        tests/cpp/test_xz_compat.cpp
         tests/cpp/test_zip_compat.cpp
     )
     target_link_libraries(superzip_tests PRIVATE superzip_core)

@@ -7,6 +7,7 @@
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_stream.hpp"
+#include "xz/xz_stream.hpp"
 
 #include <algorithm>
 #include <array>
@@ -940,6 +941,30 @@ OperationStats extract_tar_bzip2(
     std::filesystem::create_directories(destination);
 
     Bzip2InputStream extract_input(archive_path);
+    extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
+    extract_input.finish();
+
+    OperationStats stats;
+    stats.input_bytes = extract_input.input_bytes();
+    stats.output_bytes = scanned.total_file_bytes;
+    stats.entries = scanned.entries.size();
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
+}
+
+OperationStats extract_tar_xz(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    XzInputStream scan_input(archive_path);
+    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    scan_input.finish();
+    std::filesystem::create_directories(destination);
+
+    XzInputStream extract_input(archive_path);
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 

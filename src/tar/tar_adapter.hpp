@@ -58,4 +58,13 @@ OperationStats extract_tar_bzip2(
     bool overwrite,
     const ProgressCallback& progress_callback = {});
 
+// Purpose: Extract an XZ-compressed POSIX TAR archive with two-pass stream validation.
+// Inputs: `archive_path` is the `.tar.xz`/`.txz` file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns operation statistics; throws on malformed XZ/TAR data, unsafe entry paths, refused overwrite, or verified-file publication failures.
+OperationStats extract_tar_xz(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback = {});
+
 }  // namespace superzip

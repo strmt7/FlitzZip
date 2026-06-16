@@ -25,6 +25,7 @@ Primary and project-owned sources reviewed:
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - bzip2/libbzip2: https://sourceware.org/bzip2/
+- XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - NanaZip: https://github.com/M2Team/NanaZip
 - GNOME File Roller: https://gitlab.gnome.org/GNOME/file-roller
 - KDE Ark: https://apps.kde.org/ark/
@@ -86,17 +87,18 @@ already real archive/package formats in SuperZip's matrix.
 | `.tar` | Yes | Yes | Compatibility format | native bounded TAR adapter |
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.tar.bz2`, `.tbz`, `.tbz2` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored libbzip2 1.0.8 |
+| `.tar.xz`, `.txz` | No | Yes | Extract-only compatibility format | native TAR stream adapter over vendored XZ Embedded |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
 | `.bz2` | Yes | Yes | Single-file compatibility stream | vendored libbzip2 1.0.8 |
+| `.xz` | No | Yes | Extract-only single-file compatibility stream | vendored XZ Embedded |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
-| `.tar.xz`, `.txz` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.zst`, `.tzst` | No | No | Recognized only | pending stream compressor layer |
-| `.xz`, `.zst` | No | No | Recognized only | pending single-stream support |
+| `.zst` | No | No | Recognized only | pending single-stream support |
 | `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
@@ -124,6 +126,13 @@ SuperZip validates the decompressed TAR metadata in one Bzip2 pass before
 extracting in a second pass. Single-member `.bz2` extraction rejects trailing
 compressed data; concatenated `.bz2` members require a deliberate future product
 decision and tests.
+
+XZ support is extract-only in this increment. Single-file `.xz` extraction uses
+the archive filename to derive one safe output path and supports concatenated XZ
+streams with CRC64 verification. `.tar.xz`/`.txz` routes the decoded stream
+through the native TAR scanner, so all TAR paths are validated before output is
+published. XZ creation remains disabled until SuperZip has a vetted in-process
+encoder path that passes the same dependency and scanner gates.
 
 Unix Compress support is intentionally single-file when used as `.Z`.
 SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
@@ -292,6 +301,30 @@ flowchart TD
     F --> G["Pass 2: decode and publish verified TAR files"]
 ```
 
+## XZ Security Contract
+
+The XZ path is in-process through vendored XZ Embedded and follows the same
+publication rules as the other stream adapters:
+
+1. `.xz` extracts exactly one output file derived from the archive filename.
+2. `.tar.xz`/`.txz` routes through the native TAR scanner, so all TAR paths are
+   validated before any extraction output is published.
+3. The decoder supports CRC64 and concatenated streams, but rejects unsupported
+   filters and check types instead of skipping verification.
+4. The LZMA2 dictionary is capped at the SuperZip wrapper boundary to prevent
+   untrusted streams from exhausting host RAM.
+5. XZ creation is not implemented or advertised in this release.
+
+```mermaid
+flowchart TD
+    A["Open XZ stream"] --> B{"Single-file .xz or TAR.XZ?"}
+    B -->|".xz"| C["Decode concatenated XZ stream"]
+    C --> D["Publish one safe output file"]
+    B -->|".tar.xz"| E["Pass 1: decode and scan TAR metadata"]
+    E --> F["Validate all TAR paths and entry kinds"]
+    F --> G["Pass 2: decode and publish verified TAR files"]
+```
+
 ## Future Backend Gates
 
 Before adding a new compatibility backend, the implementation must satisfy:
@@ -306,7 +339,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are `.tar.xz` and `.tar.zst` stream filters, then
+Preferred next increments are `.tar.zst` and `.zst` stream extraction, then
 read-only 7z, ISO, CAB, and RAR after backend selection and licensing review.
 Write support for RAR is not planned because the common RAR creation tooling is
 not a permissive open format writer suitable for this repo.
