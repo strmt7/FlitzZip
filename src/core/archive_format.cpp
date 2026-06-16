@@ -38,7 +38,7 @@ constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim,.swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, false, false, false},
     {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
-    {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, false, false, false},
+    {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
 // Purpose: Convert a string to lowercase ASCII for extension and token matching.

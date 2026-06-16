@@ -128,6 +128,8 @@ add_library(superzip_core STATIC
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
     src/iso/iso_adapter.cpp
+    src/rpm/rpm_adapter.cpp
+    src/rpm/rpm_format.cpp
     src/tar/tar_adapter.cpp
     src/unix_compress/unix_compress_adapter.cpp
     src/xz/xz_adapter.cpp
@@ -263,6 +265,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_iso_compat.cpp
         tests/cpp/test_path_safety.cpp
+        tests/cpp/test_rpm_compat.cpp
         tests/cpp/test_tar_bzip2_compat.cpp
         tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
@@ -302,15 +305,24 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_include_directories(superzip_iso_fuzzer PRIVATE src)
     target_compile_definitions(superzip_iso_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_rpm_header_fuzzer
+        fuzz/rpm_header_fuzzer.cpp
+        src/rpm/rpm_format.cpp
+    )
+    target_include_directories(superzip_rpm_header_fuzzer PRIVATE src)
+    target_compile_definitions(superzip_rpm_header_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
     endif()
     target_compile_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 install(FILES

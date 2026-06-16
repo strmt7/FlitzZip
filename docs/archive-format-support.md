@@ -28,6 +28,7 @@ Primary and project-owned sources reviewed:
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - Zstandard/libzstd: https://github.com/facebook/zstd
 - Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
+- RPM package format v4: https://rpm-software-management.github.io/rpm/manual/format_v4.html
 - NanaZip: https://github.com/M2Team/NanaZip
 - GNOME File Roller: https://gitlab.gnome.org/GNOME/file-roller
 - KDE Ark: https://apps.kde.org/ark/
@@ -98,11 +99,12 @@ already real archive/package formats in SuperZip's matrix.
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.iso` | No | Yes | Extract-only compatibility format | native basic ISO 9660 adapter |
+| `.rpm` | No | Yes | Extract-only compatibility format | native RPM package adapter over CPIO payloads |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.cab`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
+| `.cab`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -170,6 +172,14 @@ containers, so SuperZip extracts the outer package members through the same
 bounded AR adapter. It does not install packages, execute maintainer scripts, or
 silently unpack nested `control.tar.*` or `data.tar.*` members into the
 destination. Nested package inspection needs a separate UI and security policy.
+
+RPM support is intentionally extract-only. SuperZip parses the RPM lead,
+signature header, package header, and payload metadata in process, accepts only
+CPIO payload format, and supports `none`, Gzip, Bzip2, XZ, and Zstandard payload
+compression through existing bounded stream adapters. It never installs
+packages, executes scripts, or trusts package metadata as an extraction path;
+the decoded CPIO payload is passed through the native CPIO adapter before files
+are published.
 
 ## ZIP-Container Alias Policy
 
@@ -264,6 +274,31 @@ flowchart TD
     B --> C["Use AR member scanner"]
     C --> D["Validate outer member paths"]
     D --> E["Publish outer files through verified temp path"]
+```
+
+## RPM Security Contract
+
+The RPM path is a format-specific route into the CPIO adapter:
+
+1. Validate the RPM lead, signature header, package header, and payload
+   descriptor with bounded header-entry and header-store sizes.
+2. Accept only CPIO payloads and explicitly supported payload compression.
+3. Reject mismatches between declared payload compression and payload magic.
+4. Decode the payload into a private temporary file and route it through the
+   CPIO adapter, so all package paths are validated before output.
+5. Cap compressed and decoded temporary payload spooling before disk usage can
+   grow without bound.
+6. Remove known temporary payload files on success and failure.
+
+```mermaid
+flowchart TD
+    A["Open RPM package"] --> B["Validate RPM lead and headers"]
+    B --> C["Resolve CPIO payload compression"]
+    C --> D{"Supported payload?"}
+    D -->|"yes"| E["Decode payload to private CPIO temp file"]
+    E --> F["Use CPIO scanner and path validation"]
+    F --> G["Publish verified files"]
+    D -->|"no"| H["Reject package"]
 ```
 
 ## Unix Compress Security Contract

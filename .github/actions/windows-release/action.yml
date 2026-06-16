@@ -381,6 +381,18 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable CPIO smoke extraction did not preserve payload."
         }
+        $rpmExtract = Join-Path $root "extract-rpm"
+        New-Item -ItemType Directory -Force -Path $rpmExtract | Out-Null
+        $rpmArchive = Join-Path $root "package.rpm"
+        & .\tools\new_rpm_smoke_fixture.ps1 -OutputPath $rpmArchive -PayloadPath (Join-Path $root "archive.cpio")
+        $rpmIdentity = & $cli identify $rpmArchive
+        if ($rpmIdentity -notmatch 'format=rpm') {
+            throw "Portable RPM smoke did not identify the RPM package: $rpmIdentity"
+        }
+        & $cli extract --format rpm --output $rpmExtract $rpmArchive
+        if ((Get-Content -LiteralPath (Join-Path $rpmExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable RPM smoke extraction did not preserve CPIO payload."
+        }
         $arExtract = Join-Path $root "extract-ar"
         New-Item -ItemType Directory -Force -Path $arExtract | Out-Null
         & $cli compress --format ar --output (Join-Path $root "archive.ar") $input

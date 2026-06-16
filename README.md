@@ -23,7 +23,10 @@ implemented with a native SVR4 new ASCII parser/writer for regular files and
 directories. Unix `.ar` archives are implemented with a native parser/writer for
 regular-file members. Debian `.deb` package files are extracted as native
 AR-based outer containers. Basic ISO 9660 `.iso` images are extracted by a
-native read-only parser with the same pre-write path validation. Legacy Unix
+native read-only parser with the same pre-write path validation. RPM `.rpm`
+package files are extracted by a native read-only package parser that decodes
+CPIO payloads with supported `none`, Gzip, Bzip2, XZ, and Zstandard compression
+before using the same CPIO path-safety checks. Legacy Unix
 Compress `.Z` streams are implemented with a native bounded LZW reader/writer
 for single files. Other common archive
 formats are recognized for clear diagnostics and are tracked in
@@ -155,6 +158,7 @@ build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\
 build/Release/superzip_cli.exe extract --output restored archive.ar
 build/Release/superzip_cli.exe extract --format deb --output restored package.deb
 build/Release/superzip_cli.exe extract --format iso --output restored image.iso
+build/Release/superzip_cli.exe extract --format rpm --output restored package.rpm
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
 
@@ -167,7 +171,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, Unix Compress, CPIO, AR, and DEB compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, Unix Compress, CPIO, AR, DEB, ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP
@@ -200,8 +204,9 @@ never bound directly in workflow YAML.
 ## Fuzzing
 
 Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
-builds libFuzzer targets for SuperZip archive-index metadata and archive-entry
-path canonicalization with address and undefined-behavior sanitizers:
+builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
+path canonicalization, ISO metadata, and RPM header metadata with address and
+undefined-behavior sanitizers:
 
 ```powershell
 tools/fuzz.ps1 -Runs 512
