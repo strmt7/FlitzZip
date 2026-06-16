@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.gz` remains single-file compatibility-only through miniz raw deflate, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -43,9 +43,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/compression-level-and-benchmark-suite.md`, then keep the RAM-only
   benchmark gates intact.
 - Before changing archive-format recognition or compatibility support, read
-  `docs/archive-format-support.md`. Do not add document/package aliases such as
-  DOCX, PPTX, XLSX, JAR, APK, or CBZ as user-facing archive formats unless a
-  maintainer explicitly requests package inspection.
+  `docs/archive-format-support.md`. Do not add ZIP-container aliases as
+  user-facing archive formats unless a maintainer explicitly requests package
+  inspection.
 - Before performing repo-wide refactoring or automatic cleanup, read
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
@@ -53,6 +53,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Project Map
 
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
+- `src/gzip/`: single-file Gzip compatibility using miniz raw deflate with CRC32/ISIZE verification.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
 - `src/tar/`: TAR compatibility adapter with two-pass path validation and verified file publication.
 - `src/zip/`: ZIP compatibility using miniz 3.1.1.

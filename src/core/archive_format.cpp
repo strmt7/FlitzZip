@@ -24,7 +24,7 @@ constexpr std::array<ArchiveFormatInfo, 24> kFormatRegistry{{
     {ArchiveFormat::TarBzip2, "tar.bz2", "TAR + Bzip2 (.tar.bz2, .tbz2)", ".tar.bz2,.tbz2", false, false, false, false},
     {ArchiveFormat::TarXz, "tar.xz", "TAR + XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, false, false, false},
     {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", false, false, false, false},
-    {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", false, false, false, false},
+    {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", false, false, false, false},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, false, false, false},
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst", false, false, false, false},
@@ -57,7 +57,7 @@ bool ends_with_lower(const std::string& value, std::string_view suffix) {
         value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// Purpose: Detect ZIP-container document/package aliases that are intentionally not archive formats.
+// Purpose: Detect ZIP-container aliases that are intentionally not archive formats.
 // Inputs: `path` is the candidate archive path.
 // Outputs: Returns true for known ZIP-based aliases that SuperZip should not expose as archive formats.
 bool has_excluded_zip_container_extension(const std::filesystem::path& path) {
@@ -275,6 +275,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "tar.zst";
     } else if (lowered == "zstd") {
         lowered = "zst";
+    } else if (lowered == "gzip") {
+        lowered = "gz";
     } else if (lowered == "lzh") {
         lowered = "lha";
     }

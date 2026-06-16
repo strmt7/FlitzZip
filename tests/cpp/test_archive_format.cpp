@@ -56,7 +56,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
 }
 
-TEST_CASE(archive_format_tokens_exclude_document_package_aliases) {
+TEST_CASE(archive_format_tokens_exclude_non_archive_zip_container_aliases) {
     const auto root = test_temp_dir("archive-format-excluded-aliases");
     write_fixture(root / "document.docx", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
 
@@ -66,6 +66,7 @@ TEST_CASE(archive_format_tokens_exclude_document_package_aliases) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "document.docx"), superzip::ArchiveFormat::Unknown);
     REQUIRE_EQ(superzip::parse_archive_format_token("tar").value(), superzip::ArchiveFormat::Tar);
     REQUIRE_EQ(superzip::parse_archive_format_token("tgz").value(), superzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(superzip::parse_archive_format_token("gzip").value(), superzip::ArchiveFormat::Gzip);
 }
 
 TEST_CASE(archive_format_prefers_compound_tar_extensions_over_stream_magic) {

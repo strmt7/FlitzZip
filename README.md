@@ -6,8 +6,10 @@ SuperZip is a Windows x64 archive application built around AMD HIP acceleration.
 Its native `.suzip` format is the GPU-first path. Standard `.zip` support exists
 for compatibility and is handled by the vendored miniz 3.1.1 codebase.
 Uncompressed `.tar` support is implemented by a native bounded adapter with the
-same extraction path-safety checks. Other common archive formats are recognized
-for clear diagnostics and are tracked in `docs/archive-format-support.md`.
+same extraction path-safety checks. Single-file `.gz` streams are implemented
+through miniz raw deflate with CRC32/ISIZE verification. Other common archive
+formats are recognized for clear diagnostics and are tracked in
+`docs/archive-format-support.md`.
 
 The product ships as two equivalent Windows packages:
 
@@ -113,6 +115,8 @@ build/Release/superzip_cli.exe compress --format zip --output archive.zip path\t
 build/Release/superzip_cli.exe extract --format zip --output restored archive.zip
 build/Release/superzip_cli.exe compress --format tar --output archive.tar path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.tar
+build/Release/superzip_cli.exe compress --format gz --output file.txt.gz file.txt
+build/Release/superzip_cli.exe extract --output restored file.txt.gz
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
 
@@ -125,7 +129,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP and TAR compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, and Gzip compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP
