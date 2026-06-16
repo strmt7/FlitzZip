@@ -23,12 +23,12 @@ constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::TarGzip, "tar.gz", "TAR + Gzip (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},
     {ArchiveFormat::TarBzip2, "tar.bz2", "TAR + Bzip2 (.tar.bz2, .tbz, .tbz2)", ".tar.bz2,.tbz,.tbz2", true, true, false, true},
     {ArchiveFormat::TarXz, "tar.xz", "TAR + XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, true, false, true},
-    {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", false, false, false, false},
+    {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", true, true, false, true},
     {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, true, false, true},
-    {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst", false, false, false, false},
+    {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst,.zstd", true, true, false, true},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, false, false, false},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, false, false, false},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
@@ -59,9 +59,9 @@ bool ends_with_lower(const std::string& value, std::string_view suffix) {
         value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// Purpose: Detect ZIP-based container files that are intentionally not archive formats.
+// Purpose: Detect ZIP-based application/document containers that must not be treated as archives.
 // Inputs: `path` is the candidate archive path.
-// Outputs: Returns true for document/app package extensions that must stay outside archive support.
+// Outputs: Returns true when a ZIP-magic file uses an extension outside SuperZip archive support.
 bool has_excluded_zip_container_extension(const std::filesystem::path& path) {
     const auto name = ascii_lower(path.filename().string());
     constexpr std::array excluded = {

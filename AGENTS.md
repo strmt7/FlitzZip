@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over vendored libzstd 1.5.7, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through vendored libzstd 1.5.7, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -58,9 +58,10 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `src/cpio/`: CPIO compatibility adapter for SVR4 new ASCII archives with two-pass path validation and verified file publication.
 - `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
-- `src/tar/`: TAR, TAR.GZ, TAR.BZ2, and TAR.XZ compatibility adapter with two-pass path validation and verified file publication.
+- `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
 - `src/unix_compress/`: Unix Compress `.Z` single-file compatibility adapter with bounded LZW dictionaries and verified file publication.
 - `src/xz/`: Extract-only XZ compatibility stream and `.xz` single-file adapter using vendored XZ Embedded.
+- `src/zstd/`: Zstandard compatibility streams and `.zst`/`.zstd` single-file adapter using vendored libzstd 1.5.7.
 - `src/zip/`: ZIP compatibility using miniz 3.1.1.
 - `src/cli/`: command-line entry point for deterministic automation.
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.
@@ -73,6 +74,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `third_party/xz_embedded/`: production XZ Embedded decoder copy used for extract-only `.xz` and `.tar.xz` compatibility.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
+- `third_party/zstd/`: production libzstd 1.5.7 copy used for `.zst` and `.tar.zst` compatibility.
+- `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive and checksum for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
@@ -181,6 +184,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   `.tar.xz`/`.txz`. Keep XZ Embedded in-process, keep the decoder memory cap,
   reject unsupported filters/checks instead of skipping verification, and do not
   advertise XZ creation until an encoder path is deliberately added with tests.
+- Zstandard compatibility is single-file for `.zst`/`.zstd` and TAR-stream-only
+  for `.tar.zst`/`.tzst`. Keep libzstd in-process, keep the decoder window cap,
+  keep SuperZip-created frame checksums enabled, and reject malformed streams or
+  trailing garbage before publishing output.
 - Reject absolute paths, drive-rooted paths, UNC paths, traversal, reserved Windows device names, unsafe trailing dot/space, and invalid characters.
 - Default to no overwrite. Overwrite is an explicit option.
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.

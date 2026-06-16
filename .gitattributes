@@ -38,3 +38,6 @@ third_party/bzip2/README text eol=lf
 third_party/xz_embedded/AUTHORS text eol=lf
 third_party/xz_embedded/COPYING text eol=lf
 third_party/xz_embedded/README text eol=lf
+
+third_party/zstd/COPYING text eol=lf
+third_party/zstd/LICENSE text eol=lf

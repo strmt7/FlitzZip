@@ -68,6 +68,41 @@ target_include_directories(xz_embedded
 )
 target_compile_definitions(xz_embedded PRIVATE XZ_DEC_DYNALLOC _CRT_SECURE_NO_WARNINGS)
 
+add_library(zstd STATIC
+    third_party/zstd/common/debug.c
+    third_party/zstd/common/entropy_common.c
+    third_party/zstd/common/error_private.c
+    third_party/zstd/common/fse_decompress.c
+    third_party/zstd/common/xxhash.c
+    third_party/zstd/common/zstd_common.c
+    third_party/zstd/compress/fse_compress.c
+    third_party/zstd/compress/hist.c
+    third_party/zstd/compress/huf_compress.c
+    third_party/zstd/compress/zstd_compress.c
+    third_party/zstd/compress/zstd_compress_literals.c
+    third_party/zstd/compress/zstd_compress_sequences.c
+    third_party/zstd/compress/zstd_compress_superblock.c
+    third_party/zstd/compress/zstd_double_fast.c
+    third_party/zstd/compress/zstd_fast.c
+    third_party/zstd/compress/zstd_lazy.c
+    third_party/zstd/compress/zstd_ldm.c
+    third_party/zstd/compress/zstd_opt.c
+    third_party/zstd/compress/zstd_preSplit.c
+    third_party/zstd/decompress/huf_decompress.c
+    third_party/zstd/decompress/zstd_ddict.c
+    third_party/zstd/decompress/zstd_decompress.c
+    third_party/zstd/decompress/zstd_decompress_block.c
+)
+target_include_directories(zstd
+    PUBLIC
+        third_party/zstd
+    PRIVATE
+        third_party/zstd/common
+        third_party/zstd/compress
+        third_party/zstd/decompress
+)
+target_compile_definitions(zstd PRIVATE ZSTD_LEGACY_SUPPORT=0 ZSTD_DISABLE_ASM _CRT_SECURE_NO_WARNINGS)
+
 add_library(superzip_core STATIC
     src/ar/ar_adapter.cpp
     src/bzip2/bzip2_adapter.cpp
@@ -92,11 +127,13 @@ add_library(superzip_core STATIC
     src/unix_compress/unix_compress_adapter.cpp
     src/xz/xz_adapter.cpp
     src/xz/xz_stream.cpp
+    src/zstd/zstd_adapter.cpp
+    src/zstd/zstd_stream.cpp
     src/zip/zip_adapter.cpp
 )
 
-target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2)
-target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded)
+target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/zstd)
+target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded zstd)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
@@ -221,8 +258,10 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
         tests/cpp/test_tar_xz_compat.cpp
+        tests/cpp/test_tar_zstd_compat.cpp
         tests/cpp/test_unix_compress_compat.cpp
         tests/cpp/test_xz_compat.cpp
+        tests/cpp/test_zstd_compat.cpp
         tests/cpp/test_zip_compat.cpp
     )
     target_link_libraries(superzip_tests PRIVATE superzip_core)

@@ -31,6 +31,14 @@ OperationStats compress_tar_bzip2(
     const std::filesystem::path& output_archive,
     const ProgressCallback& progress_callback = {});
 
+// Purpose: Create a Zstandard-compressed POSIX TAR archive with in-process streaming compression.
+// Inputs: `sources` are existing files/directories, `output_archive` is the destination `.tar.zst`/`.tzst`, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError` on source, path, TAR writer, or Zstandard writer failures.
+OperationStats compress_tar_zstd(
+    const std::vector<std::filesystem::path>& sources,
+    const std::filesystem::path& output_archive,
+    const ProgressCallback& progress_callback = {});
+
 // Purpose: Extract an uncompressed TAR archive with SuperZip path-safety checks.
 // Inputs: `archive_path` is the TAR file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
 // Outputs: Returns operation statistics; throws on malformed TAR data, unsafe entry paths, refused overwrite, or verified-file publication failures.
@@ -62,6 +70,15 @@ OperationStats extract_tar_bzip2(
 // Inputs: `archive_path` is the `.tar.xz`/`.txz` file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
 // Outputs: Returns operation statistics; throws on malformed XZ/TAR data, unsafe entry paths, refused overwrite, or verified-file publication failures.
 OperationStats extract_tar_xz(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback = {});
+
+// Purpose: Extract a Zstandard-compressed POSIX TAR archive with two-pass stream validation.
+// Inputs: `archive_path` is the `.tar.zst`/`.tzst` file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns operation statistics; throws on malformed Zstandard/TAR data, unsafe entry paths, refused overwrite, or verified-file publication failures.
+OperationStats extract_tar_zstd(
     const std::filesystem::path& archive_path,
     const std::filesystem::path& destination,
     bool overwrite,

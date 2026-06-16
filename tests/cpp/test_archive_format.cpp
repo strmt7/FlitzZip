@@ -69,9 +69,9 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "package.deb"), superzip::ArchiveFormat::Deb);
 }
 
-TEST_CASE(archive_format_rejects_zip_based_non_archive_containers) {
+TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     const auto root = test_temp_dir("archive-format-excluded-aliases");
-    // Office documents are ZIP-based containers, not SuperZip archive formats.
+    // Guardrail: ZIP-magic document containers are not archive formats in SuperZip.
     write_fixture(root / "document.docx", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
 
     REQUIRE_TRUE(!superzip::parse_archive_format_token("docx").has_value());
@@ -82,8 +82,10 @@ TEST_CASE(archive_format_rejects_zip_based_non_archive_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("tgz").value(), superzip::ArchiveFormat::TarGzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("tbz").value(), superzip::ArchiveFormat::TarBzip2);
     REQUIRE_EQ(superzip::parse_archive_format_token("txz").value(), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(superzip::parse_archive_format_token("tzst").value(), superzip::ArchiveFormat::TarZstd);
     REQUIRE_EQ(superzip::parse_archive_format_token("gzip").value(), superzip::ArchiveFormat::Gzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("bzip2").value(), superzip::ArchiveFormat::Bzip2);
+    REQUIRE_EQ(superzip::parse_archive_format_token("zstd").value(), superzip::ArchiveFormat::Zstd);
     REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);
 }

@@ -112,6 +112,9 @@ archive options, progress snapshots, and errors.
   while reporting recognized unsupported formats explicitly.
 - Added extract-only XZ and TAR.XZ compatibility through vendored XZ Embedded,
   preserving two-pass TAR validation and bounded decoder memory.
+- Added Zstandard and TAR.ZST compatibility through vendored libzstd 1.5.7,
+  preserving single-file stream semantics, frame-checksum creation, and two-pass
+  TAR validation.
 
 ## Validation Gates
 

@@ -62,6 +62,26 @@ hardening. The upstream source archive and checksum are stored under
 `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`
 for provenance.
 
+## Zstandard 1.5.7
+
+SuperZip vendors Zstandard/libzstd release `v1.5.7` for standards-oriented
+Zstandard compatibility.
+
+- Upstream: <https://github.com/facebook/zstd>
+- Release tag: `v1.5.7`
+- Source archive SHA-256: `7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4`
+- License: BSD, preserved at `third_party/zstd/LICENSE`
+
+SuperZip uses libzstd for two bounded CPU-codec purposes: single-file
+`.zst`/`.zstd` streams and `.tar.zst`/`.tzst` stream filters over the native
+TAR adapter. It does not provide GPU acceleration and is not an alternate
+SUZIP codec path.
+
+The production copy under `third_party/zstd/` contains the public headers plus
+the `lib/common`, `lib/compress`, and `lib/decompress` C sources required for a
+single-threaded static libzstd build. The upstream source archive and checksum
+are stored under `third_party/upstream/zstd/v1.5.7/` for provenance.
+
 ## AMD HIP SDK
 
 SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment

@@ -26,6 +26,8 @@ Primary and project-owned sources reviewed:
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - bzip2/libbzip2: https://sourceware.org/bzip2/
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
+- Zstandard/libzstd: https://github.com/facebook/zstd
+- Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
 - NanaZip: https://github.com/M2Team/NanaZip
 - GNOME File Roller: https://gitlab.gnome.org/GNOME/file-roller
 - KDE Ark: https://apps.kde.org/ark/
@@ -97,8 +99,8 @@ already real archive/package formats in SuperZip's matrix.
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
-| `.tar.zst`, `.tzst` | No | No | Recognized only | pending stream compressor layer |
-| `.zst` | No | No | Recognized only | pending single-stream support |
+| `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored libzstd 1.5.7 |
+| `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | vendored libzstd 1.5.7 |
 | `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
@@ -133,6 +135,12 @@ streams with CRC64 verification. `.tar.xz`/`.txz` routes the decoded stream
 through the native TAR scanner, so all TAR paths are validated before output is
 published. XZ creation remains disabled until SuperZip has a vetted in-process
 encoder path that passes the same dependency and scanner gates.
+
+Zstandard support is single-file when used as `.zst` or `.zstd`. SuperZip
+creates frames with the libzstd content checksum enabled and extracts through a
+bounded-window streaming decoder. `.tar.zst`/`.tzst` is multi-entry because the
+TAR stream supplies the entry table; SuperZip validates the decompressed TAR
+metadata in one Zstandard pass before extracting in a second pass.
 
 Unix Compress support is intentionally single-file when used as `.Z`.
 SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
@@ -325,6 +333,31 @@ flowchart TD
     F --> G["Pass 2: decode and publish verified TAR files"]
 ```
 
+## Zstandard Security Contract
+
+The Zstandard path is in-process through vendored libzstd 1.5.7 and follows the
+same publication rules as the other stream adapters:
+
+1. `.zst`/`.zstd` accepts exactly one source file and derives one safe output
+   filename from the archive path.
+2. `.tar.zst`/`.tzst` routes through the native TAR scanner, so all TAR paths
+   are validated before any extraction output is published.
+3. SuperZip-created frames enable the Zstandard content checksum flag.
+4. Extraction caps the frame window log at the wrapper boundary before
+   decompression starts.
+5. Malformed streams and trailing garbage are rejected before final file
+   publication.
+
+```mermaid
+flowchart TD
+    A["Open Zstandard stream"] --> B{"Single-file ZST or TAR.ZST?"}
+    B -->|".zst"| C["Decode bounded libzstd stream"]
+    C --> D["Publish one safe output file"]
+    B -->|".tar.zst"| E["Pass 1: decode and scan TAR metadata"]
+    E --> F["Validate all TAR paths and entry kinds"]
+    F --> G["Pass 2: decode and publish verified TAR files"]
+```
+
 ## Future Backend Gates
 
 Before adding a new compatibility backend, the implementation must satisfy:
@@ -339,7 +372,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are `.tar.zst` and `.zst` stream extraction, then
-read-only 7z, ISO, CAB, and RAR after backend selection and licensing review.
-Write support for RAR is not planned because the common RAR creation tooling is
-not a permissive open format writer suitable for this repo.
+Preferred next increments are read-only 7z, ISO, CAB, and RAR after backend
+selection and licensing review. Write support for RAR is not planned because
+the common RAR creation tooling is not a permissive open format writer suitable
+for this repo.
