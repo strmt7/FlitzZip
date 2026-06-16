@@ -104,6 +104,27 @@ as a SUZIP codec or GPU path. The patched production copy is under
 `third_party/lzma_sdk/`, while the unmodified upstream archive and checksum are
 stored under `third_party/upstream/lzma-sdk/26.01/`.
 
+## Lhasa 0.5.0
+
+SuperZip vendors Lhasa release `0.5.0` for extract-only LHA/LZH compatibility.
+
+- Upstream: <https://github.com/fragglet/lhasa>
+- Release tag: `v0.5.0`
+- Release commit: `450172de282c8f8730696f4370a57cf49bfabf22`
+- Source archive SHA-256: `1ae8d82d37fc12ec2c52c520b6528ec61268e243f33eca4446b440e182c66d91`
+- License: ISC, preserved at `third_party/lhasa/COPYING.md`
+
+SuperZip uses Lhasa only as an in-process LHA/LZH decoder and metadata reader.
+It does not call Lhasa's extraction helper and does not shell out to `lha` or
+other host tools. The SuperZip adapter validates every decoded entry path,
+rejects symlinks, checks payload CRC/size before destination writes, and
+publishes files through the standard verified temporary-file path.
+
+The production copy under `third_party/lhasa/` carries narrow local hardening
+patches documented in `third_party/lhasa/README.SUPERZIP.md`. The unmodified
+upstream source archive and checksum are stored under
+`third_party/upstream/lhasa/0.5.0/` for provenance.
+
 ## AMD HIP SDK
 
 SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment

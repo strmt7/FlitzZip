@@ -2,7 +2,7 @@
 
 This file is the operating manual for AI agents and programmers working in this repository. It follows the public AGENTS.md convention and GitHub guidance that agent instructions should cover commands, tests, project structure, code style, git workflow, and boundaries.
 
-References checked on 2026-06-14:
+References checked on 2026-06-16:
 - AGENTS.md format: https://github.com/agentsmd/agents.md
 - GitHub guidance on effective AGENTS.md files: https://github.blog/ai-and-ml/github-copilot/how-to-write-a-great-agents-md-lessons-from-over-2500-repositories/
 - GitHub Copilot repository instructions: https://docs.github.com/copilot/how-tos/agents/copilot-coding-agent/best-practices-for-using-copilot-to-work-on-tasks
@@ -10,6 +10,8 @@ References checked on 2026-06-14:
 - OpenSSF secure software concise guide: https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md
 - OWASP Secure Coding Practices Quick Reference Guide: https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/
 - NIST SSDF SP 800-218 v1.1 and v1.2 draft: https://csrc.nist.gov/pubs/sp/800/218/final and https://csrc.nist.gov/pubs/sp/800/218/r1/ipd
+- CISA Secure by Design guidance: https://www.cisa.gov/securebydesign and https://www.cisa.gov/resources-tools/resources/secure-by-design
+- GitHub Actions secure-use reference: https://docs.github.com/en/actions/reference/security/secure-use
 - Microsoft high-DPI Win32 guidance: https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows
 - Microsoft Defender command-line guidance: https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus
 - CMake CPack WiX generator scope guidance: https://cmake.org/cmake/help/latest/cpack_gen/wix.html
@@ -17,7 +19,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.01 decoder, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.01 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.5.0 decoder, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -82,6 +84,7 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
 - `src/iso/`: Read-only basic ISO 9660 compatibility adapter with two-pass path validation and verified file publication.
+- `src/lha/`: Read-only LHA/LZH adapter using the vendored Lhasa 0.5.0 decoder with two-pass validation and verified file publication.
 - `src/rpm/`: Read-only RPM package adapter that validates RPM headers, decodes supported CPIO payload compression, and delegates extracted package paths to the CPIO adapter.
 - `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.01 decoder with two-pass validation and verified file publication.
 - `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
@@ -102,6 +105,8 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
 - `third_party/zstd/`: production Zstandard runtime metadata and license files. Do not track extracted runtime DLLs here.
 - `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive, official Win64 runtime package, and checksums for provenance.
+- `third_party/lhasa/`: production Lhasa 0.5.0 copy with SuperZip-local hardening patches documented in `README.SUPERZIP.md`.
+- `third_party/upstream/lhasa/0.5.0/`: unmodified upstream Lhasa 0.5.0 release archive and checksum for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
@@ -213,6 +218,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   unsupported special-file attributes before output, validate payload CRC/size
   before publishing, and do not advertise 7z creation until a vetted
   in-process writer path is deliberately added with tests.
+- LHA/LZH compatibility is extraction-only and uses the vendored Lhasa 0.5.0
+  decoder in process. Do not call Lhasa's archive helper, do not shell out to
+  host `lha` tools, reject symbolic links and unsafe paths before output, run a
+  full CRC/size validation pass before destination writes, and keep the
+  upstream release archive unmodified under `third_party/upstream/lhasa/0.5.0/`.
 - Unix Compress `.Z` compatibility is single-file only. Keep the LZW dictionary
   bounded by the stream-declared maxbits, validate magic/header flags, and
   publish extraction output only through the verified temporary-file path.

@@ -20,7 +20,7 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lha
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
@@ -29,6 +29,7 @@ printf 'CD001' > /out/corpus/iso/tiny-cd001
 printf 'MSCF' > /out/corpus/cab/tiny-mscf
 printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
 printf '7z\274\257\047\034\000\003' > /out/corpus/sevenzip/tiny-sevenzip-signature
+printf '\031\216-lhd-' > /out/corpus/lha/tiny-lha-signature
 python3 - <<'PY'
 from pathlib import Path
 Path('/out/corpus/sevenzip/nested-payload.7z').write_bytes(bytes([
@@ -44,6 +45,21 @@ Path('/out/corpus/sevenzip/nested-payload.7z').write_bytes(bytes([
     20, 1, 9, 90, 0, 7, 11, 1, 0, 1, 35, 3, 1, 1, 5, 93,
     0, 0, 64, 0, 12, 94, 10, 1, 167, 128, 3, 7, 0, 0,
 ]))
+Path('/out/corpus/lha/nested-payload.lzh').write_bytes(bytes([
+    25, 142, 45, 108, 104, 100, 45, 29, 0, 0, 0, 0, 0, 0, 0, 233,
+    163, 152, 64, 32, 1, 0, 0, 0, 85, 5, 0, 80, 192, 65, 7, 0,
+    81, 232, 3, 232, 3, 10, 0, 2, 115, 117, 98, 100, 105, 114, 255, 7,
+    0, 84, 135, 255, 150, 79, 0, 0, 25, 150, 45, 108, 104, 100, 45, 37,
+    0, 0, 0, 0, 0, 0, 0, 233, 163, 152, 64, 32, 1, 0, 0, 0,
+    85, 5, 0, 80, 109, 65, 7, 0, 81, 232, 3, 232, 3, 18, 0, 2,
+    115, 117, 98, 100, 105, 114, 255, 115, 117, 98, 100, 105, 114, 50, 255, 7,
+    0, 84, 135, 255, 150, 79, 0, 0, 34, 45, 45, 108, 104, 48, 45, 49,
+    0, 0, 0, 12, 0, 0, 0, 0, 0, 33, 60, 32, 1, 9, 104, 101,
+    108, 108, 111, 46, 116, 120, 116, 120, 151, 85, 5, 0, 80, 164, 129, 7,
+    0, 81, 232, 3, 232, 3, 18, 0, 2, 115, 117, 98, 100, 105, 114, 255,
+    115, 117, 98, 100, 105, 114, 50, 255, 7, 0, 84, 0, 59, 61, 75, 0,
+    0, 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 10, 0,
+]))
 PY
 if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_archive_index_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/archive_index
@@ -52,6 +68,7 @@ if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_cab_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/cab
   /out/superzip_rpm_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/rpm
   /out/superzip_sevenzip_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/sevenzip
+  /out/superzip_lha_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/lha
 fi
 "@
 

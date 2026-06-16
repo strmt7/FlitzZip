@@ -96,6 +96,41 @@ else()
     target_compile_options(lzma_sdk_7z PRIVATE -Wno-conversion -Wno-sign-conversion)
 endif()
 
+add_library(lhasa STATIC
+    third_party/lhasa/lib/crc16.c
+    third_party/lhasa/lib/ext_header.c
+    third_party/lhasa/lib/lha_decoder.c
+    third_party/lhasa/lib/lha_endian.c
+    third_party/lhasa/lib/lha_file_header.c
+    third_party/lhasa/lib/lha_input_stream.c
+    third_party/lhasa/lib/lha_basic_reader.c
+    third_party/lhasa/lib/lha_reader.c
+    third_party/lhasa/lib/macbinary.c
+    third_party/lhasa/lib/null_decoder.c
+    third_party/lhasa/lib/lh1_decoder.c
+    third_party/lhasa/lib/lh5_decoder.c
+    third_party/lhasa/lib/lh6_decoder.c
+    third_party/lhasa/lib/lh7_decoder.c
+    third_party/lhasa/lib/lhx_decoder.c
+    third_party/lhasa/lib/lk7_decoder.c
+    third_party/lhasa/lib/lz5_decoder.c
+    third_party/lhasa/lib/lzs_decoder.c
+    third_party/lhasa/lib/pm1_decoder.c
+    third_party/lhasa/lib/pm2_decoder.c
+)
+target_include_directories(lhasa
+    PUBLIC
+        third_party/lhasa/lib/public
+    PRIVATE
+        third_party/lhasa/lib
+)
+target_compile_definitions(lhasa PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(MSVC)
+    target_compile_options(lhasa PRIVATE /wd4244 /wd4267)
+else()
+    target_compile_options(lhasa PRIVATE -Wno-conversion -Wno-sign-conversion)
+endif()
+
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/upstream/zstd/v1.5.7/zstd-v1.5.7-win64.zip")
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9")
 set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 "8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b")
@@ -158,6 +193,7 @@ add_library(superzip_core STATIC
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
     src/iso/iso_adapter.cpp
+    src/lha/lha_adapter.cpp
     src/rpm/rpm_adapter.cpp
     src/rpm/rpm_format.cpp
     src/sevenzip/sevenzip_adapter.cpp
@@ -171,8 +207,8 @@ add_library(superzip_core STATIC
     src/zip/zip_adapter.cpp
 )
 
-target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C)
-target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z)
+target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C third_party/lhasa/lib/public)
+target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z lhasa)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
@@ -296,6 +332,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_cpio_compat.cpp
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_iso_compat.cpp
+        tests/cpp/test_lha_compat.cpp
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_rpm_compat.cpp
         tests/cpp/test_sevenzip_compat.cpp
@@ -359,6 +396,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_libraries(superzip_sevenzip_fuzzer PRIVATE superzip_core)
     target_compile_definitions(superzip_sevenzip_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_lha_fuzzer
+        fuzz/lha_fuzzer.cpp
+    )
+    target_link_libraries(superzip_lha_fuzzer PRIVATE superzip_core)
+    target_compile_definitions(superzip_lha_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
     endif()
@@ -368,12 +411,14 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_sevenzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_lha_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_sevenzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_lha_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 install(FILES

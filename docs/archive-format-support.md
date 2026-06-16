@@ -29,6 +29,7 @@ Primary and project-owned sources reviewed:
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - Zstandard/libzstd: https://github.com/facebook/zstd
 - Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
+- Lhasa LHA/LZH library: https://github.com/fragglet/lhasa
 - Microsoft Cabinet SDK/FDI API: https://learn.microsoft.com/en-us/windows/win32/devnotes/fdi
 - RPM package format v4: https://rpm-software-management.github.io/rpm/manual/format_v4.html
 - NanaZip: https://github.com/M2Team/NanaZip
@@ -104,10 +105,11 @@ already real archive/package formats in SuperZip's matrix.
 | `.rpm` | No | Yes | Extract-only compatibility format | native RPM package adapter over CPIO payloads |
 | `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
 | `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.01 ANSI-C decoder |
+| `.lha`, `.lzh` | No | Yes | Extract-only compatibility format | vendored Lhasa 0.5.0 decoder with SuperZip path/publish pipeline |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.arj`, `.lha`, `.lzh`, `.wim`, `.xar` | No | No | Recognized only | pending format-specific security review |
+| `.arj`, `.wim`, `.xar` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -197,6 +199,14 @@ from SDK UTF-16 metadata, normalized, validated archive-wide, and decoded twice:
 one validation pass verifies payload CRC/size before destination writes, then
 the publish pass writes only approved regular files and directories. Encrypted
 or unsupported 7z methods fail explicitly.
+
+LHA/LZH support is intentionally extract-only. SuperZip embeds Lhasa 0.5.0 and
+does not call `lha.exe`, shell archive handlers, or other host tools. Lhasa is
+used for header decoding, payload decompression, and CRC/size verification
+only; SuperZip performs the path validation and verified output publication.
+Symlinks are rejected, and decoded parent-directory path components are
+preserved so the SuperZip validator can reject malicious entries instead of
+accepting rewritten paths.
 
 ## ZIP-Container Alias Policy
 
@@ -368,6 +378,32 @@ flowchart TD
     E --> F["Publish directories and verified files"]
     C -->|"unsafe or unsupported"| G["Reject archive"]
     D -->|"decode or CRC failure"| G
+```
+
+## LHA/LZH Security Contract
+
+The LHA/LZH path uses the ISC-licensed Lhasa 0.5.0 decoder in process:
+
+1. Open the archive through a SuperZip-owned C++ stream adapter and Lhasa reader.
+2. Parse every entry with Lhasa using the plain directory policy so synthetic
+   duplicate directory entries are not surfaced as product entries.
+3. Reject excessive entry counts, excessive total decoded bytes, symlinks,
+   unsafe paths, duplicate normalized paths, and file/child conflicts before
+   destination writes.
+4. Decode every regular-file payload once with Lhasa's CRC/size checker.
+5. Reopen the archive for the publish pass, verify that metadata matches the
+   validation pass, then publish only approved directories and regular files
+   through the standard private temporary-file path.
+
+```mermaid
+flowchart TD
+    A["Open LHA/LZH archive"] --> B["Decode headers with Lhasa"]
+    B --> C["Validate paths, entry kinds, and output totals"]
+    C --> D["Validation decode pass with CRC checks"]
+    D --> E["Reopen archive for publish pass"]
+    E --> F["Publish directories and verified files"]
+    C -->|"unsafe or unsupported"| G["Reject archive"]
+    D -->|"decode, size, or CRC failure"| G
 ```
 
 ## Unix Compress Security Contract

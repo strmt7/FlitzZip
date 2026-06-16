@@ -10,6 +10,7 @@ Before editing security-sensitive code, identify the boundary:
 - Archive metadata parser.
 - Destination path join and canonicalization.
 - ZIP compatibility extraction.
+- LHA/LZH compatibility extraction.
 - SUZIP block metadata validation.
 - Microsoft Defender opt-in scan.
 - GitHub Actions scanner integration.
@@ -30,6 +31,8 @@ Add or update tests for:
 - Existing-file overwrite refusal.
 - Corrupt payload and CRC mismatch.
 - Oversized or malformed archive metadata.
+- Symbolic links and other unsupported special-file entries in compatibility
+  formats.
 
 Do not store credentials, PATs, org IDs, scan targets, or Defender results in
 tracked files.
@@ -48,6 +51,10 @@ Workflow and release hardening rules:
 - Do not track extracted runtime binaries. Keep upstream packages under
   `third_party/upstream/**`, record checksums and license notes, and extract
   runtime DLLs into the build tree only after checksum verification.
+- LHA/LZH support must stay extraction-only, in-process, and backed by the
+  vendored Lhasa 0.5.0 decoder. Keep SuperZip's two-pass path/payload
+  validation around Lhasa and preserve the unmodified upstream archive under
+  `third_party/upstream/lhasa/0.5.0/`.
 - The only acceptable open code-scanning findings are Scorecard
   `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
   `CIIBestPracticesID`.

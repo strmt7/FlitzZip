@@ -64,3 +64,8 @@ Rules:
   `resources/design/superzip-ui-imagegen-polish-20260615.png`. Do not simplify
   or remove the brand-only top bar, Queue-local Add files/Add folder/Clear
   actions, left navigation, bottom GPU status strip, or dedicated settings pages.
+- LHA/LZH compatibility changes must exercise successful nested extraction,
+  overwrite refusal, truncated/corrupt payload rejection, absolute-path
+  rejection, parent-directory rejection, and symbolic-link rejection. Keep the
+  decoder in process through the vendored Lhasa 0.5.0 library and preserve the
+  original upstream release archive/checksum under `third_party/upstream/lhasa/`.

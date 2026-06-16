@@ -518,6 +518,7 @@ private:
     bool mouse_inside_client_ = false;
     bool primary_mouse_down_ = false;
     bool mouse_tracking_ = false;
+    bool mouse_capture_active_ = false;
     FILETIME last_process_kernel_time_{};
     FILETIME last_process_user_time_{};
     ULONGLONG last_io_read_bytes_ = 0;

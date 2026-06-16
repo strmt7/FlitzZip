@@ -13,6 +13,7 @@
 #include "gzip/gzip_adapter.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "iso/iso_adapter.hpp"
+#include "lha/lha_adapter.hpp"
 #include "rpm/rpm_adapter.hpp"
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
@@ -1051,7 +1052,9 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     }
     case WM_MOUSELEAVE:
         mouse_inside_client_ = false;
-        primary_mouse_down_ = false;
+        if (!mouse_capture_active_) {
+            primary_mouse_down_ = false;
+        }
         mouse_tracking_ = false;
         request_repaint();
         return 0;
@@ -1063,6 +1066,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         mouse_position_ = POINT{x, y};
         mouse_inside_client_ = true;
         primary_mouse_down_ = true;
+        SetCapture(hwnd_);
+        mouse_capture_active_ = true;
         request_repaint();
         const int rail_width = scale(kRailWidth);
         const int top_bar = scale(kTopBar);
@@ -1084,6 +1089,15 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_LBUTTONUP:
         mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         primary_mouse_down_ = false;
+        if (mouse_capture_active_) {
+            ReleaseCapture();
+            mouse_capture_active_ = false;
+        }
+        request_repaint();
+        return 0;
+    case WM_CAPTURECHANGED:
+        primary_mouse_down_ = false;
+        mouse_capture_active_ = false;
         request_repaint();
         return 0;
     case WM_DROPFILES: {
@@ -1235,13 +1249,28 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
     for (const auto page : pages) {
         RECT item{rect.left, y, rect.right, y + item_height};
         const bool active = state.page == page;
+        const bool hovered = mouse_inside_client_ && contains_point(item, mouse_position_.x, mouse_position_.y);
+        const bool pressed = hovered && primary_mouse_down_;
+        const RECT surface{item.left + scale(8), item.top + scale(5), item.right - scale(8), item.bottom - scale(5)};
         if (active) {
             fill_rect(dc, RECT{item.left, item.top, item.left + scale(5), item.bottom}, kAccent);
-            fill_round_rect(dc, RECT{item.left + scale(8), item.top + scale(5), item.right - scale(8), item.bottom - scale(5)}, RGB(126, 24, 31), scale(4));
+            fill_round_rect(dc, surface, pressed ? RGB(103, 20, 28) : hovered ? RGB(148, 30, 39) : RGB(126, 24, 31), scale(4));
+        } else if (pressed) {
+            fill_round_rect(dc, surface, RGB(31, 47, 53), scale(4));
+            stroke_rect(dc, surface, RGB(72, 95, 103));
+        } else if (hovered) {
+            fill_round_rect(dc, surface, kPanel2, scale(4));
+            stroke_rect(dc, surface, RGB(70, 91, 99));
         }
         RECT icon{item.left + scale(28), item.top + scale(8), item.left + scale(58), item.top + scale(38)};
-        draw_nav_icon(dc, page, icon, active ? kText : kMuted);
-        draw_text(dc, RECT{item.left + scale(4), item.top + scale(40), item.right - scale(4), item.bottom - scale(3)}, page_name(page), active ? kText : kMuted, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT label{item.left + scale(4), item.top + scale(40), item.right - scale(4), item.bottom - scale(3)};
+        if (pressed) {
+            OffsetRect(&icon, scale(1), scale(1));
+            OffsetRect(&label, scale(1), scale(1));
+        }
+        const COLORREF nav_color = active ? kText : hovered ? RGB(198, 211, 215) : kMuted;
+        draw_nav_icon(dc, page, icon, nav_color);
+        draw_text(dc, label, page_name(page), nav_color, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
         y += item_height;
     }
 }
@@ -1755,7 +1784,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR, Gzip, Bzip2, XZ, Zstandard, Unix Compress, CAB, 7z, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR, Gzip, Bzip2, XZ, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -1932,8 +1961,15 @@ void MainWindow::draw_tab_transition(HDC dc, const RECT& rect) {
         return;
     }
     const int width = rect.right - rect.left;
-    const int line_width = static_cast<int>(std::round(static_cast<double>(width) * ease_out(progress)));
+    const double eased = ease_out(progress);
+    const int line_width = static_cast<int>(std::round(static_cast<double>(width) * eased));
+    const int sweep_width = scale(52);
+    const int sweep_left = rect.left + std::max(0, line_width - sweep_width);
+    const int sweep_right = std::min(static_cast<int>(rect.right), sweep_left + sweep_width);
+    const COLORREF soft = blend_color(kBg, kAccent, 0.22 * (1.0 - progress));
     fill_rect(dc, RECT{rect.left, rect.top, rect.left + std::max(scale(12), line_width), rect.top + scale(2)}, kAccent);
+    fill_rect(dc, RECT{sweep_left, rect.top + scale(2), sweep_right, rect.top + scale(5)}, soft);
+    fill_rect(dc, RECT{rect.left, rect.top, rect.left + scale(3), rect.bottom}, soft);
 }
 
 RECT MainWindow::content_rect() const {
@@ -2687,6 +2723,8 @@ void MainWindow::start_extract() {
             stats = extract_ar(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Rpm) {
             stats = extract_rpm(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Lha) {
+            stats = extract_lha(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Unknown) {
             throw ArchiveError("unable to detect archive format: " + archive.string());
         } else {
