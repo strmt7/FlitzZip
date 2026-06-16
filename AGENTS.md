@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.gz` remains single-file compatibility-only through miniz raw deflate, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.gz` remains single-file compatibility-only through miniz raw deflate, `.cpio` remains native compatibility-only through the bounded CPIO adapter, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -53,6 +53,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Project Map
 
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
+- `src/cpio/`: CPIO compatibility adapter for SVR4 new ASCII archives with two-pass path validation and verified file publication.
 - `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
 - `src/tar/`: TAR and TAR.GZ compatibility adapter with two-pass path validation and verified file publication.
@@ -150,6 +151,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Compatibility archive support must use in-process parsers/writers. Do not
   shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other
   host tools from product code.
+- CPIO compatibility is limited to regular files and directories in the SVR4
+  new ASCII variants. Keep links, hard-link metadata, devices, FIFOs, and
+  special files rejected unless a maintainer approves a dedicated security and
+  UI policy.
 - Reject absolute paths, drive-rooted paths, UNC paths, traversal, reserved Windows device names, unsafe trailing dot/space, and invalid characters.
 - Default to no overwrite. Overwrite is an explicit option.
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.

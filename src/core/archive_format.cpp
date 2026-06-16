@@ -30,7 +30,7 @@ constexpr std::array<ArchiveFormatInfo, 24> kFormatRegistry{{
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst", false, false, false, false},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, false, false, false},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, false, false, false},
-    {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", false, false, false, false},
+    {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, false, false, false},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, false, false, false},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim,.swm", false, false, false, false},

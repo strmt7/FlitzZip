@@ -281,7 +281,8 @@ runs:
         $root = Join-Path $env:RUNNER_TEMP "superzip-portable-smoke"
         $input = Join-Path $root "input"
         $extract = Join-Path $root "extract"
-        New-Item -ItemType Directory -Force -Path $input, $extract | Out-Null
+        $cpioExtract = Join-Path $root "extract-cpio"
+        New-Item -ItemType Directory -Force -Path $input, $extract, $cpioExtract | Out-Null
         Set-Content -LiteralPath (Join-Path $input "alpha.txt") -Value "SuperZip release smoke $env:RELEASE_TAG"
         $cli = Join-Path $PWD "out\install-Release\bin\superzip_cli.exe"
         $dependency = & $cli dependency-check
@@ -302,6 +303,32 @@ runs:
         & $cli extract --format zip --output $extract (Join-Path $root "archive.zip")
         if ((Get-Content -LiteralPath (Join-Path $extract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable ZIP smoke extraction did not preserve payload."
+        }
+        $tarExtract = Join-Path $root "extract-tar"
+        New-Item -ItemType Directory -Force -Path $tarExtract | Out-Null
+        & $cli compress --format tar --output (Join-Path $root "archive.tar") $input
+        & $cli extract --format tar --output $tarExtract (Join-Path $root "archive.tar")
+        if ((Get-Content -LiteralPath (Join-Path $tarExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable TAR smoke extraction did not preserve payload."
+        }
+        $tarGzExtract = Join-Path $root "extract-tar-gz"
+        New-Item -ItemType Directory -Force -Path $tarGzExtract | Out-Null
+        & $cli compress --format tar.gz --output (Join-Path $root "archive.tar.gz") $input
+        & $cli extract --format tar.gz --output $tarGzExtract (Join-Path $root "archive.tar.gz")
+        if ((Get-Content -LiteralPath (Join-Path $tarGzExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable TAR.GZ smoke extraction did not preserve payload."
+        }
+        $gzipExtract = Join-Path $root "extract-gzip"
+        New-Item -ItemType Directory -Force -Path $gzipExtract | Out-Null
+        & $cli compress --format gz --output (Join-Path $root "alpha.txt.gz") (Join-Path $input "alpha.txt")
+        & $cli extract --format gz --output $gzipExtract (Join-Path $root "alpha.txt.gz")
+        if ((Get-Content -LiteralPath (Join-Path $gzipExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable Gzip smoke extraction did not preserve payload."
+        }
+        & $cli compress --format cpio --output (Join-Path $root "archive.cpio") $input
+        & $cli extract --format cpio --output $cpioExtract (Join-Path $root "archive.cpio")
+        if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable CPIO smoke extraction did not preserve payload."
         }
         $archive = Join-Path $root "archive.suzip"
         $suzipArgs = @("compress", "--format", "suzip", "--sha256", "--output", $archive, $input)

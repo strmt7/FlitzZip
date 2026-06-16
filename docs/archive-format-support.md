@@ -21,6 +21,8 @@ Primary and project-owned sources reviewed:
 - Keka: https://www.keka.io/en/
 - The Unarchiver: https://theunarchiver.com/
 - libarchive: https://www.libarchive.org/
+- GNU cpio manual: https://www.gnu.org/software/cpio/manual/
+- FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - NanaZip: https://github.com/M2Team/NanaZip
 - GNOME File Roller: https://gitlab.gnome.org/GNOME/file-roller
 - KDE Ark: https://apps.kde.org/ark/
@@ -81,13 +83,14 @@ already real archive/package formats in SuperZip's matrix.
 | `.tar` | Yes | Yes | Compatibility format | native bounded TAR adapter |
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
+| `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.bz2`, `.tbz2` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.xz`, `.txz` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.zst`, `.tzst` | No | No | Recognized only | pending stream compressor layer |
 | `.bz2`, `.xz`, `.zst` | No | No | Recognized only | pending single-stream support |
-| `.cab`, `.iso`, `.cpio`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.deb`, `.rpm` | No | No | Recognized only | pending format-specific security review |
+| `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.deb`, `.rpm` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -107,6 +110,13 @@ from the `.gz` archive path rather than trusting optional embedded original-name
 metadata. TAR+Gzip support is multi-entry because the TAR stream supplies the
 entry table; SuperZip validates that TAR stream in one decompression pass before
 extracting in a second pass.
+
+CPIO support covers the SVR4 new ASCII formats with magic values `070701` and
+`070702`. Creation writes `070701`. Extraction accepts both variants and verifies
+the simple payload checksum for `070702` before output. The adapter supports
+regular files and directories only; symbolic links, hard-link metadata, devices,
+FIFOs, and other special entries are rejected until SuperZip has a dedicated
+policy and UI for those objects.
 
 ## ZIP-Container Alias Policy
 
@@ -141,6 +151,28 @@ flowchart TD
     D -->|"link/device/FIFO"| H["Reject archive"]
 ```
 
+## CPIO Security Contract
+
+The CPIO adapter is in-process and follows the same extraction model as TAR:
+
+1. Parse every CPIO header and entry name.
+2. Reject malformed names, unsafe paths, duplicate normalized paths, hard-link
+   metadata, and special files before creating output.
+3. Verify `070702` entry checksums during the validation pass.
+4. Create output directories and publish regular files only after copying each
+   payload into a private same-directory temporary file.
+
+```mermaid
+flowchart TD
+    A["Open CPIO archive"] --> B["Scan new ASCII headers"]
+    B --> C["Validate all paths and entry kinds"]
+    C --> D{"Entry type"}
+    D -->|"directory"| E["Create directory under safe root"]
+    D -->|"regular file"| F["Copy to private temp file"]
+    F --> G["Atomically publish verified file"]
+    D -->|"link/device/FIFO/special"| H["Reject archive"]
+```
+
 ## Future Backend Gates
 
 Before adding a new compatibility backend, the implementation must satisfy:
@@ -156,6 +188,6 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - Documentation update in this file, README, AGENTS, and release notes.
 
 Preferred next increments are `.tar.bz2`, `.tar.xz`, and `.tar.zst` stream
-filters, then read-only 7z and RAR after backend selection and licensing
-review. Write support for RAR is not planned because the common RAR creation
-tooling is not a permissive open format writer suitable for this repo.
+filters, then read-only 7z, ISO, CAB, and RAR after backend selection and
+licensing review. Write support for RAR is not planned because the common RAR
+creation tooling is not a permissive open format writer suitable for this repo.
