@@ -14,8 +14,10 @@ CRC32/ISIZE verification. Portable `.cpio` archives are implemented with a
 native SVR4 new ASCII parser/writer for regular files and directories. Unix
 `.ar` archives are implemented with a native parser/writer for regular-file
 members. Debian `.deb` package files are extracted as native AR-based outer
-containers. Other common archive formats are recognized for clear diagnostics
-and are tracked in `docs/archive-format-support.md`.
+containers. Legacy Unix Compress `.Z` streams are implemented with a native
+bounded LZW reader/writer for single files. Other common archive formats are
+recognized for clear diagnostics and are tracked in
+`docs/archive-format-support.md`.
 
 The product ships as two equivalent Windows packages:
 
@@ -125,6 +127,8 @@ build/Release/superzip_cli.exe compress --format tar.gz --output archive.tar.gz 
 build/Release/superzip_cli.exe extract --output restored archive.tar.gz
 build/Release/superzip_cli.exe compress --format gz --output file.txt.gz file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.gz
+build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
+build/Release/superzip_cli.exe extract --output restored file.txt.Z
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.cpio
 build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\folder
@@ -142,7 +146,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, Gzip, CPIO, AR, and DEB compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, TAR.GZ, Gzip, Unix Compress, CPIO, AR, and DEB compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP

@@ -58,6 +58,7 @@ add_library(superzip_core STATIC
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
     src/tar/tar_adapter.cpp
+    src/unix_compress/unix_compress_adapter.cpp
     src/zip/zip_adapter.cpp
 )
 
@@ -183,6 +184,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
+        tests/cpp/test_unix_compress_compat.cpp
         tests/cpp/test_zip_compat.cpp
     )
     target_link_libraries(superzip_tests PRIVATE superzip_core)

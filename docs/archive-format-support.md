@@ -85,6 +85,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.tar` | Yes | Yes | Compatibility format | native bounded TAR adapter |
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
+| `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
@@ -114,6 +115,12 @@ from the `.gz` archive path rather than trusting optional embedded original-name
 metadata. TAR+Gzip support is multi-entry because the TAR stream supplies the
 entry table; SuperZip validates that TAR stream in one decompression pass before
 extracting in a second pass.
+
+Unix Compress support is intentionally single-file when used as `.Z`.
+SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
+non-block-mode streams with declared widths from 9 through 16 bits. Extraction
+derives the output filename from the `.Z` archive path and never treats `.Z` as a
+directory archive.
 
 CPIO support covers the SVR4 new ASCII formats with magic values `070701` and
 `070702`. Creation writes `070701`. Extraction accepts both variants and verifies
@@ -230,6 +237,28 @@ flowchart TD
     D --> E["Publish outer files through verified temp path"]
 ```
 
+## Unix Compress Security Contract
+
+The Unix Compress adapter is in-process and treats the LZW stream as untrusted
+input:
+
+1. Verify the `0x1F 0x9D` magic bytes, reject reserved header flags, and accept
+   only declared maxbits from 9 through 16.
+2. Keep prefix/suffix dictionaries bounded by the stream-declared maxbits.
+3. Reject undefined, future, cyclic, or over-deep dictionary references.
+4. Derive a single safe output filename from the archive path and publish it
+   through the same verified temporary-file path used by other adapters.
+
+```mermaid
+flowchart TD
+    A["Open .Z stream"] --> B["Validate magic, flags, and maxbits"]
+    B --> C["Decode bounded LZW codes"]
+    C --> D{"Dictionary state valid?"}
+    D -->|"yes"| E["Write single temp output"]
+    E --> F["Atomically publish verified file"]
+    D -->|"no"| G["Reject stream and remove temp output"]
+```
+
 ## Future Backend Gates
 
 Before adding a new compatibility backend, the implementation must satisfy:
@@ -244,8 +273,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are `.tar.bz2`, `.tar.xz`, `.tar.zst`, and legacy
-Unix Compress `.Z` stream filters, then read-only 7z, ISO, CAB, and RAR after
-backend selection and licensing review. Write support for RAR is not planned
-because the common RAR creation tooling is not a permissive open format writer
-suitable for this repo.
+Preferred next increments are `.tar.bz2`, `.tar.xz`, and `.tar.zst` stream
+filters, then read-only 7z, ISO, CAB, and RAR after backend selection and
+licensing review. Write support for RAR is not planned because the common RAR
+creation tooling is not a permissive open format writer suitable for this repo.

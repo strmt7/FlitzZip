@@ -325,6 +325,17 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $gzipExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable Gzip smoke extraction did not preserve payload."
         }
+        $unixCompressExtract = Join-Path $root "extract-unix-compress"
+        New-Item -ItemType Directory -Force -Path $unixCompressExtract | Out-Null
+        & $cli compress --format z --output (Join-Path $root "alpha.txt.Z") (Join-Path $input "alpha.txt")
+        $unixCompressIdentity = & $cli identify (Join-Path $root "alpha.txt.Z")
+        if ($unixCompressIdentity -notmatch 'format=z') {
+            throw "Portable Unix Compress smoke did not identify the .Z stream: $unixCompressIdentity"
+        }
+        & $cli extract --format z --output $unixCompressExtract (Join-Path $root "alpha.txt.Z")
+        if ((Get-Content -LiteralPath (Join-Path $unixCompressExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable Unix Compress smoke extraction did not preserve payload."
+        }
         & $cli compress --format cpio --output (Join-Path $root "archive.cpio") $input
         & $cli extract --format cpio --output $cpioExtract (Join-Path $root "archive.cpio")
         if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {

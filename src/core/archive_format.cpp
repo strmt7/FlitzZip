@@ -12,7 +12,7 @@ namespace {
 
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
 
-constexpr std::array<ArchiveFormatInfo, 25> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -25,6 +25,7 @@ constexpr std::array<ArchiveFormatInfo, 25> kFormatRegistry{{
     {ArchiveFormat::TarXz, "tar.xz", "TAR + XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, false, false, false},
     {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", false, false, false, false},
     {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
+    {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", false, false, false, false},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, false, false, false},
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst", false, false, false, false},
@@ -131,6 +132,9 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
     if (starts_with_signature(bytes, {0x1F, 0x8B})) {
         return ArchiveFormat::Gzip;
     }
+    if (starts_with_signature(bytes, {0x1F, 0x9D})) {
+        return ArchiveFormat::UnixCompress;
+    }
     if (starts_with_signature(bytes, {'B', 'Z', 'h'})) {
         return ArchiveFormat::Bzip2;
     }
@@ -212,6 +216,9 @@ ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
     if (ends_with_lower(name, ".gz")) {
         return ArchiveFormat::Gzip;
     }
+    if (ends_with_lower(name, ".z")) {
+        return ArchiveFormat::UnixCompress;
+    }
     if (ends_with_lower(name, ".bz2")) {
         return ArchiveFormat::Bzip2;
     }
@@ -281,6 +288,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "zst";
     } else if (lowered == "gzip") {
         lowered = "gz";
+    } else if (lowered == "compress" || lowered == "unix-compress") {
+        lowered = "z";
     } else if (lowered == "lzh") {
         lowered = "lha";
     }
