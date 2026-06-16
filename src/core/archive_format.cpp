@@ -21,12 +21,12 @@ constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::Rar, "rar", "RAR (.rar)", ".rar", false, false, false, false},
     {ArchiveFormat::Tar, "tar", "TAR (.tar)", ".tar", true, true, false, true},
     {ArchiveFormat::TarGzip, "tar.gz", "TAR + Gzip (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},
-    {ArchiveFormat::TarBzip2, "tar.bz2", "TAR + Bzip2 (.tar.bz2, .tbz2)", ".tar.bz2,.tbz2", false, false, false, false},
+    {ArchiveFormat::TarBzip2, "tar.bz2", "TAR + Bzip2 (.tar.bz2, .tbz, .tbz2)", ".tar.bz2,.tbz,.tbz2", true, true, false, true},
     {ArchiveFormat::TarXz, "tar.xz", "TAR + XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, false, false, false},
     {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", false, false, false, false},
     {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
-    {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", false, false, false, false},
+    {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, false, false, false},
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst", false, false, false, false},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, false, false, false},
@@ -288,6 +288,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "zst";
     } else if (lowered == "gzip") {
         lowered = "gz";
+    } else if (lowered == "bzip2") {
+        lowered = "bz2";
     } else if (lowered == "compress" || lowered == "unix-compress") {
         lowered = "z";
     } else if (lowered == "lzh") {

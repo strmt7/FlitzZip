@@ -318,12 +318,30 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $tarGzExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable TAR.GZ smoke extraction did not preserve payload."
         }
+        $tarBz2Extract = Join-Path $root "extract-tar-bz2"
+        New-Item -ItemType Directory -Force -Path $tarBz2Extract | Out-Null
+        & $cli compress --format tar.bz2 --output (Join-Path $root "archive.tar.bz2") $input
+        & $cli extract --format tar.bz2 --output $tarBz2Extract (Join-Path $root "archive.tar.bz2")
+        if ((Get-Content -LiteralPath (Join-Path $tarBz2Extract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable TAR.BZ2 smoke extraction did not preserve payload."
+        }
         $gzipExtract = Join-Path $root "extract-gzip"
         New-Item -ItemType Directory -Force -Path $gzipExtract | Out-Null
         & $cli compress --format gz --output (Join-Path $root "alpha.txt.gz") (Join-Path $input "alpha.txt")
         & $cli extract --format gz --output $gzipExtract (Join-Path $root "alpha.txt.gz")
         if ((Get-Content -LiteralPath (Join-Path $gzipExtract "alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable Gzip smoke extraction did not preserve payload."
+        }
+        $bzip2Extract = Join-Path $root "extract-bzip2"
+        New-Item -ItemType Directory -Force -Path $bzip2Extract | Out-Null
+        & $cli compress --format bz2 --output (Join-Path $root "alpha.txt.bz2") (Join-Path $input "alpha.txt")
+        $bzip2Identity = & $cli identify (Join-Path $root "alpha.txt.bz2")
+        if ($bzip2Identity -notmatch 'format=bz2') {
+            throw "Portable Bzip2 smoke did not identify the .bz2 stream: $bzip2Identity"
+        }
+        & $cli extract --format bz2 --output $bzip2Extract (Join-Path $root "alpha.txt.bz2")
+        if ((Get-Content -LiteralPath (Join-Path $bzip2Extract "alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable Bzip2 smoke extraction did not preserve payload."
         }
         $unixCompressExtract = Join-Path $root "extract-unix-compress"
         New-Item -ItemType Directory -Force -Path $unixCompressExtract | Out-Null

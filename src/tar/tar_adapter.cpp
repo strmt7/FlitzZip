@@ -1,5 +1,6 @@
 #include "tar/tar_adapter.hpp"
 
+#include "bzip2/bzip2_stream.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -846,6 +847,24 @@ OperationStats compress_tar_gzip(
     return stats;
 }
 
+OperationStats compress_tar_bzip2(
+    const std::vector<std::filesystem::path>& sources,
+    const std::filesystem::path& output_archive,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    Bzip2OutputStream output(output_archive);
+    const auto write_stats = write_tar_stream(sources, output, progress_callback);
+    output.close();
+
+    OperationStats stats;
+    stats.input_bytes = write_stats.input_bytes;
+    stats.output_bytes = output.output_bytes();
+    stats.entries = write_stats.entries;
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
+}
+
 OperationStats extract_tar(
     const std::filesystem::path& archive_path,
     const std::filesystem::path& destination,
@@ -897,6 +916,30 @@ OperationStats extract_tar_gzip(
     std::filesystem::create_directories(destination);
 
     GzipInputStream extract_input(archive_path);
+    extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
+    extract_input.finish();
+
+    OperationStats stats;
+    stats.input_bytes = extract_input.input_bytes();
+    stats.output_bytes = scanned.total_file_bytes;
+    stats.entries = scanned.entries.size();
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
+}
+
+OperationStats extract_tar_bzip2(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    Bzip2InputStream scan_input(archive_path);
+    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    scan_input.finish();
+    std::filesystem::create_directories(destination);
+
+    Bzip2InputStream extract_input(archive_path);
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 

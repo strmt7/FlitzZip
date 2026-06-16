@@ -39,8 +39,24 @@ add_library(miniz STATIC
 target_include_directories(miniz PUBLIC third_party/miniz)
 target_compile_definitions(miniz PRIVATE _CRT_SECURE_NO_WARNINGS)
 
+add_library(bzip2 STATIC
+    third_party/bzip2/blocksort.c
+    third_party/bzip2/bz_internal_error.c
+    third_party/bzip2/bzlib.c
+    third_party/bzip2/compress.c
+    third_party/bzip2/crctable.c
+    third_party/bzip2/decompress.c
+    third_party/bzip2/huffman.c
+    third_party/bzip2/randtable.c
+)
+target_include_directories(bzip2 PUBLIC third_party/bzip2)
+target_compile_definitions(bzip2 PUBLIC BZ_NO_STDIO)
+target_compile_definitions(bzip2 PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 add_library(superzip_core STATIC
     src/ar/ar_adapter.cpp
+    src/bzip2/bzip2_adapter.cpp
+    src/bzip2/bzip2_stream.cpp
     src/core/archive.cpp
     src/core/archive_format.cpp
     src/core/archive_blocks.cpp
@@ -62,8 +78,8 @@ add_library(superzip_core STATIC
     src/zip/zip_adapter.cpp
 )
 
-target_include_directories(superzip_core PUBLIC src third_party/miniz)
-target_link_libraries(superzip_core PUBLIC miniz)
+target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2)
+target_link_libraries(superzip_core PUBLIC miniz bzip2)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
@@ -179,9 +195,11 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_integrity.cpp
         tests/cpp/test_archive_format.cpp
         tests/cpp/test_ar_compat.cpp
+        tests/cpp/test_bzip2_compat.cpp
         tests/cpp/test_cpio_compat.cpp
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_path_safety.cpp
+        tests/cpp/test_tar_bzip2_compat.cpp
         tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
         tests/cpp/test_unix_compress_compat.cpp

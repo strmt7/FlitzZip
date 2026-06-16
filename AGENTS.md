@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.gz` remains single-file compatibility-only through miniz raw deflate, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -53,6 +53,7 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 ## Project Map
 
 - `src/ar/`: Unix AR and AR-based Debian outer-container compatibility adapter for regular-file members with two-pass path validation and verified file publication.
+- `src/bzip2/`: Bzip2 compatibility streams and `.bz2` single-file adapter using vendored libbzip2 1.0.8.
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
 - `src/cpio/`: CPIO compatibility adapter for SVR4 new ASCII archives with two-pass path validation and verified file publication.
 - `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
@@ -67,6 +68,8 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
 - `third_party/miniz/`: patched production miniz 3.1.1 copy used by the build.
 - `third_party/upstream/miniz/3.1.1/`: unmodified upstream miniz 3.1.1 source archive and checksum for provenance.
+- `third_party/bzip2/`: production libbzip2 1.0.8 copy plus the SuperZip link shim for `bz_internal_error`.
+- `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
@@ -166,6 +169,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Unix Compress `.Z` compatibility is single-file only. Keep the LZW dictionary
   bounded by the stream-declared maxbits, validate magic/header flags, and
   publish extraction output only through the verified temporary-file path.
+- Bzip2 compatibility is single-file for `.bz2` and TAR-stream-only for
+  `.tar.bz2`/`.tbz`/`.tbz2`. Keep libbzip2 in-process, reject trailing data in
+  single-member streams unless concatenated-member support is deliberately added
+  with tests, and publish extraction output only through verified temporary
+  paths.
 - Reject absolute paths, drive-rooted paths, UNC paths, traversal, reserved Windows device names, unsafe trailing dot/space, and invalid characters.
 - Default to no overwrite. Overwrite is an explicit option.
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.

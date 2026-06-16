@@ -21,6 +21,27 @@ under `third_party/upstream/miniz/3.1.1/` for provenance. Do not edit the
 upstream archive; production fixes belong in `third_party/miniz/` and must be
 covered by tests and security scanning.
 
+## bzip2 1.0.8
+
+SuperZip vendors bzip2/libbzip2 release `1.0.8` for standards-oriented Bzip2
+compatibility.
+
+- Upstream: <https://sourceware.org/bzip2/>
+- Release archive: <https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz>
+- SHA-256: `ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269`
+- License: bzip2 license, preserved at `third_party/bzip2/LICENSE`
+
+SuperZip uses libbzip2 for two bounded CPU-codec purposes: single-file `.bz2`
+streams and `.tar.bz2`/`.tbz`/`.tbz2` stream filters over the native TAR
+adapter. It does not provide GPU acceleration and is not an alternate SUZIP
+codec path.
+
+The production copy under `third_party/bzip2/` is intended to stay close to
+upstream. The only SuperZip-owned file in that directory is
+`bz_internal_error.c`, a required link shim for libbzip2's embedding hook. The
+unmodified upstream 1.0.8 source archive and checksum are stored under
+`third_party/upstream/bzip2/1.0.8/` for provenance.
+
 ## AMD HIP SDK
 
 SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment

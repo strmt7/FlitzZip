@@ -2,6 +2,7 @@
 
 #include "ar/ar_adapter.hpp"
 #include "app/resource.h"
+#include "bzip2/bzip2_adapter.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
 #include "cpio/cpio_adapter.hpp"
@@ -159,12 +160,14 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 8> formats{
+    constexpr std::array<ArchiveFormat, 10> formats{
         ArchiveFormat::SuperZip,
         ArchiveFormat::Zip,
         ArchiveFormat::Tar,
         ArchiveFormat::TarGzip,
+        ArchiveFormat::TarBzip2,
         ArchiveFormat::Gzip,
+        ArchiveFormat::Bzip2,
         ArchiveFormat::UnixCompress,
         ArchiveFormat::Cpio,
         ArchiveFormat::Ar,
@@ -177,12 +180,14 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 8> labels{
+    constexpr std::array<std::wstring_view, 10> labels{
         L"SuperZip GPU (.suzip)",
         L"ZIP compatibility (.zip)",
         L"TAR compatibility (.tar)",
         L"TAR.GZ compatibility (.tar.gz)",
+        L"TAR.BZ2 compatibility (.tar.bz2)",
         L"Gzip single file (.gz)",
+        L"Bzip2 single file (.bz2)",
         L"Unix Compress single file (.Z)",
         L"CPIO compatibility (.cpio)",
         L"AR compatibility (.ar)",
@@ -204,8 +209,12 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".tar";
     case ArchiveFormat::TarGzip:
         return L".tar.gz";
+    case ArchiveFormat::TarBzip2:
+        return L".tar.bz2";
     case ArchiveFormat::Gzip:
         return L".gz";
+    case ArchiveFormat::Bzip2:
+        return L".bz2";
     case ArchiveFormat::UnixCompress:
         return L".Z";
     case ArchiveFormat::Cpio:
@@ -386,6 +395,8 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             compression_format_text(5),
             compression_format_text(6),
             compression_format_text(7),
+            compression_format_text(8),
+            compression_format_text(9),
         };
     case DropdownId::CompressLevel:
         return {
@@ -1584,7 +1595,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
         : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP, Gzip, Unix Compress, and TAR.GZ use streaming APIs; TAR, CPIO, and AR use SuperZip's two-pass native adapters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP, Gzip, Bzip2, Unix Compress, TAR.GZ, and TAR.BZ2 use streaming APIs; TAR, CPIO, and AR use SuperZip's two-pass native adapters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
@@ -1728,7 +1739,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, TAR.GZ, Gzip, Unix Compress, CPIO, AR, and DEB compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, TAR.GZ, TAR.BZ2, Gzip, Bzip2, Unix Compress, CPIO, AR, and DEB compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -2241,7 +2252,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
         std::lock_guard lock(mutex_);
         switch (id) {
         case DropdownId::CompressFormat:
-            state_.compression_format_index = std::clamp(option_index, 0, 7);
+            state_.compression_format_index = std::clamp(option_index, 0, 9);
             state_.status = "Archive format changed";
             break;
         case DropdownId::CompressLevel:
@@ -2543,8 +2554,12 @@ void MainWindow::start_compress() {
             stats = compress_tar(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::TarGzip) {
             stats = compress_tar_gzip(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarBzip2) {
+            stats = compress_tar_bzip2(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Gzip) {
             stats = compress_gzip(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Bzip2) {
+            stats = compress_bzip2(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::UnixCompress) {
             stats = compress_unix_compress(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
@@ -2624,8 +2639,12 @@ void MainWindow::start_extract() {
             stats = extract_tar(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::TarGzip) {
             stats = extract_tar_gzip(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::TarBzip2) {
+            stats = extract_tar_bzip2(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Gzip) {
             stats = extract_gzip_file(archive, output, overwrite, progress_callback);
+        } else if (archive_format == ArchiveFormat::Bzip2) {
+            stats = extract_bzip2_file(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::UnixCompress) {
             stats = extract_unix_compress_file(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {

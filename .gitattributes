@@ -1,10 +1,16 @@
 * text=auto eol=crlf
 
+.gitattributes text eol=lf
+
 *.png binary
 *.jpg binary
 *.jpeg binary
 *.gif binary
 *.ico binary
+*.gz binary
+*.tar.gz binary
+*.tgz binary
+*.zip binary
 *.exe binary
 *.dll binary
 *.lib binary
@@ -24,3 +30,7 @@
 *.options text eol=lf
 *.manifest text eol=lf
 *.txt text eol=lf
+
+third_party/bzip2/CHANGES text eol=lf
+third_party/bzip2/LICENSE text eol=lf
+third_party/bzip2/README text eol=lf

@@ -27,6 +27,8 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar"), superzip::ArchiveFormat::Tar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.gz"), superzip::ArchiveFormat::TarGzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tgz"), superzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.bz2"), superzip::ArchiveFormat::TarBzip2);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tbz"), superzip::ArchiveFormat::TarBzip2);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.xz"), superzip::ArchiveFormat::TarXz);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.Z"), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cab"), superzip::ArchiveFormat::Cab);
@@ -68,6 +70,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
 
 TEST_CASE(archive_format_rejects_zip_based_non_archive_containers) {
     const auto root = test_temp_dir("archive-format-excluded-aliases");
+    // Office documents are ZIP-based containers, not SuperZip archive formats.
     write_fixture(root / "document.docx", std::array<unsigned char, 4>{'P', 'K', 0x03, 0x04});
 
     REQUIRE_TRUE(!superzip::parse_archive_format_token("docx").has_value());
@@ -76,7 +79,9 @@ TEST_CASE(archive_format_rejects_zip_based_non_archive_containers) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "document.docx"), superzip::ArchiveFormat::Unknown);
     REQUIRE_EQ(superzip::parse_archive_format_token("tar").value(), superzip::ArchiveFormat::Tar);
     REQUIRE_EQ(superzip::parse_archive_format_token("tgz").value(), superzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(superzip::parse_archive_format_token("tbz").value(), superzip::ArchiveFormat::TarBzip2);
     REQUIRE_EQ(superzip::parse_archive_format_token("gzip").value(), superzip::ArchiveFormat::Gzip);
+    REQUIRE_EQ(superzip::parse_archive_format_token("bzip2").value(), superzip::ArchiveFormat::Bzip2);
     REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);
 }
