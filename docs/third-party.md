@@ -87,6 +87,23 @@ validates runtime version `10507` (`1.5.7`), and never shells out to `zstd.exe`.
 The original source archive, official Win64 package, and checksums are stored
 under `third_party/upstream/zstd/v1.5.7/` for provenance.
 
+## LZMA SDK 26.01
+
+SuperZip vendors the minimal ANSI-C 7z decoder subset from the official LZMA
+SDK release `26.01` for extract-only 7z compatibility.
+
+- Upstream: <https://www.7-zip.org/sdk.html>
+- Release archive: <https://www.7-zip.org/a/lzma2601.7z>
+- SHA-256: `b860f17f9df3c0524dd2ef2c639ab5e43ad0006b77b8f7bb6d191bf528536885`
+- License: public domain, as stated in `DOC/lzma-sdk.txt` inside the upstream
+  archive
+
+SuperZip uses this SDK only for read-only `.7z` extraction. It does not ship or
+execute the SDK sample tools, does not call `7z.exe`, and does not use the SDK
+as a SUZIP codec or GPU path. The patched production copy is under
+`third_party/lzma_sdk/`, while the unmodified upstream archive and checksum are
+stored under `third_party/upstream/lzma-sdk/26.01/`.
+
 ## AMD HIP SDK
 
 SuperZip is built against AMD HIP SDK for Windows. AMD's Windows HIP deployment

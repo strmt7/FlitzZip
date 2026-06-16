@@ -17,7 +17,7 @@ References checked on 2026-06-14:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.01 decoder, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -83,6 +83,7 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
 - `src/iso/`: Read-only basic ISO 9660 compatibility adapter with two-pass path validation and verified file publication.
 - `src/rpm/`: Read-only RPM package adapter that validates RPM headers, decodes supported CPIO payload compression, and delegates extracted package paths to the CPIO adapter.
+- `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.01 decoder with two-pass validation and verified file publication.
 - `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
 - `src/unix_compress/`: Unix Compress `.Z` single-file compatibility adapter with bounded LZW dictionaries and verified file publication.
 - `src/xz/`: Extract-only XZ compatibility stream and `.xz` single-file adapter using vendored XZ Embedded.
@@ -207,6 +208,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   plus Windows FDI for streaming decompression. Reject spanned cabinets, validate
   names and sizes before FDI output is accepted, and publish only through the
   verified temporary-file path.
+- 7z compatibility is extraction-only and uses the vendored LZMA SDK 26.01
+  decoder in process. Keep SDK allocations bounded, reject unsafe paths and
+  unsupported special-file attributes before output, validate payload CRC/size
+  before publishing, and do not advertise 7z creation until a vetted
+  in-process writer path is deliberately added with tests.
 - Unix Compress `.Z` compatibility is single-file only. Keep the LZW dictionary
   bounded by the stream-declared maxbits, validate magic/header flags, and
   publish extraction output only through the verified temporary-file path.
@@ -252,7 +258,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Before editing scanner workflows, read `docs/security-code-scanning.md`, verify action versions from official tags/releases, and pin actions by full commit SHA.
 - Do not add GitHub Actions `environment:` blocks or `deployment:` keys. This repository uses repository variables plus an external OIDC broker instead of Actions environments so workflows cannot create deployment records.
 - Never commit Greenbone targets, credentials, Vulnetix organization IDs, scan credentials, or host-specific network details. Keep live scanner secrets outside GitHub Actions and return them only from the OIDC broker after claim validation.
-- Preserve the patched/original miniz split: production changes go under `third_party/miniz`, and the upstream archive under `third_party/upstream/miniz/3.1.1` stays unmodified.
+- Preserve patched/original dependency splits: production changes go under the
+  active vendored source directory, and upstream archives under
+  `third_party/upstream/**` stay unmodified.
 
 ## GUI Rules
 

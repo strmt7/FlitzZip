@@ -68,6 +68,34 @@ target_include_directories(xz_embedded
 )
 target_compile_definitions(xz_embedded PRIVATE XZ_DEC_DYNALLOC _CRT_SECURE_NO_WARNINGS)
 
+add_library(lzma_sdk_7z STATIC
+    third_party/lzma_sdk/C/7zArcIn.c
+    third_party/lzma_sdk/C/7zBuf.c
+    third_party/lzma_sdk/C/7zBuf2.c
+    third_party/lzma_sdk/C/7zCrc.c
+    third_party/lzma_sdk/C/7zCrcOpt.c
+    third_party/lzma_sdk/C/7zDec.c
+    third_party/lzma_sdk/C/7zStream.c
+    third_party/lzma_sdk/C/Bcj2.c
+    third_party/lzma_sdk/C/Bra.c
+    third_party/lzma_sdk/C/Bra86.c
+    third_party/lzma_sdk/C/BraIA64.c
+    third_party/lzma_sdk/C/CpuArch.c
+    third_party/lzma_sdk/C/Delta.c
+    third_party/lzma_sdk/C/Lzma2Dec.c
+    third_party/lzma_sdk/C/LzmaDec.c
+    third_party/lzma_sdk/C/Ppmd7.c
+    third_party/lzma_sdk/C/Ppmd7Dec.c
+)
+target_include_directories(lzma_sdk_7z PUBLIC third_party/lzma_sdk/C)
+target_compile_definitions(lzma_sdk_7z PUBLIC Z7_EXTRACT_ONLY Z7_PPMD_SUPPORT)
+target_compile_definitions(lzma_sdk_7z PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(MSVC)
+    target_compile_options(lzma_sdk_7z PRIVATE /wd4244 /wd4267 /wd4334)
+else()
+    target_compile_options(lzma_sdk_7z PRIVATE -Wno-conversion -Wno-sign-conversion)
+endif()
+
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/upstream/zstd/v1.5.7/zstd-v1.5.7-win64.zip")
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9")
 set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 "8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b")
@@ -132,6 +160,7 @@ add_library(superzip_core STATIC
     src/iso/iso_adapter.cpp
     src/rpm/rpm_adapter.cpp
     src/rpm/rpm_format.cpp
+    src/sevenzip/sevenzip_adapter.cpp
     src/tar/tar_adapter.cpp
     src/unix_compress/unix_compress_adapter.cpp
     src/xz/xz_adapter.cpp
@@ -142,8 +171,8 @@ add_library(superzip_core STATIC
     src/zip/zip_adapter.cpp
 )
 
-target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2)
-target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded)
+target_include_directories(superzip_core PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C)
+target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z)
 target_compile_definitions(superzip_core PUBLIC
     NOMINMAX
     WIN32_LEAN_AND_MEAN
@@ -269,6 +298,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_iso_compat.cpp
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_rpm_compat.cpp
+        tests/cpp/test_sevenzip_compat.cpp
         tests/cpp/test_tar_bzip2_compat.cpp
         tests/cpp/test_tar_gzip_compat.cpp
         tests/cpp/test_tar_compat.cpp
@@ -323,6 +353,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_include_directories(superzip_rpm_header_fuzzer PRIVATE src)
     target_compile_definitions(superzip_rpm_header_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_sevenzip_fuzzer
+        fuzz/sevenzip_fuzzer.cpp
+    )
+    target_link_libraries(superzip_sevenzip_fuzzer PRIVATE superzip_core)
+    target_compile_definitions(superzip_sevenzip_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
     endif()
@@ -331,11 +367,13 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_sevenzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_sevenzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 install(FILES

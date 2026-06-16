@@ -20,7 +20,7 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
@@ -28,12 +28,30 @@ printf 'safe/nested/file.txt' > /out/corpus/path_safety/safe-relative
 printf 'CD001' > /out/corpus/iso/tiny-cd001
 printf 'MSCF' > /out/corpus/cab/tiny-mscf
 printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
+printf '7z\274\257\047\034\000\003' > /out/corpus/sevenzip/tiny-sevenzip-signature
+python3 - <<'PY'
+from pathlib import Path
+Path('/out/corpus/sevenzip/nested-payload.7z').write_bytes(bytes([
+    55, 122, 188, 175, 39, 28, 0, 3, 61, 67, 90, 149, 110, 0, 0, 0,
+    0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 83, 152, 7, 164,
+    1, 0, 15, 115, 101, 118, 101, 110, 122, 105, 112, 32, 112, 97, 121, 108,
+    111, 97, 100, 0, 0, 0, 129, 51, 7, 174, 15, 207, 57, 176, 12, 7,
+    200, 67, 127, 65, 177, 250, 253, 226, 251, 121, 219, 32, 43, 173, 94, 44,
+    42, 8, 17, 64, 221, 175, 147, 38, 76, 135, 221, 114, 36, 255, 78, 89,
+    238, 232, 52, 84, 176, 173, 57, 39, 80, 178, 173, 141, 182, 201, 248, 140,
+    45, 225, 25, 37, 113, 224, 222, 155, 40, 199, 58, 161, 53, 45, 38, 9,
+    204, 203, 200, 225, 204, 104, 40, 134, 221, 252, 239, 51, 192, 0, 23, 6,
+    20, 1, 9, 90, 0, 7, 11, 1, 0, 1, 35, 3, 1, 1, 5, 93,
+    0, 0, 64, 0, 12, 94, 10, 1, 167, 128, 3, 7, 0, 0,
+]))
+PY
 if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_archive_index_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/archive_index
   /out/superzip_path_safety_fuzzer -runs=$fuzzRuns -max_len=4096 /out/corpus/path_safety
   /out/superzip_iso_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/iso
   /out/superzip_cab_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/cab
   /out/superzip_rpm_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/rpm
+  /out/superzip_sevenzip_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/sevenzip
 fi
 "@
 

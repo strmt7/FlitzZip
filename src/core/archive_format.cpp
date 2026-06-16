@@ -17,7 +17,7 @@ constexpr std::array<ArchiveFormatInfo, 26> kFormatRegistry{{
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
     {ArchiveFormat::Zip, "zip", "ZIP (.zip)", ".zip", true, true, false, true},
-    {ArchiveFormat::SevenZip, "7z", "7-Zip (.7z)", ".7z", false, false, false, false},
+    {ArchiveFormat::SevenZip, "7z", "7-Zip (.7z)", ".7z", false, true, false, true},
     {ArchiveFormat::Rar, "rar", "RAR (.rar)", ".rar", false, false, false, false},
     {ArchiveFormat::Tar, "tar", "TAR (.tar)", ".tar", true, true, false, true},
     {ArchiveFormat::TarGzip, "tar.gz", "TAR + Gzip (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},

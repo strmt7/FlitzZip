@@ -12,6 +12,7 @@ pre-write path validation used by SUZIP.
 Primary and project-owned sources reviewed:
 
 - 7-Zip: https://www.7-zip.org/
+- 7-Zip LZMA SDK: https://www.7-zip.org/sdk.html
 - WinRAR: https://www.win-rar.com/
 - WinZip format guide: https://www.winzip.com/en/learn/file-formats/
 - WinZip supported-format table: https://kb.winzip.com/en/130365
@@ -102,7 +103,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.iso` | No | Yes | Extract-only compatibility format | native basic ISO 9660 adapter |
 | `.rpm` | No | Yes | Extract-only compatibility format | native RPM package adapter over CPIO payloads |
 | `.cab` | No | Yes | Extract-only compatibility format | native CAB metadata scanner plus Windows FDI |
-| `.7z` | No | No | Recognized only | pending vetted backend |
+| `.7z` | No | Yes | Extract-only compatibility format | vendored LZMA SDK 26.01 ANSI-C decoder |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
@@ -188,6 +189,14 @@ folder table, file records, and declared data-block extents before invoking the
 Windows Cabinet FDI engine. Spanned cabinet sets are rejected, every CAB member
 path is normalized and validated before output, and FDI may only publish files
 whose names and sizes match the prevalidated metadata table.
+
+7z support is intentionally extract-only. SuperZip embeds the public-domain
+LZMA SDK 26.01 ANSI-C decoder and does not call `7z.exe`, Bandizip, PowerShell,
+or other host archive tools from product code. Archive filenames are converted
+from SDK UTF-16 metadata, normalized, validated archive-wide, and decoded twice:
+one validation pass verifies payload CRC/size before destination writes, then
+the publish pass writes only approved regular files and directories. Encrypted
+or unsupported 7z methods fail explicitly.
 
 ## ZIP-Container Alias Policy
 
@@ -335,6 +344,32 @@ flowchart TD
     F --> G["Publish verified files through temp path"]
 ```
 
+## 7z Security Contract
+
+The 7z path uses the official LZMA SDK 26.01 decoder in process:
+
+1. Open the archive through a bounded SDK input buffer and a SuperZip allocator
+   budget.
+2. Parse metadata, reject excessive entry counts, excessive names, unsafe
+   paths, duplicate normalized paths, file/child conflicts, reparse points,
+   devices, and unsupported POSIX special-file attributes.
+3. Cap total decoded output and SDK allocation growth before any destination
+   writes.
+4. Decode all regular-file payloads once for CRC/size validation.
+5. Reset the decoder cache, then publish only approved directories and regular
+   files through the standard private temporary-file path.
+
+```mermaid
+flowchart TD
+    A["Open 7z archive"] --> B["Parse SDK metadata with bounded allocator"]
+    B --> C["Validate names, paths, attributes, and totals"]
+    C --> D["Validation decode pass with CRC checks"]
+    D --> E["Reset decoder cache"]
+    E --> F["Publish directories and verified files"]
+    C -->|"unsafe or unsupported"| G["Reject archive"]
+    D -->|"decode or CRC failure"| G
+```
+
 ## Unix Compress Security Contract
 
 The Unix Compress adapter is in-process and treats the LZW stream as untrusted
@@ -466,7 +501,8 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only 7z, RAR, and the remaining
-recognized-only legacy/container formats after backend selection and licensing
-review. Write support for RAR is not planned because the common RAR creation
-tooling is not a permissive open format writer suitable for this repo.
+Preferred next increments are read-only RAR and the remaining recognized-only
+legacy/container formats after backend selection and licensing review. Write
+support for RAR is not planned because the common RAR creation tooling is not a
+permissive open format writer suitable for this repo. 7z creation also remains
+disabled until a vetted in-process writer path passes the same gates.
