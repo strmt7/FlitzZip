@@ -151,6 +151,26 @@ TEST_CASE(ar_extracts_gnu_string_table_names) {
     REQUIRE_EQ(read_text_file(output / "dir" / "gnu-long-name.txt"), "gnu payload");
 }
 
+// Purpose: Verify `.deb` files use the native AR extraction path for outer members.
+// Inputs: A Debian-package-named AR container with one regular member.
+// Outputs: Throws if detection, registry support, or extraction routing assumptions regress.
+TEST_CASE(deb_outer_container_extracts_with_native_ar_adapter) {
+    const auto root = test_temp_dir("deb-outer-container");
+    const auto archive = root / "package.deb";
+    write_one_bsd_ar_archive(archive, "debian-binary", "2.0\n");
+
+    const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Deb);
+    REQUIRE_TRUE(info.can_extract);
+    REQUIRE_TRUE(!info.can_create);
+    REQUIRE_TRUE(info.bundled_native);
+    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Deb);
+
+    const auto output = root / "out";
+    const auto stats = superzip::extract_ar(archive, output, false);
+    REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
+    REQUIRE_EQ(read_text_file(output / "debian-binary"), "2.0\n");
+}
+
 // Purpose: Verify AR extraction rejects traversal metadata during the validation pass.
 // Inputs: A handcrafted BSD long-name AR member containing `../escape.txt`.
 // Outputs: Throws if extraction accepts the unsafe path or writes any output.

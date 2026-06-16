@@ -36,7 +36,7 @@ constexpr std::array<ArchiveFormatInfo, 25> kFormatRegistry{{
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, false, false, false},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim,.swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, false, false, false},
-    {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, false, false, false},
+    {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, false, false, false},
 }};
 

@@ -337,6 +337,17 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $arExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable AR smoke extraction did not preserve payload."
         }
+        $debExtract = Join-Path $root "extract-deb"
+        New-Item -ItemType Directory -Force -Path $debExtract | Out-Null
+        & $cli compress --format ar --output (Join-Path $root "package.deb") $input
+        $debIdentity = & $cli identify (Join-Path $root "package.deb")
+        if ($debIdentity -notmatch 'format=deb') {
+            throw "Portable DEB smoke did not identify the AR-based package as deb: $debIdentity"
+        }
+        & $cli extract --format deb --output $debExtract (Join-Path $root "package.deb")
+        if ((Get-Content -LiteralPath (Join-Path $debExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable DEB smoke extraction did not preserve outer AR payload."
+        }
         $archive = Join-Path $root "archive.suzip"
         $suzipArgs = @("compress", "--format", "suzip", "--sha256", "--output", $archive, $input)
         if ($env:ENABLE_HIP -eq "true" -and $dependencyExit -eq 0) {

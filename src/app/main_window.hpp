@@ -514,6 +514,10 @@ private:
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
     bool transition_toggle_to_ = false;
+    POINT mouse_position_{-1, -1};
+    bool mouse_inside_client_ = false;
+    bool primary_mouse_down_ = false;
+    bool mouse_tracking_ = false;
     FILETIME last_process_kernel_time_{};
     FILETIME last_process_user_time_{};
     ULONGLONG last_io_read_bytes_ = 0;

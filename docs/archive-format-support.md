@@ -43,8 +43,9 @@ complete format matrix:
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, Zstandard, CAB, ISO, AR, CPIO, ARJ,
-LHA/LZH, WIM, XAR, DEB, and RPM. SuperZip's compatibility scope is limited to
-real archive formats with explicit product behavior.
+LHA/LZH, WIM, XAR, DEB, RPM, and legacy Unix Compress `.Z`. SuperZip's
+compatibility scope is limited to real archive/container formats with explicit
+product behavior.
 
 ## Top-Tool Format Research Matrix
 
@@ -86,13 +87,14 @@ already real archive/package formats in SuperZip's matrix.
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
+| `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.bz2`, `.tbz2` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.xz`, `.txz` | No | No | Recognized only | pending stream compressor layer |
 | `.tar.zst`, `.tzst` | No | No | Recognized only | pending stream compressor layer |
 | `.bz2`, `.xz`, `.zst` | No | No | Recognized only | pending single-stream support |
-| `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.deb`, `.rpm` | No | No | Recognized only | pending format-specific security review |
+| `.cab`, `.iso`, `.arj`, `.lha`, `.lzh`, `.wim`, `.xar`, `.rpm` | No | No | Recognized only | pending format-specific security review |
 
 The CLI exposes this matrix with:
 
@@ -126,6 +128,12 @@ string table. Extraction accepts simple member names, BSD `#1/<length>` names,
 and GNU `//` string-table references. Symbol-table metadata is skipped rather
 than extracted. The adapter supports regular-file members only because AR has no
 portable directory entry model.
+
+DEB support is intentionally extract-only. Debian package files are AR
+containers, so SuperZip extracts the outer package members through the same
+bounded AR adapter. It does not install packages, execute maintainer scripts, or
+silently unpack nested `control.tar.*` or `data.tar.*` members into the
+destination. Nested package inspection needs a separate UI and security policy.
 
 ## ZIP-Container Alias Policy
 
@@ -204,6 +212,24 @@ flowchart TD
     E --> F["Atomically publish verified file"]
 ```
 
+## DEB Security Contract
+
+The DEB path is a format-specific route into the AR adapter:
+
+1. Detect the `.deb` extension together with the AR global header.
+2. Parse and validate outer AR members exactly as AR extraction does.
+3. Extract regular outer members only.
+4. Leave nested control/data tarballs as files unless a future package
+   inspection feature explicitly requests nested extraction.
+
+```mermaid
+flowchart TD
+    A["Open DEB package"] --> B["Verify AR container magic"]
+    B --> C["Use AR member scanner"]
+    C --> D["Validate outer member paths"]
+    D --> E["Publish outer files through verified temp path"]
+```
+
 ## Future Backend Gates
 
 Before adding a new compatibility backend, the implementation must satisfy:
@@ -218,7 +244,8 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are `.tar.bz2`, `.tar.xz`, and `.tar.zst` stream
-filters, then read-only 7z, ISO, CAB, and RAR after backend selection and
-licensing review. Write support for RAR is not planned because the common RAR
-creation tooling is not a permissive open format writer suitable for this repo.
+Preferred next increments are `.tar.bz2`, `.tar.xz`, `.tar.zst`, and legacy
+Unix Compress `.Z` stream filters, then read-only 7z, ISO, CAB, and RAR after
+backend selection and licensing review. Write support for RAR is not planned
+because the common RAR creation tooling is not a permissive open format writer
+suitable for this repo.

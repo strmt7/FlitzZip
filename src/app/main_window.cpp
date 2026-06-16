@@ -1003,11 +1003,34 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         layout_and_draw(reinterpret_cast<HDC>(wparam), rect);
         return 0;
     }
+    case WM_MOUSEMOVE: {
+        mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        mouse_inside_client_ = true;
+        if (!mouse_tracking_) {
+            TRACKMOUSEEVENT event{};
+            event.cbSize = sizeof(event);
+            event.dwFlags = TME_LEAVE;
+            event.hwndTrack = hwnd_;
+            mouse_tracking_ = TrackMouseEvent(&event) != FALSE;
+        }
+        request_repaint();
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        mouse_inside_client_ = false;
+        primary_mouse_down_ = false;
+        mouse_tracking_ = false;
+        request_repaint();
+        return 0;
     case WM_LBUTTONDOWN: {
         // Use the same scaled geometry for hit testing that the renderer uses,
         // so high-DPI displays do not create visual/click drift.
         const int x = GET_X_LPARAM(lparam);
         const int y = GET_Y_LPARAM(lparam);
+        mouse_position_ = POINT{x, y};
+        mouse_inside_client_ = true;
+        primary_mouse_down_ = true;
+        request_repaint();
         const int rail_width = scale(kRailWidth);
         const int top_bar = scale(kTopBar);
         if (y < top_bar) {
@@ -1025,6 +1048,11 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         }
         return 0;
     }
+    case WM_LBUTTONUP:
+        mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        primary_mouse_down_ = false;
+        request_repaint();
+        return 0;
     case WM_DROPFILES: {
         // Native shell drag/drop is a queue regression boundary and is covered
         // by the GUI smoke harness with an injected HDROP payload.
@@ -1694,15 +1722,29 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, TAR.GZ, Gzip, CPIO, and AR compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, TAR.GZ, Gzip, CPIO, AR, and DEB compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active) {
-    fill_round_rect(dc, rect, active ? kAccent : kPanel2, scale(4));
-    stroke_rect(dc, rect, active ? kAccent2 : kBorder);
+    const bool hovered = mouse_inside_client_ && contains_point(rect, mouse_position_.x, mouse_position_.y);
+    const bool pressed = hovered && primary_mouse_down_;
+    const COLORREF base_fill = active ? kAccent : kPanel2;
+    const COLORREF hover_fill = active ? RGB(226, 47, 58) : kPanel3;
+    const COLORREF pressed_fill = active ? RGB(144, 22, 31) : RGB(38, 54, 60);
+    const COLORREF fill = pressed ? pressed_fill : hovered ? hover_fill : base_fill;
+    const COLORREF border = active ? (pressed ? RGB(111, 18, 26) : kAccent2) : (hovered ? kSubtle : kBorder);
+    fill_round_rect(dc, rect, fill, scale(4));
+    stroke_rect(dc, rect, border);
+    if (hovered && !pressed) {
+        stroke_rect(dc, inset_rect(rect, scale(1), scale(1)), active ? RGB(237, 80, 90) : RGB(75, 95, 103));
+    }
     SelectObject(dc, tiny_font_);
-    draw_text(dc, inset_rect(rect, scale(12), 0), text, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT label = inset_rect(rect, scale(12), 0);
+    if (pressed) {
+        OffsetRect(&label, scale(1), scale(1));
+    }
+    draw_text(dc, label, text, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id) {
@@ -2578,7 +2620,7 @@ void MainWindow::start_extract() {
             stats = extract_gzip_file(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
             stats = extract_cpio(archive, output, overwrite, progress_callback);
-        } else if (archive_format == ArchiveFormat::Ar) {
+        } else if (archive_format == ArchiveFormat::Ar || archive_format == ArchiveFormat::Deb) {
             stats = extract_ar(archive, output, overwrite, progress_callback);
         } else if (archive_format == ArchiveFormat::Unknown) {
             throw ArchiveError("unable to detect archive format: " + archive.string());
