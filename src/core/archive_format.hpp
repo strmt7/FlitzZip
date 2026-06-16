@@ -27,6 +27,7 @@ enum class ArchiveFormat {
     Cab,
     Iso,
     Cpio,
+    Ar,
     Arj,
     Lha,
     Wim,

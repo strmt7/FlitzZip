@@ -11,9 +11,10 @@ with a two-pass streaming TAR reader over miniz raw-deflate Gzip, so extraction
 is validated before output without staging a full intermediate TAR on disk.
 Single-file `.gz` streams are implemented through miniz raw deflate with
 CRC32/ISIZE verification. Portable `.cpio` archives are implemented with a
-native SVR4 new ASCII parser/writer for regular files and directories. Other
-common archive formats are recognized for clear diagnostics and are tracked in
-`docs/archive-format-support.md`.
+native SVR4 new ASCII parser/writer for regular files and directories. Unix
+`.ar` archives are implemented with a native parser/writer for regular-file
+members. Other common archive formats are recognized for clear diagnostics and
+are tracked in `docs/archive-format-support.md`.
 
 The product ships as two equivalent Windows packages:
 
@@ -125,6 +126,8 @@ build/Release/superzip_cli.exe compress --format gz --output file.txt.gz file.tx
 build/Release/superzip_cli.exe extract --output restored file.txt.gz
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.cpio
+build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\folder
+build/Release/superzip_cli.exe extract --output restored archive.ar
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
 ```
 
@@ -137,7 +140,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, Gzip, and CPIO compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, TAR.GZ, Gzip, CPIO, and AR compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP

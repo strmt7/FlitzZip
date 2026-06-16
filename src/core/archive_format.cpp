@@ -12,7 +12,7 @@ namespace {
 
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
 
-constexpr std::array<ArchiveFormatInfo, 24> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 25> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -31,6 +31,7 @@ constexpr std::array<ArchiveFormatInfo, 24> kFormatRegistry{{
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, false, false, false},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, false, false, false},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
+    {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, false, false, false},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, false, false, false},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim,.swm", false, false, false, false},
@@ -164,7 +165,7 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
     }
     if (starts_with_signature(bytes, {'!', '<', 'a', 'r', 'c', 'h', '>', '\n'})) {
         const auto lower_name = ascii_lower(path.filename().string());
-        return ends_with_lower(lower_name, ".deb") ? ArchiveFormat::Deb : ArchiveFormat::Unknown;
+        return ends_with_lower(lower_name, ".deb") ? ArchiveFormat::Deb : ArchiveFormat::Ar;
     }
     if (matches_signature_at(bytes, 257U, {'u', 's', 't', 'a', 'r'})) {
         return ArchiveFormat::Tar;
@@ -228,6 +229,9 @@ ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
     }
     if (ends_with_lower(name, ".cpio")) {
         return ArchiveFormat::Cpio;
+    }
+    if (ends_with_lower(name, ".ar")) {
+        return ArchiveFormat::Ar;
     }
     if (ends_with_lower(name, ".arj")) {
         return ArchiveFormat::Arj;

@@ -330,6 +330,13 @@ runs:
         if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable CPIO smoke extraction did not preserve payload."
         }
+        $arExtract = Join-Path $root "extract-ar"
+        New-Item -ItemType Directory -Force -Path $arExtract | Out-Null
+        & $cli compress --format ar --output (Join-Path $root "archive.ar") $input
+        & $cli extract --format ar --output $arExtract (Join-Path $root "archive.ar")
+        if ((Get-Content -LiteralPath (Join-Path $arExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable AR smoke extraction did not preserve payload."
+        }
         $archive = Join-Path $root "archive.suzip"
         $suzipArgs = @("compress", "--format", "suzip", "--sha256", "--output", $archive, $input)
         if ($env:ENABLE_HIP -eq "true" -and $dependencyExit -eq 0) {

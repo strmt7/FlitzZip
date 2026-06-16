@@ -40,6 +40,7 @@ target_include_directories(miniz PUBLIC third_party/miniz)
 target_compile_definitions(miniz PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 add_library(superzip_core STATIC
+    src/ar/ar_adapter.cpp
     src/core/archive.cpp
     src/core/archive_format.cpp
     src/core/archive_blocks.cpp
@@ -176,6 +177,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_archive_roundtrip.cpp
         tests/cpp/test_integrity.cpp
         tests/cpp/test_archive_format.cpp
+        tests/cpp/test_ar_compat.cpp
         tests/cpp/test_cpio_compat.cpp
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_path_safety.cpp

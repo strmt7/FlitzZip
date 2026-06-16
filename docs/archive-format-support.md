@@ -21,6 +21,7 @@ Primary and project-owned sources reviewed:
 - Keka: https://www.keka.io/en/
 - The Unarchiver: https://theunarchiver.com/
 - libarchive: https://www.libarchive.org/
+- GNU binutils ar: https://sourceware.org/binutils/docs/binutils/ar.html
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - NanaZip: https://github.com/M2Team/NanaZip
@@ -41,7 +42,7 @@ complete format matrix:
 - jZip review and format table: https://www.lifewire.com/jzip-review-1356305
 
 These tools consistently cluster around real archive/container formats:
-ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, Zstandard, CAB, ISO, CPIO, ARJ,
+ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, Zstandard, CAB, ISO, AR, CPIO, ARJ,
 LHA/LZH, WIM, XAR, DEB, and RPM. SuperZip's compatibility scope is limited to
 real archive formats with explicit product behavior.
 
@@ -84,6 +85,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
+| `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.7z` | No | No | Recognized only | pending vetted backend |
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.bz2`, `.tbz2` | No | No | Recognized only | pending stream compressor layer |
@@ -117,6 +119,13 @@ the simple payload checksum for `070702` before output. The adapter supports
 regular files and directories only; symbolic links, hard-link metadata, devices,
 FIFOs, and other special entries are rejected until SuperZip has a dedicated
 policy and UI for those objects.
+
+AR support covers Unix archive files with the global `!<arch>` magic. Creation
+writes BSD long-name members so nested paths are preserved without a separate
+string table. Extraction accepts simple member names, BSD `#1/<length>` names,
+and GNU `//` string-table references. Symbol-table metadata is skipped rather
+than extracted. The adapter supports regular-file members only because AR has no
+portable directory entry model.
 
 ## ZIP-Container Alias Policy
 
@@ -171,6 +180,28 @@ flowchart TD
     D -->|"regular file"| F["Copy to private temp file"]
     F --> G["Atomically publish verified file"]
     D -->|"link/device/FIFO/special"| H["Reject archive"]
+```
+
+## AR Security Contract
+
+The AR adapter is in-process and validates archive-wide member names before
+publishing any file payload:
+
+1. Parse the global header, fixed-width member headers, and supported long-name
+   variants.
+2. Skip AR symbol/string-table metadata that is not an extractable file.
+3. Reject malformed sizes, unsafe paths, duplicate normalized paths, and file
+   entries that conflict with descendants.
+4. Publish each regular-file member through a private same-directory temporary
+   file after validation.
+
+```mermaid
+flowchart TD
+    A["Open AR archive"] --> B["Scan member headers"]
+    B --> C["Resolve simple, BSD, and GNU names"]
+    C --> D["Validate all member paths"]
+    D --> E["Copy member to private temp file"]
+    E --> F["Atomically publish verified file"]
 ```
 
 ## Future Backend Gates

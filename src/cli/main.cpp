@@ -1,3 +1,4 @@
+#include "ar/ar_adapter.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
 #include "core/checksum.hpp"
@@ -133,9 +134,9 @@ void usage() {
         << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile Mixed|Compressible|Incompressible] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
-        << "  superzip_cli compress --format zip|tar|tar.gz|tgz|gz|gzip|cpio --output <archive> [--sha256] [--defender-scan] <path>...\n"
+        << "  superzip_cli compress --format zip|tar|tar.gz|tgz|gz|gzip|cpio|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format auto|zip|tar|tar.gz|tgz|gz|gzip|cpio --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli extract --format auto|zip|tar|tar.gz|tgz|gz|gzip|cpio|ar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -1165,6 +1166,11 @@ int main(int argc, char** argv) {
                     throw superzip::ArchiveError("CPIO compatibility does not support SUZIP GPU, worker, block-size, compression-level, or verify-after-write flags");
                 }
                 print_stats(superzip::compress_cpio(sources, output));
+            } else if (archive_format == superzip::ArchiveFormat::Ar) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("AR compatibility does not support SUZIP GPU, worker, block-size, compression-level, or verify-after-write flags");
+                }
+                print_stats(superzip::compress_ar(sources, output));
             }
             if (sha256) {
                 print_integrity_hash(output);
@@ -1263,6 +1269,11 @@ int main(int argc, char** argv) {
                     throw superzip::ArchiveError("CPIO compatibility does not support SUZIP GPU, worker, or in-flight flags");
                 }
                 print_stats(superzip::extract_cpio(archive, output, overwrite));
+            } else if (archive_format == superzip::ArchiveFormat::Ar) {
+                if (require_gpu || force_cpu || suzip_tuning_requested) {
+                    throw superzip::ArchiveError("AR compatibility does not support SUZIP GPU, worker, or in-flight flags");
+                }
+                print_stats(superzip::extract_ar(archive, output, overwrite));
             }
             if (defender_scan) {
                 print_defender_scan(output, false);
