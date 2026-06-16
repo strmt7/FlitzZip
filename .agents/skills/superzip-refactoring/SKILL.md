@@ -15,6 +15,10 @@ Required sequence:
    ```
    Add `-CheckContracts` only when explicitly auditing function comments; it is
    a heuristic and can flag lambdas or test macros.
+   Before committing, run the changed-code gate:
+   ```powershell
+   tools/refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
+   ```
 2. Identify the behavior that must remain unchanged.
 3. Make one focused structural change at a time.
 4. Run the narrowest affected tests first.
@@ -30,6 +34,9 @@ Rules:
 - Do not combine broad cleanup with benchmark claims unless the benchmark is
   rerun and recorded.
 - For GUI refactors, run `tools/gui_smoke.ps1 -Configuration Release`.
+- New or changed functions must stay small enough to avoid CodeQL
+  poorly-documented/large-function findings. If a changed function approaches
+  120 lines or mixes multiple responsibilities, split it before pushing.
 - For codec or performance refactors, run RAM-only CPU/GPU benchmarking at
   compression level 5 and record compression ratio:
   ```powershell

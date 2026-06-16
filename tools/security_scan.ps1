@@ -92,6 +92,40 @@ function Test-WorkflowSecurityPolicy {
 
 Test-WorkflowSecurityPolicy
 
+# Purpose: Keep external product comparison names out of repo docs and source after one-time audit use.
+# Inputs: Scans source-controlled text outside generated/build folders.
+# Outputs: Throws when an intentionally omitted comparison name is reintroduced.
+function Test-ExternalComparisonNamePolicy {
+    $forbiddenNames = @(
+        ("ban" + "dizip"),
+        ("ban" + "disoft")
+    )
+    $textExtensions = @(
+        ".md", ".txt", ".ps1", ".psm1", ".yml", ".yaml", ".json", ".cmake",
+        ".cpp", ".hpp", ".h", ".c", ".rc", ".wxs", ".xml", ".svg"
+    )
+    $policyFiles = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
+        $path = $_.FullName
+        ($textExtensions -contains $_.Extension.ToLowerInvariant()) -and
+        -not ($excludedRoots | Where-Object { $path.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) })
+    }
+    foreach ($file in $policyFiles) {
+        $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
+        if ($null -eq $text) { continue }
+        foreach ($name in $forbiddenNames) {
+            if ($text.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                throw "Forbidden external comparison name found in $($file.FullName). Keep only product-agnostic audit logic in this repository."
+            }
+        }
+    }
+}
+
+Test-ExternalComparisonNamePolicy
+
+& (Join-Path $repo "tools\verify_brand_assets.ps1")
+
+& (Join-Path $repo "tools\refactor_audit.ps1") -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
+
 # Purpose: Verify release MSI defaults remain aligned with the product installer contract.
 # Inputs: Reads CMake, build script, and release workflow text from the repository.
 # Outputs: Throws when the release MSI can drift away from the Program Files per-machine path.
@@ -144,4 +178,6 @@ function Test-InstallerScopePolicy {
 
 Test-InstallerScopePolicy
 
+# Normalize handled native-command exit codes so pwsh returns the logical scan result.
+$global:LASTEXITCODE = 0
 Write-Host "Security scan passed."

@@ -35,7 +35,6 @@ namespace superzip {
 namespace {
 
 constexpr std::uint64_t kArchiveFooterSize = 24;
-constexpr std::uint32_t kFooterMagic = 0x465A5553;  // SUZF
 constexpr std::size_t kFileStreamBufferBytes = 4U * 1024U * 1024U;
 
 struct PipelineBudget {
@@ -325,7 +324,7 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
     }
     input.seekg(static_cast<std::streamoff>(size - kArchiveFooterSize), std::ios::beg);
     const auto footer_magic = read_u32(input);
-    if (footer_magic != kFooterMagic) {
+    if (footer_magic != kSuperZipFooterMagic) {
         throw ArchiveError("archive footer is missing");
     }
     const auto version = read_u32(input);
@@ -695,8 +694,144 @@ std::uint64_t resolve_decode_window_bytes(const ExtractOptions& options, const A
     return std::max<std::uint64_t>(options.chunk_size, summary.largest_decoded_block_bytes);
 }
 
+// Purpose: Append the native SUZIP footer after the serialized index.
+// Inputs: `output` is positioned after the index and `index` contains the index offset and size.
+// Outputs: Writes the footer magic, version, index offset, and index size to `output`.
+void write_suzip_footer(std::ofstream& output, const ArchiveIndex& index) {
+    write_u32(output, kSuperZipFooterMagic);
+    write_u32(output, kSuperZipVersion);
+    write_u64(output, index.index_offset);
+    write_u64(output, index.index_size);
+}
+
+// Purpose: Drain one completed encode task into the archive output stream and entry metadata.
+// Inputs: `pending` owns encode futures, `entry` receives block descriptors, `output` receives payload bytes, `stats` records GPU use, `payload_written` and `archive_block_count` track bounded archive offsets, and `entry_name` labels diagnostics.
+// Outputs: Mutates archive payload, entry blocks, CRC, counters, and stats; throws on failed writes or block-count limits.
+void write_one_encoded_chunk(
+    std::deque<PendingEncode>& pending,
+    ArchiveEntry& entry,
+    std::ofstream& output,
+    OperationStats& stats,
+    std::uint64_t& payload_written,
+    std::uint64_t& archive_block_count,
+    std::uint32_t& crc,
+    const std::string& entry_name) {
+    auto chunk_result = pending.front().result.get();
+    pending.pop_front();
+    auto& encoded = chunk_result.encoded;
+    crc = crc32_combine(crc, chunk_result.crc32, chunk_result.uncompressed_size);
+    stats.gpu_used = stats.gpu_used || encoded.gpu_used;
+    if (encoded.blocks.size() > kMaxBlocksPerEntry - entry.blocks.size()) {
+        throw ArchiveError("file requires too many archive blocks: " + entry_name);
+    }
+    if (encoded.blocks.size() > kMaxArchiveBlocks - archive_block_count) {
+        throw ArchiveError("archive requires too many total blocks");
+    }
+    archive_block_count += encoded.blocks.size();
+    for (auto block : encoded.blocks) {
+        block.encoded_offset += payload_written;
+        entry.blocks.push_back(block);
+    }
+    if (!encoded.payload.empty()) {
+        output.write(
+            reinterpret_cast<const char*>(encoded.payload.data()),
+            static_cast<std::streamsize>(encoded.payload.size()));
+        if (!output) {
+            throw ArchiveError("failed to write archive payload");
+        }
+        payload_written = checked_add_u64(payload_written, encoded.payload.size(), "archive payload size overflows");
+    }
+}
+
+// Purpose: Queue one bounded source chunk for asynchronous native SUZIP encoding.
+// Inputs: `pending` receives the future, `chunk` owns uncompressed bytes, and `gpu_options` defines the CPU/GPU codec policy.
+// Outputs: Appends one future that returns encoded blocks, payload bytes, CRC, and decoded byte count.
+void enqueue_encode_chunk(
+    std::deque<PendingEncode>& pending,
+    std::vector<std::byte> chunk,
+    const GpuCodecOptions& gpu_options) {
+    pending.push_back(PendingEncode{
+        .result = std::async(
+            std::launch::async,
+            [chunk = std::move(chunk), gpu_options]() {
+                auto encoded = encode_chunk(chunk, gpu_options);
+                const auto chunk_crc = encoded.source_crc32_available
+                    ? encoded.source_crc32
+                    : crc32(std::span<const std::byte>(chunk.data(), chunk.size()));
+                return EncodedArchiveChunk{
+                    .encoded = std::move(encoded),
+                    .crc32 = chunk_crc,
+                    .uncompressed_size = chunk.size(),
+                };
+            }),
+    });
+}
+
+// Purpose: Compress one regular manifest file into a SUZIP entry while keeping memory bounded.
+// Inputs: `manifest_entry` identifies the source file, `options` and `budget` bound chunking and concurrency, `gpu_telemetry` receives HIP metrics, `output` receives payload bytes, `entry` receives metadata, `stats` records telemetry, `archive_block_count` tracks global limits, and `progress_callback` receives progress.
+// Outputs: Mutates `entry`, `stats`, `archive_block_count`, and archive payload; throws on read, encode, write, or resource-limit failure.
+void compress_manifest_file_entry(
+    const ManifestEntry& manifest_entry,
+    const CompressOptions& options,
+    const PipelineBudget& budget,
+    const std::shared_ptr<GpuTelemetry>& gpu_telemetry,
+    std::ofstream& output,
+    ArchiveEntry& entry,
+    OperationStats& stats,
+    std::uint64_t& archive_block_count,
+    ProgressState& progress,
+    const ProgressCallback& progress_callback) {
+    auto input_buffer = make_file_stream_buffer();
+    std::ifstream input;
+    configure_file_stream_buffer(input, input_buffer);
+    input.open(manifest_entry.source_path, std::ios::binary);
+    if (!input) {
+        throw ArchiveError("cannot open source file: " + manifest_entry.source_path.string());
+    }
+
+    const auto entry_chunks = count_stream_windows(manifest_entry.size, options.chunk_size);
+    const GpuCodecOptions gpu_options{
+        .require_gpu = options.gpu_required,
+        .force_cpu = options.force_cpu,
+        .block_size = options.block_size,
+        .worker_count = resolve_codec_worker_count(budget, entry_chunks),
+        .compression_level = options.compression_level,
+        .telemetry = gpu_telemetry,
+    };
+
+    std::uint64_t remaining = manifest_entry.size;
+    std::uint64_t payload_written = 0;
+    std::uint32_t crc = 0;
+    std::deque<PendingEncode> pending;
+    while (remaining > 0) {
+        const auto want = std::min<std::uint64_t>(remaining, options.chunk_size);
+        auto chunk = read_file_chunk(input, want);
+        if (chunk.empty() && want != 0) {
+            throw ArchiveError("source file ended unexpectedly: " + manifest_entry.source_path.string());
+        }
+        const auto chunk_bytes = chunk.size();
+        enqueue_encode_chunk(pending, std::move(chunk), gpu_options);
+        remaining -= chunk_bytes;
+        progress.add_bytes(chunk_bytes);
+        publish_progress(progress, progress_callback);
+        if (pending.size() >= budget.inflight_chunks) {
+            write_one_encoded_chunk(
+                pending, entry, output, stats, payload_written, archive_block_count, crc, manifest_entry.archive_path);
+        }
+    }
+    while (!pending.empty()) {
+        write_one_encoded_chunk(
+            pending, entry, output, stats, payload_written, archive_block_count, crc, manifest_entry.archive_path);
+    }
+    entry.payload_size = payload_written;
+    entry.crc32 = crc;
+}
+
 }  // namespace
 
+// Purpose: Create a native SUZIP archive from validated filesystem sources.
+// Inputs: `sources` are input roots, `output_archive` is replaced, `options` controls CPU/GPU codec policy and resource bounds, and `progress_callback` receives progress snapshots.
+// Outputs: Writes the archive and returns operation telemetry; throws on invalid inputs, resource limits, cancellation, codec failure, or write failure.
 OperationStats compress_suzip(
     const std::vector<std::filesystem::path>& sources,
     const std::filesystem::path& output_archive,
@@ -747,91 +882,17 @@ OperationStats compress_suzip(
             continue;
         }
 
-        auto input_buffer = make_file_stream_buffer();
-        std::ifstream input;
-        configure_file_stream_buffer(input, input_buffer);
-        input.open(manifest_entry.source_path, std::ios::binary);
-        if (!input) {
-            throw ArchiveError("cannot open source file: " + manifest_entry.source_path.string());
-        }
-
-        const auto entry_chunks = count_stream_windows(manifest_entry.size, options.chunk_size);
-        const GpuCodecOptions gpu_options{
-            .require_gpu = options.gpu_required,
-            .force_cpu = options.force_cpu,
-            .block_size = options.block_size,
-            .worker_count = resolve_codec_worker_count(budget, entry_chunks),
-            .compression_level = options.compression_level,
-            .telemetry = gpu_telemetry,
-        };
-
-        std::uint64_t remaining = manifest_entry.size;
-        std::uint64_t payload_written = 0;
-        std::uint32_t crc = 0;
-        std::deque<PendingEncode> pending;
-        auto write_one_encoded_chunk = [&]() {
-            auto chunk_result = pending.front().result.get();
-            pending.pop_front();
-            auto& encoded = chunk_result.encoded;
-            crc = crc32_combine(crc, chunk_result.crc32, chunk_result.uncompressed_size);
-            stats.gpu_used = stats.gpu_used || encoded.gpu_used;
-            if (encoded.blocks.size() > kMaxBlocksPerEntry - entry.blocks.size()) {
-                throw ArchiveError("file requires too many archive blocks: " + manifest_entry.archive_path);
-            }
-            if (encoded.blocks.size() > kMaxArchiveBlocks - archive_block_count) {
-                throw ArchiveError("archive requires too many total blocks");
-            }
-            archive_block_count += encoded.blocks.size();
-            for (auto block : encoded.blocks) {
-                block.encoded_offset += payload_written;
-                entry.blocks.push_back(block);
-            }
-            if (!encoded.payload.empty()) {
-                output.write(
-                    reinterpret_cast<const char*>(encoded.payload.data()),
-                    static_cast<std::streamsize>(encoded.payload.size()));
-                if (!output) {
-                    throw ArchiveError("failed to write archive payload");
-                }
-                payload_written = checked_add_u64(payload_written, encoded.payload.size(), "archive payload size overflows");
-            }
-        };
-        // Files are streamed in bounded chunks so compression never requires
-        // loading a whole large file into RAM.
-        while (remaining > 0) {
-            const auto want = std::min<std::uint64_t>(remaining, options.chunk_size);
-            auto chunk = read_file_chunk(input, want);
-            if (chunk.empty() && want != 0) {
-                throw ArchiveError("source file ended unexpectedly: " + manifest_entry.source_path.string());
-            }
-            const auto chunk_bytes = chunk.size();
-            pending.push_back(PendingEncode{
-                .result = std::async(
-                    std::launch::async,
-                    [chunk = std::move(chunk), gpu_options]() {
-                        auto encoded = encode_chunk(chunk, gpu_options);
-                        const auto chunk_crc = encoded.source_crc32_available
-                            ? encoded.source_crc32
-                            : crc32(std::span<const std::byte>(chunk.data(), chunk.size()));
-                        return EncodedArchiveChunk{
-                            .encoded = std::move(encoded),
-                            .crc32 = chunk_crc,
-                            .uncompressed_size = chunk.size(),
-                        };
-                    }),
-            });
-            remaining -= chunk_bytes;
-            progress.add_bytes(chunk_bytes);
-            publish_progress(progress, progress_callback);
-            if (pending.size() >= budget.inflight_chunks) {
-                write_one_encoded_chunk();
-            }
-        }
-        while (!pending.empty()) {
-            write_one_encoded_chunk();
-        }
-        entry.payload_size = payload_written;
-        entry.crc32 = crc;
+        compress_manifest_file_entry(
+            manifest_entry,
+            options,
+            budget,
+            gpu_telemetry,
+            output,
+            entry,
+            stats,
+            archive_block_count,
+            progress,
+            progress_callback);
         index.entries.push_back(std::move(entry));
         progress.finish_entry();
     }
@@ -839,10 +900,7 @@ OperationStats compress_suzip(
     index.index_offset = stream_position(output);
     write_archive_index(output, index);
     index.index_size = stream_position(output) - index.index_offset;
-    write_u32(output, kFooterMagic);
-    write_u32(output, kSuperZipVersion);
-    write_u64(output, index.index_offset);
-    write_u64(output, index.index_size);
+    write_suzip_footer(output, index);
     output.flush();
     if (!output) {
         throw ArchiveError("failed to finalize archive");

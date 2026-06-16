@@ -90,8 +90,8 @@ under `third_party/upstream/zstd/v1.5.7/` for provenance.
 
 ## LZMA SDK 26.01
 
-SuperZip vendors the minimal ANSI-C 7z decoder subset from the official LZMA
-SDK release `26.01` for extract-only 7z compatibility.
+SuperZip vendors the minimal ANSI-C decoder subset from the official LZMA SDK
+release `26.01` for extract-only 7z and LZMA-Alone `.lzma` compatibility.
 
 - Upstream: <https://www.7-zip.org/sdk.html>
 - Release archive: <https://www.7-zip.org/a/lzma2601.7z>
@@ -99,11 +99,12 @@ SDK release `26.01` for extract-only 7z compatibility.
 - License: public domain, as stated in `DOC/lzma-sdk.txt` inside the upstream
   archive
 
-SuperZip uses this SDK only for read-only `.7z` extraction. It does not ship or
-execute the SDK sample tools, does not call `7z.exe`, and does not use the SDK
-as a SUZIP codec or GPU path. The patched production copy is under
-`third_party/lzma_sdk/`, while the unmodified upstream archive and checksum are
-stored under `third_party/upstream/lzma-sdk/26.01/`.
+SuperZip uses this SDK only for read-only `.7z` extraction and single-file
+`.lzma` extraction. It does not ship or execute the SDK sample tools, does not
+call `7z.exe`, and does not use the SDK as a SUZIP codec or GPU path. The
+patched production copy is under `third_party/lzma_sdk/`, while the unmodified
+upstream archive and checksum are stored under
+`third_party/upstream/lzma-sdk/26.01/`.
 
 ## Lhasa 0.5.0
 

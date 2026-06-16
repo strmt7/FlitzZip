@@ -24,6 +24,7 @@ enum class ArchiveFormat {
     UnixCompress,
     Bzip2,
     Xz,
+    Lzma,
     Zstd,
     Cab,
     Iso,

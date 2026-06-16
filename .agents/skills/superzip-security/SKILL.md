@@ -61,6 +61,13 @@ Workflow and release hardening rules:
   hard links, alternate data streams, device entries, encrypted/offline/virtual
   files, and publish only rechecked staged regular files through SuperZip's
   verified temporary-file path.
+- LZMA support must stay extraction-only for legacy `.lzma` LZMA-Alone streams,
+  in-process, and backed by the vendored LZMA SDK 26.01 decoder. Keep it
+  single-file, reject oversized dictionaries and decoded output, and publish
+  only through SuperZip's verified temporary-file path.
 - The only acceptable open code-scanning findings are Scorecard
   `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
   `CIIBestPracticesID`.
+- `tools/security_scan.ps1` runs the changed-code refactor gate. Do not bypass
+  it with broad exclusions; split large functions and add required function
+  contracts before pushing.

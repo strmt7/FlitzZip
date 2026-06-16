@@ -13,6 +13,7 @@
 namespace superzip {
 
 constexpr std::uint32_t kSuperZipMagic = 0x505A5553;  // SUZP
+constexpr std::uint32_t kSuperZipFooterMagic = 0x465A5553;  // SUZF
 constexpr std::uint32_t kSuperZipVersion = 1;
 
 struct ArchiveEntry {

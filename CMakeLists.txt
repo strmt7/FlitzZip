@@ -230,6 +230,7 @@ add_library(superzip_core STATIC
     src/gpu/hip_device.cpp
     src/iso/iso_adapter.cpp
     src/lha/lha_adapter.cpp
+    src/lzma/lzma_adapter.cpp
     src/rpm/rpm_adapter.cpp
     src/rpm/rpm_format.cpp
     src/sevenzip/sevenzip_adapter.cpp
@@ -340,11 +341,30 @@ superzip_copy_wimlib_runtime(superzip_cli)
 install(TARGETS superzip_cli RUNTIME DESTINATION bin)
 
 if(SUPERZIP_BUILD_GUI AND WIN32)
+    set(SUPERZIP_BRAND_LOGO_SVG "${CMAKE_CURRENT_SOURCE_DIR}/resources/brand/superzip-logo.svg")
+    set(SUPERZIP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    set(SUPERZIP_BRAND_LOGO_HEADER "${SUPERZIP_GENERATED_DIR}/superzip_brand_logo.hpp")
+    add_custom_command(
+        OUTPUT "${SUPERZIP_BRAND_LOGO_HEADER}"
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_brand_logo_header.ps1"
+            -SvgPath "${SUPERZIP_BRAND_LOGO_SVG}"
+            -OutputPath "${SUPERZIP_BRAND_LOGO_HEADER}"
+        DEPENDS
+            "${SUPERZIP_BRAND_LOGO_SVG}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_brand_logo_header.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/superzip_brand_logo.psm1"
+        VERBATIM
+    )
+    add_custom_target(superzip_brand_logo_header DEPENDS "${SUPERZIP_BRAND_LOGO_HEADER}")
+
     add_executable(SuperZip WIN32
         src/app/main.cpp
         src/app/main_window.cpp
         src/app/SuperZip.rc
     )
+    add_dependencies(SuperZip superzip_brand_logo_header)
+    target_include_directories(SuperZip PRIVATE "${SUPERZIP_GENERATED_DIR}")
     target_link_libraries(SuperZip PRIVATE superzip_core comdlg32 shell32 shlwapi uxtheme dwmapi ole32 gdiplus pdh psapi)
     target_compile_definitions(SuperZip PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
     superzip_copy_zstd_runtime(SuperZip)
@@ -373,6 +393,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_iso_compat.cpp
         tests/cpp/test_lha_compat.cpp
+        tests/cpp/test_lzma_compat.cpp
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_rpm_compat.cpp
         tests/cpp/test_sevenzip_compat.cpp
@@ -452,6 +473,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_libraries(superzip_xar_fuzzer PRIVATE superzip_core)
     target_compile_definitions(superzip_xar_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_lzma_fuzzer
+        fuzz/lzma_fuzzer.cpp
+    )
+    target_link_libraries(superzip_lzma_fuzzer PRIVATE superzip_core)
+    target_compile_definitions(superzip_lzma_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
     endif()
@@ -463,6 +490,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_sevenzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_lha_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_xar_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_lzma_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
@@ -471,6 +499,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_options(superzip_sevenzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_lha_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_xar_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_lzma_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 install(FILES

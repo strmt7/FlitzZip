@@ -20,6 +20,22 @@ left navigation, queue/work surface, persistent GPU status, Security Review,
 History, AMD GPU, and Preferences pages. It keeps rendering native rather than
 using bitmap UI assets, so the app remains crisp at 4K+ and high DPI.
 
+## Brand Source Of Truth
+
+`resources/brand/superzip-logo.svg` is the single canonical SuperZip logo
+source. The app icon and in-app stacked mark must be generated from the SVG
+geometry instead of being redrawn independently:
+
+- `tools/generate_app_icon.ps1` renders `resources/app/superzip.ico` from the
+  canonical SVG.
+- CMake runs `tools/generate_brand_logo_header.ps1` to generate the Win32
+  vector-geometry header used by the app renderer.
+- `tools/verify_brand_assets.ps1` checks that the SVG has the canonical mark,
+  the icon is current, and the app renderer depends on generated geometry.
+
+Do not add new logo bitmaps or alternate hand-drawn marks. Any visual change to
+the mark starts in the SVG and is regenerated through the tooling.
+
 Iteration 4 plus the 2026-06-15 polish reference are the active acceptance
 references for GUI work. Future changes must preserve the compact enterprise
 shell, brand-only top bar, icon rail, page-specific forms/tables, Queue-local

@@ -1,8 +1,11 @@
 #include "core/archive_format.hpp"
 
+#include "core/archive_index.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <exception>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -11,8 +14,9 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
+constexpr std::uint64_t kSuperZipFooterBytes = 24U;
 
-constexpr std::array<ArchiveFormatInfo, 27> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 28> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -28,6 +32,7 @@ constexpr std::array<ArchiveFormatInfo, 27> kFormatRegistry{{
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, true, false, true},
+    {ArchiveFormat::Lzma, "lzma", "LZMA stream (.lzma)", ".lzma", false, true, false, true},
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst,.zstd", true, true, false, true},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
@@ -89,6 +94,42 @@ std::vector<unsigned char> read_probe_bytes(const std::filesystem::path& path) {
     input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     bytes.resize(static_cast<std::size_t>(std::max<std::streamsize>(0, input.gcount())));
     return bytes;
+}
+
+// Purpose: Probe the native SUZIP footer and index magic without depending on the `.suzip` extension.
+// Inputs: `path` is the candidate archive file.
+// Outputs: Returns true only when the footer, version, index bounds, and index magic match the native format.
+bool has_suzip_footer_signature(const std::filesystem::path& path) {
+    try {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            return false;
+        }
+        input.seekg(0, std::ios::end);
+        const auto end_position = input.tellg();
+        if (end_position == std::ifstream::pos_type(-1) ||
+            static_cast<std::uint64_t>(end_position) < kSuperZipFooterBytes) {
+            return false;
+        }
+        const auto file_size = static_cast<std::uint64_t>(end_position);
+        input.seekg(-static_cast<std::streamoff>(kSuperZipFooterBytes), std::ios::end);
+        if (read_u32(input) != kSuperZipFooterMagic || read_u32(input) != kSuperZipVersion) {
+            return false;
+        }
+        const auto index_offset = read_u64(input);
+        const auto index_size = read_u64(input);
+        if (index_size < 12U || index_size > kMaxArchiveIndexBytes || index_offset > file_size) {
+            return false;
+        }
+        if (index_size > file_size - kSuperZipFooterBytes ||
+            index_offset > file_size - kSuperZipFooterBytes - index_size) {
+            return false;
+        }
+        input.seekg(static_cast<std::streamoff>(index_offset), std::ios::beg);
+        return read_u32(input) == kSuperZipMagic;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 // Purpose: Match a fixed byte signature at the start of a probe buffer.
@@ -230,6 +271,9 @@ ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
     if (ends_with_lower(name, ".xz")) {
         return ArchiveFormat::Xz;
     }
+    if (ends_with_lower(name, ".lzma")) {
+        return ArchiveFormat::Lzma;
+    }
     if (ends_with_lower(name, ".zst") || ends_with_lower(name, ".zstd")) {
         return ArchiveFormat::Zstd;
     }
@@ -312,6 +356,9 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
     return it->format;
 }
 
+// Purpose: Detect a real archive format from path hints, leading magic, and native SUZIP footer/index magic.
+// Inputs: `archive_path` is the candidate file to classify without mutating it.
+// Outputs: Returns the detected format or `ArchiveFormat::Unknown` when no supported signature or extension matches.
 ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     if (has_excluded_zip_container_extension(archive_path)) {
         return ArchiveFormat::Unknown;
@@ -326,6 +373,9 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     const auto by_magic = detect_by_magic(read_probe_bytes(archive_path), archive_path);
     if (by_magic != ArchiveFormat::Unknown) {
         return by_magic;
+    }
+    if (has_suzip_footer_signature(archive_path)) {
+        return ArchiveFormat::SuperZip;
     }
     return by_extension;
 }

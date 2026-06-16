@@ -35,6 +35,20 @@ Automatic audit-triggered refactoring must not silently land broad changes.
 The automation produces findings and a plan; code edits still need tests and a
 normal reviewable commit.
 
+Changed code is held to a stricter gate than the historical backlog. The
+repository still contains known large legacy surfaces, especially the native
+Win32 UI shell, so the full audit remains a planning tool. New or modified
+functions must pass the changed-code gate before push:
+
+```powershell
+tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
+```
+
+This gate is intentionally wired into `tools\security_scan.ps1` so large or
+poorly documented functions are caught locally before CodeQL reports them after
+push. Do not bypass it with exclusions; split the changed function or add the
+required function contract.
+
 ## Workflow
 
 ```mermaid
@@ -74,6 +88,7 @@ For source refactors:
 ```powershell
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
+tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
 tools\security_scan.ps1
 ```
 

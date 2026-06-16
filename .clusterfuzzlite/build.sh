@@ -165,6 +165,16 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
   -o "$OUT/superzip_sevenzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+  fuzz/lzma_fuzzer.cpp \
+  src/lzma/lzma_adapter.cpp \
+  src/core/file_publish.cpp \
+  src/core/path_safety.cpp \
+  src/core/progress.cpp \
+  "${LZMA_SDK_OBJECTS[@]}" \
+  -o "$OUT/superzip_lzma_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
 build_lhasa_objects "$OUT/lhasa-objects" > "$OUT/lhasa-objects.list"
 mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
@@ -196,6 +206,7 @@ cp fuzz/superzip.dict "$OUT/superzip_iso_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_cab_header_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_rpm_header_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_sevenzip_fuzzer.dict"
+cp fuzz/superzip.dict "$OUT/superzip_lzma_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_lha_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_xar_fuzzer.dict"
 cp fuzz/*.options "$OUT/"
@@ -207,6 +218,7 @@ for target in \
   superzip_cab_header_fuzzer \
   superzip_rpm_header_fuzzer \
   superzip_sevenzip_fuzzer \
+  superzip_lzma_fuzzer \
   superzip_lha_fuzzer \
   superzip_xar_fuzzer
 do

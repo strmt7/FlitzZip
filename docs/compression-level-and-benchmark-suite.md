@@ -8,9 +8,7 @@ rules, numerical benchmark score, and autotuning behavior.
 Checked on 2026-06-15:
 
 - zlib manual: https://zlib.net/manual.html
-- Bandizip command-line parameters: https://www.bandisoft.com/bandizip/help/parameter/
 - 7-Zip command-line method switch manual mirror: https://7-zip.opensource.jp/chm/cmdline/switches/method.htm
-- Local Bandizip CLI help on the development host: `bz.exe -?`
 
 The common pattern is a 0-9 compression scale where 0 means store/no
 compression, 1 means fastest, 5 is a normal/default balance in several tools,

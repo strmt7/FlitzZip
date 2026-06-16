@@ -5,6 +5,9 @@
 SuperZip is a Windows x64 archive application built around AMD HIP acceleration.
 Its native `.suzip` format is the GPU-first path. Standard `.zip` support exists
 for compatibility and is handled by the vendored miniz 3.1.1 codebase.
+`.suzip` is a native SuperZip format, not a renamed ZIP file: it has its own
+footer/index magic, versioned metadata, block descriptors, AMD HIP boundary, and
+resource-limited verification path. See `docs/native-suzip-format.md`.
 Uncompressed `.tar` support is implemented by a native bounded adapter with the
 same extraction path-safety checks. `.tar.gz`/`.tgz` archives are implemented
 with a two-pass streaming TAR reader over miniz raw-deflate Gzip, so extraction
@@ -16,9 +19,10 @@ Embedded. `.tar.zst`/`.tzst` archives are implemented with the same TAR stream
 adapter over the bundled app-local libzstd 1.5.7 runtime. Single-file `.gz` streams are implemented
 through miniz raw deflate with CRC32/ISIZE verification, single-file `.bz2`
 streams are implemented through libbzip2, single-file `.xz` streams are
-extracted through XZ Embedded, and single-file `.zst`/`.zstd` streams are
-implemented through the app-local libzstd DLL with frame checksum creation and bounded-window
-extraction. Portable `.cpio` archives are
+extracted through XZ Embedded, single-file legacy `.lzma` streams are extracted
+through the vendored LZMA SDK with bounded decoder allocation, and single-file
+`.zst`/`.zstd` streams are implemented through the app-local libzstd DLL with
+frame checksum creation and bounded-window extraction. Portable `.cpio` archives are
 implemented with a native SVR4 new ASCII parser/writer for regular files and
 directories. Unix `.ar` archives are implemented with a native parser/writer for
 regular-file members. Debian `.deb` package files are extracted as native
@@ -161,6 +165,7 @@ build/Release/superzip_cli.exe extract --output restored file.txt.gz
 build/Release/superzip_cli.exe compress --format bz2 --output file.txt.bz2 file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.bz2
 build/Release/superzip_cli.exe extract --output restored file.txt.xz
+build/Release/superzip_cli.exe extract --output restored file.txt.lzma
 build/Release/superzip_cli.exe compress --format zst --output file.txt.zst file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.zst
 build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
@@ -189,7 +194,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, Unix Compress, CAB, 7z, LHA/LZH, WIM, XAR, CPIO, AR, DEB, ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
+ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, LZMA, Unix Compress, CAB, 7z, LHA/LZH, WIM, XAR, CPIO, AR, DEB, ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP
@@ -224,7 +229,7 @@ never bound directly in workflow YAML.
 Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
 builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
 path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
-decode/metadata handling, LHA/LZH decode/metadata handling, and XAR
+decode/metadata handling, LZMA stream handling, LHA/LZH decode/metadata handling, and XAR
 TOC/payload metadata handling with address
 and undefined-behavior sanitizers:
 

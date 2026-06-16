@@ -1,6 +1,7 @@
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
+#include "core/archive_index.hpp"
 
 #include <array>
 #include <fstream>
@@ -14,6 +15,22 @@ namespace {
 void write_fixture(const std::filesystem::path& path, std::span<const unsigned char> bytes) {
     std::ofstream output(path, std::ios::binary);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+// Purpose: Write a minimal native archive shell for format-detection tests.
+// Inputs: `path` is the fixture location.
+// Outputs: Creates a zero-entry SUZIP-shaped file with valid index/footer magic.
+void write_minimal_suzip_fixture(const std::filesystem::path& path) {
+    std::ofstream output(path, std::ios::binary);
+    const auto index_offset = static_cast<std::uint64_t>(output.tellp());
+    superzip::write_u32(output, superzip::kSuperZipMagic);
+    superzip::write_u32(output, superzip::kSuperZipVersion);
+    superzip::write_u32(output, 0U);
+    const auto index_size = static_cast<std::uint64_t>(output.tellp()) - index_offset;
+    superzip::write_u32(output, superzip::kSuperZipFooterMagic);
+    superzip::write_u32(output, superzip::kSuperZipVersion);
+    superzip::write_u64(output, index_offset);
+    superzip::write_u64(output, index_size);
 }
 
 }  // namespace
@@ -31,6 +48,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tbz"), superzip::ArchiveFormat::TarBzip2);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.xz"), superzip::ArchiveFormat::TarXz);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.txz"), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzma"), superzip::ArchiveFormat::Lzma);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.Z"), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cab"), superzip::ArchiveFormat::Cab);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.iso"), superzip::ArchiveFormat::Iso);
@@ -57,6 +75,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "rpm.bin", std::array<unsigned char, 4>{0xED, 0xAB, 0xEE, 0xDB});
     write_fixture(root / "wim.bin", std::array<unsigned char, 8>{'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00});
     write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
+    write_minimal_suzip_fixture(root / "renamed-native.bin");
 
     REQUIRE_EQ(superzip::detect_archive_format(root / "zip.bin"), superzip::ArchiveFormat::Zip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "seven.bin"), superzip::ArchiveFormat::SevenZip);
@@ -71,6 +90,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
     REQUIRE_EQ(superzip::detect_archive_format(root / "wim.bin"), superzip::ArchiveFormat::Wim);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native.bin"), superzip::ArchiveFormat::SuperZip);
 
     write_fixture(root / "package.deb", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
     REQUIRE_EQ(superzip::detect_archive_format(root / "package.deb"), superzip::ArchiveFormat::Deb);
@@ -92,6 +112,7 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("tzst").value(), superzip::ArchiveFormat::TarZstd);
     REQUIRE_EQ(superzip::parse_archive_format_token("gzip").value(), superzip::ArchiveFormat::Gzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("bzip2").value(), superzip::ArchiveFormat::Bzip2);
+    REQUIRE_EQ(superzip::parse_archive_format_token("lzma").value(), superzip::ArchiveFormat::Lzma);
     REQUIRE_EQ(superzip::parse_archive_format_token("zstd").value(), superzip::ArchiveFormat::Zstd);
     REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);

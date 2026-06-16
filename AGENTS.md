@@ -19,7 +19,7 @@ References checked on 2026-06-16:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.01 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.5.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with SuperZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.lzma` extraction remains single-file compatibility-only through the vendored LZMA SDK 26.01 decoder, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.01 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.5.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with SuperZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -48,6 +48,13 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/archive-format-support.md`. Do not add ZIP-container aliases as
   user-facing archive formats unless a maintainer explicitly requests package
   inspection.
+- Before changing the native `.suzip` format, extension handling, or format
+  detection, read `docs/native-suzip-format.md`. `.suzip` is a native versioned
+  archive format with SUZIP footer/index magic and AMD HIP block semantics, not
+  a cosmetic ZIP extension.
+- Before adding product behavior learned from a mature archive tool, read
+  `docs/product-behavior-audit.md`. Capture logic only; do not record external
+  product names or copy another product's UI/help text into this repository.
 - Before performing repo-wide refactoring or automatic cleanup, read
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
@@ -85,6 +92,7 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
 - `src/iso/`: Read-only basic ISO 9660 compatibility adapter with two-pass path validation and verified file publication.
 - `src/lha/`: Read-only LHA/LZH adapter using the vendored Lhasa 0.5.0 decoder with two-pass validation and verified file publication.
+- `src/lzma/`: Read-only LZMA-Alone `.lzma` single-file adapter using the vendored LZMA SDK 26.01 decoder with bounded allocation and verified file publication.
 - `src/rpm/`: Read-only RPM package adapter that validates RPM headers, decodes supported CPIO payload compression, and delegates extracted package paths to the CPIO adapter.
 - `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.01 decoder with two-pass validation and verified file publication.
 - `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
@@ -179,6 +187,10 @@ tools\package.ps1 -Configuration Release
 - Treat refactoring as behavior-preserving work. Use small, reviewable steps,
   measure before/after when performance is involved, and never combine broad
   cleanup with functional changes unless the coupling is documented.
+- New or changed functions must pass
+  `tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings`.
+  Split large functions before pushing; do not wait for CodeQL to report
+  poorly documented or oversized functions.
 
 ## Required Function Documentation
 
@@ -307,6 +319,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   The application icon must use the same SuperZip stacked-logo mark as the
   in-app brand mark, and navigation icons must have consistent optical size,
   stroke weight, and alignment.
+- `resources/brand/superzip-logo.svg` is the single source of truth for the
+  SuperZip logo. Regenerate `resources/app/superzip.ico` with
+  `tools\generate_app_icon.ps1`, let CMake generate the Win32 logo geometry
+  header, and keep `tools\verify_brand_assets.ps1` passing. Do not hand-redraw
+  divergent logo marks in code or docs.
 - Visible controls must share drawing and hit-test geometry. After drag/drop,
   Queue, Compress, Extract, Security, History, GPU, Preferences, and About page
   controls must remain clickable; fix the shared geometry instead of adding

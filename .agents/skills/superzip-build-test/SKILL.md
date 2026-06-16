@@ -64,6 +64,10 @@ Rules:
   `resources/design/superzip-ui-imagegen-polish-20260615.png`. Do not simplify
   or remove the brand-only top bar, Queue-local Add files/Add folder/Clear
   actions, left navigation, bottom GPU status strip, or dedicated settings pages.
+- Brand/logo changes must start from `resources/brand/superzip-logo.svg`.
+  Regenerate `resources/app/superzip.ico`, rely on the generated Win32 logo
+  geometry header, and run `tools/verify_brand_assets.ps1`. Do not add alternate
+  hand-drawn logo variants.
 - LHA/LZH compatibility changes must exercise successful nested extraction,
   overwrite refusal, truncated/corrupt payload rejection, absolute-path
   rejection, parent-directory rejection, and symbolic-link rejection. Keep the
@@ -75,3 +79,8 @@ Rules:
   in-process through the bundled wimlib 1.14.5 DLL, preserve the original
   upstream package/checksums under `third_party/upstream/wimlib/`, and do not
   call `wimlib-imagex.exe`, DISM, PowerShell, Explorer, or host WIM tools.
+- LZMA compatibility changes must exercise successful `.lzma` single-file
+  extraction, overwrite refusal, truncated/corrupt stream rejection, oversized
+  dictionary rejection, and fuzz coverage. Keep extraction in-process through
+  the vendored LZMA SDK 26.01 decoder and do not call `7z.exe`, PowerShell, or
+  host archive tools.
