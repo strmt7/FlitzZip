@@ -83,23 +83,38 @@ function Test-GitHubCliReady {
 }
 
 # Purpose: Fetch GitHub workflow runs for a commit.
-# Inputs: `Repository` is owner/repo and `Commit` is a commit SHA.
-# Outputs: Returns parsed run objects from `gh run list`.
+# Inputs: `Repository` is owner/repo and `Commit` is a full commit SHA.
+# Outputs: Returns normalized run objects from the GitHub Actions API.
 function Get-WorkflowRunForCommit {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
         [Parameter(Mandatory = $true)][string]$Commit
     )
 
-    $json = & gh run list --repo $Repository --commit $Commit --limit 50 --json databaseId,workflowName,name,status,conclusion,url,updatedAt 2>&1
+    $json = & gh api -H "Accept: application/vnd.github+json" "/repos/$Repository/actions/runs?head_sha=$Commit&per_page=100" 2>&1
     if ($LASTEXITCODE -ne 0) {
         $detail = (@($json) | Select-Object -First 3) -join " "
-        throw "gh run list failed for $Repository@$Commit. Stop instead of polling stale/missing status. gh output: $detail"
+        throw "GitHub Actions run lookup failed for $Repository@$Commit. Stop instead of polling stale/missing status. gh output: $detail"
     }
     if ([string]::IsNullOrWhiteSpace($json)) {
         return @()
     }
-    return @($json | ConvertFrom-Json)
+    $response = $json | ConvertFrom-Json
+    if ($null -eq $response.workflow_runs) {
+        return @()
+    }
+    $normalizedRuns = foreach ($run in $response.workflow_runs) {
+            [pscustomobject][ordered]@{
+                databaseId = $run.id
+                workflowName = $run.name
+                name = $run.display_title
+                status = $run.status
+                conclusion = $run.conclusion
+                url = $run.html_url
+                updatedAt = $run.updated_at
+            }
+        }
+    return @($normalizedRuns)
 }
 
 # Purpose: Return whether all selected workflow runs have completed successfully.

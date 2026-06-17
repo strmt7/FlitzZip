@@ -111,11 +111,13 @@ GitHub Actions waiting must be relevant and time-aware:
   explicit critical override.
 
 `tools\wait_relevant_workflows.ps1` performs a GitHub CLI preflight before it
-polls and resolves local refs or short SHAs to a full commit SHA. If `gh` is not
-authenticated, lacks repository access, or `gh run list` fails, the script must
-throw immediately. Agents must not keep polling a status line where every
-selected workflow is reported as missing because that usually means the wrong
-commit/ref or an authentication failure. If all selected workflows remain
+polls, resolves local refs or short SHAs to a full commit SHA, and queries the
+Actions REST API by `head_sha`. Do not replace that with `gh run list --commit`;
+that filter has returned empty results for valid SuperZip commits. If `gh` is
+not authenticated, lacks repository access, or the Actions API lookup fails, the
+script must throw immediately. Agents must not keep polling a status line where
+every selected workflow is reported as missing because that usually means the
+wrong commit/ref or an authentication failure. If all selected workflows remain
 missing past the script's missing-workflow grace window, fix the pushed commit
 or workflow selection before retrying.
 
