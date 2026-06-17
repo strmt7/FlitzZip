@@ -26,7 +26,7 @@ enum class Page {
     Security,
     History,
     Gpu,
-    Preferences,
+    Settings,
     About,
 };
 
@@ -48,9 +48,15 @@ enum class DropdownId {
     HistoryOperation,
     HistoryStatus,
     GpuUpdateSpeed,
-    PreferencesMemoryPolicy,
-    PreferencesLogLevel,
-    PreferencesLogRetention,
+    SettingsMemoryPolicy,
+    SettingsLogLevel,
+    SettingsLogRetention,
+};
+
+enum class LogSeverity {
+    Information,
+    Warning,
+    Debug,
 };
 
 struct PerformanceMonitorSample {
@@ -75,11 +81,40 @@ struct HistoryEntry {
     bool success = true;
 };
 
+struct LogEntry {
+    LogSeverity severity = LogSeverity::Information;
+    std::string message;
+};
+
+struct AppSettings {
+    int compression_format_index = 0;
+    int compression_level_index = 2;
+    int compression_block_size_index = 1;
+    int memory_policy_index = 0;
+    int log_level_index = 0;
+    int log_retention_index = 0;
+    int performance_update_seconds = 1;
+    bool open_destination_after_operation = false;
+    bool confirm_before_deleting = true;
+    bool show_operation_summary = true;
+    bool solid_archive = true;
+    bool store_timestamps = true;
+    bool delete_after_compression = false;
+    bool verify_metadata_before_extract = true;
+    bool open_destination_after_extract = false;
+    bool gpu_required = true;
+    bool overwrite = false;
+    bool integrity_hash_opt_in = false;
+    bool defender_scan_opt_in = false;
+    bool verify_after_write_opt_in = false;
+};
+
 struct UiState {
     Page page = Page::Queue;
     std::vector<std::filesystem::path> queued_paths;
     std::vector<bool> queued_enabled;
     std::vector<HistoryEntry> history;
+    std::vector<LogEntry> logs;
     std::string status = "Ready";
     std::string gpu_status;
     std::string gpu_runtime_name;
@@ -189,7 +224,7 @@ class MainWindow {
         RECT start{};
     };
 
-    struct PreferencesLayout {
+    struct SettingsLayout {
         RECT area{};
         RECT general{};
         RECT security{};
@@ -249,10 +284,35 @@ class MainWindow {
     // Outputs: Updates queue selection, releases the HDROP handle, and returns the handled Win32 result.
     LRESULT handle_drop_files(WPARAM wparam);
 
+    // Purpose: Allow shell file-drop messages through UIPI for elevated windows.
+    // Inputs: None; applies only to the main HWND and only when the process is elevated.
+    // Outputs: Returns true when no extra filter is needed or the narrow filter was applied.
+    [[nodiscard]] bool enable_elevated_drag_drop_messages() const;
+
     // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
     // Inputs: None.
     // Outputs: Arms timers and returns the handled Win32 result.
     LRESULT handle_create();
+
+    // Purpose: Load persisted per-user settings and publish the current applied snapshot.
+    // Inputs: None; reads the current user's Local AppData settings file when present.
+    // Outputs: Applies validated settings, creates defaults when needed, and logs nonfatal parse/write failures.
+    void initialize_settings();
+
+    // Purpose: Save the current Settings draft as the applied snapshot.
+    // Inputs: None; reads Settings fields from synchronized UI state.
+    // Outputs: Writes the per-user config atomically and updates the applied snapshot.
+    void apply_settings();
+
+    // Purpose: Revert Settings page controls to the last applied snapshot.
+    // Inputs: None.
+    // Outputs: Mutates Settings-owned UI fields and re-arms dependent timers.
+    void revert_settings_draft();
+
+    // Purpose: Reset Settings draft and applied snapshot to safe defaults.
+    // Inputs: None.
+    // Outputs: Updates UI, applied snapshot, and the persisted config file.
+    void reset_settings_to_defaults();
 
     // Purpose: Dispatch timers owned by the main window.
     // Inputs: `wparam` identifies the timer from `WM_TIMER`.
@@ -299,6 +359,11 @@ class MainWindow {
     // Outputs: Returns DPI-scaled Queue page control rectangles.
     [[nodiscard]] QueueLayout queue_layout(const RECT& rect) const;
 
+    // Purpose: Return the shared bottom-right primary action button rectangle for operation pages.
+    // Inputs: `area` is the DPI-scaled page content area.
+    // Outputs: Returns a 110x36 design-pixel command rectangle aligned with Settings Apply.
+    [[nodiscard]] RECT primary_action_rect(const RECT& area) const;
+
     // Purpose: Compute Compress page rectangles shared by rendering and hit testing.
     // Inputs: `rect` is the content area in physical pixels.
     // Outputs: Returns DPI-scaled Compress page control rectangles.
@@ -309,10 +374,10 @@ class MainWindow {
     // Outputs: Returns DPI-scaled Extract page control rectangles.
     [[nodiscard]] ExtractLayout extract_layout(const RECT& rect) const;
 
-    // Purpose: Compute Preferences page rectangles shared by rendering and hit testing.
+    // Purpose: Compute Settings page rectangles shared by rendering and hit testing.
     // Inputs: `rect` is the content area in physical pixels.
-    // Outputs: Returns DPI-scaled Preferences page control rectangles.
-    [[nodiscard]] PreferencesLayout preferences_layout(const RECT& rect) const;
+    // Outputs: Returns DPI-scaled Settings page control rectangles.
+    [[nodiscard]] SettingsLayout settings_layout(const RECT& rect) const;
 
     // Purpose: Draw the queue page with the file/folder selection table only.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
@@ -340,12 +405,12 @@ class MainWindow {
     // Outputs: Renders filters, history rows, and selected-operation details.
     void draw_history_page(HDC dc, const RECT& rect, const UiState& state);
 
-    // Purpose: Draw the AMD GPU diagnostics page.
+    // Purpose: Draw the System page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains backend status.
     // Outputs: Renders HIP status, device metadata, acceleration mode, and monitoring panels.
     void draw_gpu_page(HDC dc, const RECT& rect, const UiState& state);
 
-    // Purpose: Draw the live performance monitor section on the GPU diagnostics page.
+    // Purpose: Draw the live performance monitor section on the System page.
     // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `sample` is the latest live counter snapshot.
     // Outputs: Renders CPU, memory, process I/O, and GPU/VRAM cards with bounded bars.
     void draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state);
@@ -369,10 +434,10 @@ class MainWindow {
     // Outputs: Renders only while the requested operation is active.
     void draw_operation_progress_bar(HDC dc, const RECT& rect, const UiState& state, OperationKind operation);
 
-    // Purpose: Draw the preferences page.
+    // Purpose: Draw the Settings page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
     // Outputs: Renders general, security, performance, and logging settings.
-    void draw_preferences_page(HDC dc, const RECT& rect, const UiState& state);
+    void draw_settings_page(HDC dc, const RECT& rect, const UiState& state);
 
     // Purpose: Draw the about page.
     // Inputs: `dc` is the target and `rect` is the content area.
@@ -509,10 +574,10 @@ class MainWindow {
     // Outputs: Returns true when the GPU refresh command consumed the click.
     bool handle_gpu_click(const RECT& content, int x, int y);
 
-    // Purpose: Handle Preferences page hit-testing and commands.
+    // Purpose: Handle Settings page hit-testing and commands.
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
-    // Outputs: Returns true when a preference control consumed the click.
-    bool handle_preferences_click(const RECT& content, int x, int y);
+    // Outputs: Returns true when a Settings control consumed the click.
+    bool handle_settings_click(const RECT& content, int x, int y);
 
     // Purpose: Handle a click while a dropdown menu is expanded.
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
@@ -574,11 +639,6 @@ class MainWindow {
     // Outputs: Queues a repaint with the next compression level.
     void cycle_compression_level();
 
-    // Purpose: Restore safe default visible preferences.
-    // Inputs: None.
-    // Outputs: Resets opt-in settings, destination, compression level, and selection state.
-    void restore_defaults();
-
     // Purpose: Start a background SuperZip compression job from queued paths.
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
@@ -593,6 +653,11 @@ class MainWindow {
     // Inputs: `job` is the work closure and `label` is the status text shown while it runs.
     // Outputs: Updates status/history/progress and queues repaints; catches worker exceptions into UI state.
     void run_job(std::function<void()> job, std::string label);
+
+    // Purpose: Append one filtered current-session log entry.
+    // Inputs: `severity` is the visible category and `message` is safe session text.
+    // Outputs: Adds a bounded in-memory row and queues repaint.
+    void append_log_entry(LogSeverity severity, std::string message);
 
     // Purpose: Add an operation result line to the in-memory session history.
     // Inputs: `line` is a display string and should not include secrets.
@@ -619,7 +684,7 @@ class MainWindow {
     // Outputs: Closes PDH handles and clears monitor state.
     void shutdown_performance_monitor();
 
-    // Purpose: Collect one live performance sample for the GPU diagnostics page.
+    // Purpose: Collect one live performance sample for the System page.
     // Inputs: None; reads process, memory, I/O, optional PDH, and throttled HIP memory state.
     // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
     void update_performance_sample();
@@ -743,6 +808,7 @@ class MainWindow {
     std::uint64_t cached_vram_free_bytes_ = 0;
     PDH_HQUERY gpu_query_ = nullptr;
     PDH_HCOUNTER gpu_counter_ = nullptr;
+    AppSettings applied_settings_{};
 };
 
 }  // namespace superzip::app

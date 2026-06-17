@@ -44,7 +44,7 @@ uses the local `MpCmdRun.exe` command with path scanning and
 `-DisableRemediation`, so SuperZip can ask Defender for a scan result without
 silently deleting or quarantining user files from inside the app.
 
-This setting must remain opt-in. It can be surfaced in Preferences for:
+This setting must remain opt-in. It can be surfaced in Settings for:
 
 - Scan archives after creation.
 - Scan extracted files after restore.
@@ -77,7 +77,7 @@ build/Release/superzip_cli.exe extract --defender-scan --output restored archive
 build/Release/superzip_cli.exe extract --defender-scan --output restored archive.tar
 ```
 
-The GUI Preferences page must keep SHA-256 hashing disabled by default and label
+The GUI Settings page must keep SHA-256 hashing disabled by default and label
 it as an extra integrity check, not encryption or malware scanning.
 
 The CLI and GUI both keep Defender scans opt-in. When Defender actively scans a

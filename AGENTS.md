@@ -468,18 +468,37 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   header, and keep `tools\verify_brand_assets.ps1` passing. Do not hand-redraw
   divergent logo marks in code or docs.
 - Visible controls must share drawing and hit-test geometry. After drag/drop,
-  Queue, Compress, Extract, Security, History, GPU, Preferences, and About page
+  Queue, Compress, Extract, Security, History, System, Settings, and About page
   controls must remain clickable; fix the shared geometry instead of adding
   page-specific click offsets that can drift from rendering.
+- Elevated Windows drag/drop is a supported shell workflow. Keep `WM_DROPFILES`
+  and the drag-query message narrowly allowed through UIPI for elevated
+  SuperZip windows, keep the HDROP handler exception-safe, and do not replace
+  this with a broad UIAccess manifest or unrelated privilege workaround.
 - Never add or redesign a GUI feature by breaking an existing interaction.
   File-picker queueing, folder-picker queueing, drag/drop queueing, row
   selection, destination selection, dropdowns, toggles, tab changes, and primary
   actions are regression boundaries and must keep working unless a maintainer
   explicitly removes that capability.
+- User-facing archive-format labels must come from
+  `archive_format_info(...).display_name`. Do not duplicate GUI archive-format
+  label arrays, and do not add visible format labels with invented qualifiers
+  such as compatibility, single-file, encoded-file, stream, or file when the
+  selected input may be a folder.
+- The compression level dropdown shows names only: `Fastest`, `Fast`,
+  `Balanced`, `Strong`, and `Maximum`. Do not append numeric parentheticals to
+  GUI labels, and do not reintroduce plural compression-setting wording in GUI
+  source.
 - Dropdown arrows must be vertically centered in their value boxes and use one
   consistent shape and inset throughout the app.
 - Toggle rows must rely on the switch state itself. Do not add redundant
   `Enabled` or `Disabled` text labels next to settings toggles.
+- The Settings page uses a draft/apply model. Changing a Settings control
+  affects the current draft only; leaving Settings without `Apply` must restore
+  the last applied snapshot. `Apply` must atomically persist the validated
+  per-user configuration to `%LOCALAPPDATA%\SuperZip\settings.json`; GUI smoke
+  must redirect this path with `SUPERZIP_GUI_SMOKE_SETTINGS_PATH`, assert the
+  persisted values, and verify that an unapplied draft is not persisted.
 - Check all pages, not only the main queue page, when making visual changes.
 - Treat `resources/design/superzip-ui-iteration-4.png` as the current visual
   acceptance reference. Do not simplify the compact enterprise shell, command
@@ -489,7 +508,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   -Configuration Release`. The smoke must open every tab, click every visible
   button, toggle, dropdown/select field, and main action path at least once,
   exercise Add files, Add folder, Clear, drag/drop, destination selection,
-  Queue/Compress/Extract/Security/GPU/History/Settings actions, and close
+  Queue/Compress/Extract/Security/System/History/Settings actions, and close
   without leaving modal dialogs or windows open. The smoke must assert that
   queued items are visibly rendered after file picker, folder picker, and native
   drag/drop injection; clicking a control without verifying its effect is not

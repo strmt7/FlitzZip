@@ -90,10 +90,23 @@ Rules:
 - For GUI changes, run `tools/gui_smoke.ps1 -Configuration Release`. It must
   open every tab and click/use every visible button, toggle, dropdown/select
   field, and main action path at least once, including Add files, Add folder,
-  Clear, drag/drop, destination selection, Queue/Compress/Extract/Security/GPU/
+  Clear, drag/drop, destination selection, Queue/Compress/Extract/Security/System/
   History/Settings actions, then inspect every generated page screenshot. It
   must visibly verify Add files, Add folder, native drag/drop, and every
   dropdown menu instead of only clicking controls.
+- GUI archive-format labels must come from `archive_format_info(...).display_name`;
+  do not re-create format label arrays in the app layer. Visible format labels
+  use official format names only and must not add compatibility/single-file/
+  encoded-file/stream/file qualifiers.
+- Settings changes are draft-only until `Apply`; leaving Settings without
+  `Apply` must restore the last applied snapshot. `Apply` must atomically write
+  the validated per-user settings JSON under Local AppData, and GUI smoke must
+  redirect that path with `SUPERZIP_GUI_SMOKE_SETTINGS_PATH` and assert both
+  persisted values and unapplied-draft reversion.
+- Elevated drag/drop must keep the narrow UIPI message allowlist for shell drop
+  messages and an exception-safe HDROP handler. Do not solve elevated
+  drag/drop by adding broad process privileges or bypassing Windows integrity
+  boundaries.
 - Visual changes must preserve the compact enterprise design reference in
   `resources/design/superzip-ui-iteration-4.png` and the polish reference in
   `resources/design/superzip-ui-imagegen-polish-20260615.png`. Do not simplify

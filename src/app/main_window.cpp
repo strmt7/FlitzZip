@@ -36,12 +36,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <commdlg.h>
+#include <fstream>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cmath>
 #include <dwmapi.h>
+#include <knownfolders.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <iomanip>
@@ -50,6 +53,7 @@
 #include <shlobj.h>
 #include <span>
 #include <sstream>
+#include <system_error>
 #include <string>
 #include <string_view>
 #include <windowsx.h>
@@ -65,6 +69,9 @@
 #endif
 #ifndef DWMWA_BORDER_COLOR
 #define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef MSGFLT_ALLOW
+#define MSGFLT_ALLOW 1
 #endif
 
 namespace superzip::app {
@@ -88,6 +95,8 @@ constexpr UINT_PTR kSmokeClosePollTimer = 10;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
 constexpr int kButtonReleaseTransitionMs = 130;
+constexpr UINT kDragQueryMessage = 0x0049;
+constexpr std::size_t kMaxLogEntries = 128;
 
 constexpr COLORREF kBg = RGB(12, 17, 20);
 constexpr COLORREF kShell = RGB(15, 22, 26);
@@ -107,6 +116,11 @@ constexpr COLORREF kInfo = RGB(63, 181, 221);
 constexpr COLORREF kDanger = RGB(236, 73, 73);
 constexpr UINT_PTR kPerformanceTimer = 8;
 constexpr UINT kGpuMemorySampleMs = 1000;
+
+// Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
+// Inputs: `value` is UTF-8 text.
+// Outputs: Returns UTF-16 text; returns an empty string for empty input.
+std::wstring widen(const std::string& value);
 
 // Purpose: Return the fixed release window style.
 // Inputs: None.
@@ -233,17 +247,7 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 16> labels{
-        L"SuperZip GPU (.suzip)",          L"ZIP compatibility (.zip)",         L"TAR compatibility (.tar)",
-        L"TAR.GZ compatibility (.tar.gz)", L"TAR.BZ2 compatibility (.tar.bz2)", L"TAR.ZST compatibility (.tar.zst)",
-        L"Gzip single file (.gz)",         L"Bzip2 single file (.bz2)",         L"Zstandard single file (.zst)",
-        L"Unix Compress single file (.Z)", L"Base64 single file (.b64)",        L"XXEncoded single file (.xxe)",
-        L"UUencoded single file (.uue)",   L"CPIO compatibility (.cpio)",       L"CPIO.GZ compatibility (.cpgz)",
-        L"AR compatibility (.ar)",
-    };
-    const auto normalized = static_cast<std::size_t>(
-        (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
-    return std::wstring(labels[normalized]);
+    return widen(archive_format_info(compression_format_value(index)).display_name);
 }
 
 // Purpose: Return the default output extension for a selected compression format.
@@ -424,7 +428,7 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
 // Outputs: Returns a stable label that maps to a zlib/miniz compression level.
 std::wstring compression_level_text(int index) {
     constexpr std::array<std::wstring_view, 5> labels{
-        L"Fastest (level 1)", L"Fast (level 3)", L"Balanced (level 5)", L"Strong (level 7)", L"Maximum (level 9)",
+        L"Fastest", L"Fast", L"Balanced", L"Strong", L"Maximum",
     };
     const auto normalized = static_cast<std::size_t>(
         (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
@@ -446,14 +450,15 @@ std::wstring performance_update_option_text(int index) {
     return performance_update_speed_text(std::clamp(index, 0, 9) + 1);
 }
 
-// Purpose: Map the visible compression-level selection to a miniz level.
+// Purpose: Map the visible compression-level selection to a miniz setting.
 // Inputs: `index` is the mutable compression-level selection in UI state.
-// Outputs: Returns one of the supported non-store compression levels: 1, 3, 5, 7, or 9.
+// Outputs: Returns one of the supported non-store compression settings: 1, 3, 5, 7, or 9.
 int compression_level_value(int index) {
-    constexpr std::array<int, 5> levels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
-    const auto normalized = static_cast<std::size_t>(
-        (index % static_cast<int>(levels.size()) + static_cast<int>(levels.size())) % static_cast<int>(levels.size()));
-    return levels[normalized];
+    constexpr std::array<int, 5> options{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
+    const auto normalized =
+        static_cast<std::size_t>((index % static_cast<int>(options.size()) + static_cast<int>(options.size())) %
+                                 static_cast<int>(options.size()));
+    return options[normalized];
 }
 
 // Purpose: Run the selected create backend for a GUI compression job.
@@ -566,8 +571,8 @@ std::wstring memory_policy_text(int index) {
 std::wstring log_level_text(int index) {
     constexpr std::array<std::wstring_view, 3> labels{
         L"Information",
-        L"Warnings",
-        L"Verbose diagnostics",
+        L"Warning",
+        L"Debug",
     };
     return option_text(index, labels);
 }
@@ -577,11 +582,371 @@ std::wstring log_level_text(int index) {
 // Outputs: Returns a session preference label.
 std::wstring log_retention_text(int index) {
     constexpr std::array<std::wstring_view, 3> labels{
-        L"Session only",
+        L"Current session",
         L"7 days",
         L"30 days",
     };
     return option_text(index, labels);
+}
+
+// Purpose: Return the visible log severity label.
+// Inputs: `severity` is the session log category.
+// Outputs: Returns the label used in the Settings log preview.
+std::wstring log_severity_text(LogSeverity severity) {
+    switch (severity) {
+    case LogSeverity::Information:
+        return L"Information";
+    case LogSeverity::Warning:
+        return L"Warning";
+    case LogSeverity::Debug:
+        return L"Debug";
+    }
+    return L"Information";
+}
+
+// Purpose: Return the category color for one session log entry.
+// Inputs: `severity` is the log category.
+// Outputs: Returns the matching UI color.
+COLORREF log_severity_color(LogSeverity severity) {
+    switch (severity) {
+    case LogSeverity::Information:
+        return kInfo;
+    case LogSeverity::Warning:
+        return kWarn;
+    case LogSeverity::Debug:
+        return kMuted;
+    }
+    return kInfo;
+}
+
+// Purpose: Decide whether a log entry is visible for the selected log level.
+// Inputs: `severity` is an entry category and `log_level_index` is the Settings selection.
+// Outputs: Returns true when the entry should appear in the current-session log preview.
+bool log_entry_visible(LogSeverity severity, int log_level_index) {
+    switch (std::clamp(log_level_index, 0, 2)) {
+    case 0:
+        return severity == LogSeverity::Information || severity == LogSeverity::Warning;
+    case 1:
+        return severity == LogSeverity::Warning;
+    case 2:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Purpose: Return a JSON-safe string literal for a path or status field.
+// Inputs: `value` is UTF-8 text that may contain JSON metacharacters.
+// Outputs: Returns a quoted JSON string with control characters escaped.
+std::string json_string(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 2U);
+    escaped.push_back('"');
+    for (const unsigned char ch : value) {
+        switch (ch) {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\b':
+            escaped += "\\b";
+            break;
+        case '\f':
+            escaped += "\\f";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            if (ch < 0x20U) {
+                constexpr char kHex[] = "0123456789abcdef";
+                escaped += "\\u00";
+                escaped.push_back(kHex[(ch >> 4U) & 0x0FU]);
+                escaped.push_back(kHex[ch & 0x0FU]);
+            } else {
+                escaped.push_back(static_cast<char>(ch));
+            }
+            break;
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+// Purpose: Extract an integer setting from the versioned JSON config.
+// Inputs: `json`, `key`, and fallback/bounds define the accepted value.
+// Outputs: Returns the parsed integer clamped to the supported range.
+int json_int_setting(std::string_view json, std::string_view key, int fallback, int minimum, int maximum) {
+    const std::string quoted_key = json_string(key);
+    const auto key_pos = json.find(std::string_view(quoted_key));
+    if (key_pos == std::string_view::npos) {
+        return fallback;
+    }
+    const auto colon_pos = json.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string_view::npos) {
+        return fallback;
+    }
+    const auto value_pos = json.find_first_of("-0123456789", colon_pos + 1U);
+    if (value_pos == std::string_view::npos) {
+        return fallback;
+    }
+    std::size_t end_pos = value_pos;
+    if (json[end_pos] == '-') {
+        ++end_pos;
+    }
+    while (end_pos < json.size() && std::isdigit(static_cast<unsigned char>(json[end_pos])) != 0) {
+        ++end_pos;
+    }
+    try {
+        const int parsed = std::stoi(std::string(json.substr(value_pos, end_pos - value_pos)));
+        return std::clamp(parsed, minimum, maximum);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+// Purpose: Extract a boolean setting from the versioned JSON config.
+// Inputs: `json`, `key`, and `fallback` identify the setting and default.
+// Outputs: Returns the parsed boolean or fallback when the setting is absent/malformed.
+bool json_bool_setting(std::string_view json, std::string_view key, bool fallback) {
+    const std::string quoted_key = json_string(key);
+    const auto key_pos = json.find(std::string_view(quoted_key));
+    if (key_pos == std::string_view::npos) {
+        return fallback;
+    }
+    const auto colon_pos = json.find(':', key_pos + quoted_key.size());
+    if (colon_pos == std::string_view::npos) {
+        return fallback;
+    }
+    const auto value_pos = json.find_first_not_of(" \t\r\n", colon_pos + 1U);
+    if (value_pos == std::string_view::npos) {
+        return fallback;
+    }
+    if (json.substr(value_pos, 4) == "true") {
+        return true;
+    }
+    if (json.substr(value_pos, 5) == "false") {
+        return false;
+    }
+    return fallback;
+}
+
+// Purpose: Copy persisted settings into visible UI state.
+// Inputs: `settings` is already validated and `state` is the UI model to mutate.
+// Outputs: Updates Settings-owned fields without touching queue/history/runtime-only state.
+void apply_settings_to_state(const AppSettings& settings, UiState& state) {
+    state.compression_format_index = settings.compression_format_index;
+    state.compression_level_index = settings.compression_level_index;
+    state.compression_block_size_index = settings.compression_block_size_index;
+    state.memory_policy_index = settings.memory_policy_index;
+    state.log_level_index = settings.log_level_index;
+    state.log_retention_index = settings.log_retention_index;
+    state.performance_update_seconds = settings.performance_update_seconds;
+    state.open_destination_after_operation = settings.open_destination_after_operation;
+    state.confirm_before_deleting = settings.confirm_before_deleting;
+    state.show_operation_summary = settings.show_operation_summary;
+    state.solid_archive = settings.solid_archive;
+    state.store_timestamps = settings.store_timestamps;
+    state.delete_after_compression = settings.delete_after_compression;
+    state.verify_metadata_before_extract = settings.verify_metadata_before_extract;
+    state.open_destination_after_extract = settings.open_destination_after_extract;
+    state.gpu_required = settings.gpu_required;
+    state.overwrite = settings.overwrite;
+    state.integrity_hash_opt_in = settings.integrity_hash_opt_in;
+    state.defender_scan_opt_in = settings.defender_scan_opt_in;
+    state.verify_after_write_opt_in = settings.verify_after_write_opt_in;
+}
+
+// Purpose: Capture the Settings-owned fields from visible UI state.
+// Inputs: `state` is the synchronized UI model.
+// Outputs: Returns a validated settings snapshot suitable for persistence.
+AppSettings settings_from_state(const UiState& state) {
+    AppSettings settings;
+    settings.compression_format_index = std::clamp(state.compression_format_index, 0, 15);
+    settings.compression_level_index = std::clamp(state.compression_level_index, 0, 4);
+    settings.compression_block_size_index = std::clamp(state.compression_block_size_index, 0, 3);
+    settings.memory_policy_index = std::clamp(state.memory_policy_index, 0, 2);
+    settings.log_level_index = std::clamp(state.log_level_index, 0, 2);
+    settings.log_retention_index = std::clamp(state.log_retention_index, 0, 2);
+    settings.performance_update_seconds = std::clamp(state.performance_update_seconds, 1, 10);
+    settings.open_destination_after_operation = state.open_destination_after_operation;
+    settings.confirm_before_deleting = state.confirm_before_deleting;
+    settings.show_operation_summary = state.show_operation_summary;
+    settings.solid_archive = state.solid_archive;
+    settings.store_timestamps = state.store_timestamps;
+    settings.delete_after_compression = state.delete_after_compression;
+    settings.verify_metadata_before_extract = state.verify_metadata_before_extract;
+    settings.open_destination_after_extract = state.open_destination_after_extract;
+    settings.gpu_required = state.gpu_required;
+    settings.overwrite = state.overwrite;
+    settings.integrity_hash_opt_in = state.integrity_hash_opt_in;
+    settings.defender_scan_opt_in = state.defender_scan_opt_in;
+    settings.verify_after_write_opt_in = state.verify_after_write_opt_in;
+    return settings;
+}
+
+// Purpose: Compare two Settings snapshots exactly.
+// Inputs: `left` and `right` are validated snapshots.
+// Outputs: Returns true when every persisted setting matches.
+bool settings_equal(const AppSettings& left, const AppSettings& right) {
+    return left.compression_format_index == right.compression_format_index &&
+           left.compression_level_index == right.compression_level_index &&
+           left.compression_block_size_index == right.compression_block_size_index &&
+           left.memory_policy_index == right.memory_policy_index && left.log_level_index == right.log_level_index &&
+           left.log_retention_index == right.log_retention_index &&
+           left.performance_update_seconds == right.performance_update_seconds &&
+           left.open_destination_after_operation == right.open_destination_after_operation &&
+           left.confirm_before_deleting == right.confirm_before_deleting &&
+           left.show_operation_summary == right.show_operation_summary && left.solid_archive == right.solid_archive &&
+           left.store_timestamps == right.store_timestamps &&
+           left.delete_after_compression == right.delete_after_compression &&
+           left.verify_metadata_before_extract == right.verify_metadata_before_extract &&
+           left.open_destination_after_extract == right.open_destination_after_extract &&
+           left.gpu_required == right.gpu_required && left.overwrite == right.overwrite &&
+           left.integrity_hash_opt_in == right.integrity_hash_opt_in &&
+           left.defender_scan_opt_in == right.defender_scan_opt_in &&
+           left.verify_after_write_opt_in == right.verify_after_write_opt_in;
+}
+
+// Purpose: Parse a settings JSON document into a validated snapshot.
+// Inputs: `json` is the complete UTF-8 settings document.
+// Outputs: Returns settings with missing or malformed values replaced by defaults.
+AppSettings parse_settings_json(std::string_view json) {
+    AppSettings settings;
+    settings.compression_format_index =
+        json_int_setting(json, "compressionFormatIndex", settings.compression_format_index, 0, 15);
+    settings.compression_level_index =
+        json_int_setting(json, "compressionLevelIndex", settings.compression_level_index, 0, 4);
+    settings.compression_block_size_index =
+        json_int_setting(json, "compressionBlockSizeIndex", settings.compression_block_size_index, 0, 3);
+    settings.memory_policy_index = json_int_setting(json, "memoryPolicyIndex", settings.memory_policy_index, 0, 2);
+    settings.log_level_index = json_int_setting(json, "logLevelIndex", settings.log_level_index, 0, 2);
+    settings.log_retention_index = json_int_setting(json, "logRetentionIndex", settings.log_retention_index, 0, 2);
+    settings.performance_update_seconds =
+        json_int_setting(json, "performanceUpdateSeconds", settings.performance_update_seconds, 1, 10);
+    settings.open_destination_after_operation =
+        json_bool_setting(json, "openDestinationAfterOperation", settings.open_destination_after_operation);
+    settings.confirm_before_deleting =
+        json_bool_setting(json, "confirmBeforeDeleting", settings.confirm_before_deleting);
+    settings.show_operation_summary = json_bool_setting(json, "showOperationSummary", settings.show_operation_summary);
+    settings.solid_archive = json_bool_setting(json, "solidArchive", settings.solid_archive);
+    settings.store_timestamps = json_bool_setting(json, "storeTimestamps", settings.store_timestamps);
+    settings.delete_after_compression =
+        json_bool_setting(json, "deleteAfterCompression", settings.delete_after_compression);
+    settings.verify_metadata_before_extract =
+        json_bool_setting(json, "verifyMetadataBeforeExtract", settings.verify_metadata_before_extract);
+    settings.open_destination_after_extract =
+        json_bool_setting(json, "openDestinationAfterExtract", settings.open_destination_after_extract);
+    settings.gpu_required = json_bool_setting(json, "gpuRequired", settings.gpu_required);
+    settings.overwrite = json_bool_setting(json, "overwrite", settings.overwrite);
+    settings.integrity_hash_opt_in = json_bool_setting(json, "integrityHashOptIn", settings.integrity_hash_opt_in);
+    settings.defender_scan_opt_in = json_bool_setting(json, "defenderScanOptIn", settings.defender_scan_opt_in);
+    settings.verify_after_write_opt_in =
+        json_bool_setting(json, "verifyAfterWriteOptIn", settings.verify_after_write_opt_in);
+    return settings;
+}
+
+// Purpose: Serialize a validated settings snapshot as deterministic JSON.
+// Inputs: `settings` is the applied Settings snapshot.
+// Outputs: Returns a UTF-8 JSON document with stable key order.
+std::string settings_to_json(const AppSettings& settings) {
+    auto bool_text = [](bool value) { return value ? "true" : "false"; };
+    std::ostringstream out;
+    out << "{\n"
+        << "  \"schema\": \"superzip.settings.v1\",\n"
+        << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
+        << "  \"compressionLevelIndex\": " << settings.compression_level_index << ",\n"
+        << "  \"compressionBlockSizeIndex\": " << settings.compression_block_size_index << ",\n"
+        << "  \"memoryPolicyIndex\": " << settings.memory_policy_index << ",\n"
+        << "  \"logLevelIndex\": " << settings.log_level_index << ",\n"
+        << "  \"logRetentionIndex\": " << settings.log_retention_index << ",\n"
+        << "  \"performanceUpdateSeconds\": " << settings.performance_update_seconds << ",\n"
+        << "  \"openDestinationAfterOperation\": " << bool_text(settings.open_destination_after_operation) << ",\n"
+        << "  \"confirmBeforeDeleting\": " << bool_text(settings.confirm_before_deleting) << ",\n"
+        << "  \"showOperationSummary\": " << bool_text(settings.show_operation_summary) << ",\n"
+        << "  \"solidArchive\": " << bool_text(settings.solid_archive) << ",\n"
+        << "  \"storeTimestamps\": " << bool_text(settings.store_timestamps) << ",\n"
+        << "  \"deleteAfterCompression\": " << bool_text(settings.delete_after_compression) << ",\n"
+        << "  \"verifyMetadataBeforeExtract\": " << bool_text(settings.verify_metadata_before_extract) << ",\n"
+        << "  \"openDestinationAfterExtract\": " << bool_text(settings.open_destination_after_extract) << ",\n"
+        << "  \"gpuRequired\": " << bool_text(settings.gpu_required) << ",\n"
+        << "  \"overwrite\": " << bool_text(settings.overwrite) << ",\n"
+        << "  \"integrityHashOptIn\": " << bool_text(settings.integrity_hash_opt_in) << ",\n"
+        << "  \"defenderScanOptIn\": " << bool_text(settings.defender_scan_opt_in) << ",\n"
+        << "  \"verifyAfterWriteOptIn\": " << bool_text(settings.verify_after_write_opt_in) << "\n"
+        << "}\n";
+    return out.str();
+}
+
+// Purpose: Resolve the per-user SuperZip settings file path.
+// Inputs: None; uses Windows Known Folders.
+// Outputs: Returns `%LOCALAPPDATA%\SuperZip\settings.json` or throws on lookup failure.
+std::filesystem::path settings_file_path() {
+    wchar_t smoke_path[32768]{};
+    constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
+    const DWORD smoke_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_PATH", smoke_path, smoke_path_capacity);
+    if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
+        return std::filesystem::path(smoke_path);
+    }
+    PWSTR local_app_data = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data);
+    if (FAILED(result) || local_app_data == nullptr) {
+        throw ArchiveError("could not resolve Local AppData for settings");
+    }
+    std::filesystem::path path(local_app_data);
+    CoTaskMemFree(local_app_data);
+    return path / L"SuperZip" / L"settings.json";
+}
+
+// Purpose: Read the per-user settings file when it exists.
+// Inputs: `path` is the settings file location.
+// Outputs: Returns parsed settings or defaults when the file is absent.
+AppSettings read_settings_file(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        return {};
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw ArchiveError("could not open settings file for reading");
+    }
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return parse_settings_json(buffer.str());
+}
+
+// Purpose: Atomically write the per-user settings file.
+// Inputs: `path` is the target file and `settings` is the validated snapshot.
+// Outputs: Creates the settings directory and replaces the target with deterministic JSON.
+void write_settings_file(const std::filesystem::path& path, const AppSettings& settings) {
+    std::filesystem::create_directories(path.parent_path());
+    const auto temporary = path.parent_path() / (path.filename().wstring() + L".tmp");
+    {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw ArchiveError("could not open settings file for writing");
+        }
+        const auto json = settings_to_json(settings);
+        output.write(json.data(), static_cast<std::streamsize>(json.size()));
+        if (!output) {
+            throw ArchiveError("could not write complete settings file");
+        }
+    }
+    if (!MoveFileExW(temporary.wstring().c_str(), path.wstring().c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code cleanup_ec;
+        std::filesystem::remove(temporary, cleanup_ec);
+        throw ArchiveError("could not replace settings file atomically");
+    }
 }
 
 // Purpose: Return the visible history operation filter label.
@@ -651,11 +1016,11 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             performance_update_option_text(6), performance_update_option_text(7), performance_update_option_text(8),
             performance_update_option_text(9),
         };
-    case DropdownId::PreferencesMemoryPolicy:
+    case DropdownId::SettingsMemoryPolicy:
         return {memory_policy_text(0), memory_policy_text(1), memory_policy_text(2)};
-    case DropdownId::PreferencesLogLevel:
+    case DropdownId::SettingsLogLevel:
         return {log_level_text(0), log_level_text(1), log_level_text(2)};
-    case DropdownId::PreferencesLogRetention:
+    case DropdownId::SettingsLogRetention:
         return {log_retention_text(0), log_retention_text(1), log_retention_text(2)};
     case DropdownId::None:
         return {};
@@ -684,11 +1049,11 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
         return state.history_status_filter_index;
     case DropdownId::GpuUpdateSpeed:
         return std::clamp(state.performance_update_seconds, 1, 10) - 1;
-    case DropdownId::PreferencesMemoryPolicy:
+    case DropdownId::SettingsMemoryPolicy:
         return state.memory_policy_index;
-    case DropdownId::PreferencesLogLevel:
+    case DropdownId::SettingsLogLevel:
         return state.log_level_index;
-    case DropdownId::PreferencesLogRetention:
+    case DropdownId::SettingsLogRetention:
         return state.log_retention_index;
     case DropdownId::None:
         return 0;
@@ -863,8 +1228,8 @@ std::wstring page_name(Page page) {
     case Page::History:
         return L"History";
     case Page::Gpu:
-        return L"GPU";
-    case Page::Preferences:
+        return L"System";
+    case Page::Settings:
         return L"Settings";
     case Page::About:
         return L"About";
@@ -1056,8 +1421,8 @@ void add_rounded_rect_path(Gdiplus::GraphicsPath& path, float x, float y, float 
 // Purpose: Draw the settings gear navigation glyph.
 // Inputs: `graphics` is the anti-aliased target, `origin_x`/`origin_y`/`size` define normalized icon space, and drawing
 // objects provide styling. Outputs: Writes the gear glyph without changing product state.
-void draw_preferences_nav_icon(Gdiplus::Graphics& graphics, float origin_x, float origin_y, float size,
-                               Gdiplus::Pen& pen, Gdiplus::SolidBrush& soft_fill) {
+void draw_settings_nav_icon(Gdiplus::Graphics& graphics, float origin_x, float origin_y, float size, Gdiplus::Pen& pen,
+                            Gdiplus::SolidBrush& soft_fill) {
     auto px = [origin_x, size](float value) { return origin_x + (value * size / 30.0f); };
     auto py = [origin_y, size](float value) { return origin_y + (value * size / 30.0f); };
     auto rectf = [&](float left, float top, float right, float bottom) {
@@ -1185,8 +1550,8 @@ void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color) {
             graphics.DrawLine(&fine_pen, px(finger_x), py(21.4f), px(finger_x), py(24.3f));
         }
     } break;
-    case Page::Preferences:
-        draw_preferences_nav_icon(graphics, origin_x, origin_y, size, pen, soft_fill);
+    case Page::Settings:
+        draw_settings_nav_icon(graphics, origin_x, origin_y, size, pen, soft_fill);
         break;
     case Page::About:
         graphics.DrawEllipse(&pen, rectf(6.0f, 6.0f, 24.0f, 24.0f));
@@ -1470,31 +1835,107 @@ LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
     // Native shell drag/drop is a queue regression boundary and is covered by
     // the GUI smoke harness with an injected HDROP payload.
     auto drop = reinterpret_cast<HDROP>(wparam);
-    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-    std::lock_guard lock(mutex_);
-    const bool was_empty = state_.queued_paths.empty();
-    for (UINT i = 0; i < count; ++i) {
-        const UINT length = DragQueryFileW(drop, i, nullptr, 0);
-        std::wstring path(length + 1, L'\0');
-        DragQueryFileW(drop, i, path.data(), length + 1);
-        path.resize(length);
-        state_.queued_paths.emplace_back(path);
-        state_.queued_enabled.push_back(true);
+    if (drop == nullptr) {
+        return 0;
     }
-    normalize_queue_selection_locked();
-    if (was_empty && !state_.queued_paths.empty()) {
-        state_.selected_queue_index = 0;
+    std::string log_message;
+    LogSeverity log_severity = LogSeverity::Debug;
+    try {
+        const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        std::vector<std::filesystem::path> dropped_paths;
+        dropped_paths.reserve(count);
+        for (UINT i = 0; i < count; ++i) {
+            const UINT length = DragQueryFileW(drop, i, nullptr, 0);
+            if (length == 0) {
+                continue;
+            }
+            std::wstring path(length + 1, L'\0');
+            if (DragQueryFileW(drop, i, path.data(), length + 1) == 0) {
+                continue;
+            }
+            path.resize(length);
+            dropped_paths.emplace_back(std::move(path));
+        }
+        std::lock_guard lock(mutex_);
+        if (dropped_paths.empty()) {
+            state_.status = "No drop items received";
+            log_severity = LogSeverity::Warning;
+            log_message = "Shell drop did not contain usable paths";
+        } else {
+            const bool was_empty = state_.queued_paths.empty();
+            for (auto& path : dropped_paths) {
+                state_.queued_paths.emplace_back(std::move(path));
+                state_.queued_enabled.push_back(true);
+            }
+            normalize_queue_selection_locked();
+            if (was_empty && !state_.queued_paths.empty()) {
+                state_.selected_queue_index = 0;
+            }
+            state_.status = "Dropped items added";
+            log_message = "Shell drop added " + std::to_string(dropped_paths.size()) + " queued item(s)";
+        }
+    } catch (const std::exception& error) {
+        DragFinish(drop);
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = std::string("Drop failed: ") + error.what();
+        }
+        append_log_entry(LogSeverity::Warning, "Shell drop failed");
+        return 0;
+    } catch (...) {
+        DragFinish(drop);
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "Drop failed";
+        }
+        append_log_entry(LogSeverity::Warning, "Shell drop failed");
+        return 0;
     }
     DragFinish(drop);
+    if (!log_message.empty()) {
+        append_log_entry(log_severity, std::move(log_message));
+        return 0;
+    }
     request_repaint();
     return 0;
+}
+
+// Purpose: Allow shell file-drop messages through UIPI for elevated windows.
+// Inputs: None; applies only to the main HWND and only when the process is elevated.
+// Outputs: Returns true when no extra filter is needed or the narrow filter was applied.
+bool MainWindow::enable_elevated_drag_drop_messages() const {
+    BOOL elevated = FALSE;
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return true;
+    }
+    TOKEN_ELEVATION elevation{};
+    DWORD returned = 0;
+    const BOOL queried = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &returned) != FALSE;
+    CloseHandle(token);
+    if (!queried || elevation.TokenIsElevated == 0) {
+        return true;
+    }
+    const BOOL drop_allowed = ChangeWindowMessageFilterEx(hwnd_, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+    const BOOL query_allowed = ChangeWindowMessageFilterEx(hwnd_, kDragQueryMessage, MSGFLT_ALLOW, nullptr);
+    return drop_allowed != FALSE && query_allowed != FALSE;
 }
 
 // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
 // Inputs: None.
 // Outputs: Arms timers and returns the handled Win32 result.
 LRESULT MainWindow::handle_create() {
+    initialize_settings();
     DragAcceptFiles(hwnd_, TRUE);
+    if (!enable_elevated_drag_drop_messages()) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "Elevated drag/drop filter unavailable";
+        }
+        append_log_entry(LogSeverity::Warning, "Elevated shell drop message filter could not be applied");
+    } else {
+        append_log_entry(LogSeverity::Information, "Application initialized");
+    }
     initialize_performance_monitor();
     update_performance_sample();
     reset_performance_timer(state_.performance_update_seconds);
@@ -1507,6 +1948,91 @@ LRESULT MainWindow::handle_create() {
         SetTimer(hwnd_, kSmokeClosePollTimer, 250, nullptr);
     }
     return 0;
+}
+
+// Purpose: Load persisted per-user settings and publish the current applied snapshot.
+// Inputs: None; reads the current user's Local AppData settings file when present.
+// Outputs: Applies validated settings, creates defaults when needed, and logs nonfatal parse/write failures.
+void MainWindow::initialize_settings() {
+    try {
+        applied_settings_ = read_settings_file(settings_file_path());
+        {
+            std::lock_guard lock(mutex_);
+            apply_settings_to_state(applied_settings_, state_);
+            state_.status = "Settings loaded";
+        }
+        reset_performance_timer(applied_settings_.performance_update_seconds);
+        write_settings_file(settings_file_path(), applied_settings_);
+    } catch (const std::exception& error) {
+        {
+            std::lock_guard lock(mutex_);
+            applied_settings_ = settings_from_state(state_);
+            state_.status = std::string("Settings unavailable: ") + error.what();
+        }
+        append_log_entry(LogSeverity::Warning, "Settings file could not be loaded");
+    }
+}
+
+// Purpose: Save the current Settings draft as the applied snapshot.
+// Inputs: None; reads Settings fields from synchronized UI state.
+// Outputs: Writes the per-user config atomically and updates the applied snapshot.
+void MainWindow::apply_settings() {
+    AppSettings draft;
+    {
+        std::lock_guard lock(mutex_);
+        draft = settings_from_state(state_);
+    }
+    write_settings_file(settings_file_path(), draft);
+    applied_settings_ = draft;
+    {
+        std::lock_guard lock(mutex_);
+        apply_settings_to_state(applied_settings_, state_);
+        state_.status = "Settings applied";
+    }
+    reset_performance_timer(applied_settings_.performance_update_seconds);
+    append_history_entry("Settings", "Settings", "Applied for current session", true);
+    append_log_entry(LogSeverity::Information, "Settings applied for current session");
+}
+
+// Purpose: Revert Settings page controls to the last applied snapshot.
+// Inputs: None.
+// Outputs: Mutates Settings-owned UI fields and re-arms dependent timers.
+void MainWindow::revert_settings_draft() {
+    bool changed = false;
+    {
+        std::lock_guard lock(mutex_);
+        changed = !settings_equal(settings_from_state(state_), applied_settings_);
+        apply_settings_to_state(applied_settings_, state_);
+        if (changed) {
+            state_.status = "Unapplied settings reverted";
+        }
+    }
+    reset_performance_timer(applied_settings_.performance_update_seconds);
+    if (changed) {
+        append_log_entry(LogSeverity::Debug, "Unapplied settings reverted after leaving Settings");
+    } else {
+        request_repaint();
+    }
+}
+
+// Purpose: Reset Settings draft and applied snapshot to safe defaults.
+// Inputs: None.
+// Outputs: Updates UI, applied snapshot, and the persisted config file.
+void MainWindow::reset_settings_to_defaults() {
+    applied_settings_ = {};
+    write_settings_file(settings_file_path(), applied_settings_);
+    {
+        std::lock_guard lock(mutex_);
+        apply_settings_to_state(applied_settings_, state_);
+        state_.destination_directory.clear();
+        normalize_queue_selection_locked();
+        state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
+        state_.history_operation_filter_index = 0;
+        state_.history_status_filter_index = 0;
+        state_.status = "Defaults restored";
+    }
+    reset_performance_timer(applied_settings_.performance_update_seconds);
+    append_log_entry(LogSeverity::Information, "Default settings restored");
 }
 
 // Purpose: Dispatch timers owned by the main window.
@@ -1616,8 +2142,8 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
     fill_rect(dc, rect, kRail);
     draw_line(dc, rect.right - 1, rect.top, rect.right - 1, rect.bottom, kBorder);
     const std::array<Page, 8> pages{
-        Page::Queue,   Page::Compress, Page::Extract,     Page::Security,
-        Page::History, Page::Gpu,      Page::Preferences, Page::About,
+        Page::Queue,   Page::Compress, Page::Extract,  Page::Security,
+        Page::History, Page::Gpu,      Page::Settings, Page::About,
     };
     SelectObject(dc, tiny_font_);
     const int item_height = scale(63);
@@ -1686,6 +2212,9 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
               DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 }
 
+// Purpose: Dispatch the active page renderer into the content region.
+// Inputs: `dc` is the paint target, `rect` is the content bounds, and `state` is the copied UI state.
+// Outputs: Draws exactly one active page without mutating UI state.
 void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
     fill_rect(dc, rect, kBg);
     switch (state.page) {
@@ -1707,8 +2236,8 @@ void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
     case Page::Gpu:
         draw_gpu_page(dc, rect, state);
         break;
-    case Page::Preferences:
-        draw_preferences_page(dc, rect, state);
+    case Page::Settings:
+        draw_settings_page(dc, rect, state);
         break;
     case Page::About:
         draw_about_page(dc, rect);
@@ -1731,6 +2260,13 @@ MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
                             layout.add_folder.left - scale(12), header_bottom};
     layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom};
     return layout;
+}
+
+// Purpose: Return the shared bottom-right primary action button rectangle for operation pages.
+// Inputs: `area` is the DPI-scaled page content area.
+// Outputs: Returns a 110x36 design-pixel command rectangle aligned with Settings Apply.
+RECT MainWindow::primary_action_rect(const RECT& area) const {
+    return RECT{area.right - scale(110), area.bottom - scale(54), area.right, area.bottom - scale(18)};
 }
 
 // Purpose: Compute fixed checkbox and resizable data-column geometry for the Queue table.
@@ -1782,8 +2318,7 @@ MainWindow::QueueColumnLayout MainWindow::queue_column_layout(const RECT& table,
 MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
     CompressLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right,
-                        layout.area.bottom - scale(18)};
+    layout.start = primary_action_rect(layout.area);
     const int left = layout.area.left;
     const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
     const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
@@ -1816,8 +2351,7 @@ MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
 MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
     ExtractLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right,
-                        layout.area.bottom - scale(18)};
+    layout.start = primary_action_rect(layout.area);
     layout.archive =
         RECT{layout.area.left, layout.area.top + scale(54), layout.area.right, layout.area.top + scale(104)};
     layout.destination =
@@ -1839,16 +2373,15 @@ MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
     return layout;
 }
 
-// Purpose: Compute Preferences page rectangles shared by rendering and hit testing.
+// Purpose: Compute Settings page rectangles shared by rendering and hit testing.
 // Inputs: `rect` is the content area in physical pixels.
-// Outputs: Returns DPI-scaled Preferences page control rectangles.
-MainWindow::PreferencesLayout MainWindow::preferences_layout(const RECT& rect) const {
-    PreferencesLayout layout{};
+// Outputs: Returns DPI-scaled Settings page control rectangles.
+MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
+    SettingsLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54),
                                    layout.area.right - scale(126), layout.area.bottom - scale(18)};
-    layout.apply = RECT{layout.area.right - scale(110), layout.area.bottom - scale(54), layout.area.right,
-                        layout.area.bottom - scale(18)};
+    layout.apply = primary_action_rect(layout.area);
     layout.general = RECT{layout.area.left, layout.area.top + scale(56), layout.area.left + scale(470),
                           layout.area.top + scale(224)};
     layout.security = RECT{layout.general.left, layout.general.bottom + scale(16), layout.general.right,
@@ -1935,10 +2468,9 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
     int y = header_bottom;
     if (state.queued_paths.empty()) {
         SelectObject(dc, body_font_);
-        draw_text(dc, RECT{table.left + scale(22), y + scale(28), table.right - scale(22), y + scale(86)},
-                  L"Drop files or folders here, or use Add files / Add folder. Work runs in a background thread so the "
-                  L"interface stays responsive.",
-                  kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        draw_text(dc, RECT{table.left + scale(40), y, table.right - scale(40), table.bottom},
+                  L"Drag & drop files or folders here, or use the Add files / Add folder buttons.", kMuted,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     } else {
         int row_index = 0;
         for (const auto& path : state.queued_paths) {
@@ -1994,8 +2526,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.compression_level, L"Compression level",
                level_tuning ? compression_level_text(state.compression_level_index) : L"Format-managed", level_tuning);
     draw_field(dc, layout.method, L"Compression method",
-               suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred")
-                            : L"CPU compatibility stream",
+               suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"Format-managed",
                suzip_tuning);
     draw_field(dc, layout.block_size, L"Block size",
                suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"Format-managed",
@@ -2075,9 +2606,9 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
 void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Security Review",
-              kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    const RECT verify_button{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Security", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const RECT verify_button = primary_action_rect(area);
     draw_button(dc, verify_button, L"Verify", true);
     draw_operation_progress_bar(dc,
                                 RECT{verify_button.left, verify_button.bottom + scale(4), verify_button.right,
@@ -2220,14 +2751,14 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
               L"Selected operation details appear here after a job runs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
-// Purpose: Draw the AMD GPU diagnostics page with current runtime and resource-status details.
+// Purpose: Draw the System page with current runtime and resource-status details.
 // Inputs: `dc` is the double-buffered paint target, `rect` is the page bounds, and `state` supplies live GPU/status
-// text. Outputs: Renders GPU diagnostics controls and informational panels without mutating state.
+// text. Outputs: Renders system diagnostics controls and informational panels without mutating state.
 void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"AMD GPU Diagnostics",
-              kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"System", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(110), area.top, area.right, area.top + scale(34)}, L"Refresh", false);
 
     const bool ready = gpu_ready(state);
@@ -2336,7 +2867,7 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
-// Purpose: Draw the live performance monitor section on the GPU diagnostics page.
+// Purpose: Draw the live performance monitor section on the System page.
 // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `state` contains the latest counters.
 // Outputs: Renders CPU, total RAM, process read/write I/O, and VRAM history cards.
 void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state) {
@@ -2422,11 +2953,11 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
 // Purpose: Draw the preferences page.
 // Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
 // Outputs: Renders general, security, performance, and logging settings.
-void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& state) {
-    const auto layout = preferences_layout(rect);
+void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& state) {
+    const auto layout = settings_layout(rect);
     RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Preferences", kText,
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Settings", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, layout.restore_defaults, L"Restore Defaults", false);
     draw_button(dc, layout.apply, L"Apply", true);
@@ -2463,6 +2994,31 @@ void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& 
     draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
+
+    const int log_preview_left = layout.logging.left + (layout.logging.right - layout.logging.left) / 2 + scale(18);
+    draw_text(dc,
+              RECT{log_preview_left, layout.logging.top + scale(48), layout.logging.right - scale(18),
+                   layout.logging.top + scale(72)},
+              L"Current session log", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    int log_y = layout.logging.top + scale(78);
+    int rendered_logs = 0;
+    for (auto it = state.logs.rbegin(); it != state.logs.rend() && rendered_logs < 3; ++it) {
+        if (!log_entry_visible(it->severity, state.log_level_index)) {
+            continue;
+        }
+        const RECT row{log_preview_left, log_y, layout.logging.right - scale(18), log_y + scale(22)};
+        const RECT category{row.left, row.top, row.left + scale(92), row.bottom};
+        const RECT message{category.right + scale(8), row.top, row.right, row.bottom};
+        draw_text(dc, category, log_severity_text(it->severity), log_severity_color(it->severity),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, message, widen(it->message), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        log_y += scale(24);
+        ++rendered_logs;
+    }
+    if (rendered_logs == 0) {
+        draw_text(dc, RECT{log_preview_left, log_y, layout.logging.right - scale(18), log_y + scale(44)},
+                  L"No entries match the selected log level.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    }
 }
 
 // Purpose: Render the About page brand, version, and compatibility boundary summary.
@@ -2487,7 +3043,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)},
               L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
               L"LZMA, lzip, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, LHA/LZH, "
-              L"CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; "
+              L"CPIO, AR, DEB, ISO, and RPM standard-format handling. AMD HIP is the only GPU acceleration boundary; "
               L"security-sensitive extraction validates paths and metadata before writing files.",
               kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)},
@@ -2690,12 +3246,12 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
         const int monitor_top = area.top + scale(342);
         return RECT{area.right - scale(190), monitor_top + scale(8), area.right - scale(16), monitor_top + scale(52)};
     }
-    case DropdownId::PreferencesMemoryPolicy:
-        return preferences_layout(content).memory_policy;
-    case DropdownId::PreferencesLogLevel:
-        return preferences_layout(content).log_level;
-    case DropdownId::PreferencesLogRetention:
-        return preferences_layout(content).log_retention;
+    case DropdownId::SettingsMemoryPolicy:
+        return settings_layout(content).memory_policy;
+    case DropdownId::SettingsLogLevel:
+        return settings_layout(content).log_level;
+    case DropdownId::SettingsLogRetention:
+        return settings_layout(content).log_retention;
     case DropdownId::None:
         return RECT{};
     }
@@ -2779,8 +3335,8 @@ bool MainWindow::handle_content_click(int x, int y) {
         return handle_history_click(content, x, y);
     case Page::Gpu:
         return handle_gpu_click(content, x, y);
-    case Page::Preferences:
-        return handle_preferences_click(content, x, y);
+    case Page::Settings:
+        return handle_settings_click(content, x, y);
     case Page::About:
         return false;
     }
@@ -3104,7 +3660,7 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
 // Outputs: Returns true when the security review command consumed the click.
 bool MainWindow::handle_security_click(const RECT& content, int x, int y) {
     RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-    const RECT verify_button{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
+    const RECT verify_button = primary_action_rect(area);
     if (!contains_point(verify_button, x, y)) {
         return false;
     }
@@ -3198,25 +3754,36 @@ bool MainWindow::handle_gpu_click(const RECT& content, int x, int y) {
     return true;
 }
 
-// Purpose: Handle Preferences page hit-testing and commands.
+// Purpose: Handle Settings page hit-testing and commands.
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
 // Outputs: Returns true when a preference control consumed the click.
-bool MainWindow::handle_preferences_click(const RECT& content, int x, int y) {
-    const auto layout = preferences_layout(content);
+bool MainWindow::handle_settings_click(const RECT& content, int x, int y) {
+    const auto layout = settings_layout(content);
     if (handle_active_dropdown_click(x, y)) {
         return true;
     }
     if (contains_point(layout.restore_defaults, x, y)) {
-        restore_defaults();
+        try {
+            reset_settings_to_defaults();
+        } catch (const std::exception& error) {
+            {
+                std::lock_guard lock(mutex_);
+                state_.status = std::string("Settings reset failed: ") + error.what();
+            }
+            append_log_entry(LogSeverity::Warning, "Settings reset failed");
+        }
         return true;
     }
     if (contains_point(layout.apply, x, y)) {
-        append_history("Preferences applied for current session");
-        {
-            std::lock_guard lock(mutex_);
-            state_.status = "Preferences applied";
+        try {
+            apply_settings();
+        } catch (const std::exception& error) {
+            {
+                std::lock_guard lock(mutex_);
+                state_.status = std::string("Settings apply failed: ") + error.what();
+            }
+            append_log_entry(LogSeverity::Warning, "Settings apply failed");
         }
-        request_repaint();
         return true;
     }
     if (contains_point(layout.sha, x, y)) {
@@ -3241,15 +3808,15 @@ bool MainWindow::handle_preferences_click(const RECT& content, int x, int y) {
         return checkbox_bool_setting(&UiState::show_operation_summary, "Operation summary setting changed");
     }
     if (contains_point(layout.memory_policy, x, y)) {
-        open_dropdown(DropdownId::PreferencesMemoryPolicy);
+        open_dropdown(DropdownId::SettingsMemoryPolicy);
         return true;
     }
     if (contains_point(layout.log_level, x, y)) {
-        open_dropdown(DropdownId::PreferencesLogLevel);
+        open_dropdown(DropdownId::SettingsLogLevel);
         return true;
     }
     if (contains_point(layout.log_retention, x, y)) {
-        open_dropdown(DropdownId::PreferencesLogRetention);
+        open_dropdown(DropdownId::SettingsLogRetention);
         return true;
     }
     return false;
@@ -3314,6 +3881,9 @@ void MainWindow::close_active_dropdown() {
 // Outputs: Mutates UI state, closes the dropdown, updates status text, and requests repaint.
 void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     int performance_seconds = 0;
+    bool add_log = false;
+    LogSeverity log_severity = LogSeverity::Information;
+    std::string log_message;
     {
         std::lock_guard lock(mutex_);
         switch (id) {
@@ -3350,17 +3920,55 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
             performance_seconds = state_.performance_update_seconds;
             state_.status = "Performance update speed changed";
             break;
-        case DropdownId::PreferencesMemoryPolicy:
+        case DropdownId::SettingsMemoryPolicy:
             state_.memory_policy_index = std::clamp(option_index, 0, 2);
             state_.status = "Memory policy changed";
+            add_log = true;
+            log_severity = LogSeverity::Debug;
+            log_message = "Memory policy changed";
             break;
-        case DropdownId::PreferencesLogLevel:
+        case DropdownId::SettingsLogLevel:
             state_.log_level_index = std::clamp(option_index, 0, 2);
             state_.status = "Log level changed";
+            add_log = true;
+            log_severity = LogSeverity::Information;
+            switch (state_.log_level_index) {
+            case 0:
+                log_message = "Log level changed to Information";
+                break;
+            case 1:
+                log_severity = LogSeverity::Warning;
+                log_message = "Log level changed to Warning";
+                break;
+            case 2:
+                log_severity = LogSeverity::Debug;
+                log_message = "Log level changed to Debug";
+                break;
+            default:
+                log_message = "Log level changed";
+                break;
+            }
             break;
-        case DropdownId::PreferencesLogRetention:
+        case DropdownId::SettingsLogRetention:
             state_.log_retention_index = std::clamp(option_index, 0, 2);
             state_.status = "Log retention changed";
+            add_log = true;
+            log_severity = LogSeverity::Debug;
+            log_message = "Log retention changed to ";
+            switch (state_.log_retention_index) {
+            case 0:
+                log_message += "Current session";
+                break;
+            case 1:
+                log_message += "7 days";
+                break;
+            case 2:
+                log_message += "30 days";
+                break;
+            default:
+                log_message += "selected policy";
+                break;
+            }
             break;
         case DropdownId::None:
             break;
@@ -3370,11 +3978,19 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     if (performance_seconds > 0) {
         reset_performance_timer(performance_seconds);
     }
+    if (add_log) {
+        append_log_entry(log_severity, std::move(log_message));
+        return;
+    }
     request_repaint();
 }
 
+// Purpose: Change the active application page and discard unapplied Settings drafts when leaving Settings.
+// Inputs: `page` is the destination page.
+// Outputs: Mutates page state, starts transition animation, and restores the last applied Settings snapshot if needed.
 void MainWindow::set_page(Page page) {
     Page previous;
+    bool revert_unapplied_settings = false;
     {
         std::lock_guard lock(mutex_);
         previous = state_.page;
@@ -3383,6 +3999,10 @@ void MainWindow::set_page(Page page) {
         }
         state_.page = page;
         state_.active_dropdown = DropdownId::None;
+        revert_unapplied_settings = previous == Page::Settings && page != Page::Settings;
+    }
+    if (revert_unapplied_settings) {
+        revert_settings_draft();
     }
     start_page_transition(previous, page);
     request_repaint();
@@ -3573,41 +4193,6 @@ void MainWindow::cycle_compression_level() {
     request_repaint();
 }
 
-// Purpose: Restore GUI preferences and operation defaults without clearing queued paths.
-// Inputs: None.
-// Outputs: Mutates UI state, normalizes queue selection, and queues a repaint.
-void MainWindow::restore_defaults() {
-    {
-        std::lock_guard lock(mutex_);
-        state_.destination_directory.clear();
-        normalize_queue_selection_locked();
-        state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
-        state_.compression_level_index = 2;
-        state_.compression_format_index = 0;
-        state_.compression_block_size_index = 1;
-        state_.memory_policy_index = 0;
-        state_.log_level_index = 0;
-        state_.log_retention_index = 0;
-        state_.history_operation_filter_index = 0;
-        state_.history_status_filter_index = 0;
-        state_.open_destination_after_operation = false;
-        state_.confirm_before_deleting = true;
-        state_.show_operation_summary = true;
-        state_.solid_archive = true;
-        state_.store_timestamps = true;
-        state_.delete_after_compression = false;
-        state_.verify_metadata_before_extract = true;
-        state_.open_destination_after_extract = false;
-        state_.gpu_required = true;
-        state_.overwrite = false;
-        state_.integrity_hash_opt_in = false;
-        state_.defender_scan_opt_in = false;
-        state_.verify_after_write_opt_in = false;
-        state_.status = "Defaults restored";
-    }
-    request_repaint();
-}
-
 // Purpose: Start a background compression job from the current GUI queue.
 // Inputs: None; reads queued paths and compression options from synchronized UI state.
 // Outputs: Launches a worker job, updates progress/history/status, or requests repaint when the queue is empty.
@@ -3778,6 +4363,21 @@ void MainWindow::run_job(std::function<void()> job, std::string label) {
         worker_running_ = false;
         request_repaint();
     });
+    request_repaint();
+}
+
+// Purpose: Append one filtered current-session log entry.
+// Inputs: `severity` is the visible category and `message` is safe session text.
+// Outputs: Adds a bounded in-memory row and queues repaint.
+void MainWindow::append_log_entry(LogSeverity severity, std::string message) {
+    {
+        std::lock_guard lock(mutex_);
+        state_.logs.push_back(LogEntry{.severity = severity, .message = std::move(message)});
+        if (state_.logs.size() > kMaxLogEntries) {
+            state_.logs.erase(state_.logs.begin(),
+                              state_.logs.begin() + static_cast<std::ptrdiff_t>(state_.logs.size() - kMaxLogEntries));
+        }
+    }
     request_repaint();
 }
 
@@ -3991,7 +4591,7 @@ void MainWindow::publish_performance_sample(const PerformanceMonitorSample& samp
     last_performance_sample_time_ = now;
 }
 
-// Purpose: Collect one live performance sample for the GPU diagnostics page.
+// Purpose: Collect one live performance sample for the System page.
 // Inputs: None; reads process, memory, I/O, optional PDH, and throttled HIP memory state.
 // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
 void MainWindow::update_performance_sample() {

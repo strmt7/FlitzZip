@@ -4,10 +4,13 @@
 #include "core/archive_index.hpp"
 
 #include <array>
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <span>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -78,6 +81,16 @@ void write_minimal_macbinary_fixture(const std::filesystem::path& path) {
     write_fixture(path, header);
 }
 
+// Purpose: Return a lowercase copy for display-label policy tests.
+// Inputs: `text` is ASCII registry metadata.
+// Outputs: Returns a lowercase string for case-insensitive substring checks.
+std::string lowercase_ascii(std::string_view text) {
+    std::string lowered(text);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return lowered;
+}
+
 }  // namespace
 
 TEST_CASE(archive_format_detects_real_archive_extensions) {
@@ -130,9 +143,8 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "package.cpgz", std::array<unsigned char, 2>{0x1F, 0x8B});
     write_fixture(root / "unix-compress.bin", std::array<unsigned char, 3>{0x1F, 0x9D, 0x90});
     const auto b64_begin = std::array<unsigned char, 38>{
-        'b', 'e', 'g', 'i', 'n', '-', 'b', 'a', 's', 'e', '6', '4', ' ', '6', '4', '4', ' ',
-        'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n',
-        'U', '2', 'F', 'm', 'Z', 'Q', '=', '=', '\n'};
+        'b', 'e', 'g', 'i', 'n', '-', 'b', 'a', 's', 'e',  '6', '4', ' ', '6', '4', '4', ' ', 'p', 'a',
+        'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', 'U', '2', 'F', 'm', 'Z', 'Q', '=', '=', '\n'};
     write_fixture(root / "base64.bin", b64_begin);
     write_fixture(root / "bz2.bin", std::array<unsigned char, 3>{'B', 'Z', 'h'});
     write_fixture(root / "xz.bin", std::array<unsigned char, 6>{0xFD, '7', 'z', 'X', 'Z', 0x00});
@@ -149,11 +161,11 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "wim.bin", std::array<unsigned char, 8>{'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00});
     write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
     write_minimal_suzip_fixture(root / "renamed-native.bin");
-    const auto uue_begin = std::array<unsigned char, 24>{
-        'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '`', '\n'};
+    const auto uue_begin = std::array<unsigned char, 24>{'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ',  'p', 'a',
+                                                         'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '`', '\n'};
     write_fixture(root / "uue.bin", uue_begin);
-    const auto xxe_begin = std::array<unsigned char, 24>{
-        'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '+', '\n'};
+    const auto xxe_begin = std::array<unsigned char, 24>{'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ',  'p', 'a',
+                                                         'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '+', '\n'};
     write_fixture(root / "xxe.bin", xxe_begin);
 
     REQUIRE_EQ(superzip::detect_archive_format(root / "zip.bin"), superzip::ArchiveFormat::Zip);
@@ -228,6 +240,26 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("macbinary").value(), superzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(superzip::parse_archive_format_token("macbin").value(), superzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(superzip::parse_archive_format_token("swm").value(), superzip::ArchiveFormat::SplitWim);
+}
+
+TEST_CASE(archive_format_display_names_are_precise_user_facing_format_names) {
+    for (const auto& info : superzip::archive_format_registry()) {
+        const auto display_name = lowercase_ascii(info.display_name);
+        REQUIRE_TRUE(display_name.find("compatibility") == std::string::npos);
+        REQUIRE_TRUE(display_name.find("single file") == std::string::npos);
+        REQUIRE_TRUE(display_name.find("encoded file") == std::string::npos);
+        REQUIRE_TRUE(display_name.find("stream") == std::string::npos);
+        REQUIRE_TRUE(display_name.find(" file") == std::string::npos);
+        REQUIRE_TRUE(display_name.find(" files") == std::string::npos);
+    }
+    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::SuperZip).display_name),
+               std::string("SuperZip (.suzip)"));
+    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::TarGzip).display_name),
+               std::string("TAR.GZ (.tar.gz, .tgz)"));
+    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::Base64).display_name),
+               std::string("Base64 (.b64)"));
+    REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::Uue).display_name),
+               std::string("UUencode (.uue, .uu)"));
 }
 
 TEST_CASE(archive_format_prefers_compound_tar_extensions_over_stream_magic) {

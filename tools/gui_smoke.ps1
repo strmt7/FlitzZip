@@ -15,6 +15,28 @@ if ([string]::IsNullOrWhiteSpace($ScreenshotPath)) {
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ScreenshotPath) | Out-Null
 
+# Purpose: Fail fast when GUI source reintroduces previously rejected user-facing labels.
+# Inputs: None; reads the repository app source tree.
+# Outputs: Throws with a precise remediation message when a banned GUI string appears.
+function Assert-GuiSourceContract {
+    $appSources = Get-ChildItem -LiteralPath (Join-Path $repo "src\app") -File -Recurse -Include *.cpp, *.hpp, *.h, *.rc
+    $sourceText = ($appSources | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
+    $blockedPatterns = @(
+        @{ Pattern = ('\bleve' + 'ls\b'); Message = "GUI source must not use plural compression-setting wording; compression labels are named options." },
+        @{ Pattern = ('Verbose ' + 'diagnostics'); Message = "GUI log level label must be 'Debug'." },
+        @{ Pattern = ('\bWarn' + 'ings\b'); Message = "GUI log level label must be singular 'Warning'." },
+        @{ Pattern = ('Session ' + 'only'); Message = "GUI log retention label must be 'Current session'." },
+        @{ Pattern = ('AMD GPU ' + 'Diagnostics'); Message = "The former GPU page title must remain 'System'." }
+    )
+    foreach ($rule in $blockedPatterns) {
+        if ($sourceText -match $rule.Pattern) {
+            throw $rule.Message
+        }
+    }
+}
+
+Assert-GuiSourceContract
+
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -633,17 +655,40 @@ function Invoke-DropdownExercise {
     return $capture
 }
 
+# Purpose: Assert one persisted GUI setting value in the temporary smoke settings file.
+# Inputs: `Path` is the JSON settings file, `Name` is the property, and `Expected` is the required value.
+# Outputs: Throws when Apply did not persist the expected value.
+function Assert-SettingsValue {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [object]$Expected
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Expected settings file was not written: $Path"
+    }
+    $settings = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    $actual = $settings.$Name
+    if ($actual -ne $Expected) {
+        throw "Expected settings $Name to be '$Expected', got '$actual'."
+    }
+}
+
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
 $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
+$badArchive = Join-Path $smokeRoot "invalid-input.suzip"
 $smokeCloseFile = Join-Path $smokeRoot "close.request"
+$smokeSettingsFile = Join-Path $smokeRoot "settings.json"
 Set-Content -LiteralPath $smokeInput -Value "SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
+Set-Content -LiteralPath $badArchive -Value "not a valid SuperZip archive" -NoNewline
 Remove-Item -LiteralPath $smokeArchive -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $smokeSettingsFile -Force -ErrorAction SilentlyContinue
 & (Join-Path $repo "build\$Configuration\superzip_cli.exe") compress --format suzip --output $smokeArchive --force-cpu $smokeInput | Out-Null
 if (-not (Test-Path -LiteralPath $smokeArchive)) {
     throw "Could not create valid SUZIP archive for GUI extract smoke."
@@ -653,11 +698,13 @@ $previousSmokeFiles = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_
 $previousSmokeFolder = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", "Process")
 $previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
 $previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
+$previousSmokeSettingsPath = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_PATH", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeRoot, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", (Resolve-Path -LiteralPath $smokeInput).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "90000", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_PATH", $smokeSettingsFile, "Process")
 
 $previousDpiContext = [SuperZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = Start-Process -FilePath $exe -PassThru
@@ -686,7 +733,7 @@ try {
     }
     Assert-FixedWindowStyle -Handle $windowHandle
     $captures = @()
-    $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "GPU", "Preferences", "About")
+    $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "System", "Settings", "About")
     $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
     $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $ScreenshotPath
@@ -899,7 +946,22 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     Start-Sleep -Seconds 2
 
-    # Security, History, GPU, and Preferences page controls.
+    # Extract failure: queue a corrupt SUZIP and verify History exposes a real Failure row.
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
+    Start-Sleep -Milliseconds 150
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
+    Start-Sleep -Milliseconds 150
+    Remove-Item -LiteralPath (Join-Path $smokeRoot "SuperZip-extracted") -Recurse -Force -ErrorAction SilentlyContinue
+    Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $badArchive).Path)
+    Start-Sleep -Milliseconds 250
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
+    Start-Sleep -Milliseconds 250
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 520 -DesignY 227
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
+    Start-Sleep -Seconds 2
+
+    # Security, History, System, and Settings page controls.
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 3
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -908,7 +970,12 @@ try {
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 4
     Start-Sleep -Milliseconds 250
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Operation" -OpenX 220 -OpenY 145 -SelectX 220 -SelectY 246 -MenuLeft 116 -MenuTop 170 -MenuRight 336 -MenuBottom 300 -BasePath $basePath -Extension $extension
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Status" -OpenX 390 -OpenY 145 -SelectX 390 -SelectY 214 -MenuLeft 354 -MenuTop 170 -MenuRight 574 -MenuBottom 268 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Status-Success" -OpenX 390 -OpenY 145 -SelectX 390 -SelectY 214 -MenuLeft 354 -MenuTop 170 -MenuRight 574 -MenuBottom 268 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "History-Status-Failure" -OpenX 390 -OpenY 145 -SelectX 390 -SelectY 246 -MenuLeft 354 -MenuTop 170 -MenuRight 574 -MenuBottom 268 -BasePath $basePath -Extension $extension
+    $historyFailurePath = "${basePath}-History-FailureRows$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyFailurePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasColor -Path $historyFailurePath -Dpi $windowDpi -Left 700 -Top 210 -Right 1138 -Bottom 470 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 236 -ExpectedGreen 73 -ExpectedBlue 73 -Tolerance 42 -MinPixels 4
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 90
     Start-Sleep -Milliseconds 250
 
@@ -916,15 +983,15 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 92
     Start-Sleep -Milliseconds 250
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "GPU-UpdateSpeed" -OpenX 1050 -OpenY 446 -SelectX 1050 -SelectY 242 -MenuLeft 980 -MenuTop 98 -MenuRight 1158 -MenuBottom 420 -BasePath $basePath -Extension $extension
-    $gpuMonitorPath = "${basePath}-GPU-PerformanceMonitor$extension"
-    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $gpuMonitorPath
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed" -OpenX 1050 -OpenY 446 -SelectX 1050 -SelectY 242 -MenuLeft 980 -MenuTop 98 -MenuRight 1158 -MenuBottom 420 -BasePath $basePath -Extension $extension
+    $systemMonitorPath = "${basePath}-System-PerformanceMonitor$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
-    Assert-DesignRectHasDetail -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
-    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 63 -ExpectedGreen 181 -ExpectedBlue 221
-    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 83 -ExpectedGreen 210 -ExpectedBlue 101
-    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 237 -ExpectedGreen 179 -ExpectedBlue 61
-    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45
+    Assert-DesignRectHasDetail -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 63 -ExpectedGreen 181 -ExpectedBlue 221
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 83 -ExpectedGreen 210 -ExpectedBlue 101
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 237 -ExpectedGreen 179 -ExpectedBlue 61
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 6
     Start-Sleep -Milliseconds 250
@@ -942,9 +1009,27 @@ try {
         Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX $point[0] -DesignY $point[1]
         Start-Sleep -Milliseconds 140
     }
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Preferences-MemoryPolicy" -OpenX 700 -OpenY 247 -SelectX 700 -SelectY 318 -MenuLeft 622 -MenuTop 274 -MenuRight 887 -MenuBottom 372 -BasePath $basePath -Extension $extension
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Preferences-LogLevel" -OpenX 700 -OpenY 384 -SelectX 700 -SelectY 456 -MenuLeft 622 -MenuTop 412 -MenuRight 887 -MenuBottom 510 -BasePath $basePath -Extension $extension
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Preferences-LogRetention" -OpenX 700 -OpenY 442 -SelectX 700 -SelectY 514 -MenuLeft 622 -MenuTop 470 -MenuRight 887 -MenuBottom 568 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-MemoryPolicy" -OpenX 700 -OpenY 247 -SelectX 700 -SelectY 318 -MenuLeft 622 -MenuTop 274 -MenuRight 887 -MenuBottom 372 -BasePath $basePath -Extension $extension
+    foreach ($rowY in @(424, 456, 488)) {
+        $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-LogLevel-$rowY" -OpenX 700 -OpenY 384 -SelectX 700 -SelectY $rowY -MenuLeft 622 -MenuTop 412 -MenuRight 887 -MenuBottom 510 -BasePath $basePath -Extension $extension
+    }
+    foreach ($rowY in @(482, 514, 546)) {
+        $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-LogRetention-$rowY" -OpenX 700 -OpenY 442 -SelectX 700 -SelectY $rowY -MenuLeft 622 -MenuTop 470 -MenuRight 887 -MenuBottom 568 -BasePath $basePath -Extension $extension
+    }
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
+    Start-Sleep -Milliseconds 250
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "memoryPolicyIndex" -Expected 1
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "logRetentionIndex" -Expected 2
+
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-LogLevel-UnappliedWarning" -OpenX 700 -OpenY 384 -SelectX 700 -SelectY 456 -MenuLeft 622 -MenuTop 412 -MenuRight 887 -MenuBottom 510 -BasePath $basePath -Extension $extension
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
+    Start-Sleep -Milliseconds 250
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 6
+    Start-Sleep -Milliseconds 250
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
+    Start-Sleep -Milliseconds 250
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
 
     for ($index = 0; $index -lt $pageNames.Count; ++$index) {
         Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex $index
@@ -979,6 +1064,7 @@ try {
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", $previousSmokeFolder, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", $previousSmokeAutoClose, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $previousSmokeCloseFile, "Process")
+    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_PATH", $previousSmokeSettingsPath, "Process")
     Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
     if ($cleanupFailure) {
         throw $cleanupFailure

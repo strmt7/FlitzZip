@@ -25,91 +25,70 @@ struct ExtensionFormatMapping {
 constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
-    {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
+    {ArchiveFormat::SuperZip, "suzip", "SuperZip (.suzip)", ".suzip", true, true, true, true},
     {ArchiveFormat::Zip, "zip", "ZIP (.zip)", ".zip", true, true, false, true},
     {ArchiveFormat::Zipx, "zipx", "ZIPX (.zipx)", ".zipx", false, true, false, true},
-    {ArchiveFormat::SevenZip, "7z", "7-Zip (.7z)", ".7z", false, true, false, true},
+    {ArchiveFormat::SevenZip, "7z", "7z (.7z)", ".7z", false, true, false, true},
     {ArchiveFormat::Rar, "rar", "RAR (.rar)", ".rar", false, false, false, false},
     {ArchiveFormat::Tar, "tar", "TAR (.tar)", ".tar", true, true, false, true},
-    {ArchiveFormat::TarGzip, "tar.gz", "TAR + Gzip (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},
-    {ArchiveFormat::TarBzip2, "tar.bz2", "TAR + Bzip2 (.tar.bz2, .tbz, .tbz2)", ".tar.bz2,.tbz,.tbz2", true, true, false, true},
-    {ArchiveFormat::TarXz, "tar.xz", "TAR + XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, true, false, true},
-    {ArchiveFormat::TarLzip, "tar.lz", "TAR + lzip (.tar.lz, .tlz)", ".tar.lz,.tlz", false, true, false, true},
-    {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", true, true, false, true},
-    {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
+    {ArchiveFormat::TarGzip, "tar.gz", "TAR.GZ (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},
+    {ArchiveFormat::TarBzip2, "tar.bz2", "TAR.BZ2 (.tar.bz2, .tbz, .tbz2)", ".tar.bz2,.tbz,.tbz2", true, true, false,
+     true},
+    {ArchiveFormat::TarXz, "tar.xz", "TAR.XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, true, false, true},
+    {ArchiveFormat::TarLzip, "tar.lz", "TAR.LZ (.tar.lz, .tlz)", ".tar.lz,.tlz", false, true, false, true},
+    {ArchiveFormat::TarZstd, "tar.zst", "TAR.ZST (.tar.zst, .tzst)", ".tar.zst,.tzst", true, true, false, true},
+    {ArchiveFormat::Gzip, "gz", "Gzip (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
-    {ArchiveFormat::Base64, "b64", "Base64 encoded file (.b64)", ".b64", true, true, false, true},
-    {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
-    {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, true, false, true},
-    {ArchiveFormat::Lzma, "lzma", "LZMA stream (.lzma)", ".lzma", false, true, false, true},
-    {ArchiveFormat::Lzip, "lz", "lzip stream (.lz)", ".lz", false, true, false, true},
-    {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst,.zstd", true, true, false, true},
+    {ArchiveFormat::Base64, "b64", "Base64 (.b64)", ".b64", true, true, false, true},
+    {ArchiveFormat::Bzip2, "bz2", "Bzip2 (.bz2)", ".bz2", true, true, false, true},
+    {ArchiveFormat::Xz, "xz", "XZ (.xz)", ".xz", false, true, false, true},
+    {ArchiveFormat::Lzma, "lzma", "LZMA (.lzma)", ".lzma", false, true, false, true},
+    {ArchiveFormat::Lzip, "lz", "lzip (.lz)", ".lz", false, true, false, true},
+    {ArchiveFormat::Zstd, "zst", "Zstandard (.zst, .zstd)", ".zst,.zstd", true, true, false, true},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
-    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO + Gzip (.cpio.gz, .cpgz)", ".cpio.gz,.cpgz", true, true, false, true},
+    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO.GZ (.cpio.gz, .cpgz)", ".cpio.gz,.cpgz", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
     {ArchiveFormat::Hqx, "hqx", "BinHex 4.0 (.hqx)", ".hqx", false, true, false, true},
-    {ArchiveFormat::MacBinary, "macbinary", "MacBinary (.macbin, header-detected .bin)", ".macbin", false, true, false, true},
-    {ArchiveFormat::Xxe, "xxe", "XXEncoded file (.xxe)", ".xxe", true, true, false, true},
-    {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
+    {ArchiveFormat::MacBinary, "macbinary", "MacBinary (.macbin, header-detected .bin)", ".macbin", false, true, false,
+     true},
+    {ArchiveFormat::Xxe, "xxe", "XXEncode (.xxe)", ".xxe", true, true, false, true},
+    {ArchiveFormat::Uue, "uue", "UUencode (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
-    {ArchiveFormat::SplitWim, "swm", "Split Windows Imaging part (.swm)", ".swm", false, false, false, false},
+    {ArchiveFormat::SplitWim, "swm", "Split WIM (.swm)", ".swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, true, false, true},
     {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
 constexpr std::array<ExtensionFormatMapping, 47> kExtensionFormats{{
-    {".suzip", ArchiveFormat::SuperZip},
-    {".zip", ArchiveFormat::Zip},
-    {".zipx", ArchiveFormat::Zipx},
-    {".7z", ArchiveFormat::SevenZip},
-    {".rar", ArchiveFormat::Rar},
-    {".tar.gz", ArchiveFormat::TarGzip},
-    {".tgz", ArchiveFormat::TarGzip},
-    {".tar.bz2", ArchiveFormat::TarBzip2},
-    {".tbz", ArchiveFormat::TarBzip2},
-    {".tbz2", ArchiveFormat::TarBzip2},
-    {".tar.xz", ArchiveFormat::TarXz},
-    {".txz", ArchiveFormat::TarXz},
-    {".tar.lz", ArchiveFormat::TarLzip},
-    {".tlz", ArchiveFormat::TarLzip},
-    {".tar.zst", ArchiveFormat::TarZstd},
-    {".tzst", ArchiveFormat::TarZstd},
-    {".cpio.gz", ArchiveFormat::CpioGzip},
-    {".cpgz", ArchiveFormat::CpioGzip},
-    {".tar", ArchiveFormat::Tar},
-    {".gz", ArchiveFormat::Gzip},
-    {".z", ArchiveFormat::UnixCompress},
-    {".b64", ArchiveFormat::Base64},
-    {".bz2", ArchiveFormat::Bzip2},
-    {".xz", ArchiveFormat::Xz},
-    {".lzma", ArchiveFormat::Lzma},
-    {".lz", ArchiveFormat::Lzip},
-    {".zst", ArchiveFormat::Zstd},
-    {".zstd", ArchiveFormat::Zstd},
-    {".cab", ArchiveFormat::Cab},
-    {".iso", ArchiveFormat::Iso},
-    {".cpio", ArchiveFormat::Cpio},
-    {".ar", ArchiveFormat::Ar},
-    {".arj", ArchiveFormat::Arj},
-    {".arc", ArchiveFormat::Arc},
-    {".ark", ArchiveFormat::Arc},
-    {".hqx", ArchiveFormat::Hqx},
-    {".macbin", ArchiveFormat::MacBinary},
-    {".xxe", ArchiveFormat::Xxe},
-    {".uue", ArchiveFormat::Uue},
-    {".uu", ArchiveFormat::Uue},
-    {".lha", ArchiveFormat::Lha},
-    {".lzh", ArchiveFormat::Lha},
-    {".wim", ArchiveFormat::Wim},
-    {".swm", ArchiveFormat::SplitWim},
-    {".xar", ArchiveFormat::Xar},
-    {".deb", ArchiveFormat::Deb},
+    {".suzip", ArchiveFormat::SuperZip},   {".zip", ArchiveFormat::Zip},
+    {".zipx", ArchiveFormat::Zipx},        {".7z", ArchiveFormat::SevenZip},
+    {".rar", ArchiveFormat::Rar},          {".tar.gz", ArchiveFormat::TarGzip},
+    {".tgz", ArchiveFormat::TarGzip},      {".tar.bz2", ArchiveFormat::TarBzip2},
+    {".tbz", ArchiveFormat::TarBzip2},     {".tbz2", ArchiveFormat::TarBzip2},
+    {".tar.xz", ArchiveFormat::TarXz},     {".txz", ArchiveFormat::TarXz},
+    {".tar.lz", ArchiveFormat::TarLzip},   {".tlz", ArchiveFormat::TarLzip},
+    {".tar.zst", ArchiveFormat::TarZstd},  {".tzst", ArchiveFormat::TarZstd},
+    {".cpio.gz", ArchiveFormat::CpioGzip}, {".cpgz", ArchiveFormat::CpioGzip},
+    {".tar", ArchiveFormat::Tar},          {".gz", ArchiveFormat::Gzip},
+    {".z", ArchiveFormat::UnixCompress},   {".b64", ArchiveFormat::Base64},
+    {".bz2", ArchiveFormat::Bzip2},        {".xz", ArchiveFormat::Xz},
+    {".lzma", ArchiveFormat::Lzma},        {".lz", ArchiveFormat::Lzip},
+    {".zst", ArchiveFormat::Zstd},         {".zstd", ArchiveFormat::Zstd},
+    {".cab", ArchiveFormat::Cab},          {".iso", ArchiveFormat::Iso},
+    {".cpio", ArchiveFormat::Cpio},        {".ar", ArchiveFormat::Ar},
+    {".arj", ArchiveFormat::Arj},          {".arc", ArchiveFormat::Arc},
+    {".ark", ArchiveFormat::Arc},          {".hqx", ArchiveFormat::Hqx},
+    {".macbin", ArchiveFormat::MacBinary}, {".xxe", ArchiveFormat::Xxe},
+    {".uue", ArchiveFormat::Uue},          {".uu", ArchiveFormat::Uue},
+    {".lha", ArchiveFormat::Lha},          {".lzh", ArchiveFormat::Lha},
+    {".wim", ArchiveFormat::Wim},          {".swm", ArchiveFormat::SplitWim},
+    {".xar", ArchiveFormat::Xar},          {".deb", ArchiveFormat::Deb},
     {".rpm", ArchiveFormat::Rpm},
 }};
 
@@ -117,9 +96,7 @@ constexpr std::array<ExtensionFormatMapping, 47> kExtensionFormats{{
 // Inputs: `value` is an archive token or filename.
 // Outputs: Returns a lowercased copy; non-ASCII bytes are preserved except C-locale ASCII folds.
 std::string ascii_lower(std::string value) {
-    std::ranges::transform(value, value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(value, value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
@@ -127,8 +104,7 @@ std::string ascii_lower(std::string value) {
 // Inputs: `value` and `suffix` are lowercase strings.
 // Outputs: Returns true when `suffix` is a byte suffix of `value`.
 bool ends_with_lower(const std::string& value, std::string_view suffix) {
-    return value.size() >= suffix.size() &&
-        value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+    return value.size() >= suffix.size() && value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 // Purpose: Detect ZIP-based application/document containers that must not be treated as archives.
@@ -137,15 +113,9 @@ bool ends_with_lower(const std::string& value, std::string_view suffix) {
 bool has_excluded_zip_container_extension(const std::filesystem::path& path) {
     const auto name = ascii_lower(path.filename().string());
     constexpr std::array excluded = {
-        ".docx", ".pptx", ".xlsx",
-        ".odt", ".ods", ".odp",
-        ".jar", ".war", ".ear",
-        ".apk", ".ipa", ".xpi",
-        ".cbz",
+        ".docx", ".pptx", ".xlsx", ".odt", ".ods", ".odp", ".jar", ".war", ".ear", ".apk", ".ipa", ".xpi", ".cbz",
     };
-    return std::ranges::any_of(excluded, [&](std::string_view extension) {
-        return ends_with_lower(name, extension);
-    });
+    return std::ranges::any_of(excluded, [&](std::string_view extension) { return ends_with_lower(name, extension); });
 }
 
 // Purpose: Read bounded leading bytes for format magic detection.
@@ -241,7 +211,8 @@ bool has_uue_begin_line(std::span<const unsigned char> bytes) {
 
 // Purpose: Detect an XXEncode begin line without stealing generic UUencode text probes.
 // Inputs: `bytes` contains the file prefix and `path` supplies the `.xxe` extension hint for short payloads.
-// Outputs: Returns true for `.xxe` files with a strict begin line or for extensionless probes with an XXE-only length marker.
+// Outputs: Returns true for `.xxe` files with a strict begin line or for extensionless probes with an XXE-only length
+// marker.
 bool has_xxe_begin_line(std::span<const unsigned char> bytes, const std::filesystem::path& path) {
     const bool extension_hint = ends_with_lower(ascii_lower(path.filename().string()), ".xxe");
     std::size_t line_start = 0;
@@ -255,7 +226,8 @@ bool has_xxe_begin_line(std::span<const unsigned char> bytes, const std::filesys
             --line_size;
         }
         constexpr std::string_view prefix = "begin ";
-        const bool begin_matches = line_size > prefix.size() &&
+        const bool begin_matches =
+            line_size > prefix.size() &&
             std::equal(prefix.begin(), prefix.end(), bytes.begin() + static_cast<std::ptrdiff_t>(line_start));
         if (begin_matches) {
             auto cursor = line_start + prefix.size();
@@ -317,9 +289,8 @@ bool has_base64_begin_line(std::span<const unsigned char> bytes) {
 // Outputs: Returns true when the standard BinHex comment and a following payload colon appear in the probe.
 bool has_hqx_comment_marker(std::span<const unsigned char> bytes) {
     constexpr std::string_view comment = "(This file must be converted with BinHex 4.0)";
-    auto it = std::search(bytes.begin(), bytes.end(), comment.begin(), comment.end(), [](unsigned char lhs, char rhs) {
-        return lhs == static_cast<unsigned char>(rhs);
-    });
+    auto it = std::search(bytes.begin(), bytes.end(), comment.begin(), comment.end(),
+                          [](unsigned char lhs, char rhs) { return lhs == static_cast<unsigned char>(rhs); });
     if (it == bytes.end()) {
         return false;
     }
@@ -331,9 +302,8 @@ bool has_hqx_comment_marker(std::span<const unsigned char> bytes) {
 // Inputs: `bytes` contains at least `offset + 2` bytes and `offset` is the first byte.
 // Outputs: Returns the decoded integer.
 std::uint16_t read_probe_be_u16(std::span<const unsigned char> bytes, std::size_t offset) {
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(bytes[offset]) << 8U) |
-        static_cast<std::uint16_t>(bytes[offset + 1U]));
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[offset]) << 8U) |
+                                      static_cast<std::uint16_t>(bytes[offset + 1U]));
 }
 
 // Purpose: Read a big-endian 32-bit integer from a bounded probe buffer.
@@ -341,9 +311,8 @@ std::uint16_t read_probe_be_u16(std::span<const unsigned char> bytes, std::size_
 // Outputs: Returns the decoded integer.
 std::uint32_t read_probe_be_u32(std::span<const unsigned char> bytes, std::size_t offset) {
     return (static_cast<std::uint32_t>(bytes[offset]) << 24U) |
-        (static_cast<std::uint32_t>(bytes[offset + 1U]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[offset + 2U]) << 8U) |
-        static_cast<std::uint32_t>(bytes[offset + 3U]);
+           (static_cast<std::uint32_t>(bytes[offset + 1U]) << 16U) |
+           (static_cast<std::uint32_t>(bytes[offset + 2U]) << 8U) | static_cast<std::uint32_t>(bytes[offset + 3U]);
 }
 
 // Purpose: Update a CRC-16/XMODEM register with one byte for MacBinary header probing.
@@ -373,7 +342,8 @@ std::uint16_t macbinary_probe_crc(std::span<const unsigned char> bytes) {
 
 // Purpose: Detect a strongly identifiable MacBinary II/III header in a generic binary probe.
 // Inputs: `bytes` contains the file prefix and may be shorter than a full header.
-// Outputs: Returns true only when required zero fields, filename bytes, version/signature markers, and header CRC agree.
+// Outputs: Returns true only when required zero fields, filename bytes, version/signature markers, and header CRC
+// agree.
 bool has_macbinary_header_marker(std::span<const unsigned char> bytes) {
     if (bytes.size() < 128U || bytes[0] != 0U || bytes[74] != 0U || bytes[82] != 0U) {
         return false;
@@ -388,17 +358,14 @@ bool has_macbinary_header_marker(std::span<const unsigned char> bytes) {
             return false;
         }
     }
-    const bool versioned = (bytes[122] == 0x81U || bytes[122] == 0x82U) &&
-        (bytes[123] == 0x81U || bytes[123] == 0x82U);
-    const bool signed_v3 = bytes[102] == static_cast<unsigned char>('m') &&
-        bytes[103] == static_cast<unsigned char>('B') &&
-        bytes[104] == static_cast<unsigned char>('I') &&
-        bytes[105] == static_cast<unsigned char>('N');
+    const bool versioned = (bytes[122] == 0x81U || bytes[122] == 0x82U) && (bytes[123] == 0x81U || bytes[123] == 0x82U);
+    const bool signed_v3 =
+        bytes[102] == static_cast<unsigned char>('m') && bytes[103] == static_cast<unsigned char>('B') &&
+        bytes[104] == static_cast<unsigned char>('I') && bytes[105] == static_cast<unsigned char>('N');
     if (!versioned && !signed_v3) {
         return false;
     }
-    if ((read_probe_be_u32(bytes, 83U) & 0x80000000U) != 0U ||
-        (read_probe_be_u32(bytes, 87U) & 0x80000000U) != 0U) {
+    if ((read_probe_be_u32(bytes, 83U) & 0x80000000U) != 0U || (read_probe_be_u32(bytes, 87U) & 0x80000000U) != 0U) {
         return false;
     }
     return read_probe_be_u16(bytes, 124U) == macbinary_probe_crc(bytes);
@@ -407,10 +374,8 @@ bool has_macbinary_header_marker(std::span<const unsigned char> bytes) {
 // Purpose: Match a fixed byte signature at an arbitrary offset.
 // Inputs: `bytes` is the file probe, `offset` is the byte offset, and `signature` is the magic sequence.
 // Outputs: Returns true when all signature bytes match at `offset`.
-bool matches_signature_at(
-    std::span<const unsigned char> bytes,
-    std::size_t offset,
-    std::initializer_list<unsigned char> signature) {
+bool matches_signature_at(std::span<const unsigned char> bytes, std::size_t offset,
+                          std::initializer_list<unsigned char> signature) {
     if (offset > bytes.size() || bytes.size() - offset < signature.size()) {
         return false;
     }
@@ -444,7 +409,8 @@ ArchiveFormat detect_stream_magic(std::span<const unsigned char> bytes, const st
     }
     if (starts_with_signature(bytes, {'L', 'Z', 'I', 'P'})) {
         const auto lower_name = ascii_lower(path.filename().string());
-        return (ends_with_lower(lower_name, ".tar.lz") || ends_with_lower(lower_name, ".tlz")) ? ArchiveFormat::TarLzip : ArchiveFormat::Lzip;
+        return (ends_with_lower(lower_name, ".tar.lz") || ends_with_lower(lower_name, ".tlz")) ? ArchiveFormat::TarLzip
+                                                                                               : ArchiveFormat::Lzip;
     }
     if (starts_with_signature(bytes, {0x28, 0xB5, 0x2F, 0xFD})) {
         return ArchiveFormat::Zstd;
@@ -456,8 +422,7 @@ ArchiveFormat detect_stream_magic(std::span<const unsigned char> bytes, const st
 // Inputs: `bytes` contains a bounded prefix probe and `path` supplies extension context for ambiguous container magics.
 // Outputs: Returns a detected format or unknown.
 ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::filesystem::path& path) {
-    if (starts_with_signature(bytes, {'P', 'K', 0x03, 0x04}) ||
-        starts_with_signature(bytes, {'P', 'K', 0x05, 0x06}) ||
+    if (starts_with_signature(bytes, {'P', 'K', 0x03, 0x04}) || starts_with_signature(bytes, {'P', 'K', 0x05, 0x06}) ||
         starts_with_signature(bytes, {'P', 'K', 0x07, 0x08})) {
         const auto lower_name = ascii_lower(path.filename().string());
         return ends_with_lower(lower_name, ".zipx") ? ArchiveFormat::Zipx : ArchiveFormat::Zip;
@@ -540,14 +505,16 @@ ArchiveFormat detect_by_extension(const std::filesystem::path& path) {
 
 }  // namespace
 
+// Purpose: Return the static registry of real archive/container formats known to SuperZip.
+// Inputs: None.
+// Outputs: Returns immutable metadata shared by CLI, GUI, and tests.
 std::span<const ArchiveFormatInfo> archive_format_registry() {
     return kFormatRegistry;
 }
 
 const ArchiveFormatInfo& archive_format_info(ArchiveFormat format) {
-    const auto it = std::ranges::find_if(kFormatRegistry, [format](const ArchiveFormatInfo& info) {
-        return info.format == format;
-    });
+    const auto it = std::ranges::find_if(kFormatRegistry,
+                                         [format](const ArchiveFormatInfo& info) { return info.format == format; });
     return it == kFormatRegistry.end() ? kFormatRegistry.front() : *it;
 }
 
@@ -593,9 +560,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
     } else if (lowered == "ark") {
         lowered = "arc";
     }
-    const auto it = std::ranges::find_if(kFormatRegistry, [&](const ArchiveFormatInfo& info) {
-        return lowered == info.key;
-    });
+    const auto it =
+        std::ranges::find_if(kFormatRegistry, [&](const ArchiveFormatInfo& info) { return lowered == info.key; });
     if (it == kFormatRegistry.end()) {
         return std::nullopt;
     }
@@ -610,12 +576,9 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
         return ArchiveFormat::Unknown;
     }
     const auto by_extension = detect_by_extension(archive_path);
-    if (by_extension == ArchiveFormat::TarGzip ||
-        by_extension == ArchiveFormat::TarBzip2 ||
-        by_extension == ArchiveFormat::TarXz ||
-        by_extension == ArchiveFormat::TarLzip ||
-        by_extension == ArchiveFormat::TarZstd ||
-        by_extension == ArchiveFormat::CpioGzip) {
+    if (by_extension == ArchiveFormat::TarGzip || by_extension == ArchiveFormat::TarBzip2 ||
+        by_extension == ArchiveFormat::TarXz || by_extension == ArchiveFormat::TarLzip ||
+        by_extension == ArchiveFormat::TarZstd || by_extension == ArchiveFormat::CpioGzip) {
         return by_extension;
     }
     const auto by_magic = detect_by_magic(read_probe_bytes(archive_path), archive_path);

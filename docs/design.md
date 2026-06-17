@@ -16,8 +16,8 @@ Generated design boards are stored under `resources/design/`:
   shared page-grid alignment, Queue-local actions, and symmetric rail icons.
 
 The current Win32 implementation follows iteration 4 at the structural level:
-left navigation, queue/work surface, persistent GPU status, Security Review,
-History, AMD GPU, and Preferences pages. It keeps rendering native rather than
+left navigation, queue/work surface, persistent GPU status, Security,
+History, System, and Settings pages. It keeps rendering native rather than
 using bitmap UI assets, so the app remains crisp at 4K+ and high DPI.
 
 ## Brand Source Of Truth
