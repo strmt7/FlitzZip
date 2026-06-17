@@ -53,3 +53,37 @@ against the reference direction.
 - Work starts on a background thread and updates progress through coalesced
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
+
+## Performance Monitor Contract
+
+References checked on 2026-06-18:
+
+- Windows Task Manager overview:
+  <https://learn.microsoft.com/en-us/shows/inside/task-manager>
+- Windows Performance Counters:
+  <https://learn.microsoft.com/en-us/windows/win32/perfctrs/performance-counters-portal>
+- PDH sampling guidance:
+  <https://learn.microsoft.com/en-us/windows/win32/perfctrs/collecting-performance-data>
+- DWM drawing best practices:
+  <https://learn.microsoft.com/en-us/windows/win32/dwm/bestpractices-ovw>
+- Double-buffering rationale:
+  <https://learn.microsoft.com/en-us/dotnet/desktop/winforms/advanced/how-to-reduce-graphics-flicker-with-double-buffering-for-forms-and-controls>
+
+The GPU diagnostics page uses Task Manager-style history cards: a current
+value, short explanatory detail, a subtle grid, and a bounded ring-buffer graph.
+The visible cards are CPU usage, total used system RAM, process read/write I/O,
+and used GPU VRAM. Current values must remain visible alongside graphs; a graph
+without the live number is a regression.
+
+Sampling is deliberately bounded. The update-speed dropdown offers exactly
+1-10 seconds, maps directly to the Win32 timer interval, and re-arms the timer
+when changed. CPU and process I/O rates are interval-based and need at least two
+samples before they show meaningful nonzero rates. GPU engine utilization uses
+Windows PDH when available; VRAM uses throttled HIP device queries so the
+monitor does not create device chatter or interfere with compression.
+
+Rendering must stay native, crisp, and low-overhead: no blurred backgrounds, no
+bitmap graph assets, no unbounded animations, no full-window transparency, and
+no polling faster than the selected interval. `tools\gui_smoke.ps1` must keep
+opening the update-speed dropdown, capture the expanded menu, and assert that
+the performance monitor region contains the expected graph color families.
