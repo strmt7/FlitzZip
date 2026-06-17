@@ -16,6 +16,7 @@
 #include "gpu/gpu_codec.hpp"
 #include "iso/iso_adapter.hpp"
 #include "lha/lha_adapter.hpp"
+#include "lzip/lzip_adapter.hpp"
 #include "lzma/lzma_adapter.hpp"
 #include "rpm/rpm_adapter.hpp"
 #include "sevenzip/sevenzip_adapter.hpp"
@@ -316,6 +317,8 @@ OperationStats extract_detected_archive(
         return extract_tar_bzip2(archive, output, overwrite, progress_callback);
     case ArchiveFormat::TarXz:
         return extract_tar_xz(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::TarLzip:
+        return extract_tar_lzip(archive, output, overwrite, progress_callback);
     case ArchiveFormat::TarZstd:
         return extract_tar_zstd(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Gzip:
@@ -326,6 +329,8 @@ OperationStats extract_detected_archive(
         return extract_xz_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Lzma:
         return extract_lzma_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Lzip:
+        return extract_lzip_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Zstd:
         return extract_zstd_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::UnixCompress:
@@ -1862,6 +1867,9 @@ void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& 
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
 }
 
+// Purpose: Render the About page brand, version, and compatibility boundary summary.
+// Inputs: `dc` is the target device context and `rect` is the DPI-scaled page bounds.
+// Outputs: Draws into `dc`; does not mutate archive state or perform I/O.
 void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     RECT card{area.left, area.top + scale(56), area.right, area.bottom - scale(60)};
@@ -1875,7 +1883,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR, Gzip, Bzip2, XZ, LZMA, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 

@@ -7,6 +7,7 @@
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_stream.hpp"
+#include "lzip/lzip_stream.hpp"
 #include "xz/xz_stream.hpp"
 #include "zstd/zstd_stream.hpp"
 
@@ -972,6 +973,9 @@ OperationStats extract_tar_bzip2(
     return stats;
 }
 
+// Purpose: Extract an XZ-compressed TAR stream with two-pass TAR metadata validation.
+// Inputs: `archive_path` is the compressed TAR source, `destination` is the output root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns extraction telemetry; throws for malformed XZ/TAR data, unsafe paths, refused overwrite, or publication failures.
 OperationStats extract_tar_xz(
     const std::filesystem::path& archive_path,
     const std::filesystem::path& destination,
@@ -984,6 +988,33 @@ OperationStats extract_tar_xz(
     std::filesystem::create_directories(destination);
 
     XzInputStream extract_input(archive_path);
+    extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
+    extract_input.finish();
+
+    OperationStats stats;
+    stats.input_bytes = extract_input.input_bytes();
+    stats.output_bytes = scanned.total_file_bytes;
+    stats.entries = scanned.entries.size();
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
+}
+
+// Purpose: Extract a lzip-compressed TAR stream with two-pass TAR metadata validation.
+// Inputs: `archive_path` is the compressed TAR source, `destination` is the output root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns extraction telemetry; throws for malformed lzip/TAR data, unsafe paths, refused overwrite, or publication failures.
+OperationStats extract_tar_lzip(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback) {
+    const auto started = std::chrono::steady_clock::now();
+    LzipInputStream scan_input(archive_path);
+    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    scan_input.finish();
+    std::filesystem::create_directories(destination);
+
+    LzipInputStream extract_input(archive_path);
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 

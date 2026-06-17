@@ -28,6 +28,8 @@ Primary and project-owned sources reviewed:
 - ARC format reference mirror: https://www.fileformat.info/format/arc/corion.htm
 - ARC format implementation notes: https://www.virtualdub.org/blog2/entry_345.html
 - Nomarch ARC extractor overview: https://www.svgalib.org/rus/nomarch.html
+- Lzip manual and format specification: https://www.nongnu.org/lzip/manual/lzip_manual.html
+- Lzip compressed-format Internet-Draft: https://datatracker.ietf.org/doc/draft-diaz-lzip/
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - bzip2/libbzip2: https://sourceware.org/bzip2/
@@ -64,7 +66,7 @@ URLs, and text are intentionally not recorded in this repository; only the
 resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
-ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, Zstandard, CAB, ISO, AR, CPIO, ARJ, ARC,
+ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, ARJ, ARC,
 LHA/LZH, WIM, XAR, DEB, RPM, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
@@ -110,10 +112,12 @@ already real archive/package formats in SuperZip's matrix.
 | `.tar.gz`, `.tgz` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.tar.bz2`, `.tbz`, `.tbz2` | Yes | Yes | Compatibility format | native TAR stream adapter over vendored libbzip2 1.0.8 |
 | `.tar.xz`, `.txz` | No | Yes | Extract-only compatibility format | native TAR stream adapter over vendored XZ Embedded |
+| `.tar.lz`, `.tlz` | No | Yes | Extract-only compatibility format | native TAR stream adapter over lzip wrapper checks and vendored LZMA SDK 26.01 |
 | `.gz` | Yes | Yes | Single-file compatibility stream | vendored miniz 3.1.1 raw deflate |
 | `.bz2` | Yes | Yes | Single-file compatibility stream | vendored libbzip2 1.0.8 |
 | `.xz` | No | Yes | Extract-only single-file compatibility stream | vendored XZ Embedded |
 | `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.01 decoder with SuperZip path/publish pipeline |
+| `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.01 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
@@ -180,6 +184,15 @@ embedded checksum; SuperZip verifies the decoder state, declared output size
 when present, dictionary/resource limits, and final output publication, while
 the optional SHA-256 integrity mode remains the strong end-to-end archive-file
 check.
+
+Lzip support is extract-only. Single-file `.lz` extraction derives one safe
+output path from the archive filename. The lzip wrapper is validated around the
+vendored LZMA decoder: each member must use version 1, a valid coded dictionary
+size, an EOS-terminated LZMA stream, matching CRC32, matching uncompressed data
+size, and matching member size. Concatenated lzip members are accepted for
+single-file streams and exposed as one continuous output. `.tar.lz`/`.tlz`
+routes the decoded stream through the native TAR scanner, so TAR paths are
+validated in a full first pass before destination writes.
 
 Zstandard support is single-file when used as `.zst` or `.zstd`. SuperZip loads
 the bundled official libzstd 1.5.7 DLL from the executable directory, validates
@@ -731,6 +744,35 @@ flowchart TD
     E -->|"size or trailing-data failure"| G
 ```
 
+## Lzip Security Contract
+
+The lzip path is in-process through SuperZip's lzip wrapper decoder over the
+vendored LZMA SDK 26.01 decoder:
+
+1. `.lz` derives one safe output file from the archive filename.
+2. `.tar.lz`/`.tlz` routes through the native TAR scanner, so all TAR paths are
+   validated before any extraction output is published.
+3. Each lzip member must use the `LZIP` magic, version 1, and a valid coded
+   dictionary size between 4 KiB and 512 MiB.
+4. Each member must reach the LZMA EOS marker and match the trailer CRC32,
+   uncompressed data size, and member size before bytes are trusted.
+5. Concatenated members are supported; trailing non-member data and empty
+   members before another member are rejected.
+6. SDK allocations are routed through a bounded allocator, and decoded output is
+   capped by the SuperZip pipeline limit.
+
+```mermaid
+flowchart TD
+    A["Open lzip stream"] --> B{"Single-file .lz or TAR.LZ?"}
+    B -->|".lz"| C["Decode and validate every lzip member"]
+    C --> D["Publish one safe output file"]
+    B -->|".tar.lz"| E["Pass 1: decode lzip and scan TAR metadata"]
+    E --> F["Validate all TAR paths and entry kinds"]
+    F --> G["Pass 2: decode lzip and publish verified TAR files"]
+    C -->|"header, EOS, CRC, size, or member failure"| H["Reject stream"]
+    E -->|"lzip or TAR validation failure"| H
+```
+
 ## Zstandard Security Contract
 
 The Zstandard path is in-process through the bundled official libzstd 1.5.7 DLL
@@ -792,11 +834,12 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only RAR, broader ARJ and SEA ARC compressed-method
-extraction, deeper ZIPX method coverage, and the remaining recognized-only
+Preferred next increments are read-only RAR, broader ARJ and SEA ARC
+compressed-method extraction, deeper ZIPX method coverage, lzip creation only
+after a vetted in-process encoder exists, and the remaining recognized-only
 legacy/container formats after backend selection and licensing review. XAR
 checksum/signature validation is also a future hardening increment before
-SuperZip can claim broad XAR compatibility. Write
-support for RAR is not planned because the common RAR creation tooling is not a
-permissive open format writer suitable for this repo. 7z creation also remains
-disabled until a vetted in-process writer path passes the same gates.
+SuperZip can claim broad XAR compatibility. Write support for RAR is not
+planned because the common RAR creation tooling is not a permissive open format
+writer suitable for this repo. 7z creation also remains disabled until a vetted
+in-process writer path passes the same gates.

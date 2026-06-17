@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 31> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 33> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -34,12 +34,14 @@ constexpr std::array<ArchiveFormatInfo, 31> kFormatRegistry{{
     {ArchiveFormat::TarGzip, "tar.gz", "TAR + Gzip (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},
     {ArchiveFormat::TarBzip2, "tar.bz2", "TAR + Bzip2 (.tar.bz2, .tbz, .tbz2)", ".tar.bz2,.tbz,.tbz2", true, true, false, true},
     {ArchiveFormat::TarXz, "tar.xz", "TAR + XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, true, false, true},
+    {ArchiveFormat::TarLzip, "tar.lz", "TAR + lzip (.tar.lz, .tlz)", ".tar.lz,.tlz", false, true, false, true},
     {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", true, true, false, true},
     {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, true, false, true},
     {ArchiveFormat::Lzma, "lzma", "LZMA stream (.lzma)", ".lzma", false, true, false, true},
+    {ArchiveFormat::Lzip, "lz", "lzip stream (.lz)", ".lz", false, true, false, true},
     {ArchiveFormat::Zstd, "zst", "Zstandard stream (.zst)", ".zst,.zstd", true, true, false, true},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
@@ -56,7 +58,7 @@ constexpr std::array<ArchiveFormatInfo, 31> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 38> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 41> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -69,6 +71,8 @@ constexpr std::array<ExtensionFormatMapping, 38> kExtensionFormats{{
     {".tbz2", ArchiveFormat::TarBzip2},
     {".tar.xz", ArchiveFormat::TarXz},
     {".txz", ArchiveFormat::TarXz},
+    {".tar.lz", ArchiveFormat::TarLzip},
+    {".tlz", ArchiveFormat::TarLzip},
     {".tar.zst", ArchiveFormat::TarZstd},
     {".tzst", ArchiveFormat::TarZstd},
     {".tar", ArchiveFormat::Tar},
@@ -77,6 +81,7 @@ constexpr std::array<ExtensionFormatMapping, 38> kExtensionFormats{{
     {".bz2", ArchiveFormat::Bzip2},
     {".xz", ArchiveFormat::Xz},
     {".lzma", ArchiveFormat::Lzma},
+    {".lz", ArchiveFormat::Lzip},
     {".zst", ArchiveFormat::Zstd},
     {".zstd", ArchiveFormat::Zstd},
     {".cab", ArchiveFormat::Cab},
@@ -265,6 +270,10 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
     if (starts_with_signature(bytes, {0xFD, '7', 'z', 'X', 'Z', 0x00})) {
         return ArchiveFormat::Xz;
     }
+    if (starts_with_signature(bytes, {'L', 'Z', 'I', 'P'})) {
+        const auto lower_name = ascii_lower(path.filename().string());
+        return (ends_with_lower(lower_name, ".tar.lz") || ends_with_lower(lower_name, ".tlz")) ? ArchiveFormat::TarLzip : ArchiveFormat::Lzip;
+    }
     if (starts_with_signature(bytes, {0x28, 0xB5, 0x2F, 0xFD})) {
         return ArchiveFormat::Zstd;
     }
@@ -355,6 +364,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "tar.bz2";
     } else if (lowered == "txz") {
         lowered = "tar.xz";
+    } else if (lowered == "tlz") {
+        lowered = "tar.lz";
     } else if (lowered == "tzst") {
         lowered = "tar.zst";
     } else if (lowered == "zstd") {
@@ -363,6 +374,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "gz";
     } else if (lowered == "bzip2") {
         lowered = "bz2";
+    } else if (lowered == "lzip") {
+        lowered = "lz";
     } else if (lowered == "compress" || lowered == "unix-compress") {
         lowered = "z";
     } else if (lowered == "lzh") {
@@ -392,6 +405,7 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     if (by_extension == ArchiveFormat::TarGzip ||
         by_extension == ArchiveFormat::TarBzip2 ||
         by_extension == ArchiveFormat::TarXz ||
+        by_extension == ArchiveFormat::TarLzip ||
         by_extension == ArchiveFormat::TarZstd) {
         return by_extension;
     }

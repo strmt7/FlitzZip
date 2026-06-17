@@ -84,3 +84,8 @@ Rules:
   dictionary rejection, and fuzz coverage. Keep extraction in-process through
   the vendored LZMA SDK 26.01 decoder and do not call `7z.exe`, PowerShell, or
   host archive tools.
+- Lzip compatibility changes must exercise successful `.lz` single-file
+  extraction, concatenated-member extraction, `.tar.lz`/`.tlz` TAR extraction,
+  overwrite refusal, corrupt trailer rejection, invalid dictionary rejection,
+  unsafe TAR path rejection, and fuzz coverage. Keep extraction in process
+  through SuperZip's lzip wrapper over the vendored LZMA SDK 26.01 decoder.

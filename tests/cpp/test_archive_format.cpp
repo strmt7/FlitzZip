@@ -49,7 +49,10 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tbz"), superzip::ArchiveFormat::TarBzip2);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.xz"), superzip::ArchiveFormat::TarXz);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.txz"), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tar.lz"), superzip::ArchiveFormat::TarLzip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.tlz"), superzip::ArchiveFormat::TarLzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzma"), superzip::ArchiveFormat::Lzma);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lz"), superzip::ArchiveFormat::Lzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.Z"), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cab"), superzip::ArchiveFormat::Cab);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.iso"), superzip::ArchiveFormat::Iso);
@@ -76,6 +79,8 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "unix-compress.bin", std::array<unsigned char, 3>{0x1F, 0x9D, 0x90});
     write_fixture(root / "bz2.bin", std::array<unsigned char, 3>{'B', 'Z', 'h'});
     write_fixture(root / "xz.bin", std::array<unsigned char, 6>{0xFD, '7', 'z', 'X', 'Z', 0x00});
+    write_fixture(root / "lz.bin", std::array<unsigned char, 6>{'L', 'Z', 'I', 'P', 1, 20});
+    write_fixture(root / "logs.tar.lz", std::array<unsigned char, 6>{'L', 'Z', 'I', 'P', 1, 20});
     write_fixture(root / "zst.bin", std::array<unsigned char, 4>{0x28, 0xB5, 0x2F, 0xFD});
     write_fixture(root / "cab.bin", std::array<unsigned char, 4>{'M', 'S', 'C', 'F'});
     write_fixture(root / "ar.bin", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
@@ -97,6 +102,8 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "unix-compress.bin"), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::detect_archive_format(root / "bz2.bin"), superzip::ArchiveFormat::Bzip2);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xz.bin"), superzip::ArchiveFormat::Xz);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "lz.bin"), superzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.lz"), superzip::ArchiveFormat::TarLzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "zst.bin"), superzip::ArchiveFormat::Zstd);
     REQUIRE_EQ(superzip::detect_archive_format(root / "cab.bin"), superzip::ArchiveFormat::Cab);
     REQUIRE_EQ(superzip::detect_archive_format(root / "ar.bin"), superzip::ArchiveFormat::Ar);
@@ -125,10 +132,13 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("tgz").value(), superzip::ArchiveFormat::TarGzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("tbz").value(), superzip::ArchiveFormat::TarBzip2);
     REQUIRE_EQ(superzip::parse_archive_format_token("txz").value(), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(superzip::parse_archive_format_token("tlz").value(), superzip::ArchiveFormat::TarLzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("tzst").value(), superzip::ArchiveFormat::TarZstd);
     REQUIRE_EQ(superzip::parse_archive_format_token("gzip").value(), superzip::ArchiveFormat::Gzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("bzip2").value(), superzip::ArchiveFormat::Bzip2);
     REQUIRE_EQ(superzip::parse_archive_format_token("lzma").value(), superzip::ArchiveFormat::Lzma);
+    REQUIRE_EQ(superzip::parse_archive_format_token("lzip").value(), superzip::ArchiveFormat::Lzip);
+    REQUIRE_EQ(superzip::parse_archive_format_token("lz").value(), superzip::ArchiveFormat::Lzip);
     REQUIRE_EQ(superzip::parse_archive_format_token("zstd").value(), superzip::ArchiveFormat::Zstd);
     REQUIRE_EQ(superzip::parse_archive_format_token("zipx").value(), superzip::ArchiveFormat::Zipx);
     REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
@@ -145,7 +155,9 @@ TEST_CASE(archive_format_prefers_compound_tar_extensions_over_stream_magic) {
     const auto root = test_temp_dir("archive-format-compound");
     write_fixture(root / "logs.tar.gz", std::array<unsigned char, 2>{0x1F, 0x8B});
     write_fixture(root / "logs.tar.xz", std::array<unsigned char, 6>{0xFD, '7', 'z', 'X', 'Z', 0x00});
+    write_fixture(root / "logs.tar.lz", std::array<unsigned char, 6>{'L', 'Z', 'I', 'P', 1, 20});
 
     REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.gz"), superzip::ArchiveFormat::TarGzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.xz"), superzip::ArchiveFormat::TarXz);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "logs.tar.lz"), superzip::ArchiveFormat::TarLzip);
 }

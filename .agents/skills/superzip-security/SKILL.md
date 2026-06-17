@@ -65,6 +65,11 @@ Workflow and release hardening rules:
   in-process, and backed by the vendored LZMA SDK 26.01 decoder. Keep it
   single-file, reject oversized dictionaries and decoded output, and publish
   only through SuperZip's verified temporary-file path.
+- Lzip support must stay extraction-only for `.lz` and TAR-stream-only for
+  `.tar.lz`/`.tlz`, in-process, and backed by SuperZip's lzip wrapper over the
+  vendored LZMA SDK 26.01 decoder. Keep version, dictionary, EOS, CRC32,
+  data-size, and member-size checks mandatory for every member, reject trailing
+  non-member data, and publish only through verified temporary paths.
 - The only acceptable open code-scanning findings are Scorecard
   `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
   `CIIBestPracticesID`.

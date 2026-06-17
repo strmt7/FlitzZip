@@ -123,6 +123,10 @@ archive options, progress snapshots, and errors.
   bounded parser with CRC-16/ARC payload validation, archive-wide path
   validation, strict end-marker handling, and explicit rejection of compressed
   methods or unrelated `.arc` file families until dedicated decoders exist.
+- Added extract-only lzip `.lz` and TAR.LZ `.tar.lz`/`.tlz` compatibility over
+  the vendored LZMA SDK, with lzip version/dictionary validation,
+  EOS-enforced decoding, CRC32/data-size/member-size trailer checks,
+  concatenated-member handling, two-pass TAR validation, and fuzz coverage.
 
 ## Validation Gates
 

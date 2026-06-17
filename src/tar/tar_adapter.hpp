@@ -75,6 +75,15 @@ OperationStats extract_tar_xz(
     bool overwrite,
     const ProgressCallback& progress_callback = {});
 
+// Purpose: Extract a lzip-compressed POSIX TAR archive with two-pass stream validation.
+// Inputs: `archive_path` is the `.tar.lz`/`.tlz` file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns operation statistics; throws on malformed lzip/TAR data, unsafe entry paths, refused overwrite, or verified-file publication failures.
+OperationStats extract_tar_lzip(
+    const std::filesystem::path& archive_path,
+    const std::filesystem::path& destination,
+    bool overwrite,
+    const ProgressCallback& progress_callback = {});
+
 // Purpose: Extract a Zstandard-compressed POSIX TAR archive with two-pass stream validation.
 // Inputs: `archive_path` is the `.tar.zst`/`.tzst` file, `destination` is the extraction root, `overwrite` allows existing targets only when true, and `progress_callback` receives synchronous progress snapshots.
 // Outputs: Returns operation statistics; throws on malformed Zstandard/TAR data, unsafe entry paths, refused overwrite, or verified-file publication failures.

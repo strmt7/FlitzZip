@@ -176,6 +176,18 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+  fuzz/lzip_fuzzer.cpp \
+  src/lzip/lzip_adapter.cpp \
+  src/lzip/lzip_stream.cpp \
+  src/core/checksum.cpp \
+  src/core/file_publish.cpp \
+  src/core/path_safety.cpp \
+  src/core/progress.cpp \
+  "${LZMA_SDK_OBJECTS[@]}" \
+  -o "$OUT/superzip_lzip_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/arj_fuzzer.cpp \
   src/arj/arj_adapter.cpp \
   src/core/checksum.cpp \
@@ -226,6 +238,7 @@ cp fuzz/superzip.dict "$OUT/superzip_cab_header_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_rpm_header_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_sevenzip_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_lzma_fuzzer.dict"
+cp fuzz/superzip.dict "$OUT/superzip_lzip_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_lha_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_xar_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_arj_fuzzer.dict"
@@ -240,6 +253,7 @@ for target in \
   superzip_rpm_header_fuzzer \
   superzip_sevenzip_fuzzer \
   superzip_lzma_fuzzer \
+  superzip_lzip_fuzzer \
   superzip_lha_fuzzer \
   superzip_xar_fuzzer \
   superzip_arj_fuzzer \

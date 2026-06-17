@@ -232,6 +232,8 @@ add_library(superzip_core STATIC
     src/gpu/hip_device.cpp
     src/iso/iso_adapter.cpp
     src/lha/lha_adapter.cpp
+    src/lzip/lzip_adapter.cpp
+    src/lzip/lzip_stream.cpp
     src/lzma/lzma_adapter.cpp
     src/rpm/rpm_adapter.cpp
     src/rpm/rpm_format.cpp
@@ -398,6 +400,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_gzip_compat.cpp
         tests/cpp/test_iso_compat.cpp
         tests/cpp/test_lha_compat.cpp
+        tests/cpp/test_lzip_compat.cpp
         tests/cpp/test_lzma_compat.cpp
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_rpm_compat.cpp
@@ -485,6 +488,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_libraries(superzip_lzma_fuzzer PRIVATE superzip_core)
     target_compile_definitions(superzip_lzma_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_lzip_fuzzer
+        fuzz/lzip_fuzzer.cpp
+    )
+    target_link_libraries(superzip_lzip_fuzzer PRIVATE superzip_core)
+    target_compile_definitions(superzip_lzip_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     add_executable(superzip_arj_fuzzer
         fuzz/arj_fuzzer.cpp
     )
@@ -509,6 +518,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_lha_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_xar_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_lzma_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_lzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_arj_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_arc_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
@@ -520,6 +530,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_options(superzip_lha_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_xar_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_lzma_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_lzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_arj_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_arc_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()

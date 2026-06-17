@@ -18,14 +18,17 @@ is validated before output without staging a full intermediate TAR on disk.
 `.tar.bz2`/`.tbz`/`.tbz2` archives are implemented with the same TAR stream
 adapter over vendored libbzip2 1.0.8. `.tar.xz`/`.txz` extraction is
 implemented through the same validated TAR stream path over vendored XZ
-Embedded. `.tar.zst`/`.tzst` archives are implemented with the same TAR stream
+Embedded. `.tar.lz`/`.tlz` extraction is implemented through the same validated
+TAR stream path over the vendored LZMA SDK and lzip wrapper checks.
+`.tar.zst`/`.tzst` archives are implemented with the same TAR stream
 adapter over the bundled app-local libzstd 1.5.7 runtime. Single-file `.gz` streams are implemented
 through miniz raw deflate with CRC32/ISIZE verification, single-file `.bz2`
 streams are implemented through libbzip2, single-file `.xz` streams are
 extracted through XZ Embedded, single-file legacy `.lzma` streams are extracted
-through the vendored LZMA SDK with bounded decoder allocation, and single-file
-`.zst`/`.zstd` streams are implemented through the app-local libzstd DLL with
-frame checksum creation and bounded-window extraction. Portable `.cpio` archives are
+through the vendored LZMA SDK with bounded decoder allocation, single-file
+`.lz` streams are extracted through the lzip wrapper with CRC32/data-size/member-size
+verification, and single-file `.zst`/`.zstd` streams are implemented through the
+app-local libzstd DLL with frame checksum creation and bounded-window extraction. Portable `.cpio` archives are
 implemented with a native SVR4 new ASCII parser/writer for regular files and
 directories. Unix `.ar` archives are implemented with a native parser/writer for
 regular-file members. Debian `.deb` package files are extracted as native
@@ -210,7 +213,7 @@ benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
 and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
-ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, LZMA,
+ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, Gzip, Bzip2, XZ, LZMA, lzip,
 Unix Compress, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
 ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
@@ -247,7 +250,7 @@ never bound directly in workflow YAML.
 Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
 builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
 path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
-decode/metadata handling, LZMA stream handling, ARJ metadata/stored-payload
+decode/metadata handling, LZMA and lzip stream handling, ARJ metadata/stored-payload
 handling, SEA ARC/ARK metadata/unpacked-payload handling, LHA/LZH
 decode/metadata handling, and XAR
 TOC/payload metadata handling with address
