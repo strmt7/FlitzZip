@@ -115,6 +115,10 @@ archive options, progress snapshots, and errors.
 - Added Zstandard and TAR.ZST compatibility through the bundled app-local
   official libzstd 1.5.7 runtime, preserving single-file stream semantics,
   frame-checksum creation, and two-pass TAR validation.
+- Added read-only ARJ stored-entry extraction through a native bounded parser
+  with header CRC validation, payload CRC validation, archive-wide path
+  validation, and explicit rejection of compressed/encrypted/multi-volume ARJ
+  variants until a vetted decoder path is added.
 
 ## Validation Gates
 

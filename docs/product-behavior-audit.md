@@ -1,13 +1,14 @@
 # Product Behavior Audit Checklist
 
-Checked on 2026-06-16 against an official help corpus from a mature Windows
-archive application. The external product name and page text are intentionally
-not recorded here. This document captures only product-quality logic that is
-useful for SuperZip.
+Checked on 2026-06-17 against an official help corpus from a mature Windows
+archive application. The reviewed section contained 66 same-site help pages,
+and every page fetched successfully. The external product name, URLs, and page
+text are intentionally not recorded here. This document captures only
+product-quality logic that is useful for SuperZip.
 
 ## Audit Coverage
 
-The reviewed help corpus covered 77 same-site pages. The topics clustered into:
+The reviewed help corpus clustered into:
 
 - Format behavior, including modern and legacy archive families.
 - Performance behavior, including multi-core compression, parallel extraction,
@@ -22,6 +23,34 @@ The reviewed help corpus covered 77 same-site pages. The topics clustered into:
 - Troubleshooting behavior, including slow jobs, split archives, mapped drives,
   icon registration, context menus, setup parameters, and generic parameter
   errors.
+
+## Capability Planning Lessons
+
+- Features that change user data need a create, extract, verify, rollback, and
+  troubleshooting story before they become visible in the GUI.
+- Archive mutation is a separate product surface from archive creation and
+  extraction. Direct edit, delete, rename, and in-place update flows require
+  temporary backups, atomic publication, and corruption recovery tests.
+- Preview and open-with flows must not bypass extraction safety. Any temporary
+  preview output needs the same path validation, overwrite policy, cleanup, and
+  optional malware scan path as normal extraction.
+- Split archives need explicit part discovery, ordering, size limits, missing
+  part diagnostics, and a safe failure mode before extraction support is
+  advertised.
+- Password handling needs clear boundaries: encryption, filename encryption,
+  password storage, recovery, and non-ASCII password input are separate
+  features with separate threat models.
+- Shell integration is not just menu registration. File associations, context
+  menus, drag/drop behavior, icon refresh, installer repair, uninstall cleanup,
+  and default-app conflicts each need smoke tests.
+- Performance features must be tied to evidence. Multi-core compression,
+  parallel extraction, high-speed archive updates, and GPU acceleration need
+  benchmarks that report data size, compression level, block size, ratio,
+  memory mode, CPU/GPU lane, and resource sampling interval.
+- Troubleshooting text should map directly to a diagnostic command or UI state.
+  Examples include unsupported archive method, missing HIP runtime, missing
+  driver, unavailable destination, locked file, mapped-drive failure, invalid
+  code page, and corrupt split set.
 
 ## SuperZip Decisions
 
@@ -57,6 +86,22 @@ The reviewed help corpus covered 77 same-site pages. The topics clustered into:
 - Install and uninstall behavior must be clean and testable. Product releases
   remain Windows x64, HIP-enabled, per-machine by default, and removable without
   leaving app-owned files or registry state behind.
+
+## Required Test Signals
+
+- Each visible GUI workflow must have at least one automated smoke path and at
+  least one screenshot reviewed after layout changes.
+- Every supported extraction backend needs parser tests for empty input,
+  truncated input, malformed headers, oversized metadata, unsafe paths,
+  duplicate paths, unsupported methods, and corrupt payload checksums when the
+  format provides them.
+- Every compatibility feature must have CLI coverage because CLI tests are the
+  repeatable contract used by CI and future agents.
+- Installer changes must validate both the default elevated product path and
+  the non-admin development path. Release artifacts must stay HIP-enabled.
+- Documentation must distinguish supported, extract-only, recognized-only, and
+  explicitly unsupported behavior. Do not let marketing-style wording outrun the
+  actual backend.
 
 ## Regression Gate
 

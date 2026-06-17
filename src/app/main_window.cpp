@@ -1,6 +1,7 @@
 #include "app/main_window.hpp"
 
 #include "ar/ar_adapter.hpp"
+#include "arj/arj_adapter.hpp"
 #include "app/resource.h"
 #include "bzip2/bzip2_adapter.hpp"
 #include "cab/cab_adapter.hpp"
@@ -339,6 +340,8 @@ OperationStats extract_detected_archive(
     case ArchiveFormat::Ar:
     case ArchiveFormat::Deb:
         return extract_ar(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Arj:
+        return extract_arj(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Rpm:
         return extract_rpm(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Lha:

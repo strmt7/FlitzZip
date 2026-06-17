@@ -22,6 +22,9 @@ Primary and project-owned sources reviewed:
 - The Unarchiver: https://theunarchiver.com/
 - libarchive: https://www.libarchive.org/
 - GNU binutils ar: https://sourceware.org/binutils/docs/binutils/ar.html
+- ARJ technical information: https://www.opennet.ru/docs/formats/arj.txt
+- ARJ format reference mirror: https://www.fileformat.info/format/arj/corion.htm
+- Open-source ARJ implementation overview: https://arj.sourceforge.net/
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - bzip2/libbzip2: https://sourceware.org/bzip2/
@@ -53,9 +56,9 @@ complete format matrix:
 - jZip review and format table: https://www.lifewire.com/jzip-review-1356305
 
 An additional official help corpus from a mature Windows archive application was
-reviewed on 2026-06-16 only as an external audit checklist. The product name and
-text are intentionally not recorded in this repository; only the resulting
-engineering implications are kept in `docs/product-behavior-audit.md`.
+reviewed on 2026-06-17 only as an external audit checklist. The product name,
+URLs, and text are intentionally not recorded in this repository; only the
+resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, Zstandard, CAB, ISO, AR, CPIO, ARJ,
@@ -124,7 +127,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.rar` | No | No | Recognized only | pending read-only backend and licensing review |
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
-| `.arj` | No | No | Recognized only | pending format-specific security review |
+| `.arj` | No | Yes | Extract-only stored-entry compatibility format | native bounded ARJ adapter for stored regular files/directories; compressed methods fail explicitly |
 
 The CLI exposes this matrix with:
 
@@ -239,6 +242,14 @@ one validation pass verifies payload CRC/size before destination writes, then
 the publish pass writes only approved regular files and directories. Encrypted
 or unsupported 7z methods fail explicitly.
 
+ARJ support is intentionally extract-only and limited to stored regular-file
+and directory entries. The native parser validates the `0x60 0xEA` header id,
+the 2600-byte basic-header size limit, basic and extended header CRCs,
+member paths, entry counts, total decoded bytes, and stored payload CRCs before
+destination writes. Encrypted entries, multi-volume entries, compressed methods,
+volume labels, backup chapters, and SFX-prefixed header searching fail
+explicitly until a later increment adds a vetted decoder path and tests.
+
 LHA/LZH support is intentionally extract-only. SuperZip embeds Lhasa 0.5.0 and
 does not call `lha.exe`, shell archive handlers, or other host tools. Lhasa is
 used for header decoding, payload decompression, and CRC/size verification
@@ -343,6 +354,32 @@ flowchart TD
     C --> D["Validate all member paths"]
     D --> E["Copy member to private temp file"]
     E --> F["Atomically publish verified file"]
+```
+
+## ARJ Security Contract
+
+The ARJ path is an in-process read-only parser for the current stored-entry
+subset:
+
+1. Parse the main header, local headers, extended headers, and end marker with
+   the ARJ header CRC checks enabled.
+2. Reject encrypted, split, compressed, label, chapter, malformed, oversized,
+   or SFX-prefixed inputs before destination writes.
+3. Normalize member names and validate the full archive path set before output.
+4. Verify every stored regular-file payload CRC during the validation pass.
+5. Reopen the archive and publish only validated directories and stored files
+   through SuperZip's temporary-file commit path.
+
+```mermaid
+flowchart TD
+    A["Open ARJ archive"] --> B["Validate main/local headers and CRCs"]
+    B --> C["Reject unsupported flags, types, and methods"]
+    C --> D["Validate all paths and stored payload CRCs"]
+    D --> E["Reopen archive for publish pass"]
+    E --> F["Create directories and publish stored files"]
+    B -->|"malformed"| G["Reject archive"]
+    C -->|"unsupported"| G
+    D -->|"unsafe path or CRC mismatch"| G
 ```
 
 ## DEB Security Contract
@@ -716,7 +753,7 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only RAR, ARJ extraction, deeper ZIPX method
+Preferred next increments are read-only RAR, broader ARJ compressed-method extraction, deeper ZIPX method
 coverage, and the remaining recognized-only legacy/container formats after
 backend selection and licensing review. XAR checksum/signature validation is
 also a future hardening increment before SuperZip can claim broad XAR compatibility. Write

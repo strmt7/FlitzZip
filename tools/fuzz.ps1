@@ -20,7 +20,7 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lha /out/corpus/xar
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/arj /out/corpus/lha /out/corpus/xar
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
@@ -30,6 +30,7 @@ printf 'MSCF' > /out/corpus/cab/tiny-mscf
 printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
 printf '7z\274\257\047\034\000\003' > /out/corpus/sevenzip/tiny-sevenzip-signature
 printf '\135\000\000\200\000\377\377\377\377\377\377\377\377\000' > /out/corpus/lzma/tiny-lzma-header
+printf '\140\352\000\000' > /out/corpus/arj/tiny-arj-end-marker
 printf '\031\216-lhd-' > /out/corpus/lha/tiny-lha-signature
 printf 'xar!' > /out/corpus/xar/tiny-xar-signature
 python3 - <<'PY'
@@ -84,6 +85,7 @@ if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_rpm_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/rpm
   /out/superzip_sevenzip_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/sevenzip
   /out/superzip_lzma_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/lzma
+  /out/superzip_arj_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/arj
   /out/superzip_lha_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/lha
   /out/superzip_xar_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/xar
 fi

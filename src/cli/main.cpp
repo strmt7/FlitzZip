@@ -1,4 +1,5 @@
 #include "ar/ar_adapter.hpp"
+#include "arj/arj_adapter.hpp"
 #include "bzip2/bzip2_adapter.hpp"
 #include "cab/cab_adapter.hpp"
 #include "core/archive.hpp"
@@ -151,7 +152,7 @@ void usage() {
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|uue|uu|cpio|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|zst|zstd|z|compress|uue|uu|cab|iso|cpio|ar|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli extract --format auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|zst|zstd|z|compress|uue|uu|cab|iso|cpio|ar|arj|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -1253,6 +1254,9 @@ superzip::OperationStats extract_by_format(
     case superzip::ArchiveFormat::Deb:
         reject_compat_extract_tuning("AR/DEB", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
         return superzip::extract_ar(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Arj:
+        reject_compat_extract_tuning("ARJ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        return superzip::extract_arj(command.archive, command.output, command.overwrite);
     case superzip::ArchiveFormat::Rpm:
         reject_compat_extract_tuning("RPM", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
         return superzip::extract_rpm(command.archive, command.output, command.overwrite);

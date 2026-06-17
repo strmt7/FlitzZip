@@ -38,6 +38,9 @@ are extracted through a native metadata scanner plus the Windows Cabinet API,
 with all CAB names and sizes validated before FDI output is published. 7-Zip
 `.7z` archives are extracted with a vendored in-process LZMA SDK 26.01 decoder
 and the same pre-write path validation used by other extraction adapters.
+ARJ `.arj` archives are extracted by a native read-only adapter for stored
+regular-file and directory entries; compressed ARJ methods fail explicitly until
+a vetted decoder path is added.
 LHA/LZH `.lha` and `.lzh` archives are extracted with the vendored in-process
 Lhasa 0.5.0 decoder while SuperZip keeps ownership of path validation and
 verified output publication.
@@ -187,6 +190,7 @@ build/Release/superzip_cli.exe extract --format iso --output restored image.iso
 build/Release/superzip_cli.exe extract --format rpm --output restored package.rpm
 build/Release/superzip_cli.exe extract --format cab --output restored package.cab
 build/Release/superzip_cli.exe extract --format 7z --output restored archive.7z
+build/Release/superzip_cli.exe extract --format arj --output restored archive.arj
 build/Release/superzip_cli.exe extract --format lha --output restored archive.lzh
 build/Release/superzip_cli.exe extract --format wim --output restored image.wim
 build/Release/superzip_cli.exe extract --format xar --output restored archive.xar
@@ -203,7 +207,7 @@ and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
 ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, LZMA,
-Unix Compress, UUE, CAB, 7z, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
+Unix Compress, UUE, CAB, 7z, ARJ, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
 ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
@@ -239,7 +243,8 @@ never bound directly in workflow YAML.
 Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
 builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
 path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
-decode/metadata handling, LZMA stream handling, LHA/LZH decode/metadata handling, and XAR
+decode/metadata handling, LZMA stream handling, ARJ metadata/stored-payload
+handling, LHA/LZH decode/metadata handling, and XAR
 TOC/payload metadata handling with address
 and undefined-behavior sanitizers:
 

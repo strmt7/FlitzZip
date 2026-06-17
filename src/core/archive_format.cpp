@@ -45,7 +45,7 @@ constexpr std::array<ArchiveFormatInfo, 30> kFormatRegistry{{
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
-    {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, false, false, false},
+    {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
