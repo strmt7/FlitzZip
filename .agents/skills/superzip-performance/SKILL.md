@@ -9,6 +9,12 @@ Read `docs/performance-block-size-validation.md` and
 `docs/compression-level-and-benchmark-suite.md` before editing performance code,
 benchmark scripts, compression-level UI, block-size UI, or benchmark
 documentation.
+Run `tools/verification_plan.ps1 -IncludeUntracked` before choosing checks.
+The plan marks RAM-only benchmark sweeps as manual commands when performance
+code or performance claims are touched.
+For pushed performance changes, use opportunistic GitHub Actions checks only
+during iterative tuning when `workflowWaitPolicy.deferAllowed=true`; run the
+final relevant workflow wait before recording a completed tuning result.
 
 Required rules:
 
@@ -28,7 +34,7 @@ Required rules:
 - Propagate verified benchmark improvements into production code paths. Do not
   keep benchmark-only optimizations.
 
-Standard command after correctness tests pass:
+Standard manual command after plan-selected correctness tests pass:
 
 ```powershell
 tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384

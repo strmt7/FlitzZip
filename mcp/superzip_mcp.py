@@ -16,6 +16,54 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMANDS = {
+    "verification_plan": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/verification_plan.ps1",
+        "-IncludeUntracked",
+    ],
+    "verify_changes": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/verify_changes.ps1",
+        "-IncludeUntracked",
+    ],
+    "wait_relevant_workflows": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/wait_relevant_workflows.ps1",
+        "-Mode",
+        "final",
+    ],
+    "wait_relevant_workflows_opportunistic": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/wait_relevant_workflows.ps1",
+        "-Mode",
+        "opportunistic",
+    ],
+    "defer_relevant_workflows": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/wait_relevant_workflows.ps1",
+        "-Mode",
+        "defer",
+    ],
     "build": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1"],
     "build_hip": [
         "powershell",
@@ -39,6 +87,10 @@ COMMANDS = {
 
 
 def respond(message_id: object, result: object = None, error: object = None) -> None:
+    """Purpose: Emit one JSON-RPC response.
+    Inputs: message_id is echoed from the request; result or error is serialized as JSON.
+    Outputs: Writes a flushed response line to stdout.
+    """
     payload = {"jsonrpc": "2.0", "id": message_id}
     if error is None:
         payload["result"] = result
@@ -48,6 +100,10 @@ def respond(message_id: object, result: object = None, error: object = None) -> 
 
 
 def handle(request: dict) -> None:
+    """Purpose: Dispatch a restricted SuperZip MCP-style JSON-RPC request.
+    Inputs: request is a parsed JSON object from stdin.
+    Outputs: Runs only allowlisted commands and returns captured stdout, stderr, and exit code.
+    """
     message_id = request.get("id")
     method = request.get("method")
     if method == "initialize":
@@ -83,6 +139,10 @@ def handle(request: dict) -> None:
 
 
 def main() -> int:
+    """Purpose: Process newline-delimited JSON-RPC requests until stdin closes.
+    Inputs: stdin supplies one JSON object per line.
+    Outputs: Returns a process exit code after all requests are handled.
+    """
     for line in sys.stdin:
         if not line.strip():
             continue

@@ -57,6 +57,16 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   product names or copy another product's UI/help text into this repository.
 - Before performing repo-wide refactoring or automatic cleanup, read
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
+- Before choosing local tests, security scans, GUI smoke, fuzzing, benchmarks,
+  or post-push workflow waits, read `docs/targeted-verification.md` and run
+  `tools\verification_plan.ps1 -IncludeUntracked`. Use the selected checks
+  instead of broad habit-driven gates. If the plan escalates, a targeted check
+  fails, changed paths are unknown, or a wider bug is suspected, use the full
+  verification profile automatically with `tools\verify_changes.ps1 -Full`.
+  Follow `workflowWaitPolicy`: opportunistic checks are acceptable during
+  multi-commit iteration only when deferral is allowed, but final handoff,
+  release work, workflow changes, verifier changes, MCP changes, skill changes,
+  and full-escalation changes must complete the relevant final workflow wait.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
 ## Engineering Quality Baseline
@@ -137,8 +147,24 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 
 ## Build And Test Commands
 
-Use these from the repository root. The normal local build is HIP-enabled and
-requires `HIP_PATH`:
+Use these from the repository root. Start every change by asking the verifier
+what is relevant:
+
+```powershell
+tools\verification_plan.ps1 -IncludeUntracked
+tools\verify_changes.ps1 -IncludeUntracked
+```
+
+If a larger bug is suspected, changed paths are broad or unknown, verification
+tooling changed, or a targeted check fails, the system must run the full local
+profile:
+
+```powershell
+tools\verify_changes.ps1 -IncludeUntracked -Full
+```
+
+The normal local build remains HIP-enabled and requires `HIP_PATH` when the plan
+selects a product build:
 
 ```powershell
 tools\build.ps1 -Configuration Release
@@ -421,10 +447,22 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 ## Git Workflow
 
 - Inspect `git status --short` before staging.
+- Run `tools\verification_plan.ps1 -IncludeUntracked` before deciding which
+  checks to run. Run `tools\verify_changes.ps1 -IncludeUntracked` for the
+  selected local checks, and use `-Full` when the classifier escalates or a
+  broader regression is suspected.
 - Stage only intentional source/docs/config changes.
 - Never use destructive commands such as `git reset --hard` or `git checkout --` unless a maintainer explicitly requests them.
-- Before pushing, run build/test/security scans and `rg` for token patterns and personal paths.
+- Before pushing, run the checks selected by the verification plan and the
+  changed-file hygiene gate. Do not run unrelated heavyweight checks unless the
+  selector escalates or there is evidence of a broader problem.
 - After pushing, verify the remote URL does not contain credentials.
+- After pushing, follow the current plan's `workflowWaitPolicy`. Use
+  `tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode opportunistic` only
+  during intermediate commits when the plan allows deferral. Use `-Mode final`
+  before final handoff or release, and always use final mode for workflow,
+  verifier, MCP, skill, or full-escalation changes. If the verifier requires a
+  post-push audit, the final waiter runs `tools\github_post_push_audit.ps1`.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
   and run install/uninstall smoke tests before publishing.
 - `0.1.0` is the current beta release. Until a maintainer explicitly opens the
@@ -437,5 +475,13 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 1. Read this file, `README.md`, `IMPLEMENTATION_PLAN.md`, and relevant local code before editing.
 2. Make the smallest change that satisfies the request while preserving the architecture.
 3. Add or update tests for behavior, security boundaries, and regressions.
-4. Run the narrowest relevant tests first, then the standard build/test/security set.
-5. Report what changed, what was verified, and any remaining risk.
+4. Run `tools\verification_plan.ps1 -IncludeUntracked`, then run the selected
+   targeted checks with `tools\verify_changes.ps1 -IncludeUntracked`.
+5. Escalate automatically to `tools\verify_changes.ps1 -IncludeUntracked -Full`
+   when the plan requires it, a targeted check fails, or a wider bug is
+   suspected.
+6. During multi-commit work, sample relevant workflows opportunistically only
+   when the plan allows it, keep implementing while runs are active, and do not
+   report completion until the final relevant workflow wait has passed.
+7. Report what changed, what was verified, which workflows were waited for, and
+   any remaining risk.

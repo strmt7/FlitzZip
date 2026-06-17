@@ -15,14 +15,31 @@ Before editing security-sensitive code, identify the boundary:
 - Microsoft Defender opt-in scan.
 - GitHub Actions scanner integration.
 
-Required checks:
+Required selection step:
 
 ```powershell
-tools/build.ps1 -Configuration Release
-tools/test.ps1
-tools/security_scan.ps1
-tools/github_post_push_audit.ps1
+tools/verification_plan.ps1 -IncludeUntracked
+tools/verify_changes.ps1 -IncludeUntracked
 ```
+
+Use the full profile automatically when the plan escalates, a targeted check
+fails, the changed path set is broad or unknown, or a wider security regression
+is suspected:
+
+```powershell
+tools/verify_changes.ps1 -IncludeUntracked -Full
+```
+
+After push, wait only for relevant workflows selected by the classifier:
+
+```powershell
+tools/wait_relevant_workflows.ps1 -Commit <sha> -Mode final
+```
+
+For non-critical intermediate commits, `-Mode opportunistic` may be used only
+when `workflowWaitPolicy.deferAllowed=true`. Security, workflow, verifier, MCP,
+skill, and full-escalation changes must not be reported complete until final
+mode and any required post-push audit pass.
 
 Add or update tests for:
 
@@ -80,3 +97,7 @@ Workflow and release hardening rules:
 - `tools/security_scan.ps1` runs the changed-code refactor gate. Do not bypass
   it with broad exclusions; split large functions and add required function
   contracts before pushing.
+- Do not wait for unrelated post-push workflows. Use
+  `tools/wait_relevant_workflows.ps1`, which supports final, opportunistic, and
+  defer modes and also runs `tools/github_post_push_audit.ps1` when workflow or
+  verifier changes require it.

@@ -5,7 +5,27 @@ description: Build, test, benchmark, and security-scan the SuperZip native C++ A
 
 # SuperZip Build/Test Skill
 
-Use one of two lanes:
+Start by asking the change-aware verifier what is relevant:
+
+```powershell
+tools/verification_plan.ps1 -IncludeUntracked
+tools/verify_changes.ps1 -IncludeUntracked
+```
+
+Use the full profile only when the plan escalates, the change is broad or
+unknown, verification tooling changed, or a targeted command fails:
+
+```powershell
+tools/verify_changes.ps1 -IncludeUntracked -Full
+```
+
+For pushed commits, follow the plan's `workflowWaitPolicy`. During multi-commit
+feature work, use `tools/wait_relevant_workflows.ps1 -Commit <sha> -Mode
+opportunistic` only when deferral is allowed, and keep developing while runs are
+active. Before handoff or release, and always for workflow/verifier/MCP/skill or
+full-escalation changes, use `-Mode final`.
+
+Manual lanes remain available when the plan selects them:
 
 1. Portable CI lane:
    ```powershell
@@ -23,6 +43,8 @@ Use one of two lanes:
 
 Rules:
 
+- Do not run broad checks merely because they exist. Run the plan-selected
+  checks, then escalate automatically when evidence points to a wider problem.
 - Do not launch the GUI unless the user has been warned first.
 - Use CLI smoke tests for archive validation.
 - Keep `HIP_PATH`, Visual Studio, and architecture configurable.
