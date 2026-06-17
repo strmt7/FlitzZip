@@ -174,6 +174,16 @@ tools\verification_plan.ps1 -IncludeUntracked
 tools\verify_changes.ps1 -IncludeUntracked
 ```
 
+If local lint tooling is missing, bootstrap the repo-local pinned toolchain
+before rerunning verification. Use `-PythonPath` or `SUPERZIP_PYTHON` only to
+select the host Python executable; the linters themselves must come from the
+hash-locked requirements file and the pinned PSScriptAnalyzer package:
+
+```powershell
+tools\bootstrap_lint_env.ps1 -PythonPath <path-to-python.exe>
+tools\lint.ps1 -CppMode Changed -IncludeUntracked
+```
+
 If a larger bug is suspected, changed paths are broad or unknown, verification
 tooling changed, or a targeted check fails, the system must run the full local
 profile:

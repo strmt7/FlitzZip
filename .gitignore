@@ -3,6 +3,8 @@ build/
 out/
 reports/
 /skills/
+.venv*/
+.psmodules/
 __pycache__/
 *.pyc
 *.user

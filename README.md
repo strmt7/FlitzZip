@@ -265,7 +265,9 @@ high-resolution displays.
 SuperZip treats archive contents as untrusted input. It rejects unsafe
 extraction paths, malformed metadata, CRC mismatches, and accidental overwrites
 by default. Microsoft Defender scanning and SHA-256 integrity hashing are
-available as opt-in checks.
+available as opt-in checks. Defender scans are hidden subprocesses with a
+bounded timeout, and a timeout is reported as a failed scan rather than as a
+clean result.
 
 GitHub Actions run build/test validation, CodeQL, Trivy, Semgrep, DevSkim, OSV,
 Dependency Review, default-branch OSSF Scorecard, workflow linting, secret

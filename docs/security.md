@@ -52,6 +52,9 @@ This setting must remain opt-in. It can be surfaced in Preferences for:
 
 If Microsoft Defender is unavailable, disabled by policy, or returns an error,
 SuperZip reports that state to the user instead of claiming the file is clean.
+Enabled scans validate that the selected target exists before scanner discovery.
+The scanner subprocess is hidden, bounded by a 30-minute timeout, and treated as
+not clean if it times out.
 
 ## Optional Integrity Hashing
 

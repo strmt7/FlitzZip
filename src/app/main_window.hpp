@@ -102,7 +102,7 @@ struct UiState {
 };
 
 class MainWindow {
-public:
+  public:
     // Purpose: Construct a main window controller with default UI state.
     // Inputs: None.
     // Outputs: Initializes fields only; the native HWND is created by `run`.
@@ -118,7 +118,7 @@ public:
     // Outputs: Runs the message loop and returns the process exit code.
     int run(HINSTANCE instance, int show_command);
 
-private:
+  private:
     struct QueueLayout {
         RECT area{};
         RECT add_files{};
@@ -292,7 +292,8 @@ private:
 
     // Purpose: Draw the compression settings page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains opt-in settings.
-    // Outputs: Renders archive destination, format, compression level, advanced options, integrity toggles, and start control.
+    // Outputs: Renders archive destination, format, compression level, advanced options, integrity toggles, and start
+    // control.
     void draw_compress_page(HDC dc, const RECT& rect, const UiState& state);
 
     // Purpose: Draw the extraction settings page.
@@ -323,14 +324,8 @@ private:
     // Purpose: Draw one metric card inside the live performance monitor.
     // Inputs: `dc` is the target; text/value fields are preformatted; `ratio` controls the normalized bar fill.
     // Outputs: Renders a bordered metric card without overflowing text.
-    void draw_performance_monitor_card(
-        HDC dc,
-        const RECT& graph,
-        const wchar_t* label,
-        const std::wstring& value,
-        const std::wstring& detail,
-        double ratio,
-        COLORREF color);
+    void draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
+                                       const std::wstring& detail, double ratio, COLORREF color);
 
     // Purpose: Draw the preferences page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
@@ -343,23 +338,23 @@ private:
     void draw_about_page(HDC dc, const RECT& rect);
 
     // Purpose: Draw a simple DPI-scaled command or navigation button.
-    // Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent styling.
-    // Outputs: Renders the button into `dc`; text is ellipsized rather than overflowing.
+    // Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent
+    // styling. Outputs: Renders the button into `dc`; text is ellipsized rather than overflowing.
     void draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active);
 
     // Purpose: Draw a DPI-scaled opt-in settings toggle row.
-    // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked styling.
-    // Outputs: Renders the toggle and label into `dc`.
+    // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
+    // styling. Outputs: Renders the toggle and label into `dc`.
     void draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id);
 
     // Purpose: Draw a DPI-scaled checkbox row.
-    // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked styling.
-    // Outputs: Renders a checkbox and label into `dc`.
+    // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
+    // styling. Outputs: Renders a checkbox and label into `dc`.
     void draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool enabled);
 
     // Purpose: Draw a form field or select-style value box.
-    // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is the current display value, and `select` adds an affordance.
-    // Outputs: Renders label and bordered field with ellipsized value.
+    // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is the current display value, and
+    // `select` adds an affordance. Outputs: Renders label and bordered field with ellipsized value.
     void draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select);
 
     // Purpose: Draw the currently expanded select/dropdown menu.
@@ -391,6 +386,51 @@ private:
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
     // Outputs: Returns true when a setting was changed and a repaint was queued.
     bool handle_content_click(int x, int y);
+
+    // Purpose: Toggle a boolean UI-state member with the standard animated toggle feedback.
+    // Inputs: `member` selects the state field and `id` identifies the visual toggle to animate.
+    // Outputs: Mutates the state, starts the toggle animation, queues repaint, and returns true.
+    bool toggle_bool_setting(bool UiState::* member, ToggleId id);
+
+    // Purpose: Toggle a checkbox-style boolean UI-state member without knob animation.
+    // Inputs: `member` selects the state field and `status` is the visible status-line text.
+    // Outputs: Mutates the state, writes status text, queues repaint, and returns true.
+    bool checkbox_bool_setting(bool UiState::* member, const char* status);
+
+    // Purpose: Handle Queue page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when a queue control or row selection consumed the click.
+    bool handle_queue_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle Compress page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when a compression control consumed the click.
+    bool handle_compress_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle Extract page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when an extraction control consumed the click.
+    bool handle_extract_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle History page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when a history filter or command consumed the click.
+    bool handle_history_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle Security page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when the security review command consumed the click.
+    bool handle_security_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle GPU page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when the GPU refresh command consumed the click.
+    bool handle_gpu_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle Preferences page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when a preference control consumed the click.
+    bool handle_preferences_click(const RECT& content, int x, int y);
 
     // Purpose: Handle a click while a dropdown menu is expanded.
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.

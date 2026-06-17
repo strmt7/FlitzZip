@@ -166,6 +166,23 @@ std::filesystem::path safe_current_path() {
     return path;
 }
 
+// Purpose: Create a concise history message for an optional Defender scan.
+// Inputs: `prefix` names the scanned item and `scan` is the Defender result.
+// Outputs: Returns a user-visible status string that distinguishes clean, timeout, failed, and unavailable states.
+std::string defender_history_status(std::string_view prefix, const DefenderScanResult& scan) {
+    std::string message(prefix);
+    if (scan.attempted && scan.clean) {
+        message += " scan clean";
+    } else if (scan.timed_out) {
+        message += " scan timed out";
+    } else if (scan.attempted) {
+        message += " scan not clean";
+    } else {
+        message += " scan unavailable";
+    }
+    return message;
+}
+
 // Purpose: Resolve the selected destination directory or the process directory.
 // Inputs: `state` is the copied UI state.
 // Outputs: Returns a usable destination folder path for display and jobs.
@@ -181,24 +198,14 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
     constexpr std::array<ArchiveFormat, 16> formats{
-        ArchiveFormat::SuperZip,
-        ArchiveFormat::Zip,
-        ArchiveFormat::Tar,
-        ArchiveFormat::TarGzip,
-        ArchiveFormat::TarBzip2,
-        ArchiveFormat::TarZstd,
-        ArchiveFormat::Gzip,
-        ArchiveFormat::Bzip2,
-        ArchiveFormat::Zstd,
-        ArchiveFormat::UnixCompress,
-        ArchiveFormat::Base64,
-        ArchiveFormat::Xxe,
-        ArchiveFormat::Uue,
-        ArchiveFormat::Cpio,
-        ArchiveFormat::CpioGzip,
-        ArchiveFormat::Ar,
+        ArchiveFormat::SuperZip, ArchiveFormat::Zip,          ArchiveFormat::Tar,      ArchiveFormat::TarGzip,
+        ArchiveFormat::TarBzip2, ArchiveFormat::TarZstd,      ArchiveFormat::Gzip,     ArchiveFormat::Bzip2,
+        ArchiveFormat::Zstd,     ArchiveFormat::UnixCompress, ArchiveFormat::Base64,   ArchiveFormat::Xxe,
+        ArchiveFormat::Uue,      ArchiveFormat::Cpio,         ArchiveFormat::CpioGzip, ArchiveFormat::Ar,
     };
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(formats.size()) + static_cast<int>(formats.size())) % static_cast<int>(formats.size()));
+    const auto normalized =
+        static_cast<std::size_t>((index % static_cast<int>(formats.size()) + static_cast<int>(formats.size())) %
+                                 static_cast<int>(formats.size()));
     return formats[normalized];
 }
 
@@ -207,24 +214,15 @@ ArchiveFormat compression_format_value(int index) {
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
     constexpr std::array<std::wstring_view, 16> labels{
-        L"SuperZip GPU (.suzip)",
-        L"ZIP compatibility (.zip)",
-        L"TAR compatibility (.tar)",
-        L"TAR.GZ compatibility (.tar.gz)",
-        L"TAR.BZ2 compatibility (.tar.bz2)",
-        L"TAR.ZST compatibility (.tar.zst)",
-        L"Gzip single file (.gz)",
-        L"Bzip2 single file (.bz2)",
-        L"Zstandard single file (.zst)",
-        L"Unix Compress single file (.Z)",
-        L"Base64 single file (.b64)",
-        L"XXEncoded single file (.xxe)",
-        L"UUencoded single file (.uue)",
-        L"CPIO compatibility (.cpio)",
-        L"CPIO.GZ compatibility (.cpgz)",
+        L"SuperZip GPU (.suzip)",          L"ZIP compatibility (.zip)",         L"TAR compatibility (.tar)",
+        L"TAR.GZ compatibility (.tar.gz)", L"TAR.BZ2 compatibility (.tar.bz2)", L"TAR.ZST compatibility (.tar.zst)",
+        L"Gzip single file (.gz)",         L"Bzip2 single file (.bz2)",         L"Zstandard single file (.zst)",
+        L"Unix Compress single file (.Z)", L"Base64 single file (.b64)",        L"XXEncoded single file (.xxe)",
+        L"UUencoded single file (.uue)",   L"CPIO compatibility (.cpio)",       L"CPIO.GZ compatibility (.cpgz)",
         L"AR compatibility (.ar)",
     };
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
+    const auto normalized = static_cast<std::size_t>(
+        (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
     return std::wstring(labels[normalized]);
 }
 
@@ -301,11 +299,8 @@ std::filesystem::path extraction_output_path_for(const UiState& state) {
     return safe_current_path() / L"SuperZip-extracted";
 }
 
-using CompatibilityExtractor = OperationStats (*)(
-    const std::filesystem::path&,
-    const std::filesystem::path&,
-    bool,
-    const ProgressCallback&);
+using CompatibilityExtractor = OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
+                                                  const ProgressCallback&);
 
 struct CompatibilityExtractionRoute {
     ArchiveFormat format;
@@ -352,23 +347,21 @@ CompatibilityExtractor compatibility_extractor_for(ArchiveFormat archive_format)
         {ArchiveFormat::Xar, extract_xar},
     }};
 
-    const auto match = std::find_if(
-        routes.begin(),
-        routes.end(),
-        [archive_format](const CompatibilityExtractionRoute& route) { return route.format == archive_format; });
+    const auto match =
+        std::find_if(routes.begin(), routes.end(), [archive_format](const CompatibilityExtractionRoute& route) {
+            return route.format == archive_format;
+        });
     return match == routes.end() ? nullptr : match->extractor;
 }
 
 // Purpose: Dispatch one detected archive to the matching extraction adapter.
-// Inputs: `archive_format` is the already detected format, `archive` is the input file, `output` is the extraction root, `gpu_required` controls only SUZIP, `overwrite` controls existing targets, and `progress_callback` receives progress updates.
-// Outputs: Returns extraction statistics, or throws when the format is unknown, unsupported, unsafe, or corrupt.
-OperationStats extract_detected_archive(
-    ArchiveFormat archive_format,
-    const std::filesystem::path& archive,
-    const std::filesystem::path& output,
-    bool gpu_required,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_format` is the already detected format, `archive` is the input file, `output` is the extraction
+// root, `gpu_required` controls only SUZIP, `overwrite` controls existing targets, and `progress_callback` receives
+// progress updates. Outputs: Returns extraction statistics, or throws when the format is unknown, unsupported, unsafe,
+// or corrupt.
+OperationStats extract_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
+                                        const std::filesystem::path& output, bool gpu_required, bool overwrite,
+                                        const ProgressCallback& progress_callback) {
     if (archive_format == ArchiveFormat::SuperZip) {
         ExtractOptions options;
         options.gpu_required = gpu_required;
@@ -382,9 +375,8 @@ OperationStats extract_detected_archive(
     if (const auto extractor = compatibility_extractor_for(archive_format); extractor != nullptr) {
         return extractor(archive, output, overwrite, progress_callback);
     }
-    throw ArchiveError(
-        std::string("archive format recognized but not implemented for extraction: ") +
-        archive_format_info(archive_format).key);
+    throw ArchiveError(std::string("archive format recognized but not implemented for extraction: ") +
+                       archive_format_info(archive_format).key);
 }
 
 // Purpose: Return the user-facing compression-level label.
@@ -392,13 +384,10 @@ OperationStats extract_detected_archive(
 // Outputs: Returns a stable label that maps to a zlib/miniz compression level.
 std::wstring compression_level_text(int index) {
     constexpr std::array<std::wstring_view, 5> labels{
-        L"Fastest (level 1)",
-        L"Fast (level 3)",
-        L"Balanced (level 5)",
-        L"Strong (level 7)",
-        L"Maximum (level 9)",
+        L"Fastest (level 1)", L"Fast (level 3)", L"Balanced (level 5)", L"Strong (level 7)", L"Maximum (level 9)",
     };
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
+    const auto normalized = static_cast<std::size_t>(
+        (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
     return std::wstring(labels[normalized]);
 }
 
@@ -407,7 +396,8 @@ std::wstring compression_level_text(int index) {
 // Outputs: Returns one of the supported non-store compression levels: 1, 3, 5, 7, or 9.
 int compression_level_value(int index) {
     constexpr std::array<int, 5> levels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(levels.size()) + static_cast<int>(levels.size())) % static_cast<int>(levels.size()));
+    const auto normalized = static_cast<std::size_t>(
+        (index % static_cast<int>(levels.size()) + static_cast<int>(levels.size())) % static_cast<int>(levels.size()));
     return levels[normalized];
 }
 
@@ -421,7 +411,8 @@ std::wstring compression_block_size_text(int index) {
         L"4 MiB blocks",
         L"16 MiB blocks",
     };
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
+    const auto normalized = static_cast<std::size_t>(
+        (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
     return std::wstring(labels[normalized]);
 }
 
@@ -435,17 +426,18 @@ std::uint32_t compression_block_size_bytes(int index) {
         4U * 1024U * 1024U,
         superzip::kMaxArchiveBlockBytes,
     };
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(sizes.size()) + static_cast<int>(sizes.size())) % static_cast<int>(sizes.size()));
+    const auto normalized = static_cast<std::size_t>(
+        (index % static_cast<int>(sizes.size()) + static_cast<int>(sizes.size())) % static_cast<int>(sizes.size()));
     return sizes[normalized];
 }
 
 // Purpose: Return a label from a circular option list.
 // Inputs: `index` is the current selection and `labels` contains display choices.
 // Outputs: Returns the normalized display label.
-template <std::size_t Count>
-std::wstring option_text(int index, const std::array<std::wstring_view, Count>& labels) {
+template <std::size_t Count> std::wstring option_text(int index, const std::array<std::wstring_view, Count>& labels) {
     static_assert(Count > 0);
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(Count) + static_cast<int>(Count)) % static_cast<int>(Count));
+    const auto normalized =
+        static_cast<std::size_t>((index % static_cast<int>(Count) + static_cast<int>(Count)) % static_cast<int>(Count));
     return std::wstring(labels[normalized]);
 }
 
@@ -517,30 +509,17 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
     switch (id) {
     case DropdownId::CompressFormat:
         return {
-            compression_format_text(0),
-            compression_format_text(1),
-            compression_format_text(2),
-            compression_format_text(3),
-            compression_format_text(4),
-            compression_format_text(5),
-            compression_format_text(6),
-            compression_format_text(7),
-            compression_format_text(8),
-            compression_format_text(9),
-            compression_format_text(10),
-            compression_format_text(11),
-            compression_format_text(12),
-            compression_format_text(13),
-            compression_format_text(14),
+            compression_format_text(0),  compression_format_text(1),  compression_format_text(2),
+            compression_format_text(3),  compression_format_text(4),  compression_format_text(5),
+            compression_format_text(6),  compression_format_text(7),  compression_format_text(8),
+            compression_format_text(9),  compression_format_text(10), compression_format_text(11),
+            compression_format_text(12), compression_format_text(13), compression_format_text(14),
             compression_format_text(15),
         };
     case DropdownId::CompressLevel:
         return {
-            compression_level_text(0),
-            compression_level_text(1),
-            compression_level_text(2),
-            compression_level_text(3),
-            compression_level_text(4),
+            compression_level_text(0), compression_level_text(1), compression_level_text(2),
+            compression_level_text(3), compression_level_text(4),
         };
     case DropdownId::CompressMethod:
         return {L"AMD HIP required", L"AMD HIP preferred"};
@@ -554,7 +533,8 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
     case DropdownId::ExtractOverwrite:
         return {L"Ask before overwrite", L"Overwrite enabled"};
     case DropdownId::HistoryOperation:
-        return {history_operation_filter_text(0), history_operation_filter_text(1), history_operation_filter_text(2), history_operation_filter_text(3)};
+        return {history_operation_filter_text(0), history_operation_filter_text(1), history_operation_filter_text(2),
+                history_operation_filter_text(3)};
     case DropdownId::HistoryStatus:
         return {history_status_filter_text(0), history_status_filter_text(1), history_status_filter_text(2)};
     case DropdownId::PreferencesMemoryPolicy:
@@ -608,7 +588,8 @@ COLORREF blend_color(COLORREF from, COLORREF to, double t) {
     const auto blend = [clamped](int a, int b) {
         return static_cast<int>(std::round(static_cast<double>(a) + (static_cast<double>(b - a) * clamped)));
     };
-    return RGB(blend(GetRValue(from), GetRValue(to)), blend(GetGValue(from), GetGValue(to)), blend(GetBValue(from), GetBValue(to)));
+    return RGB(blend(GetRValue(from), GetRValue(to)), blend(GetGValue(from), GetGValue(to)),
+               blend(GetBValue(from), GetBValue(to)));
 }
 
 // Purpose: Ease a short UI animation without changing duration.
@@ -718,14 +699,22 @@ std::wstring detected_archive_format_text(const std::vector<std::filesystem::pat
 // Outputs: Returns a UTF-16 label for rendering.
 std::wstring page_name(Page page) {
     switch (page) {
-    case Page::Queue: return L"Queue";
-    case Page::Compress: return L"Compress";
-    case Page::Extract: return L"Extract";
-    case Page::Security: return L"Security";
-    case Page::History: return L"History";
-    case Page::Gpu: return L"GPU";
-    case Page::Preferences: return L"Settings";
-    case Page::About: return L"About";
+    case Page::Queue:
+        return L"Queue";
+    case Page::Compress:
+        return L"Compress";
+    case Page::Extract:
+        return L"Extract";
+    case Page::Security:
+        return L"Security";
+    case Page::History:
+        return L"History";
+    case Page::Gpu:
+        return L"GPU";
+    case Page::Preferences:
+        return L"Settings";
+    case Page::About:
+        return L"About";
     }
     return L"SuperZip";
 }
@@ -780,8 +769,8 @@ void draw_line(HDC dc, int x1, int y1, int x2, int y2, COLORREF color) {
 }
 
 // Purpose: Draw UTF-16 text with the currently selected font.
-// Inputs: `dc` is the target, `rect` is the layout box, `text` is display text, `color` is text color, and `format` is DrawTextW flags.
-// Outputs: Writes text into `dc` without mutating the caller's rectangle.
+// Inputs: `dc` is the target, `rect` is the layout box, `text` is display text, `color` is text color, and `format` is
+// DrawTextW flags. Outputs: Writes text into `dc` without mutating the caller's rectangle.
 void draw_text(HDC dc, const RECT& rect, std::wstring_view text, COLORREF color, UINT format) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, color);
@@ -828,9 +817,8 @@ void draw_logo(HDC dc, const RECT& rect, COLORREF color) {
         return Gdiplus::PointF{origin_x + point.x * scale_factor, origin_y + point.y * scale_factor};
     };
 
-    Gdiplus::Pen pen(
-        Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)),
-        std::max(1.35f, brand::kSuperZipLogoMarkStrokeWidth * scale_factor));
+    Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)),
+                     std::max(1.35f, brand::kSuperZipLogoMarkStrokeWidth * scale_factor));
     pen.SetStartCap(Gdiplus::LineCapRound);
     pen.SetEndCap(Gdiplus::LineCapRound);
     pen.SetLineJoin(Gdiplus::LineJoinRound);
@@ -867,6 +855,36 @@ void add_rounded_rect_path(Gdiplus::GraphicsPath& path, float x, float y, float 
     path.AddArc(x + width - r * 2.0f, y + height - r * 2.0f, r * 2.0f, r * 2.0f, 0.0f, 90.0f);
     path.AddArc(x, y + height - r * 2.0f, r * 2.0f, r * 2.0f, 90.0f, 90.0f);
     path.CloseFigure();
+}
+
+// Purpose: Draw the settings gear navigation glyph.
+// Inputs: `graphics` is the anti-aliased target, `origin_x`/`origin_y`/`size` define normalized icon space, and drawing
+// objects provide styling. Outputs: Writes the gear glyph without changing product state.
+void draw_preferences_nav_icon(Gdiplus::Graphics& graphics, float origin_x, float origin_y, float size,
+                               Gdiplus::Pen& pen, Gdiplus::SolidBrush& soft_fill) {
+    auto px = [origin_x, size](float value) { return origin_x + (value * size / 30.0f); };
+    auto py = [origin_y, size](float value) { return origin_y + (value * size / 30.0f); };
+    auto rectf = [&](float left, float top, float right, float bottom) {
+        return Gdiplus::RectF(px(left), py(top), px(right) - px(left), py(bottom) - py(top));
+    };
+
+    std::array<Gdiplus::PointF, 16> teeth{};
+    for (int i = 0; i < static_cast<int>(teeth.size()); ++i) {
+        const double angle = (-3.14159265358979323846 / 2.0) + (3.14159265358979323846 * 2.0 * static_cast<double>(i) /
+                                                                static_cast<double>(teeth.size()));
+        const float radius = (i % 2 == 0) ? 10.8f : 8.4f;
+        teeth[static_cast<std::size_t>(i)] = {
+            px(15.0f + std::cos(angle) * radius),
+            py(15.0f + std::sin(angle) * radius),
+        };
+    }
+    Gdiplus::GraphicsPath gear;
+    gear.AddPolygon(teeth.data(), static_cast<INT>(teeth.size()));
+    gear.CloseFigure();
+    graphics.FillPath(&soft_fill, &gear);
+    graphics.DrawPath(&pen, &gear);
+    graphics.DrawEllipse(&pen, rectf(10.6f, 10.6f, 19.4f, 19.4f));
+    graphics.FillEllipse(&soft_fill, rectf(13.0f, 13.0f, 17.0f, 17.0f));
 }
 
 // Purpose: Draw a compact anti-aliased navigation icon from native vector primitives.
@@ -908,102 +926,71 @@ void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color) {
             graphics.DrawLine(&pen, px(11.0f), py(row), px(24.0f), py(row));
         }
         break;
-    case Page::Compress:
-        {
-            Gdiplus::GraphicsPath tray;
-            add_rounded_rect_path(tray, px(6.2f), py(16.2f), px(23.8f) - px(6.2f), py(24.2f) - py(16.2f), size / 12.0f);
-            graphics.FillPath(&soft_fill, &tray);
-            graphics.DrawPath(&pen, &tray);
-            graphics.DrawLine(&strong_pen, px(15.0f), py(5.2f), px(15.0f), py(15.0f));
-            Gdiplus::PointF arrow[] = {{px(10.4f), py(11.2f)}, {px(15.0f), py(15.8f)}, {px(19.6f), py(11.2f)}};
-            graphics.DrawLines(&strong_pen, arrow, 3);
-            graphics.DrawLine(&fine_pen, px(10.0f), py(20.0f), px(20.0f), py(20.0f));
+    case Page::Compress: {
+        Gdiplus::GraphicsPath tray;
+        add_rounded_rect_path(tray, px(6.2f), py(16.2f), px(23.8f) - px(6.2f), py(24.2f) - py(16.2f), size / 12.0f);
+        graphics.FillPath(&soft_fill, &tray);
+        graphics.DrawPath(&pen, &tray);
+        graphics.DrawLine(&strong_pen, px(15.0f), py(5.2f), px(15.0f), py(15.0f));
+        Gdiplus::PointF arrow[] = {{px(10.4f), py(11.2f)}, {px(15.0f), py(15.8f)}, {px(19.6f), py(11.2f)}};
+        graphics.DrawLines(&strong_pen, arrow, 3);
+        graphics.DrawLine(&fine_pen, px(10.0f), py(20.0f), px(20.0f), py(20.0f));
+    } break;
+    case Page::Extract: {
+        Gdiplus::GraphicsPath tray;
+        add_rounded_rect_path(tray, px(6.2f), py(16.2f), px(23.8f) - px(6.2f), py(24.2f) - py(16.2f), size / 12.0f);
+        graphics.FillPath(&soft_fill, &tray);
+        graphics.DrawPath(&pen, &tray);
+        graphics.DrawLine(&strong_pen, px(15.0f), py(15.8f), px(15.0f), py(5.2f));
+        Gdiplus::PointF arrow[] = {{px(10.4f), py(9.8f)}, {px(15.0f), py(5.2f)}, {px(19.6f), py(9.8f)}};
+        graphics.DrawLines(&strong_pen, arrow, 3);
+        graphics.DrawLine(&fine_pen, px(10.0f), py(20.0f), px(20.0f), py(20.0f));
+    } break;
+    case Page::Security: {
+        Gdiplus::PointF shield[] = {
+            {px(15.0f), py(4.3f)},  {px(23.3f), py(7.3f)}, {px(22.2f), py(17.3f)},
+            {px(15.0f), py(25.2f)}, {px(7.8f), py(17.3f)}, {px(6.7f), py(7.3f)},
+        };
+        Gdiplus::GraphicsPath path;
+        path.AddPolygon(shield, 6);
+        path.CloseFigure();
+        graphics.FillPath(&soft_fill, &path);
+        graphics.DrawPath(&pen, &path);
+        Gdiplus::PointF check[] = {{px(10.7f), py(15.2f)}, {px(14.0f), py(18.5f)}, {px(20.2f), py(11.2f)}};
+        graphics.DrawLines(&strong_pen, check, 3);
+    } break;
+    case Page::History: {
+        graphics.DrawEllipse(&pen, rectf(5.0f, 5.0f, 25.0f, 25.0f));
+        graphics.DrawLine(&fine_pen, px(15.0f), py(8.0f), px(15.0f), py(10.6f));
+        graphics.DrawLine(&fine_pen, px(15.0f), py(19.4f), px(15.0f), py(22.0f));
+        graphics.DrawLine(&fine_pen, px(8.0f), py(15.0f), px(10.6f), py(15.0f));
+        graphics.DrawLine(&fine_pen, px(19.4f), py(15.0f), px(22.0f), py(15.0f));
+        graphics.DrawLine(&pen, px(15.0f), py(15.0f), px(15.0f), py(10.0f));
+        graphics.DrawLine(&pen, px(15.0f), py(15.0f), px(19.2f), py(17.8f));
+        graphics.FillEllipse(&firm_fill, rectf(13.7f, 13.7f, 16.3f, 16.3f));
+    } break;
+    case Page::Gpu: {
+        // The GPU glyph is intentionally a horizontal add-in card, not a square chip.
+        Gdiplus::GraphicsPath card;
+        add_rounded_rect_path(card, px(7.0f), py(8.3f), px(25.0f) - px(7.0f), py(21.4f) - py(8.3f), size / 12.0f);
+        graphics.FillPath(&soft_fill, &card);
+        graphics.DrawPath(&pen, &card);
+        graphics.DrawLine(&pen, px(4.3f), py(10.5f), px(7.0f), py(10.5f));
+        graphics.DrawLine(&pen, px(4.3f), py(10.5f), px(4.3f), py(19.2f));
+        graphics.DrawLine(&pen, px(4.3f), py(19.2f), px(7.0f), py(19.2f));
+        graphics.DrawEllipse(&pen, rectf(11.0f, 10.6f, 19.8f, 19.4f));
+        graphics.FillEllipse(&firm_fill, rectf(14.0f, 13.6f, 16.8f, 16.4f));
+        graphics.DrawLine(&fine_pen, px(15.4f), py(10.8f), px(15.4f), py(19.2f));
+        graphics.DrawLine(&fine_pen, px(11.2f), py(15.0f), px(19.6f), py(15.0f));
+        graphics.DrawLine(&fine_pen, px(21.8f), py(12.0f), px(24.1f), py(12.0f));
+        graphics.DrawLine(&fine_pen, px(21.8f), py(16.0f), px(24.1f), py(16.0f));
+        for (int i = 0; i < 4; ++i) {
+            const float finger_x = 10.0f + static_cast<float>(i) * 3.0f;
+            graphics.DrawLine(&fine_pen, px(finger_x), py(21.4f), px(finger_x), py(24.3f));
         }
-        break;
-    case Page::Extract:
-        {
-            Gdiplus::GraphicsPath tray;
-            add_rounded_rect_path(tray, px(6.2f), py(16.2f), px(23.8f) - px(6.2f), py(24.2f) - py(16.2f), size / 12.0f);
-            graphics.FillPath(&soft_fill, &tray);
-            graphics.DrawPath(&pen, &tray);
-            graphics.DrawLine(&strong_pen, px(15.0f), py(15.8f), px(15.0f), py(5.2f));
-            Gdiplus::PointF arrow[] = {{px(10.4f), py(9.8f)}, {px(15.0f), py(5.2f)}, {px(19.6f), py(9.8f)}};
-            graphics.DrawLines(&strong_pen, arrow, 3);
-            graphics.DrawLine(&fine_pen, px(10.0f), py(20.0f), px(20.0f), py(20.0f));
-        }
-        break;
-    case Page::Security:
-        {
-            Gdiplus::PointF shield[] = {
-                {px(15.0f), py(4.3f)},
-                {px(23.3f), py(7.3f)},
-                {px(22.2f), py(17.3f)},
-                {px(15.0f), py(25.2f)},
-                {px(7.8f), py(17.3f)},
-                {px(6.7f), py(7.3f)},
-            };
-            Gdiplus::GraphicsPath path;
-            path.AddPolygon(shield, 6);
-            path.CloseFigure();
-            graphics.FillPath(&soft_fill, &path);
-            graphics.DrawPath(&pen, &path);
-            Gdiplus::PointF check[] = {{px(10.7f), py(15.2f)}, {px(14.0f), py(18.5f)}, {px(20.2f), py(11.2f)}};
-            graphics.DrawLines(&strong_pen, check, 3);
-        }
-        break;
-    case Page::History:
-        {
-            graphics.DrawEllipse(&pen, rectf(5.0f, 5.0f, 25.0f, 25.0f));
-            graphics.DrawLine(&fine_pen, px(15.0f), py(8.0f), px(15.0f), py(10.6f));
-            graphics.DrawLine(&fine_pen, px(15.0f), py(19.4f), px(15.0f), py(22.0f));
-            graphics.DrawLine(&fine_pen, px(8.0f), py(15.0f), px(10.6f), py(15.0f));
-            graphics.DrawLine(&fine_pen, px(19.4f), py(15.0f), px(22.0f), py(15.0f));
-            graphics.DrawLine(&pen, px(15.0f), py(15.0f), px(15.0f), py(10.0f));
-            graphics.DrawLine(&pen, px(15.0f), py(15.0f), px(19.2f), py(17.8f));
-            graphics.FillEllipse(&firm_fill, rectf(13.7f, 13.7f, 16.3f, 16.3f));
-        }
-        break;
-    case Page::Gpu:
-        {
-            // The GPU glyph is intentionally a horizontal add-in card, not a square chip.
-            Gdiplus::GraphicsPath card;
-            add_rounded_rect_path(card, px(7.0f), py(8.3f), px(25.0f) - px(7.0f), py(21.4f) - py(8.3f), size / 12.0f);
-            graphics.FillPath(&soft_fill, &card);
-            graphics.DrawPath(&pen, &card);
-            graphics.DrawLine(&pen, px(4.3f), py(10.5f), px(7.0f), py(10.5f));
-            graphics.DrawLine(&pen, px(4.3f), py(10.5f), px(4.3f), py(19.2f));
-            graphics.DrawLine(&pen, px(4.3f), py(19.2f), px(7.0f), py(19.2f));
-            graphics.DrawEllipse(&pen, rectf(11.0f, 10.6f, 19.8f, 19.4f));
-            graphics.FillEllipse(&firm_fill, rectf(14.0f, 13.6f, 16.8f, 16.4f));
-            graphics.DrawLine(&fine_pen, px(15.4f), py(10.8f), px(15.4f), py(19.2f));
-            graphics.DrawLine(&fine_pen, px(11.2f), py(15.0f), px(19.6f), py(15.0f));
-            graphics.DrawLine(&fine_pen, px(21.8f), py(12.0f), px(24.1f), py(12.0f));
-            graphics.DrawLine(&fine_pen, px(21.8f), py(16.0f), px(24.1f), py(16.0f));
-            for (int i = 0; i < 4; ++i) {
-                const float finger_x = 10.0f + static_cast<float>(i) * 3.0f;
-                graphics.DrawLine(&fine_pen, px(finger_x), py(21.4f), px(finger_x), py(24.3f));
-            }
-        }
-        break;
+    } break;
     case Page::Preferences:
-        {
-            std::array<Gdiplus::PointF, 16> teeth{};
-            for (int i = 0; i < static_cast<int>(teeth.size()); ++i) {
-                const double angle = (-3.14159265358979323846 / 2.0) + (3.14159265358979323846 * 2.0 * static_cast<double>(i) / static_cast<double>(teeth.size()));
-                const float radius = (i % 2 == 0) ? 10.8f : 8.4f;
-                teeth[static_cast<std::size_t>(i)] = {
-                    px(15.0f + std::cos(angle) * radius),
-                    py(15.0f + std::sin(angle) * radius),
-                };
-            }
-            Gdiplus::GraphicsPath gear;
-            gear.AddPolygon(teeth.data(), static_cast<INT>(teeth.size()));
-            gear.CloseFigure();
-            graphics.FillPath(&soft_fill, &gear);
-            graphics.DrawPath(&pen, &gear);
-            graphics.DrawEllipse(&pen, rectf(10.6f, 10.6f, 19.4f, 19.4f));
-            graphics.FillEllipse(&soft_fill, rectf(13.0f, 13.0f, 17.0f, 17.0f));
-        }
+        draw_preferences_nav_icon(graphics, origin_x, origin_y, size, pen, soft_fill);
         break;
     case Page::About:
         graphics.DrawEllipse(&pen, rectf(6.0f, 6.0f, 24.0f, 24.0f));
@@ -1022,8 +1009,14 @@ bool gpu_ready(const UiState& state) {
 
 }  // namespace
 
+// Purpose: Construct a main window controller with default UI state.
+// Inputs: None.
+// Outputs: Initializes fields only; the native HWND is created by `run`.
 MainWindow::MainWindow() = default;
 
+// Purpose: Join worker threads and release GDI/GDI+ handles.
+// Inputs: None.
+// Outputs: Blocks until active work finishes, then frees owned native resources.
 MainWindow::~MainWindow() {
     if (worker_.joinable()) {
         worker_.join();
@@ -1040,6 +1033,9 @@ MainWindow::~MainWindow() {
     }
 }
 
+// Purpose: Register and show the native Win32 SuperZip window.
+// Inputs: `instance` is the process HINSTANCE and `show_command` is the Windows show mode from `wWinMain`.
+// Outputs: Runs the message loop and returns the process exit code.
 int MainWindow::run(HINSTANCE instance, int show_command) {
     Gdiplus::GdiplusStartupInput gdiplus_startup_input{};
     if (Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplus_startup_input, nullptr) != Gdiplus::Ok) {
@@ -1050,7 +1046,8 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     refresh_gpu_status();
     const UINT initial_dpi = GetDpiForSystem();
     const DWORD style = window_style();
-    RECT initial_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(initial_dpi), 96), MulDiv(kDesignClientHeight, static_cast<int>(initial_dpi), 96)};
+    RECT initial_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(initial_dpi), 96),
+                        MulDiv(kDesignClientHeight, static_cast<int>(initial_dpi), 96)};
     AdjustWindowRectExForDpi(&initial_window, style, FALSE, 0, initial_dpi);
     const int initial_width = initial_window.right - initial_window.left;
     const int initial_height = initial_window.bottom - initial_window.top;
@@ -1062,23 +1059,14 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     wc.lpszClassName = L"SuperZipMainWindow";
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP));
-    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP), IMAGE_ICON, MulDiv(16, static_cast<int>(initial_dpi), 96), MulDiv(16, static_cast<int>(initial_dpi), 96), LR_DEFAULTCOLOR));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP), IMAGE_ICON,
+                                               MulDiv(16, static_cast<int>(initial_dpi), 96),
+                                               MulDiv(16, static_cast<int>(initial_dpi), 96), LR_DEFAULTCOLOR));
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     RegisterClassExW(&wc);
 
-    hwnd_ = CreateWindowExW(
-        0,
-        wc.lpszClassName,
-        L"SuperZip",
-        style,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        initial_width,
-        initial_height,
-        nullptr,
-        nullptr,
-        instance,
-        this);
+    hwnd_ = CreateWindowExW(0, wc.lpszClassName, L"SuperZip", style, CW_USEDEFAULT, CW_USEDEFAULT, initial_width,
+                            initial_height, nullptr, nullptr, instance, this);
     if (hwnd_ == nullptr) {
         return 1;
     }
@@ -1106,6 +1094,9 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     return static_cast<int>(msg.wParam);
 }
 
+// Purpose: Route Win32 messages from the static window procedure to the C++ instance.
+// Inputs: Standard Win32 `hwnd`, `message`, `wparam`, and `lparam` arguments.
+// Outputs: Returns the message result expected by Win32.
 LRESULT CALLBACK MainWindow::window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     MainWindow* self = nullptr;
     if (message == WM_NCCREATE) {
@@ -1133,16 +1124,11 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         dpi_ = HIWORD(wparam);
         rebuild_fonts();
         const auto* suggested = reinterpret_cast<RECT*>(lparam);
-        RECT fixed_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(dpi_), 96), MulDiv(kDesignClientHeight, static_cast<int>(dpi_), 96)};
+        RECT fixed_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(dpi_), 96),
+                          MulDiv(kDesignClientHeight, static_cast<int>(dpi_), 96)};
         AdjustWindowRectExForDpi(&fixed_window, window_style(), FALSE, 0, dpi_);
-        SetWindowPos(
-            hwnd_,
-            nullptr,
-            suggested->left,
-            suggested->top,
-            fixed_window.right - fixed_window.left,
-            fixed_window.bottom - fixed_window.top,
-            SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, fixed_window.right - fixed_window.left,
+                     fixed_window.bottom - fixed_window.top, SWP_NOZORDER | SWP_NOACTIVATE);
         request_repaint();
         return 0;
     }
@@ -1402,6 +1388,9 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     draw_status_bar(dc, status, state);
 }
 
+// Purpose: Draw the persistent product shell strip.
+// Inputs: `dc` is the target and `rect` is the full client rectangle.
+// Outputs: Renders the brand chrome; page-specific actions stay inside their pages.
 void MainWindow::draw_top_bar(HDC dc, const RECT& rect) {
     fill_rect(dc, rect, kShell);
     draw_line(dc, rect.left, rect.bottom - 1, rect.right, rect.bottom - 1, kBorder);
@@ -1410,21 +1399,19 @@ void MainWindow::draw_top_bar(HDC dc, const RECT& rect) {
     RECT logo{scale(18), scale(14), scale(38), scale(36)};
     draw_logo(dc, logo, kAccent);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{scale(48), rect.top, rail_width + scale(76), rect.bottom}, L"SuperZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{scale(48), rect.top, rail_width + scale(76), rect.bottom}, L"SuperZip", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
+// Purpose: Draw the compact navigation rail.
+// Inputs: `dc` is the target, `rect` is the rail rectangle, and `state` is the copied UI state.
+// Outputs: Renders all primary pages with active-page highlighting.
 void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state) {
     fill_rect(dc, rect, kRail);
     draw_line(dc, rect.right - 1, rect.top, rect.right - 1, rect.bottom, kBorder);
     const std::array<Page, 8> pages{
-        Page::Queue,
-        Page::Compress,
-        Page::Extract,
-        Page::Security,
-        Page::History,
-        Page::Gpu,
-        Page::Preferences,
-        Page::About,
+        Page::Queue,   Page::Compress, Page::Extract,     Page::Security,
+        Page::History, Page::Gpu,      Page::Preferences, Page::About,
     };
     SelectObject(dc, tiny_font_);
     const int item_height = scale(63);
@@ -1437,7 +1424,11 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
         const RECT surface{item.left + scale(8), item.top + scale(5), item.right - scale(8), item.bottom - scale(5)};
         if (active) {
             fill_rect(dc, RECT{item.left, item.top, item.left + scale(5), item.bottom}, kAccent);
-            fill_round_rect(dc, surface, pressed ? RGB(103, 20, 28) : hovered ? RGB(148, 30, 39) : RGB(126, 24, 31), scale(4));
+            fill_round_rect(dc, surface,
+                            pressed   ? RGB(103, 20, 28)
+                            : hovered ? RGB(148, 30, 39)
+                                      : RGB(126, 24, 31),
+                            scale(4));
         } else if (pressed) {
             fill_round_rect(dc, surface, RGB(31, 47, 53), scale(4));
             stroke_rect(dc, surface, RGB(72, 95, 103));
@@ -1458,6 +1449,9 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
     }
 }
 
+// Purpose: Draw the persistent AMD GPU and operation status strip.
+// Inputs: `dc` is the target, `rect` is the status-strip rectangle, and `state` is the copied UI state.
+// Outputs: Renders backend status, throughput, VRAM placeholder, and details affordance.
 void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state) {
     fill_rect(dc, rect, kShell);
     draw_line(dc, rect.left, rect.top, rect.right, rect.top, kBorder);
@@ -1470,14 +1464,20 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
     DeleteObject(dot);
 
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{rect.left + scale(36), rect.top, rect.left + scale(202), rect.bottom}, ready ? L"AMD GPU Ready" : L"AMD GPU inactive", ready ? kOk : kWarn, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{rect.left + scale(36), rect.top, rect.left + scale(202), rect.bottom},
+              ready ? L"AMD GPU Ready" : L"AMD GPU inactive", ready ? kOk : kWarn,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, rect.left + scale(220), rect.top + scale(8), rect.left + scale(220), rect.bottom - scale(8), kBorder);
-    draw_text(dc, RECT{rect.left + scale(238), rect.top, rect.left + scale(430), rect.bottom}, widen(state.gpu_status), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{rect.left + scale(238), rect.top, rect.left + scale(430), rect.bottom}, widen(state.gpu_status),
+              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_line(dc, rect.left + scale(450), rect.top + scale(8), rect.left + scale(450), rect.bottom - scale(8), kBorder);
     const auto speed = human_bytes(state.progress.throughput_bytes_per_second) + "/s";
-    draw_text(dc, RECT{rect.left + scale(468), rect.top, rect.left + scale(620), rect.bottom}, widen("Throughput " + speed), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_line(dc, rect.right - scale(132), rect.top + scale(8), rect.right - scale(132), rect.bottom - scale(8), kBorder);
-    draw_text(dc, RECT{rect.right - scale(118), rect.top, rect.right - scale(16), rect.bottom}, L"Details", kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{rect.left + scale(468), rect.top, rect.left + scale(620), rect.bottom},
+              widen("Throughput " + speed), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_line(dc, rect.right - scale(132), rect.top + scale(8), rect.right - scale(132), rect.bottom - scale(8),
+              kBorder);
+    draw_text(dc, RECT{rect.right - scale(118), rect.top, rect.right - scale(16), rect.bottom}, L"Details", kMuted,
+              DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 }
 
 void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
@@ -1510,22 +1510,31 @@ void MainWindow::draw_content(HDC dc, const RECT& rect, const UiState& state) {
     }
 }
 
+// Purpose: Compute Queue page rectangles shared by rendering and hit testing.
+// Inputs: `rect` is the content area in physical pixels.
+// Outputs: Returns DPI-scaled Queue page control rectangles.
 MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
     QueueLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     const int header_top = layout.area.top;
     const int header_bottom = header_top + scale(kPageHeaderHeight);
     layout.clear = RECT{layout.area.right - scale(72), header_top, layout.area.right, header_bottom};
-    layout.add_folder = RECT{layout.clear.left - scale(12) - scale(108), header_top, layout.clear.left - scale(12), header_bottom};
-    layout.add_files = RECT{layout.add_folder.left - scale(12) - scale(96), header_top, layout.add_folder.left - scale(12), header_bottom};
+    layout.add_folder =
+        RECT{layout.clear.left - scale(12) - scale(108), header_top, layout.clear.left - scale(12), header_bottom};
+    layout.add_files = RECT{layout.add_folder.left - scale(12) - scale(96), header_top,
+                            layout.add_folder.left - scale(12), header_bottom};
     layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom};
     return layout;
 }
 
+// Purpose: Compute Compress page rectangles shared by rendering and hit testing.
+// Inputs: `rect` is the content area in physical pixels.
+// Outputs: Returns DPI-scaled Compress page control rectangles.
 MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
     CompressLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right, layout.area.bottom - scale(18)};
+    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right,
+                        layout.area.bottom - scale(18)};
     const int left = layout.area.left;
     const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
     const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
@@ -1536,96 +1545,157 @@ MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
     layout.method = RECT{left, layout.area.top + scale(194), left + field_w, layout.area.top + scale(244)};
     layout.block_size = RECT{mid, layout.area.top + scale(194), mid + field_w, layout.area.top + scale(244)};
     layout.advanced = RECT{left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(390)};
-    layout.solid_archive = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(48), layout.advanced.left + scale(310), layout.advanced.top + scale(76)};
-    layout.store_timestamps = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(80), layout.advanced.left + scale(310), layout.advanced.top + scale(108)};
-    layout.delete_after_compression = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(48), layout.advanced.left + scale(680), layout.advanced.top + scale(76)};
-    layout.verify = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(80), layout.advanced.left + scale(710), layout.advanced.top + scale(108)};
+    layout.solid_archive = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(48),
+                                layout.advanced.left + scale(310), layout.advanced.top + scale(76)};
+    layout.store_timestamps = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(80),
+                                   layout.advanced.left + scale(310), layout.advanced.top + scale(108)};
+    layout.delete_after_compression = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(48),
+                                           layout.advanced.left + scale(680), layout.advanced.top + scale(76)};
+    layout.verify = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(80),
+                         layout.advanced.left + scale(710), layout.advanced.top + scale(108)};
     layout.security = RECT{left, layout.area.top + scale(410), layout.area.right, layout.area.top + scale(528)};
-    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(46), layout.security.left + scale(420), layout.security.top + scale(78)};
-    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(82), layout.security.left + scale(420), layout.security.top + scale(114)};
+    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(46),
+                      layout.security.left + scale(420), layout.security.top + scale(78)};
+    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(82),
+                           layout.security.left + scale(420), layout.security.top + scale(114)};
     return layout;
 }
 
+// Purpose: Compute Extract page rectangles shared by rendering and hit testing.
+// Inputs: `rect` is the content area in physical pixels.
+// Outputs: Returns DPI-scaled Extract page control rectangles.
 MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
     ExtractLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right, layout.area.bottom - scale(18)};
-    layout.archive = RECT{layout.area.left, layout.area.top + scale(58), layout.area.right, layout.area.top + scale(108)};
-    layout.destination = RECT{layout.area.left, layout.area.top + scale(128), layout.area.right, layout.area.top + scale(178)};
-    layout.path_mode = RECT{layout.area.left, layout.area.top + scale(198), layout.area.left + scale(320), layout.area.top + scale(248)};
-    layout.overwrite_policy = RECT{layout.area.left + scale(342), layout.area.top + scale(198), layout.area.left + scale(662), layout.area.top + scale(248)};
-    layout.checks = RECT{layout.area.left, layout.area.top + scale(280), layout.area.right, layout.area.top + scale(412)};
-    layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48), layout.checks.left + scale(420), layout.checks.top + scale(78)};
-    layout.open_destination_after_extract = RECT{layout.checks.left + scale(18), layout.checks.top + scale(80), layout.checks.left + scale(420), layout.checks.top + scale(110)};
-    layout.sha = RECT{layout.checks.left + scale(470), layout.checks.top + scale(48), layout.checks.right - scale(20), layout.checks.top + scale(80)};
-    layout.defender = RECT{layout.checks.left + scale(470), layout.checks.top + scale(84), layout.checks.right - scale(20), layout.checks.top + scale(116)};
+    layout.start = RECT{layout.area.right - scale(150), layout.area.bottom - scale(58), layout.area.right,
+                        layout.area.bottom - scale(18)};
+    layout.archive =
+        RECT{layout.area.left, layout.area.top + scale(58), layout.area.right, layout.area.top + scale(108)};
+    layout.destination =
+        RECT{layout.area.left, layout.area.top + scale(128), layout.area.right, layout.area.top + scale(178)};
+    layout.path_mode = RECT{layout.area.left, layout.area.top + scale(198), layout.area.left + scale(320),
+                            layout.area.top + scale(248)};
+    layout.overwrite_policy = RECT{layout.area.left + scale(342), layout.area.top + scale(198),
+                                   layout.area.left + scale(662), layout.area.top + scale(248)};
+    layout.checks =
+        RECT{layout.area.left, layout.area.top + scale(280), layout.area.right, layout.area.top + scale(412)};
+    layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48),
+                                  layout.checks.left + scale(420), layout.checks.top + scale(78)};
+    layout.open_destination_after_extract = RECT{layout.checks.left + scale(18), layout.checks.top + scale(80),
+                                                 layout.checks.left + scale(420), layout.checks.top + scale(110)};
+    layout.sha = RECT{layout.checks.left + scale(470), layout.checks.top + scale(48), layout.checks.right - scale(20),
+                      layout.checks.top + scale(80)};
+    layout.defender = RECT{layout.checks.left + scale(470), layout.checks.top + scale(84),
+                           layout.checks.right - scale(20), layout.checks.top + scale(116)};
     return layout;
 }
 
+// Purpose: Compute Preferences page rectangles shared by rendering and hit testing.
+// Inputs: `rect` is the content area in physical pixels.
+// Outputs: Returns DPI-scaled Preferences page control rectangles.
 MainWindow::PreferencesLayout MainWindow::preferences_layout(const RECT& rect) const {
     PreferencesLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54), layout.area.right - scale(126), layout.area.bottom - scale(18)};
-    layout.apply = RECT{layout.area.right - scale(110), layout.area.bottom - scale(54), layout.area.right, layout.area.bottom - scale(18)};
-    layout.general = RECT{layout.area.left, layout.area.top + scale(56), layout.area.left + scale(470), layout.area.top + scale(224)};
-    layout.security = RECT{layout.general.left, layout.general.bottom + scale(16), layout.general.right, layout.general.bottom + scale(176)};
-    layout.performance = RECT{layout.general.right + scale(18), layout.general.top, layout.area.right, layout.area.top + scale(224)};
-    layout.logging = RECT{layout.performance.left, layout.performance.bottom + scale(16), layout.area.right, layout.performance.bottom + scale(176)};
-    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(48), layout.security.right - scale(16), layout.security.top + scale(80)};
-    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(84), layout.security.right - scale(16), layout.security.top + scale(116)};
-    layout.gpu = RECT{layout.security.left + scale(18), layout.security.top + scale(120), layout.security.right - scale(16), layout.security.top + scale(152)};
-    layout.verify = RECT{layout.performance.left + scale(18), layout.performance.top + scale(48), layout.performance.right - scale(18), layout.performance.top + scale(80)};
-    const int performance_half_right = layout.performance.left + (layout.performance.right - layout.performance.left) / 2;
+    layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54),
+                                   layout.area.right - scale(126), layout.area.bottom - scale(18)};
+    layout.apply = RECT{layout.area.right - scale(110), layout.area.bottom - scale(54), layout.area.right,
+                        layout.area.bottom - scale(18)};
+    layout.general = RECT{layout.area.left, layout.area.top + scale(56), layout.area.left + scale(470),
+                          layout.area.top + scale(224)};
+    layout.security = RECT{layout.general.left, layout.general.bottom + scale(16), layout.general.right,
+                           layout.general.bottom + scale(176)};
+    layout.performance =
+        RECT{layout.general.right + scale(18), layout.general.top, layout.area.right, layout.area.top + scale(224)};
+    layout.logging = RECT{layout.performance.left, layout.performance.bottom + scale(16), layout.area.right,
+                          layout.performance.bottom + scale(176)};
+    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(48),
+                      layout.security.right - scale(16), layout.security.top + scale(80)};
+    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(84),
+                           layout.security.right - scale(16), layout.security.top + scale(116)};
+    layout.gpu = RECT{layout.security.left + scale(18), layout.security.top + scale(120),
+                      layout.security.right - scale(16), layout.security.top + scale(152)};
+    layout.verify = RECT{layout.performance.left + scale(18), layout.performance.top + scale(48),
+                         layout.performance.right - scale(18), layout.performance.top + scale(80)};
+    const int performance_half_right =
+        layout.performance.left + (layout.performance.right - layout.performance.left) / 2;
     const int logging_half_right = layout.logging.left + (layout.logging.right - layout.logging.left) / 2;
-    layout.memory_policy = RECT{layout.performance.left + scale(18), layout.performance.top + scale(94), performance_half_right, layout.performance.top + scale(140)};
-    layout.log_level = RECT{layout.logging.left + scale(18), layout.logging.top + scale(48), logging_half_right, layout.logging.top + scale(94)};
-    layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right, layout.logging.top + scale(152)};
-    layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48), layout.general.right - scale(16), layout.general.top + scale(78)};
-    layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82), layout.general.right - scale(16), layout.general.top + scale(112)};
-    layout.show_operation_summary = RECT{layout.general.left + scale(18), layout.general.top + scale(116), layout.general.right - scale(16), layout.general.top + scale(146)};
+    layout.memory_policy = RECT{layout.performance.left + scale(18), layout.performance.top + scale(94),
+                                performance_half_right, layout.performance.top + scale(140)};
+    layout.log_level = RECT{layout.logging.left + scale(18), layout.logging.top + scale(48), logging_half_right,
+                            layout.logging.top + scale(94)};
+    layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right,
+                                layout.logging.top + scale(152)};
+    layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48),
+                                                   layout.general.right - scale(16), layout.general.top + scale(78)};
+    layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82),
+                                          layout.general.right - scale(16), layout.general.top + scale(112)};
+    layout.show_operation_summary = RECT{layout.general.left + scale(18), layout.general.top + scale(116),
+                                         layout.general.right - scale(16), layout.general.top + scale(146)};
     return layout;
 }
 
+// Purpose: Draw the queue page with the file/folder selection table only.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
+// Outputs: Renders queue selection controls; operation configuration remains on later pages.
 void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state) {
     const auto layout = queue_layout(rect);
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, layout.add_files.left - scale(18), area.top + scale(kPageHeaderHeight)}, L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, layout.add_files.left - scale(18), area.top + scale(kPageHeaderHeight)},
+              L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_button(dc, layout.add_files, L"+ Add files", false);
     draw_button(dc, layout.add_folder, L"+ Add folder", false);
     draw_button(dc, layout.clear, L"Clear", false);
     SelectObject(dc, tiny_font_);
-    const auto count_text = std::to_wstring(state.queued_paths.size()) + L" item" + (state.queued_paths.size() == 1 ? L"" : L"s");
-    draw_text(dc, RECT{layout.add_files.left - scale(120), area.top, layout.add_files.left - scale(18), area.top + scale(kPageHeaderHeight)}, count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    const auto count_text =
+        std::to_wstring(state.queued_paths.size()) + L" item" + (state.queued_paths.size() == 1 ? L"" : L"s");
+    draw_text(dc,
+              RECT{layout.add_files.left - scale(120), area.top, layout.add_files.left - scale(18),
+                   area.top + scale(kPageHeaderHeight)},
+              count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
     RECT table = layout.table;
     fill_round_rect(dc, table, kPanel, scale(4));
     stroke_rect(dc, table, kBorder);
     SelectObject(dc, tiny_font_);
     const int header_bottom = table.top + scale(36);
-    draw_text(dc, RECT{table.left + scale(14), table.top, table.left + scale(70), header_bottom}, L"Use", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(82), table.top, table.left + scale(330), header_bottom}, L"Name", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(340), table.top, table.left + scale(450), header_bottom}, L"Size", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(462), table.top, table.left + scale(560), header_bottom}, L"Type", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(572), table.top, table.right - scale(12), header_bottom}, L"Path", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(14), table.top, table.left + scale(70), header_bottom}, L"Use", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(82), table.top, table.left + scale(330), header_bottom}, L"Name", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(340), table.top, table.left + scale(450), header_bottom}, L"Size", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(462), table.top, table.left + scale(560), header_bottom}, L"Type", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(572), table.top, table.right - scale(12), header_bottom}, L"Path", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, table.left, header_bottom, table.right, header_bottom, kBorder);
 
     int y = header_bottom;
     if (state.queued_paths.empty()) {
         SelectObject(dc, body_font_);
-        draw_text(dc, RECT{table.left + scale(22), y + scale(28), table.right - scale(22), y + scale(86)}, L"Drop files or folders here, or use Add files / Add folder. Work runs in a background thread so the interface stays responsive.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        draw_text(dc, RECT{table.left + scale(22), y + scale(28), table.right - scale(22), y + scale(86)},
+                  L"Drop files or folders here, or use Add files / Add folder. Work runs in a background thread so the "
+                  L"interface stays responsive.",
+                  kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else {
         int row_index = 0;
         for (const auto& path : state.queued_paths) {
             const int row_bottom = y + scale(34);
             const bool selected = row_index == state.selected_queue_index;
-            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom}, selected ? kPanel3 : (((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel));
-            draw_checkbox(dc, RECT{table.left + scale(12), y + scale(6), table.left + scale(64), row_bottom - scale(4)}, L"", true);
-            draw_text(dc, RECT{table.left + scale(82), y, table.left + scale(330), row_bottom}, path.filename().wstring(), kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, RECT{table.left + scale(340), y, table.left + scale(450), row_bottom}, entry_size_text(path), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, RECT{table.left + scale(462), y, table.left + scale(560), row_bottom}, entry_type_text(path), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, RECT{table.left + scale(572), y, table.right - scale(12), row_bottom}, path.wstring(), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom},
+                      selected ? kPanel3 : (((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel));
+            draw_checkbox(dc, RECT{table.left + scale(12), y + scale(6), table.left + scale(64), row_bottom - scale(4)},
+                          L"", true);
+            draw_text(dc, RECT{table.left + scale(82), y, table.left + scale(330), row_bottom},
+                      path.filename().wstring(), kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, RECT{table.left + scale(340), y, table.left + scale(450), row_bottom}, entry_size_text(path),
+                      kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            draw_text(dc, RECT{table.left + scale(462), y, table.left + scale(560), row_bottom}, entry_type_text(path),
+                      kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            draw_text(dc, RECT{table.left + scale(572), y, table.right - scale(12), row_bottom}, path.wstring(), kMuted,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             y = row_bottom;
             ++row_index;
             if (y > table.bottom - scale(34)) {
@@ -1635,11 +1705,16 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
     }
 }
 
+// Purpose: Draw the compression settings page.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` contains opt-in settings.
+// Outputs: Renders archive destination, format, compression level, advanced options, integrity toggles, and start
+// control.
 void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& state) {
     const auto layout = compress_layout(rect);
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Compress", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Compress", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, layout.start, L"Start", true);
 
     const auto format = compression_format_value(state.compression_format_index);
@@ -1647,69 +1722,100 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.archive_name, L"Archive name", compression_output_filename_for(state), false);
     draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false);
     draw_field(dc, layout.format, L"Archive format", compression_format_text(state.compression_format_index), true);
-    draw_field(dc, layout.compression_level, L"Compression level", suzip_tuning ? compression_level_text(state.compression_level_index) : L"Compatibility default", suzip_tuning);
-    draw_field(dc, layout.method, L"Compression method", suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"CPU compatibility stream", suzip_tuning);
-    draw_field(dc, layout.block_size, L"Block size", suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"Format-managed", suzip_tuning);
+    draw_field(dc, layout.compression_level, L"Compression level",
+               suzip_tuning ? compression_level_text(state.compression_level_index) : L"Compatibility default",
+               suzip_tuning);
+    draw_field(dc, layout.method, L"Compression method",
+               suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred")
+                            : L"CPU compatibility stream",
+               suzip_tuning);
+    draw_field(dc, layout.block_size, L"Block size",
+               suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"Format-managed",
+               suzip_tuning);
 
     RECT advanced = layout.advanced;
     fill_round_rect(dc, advanced, kPanel, scale(4));
     stroke_rect(dc, advanced, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{advanced.left + scale(16), advanced.top + scale(12), advanced.right, advanced.top + scale(36)}, L"Advanced", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{advanced.left + scale(16), advanced.top + scale(12), advanced.right, advanced.top + scale(36)},
+              L"Advanced", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_checkbox(dc, layout.solid_archive, L"Solid archive", state.solid_archive);
     draw_checkbox(dc, layout.store_timestamps, L"Store timestamps", state.store_timestamps);
-    draw_checkbox(dc, layout.delete_after_compression, L"Delete files after compression", state.delete_after_compression);
-    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
+    draw_checkbox(dc, layout.delete_after_compression, L"Delete files after compression",
+                  state.delete_after_compression);
+    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in,
+                ToggleId::VerifyAfterWrite);
 
     RECT security = layout.security;
     fill_round_rect(dc, security, kPanel, scale(4));
     stroke_rect(dc, security, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)}, L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)},
+              L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
-    draw_text(dc, RECT{security.left + scale(448), security.top + scale(46), security.right - scale(16), security.top + scale(114)}, L"Security checks remain disabled until explicitly enabled for the job or as a default in Settings.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc,
+              RECT{security.left + scale(448), security.top + scale(46), security.right - scale(16),
+                   security.top + scale(114)},
+              L"Security checks remain disabled until explicitly enabled for the job or as a default in Settings.",
+              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
+// Purpose: Draw the extraction settings page.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` contains opt-in settings.
+// Outputs: Renders archive/destination fields, overwrite policy, integrity toggles, and start control.
 void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& state) {
     const auto layout = extract_layout(rect);
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Extract", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Extract", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, layout.start, L"Start", true);
 
-    const auto archive = state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
+    const auto archive =
+        state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
     draw_field(dc, layout.archive, L"Archive", archive, false);
     draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false);
     draw_field(dc, layout.path_mode, L"Archive format", detected_archive_format_text(state.queued_paths), false);
-    draw_field(dc, layout.overwrite_policy, L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", true);
+    draw_field(dc, layout.overwrite_policy, L"Overwrite policy",
+               state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", true);
 
     RECT checks = layout.checks;
     fill_round_rect(dc, checks, kPanel, scale(4));
     stroke_rect(dc, checks, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{checks.left + scale(16), checks.top + scale(12), checks.right, checks.top + scale(36)}, L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{checks.left + scale(16), checks.top + scale(12), checks.right, checks.top + scale(36)},
+              L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, layout.verify_metadata, L"Verify archive metadata before extraction", state.verify_metadata_before_extract);
-    draw_checkbox(dc, layout.open_destination_after_extract, L"Open destination folder after extraction", state.open_destination_after_extract);
+    draw_checkbox(dc, layout.verify_metadata, L"Verify archive metadata before extraction",
+                  state.verify_metadata_before_extract);
+    draw_checkbox(dc, layout.open_destination_after_extract, L"Open destination folder after extraction",
+                  state.open_destination_after_extract);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
 }
 
+// Purpose: Draw the security review page.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` contains security choices.
+// Outputs: Renders path, CRC, integrity, Defender, and overwrite checks with explicit status.
 void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Security Review", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, RECT{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)}, L"Verify", true);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Security Review", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_button(dc, RECT{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)},
+                L"Verify", true);
 
     RECT summary{area.left, area.top + scale(54), area.left + scale(430), area.bottom - scale(80)};
     fill_round_rect(dc, summary, kPanel, scale(4));
     stroke_rect(dc, summary, kBorder);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{summary.left + scale(16), summary.top, summary.left + scale(210), summary.top + scale(36)}, L"Check", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{summary.left + scale(230), summary.top, summary.right - scale(16), summary.top + scale(36)}, L"Status", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{summary.left + scale(16), summary.top, summary.left + scale(210), summary.top + scale(36)},
+              L"Check", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{summary.left + scale(230), summary.top, summary.right - scale(16), summary.top + scale(36)},
+              L"Status", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, summary.left, summary.top + scale(36), summary.right, summary.top + scale(36), kBorder);
     struct Row {
         const wchar_t* name;
@@ -1719,18 +1825,26 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     const Row rows[] = {
         {L"Path safety", L"Safe", kOk},
         {L"CRC metadata", L"Verified", kOk},
-        {L"Post-write verify", state.verify_after_write_opt_in ? L"Selected" : L"Not selected", state.verify_after_write_opt_in ? kOk : kWarn},
-        {L"SHA-256 optional", state.integrity_hash_opt_in ? L"Selected" : L"Not selected", state.integrity_hash_opt_in ? kOk : kWarn},
-        {L"Defender optional", state.defender_scan_opt_in ? L"Selected" : L"Not selected", state.defender_scan_opt_in ? kOk : kWarn},
-        {L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", state.overwrite ? kWarn : kOk},
-        {L"GPU requirement", state.gpu_required ? L"AMD HIP required" : L"Fallback allowed", state.gpu_required ? kInfo : kWarn},
+        {L"Post-write verify", state.verify_after_write_opt_in ? L"Selected" : L"Not selected",
+         state.verify_after_write_opt_in ? kOk : kWarn},
+        {L"SHA-256 optional", state.integrity_hash_opt_in ? L"Selected" : L"Not selected",
+         state.integrity_hash_opt_in ? kOk : kWarn},
+        {L"Defender optional", state.defender_scan_opt_in ? L"Selected" : L"Not selected",
+         state.defender_scan_opt_in ? kOk : kWarn},
+        {L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite",
+         state.overwrite ? kWarn : kOk},
+        {L"GPU requirement", state.gpu_required ? L"AMD HIP required" : L"Fallback allowed",
+         state.gpu_required ? kInfo : kWarn},
     };
     int y = summary.top + scale(36);
     for (const auto& row : rows) {
         const int bottom = y + scale(38);
-        fill_rect(dc, RECT{summary.left + scale(1), y + scale(1), summary.right - scale(1), bottom}, ((y / scale(38)) % 2 == 0) ? kPanel2 : kPanel);
-        draw_text(dc, RECT{summary.left + scale(16), y, summary.left + scale(210), bottom}, row.name, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, RECT{summary.left + scale(230), y, summary.right - scale(16), bottom}, row.status, row.color, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        fill_rect(dc, RECT{summary.left + scale(1), y + scale(1), summary.right - scale(1), bottom},
+                  ((y / scale(38)) % 2 == 0) ? kPanel2 : kPanel);
+        draw_text(dc, RECT{summary.left + scale(16), y, summary.left + scale(210), bottom}, row.name, kText,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, RECT{summary.left + scale(230), y, summary.right - scale(16), bottom}, row.status, row.color,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         y = bottom;
     }
 
@@ -1738,41 +1852,69 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     fill_round_rect(dc, detail, kPanel, scale(4));
     stroke_rect(dc, detail, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{detail.left + scale(18), detail.top + scale(14), detail.right, detail.top + scale(40)}, L"Archive boundary contract", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{detail.left + scale(18), detail.top + scale(14), detail.right, detail.top + scale(40)},
+              L"Archive boundary contract", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{detail.left + scale(18), detail.top + scale(56), detail.right - scale(18), detail.top + scale(154)}, L"Extraction publishes final files only after each archive entry is normalized, decoded, and verified inside the selected destination. Absolute paths, drive-rooted paths, UNC paths, traversal, unsafe names, malformed block metadata, CRC mismatches, and overwrite attempts are rejected before final publication.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_field(dc, RECT{detail.left + scale(18), detail.top + scale(184), detail.right - scale(18), detail.top + scale(234)}, L"Archive", state.queued_paths.empty() ? L"No archive selected" : state.queued_paths.front().wstring(), false);
-    draw_field(dc, RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(248), detail.top + scale(302)}, L"Files", std::to_wstring(state.queued_paths.size()), false);
-    draw_field(dc, RECT{detail.left + scale(270), detail.top + scale(252), detail.right - scale(18), detail.top + scale(302)}, L"Total size", L"Calculated during job", false);
+    draw_text(
+        dc, RECT{detail.left + scale(18), detail.top + scale(56), detail.right - scale(18), detail.top + scale(154)},
+        L"Extraction publishes final files only after each archive entry is normalized, decoded, and verified inside "
+        L"the selected destination. Absolute paths, drive-rooted paths, UNC paths, traversal, unsafe names, malformed "
+        L"block metadata, CRC mismatches, and overwrite attempts are rejected before final publication.",
+        kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_field(
+        dc, RECT{detail.left + scale(18), detail.top + scale(184), detail.right - scale(18), detail.top + scale(234)},
+        L"Archive", state.queued_paths.empty() ? L"No archive selected" : state.queued_paths.front().wstring(), false);
+    draw_field(
+        dc, RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(248), detail.top + scale(302)},
+        L"Files", std::to_wstring(state.queued_paths.size()), false);
+    draw_field(
+        dc, RECT{detail.left + scale(270), detail.top + scale(252), detail.right - scale(18), detail.top + scale(302)},
+        L"Total size", L"Calculated during job", false);
 }
 
+// Purpose: Draw the operation history page.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` contains session history.
+// Outputs: Renders filters, history rows, and selected-operation details.
 void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"History", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"History", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(142), area.top, area.right, area.top + scale(34)}, L"Clear History", false);
-    draw_field(dc, RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)}, L"Operation", history_operation_filter_text(state.history_operation_filter_index), true);
-    draw_field(dc, RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)}, L"Status", history_status_filter_text(state.history_status_filter_index), true);
+    draw_field(dc, RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)}, L"Operation",
+               history_operation_filter_text(state.history_operation_filter_index), true);
+    draw_field(dc, RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)},
+               L"Status", history_status_filter_text(state.history_status_filter_index), true);
 
     RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
     fill_round_rect(dc, table, kPanel, scale(4));
     stroke_rect(dc, table, kBorder);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{table.left + scale(14), table.top, table.left + scale(150), table.top + scale(34)}, L"Time", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(160), table.top, table.left + scale(290), table.top + scale(34)}, L"Operation", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(300), table.top, table.left + scale(620), table.top + scale(34)}, L"Archive", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(632), table.top, table.right - scale(16), table.top + scale(34)}, L"Status", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(14), table.top, table.left + scale(150), table.top + scale(34)}, L"Time",
+              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(160), table.top, table.left + scale(290), table.top + scale(34)},
+              L"Operation", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(300), table.top, table.left + scale(620), table.top + scale(34)}, L"Archive",
+              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{table.left + scale(632), table.top, table.right - scale(16), table.top + scale(34)}, L"Status",
+              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, table.left, table.top + scale(34), table.right, table.top + scale(34), kBorder);
     int y = table.top + scale(34);
     if (state.history.empty()) {
-        draw_text(dc, RECT{table.left + scale(18), y + scale(28), table.right - scale(18), y + scale(70)}, L"No completed operations in this session yet.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        draw_text(dc, RECT{table.left + scale(18), y + scale(28), table.right - scale(18), y + scale(70)},
+                  L"No completed operations in this session yet.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else {
         for (const auto& line : state.history) {
             const int bottom = y + scale(34);
-            draw_text(dc, RECT{table.left + scale(14), y, table.left + scale(150), bottom}, L"Session", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, RECT{table.left + scale(160), y, table.left + scale(290), bottom}, L"Job", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, RECT{table.left + scale(300), y, table.left + scale(620), bottom}, widen(line), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, RECT{table.left + scale(632), y, table.right - scale(16), bottom}, line.starts_with("Error") ? L"Failed" : L"Success", line.starts_with("Error") ? kDanger : kOk, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            draw_text(dc, RECT{table.left + scale(14), y, table.left + scale(150), bottom}, L"Session", kMuted,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            draw_text(dc, RECT{table.left + scale(160), y, table.left + scale(290), bottom}, L"Job", kText,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            draw_text(dc, RECT{table.left + scale(300), y, table.left + scale(620), bottom}, widen(line), kMuted,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, RECT{table.left + scale(632), y, table.right - scale(16), bottom},
+                      line.starts_with("Error") ? L"Failed" : L"Success", line.starts_with("Error") ? kDanger : kOk,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             y = bottom;
             if (y > table.bottom - scale(34)) {
                 break;
@@ -1782,16 +1924,18 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     RECT details{area.left, area.bottom - scale(76), area.right, area.bottom};
     fill_round_rect(dc, details, kPanel, scale(4));
     stroke_rect(dc, details, kBorder);
-    draw_text(dc, RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom}, L"Selected operation details appear here after a job runs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom},
+              L"Selected operation details appear here after a job runs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 // Purpose: Draw the AMD GPU diagnostics page with current runtime and resource-status details.
-// Inputs: `dc` is the double-buffered paint target, `rect` is the page bounds, and `state` supplies live GPU/status text.
-// Outputs: Renders GPU diagnostics controls and informational panels without mutating state.
+// Inputs: `dc` is the double-buffered paint target, `rect` is the page bounds, and `state` supplies live GPU/status
+// text. Outputs: Renders GPU diagnostics controls and informational panels without mutating state.
 void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"AMD GPU Diagnostics", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"AMD GPU Diagnostics", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, RECT{area.right - scale(110), area.top, area.right, area.top + scale(34)}, L"Refresh", false);
 
     const bool ready = gpu_ready(state);
@@ -1799,10 +1943,16 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     fill_round_rect(dc, top, kPanel, scale(4));
     stroke_rect(dc, top, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{top.left + scale(18), top.top + scale(12), top.left + scale(180), top.top + scale(40)}, L"HIP status", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{top.left + scale(190), top.top + scale(12), top.right - scale(18), top.top + scale(40)}, widen(state.gpu_status), ready ? kOk : kWarn, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{top.left + scale(18), top.top + scale(12), top.left + scale(180), top.top + scale(40)},
+              L"HIP status", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{top.left + scale(190), top.top + scale(12), top.right - scale(18), top.top + scale(40)},
+              widen(state.gpu_status), ready ? kOk : kWarn, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{top.left + scale(18), top.top + scale(50), top.right - scale(18), top.bottom - scale(12)}, ready ? L"SuperZip will use AMD HIP for native .suzip jobs that require GPU acceleration." : L"This build or host is not reporting an active AMD HIP device. GPU-required jobs fail instead of silently using a different vendor path.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{top.left + scale(18), top.top + scale(50), top.right - scale(18), top.bottom - scale(12)},
+              ready ? L"SuperZip will use AMD HIP for native .suzip jobs that require GPU acceleration."
+                    : L"This build or host is not reporting an active AMD HIP device. GPU-required jobs fail instead "
+                      L"of silently using a different vendor path.",
+              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     const int card_w = (area.right - area.left - scale(28)) / 3;
     RECT gpu{area.left, area.top + scale(166), area.left + card_w, area.top + scale(316)};
@@ -1815,31 +1965,41 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     stroke_rect(dc, memory, kBorder);
     stroke_rect(dc, accel, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(12), gpu.right, gpu.top + scale(36)}, L"GPU", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(12), memory.right, memory.top + scale(36)}, L"Memory", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(12), accel.right, accel.top + scale(36)}, L"Acceleration", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(12), gpu.right, gpu.top + scale(36)}, L"GPU", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(12), memory.right, memory.top + scale(36)},
+              L"Memory", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(12), accel.right, accel.top + scale(36)},
+              L"Acceleration", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    const std::wstring gpu_detail = ready
-        ? (std::wstring(L"Backend: AMD HIP\nDevice: ") +
-              (state.gpu_device_name.empty() ? L"Detected by HIP runtime" : widen(state.gpu_device_name)) +
-              L"\nArchitecture: " +
-              (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
-        : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
-    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. Streaming codecs cover ZIP, Gzip, Bzip2, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, TAR filters, CAB, RPM, XZ, and LZMA; container adapters keep metadata and output publication capped.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    const std::wstring gpu_detail =
+        ready ? (std::wstring(L"Backend: AMD HIP\nDevice: ") +
+                 (state.gpu_device_name.empty() ? L"Detected by HIP runtime" : widen(state.gpu_device_name)) +
+                 L"\nArchitecture: " + (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
+              : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
+    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)},
+              gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(
+        dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)},
+        L"Bounded chunks keep archive work from loading whole archives into RAM. Streaming codecs cover ZIP, Gzip, "
+        L"Bzip2, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, TAR filters, CAB, RPM, XZ, and "
+        L"LZMA; container adapters keep metadata and output publication capped.",
+        kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc,
+              RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)},
+              state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only"
+                                 : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only",
+              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
 }
 
-void MainWindow::draw_performance_monitor_card(
-    HDC dc,
-    const RECT& graph,
-    const wchar_t* label,
-    const std::wstring& value,
-    const std::wstring& detail,
-    double ratio,
-    COLORREF color) {
+// Purpose: Draw one metric card inside the live performance monitor.
+// Inputs: `dc` is the target; text/value fields are preformatted; `ratio` controls the normalized bar fill.
+// Outputs: Renders a bordered metric card without overflowing text.
+void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label,
+                                               const std::wstring& value, const std::wstring& detail, double ratio,
+                                               COLORREF color) {
     fill_round_rect(dc, graph, kPanel2, scale(4));
     stroke_rect(dc, graph, kBorder);
     RECT value_rect{graph.left + scale(12), graph.top + scale(10), graph.right - scale(12), graph.top + scale(42)};
@@ -1847,87 +2007,88 @@ void MainWindow::draw_performance_monitor_card(
     RECT bar_track{graph.left + scale(12), graph.bottom - scale(20), graph.right - scale(12), graph.bottom - scale(12)};
     const int bar_width = std::max(0, static_cast<int>(bar_track.right - bar_track.left));
     RECT bar_fill = bar_track;
-    bar_fill.right = bar_fill.left + static_cast<int>(std::round(static_cast<double>(bar_width) * std::clamp(ratio, 0.0, 1.0)));
+    bar_fill.right =
+        bar_fill.left + static_cast<int>(std::round(static_cast<double>(bar_width) * std::clamp(ratio, 0.0, 1.0)));
     fill_round_rect(dc, bar_track, RGB(35, 50, 56), scale(4));
     if (bar_fill.right > bar_fill.left) {
         fill_round_rect(dc, bar_fill, color, scale(4));
     }
     draw_text(dc, value_rect, value, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
-    draw_text(dc, RECT{graph.left, graph.bottom + scale(4), graph.right, graph.bottom + scale(24)}, label, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{graph.left, graph.bottom + scale(4), graph.right, graph.bottom + scale(24)}, label, kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
+// Purpose: Draw the live performance monitor section on the GPU diagnostics page.
+// Inputs: `dc` is the target, `monitor` is the panel rectangle, and `sample` is the latest live counter snapshot.
+// Outputs: Renders CPU, memory, process I/O, and GPU/VRAM cards with bounded bars.
 void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const PerformanceMonitorSample& sample) {
     fill_round_rect(dc, monitor, kPanel, scale(4));
     stroke_rect(dc, monitor, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{monitor.left + scale(16), monitor.top + scale(12), monitor.right, monitor.top + scale(36)}, L"Performance Monitor", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{monitor.left + scale(16), monitor.top + scale(12), monitor.right, monitor.top + scale(36)},
+              L"Performance Monitor", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     const int graph_top = monitor.top + scale(60);
     const int graph_bottom = monitor.bottom - scale(42);
     const int graph_w = (monitor.right - monitor.left - scale(86)) / 4;
     const double io_total = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
     for (int i = 0; i < 4; ++i) {
-        RECT graph{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top, monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
+        RECT graph{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top,
+                   monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
         if (!sample.live) {
-            draw_performance_monitor_card(dc, graph, i == 0 ? L"CPU" : i == 1 ? L"Memory" : i == 2 ? L"I/O" : L"GPU", L"Collecting", L"Waiting for the first live sample.", 0.0, kSubtle);
+            draw_performance_monitor_card(dc, graph,
+                                          i == 0   ? L"CPU"
+                                          : i == 1 ? L"Memory"
+                                          : i == 2 ? L"I/O"
+                                                   : L"GPU",
+                                          L"Collecting", L"Waiting for the first live sample.", 0.0, kSubtle);
             continue;
         }
         if (i == 0) {
-            draw_performance_monitor_card(
-                dc,
-                graph,
-                L"CPU",
-                percentage_text(sample.cpu_percent),
-                L"Process utilization across logical CPUs.",
-                sample.cpu_percent / 100.0,
-                kInfo);
+            draw_performance_monitor_card(dc, graph, L"CPU", percentage_text(sample.cpu_percent),
+                                          L"Process utilization across logical CPUs.", sample.cpu_percent / 100.0,
+                                          kInfo);
         } else if (i == 1) {
-            const auto detail = std::wstring(L"Private ") + widen(human_bytes(static_cast<double>(sample.private_bytes))) + L"\nSystem " + percentage_text(sample.system_memory_percent);
-            draw_performance_monitor_card(
-                dc,
-                graph,
-                L"Memory",
-                widen(human_bytes(static_cast<double>(sample.private_bytes))),
-                detail,
-                sample.system_memory_percent / 100.0,
-                kOk);
+            const auto detail = std::wstring(L"Private ") +
+                                widen(human_bytes(static_cast<double>(sample.private_bytes))) + L"\nSystem " +
+                                percentage_text(sample.system_memory_percent);
+            draw_performance_monitor_card(dc, graph, L"Memory",
+                                          widen(human_bytes(static_cast<double>(sample.private_bytes))), detail,
+                                          sample.system_memory_percent / 100.0, kOk);
         } else if (i == 2) {
-            const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " + rate_text(sample.io_write_bytes_per_second);
-            draw_performance_monitor_card(
-                dc,
-                graph,
-                L"I/O",
-                rate_text(io_total),
-                detail,
-                std::min(1.0, io_total / (1024.0 * 1024.0 * 1024.0)),
-                kWarn);
+            const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " +
+                                rate_text(sample.io_write_bytes_per_second);
+            draw_performance_monitor_card(dc, graph, L"I/O", rate_text(io_total), detail,
+                                          std::min(1.0, io_total / (1024.0 * 1024.0 * 1024.0)), kWarn);
         } else {
             const bool has_vram = sample.vram_total_bytes > 0;
-            const double vram_ratio = has_vram
-                ? static_cast<double>(sample.vram_total_bytes - sample.vram_free_bytes) / static_cast<double>(sample.vram_total_bytes)
-                : 0.0;
-            const std::wstring gpu_value = sample.gpu_utilization_available ? percentage_text(sample.gpu_utilization_percent) : L"Unavailable";
-            const std::wstring detail = has_vram
-                ? (std::wstring(L"VRAM free ") + widen(human_bytes(static_cast<double>(sample.vram_free_bytes))) + L"\nTotal " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))))
-                : L"Windows GPU counter or HIP VRAM is not exposed.";
+            const double vram_ratio = has_vram ? static_cast<double>(sample.vram_total_bytes - sample.vram_free_bytes) /
+                                                     static_cast<double>(sample.vram_total_bytes)
+                                               : 0.0;
+            const std::wstring gpu_value =
+                sample.gpu_utilization_available ? percentage_text(sample.gpu_utilization_percent) : L"Unavailable";
+            const std::wstring detail =
+                has_vram
+                    ? (std::wstring(L"VRAM free ") + widen(human_bytes(static_cast<double>(sample.vram_free_bytes))) +
+                       L"\nTotal " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))))
+                    : L"Windows GPU counter or HIP VRAM is not exposed.";
             draw_performance_monitor_card(
-                dc,
-                graph,
-                L"GPU",
-                gpu_value,
-                detail,
-                sample.gpu_utilization_available ? sample.gpu_utilization_percent / 100.0 : vram_ratio,
-                kAccent);
+                dc, graph, L"GPU", gpu_value, detail,
+                sample.gpu_utilization_available ? sample.gpu_utilization_percent / 100.0 : vram_ratio, kAccent);
         }
     }
 }
 
+// Purpose: Draw the preferences page.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
+// Outputs: Renders general, security, performance, and logging settings.
 void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& state) {
     const auto layout = preferences_layout(rect);
     RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Preferences", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(34)}, L"Preferences", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, layout.restore_defaults, L"Restore Defaults", false);
     draw_button(dc, layout.apply, L"Apply", true);
 
@@ -1940,18 +2101,26 @@ void MainWindow::draw_preferences_page(HDC dc, const RECT& rect, const UiState& 
         stroke_rect(dc, panel, kBorder);
     }
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{general.left + scale(16), general.top + scale(12), general.right, general.top + scale(36)}, L"General", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)}, L"Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{performance.left + scale(16), performance.top + scale(12), performance.right, performance.top + scale(36)}, L"Performance", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{logging.left + scale(16), logging.top + scale(12), logging.right, logging.top + scale(36)}, L"Logging", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{general.left + scale(16), general.top + scale(12), general.right, general.top + scale(36)},
+              L"General", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{security.left + scale(16), security.top + scale(12), security.right, security.top + scale(36)},
+              L"Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(
+        dc,
+        RECT{performance.left + scale(16), performance.top + scale(12), performance.right, performance.top + scale(36)},
+        L"Performance", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{logging.left + scale(16), logging.top + scale(12), logging.right, logging.top + scale(36)},
+              L"Logging", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, layout.open_destination_after_operation, L"Open destination folder after operation", state.open_destination_after_operation);
+    draw_checkbox(dc, layout.open_destination_after_operation, L"Open destination folder after operation",
+                  state.open_destination_after_operation);
     draw_checkbox(dc, layout.confirm_before_deleting, L"Confirm before deleting files", state.confirm_before_deleting);
     draw_checkbox(dc, layout.show_operation_summary, L"Show operation summary", state.show_operation_summary);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
     draw_toggle(dc, layout.gpu, L"Require AMD GPU acceleration", state.gpu_required, ToggleId::GpuRequired);
-    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
+    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in,
+                ToggleId::VerifyAfterWrite);
     draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
@@ -1968,18 +2137,28 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     RECT logo{card.left + scale(42), card.top + scale(58), card.left + scale(110), card.top + scale(132)};
     draw_logo(dc, logo, kAccent);
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{card.left + scale(142), card.top + scale(50), card.right - scale(40), card.top + scale(90)}, L"SuperZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{card.left + scale(142), card.top + scale(50), card.right - scale(40), card.top + scale(90)},
+              L"SuperZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)},
+              L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)},
+              widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)},
+              L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
+              L"LZMA, lzip, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, LHA/LZH, "
+              L"CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; "
+              L"security-sensitive extraction validates paths and metadata before writing files.",
+              kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)},
+              L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted,
+              DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 // Purpose: Draw a simple DPI-scaled command or navigation button.
-// Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent styling.
-// Outputs: Renders hover, press, release, border, and ellipsized text states.
+// Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent
+// styling. Outputs: Renders hover, press, release, border, and ellipsized text states.
 void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active) {
     const bool hovered = mouse_inside_client_ && contains_point(rect, mouse_position_.x, mouse_position_.y);
     const bool pressed = hovered && primary_mouse_down_;
@@ -2008,8 +2187,12 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
     draw_text(dc, label, text, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+// Purpose: Draw a DPI-scaled opt-in settings toggle row.
+// Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
+// styling. Outputs: Renders the toggle and label into `dc`.
 void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id) {
-    draw_text(dc, RECT{rect.left + scale(54), rect.top, rect.right, rect.bottom}, text, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{rect.left + scale(54), rect.top, rect.right, rect.bottom}, text, kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     const int cy = (rect.top + rect.bottom) / 2;
     const int track_height = scale(18);
     RECT track{rect.left, cy - track_height / 2, rect.left + scale(42), cy + track_height / 2};
@@ -2019,12 +2202,16 @@ void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool
     HGDIOBJ previous = SelectObject(dc, knob);
     const int knob_size = scale(14);
     const int knob_travel = (track.right - track.left) - knob_size - scale(6);
-    const int knob_left = track.left + scale(3) + static_cast<int>(std::round(position * static_cast<double>(std::max(0, knob_travel))));
+    const int knob_left =
+        track.left + scale(3) + static_cast<int>(std::round(position * static_cast<double>(std::max(0, knob_travel))));
     Ellipse(dc, knob_left, cy - knob_size / 2, knob_left + knob_size, cy + knob_size / 2);
     SelectObject(dc, previous);
     DeleteObject(knob);
 }
 
+// Purpose: Draw a DPI-scaled checkbox row.
+// Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
+// styling. Outputs: Renders a checkbox and label into `dc`.
 void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool enabled) {
     RECT box{rect.left, rect.top + scale(6), rect.left + scale(16), rect.top + scale(22)};
     fill_rect(dc, box, enabled ? kAccent : kPanel2);
@@ -2034,17 +2221,23 @@ void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bo
         draw_line(dc, box.left + scale(7), box.bottom - scale(4), box.right - scale(3), box.top + scale(4), kText);
     }
     if (text != nullptr && text[0] != L'\0') {
-        draw_text(dc, RECT{rect.left + scale(26), rect.top, rect.right, rect.bottom}, text, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, RECT{rect.left + scale(26), rect.top, rect.right, rect.bottom}, text, kText,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 }
 
+// Purpose: Draw a form field or select-style value box.
+// Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is display text, and `select` adds an
+// affordance. Outputs: Renders label and bordered field with ellipsized value.
 void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select) {
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{rect.left, rect.top, rect.right, rect.top + scale(18)}, label, kMuted, DT_LEFT | DT_TOP | DT_SINGLELINE);
+    draw_text(dc, RECT{rect.left, rect.top, rect.right, rect.top + scale(18)}, label, kMuted,
+              DT_LEFT | DT_TOP | DT_SINGLELINE);
     RECT box{rect.left, rect.top + scale(20), rect.right, rect.bottom};
     fill_round_rect(dc, box, kPanel2, scale(3));
     stroke_rect(dc, box, kBorder);
-    draw_text(dc, RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom}, value, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom}, value, kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (select) {
         const int arrow_cx = box.right - scale(15);
         const int arrow_cy = (box.top + box.bottom) / 2;
@@ -2085,7 +2278,8 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
     const int selected = dropdown_selected_index(state, state.active_dropdown);
     SelectObject(dc, tiny_font_);
     for (int index = 0; index < static_cast<int>(options.size()); ++index) {
-        const RECT row{menu.left + scale(1), menu.top + scale(1) + (index * row_height), menu.right - scale(1), menu.top + scale(1) + ((index + 1) * row_height)};
+        const RECT row{menu.left + scale(1), menu.top + scale(1) + (index * row_height), menu.right - scale(1),
+                       menu.top + scale(1) + ((index + 1) * row_height)};
         const bool is_selected = index == selected;
         fill_rect(dc, row, is_selected ? RGB(126, 24, 31) : ((index % 2 == 0) ? kPanel2 : kPanel));
         if (index > 0) {
@@ -2094,9 +2288,12 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
         if (is_selected) {
             const int check_mid = (row.top + row.bottom) / 2;
             draw_line(dc, row.left + scale(12), check_mid, row.left + scale(17), check_mid + scale(5), kText);
-            draw_line(dc, row.left + scale(17), check_mid + scale(5), row.left + scale(27), check_mid - scale(6), kText);
+            draw_line(dc, row.left + scale(17), check_mid + scale(5), row.left + scale(27), check_mid - scale(6),
+                      kText);
         }
-        draw_text(dc, RECT{row.left + scale(36), row.top, row.right - scale(12), row.bottom}, options[static_cast<std::size_t>(index)], is_selected ? kText : kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, RECT{row.left + scale(36), row.top, row.right - scale(12), row.bottom},
+                  options[static_cast<std::size_t>(index)], is_selected ? kText : kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 }
 
@@ -2186,6 +2383,9 @@ RECT MainWindow::content_rect() const {
     return RECT{rail_width, top_bar, client.right, client.bottom - status_bar};
 }
 
+// Purpose: Handle clicks inside the content area.
+// Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
+// Outputs: Returns true when a setting was changed and a repaint was queued.
 bool MainWindow::handle_content_click(int x, int y) {
     Page page;
     {
@@ -2193,262 +2393,304 @@ bool MainWindow::handle_content_click(int x, int y) {
         page = state_.page;
     }
     const RECT content = content_rect();
+    switch (page) {
+    case Page::Queue:
+        return handle_queue_click(content, x, y);
+    case Page::Compress:
+        return handle_compress_click(content, x, y);
+    case Page::Extract:
+        return handle_extract_click(content, x, y);
+    case Page::Security:
+        return handle_security_click(content, x, y);
+    case Page::History:
+        return handle_history_click(content, x, y);
+    case Page::Gpu:
+        return handle_gpu_click(content, x, y);
+    case Page::Preferences:
+        return handle_preferences_click(content, x, y);
+    case Page::About:
+        return false;
+    }
+    return false;
+}
 
-    // Local mutators centralize repaint and animation behavior for repeated control rows.
-    const auto toggle_bool = [this](bool UiState::*member, ToggleId id) {
-        bool previous = false;
-        bool next = false;
+// Purpose: Toggle a boolean UI-state member with the standard animated toggle feedback.
+// Inputs: `member` selects the state field and `id` identifies the visual toggle to animate.
+// Outputs: Mutates the state, starts the toggle animation, queues repaint, and returns true.
+bool MainWindow::toggle_bool_setting(bool UiState::* member, ToggleId id) {
+    bool previous = false;
+    bool next = false;
+    {
+        std::lock_guard lock(mutex_);
+        previous = state_.*member;
+        state_.*member = !previous;
+        next = state_.*member;
+    }
+    start_toggle_animation(id, previous, next);
+    request_repaint();
+    return true;
+}
+
+// Purpose: Toggle a checkbox-style boolean UI-state member without knob animation.
+// Inputs: `member` selects the state field and `status` is the visible status-line text.
+// Outputs: Mutates the state, writes status text, queues repaint, and returns true.
+bool MainWindow::checkbox_bool_setting(bool UiState::* member, const char* status) {
+    {
+        std::lock_guard lock(mutex_);
+        state_.*member = !(state_.*member);
+        state_.status = status;
+    }
+    request_repaint();
+    return true;
+}
+
+// Purpose: Handle Queue page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when a queue control or row selection consumed the click.
+bool MainWindow::handle_queue_click(const RECT& content, int x, int y) {
+    const auto layout = queue_layout(content);
+    if (handle_active_dropdown_click(x, y)) {
+        return true;
+    }
+    if (contains_point(layout.add_files, x, y)) {
+        add_files();
+        return true;
+    }
+    if (contains_point(layout.add_folder, x, y)) {
+        add_folder();
+        return true;
+    }
+    if (contains_point(layout.clear, x, y)) {
+        clear_queue();
+        return true;
+    }
+    const int header_bottom = layout.table.top + scale(36);
+    const int row_height = scale(34);
+    if (y >= header_bottom && y < layout.table.bottom && row_height > 0) {
+        const int index = (y - header_bottom) / row_height;
+        std::lock_guard lock(mutex_);
+        if (index >= 0 && index < static_cast<int>(state_.queued_paths.size())) {
+            state_.selected_queue_index = index;
+            request_repaint();
+            return true;
+        }
+    }
+    return false;
+}
+
+// Purpose: Handle Compress page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when a compression control consumed the click.
+bool MainWindow::handle_compress_click(const RECT& content, int x, int y) {
+    const auto layout = compress_layout(content);
+    if (handle_active_dropdown_click(x, y)) {
+        return true;
+    }
+    if (contains_point(layout.start, x, y)) {
+        start_compress();
+        return true;
+    }
+    if (contains_point(layout.destination, x, y)) {
+        choose_destination();
+        return true;
+    }
+    if (contains_point(layout.format, x, y)) {
+        open_dropdown(DropdownId::CompressFormat);
+        return true;
+    }
+    if (contains_point(layout.compression_level, x, y)) {
+        std::lock_guard lock(mutex_);
+        if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
+            state_.active_dropdown = DropdownId::CompressLevel;
+            request_repaint();
+        }
+        return true;
+    }
+    if (contains_point(layout.method, x, y)) {
+        std::lock_guard lock(mutex_);
+        if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
+            state_.active_dropdown = DropdownId::CompressMethod;
+            request_repaint();
+        }
+        return true;
+    }
+    if (contains_point(layout.block_size, x, y)) {
+        std::lock_guard lock(mutex_);
+        if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
+            state_.active_dropdown = DropdownId::CompressBlockSize;
+            request_repaint();
+        }
+        return true;
+    }
+    if (contains_point(layout.solid_archive, x, y)) {
+        return checkbox_bool_setting(&UiState::solid_archive, "Solid archive setting changed");
+    }
+    if (contains_point(layout.store_timestamps, x, y)) {
+        return checkbox_bool_setting(&UiState::store_timestamps, "Timestamp setting changed");
+    }
+    if (contains_point(layout.delete_after_compression, x, y)) {
+        return checkbox_bool_setting(&UiState::delete_after_compression, "Delete-after-compression setting changed");
+    }
+    if (contains_point(layout.verify, x, y)) {
+        return toggle_bool_setting(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
+    }
+    if (contains_point(layout.sha, x, y)) {
+        return toggle_bool_setting(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
+    }
+    if (contains_point(layout.defender, x, y)) {
+        return toggle_bool_setting(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
+    }
+    return false;
+}
+
+// Purpose: Handle Extract page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when an extraction control consumed the click.
+bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
+    const auto layout = extract_layout(content);
+    if (handle_active_dropdown_click(x, y)) {
+        return true;
+    }
+    if (contains_point(layout.start, x, y)) {
+        start_extract();
+        return true;
+    }
+    if (contains_point(layout.destination, x, y)) {
+        choose_destination();
+        return true;
+    }
+    if (contains_point(layout.overwrite_policy, x, y)) {
+        open_dropdown(DropdownId::ExtractOverwrite);
+        return true;
+    }
+    if (contains_point(layout.verify_metadata, x, y)) {
+        return checkbox_bool_setting(&UiState::verify_metadata_before_extract,
+                                     "Extraction metadata verification setting changed");
+    }
+    if (contains_point(layout.open_destination_after_extract, x, y)) {
+        return checkbox_bool_setting(&UiState::open_destination_after_extract,
+                                     "Open destination after extraction setting changed");
+    }
+    if (contains_point(layout.sha, x, y)) {
+        return toggle_bool_setting(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
+    }
+    if (contains_point(layout.defender, x, y)) {
+        return toggle_bool_setting(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
+    }
+    return false;
+}
+
+// Purpose: Handle History page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when a history filter or command consumed the click.
+bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
+    RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+    const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
+    const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
+    const RECT clear{area.right - scale(142), area.top, area.right, area.top + scale(34)};
+    if (handle_active_dropdown_click(x, y)) {
+        return true;
+    }
+    if (contains_point(operation, x, y)) {
+        open_dropdown(DropdownId::HistoryOperation);
+        return true;
+    }
+    if (contains_point(status, x, y)) {
+        open_dropdown(DropdownId::HistoryStatus);
+        return true;
+    }
+    if (contains_point(clear, x, y)) {
+        clear_history();
+        return true;
+    }
+    return false;
+}
+
+// Purpose: Handle Security page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when the security review command consumed the click.
+bool MainWindow::handle_security_click(const RECT& content, int x, int y) {
+    RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+    const RECT verify_button{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
+    if (!contains_point(verify_button, x, y)) {
+        return false;
+    }
+    append_history("Security review completed");
+    {
+        std::lock_guard lock(mutex_);
+        state_.status = "Security review completed";
+    }
+    request_repaint();
+    return true;
+}
+
+// Purpose: Handle GPU page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when the GPU refresh command consumed the click.
+bool MainWindow::handle_gpu_click(const RECT& content, int x, int y) {
+    RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+    const RECT refresh{area.right - scale(110), area.top, area.right, area.top + scale(34)};
+    if (!contains_point(refresh, x, y)) {
+        return false;
+    }
+    refresh_gpu_status();
+    request_repaint();
+    return true;
+}
+
+// Purpose: Handle Preferences page hit-testing and commands.
+// Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+// Outputs: Returns true when a preference control consumed the click.
+bool MainWindow::handle_preferences_click(const RECT& content, int x, int y) {
+    const auto layout = preferences_layout(content);
+    if (handle_active_dropdown_click(x, y)) {
+        return true;
+    }
+    if (contains_point(layout.restore_defaults, x, y)) {
+        restore_defaults();
+        return true;
+    }
+    if (contains_point(layout.apply, x, y)) {
+        append_history("Preferences applied for current session");
         {
             std::lock_guard lock(mutex_);
-            previous = state_.*member;
-            state_.*member = !previous;
-            next = state_.*member;
-        }
-        start_toggle_animation(id, previous, next);
-        request_repaint();
-        return true;
-    };
-    const auto checkbox_bool = [this](bool UiState::*member, const char* status) {
-        {
-            std::lock_guard lock(mutex_);
-            state_.*member = !(state_.*member);
-            state_.status = status;
+            state_.status = "Preferences applied";
         }
         request_repaint();
         return true;
-    };
-
-    // Queue clicks cover only file/folder selection and row selection; job controls live on later pages.
-    if (page == Page::Queue) {
-        const auto layout = queue_layout(content);
-        if (handle_active_dropdown_click(x, y)) {
-            return true;
-        }
-        if (contains_point(layout.add_files, x, y)) {
-            add_files();
-            return true;
-        }
-        if (contains_point(layout.add_folder, x, y)) {
-            add_folder();
-            return true;
-        }
-        if (contains_point(layout.clear, x, y)) {
-            clear_queue();
-            return true;
-        }
-        const int header_bottom = layout.table.top + scale(36);
-        const int row_height = scale(34);
-        if (y >= header_bottom && y < layout.table.bottom && row_height > 0) {
-            const int index = (y - header_bottom) / row_height;
-            std::lock_guard lock(mutex_);
-            if (index >= 0 && index < static_cast<int>(state_.queued_paths.size())) {
-                state_.selected_queue_index = index;
-                request_repaint();
-                return true;
-            }
-        }
-        return false;
     }
-
-    // Compress keeps dropdowns ahead of toggles so expanded menus consume their own option clicks.
-    if (page == Page::Compress) {
-        const auto layout = compress_layout(content);
-        if (handle_active_dropdown_click(x, y)) {
-            return true;
-        }
-        if (contains_point(layout.start, x, y)) {
-            start_compress();
-            return true;
-        }
-        if (contains_point(layout.destination, x, y)) {
-            choose_destination();
-            return true;
-        }
-        if (contains_point(layout.format, x, y)) {
-            open_dropdown(DropdownId::CompressFormat);
-            return true;
-        }
-        if (contains_point(layout.compression_level, x, y)) {
-            std::lock_guard lock(mutex_);
-            if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
-                state_.active_dropdown = DropdownId::CompressLevel;
-                request_repaint();
-            }
-            return true;
-        }
-        if (contains_point(layout.method, x, y)) {
-            std::lock_guard lock(mutex_);
-            if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
-                state_.active_dropdown = DropdownId::CompressMethod;
-                request_repaint();
-            }
-            return true;
-        }
-        if (contains_point(layout.block_size, x, y)) {
-            std::lock_guard lock(mutex_);
-            if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
-                state_.active_dropdown = DropdownId::CompressBlockSize;
-                request_repaint();
-            }
-            return true;
-        }
-        if (contains_point(layout.solid_archive, x, y)) {
-            return checkbox_bool(&UiState::solid_archive, "Solid archive setting changed");
-        }
-        if (contains_point(layout.store_timestamps, x, y)) {
-            return checkbox_bool(&UiState::store_timestamps, "Timestamp setting changed");
-        }
-        if (contains_point(layout.delete_after_compression, x, y)) {
-            return checkbox_bool(&UiState::delete_after_compression, "Delete-after-compression setting changed");
-        }
-        if (contains_point(layout.verify, x, y)) {
-            return toggle_bool(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
-        }
-        if (contains_point(layout.sha, x, y)) {
-            return toggle_bool(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
-        }
-        if (contains_point(layout.defender, x, y)) {
-            return toggle_bool(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
-        }
-        return false;
+    if (contains_point(layout.sha, x, y)) {
+        return toggle_bool_setting(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
     }
-
-    // Extract routes the overwrite policy through the dropdown model instead of hidden cycling.
-    if (page == Page::Extract) {
-        const auto layout = extract_layout(content);
-        if (handle_active_dropdown_click(x, y)) {
-            return true;
-        }
-        if (contains_point(layout.start, x, y)) {
-            start_extract();
-            return true;
-        }
-        if (contains_point(layout.destination, x, y)) {
-            choose_destination();
-            return true;
-        }
-        if (contains_point(layout.overwrite_policy, x, y)) {
-            open_dropdown(DropdownId::ExtractOverwrite);
-            return true;
-        }
-        if (contains_point(layout.verify_metadata, x, y)) {
-            return checkbox_bool(&UiState::verify_metadata_before_extract, "Extraction metadata verification setting changed");
-        }
-        if (contains_point(layout.open_destination_after_extract, x, y)) {
-            return checkbox_bool(&UiState::open_destination_after_extract, "Open destination after extraction setting changed");
-        }
-        if (contains_point(layout.sha, x, y)) {
-            return toggle_bool(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
-        }
-        if (contains_point(layout.defender, x, y)) {
-            return toggle_bool(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
-        }
-        return false;
+    if (contains_point(layout.defender, x, y)) {
+        return toggle_bool_setting(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
     }
-
-    // History filter controls use the same dropdown path as settings for consistent testing.
-    if (page == Page::History) {
-        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
-        const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
-        const RECT clear{area.right - scale(142), area.top, area.right, area.top + scale(34)};
-        if (handle_active_dropdown_click(x, y)) {
-            return true;
-        }
-        if (contains_point(operation, x, y)) {
-            open_dropdown(DropdownId::HistoryOperation);
-            return true;
-        }
-        if (contains_point(status, x, y)) {
-            open_dropdown(DropdownId::HistoryStatus);
-            return true;
-        }
-        if (contains_point(clear, x, y)) {
-            clear_history();
-            return true;
-        }
-        return false;
+    if (contains_point(layout.gpu, x, y)) {
+        return toggle_bool_setting(&UiState::gpu_required, ToggleId::GpuRequired);
     }
-
-    if (page == Page::Security) {
-        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        const RECT verify_button{area.right - scale(150), area.bottom - scale(58), area.right, area.bottom - scale(18)};
-        if (contains_point(verify_button, x, y)) {
-            append_history("Security review completed");
-            {
-                std::lock_guard lock(mutex_);
-                state_.status = "Security review completed";
-            }
-            request_repaint();
-            return true;
-        }
-        return false;
+    if (contains_point(layout.verify, x, y)) {
+        return toggle_bool_setting(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
     }
-
-    if (page == Page::Gpu) {
-        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        const RECT refresh{area.right - scale(110), area.top, area.right, area.top + scale(34)};
-        if (contains_point(refresh, x, y)) {
-            refresh_gpu_status();
-            request_repaint();
-            return true;
-        }
-        return false;
+    if (contains_point(layout.open_destination_after_operation, x, y)) {
+        return checkbox_bool_setting(&UiState::open_destination_after_operation, "Open destination setting changed");
     }
-
-    // Preferences mixes persistent defaults, opt-in security toggles, and dropdown policy fields.
-    if (page == Page::Preferences) {
-        const auto layout = preferences_layout(content);
-        if (handle_active_dropdown_click(x, y)) {
-            return true;
-        }
-        if (contains_point(layout.restore_defaults, x, y)) {
-            restore_defaults();
-            return true;
-        }
-        if (contains_point(layout.apply, x, y)) {
-            append_history("Preferences applied for current session");
-            {
-                std::lock_guard lock(mutex_);
-                state_.status = "Preferences applied";
-            }
-            request_repaint();
-            return true;
-        }
-        if (contains_point(layout.sha, x, y)) {
-            return toggle_bool(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
-        }
-        if (contains_point(layout.defender, x, y)) {
-            return toggle_bool(&UiState::defender_scan_opt_in, ToggleId::DefenderScan);
-        }
-        if (contains_point(layout.gpu, x, y)) {
-            return toggle_bool(&UiState::gpu_required, ToggleId::GpuRequired);
-        }
-        if (contains_point(layout.verify, x, y)) {
-            return toggle_bool(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
-        }
-        if (contains_point(layout.open_destination_after_operation, x, y)) {
-            return checkbox_bool(&UiState::open_destination_after_operation, "Open destination setting changed");
-        }
-        if (contains_point(layout.confirm_before_deleting, x, y)) {
-            return checkbox_bool(&UiState::confirm_before_deleting, "Delete confirmation setting changed");
-        }
-        if (contains_point(layout.show_operation_summary, x, y)) {
-            return checkbox_bool(&UiState::show_operation_summary, "Operation summary setting changed");
-        }
-        if (contains_point(layout.memory_policy, x, y)) {
-            open_dropdown(DropdownId::PreferencesMemoryPolicy);
-            return true;
-        }
-        if (contains_point(layout.log_level, x, y)) {
-            open_dropdown(DropdownId::PreferencesLogLevel);
-            return true;
-        }
-        if (contains_point(layout.log_retention, x, y)) {
-            open_dropdown(DropdownId::PreferencesLogRetention);
-            return true;
-        }
-        return false;
+    if (contains_point(layout.confirm_before_deleting, x, y)) {
+        return checkbox_bool_setting(&UiState::confirm_before_deleting, "Delete confirmation setting changed");
+    }
+    if (contains_point(layout.show_operation_summary, x, y)) {
+        return checkbox_bool_setting(&UiState::show_operation_summary, "Operation summary setting changed");
+    }
+    if (contains_point(layout.memory_policy, x, y)) {
+        open_dropdown(DropdownId::PreferencesMemoryPolicy);
+        return true;
+    }
+    if (contains_point(layout.log_level, x, y)) {
+        open_dropdown(DropdownId::PreferencesLogLevel);
+        return true;
+    }
+    if (contains_point(layout.log_retention, x, y)) {
+        open_dropdown(DropdownId::PreferencesLogRetention);
+        return true;
     }
     return false;
 }
@@ -2577,10 +2819,14 @@ void MainWindow::set_page(Page page) {
     request_repaint();
 }
 
+// Purpose: Open the Windows file picker and append selected files to the queue.
+// Inputs: None; user selection comes from the common dialog or GUI smoke-test environment.
+// Outputs: Mutates queued paths and queues a repaint when files are selected.
 void MainWindow::add_files() {
     wchar_t smoke_paths[32768]{};
     constexpr DWORD smoke_paths_capacity = static_cast<DWORD>(sizeof(smoke_paths) / sizeof(smoke_paths[0]));
-    const DWORD smoke_length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
+    const DWORD smoke_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
     if (smoke_length > 0 && smoke_length < smoke_paths_capacity) {
         std::lock_guard lock(mutex_);
         const bool was_empty = state_.queued_paths.empty();
@@ -2588,7 +2834,8 @@ void MainWindow::add_files() {
         std::size_t start = 0;
         while (start <= paths.size()) {
             const std::size_t end = paths.find(L';', start);
-            const auto part = paths.substr(start, end == std::wstring_view::npos ? std::wstring_view::npos : end - start);
+            const auto part =
+                paths.substr(start, end == std::wstring_view::npos ? std::wstring_view::npos : end - start);
             if (!part.empty()) {
                 state_.queued_paths.emplace_back(std::wstring(part));
             }
@@ -2635,10 +2882,14 @@ void MainWindow::add_files() {
     request_repaint();
 }
 
+// Purpose: Open the Windows folder picker and append a selected folder to the queue.
+// Inputs: None; user selection comes from the shell folder picker or GUI smoke-test environment.
+// Outputs: Mutates queued paths and queues a repaint when a folder is selected.
 void MainWindow::add_folder() {
     wchar_t smoke_path[32768]{};
     constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
-    const DWORD smoke_length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
+    const DWORD smoke_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
     if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
         std::lock_guard lock(mutex_);
         const bool was_empty = state_.queued_paths.empty();
@@ -2693,10 +2944,14 @@ void MainWindow::clear_history() {
     request_repaint();
 }
 
+// Purpose: Open the Windows folder picker for destination selection.
+// Inputs: None; user selection comes from the shell dialog or smoke-test environment override.
+// Outputs: Updates the destination directory and queues a repaint when selected.
 void MainWindow::choose_destination() {
     wchar_t smoke_path[32768]{};
     constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
-    const DWORD smoke_length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_DESTINATION", smoke_path, smoke_path_capacity);
+    const DWORD smoke_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_DESTINATION", smoke_path, smoke_path_capacity);
     if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
         std::lock_guard lock(mutex_);
         state_.destination_directory = smoke_path;
@@ -2800,69 +3055,76 @@ void MainWindow::start_compress() {
         request_repaint();
         return;
     }
-    run_job([this, sources, output, archive_format, gpu_required, integrity, defender, verify_after_write, block_size, compression_level] {
-        auto progress_callback = [this](const ProgressSnapshot& snapshot) {
-            std::lock_guard lock(mutex_);
-            state_.progress = snapshot;
-            request_repaint();
-        };
-        OperationStats stats;
-        if (archive_format == ArchiveFormat::SuperZip) {
-            CompressOptions options;
-            options.gpu_required = gpu_required;
-            options.block_size = block_size;
-            options.compression_level = compression_level;
-            options.verify_after_write = verify_after_write;
-            stats = compress_suzip(sources, output, options, progress_callback);
-        } else if (archive_format == ArchiveFormat::Zip) {
-            stats = compress_zip(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Tar) {
-            stats = compress_tar(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarGzip) {
-            stats = compress_tar_gzip(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarBzip2) {
-            stats = compress_tar_bzip2(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::TarZstd) {
-            stats = compress_tar_zstd(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Gzip) {
-            stats = compress_gzip(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Bzip2) {
-            stats = compress_bzip2(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Zstd) {
-            stats = compress_zstd(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::UnixCompress) {
-            stats = compress_unix_compress(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Base64) {
-            stats = compress_base64(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Xxe) {
-            stats = compress_xxe(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Uue) {
-            stats = compress_uue(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Cpio) {
-            stats = compress_cpio(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::CpioGzip) {
-            stats = compress_cpio_gzip(sources, output, progress_callback);
-        } else if (archive_format == ArchiveFormat::Ar) {
-            stats = compress_ar(sources, output, progress_callback);
-        } else {
-            throw ArchiveError(
-                std::string("archive format recognized but not implemented for compression: ") +
-                archive_format_info(archive_format).key);
-        }
-        std::ostringstream line;
-        line << "Compressed " << archive_format_info(archive_format).key << " to " << output.string() << " in " << stats.seconds << "s";
-        append_history(line.str());
-        if (integrity) {
-            const auto hash = hash_file(output, IntegrityMode::Sha256);
-            append_history("SHA-256 " + hash.hex_digest);
-        }
-        if (defender) {
-            const auto scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-            append_history(scan.attempted && scan.clean ? "Defender scan clean" : "Defender scan unavailable or not clean");
-        }
-    }, "Compressing");
+    run_job(
+        [this, sources, output, archive_format, gpu_required, integrity, defender, verify_after_write, block_size,
+         compression_level] {
+            auto progress_callback = [this](const ProgressSnapshot& snapshot) {
+                std::lock_guard lock(mutex_);
+                state_.progress = snapshot;
+                request_repaint();
+            };
+            OperationStats stats;
+            if (archive_format == ArchiveFormat::SuperZip) {
+                CompressOptions options;
+                options.gpu_required = gpu_required;
+                options.block_size = block_size;
+                options.compression_level = compression_level;
+                options.verify_after_write = verify_after_write;
+                stats = compress_suzip(sources, output, options, progress_callback);
+            } else if (archive_format == ArchiveFormat::Zip) {
+                stats = compress_zip(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Tar) {
+                stats = compress_tar(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::TarGzip) {
+                stats = compress_tar_gzip(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::TarBzip2) {
+                stats = compress_tar_bzip2(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::TarZstd) {
+                stats = compress_tar_zstd(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Gzip) {
+                stats = compress_gzip(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Bzip2) {
+                stats = compress_bzip2(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Zstd) {
+                stats = compress_zstd(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::UnixCompress) {
+                stats = compress_unix_compress(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Base64) {
+                stats = compress_base64(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Xxe) {
+                stats = compress_xxe(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Uue) {
+                stats = compress_uue(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Cpio) {
+                stats = compress_cpio(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::CpioGzip) {
+                stats = compress_cpio_gzip(sources, output, progress_callback);
+            } else if (archive_format == ArchiveFormat::Ar) {
+                stats = compress_ar(sources, output, progress_callback);
+            } else {
+                throw ArchiveError(std::string("archive format recognized but not implemented for compression: ") +
+                                   archive_format_info(archive_format).key);
+            }
+            std::ostringstream line;
+            line << "Compressed " << archive_format_info(archive_format).key << " to " << output.string() << " in "
+                 << stats.seconds << "s";
+            append_history(line.str());
+            if (integrity) {
+                const auto hash = hash_file(output, IntegrityMode::Sha256);
+                append_history("SHA-256 " + hash.hex_digest);
+            }
+            if (defender) {
+                const auto scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
+                append_history(defender_history_status("Defender", scan));
+            }
+        },
+        "Compressing");
 }
 
+// Purpose: Start a background extraction job from the current GUI queue.
+// Inputs: None; reads queued archive, destination, security, and GPU options from synchronized UI state.
+// Outputs: Launches a worker job, updates progress/history/status, blocks unclean pre-scans, or requests repaint when
+// no archive is selected.
 void MainWindow::start_extract() {
     std::vector<std::filesystem::path> sources;
     bool gpu_required = true;
@@ -2887,33 +3149,37 @@ void MainWindow::start_extract() {
         request_repaint();
         return;
     }
-    run_job([this, archive = sources.front(), output, gpu_required, overwrite, integrity, defender] {
-        if (integrity) {
-            const auto hash = hash_file(archive, IntegrityMode::Sha256);
-            append_history("SHA-256 " + hash.hex_digest);
-        }
-        if (defender) {
-            const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
-            append_history(pre_scan.attempted && pre_scan.clean ? "Defender archive scan clean" : "Defender archive scan unavailable or not clean");
-            if (pre_scan.attempted && !pre_scan.clean) {
-                throw SecurityError("Microsoft Defender did not report the archive as clean: " + archive.string());
+    run_job(
+        [this, archive = sources.front(), output, gpu_required, overwrite, integrity, defender] {
+            if (integrity) {
+                const auto hash = hash_file(archive, IntegrityMode::Sha256);
+                append_history("SHA-256 " + hash.hex_digest);
             }
-        }
-        auto progress_callback = [this](const ProgressSnapshot& snapshot) {
-            std::lock_guard lock(mutex_);
-            state_.progress = snapshot;
-            request_repaint();
-        };
-        const auto archive_format = detect_archive_format(archive);
-        const auto stats = extract_detected_archive(archive_format, archive, output, gpu_required, overwrite, progress_callback);
-        std::ostringstream line;
-        line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in " << stats.seconds << "s";
-        append_history(line.str());
-        if (defender) {
-            const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-            append_history(post_scan.attempted && post_scan.clean ? "Defender output scan clean" : "Defender output scan unavailable or not clean");
-        }
-    }, "Extracting");
+            if (defender) {
+                const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
+                append_history(defender_history_status("Defender archive", pre_scan));
+                if (pre_scan.attempted && !pre_scan.clean) {
+                    throw SecurityError("Microsoft Defender did not report the archive as clean: " + archive.string());
+                }
+            }
+            auto progress_callback = [this](const ProgressSnapshot& snapshot) {
+                std::lock_guard lock(mutex_);
+                state_.progress = snapshot;
+                request_repaint();
+            };
+            const auto archive_format = detect_archive_format(archive);
+            const auto stats =
+                extract_detected_archive(archive_format, archive, output, gpu_required, overwrite, progress_callback);
+            std::ostringstream line;
+            line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
+                 << stats.seconds << "s";
+            append_history(line.str());
+            if (defender) {
+                const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
+                append_history(defender_history_status("Defender output", post_scan));
+            }
+        },
+        "Extracting");
 }
 
 void MainWindow::run_job(std::function<void()> job, std::string label) {
@@ -2957,6 +3223,9 @@ void MainWindow::refresh_gpu_status() {
     state_.gpu_arch = info.gcn_arch;
 }
 
+// Purpose: Initialize optional Windows performance counters for live monitoring.
+// Inputs: None; uses the current process and Windows PDH provider.
+// Outputs: Opens best-effort GPU engine counters without failing app startup.
 void MainWindow::initialize_performance_monitor() {
     if (gpu_query_ != nullptr) {
         return;
@@ -2966,7 +3235,8 @@ void MainWindow::initialize_performance_monitor() {
         gpu_counter_ = nullptr;
         return;
     }
-    const PDH_STATUS status = PdhAddEnglishCounterW(gpu_query_, L"\\GPU Engine(*)\\Utilization Percentage", 0, &gpu_counter_);
+    const PDH_STATUS status =
+        PdhAddEnglishCounterW(gpu_query_, L"\\GPU Engine(*)\\Utilization Percentage", 0, &gpu_counter_);
     if (status != ERROR_SUCCESS) {
         PdhCloseQuery(gpu_query_);
         gpu_query_ = nullptr;
@@ -3025,6 +3295,9 @@ double MainWindow::sample_gpu_utilization() {
     return std::clamp(value, 0.0, 100.0);
 }
 
+// Purpose: Collect one live performance sample for the GPU diagnostics page.
+// Inputs: None; reads process, memory, I/O, optional PDH, and throttled HIP memory state.
+// Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
 void MainWindow::update_performance_sample() {
     const auto now = std::chrono::steady_clock::now();
     double elapsed_seconds = 0.0;
@@ -3039,11 +3312,14 @@ void MainWindow::update_performance_sample() {
     FILETIME user_time{};
     if (GetProcessTimes(GetCurrentProcess(), &creation_time, &exit_time, &kernel_time, &user_time)) {
         if (elapsed_seconds > 0.0) {
-            const std::uint64_t previous_ticks = filetime_ticks(last_process_kernel_time_) + filetime_ticks(last_process_user_time_);
+            const std::uint64_t previous_ticks =
+                filetime_ticks(last_process_kernel_time_) + filetime_ticks(last_process_user_time_);
             const std::uint64_t current_ticks = filetime_ticks(kernel_time) + filetime_ticks(user_time);
             const auto logical_processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
             if (current_ticks >= previous_ticks) {
-                cpu_percent = (static_cast<double>(current_ticks - previous_ticks) / (elapsed_seconds * 10000000.0 * static_cast<double>(logical_processors))) * 100.0;
+                cpu_percent = (static_cast<double>(current_ticks - previous_ticks) /
+                               (elapsed_seconds * 10000000.0 * static_cast<double>(logical_processors))) *
+                              100.0;
                 cpu_percent = std::clamp(cpu_percent, 0.0, 100.0);
             }
         }
@@ -3057,10 +3333,12 @@ void MainWindow::update_performance_sample() {
     if (GetProcessIoCounters(GetCurrentProcess(), &io_counters)) {
         if (elapsed_seconds > 0.0) {
             if (io_counters.ReadTransferCount >= last_io_read_bytes_) {
-                io_read_rate = static_cast<double>(io_counters.ReadTransferCount - last_io_read_bytes_) / elapsed_seconds;
+                io_read_rate =
+                    static_cast<double>(io_counters.ReadTransferCount - last_io_read_bytes_) / elapsed_seconds;
             }
             if (io_counters.WriteTransferCount >= last_io_write_bytes_) {
-                io_write_rate = static_cast<double>(io_counters.WriteTransferCount - last_io_write_bytes_) / elapsed_seconds;
+                io_write_rate =
+                    static_cast<double>(io_counters.WriteTransferCount - last_io_write_bytes_) / elapsed_seconds;
             }
         }
         last_io_read_bytes_ = io_counters.ReadTransferCount;
@@ -3070,7 +3348,8 @@ void MainWindow::update_performance_sample() {
     std::uint64_t private_bytes = 0;
     PROCESS_MEMORY_COUNTERS_EX memory_counters{};
     memory_counters.cb = sizeof(memory_counters);
-    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory_counters), sizeof(memory_counters))) {
+    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory_counters),
+                             sizeof(memory_counters))) {
         private_bytes = static_cast<std::uint64_t>(memory_counters.PrivateUsage);
     }
 
@@ -3082,7 +3361,8 @@ void MainWindow::update_performance_sample() {
     }
 
     if (last_gpu_memory_sample_time_ == std::chrono::steady_clock::time_point{} ||
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_gpu_memory_sample_time_).count() >= kGpuMemorySampleMs) {
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_gpu_memory_sample_time_).count() >=
+            kGpuMemorySampleMs) {
         const auto info = query_gpu_info();
         cached_vram_total_bytes_ = info.vram_total_bytes;
         cached_vram_free_bytes_ = info.vram_free_bytes;
@@ -3141,17 +3421,26 @@ double MainWindow::page_transition_progress() const {
     if (page_transition_start_ == std::chrono::steady_clock::time_point{}) {
         return 1.0;
     }
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - page_transition_start_).count();
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - page_transition_start_)
+            .count();
     return std::clamp(static_cast<double>(elapsed) / static_cast<double>(kPageTransitionMs), 0.0, 1.0);
 }
 
+// Purpose: Return a toggle's visual knob position.
+// Inputs: `id` identifies the toggle and `enabled` is the final logical state.
+// Outputs: Returns a normalized knob position from 0.0 to 1.0.
 double MainWindow::toggle_visual_position(ToggleId id, bool enabled) const {
     const double final_position = enabled ? 1.0 : 0.0;
-    if (id == ToggleId::None || id != transition_toggle_ || toggle_transition_start_ == std::chrono::steady_clock::time_point{}) {
+    if (id == ToggleId::None || id != transition_toggle_ ||
+        toggle_transition_start_ == std::chrono::steady_clock::time_point{}) {
         return final_position;
     }
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - toggle_transition_start_).count();
-    const double progress = std::clamp(static_cast<double>(elapsed) / static_cast<double>(kToggleTransitionMs), 0.0, 1.0);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                               toggle_transition_start_)
+                             .count();
+    const double progress =
+        std::clamp(static_cast<double>(elapsed) / static_cast<double>(kToggleTransitionMs), 0.0, 1.0);
     if (progress >= 1.0) {
         return final_position;
     }
@@ -3168,7 +3457,9 @@ double MainWindow::button_release_progress(const RECT& rect) const {
         !contains_point(rect, button_release_point_.x, button_release_point_.y)) {
         return 1.0;
     }
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_).count();
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_)
+            .count();
     return std::clamp(static_cast<double>(elapsed) / static_cast<double>(kButtonReleaseTransitionMs), 0.0, 1.0);
 }
 
@@ -3177,13 +3468,15 @@ double MainWindow::button_release_progress(const RECT& rect) const {
 // Outputs: Queues another repaint while animation is active or stops the timer.
 void MainWindow::tick_animation() {
     const bool page_active = page_transition_progress() < 1.0;
-    const bool toggle_active =
-        transition_toggle_ != ToggleId::None &&
-        toggle_transition_start_ != std::chrono::steady_clock::time_point{} &&
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - toggle_transition_start_).count() < kToggleTransitionMs;
+    const bool toggle_active = transition_toggle_ != ToggleId::None &&
+                               toggle_transition_start_ != std::chrono::steady_clock::time_point{} &&
+                               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                     toggle_transition_start_)
+                                       .count() < kToggleTransitionMs;
     const bool button_release_active =
         button_release_start_ != std::chrono::steady_clock::time_point{} &&
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_).count() < kButtonReleaseTransitionMs;
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_)
+                .count() < kButtonReleaseTransitionMs;
     if (!page_active) {
         page_transition_start_ = {};
     }
@@ -3203,6 +3496,9 @@ void MainWindow::tick_animation() {
     request_repaint();
 }
 
+// Purpose: Recreate native fonts at the current monitor DPI.
+// Inputs: None; reads `dpi_`.
+// Outputs: Replaces owned GDI font handles.
 void MainWindow::rebuild_fonts() {
     for (HFONT* font : {&title_font_, &body_font_, &small_font_, &tiny_font_, &mono_font_}) {
         if (*font != nullptr) {
@@ -3210,16 +3506,21 @@ void MainWindow::rebuild_fonts() {
             *font = nullptr;
         }
     }
-    title_font_ = CreateFontW(-MulDiv(22, static_cast<int>(dpi_), 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    body_font_ = CreateFontW(-MulDiv(12, static_cast<int>(dpi_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    small_font_ = CreateFontW(-MulDiv(10, static_cast<int>(dpi_), 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    tiny_font_ = CreateFontW(-MulDiv(9, static_cast<int>(dpi_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    mono_font_ = CreateFontW(-MulDiv(9, static_cast<int>(dpi_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Cascadia Mono");
+    title_font_ =
+        CreateFontW(-MulDiv(22, static_cast<int>(dpi_), 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    body_font_ =
+        CreateFontW(-MulDiv(12, static_cast<int>(dpi_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    small_font_ =
+        CreateFontW(-MulDiv(10, static_cast<int>(dpi_), 72), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    tiny_font_ =
+        CreateFontW(-MulDiv(9, static_cast<int>(dpi_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    mono_font_ = CreateFontW(-MulDiv(9, static_cast<int>(dpi_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY,
+                             DEFAULT_PITCH, L"Cascadia Mono");
 }
 
 void MainWindow::request_repaint() {

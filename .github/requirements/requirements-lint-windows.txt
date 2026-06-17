@@ -13,11 +13,13 @@ pathspec==1.1.1 \
 py-walk==0.3.3 \
     --hash=sha256:238fc018165138021ce0bfd9c351cdc473d3120ccc5534df35611b92608c94d5
 pyjson5==2.0.1 \
-    --hash=sha256:67f8f5b8d3e3b2ca5f618c928729986aa00fb588c476c0d0d3a151633ff41e0d
+    --hash=sha256:67f8f5b8d3e3b2ca5f618c928729986aa00fb588c476c0d0d3a151633ff41e0d \
+    --hash=sha256:8dea9976eea0aa7af8b5ad49df3fa831d6bda08ffd7bb11409d6a81961491219
 pymarkdownlnt==0.9.38 \
     --hash=sha256:37eda39c2ba0d5be10abe0d1150e4564b08cd26a3570b1575a972db5a423aa39
 PyYAML==6.0.3 \
-    --hash=sha256:79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c
+    --hash=sha256:79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c \
+    --hash=sha256:5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b
 ruff==0.15.17 \
     --hash=sha256:6769e5fa1710b179b92e0bfa5a51735b35baea9013dadb06d5f44cbcf9547084
 six==1.17.0 \
@@ -25,7 +27,8 @@ six==1.17.0 \
 sly==0.5 \
     --hash=sha256:20485483259eec7f6ba85ff4d2e96a4e50c6621902667fc2695cc8bc2a3e5133
 tomli==2.4.1 \
-    --hash=sha256:8d65a2fbf9d2f8352685bc1364177ee3923d6baf5e7f43ea4959d7d8bc326a36
+    --hash=sha256:8d65a2fbf9d2f8352685bc1364177ee3923d6baf5e7f43ea4959d7d8bc326a36 \
+    --hash=sha256:52c8ef851d9a240f11a88c003eacb03c31fc1c9c4ec64a99a0f922b93874fda9
 toolz==1.1.0 \
     --hash=sha256:15ccc861ac51c53696de0a5d6d4607f99c210739caf987b5d2054f3efed429d8
 typing_extensions==4.15.0 \

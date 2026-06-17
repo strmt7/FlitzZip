@@ -10,14 +10,45 @@ $secretPatterns = @(
 
 $excludedRoots = @(
     (Join-Path $repo ".git"),
+    (Join-Path $repo ".psmodules"),
+    (Join-Path $repo ".ruff_cache"),
+    (Join-Path $repo ".venv-lint"),
     (Join-Path $repo "build"),
     (Join-Path $repo "out"),
+    (Join-Path $repo "skills"),
     (Join-Path $repo ".vs")
 )
+$excludedFragments = @(
+    "\__pycache__\"
+)
+
+# Purpose: Decide whether a file is generated local state outside source/security scanning scope.
+# Inputs: `Path` is a candidate absolute file path under the repository.
+# Outputs: Returns true for build products, local tool caches, Python bytecode caches, and ignored generated folders.
+function Test-ExcludedScanPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $full = [IO.Path]::GetFullPath($Path)
+    foreach ($root in $excludedRoots) {
+        $normalizedRoot = [IO.Path]::GetFullPath($root).TrimEnd(
+            [IO.Path]::DirectorySeparatorChar,
+            [IO.Path]::AltDirectorySeparatorChar)
+        if ($full.Equals($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $full.StartsWith($normalizedRoot + [IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $full.StartsWith($normalizedRoot + [IO.Path]::AltDirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    foreach ($fragment in $excludedFragments) {
+        if ($full.IndexOf($fragment, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            return $true
+        }
+    }
+    return $false
+}
 
 $files = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
-    $path = $_.FullName
-    -not ($excludedRoots | Where-Object { $path.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) })
+    -not (Test-ExcludedScanPath -Path $_.FullName)
 }
 
 foreach ($file in $files) {
@@ -31,8 +62,7 @@ foreach ($file in $files) {
 }
 
 $forbidden = Get-ChildItem -Path $repo -Recurse -File -Include *.pdb,*.ilk,*.obj,*.exe,*.dll -Force | Where-Object {
-    $path = $_.FullName
-    -not ($excludedRoots | Where-Object { $path.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) })
+    -not (Test-ExcludedScanPath -Path $_.FullName)
 }
 if ($forbidden) {
     throw "Build artifacts found outside build directory: $($forbidden[0].FullName)"

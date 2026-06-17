@@ -3,11 +3,38 @@ param(
     [string]$CppMode = "Changed",
     [string]$BaseRef = "",
     [string]$HeadRef = "HEAD",
-    [switch]$IncludeUntracked
+    [switch]$IncludeUntracked,
+    [string]$LintVenvPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($LintVenvPath)) {
+    $LintVenvPath = Join-Path $repo ".venv-lint"
+}
+$localModuleRoot = Join-Path $repo ".psmodules"
+if (Test-Path -LiteralPath $localModuleRoot) {
+    $env:PSModulePath = "$localModuleRoot;$env:PSModulePath"
+}
+
+# Purpose: Resolve a linter executable from the repo-local virtual environment before PATH.
+# Inputs: `Name` is the command name and `VenvPath` is the local Python virtual environment root.
+# Outputs: Returns a concrete executable path when present, otherwise the original command name.
+function Resolve-LintToolPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$VenvPath
+    )
+
+    $scripts = Join-Path $VenvPath "Scripts"
+    foreach ($candidate in @("$Name.exe", $Name)) {
+        $toolPath = Join-Path $scripts $candidate
+        if (Test-Path -LiteralPath $toolPath) {
+            return $toolPath
+        }
+    }
+    return $Name
+}
 
 # Purpose: Invoke a native command and fail when it returns a non-zero exit code.
 # Inputs: `FilePath` is the executable, `Arguments` is argv, and `Label` describes the lint step.
@@ -165,8 +192,8 @@ try {
         -ConfigPattern @("^\.ruff\.toml$") `
         -ForceAll:($CppMode -eq "All")
     if ($pythonFiles.Count -gt 0) {
-        Invoke-LintCommand -FilePath "ruff" -Arguments (@("check") + $pythonFiles) -Label "python-ruff-check"
-        Invoke-LintCommand -FilePath "ruff" -Arguments (@("format", "--check") + $pythonFiles) -Label "python-ruff-format"
+        Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "ruff" -VenvPath $LintVenvPath) -Arguments (@("check") + $pythonFiles) -Label "python-ruff-check"
+        Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "ruff" -VenvPath $LintVenvPath) -Arguments (@("format", "--check") + $pythonFiles) -Label "python-ruff-format"
     } else {
         Write-Output "lint step=python-ruff skipped=no-python-files"
     }
@@ -189,7 +216,7 @@ try {
         -ConfigPattern @("^\.yamllint$") `
         -ForceAll:($CppMode -eq "All")
     if ($yamlFiles.Count -gt 0) {
-        Invoke-LintCommand -FilePath "yamllint" -Arguments (@("-c", ".yamllint") + $yamlFiles) -Label "yaml-yamllint"
+        Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "yamllint" -VenvPath $LintVenvPath) -Arguments (@("-c", ".yamllint") + $yamlFiles) -Label "yaml-yamllint"
     } else {
         Write-Output "lint step=yaml-yamllint skipped=no-yaml-files"
     }
@@ -201,7 +228,7 @@ try {
         -ConfigPattern @("^\.pymarkdown\.json$") `
         -ForceAll:($CppMode -eq "All")
     if ($markdownFiles.Count -gt 0) {
-        Invoke-LintCommand -FilePath "pymarkdown" -Arguments (@("--config", ".pymarkdown.json", "scan") + $markdownFiles) -Label "markdown-pymarkdown"
+        Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "pymarkdown" -VenvPath $LintVenvPath) -Arguments (@("--config", ".pymarkdown.json", "scan") + $markdownFiles) -Label "markdown-pymarkdown"
     } else {
         Write-Output "lint step=markdown-pymarkdown skipped=no-markdown-files"
     }
@@ -212,7 +239,7 @@ try {
         -FilePattern @("^CMakeLists\.txt$", "^cmake/.*\.cmake$") `
         -ForceAll:($CppMode -eq "All")
     if ($cmakeFiles.Count -gt 0) {
-        Invoke-LintCommand -FilePath "cmake-lint" -Arguments $cmakeFiles -Label "cmake-lint"
+        Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "cmake-lint" -VenvPath $LintVenvPath) -Arguments $cmakeFiles -Label "cmake-lint"
     } else {
         Write-Output "lint step=cmake-lint skipped=no-cmake-files"
     }
@@ -224,7 +251,7 @@ try {
             Select-SuperZipCppLintFile -Path $changedFiles
         }
         if ($cppFiles.Count -gt 0) {
-            Invoke-LintCommand -FilePath "clang-format" -Arguments (@("--dry-run", "--Werror") + $cppFiles) -Label "cpp-clang-format-$CppMode"
+            Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "clang-format" -VenvPath $LintVenvPath) -Arguments (@("--dry-run", "--Werror") + $cppFiles) -Label "cpp-clang-format-$CppMode"
         } else {
             Write-Output "lint step=cpp-clang-format-$CppMode skipped=no-owned-cpp-files"
         }

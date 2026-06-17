@@ -22,6 +22,13 @@ $skipFragments = @(
     "\resources\design\"
 )
 $changedLineRangesByPath = @{}
+$script:AuditMaxFileLines = $MaxFileLines
+$script:AuditMaxFunctionLines = $MaxFunctionLines
+$script:AuditMaxComplexityMarkers = $MaxComplexityMarkers
+$script:AuditChangedOnly = $ChangedOnly
+$script:AuditGitBase = $GitBase
+$script:AuditCheckContracts = $CheckContracts
+$script:AuditFailOnFindings = $FailOnFindings
 
 # Purpose: Return a repository-relative path for stable audit output.
 # Inputs: `Path` is an absolute or relative filesystem path.
@@ -64,7 +71,7 @@ function Test-SkippedPath {
 # Purpose: Verify that a Git revision is available for changed-code auditing.
 # Inputs: `Revision` is a Git revision expression.
 # Outputs: Returns true when Git can resolve the revision to a commit.
-function Test-GitRevisionExists {
+function Test-GitRevisionAvailable {
     param([Parameter(Mandatory = $true)][string]$Revision)
 
     & git -C $repo rev-parse --verify "$Revision^{commit}" *> $null
@@ -75,14 +82,14 @@ function Test-GitRevisionExists {
 # Inputs: None; uses explicit `GitBase`, uncommitted work, or the previous commit.
 # Outputs: Returns a Git base revision, or an empty string when no comparison is possible.
 function Resolve-ChangedAuditBase {
-    if (-not [string]::IsNullOrWhiteSpace($GitBase)) {
-        return $GitBase
+    if (-not [string]::IsNullOrWhiteSpace($script:AuditGitBase)) {
+        return $script:AuditGitBase
     }
     $status = & git -C $repo status --porcelain --untracked-files=no
     if ($LASTEXITCODE -eq 0 -and $status) {
         return "HEAD"
     }
-    if (Test-GitRevisionExists -Revision "HEAD~1") {
+    if (Test-GitRevisionAvailable -Revision "HEAD~1") {
         return "HEAD~1"
     }
     return ""
@@ -91,7 +98,7 @@ function Resolve-ChangedAuditBase {
 # Purpose: Return source files changed relative to a Git base.
 # Inputs: `Base` is a resolved Git comparison revision.
 # Outputs: Returns filesystem paths for changed source files still present in the working tree.
-function Get-ChangedSourceFiles {
+function Get-ChangedSourceFile {
     param([Parameter(Mandatory = $true)][string]$Base)
 
     $paths = & git -C $repo diff --name-only --diff-filter=ACMR $Base --
@@ -113,7 +120,7 @@ function Get-ChangedSourceFiles {
 # Purpose: Return added/modified line ranges for one changed file.
 # Inputs: `Base` is the Git comparison revision and `Path` is an existing source file.
 # Outputs: Returns one-based inclusive line ranges in the new file.
-function Get-ChangedLineRanges {
+function Get-ChangedLineRange {
     param(
         [Parameter(Mandatory = $true)][string]$Base,
         [Parameter(Mandatory = $true)][string]$Path
@@ -146,14 +153,14 @@ function Get-ChangedLineRanges {
 # Purpose: Decide whether an audit finding intersects edited lines in changed-only mode.
 # Inputs: `Path`, `StartLine`, and `EndLine` describe the candidate finding range.
 # Outputs: Returns true for full-audit mode or when an edited line falls inside the range.
-function Test-FindingIntersectsChangedLines {
+function Test-FindingChangedLineIntersection {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][int]$StartLine,
         [Parameter(Mandatory = $true)][int]$EndLine
     )
 
-    if (-not $ChangedOnly) {
+    if (-not $script:AuditChangedOnly) {
         return $true
     }
     $relative = ConvertTo-RepoRelativePath -Path $Path
@@ -176,7 +183,29 @@ function Get-BraceDelta {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
 
     $delta = 0
+    $inSingleQuote = $false
+    $inDoubleQuote = $false
+    $escaped = $false
     foreach ($char in $Line.ToCharArray()) {
+        if ($escaped) {
+            $escaped = $false
+            continue
+        }
+        if ($char -eq [char]92 -and $inDoubleQuote) {
+            $escaped = $true
+            continue
+        }
+        if ($char -eq [char]39 -and -not $inDoubleQuote) {
+            $inSingleQuote = -not $inSingleQuote
+            continue
+        }
+        if ($char -eq [char]34 -and -not $inSingleQuote) {
+            $inDoubleQuote = -not $inDoubleQuote
+            continue
+        }
+        if ($inSingleQuote -or $inDoubleQuote) {
+            continue
+        }
         if ($char -eq "{") {
             ++$delta
         } elseif ($char -eq "}") {
@@ -189,7 +218,7 @@ function Get-BraceDelta {
 # Purpose: Count simple branch and boolean markers as a rough complexity signal.
 # Inputs: `Lines` is a function body slice.
 # Outputs: Returns a non-authoritative marker count for refactoring triage.
-function Measure-ComplexityMarkers {
+function Measure-ComplexityMarker {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines)
 
     $count = 0
@@ -218,6 +247,31 @@ function Test-NearbyContractComment {
     return $false
 }
 
+# Purpose: Return the first line of a multi-line C++ statement for heuristic classification.
+# Inputs: `Lines` is the full file and `Index` is the candidate line ending in an opening brace.
+# Outputs: Returns the closest logical statement-start text used to distinguish functions from control blocks.
+function Get-CppStatementStartText {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
+        [Parameter(Mandatory = $true)][int]$Index
+    )
+
+    $start = [Math]::Max(0, $Index - 8)
+    for ($i = $Index; $i -ge $start; --$i) {
+        $candidate = $Lines[$i].Trim()
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if ($candidate -match "^(if|else\s+if|for|while|switch|catch)\b") {
+            return $candidate
+        }
+        if ($i -lt $Index -and $candidate -match "[;{}]\s*$") {
+            break
+        }
+    }
+    return $Lines[$Index].Trim()
+}
+
 # Purpose: Add one audit finding to the shared collection.
 # Inputs: `Findings` is the mutable finding list and the remaining arguments describe the finding.
 # Outputs: Appends a structured object to `Findings`.
@@ -234,7 +288,7 @@ function Add-RefactorFinding {
     if ($EndLine -le 0) {
         $EndLine = $Line
     }
-    if (-not (Test-FindingIntersectsChangedLines -Path $Path -StartLine $Line -EndLine $EndLine)) {
+    if (-not (Test-FindingChangedLineIntersection -Path $Path -StartLine $Line -EndLine $EndLine)) {
         return
     }
     $Findings.Add([pscustomobject]@{
@@ -260,7 +314,8 @@ function Test-CppFile {
         if ($trimmed -notmatch "\)\s*(const\s*)?(\{|noexcept\s*\{|->.*\{)$") {
             continue
         }
-        if ($trimmed -match "^(if|else|for|while|switch|catch|TEST_CASE)\b" -or
+        $statementStart = Get-CppStatementStartText -Lines $lines -Index $i
+        if ($statementStart -match "^(if|else|for|while|switch|catch|TEST_CASE)\b" -or
             $trimmed -match "^\}\s*(else|catch)\b" -or
             $trimmed -match "\]\s*\(" -or
             $trimmed -match "(\s(==|!=|<=|>=|<|>)\s|&&|\|\|)") {
@@ -276,14 +331,14 @@ function Test-CppFile {
             }
         }
         $lineCount = $body.Count
-        $markers = Measure-ComplexityMarkers -Lines $body.ToArray()
-        if ($lineCount -gt $MaxFunctionLines) {
+        $markers = Measure-ComplexityMarker -Lines $body.ToArray()
+        if ($lineCount -gt $script:AuditMaxFunctionLines) {
             Add-RefactorFinding -Findings $Findings -Category "large-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$lineCount lines"
         }
-        if ($markers -gt $MaxComplexityMarkers) {
+        if ($markers -gt $script:AuditMaxComplexityMarkers) {
             Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$markers markers"
         }
-        if ($CheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $i)) {
+        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $i)) {
             Add-RefactorFinding -Findings $Findings -Category "missing-contract" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "No nearby Purpose/Input/Output contract comment"
         }
     }
@@ -313,30 +368,30 @@ function Test-PowerShellFile {
             }
         }
         $lineCount = $body.Count
-        $markers = Measure-ComplexityMarkers -Lines $body.ToArray()
-        if ($lineCount -gt $MaxFunctionLines) {
+        $markers = Measure-ComplexityMarker -Lines $body.ToArray()
+        if ($lineCount -gt $script:AuditMaxFunctionLines) {
             Add-RefactorFinding -Findings $Findings -Category "large-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$lineCount lines"
         }
-        if ($markers -gt $MaxComplexityMarkers) {
+        if ($markers -gt $script:AuditMaxComplexityMarkers) {
             Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$markers markers"
         }
     }
 }
 
 $findings = [System.Collections.Generic.List[object]]::new()
-if ($ChangedOnly) {
+if ($script:AuditChangedOnly) {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         throw "git is required for changed-only refactor auditing."
     }
     $base = Resolve-ChangedAuditBase
     if ([string]::IsNullOrWhiteSpace($base)) {
-        Write-Host "refactor_audit status=clean mode=changed-only reason=no-comparison-base"
+        Write-Output "refactor_audit status=clean mode=changed-only reason=no-comparison-base"
         return
     }
-    $files = @(Get-ChangedSourceFiles -Base $base)
+    $files = @(Get-ChangedSourceFile -Base $base)
     foreach ($file in $files) {
         $relative = ConvertTo-RepoRelativePath -Path $file.FullName
-        $script:changedLineRangesByPath[$relative] = @(Get-ChangedLineRanges -Base $base -Path $file.FullName)
+        $script:changedLineRangesByPath[$relative] = @(Get-ChangedLineRange -Base $base -Path $file.FullName)
     }
 } else {
     $files = Get-ChildItem -LiteralPath $repo -Recurse -File |
@@ -346,7 +401,7 @@ if ($ChangedOnly) {
 
 foreach ($file in $files) {
     $lines = [IO.File]::ReadAllLines($file.FullName)
-    if ($lines.Count -gt $MaxFileLines) {
+    if ($lines.Count -gt $script:AuditMaxFileLines) {
         Add-RefactorFinding -Findings $findings -Category "large-file" -Path $file.FullName -Line 1 -Detail "$($lines.Count) lines"
     }
     if ($file.Extension -eq ".ps1") {
@@ -357,14 +412,14 @@ foreach ($file in $files) {
 }
 
 if ($findings.Count -eq 0) {
-    Write-Host "refactor_audit status=clean"
+    Write-Output "refactor_audit status=clean"
     return
 }
 
 foreach ($finding in ($findings | Sort-Object Path, Line, Category)) {
-    Write-Host ("refactor_finding category={0} path=""{1}"" line={2} detail=""{3}""" -f $finding.Category, $finding.Path, $finding.Line, $finding.Detail)
+    Write-Output ("refactor_finding category={0} path=""{1}"" line={2} detail=""{3}""" -f $finding.Category, $finding.Path, $finding.Line, $finding.Detail)
 }
-Write-Host "refactor_audit status=findings count=$($findings.Count)"
-if ($FailOnFindings) {
+Write-Output "refactor_audit status=findings count=$($findings.Count)"
+if ($script:AuditFailOnFindings) {
     exit 1
 }
