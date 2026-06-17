@@ -53,12 +53,15 @@ download paths to the repository.
 ## Manual Inputs
 
 - `release_version`: SemVer product version without a `v` prefix, for example
-  `0.1.0`. Leave it empty to use the version declared in `CMakeLists.txt`.
-  `0.1.0` is the current beta release. Until a maintainer explicitly opens the
-  next version line, use `0.1.0` with `replace_existing=true` so the workflow
-  replaces the existing release/tag instead of publishing a new version.
+  `0.1.1`. Leave it empty to use the version declared in `CMakeLists.txt`.
 - `replace_existing`: deletes the existing release/tag before publishing when
-  set to `true`.
+  set to `true`. This is exceptional and must be used only when the current
+  maintainer/user request explicitly asks to replace that specific release.
+  Normal release runs use a new SemVer version with `replace_existing=false`.
+- `replacement_acknowledgement`: required only when `replace_existing=true`.
+  Enter exactly `replace <version>`, for example `replace 0.1.0`. The release
+  workflow refuses to delete an existing release/tag without this exact
+  version-specific acknowledgement.
 - `release_track`: `beta` publishes a prerelease; `stable` publishes a normal
   release.
 - `create_msi`: builds and smoke-tests the MSI in addition to the portable ZIP.
@@ -140,7 +143,7 @@ Use the GitHub UI:
 
 1. Open `Actions > release`.
 2. Click `Run workflow`.
-3. Enter a product version such as `0.1.0`.
+3. Enter a new product version such as `0.1.1`.
 4. Choose `release_track=beta` for the first public beta or `stable` for a
    normal release.
 5. Keep `create_msi=true` unless MSI validation is intentionally isolated.
@@ -149,8 +152,21 @@ Use GitHub CLI:
 
 ```powershell
 gh workflow run release.yml -R strmt7/SuperZip `
+  -f release_version=0.1.1 `
+  -f replace_existing=false `
+  -f replacement_acknowledgement="" `
+  -f release_track=beta `
+  -f create_msi=true
+```
+
+Replacement example, only after the current maintainer/user request explicitly
+asks to replace that specific version:
+
+```powershell
+gh workflow run release.yml -R strmt7/SuperZip `
   -f release_version=0.1.0 `
   -f replace_existing=true `
+  -f replacement_acknowledgement="replace 0.1.0" `
   -f release_track=beta `
   -f create_msi=true
 ```

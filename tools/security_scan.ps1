@@ -47,6 +47,36 @@ function Test-ExcludedScanPath {
     return $false
 }
 
+# Purpose: Verify release replacement remains guarded by an explicit version-specific acknowledgement.
+# Inputs: Reads the release workflow and composite release action from the repository.
+# Outputs: Throws when replacement can delete an existing release/tag without the acknowledgement gate.
+function Assert-ReleaseReplacementSafeguard {
+    $releaseWorkflow = Join-Path $repo ".github\workflows\release.yml"
+    $releaseAction = Join-Path $repo ".github\actions\windows-release\action.yml"
+    if (-not (Test-Path -LiteralPath $releaseWorkflow) -or -not (Test-Path -LiteralPath $releaseAction)) {
+        throw "Release workflow and windows-release action must both exist for replacement safeguard validation."
+    }
+
+    $workflowText = Get-Content -LiteralPath $releaseWorkflow -Raw
+    $actionText = Get-Content -LiteralPath $releaseAction -Raw
+    foreach ($requiredSnippet in @(
+            "replacement_acknowledgement:",
+            'replacement_acknowledgement: ${{ inputs.replacement_acknowledgement }}')) {
+        if ($workflowText -notmatch [regex]::Escape($requiredSnippet)) {
+            throw "Release workflow is missing the replacement acknowledgement safeguard: $requiredSnippet"
+        }
+    }
+    foreach ($requiredSnippet in @(
+            "replacement_acknowledgement:",
+            "REPLACEMENT_ACKNOWLEDGEMENT",
+            "replace_existing=true requires replacement_acknowledgement exactly",
+            "Replacement is exceptional")) {
+        if ($actionText -notmatch [regex]::Escape($requiredSnippet)) {
+            throw "Windows release action is missing the replacement acknowledgement safeguard: $requiredSnippet"
+        }
+    }
+}
+
 $files = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
     -not (Test-ExcludedScanPath -Path $_.FullName)
 }
@@ -138,6 +168,8 @@ function Test-WorkflowSecurityPolicy {
             throw ".semgrepignore must not contain active ignore patterns: $semgrepIgnore"
         }
     }
+
+    Assert-ReleaseReplacementSafeguard
 }
 
 # Purpose: Return the count of leading spaces before the first non-space character.

@@ -518,10 +518,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   `-FinalCommit` when the current commit is the final handoff or release.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
   and run install/uninstall smoke tests before publishing.
-- `0.1.0` is the current beta release. Until a maintainer explicitly opens the
-  next version line, GitHub release runs should replace the existing `0.1.0`
-  release/tag and their release notes must list the actual fixes, created
-  assets, validation work, and known limitations.
+- Do not replace an existing GitHub release or tag by default. Release
+  replacement is exceptional and is allowed only when the current maintainer or
+  user request explicitly asks for that specific replacement. A replacement run
+  must use an explicit `release_version`, `replace_existing=true`, and
+  `replacement_acknowledgement` set exactly to `replace <version>`, for example
+  `replace 0.1.0`. Normal release runs use a new SemVer version with
+  `replace_existing=false`, and release notes must list the actual fixes,
+  created assets, validation work, and known limitations.
 
 ## Agent Workflow
 

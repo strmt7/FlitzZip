@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      replacement_acknowledgement:
+        description: Required only when replace_existing=true; enter replace <version>
+        required: false
+        default: ""
+        type: string
       release_track:
         description: Release track; beta publishes a GitHub prerelease, stable publishes a normal release
         required: true
@@ -60,6 +65,7 @@ jobs:
         with:
           release_version: ${{ inputs.release_version }}
           replace_existing: ${{ inputs.replace_existing }}
+          replacement_acknowledgement: ${{ inputs.replacement_acknowledgement }}
           release_track: ${{ inputs.release_track }}
           create_msi: ${{ inputs.create_msi }}
           enable_hip: "true"

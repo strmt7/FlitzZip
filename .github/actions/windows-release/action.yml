@@ -9,6 +9,9 @@ inputs:
   replace_existing:
     description: Delete an existing release/tag before publishing.
     required: true
+  replacement_acknowledgement:
+    description: Required exact acknowledgement when replace_existing is true.
+    required: true
   release_track:
     description: beta publishes a prerelease; stable publishes a normal release.
     required: true
@@ -33,6 +36,7 @@ runs:
       env:
         RELEASE_VERSION_INPUT: ${{ inputs.release_version }}
         REPLACE_EXISTING: ${{ inputs.replace_existing }}
+        REPLACEMENT_ACKNOWLEDGEMENT: ${{ inputs.replacement_acknowledgement }}
         RELEASE_TRACK: ${{ inputs.release_track }}
         CREATE_MSI: ${{ inputs.create_msi }}
         ENABLE_HIP: ${{ inputs.enable_hip }}
@@ -43,6 +47,7 @@ runs:
         $values = [ordered]@{
             RELEASE_VERSION_INPUT = [string]$env:RELEASE_VERSION_INPUT
             REPLACE_EXISTING = [string]$env:REPLACE_EXISTING
+            REPLACEMENT_ACKNOWLEDGEMENT = [string]$env:REPLACEMENT_ACKNOWLEDGEMENT
             RELEASE_TRACK = [string]$env:RELEASE_TRACK
             CREATE_MSI = [string]$env:CREATE_MSI
             ENABLE_HIP = [string]$env:ENABLE_HIP
@@ -89,6 +94,19 @@ runs:
         }
         if ($replaceExisting -and -not $requestedVersion.Trim()) {
             throw "replace_existing requires an explicit release_version."
+        }
+        $replacementAcknowledgement = [string]$env:REPLACEMENT_ACKNOWLEDGEMENT
+        if (-not $replaceExisting -and $replacementAcknowledgement.Trim()) {
+            throw "replacement_acknowledgement is only valid when replace_existing=true."
+        }
+        if ($replaceExisting) {
+            $expectedAcknowledgement = "replace $($requestedVersion.Trim())"
+            if ($replacementAcknowledgement -ne $expectedAcknowledgement) {
+                throw (
+                    "replace_existing=true requires replacement_acknowledgement exactly " +
+                    "'$expectedAcknowledgement'. Replacement is exceptional and must be " +
+                    "explicitly requested by a maintainer/user.")
+            }
         }
         if ($env:RELEASE_TRACK -notin @("beta", "stable")) {
             throw "release_track must be beta or stable."

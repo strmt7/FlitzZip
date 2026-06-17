@@ -42,6 +42,11 @@ the Security tab, released artifacts, or the product UI again.
 - Build/package commands must not run in parallel with GUI smoke tests. The
   build script checks for a running build-output `SuperZip.exe` and fails with a
   direct close-the-app message instead of surfacing a linker file-lock error.
+- Release replacement is exceptional. The release workflow requires
+  `replace_existing=true` plus `replacement_acknowledgement` set exactly to
+  `replace <version>`, and both `tools\verify_change_hygiene.ps1` and
+  `tools\security_scan.ps1` reject release workflow/action edits that remove
+  that safeguard.
 
 ## Adding A New Lesson
 
