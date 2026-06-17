@@ -25,8 +25,11 @@ the Security tab, released artifacts, or the product UI again.
   geometry, stroke style, layer count, and source-of-truth metadata. Agents may
   move or resize the mark for layout and may edit surrounding tagline copy.
 - Workflow waiting must use `tools\wait_relevant_workflows.ps1` and the plan's
-  `workflowWaitPolicy`. Agents must not wait on completed Greenbone/OpenVAS
-  integration runs or unrelated long-running workflows.
+  `workflowWaitPolicy`. The waiter resolves local refs to full commit SHAs,
+  performs a GitHub CLI preflight, and fails on `gh run list` errors instead of
+  polling misleading "missing workflow" states. Agents must not wait on
+  completed Greenbone/OpenVAS integration runs, unauthenticated GitHub CLI
+  calls, wrong commit refs, or unrelated long-running workflows.
 - CodeQL C++ must use a real manual Windows build database. Build-free C/C++
   analysis produced parser-artifact Security tab alerts for Win32/GDI+, HIP,
   and vendored C code; `tools\verify_change_hygiene.ps1` and

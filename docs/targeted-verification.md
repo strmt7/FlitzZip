@@ -110,6 +110,15 @@ GitHub Actions waiting must be relevant and time-aware:
   verifier, MCP, skill, or full-escalation changes unless a maintainer makes an
   explicit critical override.
 
+`tools\wait_relevant_workflows.ps1` performs a GitHub CLI preflight before it
+polls and resolves local refs or short SHAs to a full commit SHA. If `gh` is not
+authenticated, lacks repository access, or `gh run list` fails, the script must
+throw immediately. Agents must not keep polling a status line where every
+selected workflow is reported as missing because that usually means the wrong
+commit/ref or an authentication failure. If all selected workflows remain
+missing past the script's missing-workflow grace window, fix the pushed commit
+or workflow selection before retrying.
+
 For iterative feature work, run targeted local checks for each commit, use
 `-Mode opportunistic` after pushes when useful, continue development while runs
 are active, and run `-Mode final` once the feature is ready for handoff. Do not

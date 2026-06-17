@@ -509,6 +509,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   before final handoff or release, and always use final mode for workflow,
   verifier, MCP, skill, or full-escalation changes. If the verifier requires a
   post-push audit, the final waiter runs `tools\github_post_push_audit.ps1`.
+  The waiter must resolve short refs to full commit SHAs and pass its GitHub
+  CLI preflight before polling. If `gh` is unauthenticated, unauthorized, or
+  returns an error, stop and fix authentication instead of treating every
+  workflow as missing.
   Fuzzing is a long-running observed workflow: do not block on it during normal
   iteration, but sample it with `-IncludeLongRunning` and wait for it with
   `-FinalCommit` when the current commit is the final handoff or release.

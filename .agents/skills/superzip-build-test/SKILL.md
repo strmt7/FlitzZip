@@ -24,6 +24,10 @@ feature work, use `tools/wait_relevant_workflows.ps1 -Commit <sha> -Mode
 opportunistic` only when deferral is allowed, and keep developing while runs are
 active. Before handoff or release, and always for workflow/verifier/MCP/skill or
 full-escalation changes, use `-Mode final`.
+The waiter resolves local refs to full commit SHAs and performs a GitHub CLI
+preflight before polling. If authentication, authorization, or `gh run list`
+fails, fix that root cause immediately; do not keep waiting on a state where
+every selected workflow appears missing.
 Fuzzing is long-running and must not be waited for during routine iteration.
 Use `-Mode opportunistic -IncludeLongRunning` to sample it periodically, and use
 `-Mode final -FinalCommit` for the final handoff or release commit.

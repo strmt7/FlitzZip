@@ -40,6 +40,10 @@ For non-critical intermediate commits, `-Mode opportunistic` may be used only
 when `workflowWaitPolicy.deferAllowed=true`. Security, workflow, verifier, MCP,
 skill, and full-escalation changes must not be reported complete until final
 mode and any required post-push audit pass.
+The waiter resolves local refs to full commit SHAs and performs a GitHub CLI
+preflight before polling. Authentication failures, authorization failures, and
+`gh run list` errors are hard blockers; do not keep waiting on a state where
+every selected workflow appears missing.
 Fuzzing is intentionally long-running. It is observed separately from normal
 blocking waits; check it opportunistically during iteration and include it in
 the blocking wait only for final handoff or release.

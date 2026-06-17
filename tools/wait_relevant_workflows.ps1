@@ -9,6 +9,7 @@ param(
     [string]$Mode = "final",
     [int]$TimeoutMinutes = 60,
     [int]$PollSeconds = 30,
+    [int]$MissingWorkflowGraceMinutes = 8,
     [switch]$Full,
     [switch]$IncludeLongRunning,
     [switch]$FinalCommit,
@@ -44,15 +45,41 @@ function Resolve-GitHubRepository {
 }
 
 # Purpose: Resolve the commit SHA to inspect in GitHub Actions.
-# Inputs: `Commit` may explicitly provide a SHA; otherwise `HEAD` is used.
-# Outputs: Returns a full commit SHA.
+# Inputs: `Commit` may explicitly provide a ref or SHA; otherwise `HEAD` is used.
+# Outputs: Returns a full commit SHA or throws when a short/ambiguous ref cannot be resolved locally.
 function Resolve-WorkflowCommit {
     param([string]$Commit)
 
-    if (-not [string]::IsNullOrWhiteSpace($Commit)) {
-        return $Commit
+    $candidate = if (-not [string]::IsNullOrWhiteSpace($Commit)) {
+        $Commit.Trim()
+    } else {
+        "HEAD"
     }
-    return (git -C $repoRoot rev-parse HEAD).Trim()
+    $resolved = & git -C $repoRoot rev-parse --verify "$candidate^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) {
+        if ($candidate -match '^[0-9a-fA-F]{40}$') {
+            return $candidate.ToLowerInvariant()
+        }
+        throw "Cannot resolve commit '$candidate' to a full local commit SHA. Fetch the branch or pass a full 40-character SHA before waiting for workflows."
+    }
+    return (@($resolved)[0]).Trim()
+}
+
+# Purpose: Verify GitHub CLI access before workflow polling begins.
+# Inputs: `Repository` is an owner/repo slug.
+# Outputs: Throws on missing `gh`, missing authentication, missing authorization, or API failure.
+function Test-GitHubCliReady {
+    param([Parameter(Mandatory = $true)][string]$Repository)
+
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "GitHub CLI 'gh' is required before waiting for remote workflows."
+    }
+
+    $result = & gh api -H "Accept: application/vnd.github+json" "/repos/$Repository" --jq ".full_name" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $detail = (@($result) | Select-Object -First 3) -join " "
+        throw "GitHub CLI preflight failed for $Repository. Set GH_TOKEN for this PowerShell process or run 'gh auth login' before waiting. gh output: $detail"
+    }
 }
 
 # Purpose: Fetch GitHub workflow runs for a commit.
@@ -64,7 +91,11 @@ function Get-WorkflowRunForCommit {
         [Parameter(Mandatory = $true)][string]$Commit
     )
 
-    $json = gh run list --repo $Repository --commit $Commit --limit 50 --json databaseId,workflowName,name,status,conclusion,url,updatedAt
+    $json = & gh run list --repo $Repository --commit $Commit --limit 50 --json databaseId,workflowName,name,status,conclusion,url,updatedAt 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $detail = (@($json) | Select-Object -First 3) -join " "
+        throw "gh run list failed for $Repository@$Commit. Stop instead of polling stale/missing status. gh output: $detail"
+    }
     if ([string]::IsNullOrWhiteSpace($json)) {
         return @()
     }
@@ -134,7 +165,9 @@ if ($Mode -eq "defer") {
 
 $repositorySlug = Resolve-GitHubRepository -Repository $Repository
 $commitSha = Resolve-WorkflowCommit -Commit $Commit
+Test-GitHubCliReady -Repository $repositorySlug
 $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
+$missingDeadline = [DateTime]::UtcNow.AddMinutes($MissingWorkflowGraceMinutes)
 if ($Mode -eq "opportunistic") {
     Write-Output ("Checking relevant workflows opportunistically on {0}@{1}: {2}" -f $repositorySlug, $commitSha, ($selected -join ', '))
     $runs = Get-WorkflowRunForCommit -Repository $repositorySlug -Commit $commitSha
@@ -168,6 +201,9 @@ while ($true) {
     }
     if ([DateTime]::UtcNow -ge $deadline) {
         throw "Timed out waiting for relevant workflows. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
+    }
+    if ($status.missing.Count -eq $selected.Count -and $status.running.Count -eq 0 -and [DateTime]::UtcNow -ge $missingDeadline) {
+        throw "No selected workflow runs were found for $repositorySlug@$commitSha after $MissingWorkflowGraceMinutes minute(s). Verify that the commit was pushed to the triggering branch and that workflow names are correct."
     }
     Write-Output "Still waiting. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
     Start-Sleep -Seconds $PollSeconds
