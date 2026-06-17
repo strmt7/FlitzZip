@@ -190,6 +190,51 @@ private:
     // Outputs: Returns zero for handled messages or delegates to `DefWindowProcW`.
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);
 
+    // Purpose: Track pointer hover state and arm native leave notifications.
+    // Inputs: `lparam` contains client-coordinate mouse position from `WM_MOUSEMOVE`.
+    // Outputs: Updates hover state and returns the handled Win32 result.
+    LRESULT handle_mouse_move(LPARAM lparam);
+
+    // Purpose: Clear pointer hover state after the cursor leaves the client area.
+    // Inputs: None; uses current capture state.
+    // Outputs: Updates mouse state and returns the handled Win32 result.
+    LRESULT handle_mouse_leave();
+
+    // Purpose: Handle primary-button press using the same geometry as rendering.
+    // Inputs: `lparam` contains client-coordinate click position from `WM_LBUTTONDOWN`.
+    // Outputs: Updates capture/pressed state, dispatches page or content clicks, and returns the handled Win32 result.
+    LRESULT handle_primary_mouse_down(LPARAM lparam);
+
+    // Purpose: Handle primary-button release and trigger the shared command release pulse.
+    // Inputs: `lparam` contains client-coordinate release position from `WM_LBUTTONUP`.
+    // Outputs: Releases capture, updates mouse state, queues animation, and returns the handled Win32 result.
+    LRESULT handle_primary_mouse_up(LPARAM lparam);
+
+    // Purpose: Normalize mouse state after Windows changes capture ownership.
+    // Inputs: None.
+    // Outputs: Clears pressed/capture flags and returns the handled Win32 result.
+    LRESULT handle_capture_changed();
+
+    // Purpose: Append native shell-dropped paths to the queue.
+    // Inputs: `wparam` contains the HDROP handle from `WM_DROPFILES`.
+    // Outputs: Updates queue selection, releases the HDROP handle, and returns the handled Win32 result.
+    LRESULT handle_drop_files(WPARAM wparam);
+
+    // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
+    // Inputs: None.
+    // Outputs: Arms timers and returns the handled Win32 result.
+    LRESULT handle_create();
+
+    // Purpose: Dispatch timers owned by the main window.
+    // Inputs: `wparam` identifies the timer from `WM_TIMER`.
+    // Outputs: Runs animation, monitoring, or smoke shutdown work and returns the handled Win32 result.
+    LRESULT handle_timer(WPARAM wparam);
+
+    // Purpose: Stop timers and release monitor state before window destruction completes.
+    // Inputs: None.
+    // Outputs: Posts quit and returns the handled Win32 result.
+    LRESULT handle_destroy();
+
     // Purpose: Paint the full client area using an off-screen buffer.
     // Inputs: None; obtains paint state from Win32.
     // Outputs: Renders one crisp frame and validates the paint region.
@@ -462,6 +507,11 @@ private:
     // Outputs: Arms the animation timer and queues repaint frames.
     void start_toggle_animation(ToggleId id, bool from, bool to);
 
+    // Purpose: Start a bounded non-blocking command-button release animation.
+    // Inputs: `point` is the client-coordinate release position after a primary mouse click.
+    // Outputs: Records the release pulse origin and arms the animation timer.
+    void start_button_release_animation(POINT point);
+
     // Purpose: Return normalized active page-transition progress.
     // Inputs: None; reads the steady animation clock.
     // Outputs: Returns 1.0 when no page transition is active.
@@ -471,6 +521,11 @@ private:
     // Inputs: `id` identifies the toggle and `enabled` is the final logical state.
     // Outputs: Returns a normalized knob position from 0.0 to 1.0.
     [[nodiscard]] double toggle_visual_position(ToggleId id, bool enabled) const;
+
+    // Purpose: Return normalized command-button release animation progress.
+    // Inputs: `rect` is the button rectangle being rendered.
+    // Outputs: Returns 1.0 when no release pulse applies to this button.
+    [[nodiscard]] double button_release_progress(const RECT& rect) const;
 
     // Purpose: Advance active UI animations.
     // Inputs: None.
@@ -509,12 +564,14 @@ private:
     Page transition_to_page_ = Page::Queue;
     std::chrono::steady_clock::time_point page_transition_start_{};
     std::chrono::steady_clock::time_point toggle_transition_start_{};
+    std::chrono::steady_clock::time_point button_release_start_{};
     std::chrono::steady_clock::time_point last_performance_sample_time_{};
     std::chrono::steady_clock::time_point last_gpu_memory_sample_time_{};
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
     bool transition_toggle_to_ = false;
     POINT mouse_position_{-1, -1};
+    POINT button_release_point_{-1, -1};
     bool mouse_inside_client_ = false;
     bool primary_mouse_down_ = false;
     bool mouse_tracking_ = false;

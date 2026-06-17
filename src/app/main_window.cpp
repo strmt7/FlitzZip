@@ -3,6 +3,7 @@
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
+#include "base64/base64_adapter.hpp"
 #include "app/resource.h"
 #include "bzip2/bzip2_adapter.hpp"
 #include "cab/cab_adapter.hpp"
@@ -78,6 +79,7 @@ constexpr UINT_PTR kSmokeAutoCloseTimer = 9;
 constexpr UINT_PTR kSmokeClosePollTimer = 10;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
+constexpr int kButtonReleaseTransitionMs = 130;
 
 constexpr COLORREF kBg = RGB(12, 17, 20);
 constexpr COLORREF kShell = RGB(15, 22, 26);
@@ -175,7 +177,7 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 14> formats{
+    constexpr std::array<ArchiveFormat, 15> formats{
         ArchiveFormat::SuperZip,
         ArchiveFormat::Zip,
         ArchiveFormat::Tar,
@@ -186,6 +188,7 @@ ArchiveFormat compression_format_value(int index) {
         ArchiveFormat::Bzip2,
         ArchiveFormat::Zstd,
         ArchiveFormat::UnixCompress,
+        ArchiveFormat::Base64,
         ArchiveFormat::Uue,
         ArchiveFormat::Cpio,
         ArchiveFormat::CpioGzip,
@@ -199,7 +202,7 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 14> labels{
+    constexpr std::array<std::wstring_view, 15> labels{
         L"SuperZip GPU (.suzip)",
         L"ZIP compatibility (.zip)",
         L"TAR compatibility (.tar)",
@@ -210,6 +213,7 @@ std::wstring compression_format_text(int index) {
         L"Bzip2 single file (.bz2)",
         L"Zstandard single file (.zst)",
         L"Unix Compress single file (.Z)",
+        L"Base64 single file (.b64)",
         L"UUencoded single file (.uue)",
         L"CPIO compatibility (.cpio)",
         L"CPIO.GZ compatibility (.cpgz)",
@@ -244,6 +248,8 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".zst";
     case ArchiveFormat::UnixCompress:
         return L".Z";
+    case ArchiveFormat::Base64:
+        return L".b64";
     case ArchiveFormat::Uue:
         return L".uue";
     case ArchiveFormat::Cpio:
@@ -339,6 +345,8 @@ OperationStats extract_detected_archive(
         return extract_zstd_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::UnixCompress:
         return extract_unix_compress_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Base64:
+        return extract_base64_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Uue:
         return extract_uue_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Cab:
@@ -517,6 +525,7 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             compression_format_text(11),
             compression_format_text(12),
             compression_format_text(13),
+            compression_format_text(14),
         };
     case DropdownId::CompressLevel:
         return {
@@ -1106,6 +1115,9 @@ LRESULT CALLBACK MainWindow::window_proc(HWND hwnd, UINT message, WPARAM wparam,
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
+// Purpose: Dispatch Win32 messages to narrow handlers while preserving default processing.
+// Inputs: `message`, `wparam`, and `lparam` are the native window message payload.
+// Outputs: Returns the Win32 message result for handled or defaulted messages.
 LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_DPICHANGED: {
@@ -1137,144 +1149,208 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         layout_and_draw(reinterpret_cast<HDC>(wparam), rect);
         return 0;
     }
-    case WM_MOUSEMOVE: {
-        mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-        mouse_inside_client_ = true;
-        if (!mouse_tracking_) {
-            TRACKMOUSEEVENT event{};
-            event.cbSize = sizeof(event);
-            event.dwFlags = TME_LEAVE;
-            event.hwndTrack = hwnd_;
-            mouse_tracking_ = TrackMouseEvent(&event) != FALSE;
-        }
-        request_repaint();
-        return 0;
-    }
+    case WM_MOUSEMOVE:
+        return handle_mouse_move(lparam);
     case WM_MOUSELEAVE:
-        mouse_inside_client_ = false;
-        if (!mouse_capture_active_) {
-            primary_mouse_down_ = false;
-        }
-        mouse_tracking_ = false;
-        request_repaint();
-        return 0;
-    case WM_LBUTTONDOWN: {
-        // Use the same scaled geometry for hit testing that the renderer uses,
-        // so high-DPI displays do not create visual/click drift.
-        const int x = GET_X_LPARAM(lparam);
-        const int y = GET_Y_LPARAM(lparam);
-        mouse_position_ = POINT{x, y};
-        mouse_inside_client_ = true;
-        primary_mouse_down_ = true;
-        SetCapture(hwnd_);
-        mouse_capture_active_ = true;
-        request_repaint();
-        const int rail_width = scale(kRailWidth);
-        const int top_bar = scale(kTopBar);
-        if (y < top_bar) {
-            close_active_dropdown();
-        } else if (x < rail_width) {
-            const int nav_top = top_bar + scale(10);
-            const int item_height = scale(63);
-            const int item = item_height > 0 ? (y - nav_top) / item_height : -1;
-            if (item >= 0 && item < 8) {
-                close_active_dropdown();
-                set_page(static_cast<Page>(item));
-            }
-        } else {
-            (void)handle_content_click(x, y);
-        }
-        return 0;
-    }
+        return handle_mouse_leave();
+    case WM_LBUTTONDOWN:
+        return handle_primary_mouse_down(lparam);
     case WM_LBUTTONUP:
-        mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-        primary_mouse_down_ = false;
-        if (mouse_capture_active_) {
-            ReleaseCapture();
-            mouse_capture_active_ = false;
-        }
-        request_repaint();
-        return 0;
+        return handle_primary_mouse_up(lparam);
     case WM_CAPTURECHANGED:
-        primary_mouse_down_ = false;
-        mouse_capture_active_ = false;
-        request_repaint();
-        return 0;
-    case WM_DROPFILES: {
-        // Native shell drag/drop is a queue regression boundary and is covered
-        // by the GUI smoke harness with an injected HDROP payload.
-        auto drop = reinterpret_cast<HDROP>(wparam);
-        const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-        std::lock_guard lock(mutex_);
-        const bool was_empty = state_.queued_paths.empty();
-        for (UINT i = 0; i < count; ++i) {
-            const UINT length = DragQueryFileW(drop, i, nullptr, 0);
-            std::wstring path(length + 1, L'\0');
-            DragQueryFileW(drop, i, path.data(), length + 1);
-            path.resize(length);
-            state_.queued_paths.emplace_back(path);
-        }
-        if (was_empty && !state_.queued_paths.empty()) {
-            state_.selected_queue_index = 0;
-        }
-        DragFinish(drop);
-        request_repaint();
-        return 0;
-    }
+        return handle_capture_changed();
+    case WM_DROPFILES:
+        return handle_drop_files(wparam);
     case WM_CREATE:
-        DragAcceptFiles(hwnd_, TRUE);
-        initialize_performance_monitor();
-        update_performance_sample();
-        SetTimer(hwnd_, kPerformanceTimer, kPerformanceSampleMs, nullptr);
-        if (const UINT auto_close_ms = smoke_auto_close_ms(); auto_close_ms > 0) {
-            // Smoke-only auto-close prevents orphaned GUI windows if the
-            // harness exits before it can post WM_CLOSE.
-            SetTimer(hwnd_, kSmokeAutoCloseTimer, auto_close_ms, nullptr);
-        }
-        if (!smoke_close_marker_path().empty()) {
-            SetTimer(hwnd_, kSmokeClosePollTimer, 250, nullptr);
-        }
-        return 0;
+        return handle_create();
     case WM_APP + 1:
         repaint_queued_ = false;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_TIMER:
-        if (wparam == kAnimationTimer) {
-            tick_animation();
-            return 0;
-        }
-        if (wparam == kPerformanceTimer) {
-            update_performance_sample();
-            request_repaint();
-            return 0;
-        }
-        if (wparam == kSmokeAutoCloseTimer) {
-            DestroyWindow(hwnd_);
-            return 0;
-        }
-        if (wparam == kSmokeClosePollTimer) {
-            // The marker file gives the smoke harness a second shutdown path
-            // that does not depend on external window activation.
-            if (smoke_close_requested()) {
-                DestroyWindow(hwnd_);
-            }
-            return 0;
-        }
-        return DefWindowProcW(hwnd_, message, wparam, lparam);
+        return handle_timer(wparam);
     case WM_DESTROY:
-        // Kill every timer owned by this window before shutdown so repaint,
-        // telemetry sampling, and smoke cleanup cannot outlive the HWND.
-        KillTimer(hwnd_, kAnimationTimer);
-        KillTimer(hwnd_, kPerformanceTimer);
-        KillTimer(hwnd_, kSmokeAutoCloseTimer);
-        KillTimer(hwnd_, kSmokeClosePollTimer);
-        shutdown_performance_monitor();
-        PostQuitMessage(0);
-        return 0;
+        return handle_destroy();
     default:
         return DefWindowProcW(hwnd_, message, wparam, lparam);
     }
+}
+
+// Purpose: Track pointer hover state and arm native leave notifications.
+// Inputs: `lparam` contains client-coordinate mouse position from `WM_MOUSEMOVE`.
+// Outputs: Updates hover state and returns the handled Win32 result.
+LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
+    mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    mouse_inside_client_ = true;
+    if (!mouse_tracking_) {
+        TRACKMOUSEEVENT event{};
+        event.cbSize = sizeof(event);
+        event.dwFlags = TME_LEAVE;
+        event.hwndTrack = hwnd_;
+        mouse_tracking_ = TrackMouseEvent(&event) != FALSE;
+    }
+    request_repaint();
+    return 0;
+}
+
+// Purpose: Clear pointer hover state after the cursor leaves the client area.
+// Inputs: None; uses current capture state.
+// Outputs: Updates mouse state and returns the handled Win32 result.
+LRESULT MainWindow::handle_mouse_leave() {
+    mouse_inside_client_ = false;
+    if (!mouse_capture_active_) {
+        primary_mouse_down_ = false;
+    }
+    mouse_tracking_ = false;
+    request_repaint();
+    return 0;
+}
+
+// Purpose: Handle primary-button press using the same geometry as rendering.
+// Inputs: `lparam` contains client-coordinate click position from `WM_LBUTTONDOWN`.
+// Outputs: Updates capture/pressed state, dispatches page or content clicks, and returns the handled Win32 result.
+LRESULT MainWindow::handle_primary_mouse_down(LPARAM lparam) {
+    // Use the same scaled geometry for hit testing that the renderer uses, so
+    // high-DPI displays do not create visual/click drift.
+    const int x = GET_X_LPARAM(lparam);
+    const int y = GET_Y_LPARAM(lparam);
+    mouse_position_ = POINT{x, y};
+    mouse_inside_client_ = true;
+    primary_mouse_down_ = true;
+    SetCapture(hwnd_);
+    mouse_capture_active_ = true;
+    request_repaint();
+
+    const int rail_width = scale(kRailWidth);
+    const int top_bar = scale(kTopBar);
+    if (y < top_bar) {
+        close_active_dropdown();
+    } else if (x < rail_width) {
+        const int nav_top = top_bar + scale(10);
+        const int item_height = scale(63);
+        const int item = item_height > 0 ? (y - nav_top) / item_height : -1;
+        if (item >= 0 && item < 8) {
+            close_active_dropdown();
+            set_page(static_cast<Page>(item));
+        }
+    } else {
+        (void)handle_content_click(x, y);
+    }
+    return 0;
+}
+
+// Purpose: Handle primary-button release and trigger the shared command release pulse.
+// Inputs: `lparam` contains client-coordinate release position from `WM_LBUTTONUP`.
+// Outputs: Releases capture, updates mouse state, queues animation, and returns the handled Win32 result.
+LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
+    mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    primary_mouse_down_ = false;
+    if (mouse_capture_active_) {
+        ReleaseCapture();
+        mouse_capture_active_ = false;
+    }
+    if (mouse_inside_client_) {
+        start_button_release_animation(mouse_position_);
+    }
+    request_repaint();
+    return 0;
+}
+
+// Purpose: Normalize mouse state after Windows changes capture ownership.
+// Inputs: None.
+// Outputs: Clears pressed/capture flags and returns the handled Win32 result.
+LRESULT MainWindow::handle_capture_changed() {
+    primary_mouse_down_ = false;
+    mouse_capture_active_ = false;
+    request_repaint();
+    return 0;
+}
+
+// Purpose: Append native shell-dropped paths to the queue.
+// Inputs: `wparam` contains the HDROP handle from `WM_DROPFILES`.
+// Outputs: Updates queue selection, releases the HDROP handle, and returns the handled Win32 result.
+LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
+    // Native shell drag/drop is a queue regression boundary and is covered by
+    // the GUI smoke harness with an injected HDROP payload.
+    auto drop = reinterpret_cast<HDROP>(wparam);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    std::lock_guard lock(mutex_);
+    const bool was_empty = state_.queued_paths.empty();
+    for (UINT i = 0; i < count; ++i) {
+        const UINT length = DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring path(length + 1, L'\0');
+        DragQueryFileW(drop, i, path.data(), length + 1);
+        path.resize(length);
+        state_.queued_paths.emplace_back(path);
+    }
+    if (was_empty && !state_.queued_paths.empty()) {
+        state_.selected_queue_index = 0;
+    }
+    DragFinish(drop);
+    request_repaint();
+    return 0;
+}
+
+// Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
+// Inputs: None.
+// Outputs: Arms timers and returns the handled Win32 result.
+LRESULT MainWindow::handle_create() {
+    DragAcceptFiles(hwnd_, TRUE);
+    initialize_performance_monitor();
+    update_performance_sample();
+    SetTimer(hwnd_, kPerformanceTimer, kPerformanceSampleMs, nullptr);
+    if (const UINT auto_close_ms = smoke_auto_close_ms(); auto_close_ms > 0) {
+        // Smoke-only auto-close prevents orphaned GUI windows if the harness
+        // exits before it can post WM_CLOSE.
+        SetTimer(hwnd_, kSmokeAutoCloseTimer, auto_close_ms, nullptr);
+    }
+    if (!smoke_close_marker_path().empty()) {
+        SetTimer(hwnd_, kSmokeClosePollTimer, 250, nullptr);
+    }
+    return 0;
+}
+
+// Purpose: Dispatch timers owned by the main window.
+// Inputs: `wparam` identifies the timer from `WM_TIMER`.
+// Outputs: Runs animation, monitoring, or smoke shutdown work and returns the handled Win32 result.
+LRESULT MainWindow::handle_timer(WPARAM wparam) {
+    if (wparam == kAnimationTimer) {
+        tick_animation();
+        return 0;
+    }
+    if (wparam == kPerformanceTimer) {
+        update_performance_sample();
+        request_repaint();
+        return 0;
+    }
+    if (wparam == kSmokeAutoCloseTimer) {
+        DestroyWindow(hwnd_);
+        return 0;
+    }
+    if (wparam == kSmokeClosePollTimer) {
+        // The marker file gives the smoke harness a second shutdown path that
+        // does not depend on external window activation.
+        if (smoke_close_requested()) {
+            DestroyWindow(hwnd_);
+        }
+        return 0;
+    }
+    return DefWindowProcW(hwnd_, WM_TIMER, wparam, 0);
+}
+
+// Purpose: Stop timers and release monitor state before window destruction completes.
+// Inputs: None.
+// Outputs: Posts quit and returns the handled Win32 result.
+LRESULT MainWindow::handle_destroy() {
+    // Kill every timer owned by this window before shutdown so repaint,
+    // telemetry sampling, and smoke cleanup cannot outlive the HWND.
+    KillTimer(hwnd_, kAnimationTimer);
+    KillTimer(hwnd_, kPerformanceTimer);
+    KillTimer(hwnd_, kSmokeAutoCloseTimer);
+    KillTimer(hwnd_, kSmokeClosePollTimer);
+    shutdown_performance_monitor();
+    PostQuitMessage(0);
+    return 0;
 }
 
 void MainWindow::paint() {
@@ -1894,9 +1970,13 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
+// Purpose: Draw a simple DPI-scaled command or navigation button.
+// Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent styling.
+// Outputs: Renders hover, press, release, border, and ellipsized text states.
 void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active) {
     const bool hovered = mouse_inside_client_ && contains_point(rect, mouse_position_.x, mouse_position_.y);
     const bool pressed = hovered && primary_mouse_down_;
+    const double release_progress = button_release_progress(rect);
     const COLORREF base_fill = active ? kAccent : kPanel2;
     const COLORREF hover_fill = active ? RGB(226, 47, 58) : kPanel3;
     const COLORREF pressed_fill = active ? RGB(144, 22, 31) : RGB(38, 54, 60);
@@ -1906,6 +1986,12 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
     stroke_rect(dc, rect, border);
     if (hovered && !pressed) {
         stroke_rect(dc, inset_rect(rect, scale(1), scale(1)), active ? RGB(237, 80, 90) : RGB(75, 95, 103));
+    }
+    if (release_progress < 1.0) {
+        const double eased = ease_out(release_progress);
+        const int inset = static_cast<int>(std::round(static_cast<double>(scale(7)) * eased));
+        const COLORREF pulse = blend_color(active ? RGB(255, 123, 131) : RGB(126, 151, 159), fill, eased);
+        stroke_rect(dc, inset_rect(rect, std::max(1, inset), std::max(1, inset)), pulse);
     }
     SelectObject(dc, tiny_font_);
     RECT label = inset_rect(rect, scale(12), 0);
@@ -1968,6 +2054,9 @@ void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, cons
     }
 }
 
+// Purpose: Draw the currently expanded select/dropdown menu.
+// Inputs: `dc` is the target, `content` is the active content area, and `state` is copied UI state.
+// Outputs: Renders the active dropdown menu using the same row height as hit testing.
 void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState& state) {
     if (state.active_dropdown == DropdownId::None) {
         return;
@@ -1985,7 +2074,7 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
     fill_round_rect(dc, menu, kPanel2, scale(4));
     stroke_rect(dc, menu, kAccent);
 
-    const int row_height = scale(32);
+    const int row_height = scale(options.size() > 10U ? 30 : 32);
     const int selected = dropdown_selected_index(state, state.active_dropdown);
     SelectObject(dc, tiny_font_);
     for (int index = 0; index < static_cast<int>(options.size()); ++index) {
@@ -2036,6 +2125,9 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
     return RECT{};
 }
 
+// Purpose: Resolve the overlay menu rectangle for a dropdown.
+// Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
+// Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
 RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
     const auto options = dropdown_options(id);
     if (options.empty()) {
@@ -2046,7 +2138,7 @@ RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
         return RECT{};
     }
     const int gap = scale(4);
-    const int row_height = scale(32);
+    const int row_height = scale(options.size() > 10U ? 30 : 32);
     const int menu_height = row_height * static_cast<int>(options.size()) + scale(2);
     int top = anchor.bottom + gap;
     int bottom = top + menu_height;
@@ -2354,6 +2446,9 @@ bool MainWindow::handle_content_click(int x, int y) {
     return false;
 }
 
+// Purpose: Handle a click while a dropdown menu is expanded.
+// Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
+// Outputs: Returns true when the click was consumed by dropdown close or selection.
 bool MainWindow::handle_active_dropdown_click(int x, int y) {
     DropdownId active = DropdownId::None;
     {
@@ -2368,9 +2463,9 @@ bool MainWindow::handle_active_dropdown_click(int x, int y) {
     const RECT menu = dropdown_menu_rect(active, content);
     const RECT anchor = dropdown_anchor_rect(active, content);
     if (contains_point(menu, x, y)) {
-        const int row_height = scale(32);
-        const int option_index = row_height > 0 ? (y - menu.top - scale(1)) / row_height : -1;
         const auto options = dropdown_options(active);
+        const int row_height = scale(options.size() > 10U ? 30 : 32);
+        const int option_index = row_height > 0 ? (y - menu.top - scale(1)) / row_height : -1;
         if (option_index >= 0 && option_index < static_cast<int>(options.size())) {
             select_dropdown_option(active, option_index);
             return true;
@@ -2413,7 +2508,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
         std::lock_guard lock(mutex_);
         switch (id) {
         case DropdownId::CompressFormat:
-            state_.compression_format_index = std::clamp(option_index, 0, 13);
+            state_.compression_format_index = std::clamp(option_index, 0, 14);
             state_.status = "Archive format changed";
             break;
         case DropdownId::CompressLevel:
@@ -2730,6 +2825,8 @@ void MainWindow::start_compress() {
             stats = compress_zstd(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::UnixCompress) {
             stats = compress_unix_compress(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Base64) {
+            stats = compress_base64(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Uue) {
             stats = compress_uue(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
@@ -3022,6 +3119,15 @@ void MainWindow::start_toggle_animation(ToggleId id, bool from, bool to) {
     SetTimer(hwnd_, kAnimationTimer, 8, nullptr);
 }
 
+// Purpose: Start a bounded non-blocking command-button release animation.
+// Inputs: `point` is the client-coordinate release position after a primary mouse click.
+// Outputs: Records the release pulse origin and arms the animation timer.
+void MainWindow::start_button_release_animation(POINT point) {
+    button_release_point_ = point;
+    button_release_start_ = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kAnimationTimer, 8, nullptr);
+}
+
 double MainWindow::page_transition_progress() const {
     if (page_transition_start_ == std::chrono::steady_clock::time_point{}) {
         return 1.0;
@@ -3045,12 +3151,30 @@ double MainWindow::toggle_visual_position(ToggleId id, bool enabled) const {
     return start + ((end - start) * ease_out(progress));
 }
 
+// Purpose: Return normalized command-button release animation progress.
+// Inputs: `rect` is the button rectangle being rendered.
+// Outputs: Returns 1.0 when no release pulse applies to this button.
+double MainWindow::button_release_progress(const RECT& rect) const {
+    if (button_release_start_ == std::chrono::steady_clock::time_point{} ||
+        !contains_point(rect, button_release_point_.x, button_release_point_.y)) {
+        return 1.0;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_).count();
+    return std::clamp(static_cast<double>(elapsed) / static_cast<double>(kButtonReleaseTransitionMs), 0.0, 1.0);
+}
+
+// Purpose: Advance active UI animations.
+// Inputs: None.
+// Outputs: Queues another repaint while animation is active or stops the timer.
 void MainWindow::tick_animation() {
     const bool page_active = page_transition_progress() < 1.0;
     const bool toggle_active =
         transition_toggle_ != ToggleId::None &&
         toggle_transition_start_ != std::chrono::steady_clock::time_point{} &&
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - toggle_transition_start_).count() < kToggleTransitionMs;
+    const bool button_release_active =
+        button_release_start_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_).count() < kButtonReleaseTransitionMs;
     if (!page_active) {
         page_transition_start_ = {};
     }
@@ -3058,7 +3182,11 @@ void MainWindow::tick_animation() {
         transition_toggle_ = ToggleId::None;
         toggle_transition_start_ = {};
     }
-    if (page_active || toggle_active) {
+    if (!button_release_active) {
+        button_release_start_ = {};
+        button_release_point_ = POINT{-1, -1};
+    }
+    if (page_active || toggle_active || button_release_active) {
         request_repaint();
         return;
     }

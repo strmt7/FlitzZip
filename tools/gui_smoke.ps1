@@ -666,7 +666,7 @@ try {
     Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 524
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 508
     Start-Sleep -Milliseconds 160
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdZstd = $false
@@ -686,7 +686,7 @@ try {
     Remove-Item -LiteralPath $expectedTarZstd -Force -ErrorAction SilentlyContinue
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 428
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 418
     Start-Sleep -Milliseconds 160
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdTarZstd = $false
@@ -706,7 +706,7 @@ try {
     Remove-Item -LiteralPath $expectedTarGz -Force -ErrorAction SilentlyContinue
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 364
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 358
     Start-Sleep -Milliseconds 160
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdTarGz = $false
@@ -725,7 +725,7 @@ try {
     Remove-Item -LiteralPath $expectedCpioGz -Force -ErrorAction SilentlyContinue
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 652
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 658
     Start-Sleep -Milliseconds 160
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdCpioGz = $false
@@ -738,6 +738,25 @@ try {
     }
     if (-not $createdCpioGz) {
         throw "GUI compression did not create expected non-empty CPIO.GZ archive at $expectedCpioGz."
+    }
+
+    $expectedBase64 = Join-Path $smokeRoot "SuperZip-output.b64"
+    Remove-Item -LiteralPath $expectedBase64 -Force -ErrorAction SilentlyContinue
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 568
+    Start-Sleep -Milliseconds 160
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
+    $createdBase64 = $false
+    foreach ($attempt in 1..50) {
+        Start-Sleep -Milliseconds 100
+        if ((Test-Path -LiteralPath $expectedBase64) -and ((Get-Item -LiteralPath $expectedBase64).Length -gt 0)) {
+            $createdBase64 = $true
+            break
+        }
+    }
+    if (-not $createdBase64) {
+        throw "GUI compression did not create expected non-empty Base64 archive at $expectedBase64."
     }
 
     # Extract: return to Queue, clear inputs, drop a valid archive, then exercise extract controls.

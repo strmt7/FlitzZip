@@ -28,7 +28,9 @@ extracted through XZ Embedded, single-file legacy `.lzma` streams are extracted
 through the vendored LZMA SDK with bounded decoder allocation, single-file
 `.lz` streams are extracted through the lzip wrapper with CRC32/data-size/member-size
 verification, and single-file `.zst`/`.zstd` streams are implemented through the
-app-local libzstd DLL with frame checksum creation and bounded-window extraction. Portable `.cpio`
+app-local libzstd DLL with frame checksum creation and bounded-window extraction.
+Single-file `.b64` streams are implemented through a bounded Base64 adapter with
+strict padding validation and optional wrapper-header filename validation. Portable `.cpio`
 and Gzip-filtered `.cpio.gz`/`.cpgz` archives are implemented with a native
 SVR4 new ASCII parser/writer for regular files and directories; compressed CPIO
 uses the same two-pass validation model as compressed TAR without staging a full
@@ -187,6 +189,8 @@ build/Release/superzip_cli.exe compress --format zst --output file.txt.zst file.
 build/Release/superzip_cli.exe extract --output restored file.txt.zst
 build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.Z
+build/Release/superzip_cli.exe compress --format b64 --output file.txt.b64 file.txt
+build/Release/superzip_cli.exe extract --output restored file.txt.b64
 build/Release/superzip_cli.exe compress --format uue --output file.txt.uue file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.uue
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
@@ -218,7 +222,7 @@ and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
 ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, Gzip, Bzip2, XZ, LZMA, lzip,
-Unix Compress, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
+Unix Compress, Base64, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
 CPIO.GZ, AR, DEB, ISO, and RPM compatibility are deliberately separate from
 SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,

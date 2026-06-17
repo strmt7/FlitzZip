@@ -56,6 +56,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzma"), superzip::ArchiveFormat::Lzma);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lz"), superzip::ArchiveFormat::Lzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.Z"), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.b64"), superzip::ArchiveFormat::Base64);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.cab"), superzip::ArchiveFormat::Cab);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.iso"), superzip::ArchiveFormat::Iso);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ar"), superzip::ArchiveFormat::Ar);
@@ -80,6 +81,11 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "gz.bin", std::array<unsigned char, 2>{0x1F, 0x8B});
     write_fixture(root / "package.cpgz", std::array<unsigned char, 2>{0x1F, 0x8B});
     write_fixture(root / "unix-compress.bin", std::array<unsigned char, 3>{0x1F, 0x9D, 0x90});
+    const auto b64_begin = std::array<unsigned char, 38>{
+        'b', 'e', 'g', 'i', 'n', '-', 'b', 'a', 's', 'e', '6', '4', ' ', '6', '4', '4', ' ',
+        'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n',
+        'U', '2', 'F', 'm', 'Z', 'Q', '=', '=', '\n'};
+    write_fixture(root / "base64.bin", b64_begin);
     write_fixture(root / "bz2.bin", std::array<unsigned char, 3>{'B', 'Z', 'h'});
     write_fixture(root / "xz.bin", std::array<unsigned char, 6>{0xFD, '7', 'z', 'X', 'Z', 0x00});
     write_fixture(root / "lz.bin", std::array<unsigned char, 6>{'L', 'Z', 'I', 'P', 1, 20});
@@ -104,6 +110,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "gz.bin"), superzip::ArchiveFormat::Gzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "package.cpgz"), superzip::ArchiveFormat::CpioGzip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "unix-compress.bin"), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "base64.bin"), superzip::ArchiveFormat::Base64);
     REQUIRE_EQ(superzip::detect_archive_format(root / "bz2.bin"), superzip::ArchiveFormat::Bzip2);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xz.bin"), superzip::ArchiveFormat::Xz);
     REQUIRE_EQ(superzip::detect_archive_format(root / "lz.bin"), superzip::ArchiveFormat::Lzip);
@@ -149,6 +156,8 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("zipx").value(), superzip::ArchiveFormat::Zipx);
     REQUIRE_EQ(superzip::parse_archive_format_token("compress").value(), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(superzip::parse_archive_format_token("b64").value(), superzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(superzip::parse_archive_format_token("base64").value(), superzip::ArchiveFormat::Base64);
     REQUIRE_EQ(superzip::parse_archive_format_token("uu").value(), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::parse_archive_format_token("uuencode").value(), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::parse_archive_format_token("arj").value(), superzip::ArchiveFormat::Arj);

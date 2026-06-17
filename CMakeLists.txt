@@ -210,6 +210,7 @@ add_library(superzip_core STATIC
     src/ar/ar_adapter.cpp
     src/arc/arc_adapter.cpp
     src/arj/arj_adapter.cpp
+    src/base64/base64_adapter.cpp
     src/bzip2/bzip2_adapter.cpp
     src/bzip2/bzip2_stream.cpp
     src/cab/cab_adapter.cpp
@@ -394,6 +395,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_ar_compat.cpp
         tests/cpp/test_arc_compat.cpp
         tests/cpp/test_arj_compat.cpp
+        tests/cpp/test_base64_compat.cpp
         tests/cpp/test_bzip2_compat.cpp
         tests/cpp/test_cab_compat.cpp
         tests/cpp/test_cpio_compat.cpp

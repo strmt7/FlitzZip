@@ -33,6 +33,8 @@ Primary and project-owned sources reviewed:
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - CPGZ file extension reference: https://fileinfo.com/extension/cpgz
+- RFC 2045 Base64 content-transfer encoding: https://datatracker.ietf.org/doc/html/rfc2045
+- GNU/Arch uuencode Base64 wrapper notes: https://man.archlinux.org/man/uuencode.5.en
 - bzip2/libbzip2: https://sourceware.org/bzip2/
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - Zstandard/libzstd: https://github.com/facebook/zstd
@@ -68,9 +70,17 @@ resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, CPIO.GZ, ARJ, ARC,
-LHA/LZH, WIM, XAR, DEB, RPM, UUencode, and legacy Unix Compress `.Z`. SuperZip's
+LHA/LZH, WIM, XAR, DEB, RPM, Base64, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
+
+The 2026-06-17 twenty-tool review also shows recurring gaps that are not yet
+implemented as product support: full RAR, broader ZIPX method coverage, DMG/UDF
+and virtual-disk readers, MSI/NSIS/CHM package readers, StuffIt-family readers,
+ZOO/ACE/SQX/BH/EGG/ALZ/B1/PAQ/ZPAQ families, split-volume discovery, and
+MIME multipart handling. Each remains a backend-by-backend implementation item;
+SuperZip must not expose those names as supported until there is an in-process
+parser, a security contract, and tests.
 
 ## Top-Tool Format Research Matrix
 
@@ -120,6 +130,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.01 decoder with SuperZip path/publish pipeline |
 | `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.01 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
+| `.b64` | Yes | Yes | Single-file compatibility stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
 | `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.cpio.gz`, `.cpgz` | Yes | Yes | Compatibility format | native CPIO stream adapter over vendored miniz 3.1.1 raw deflate |
@@ -209,6 +220,15 @@ SuperZip writes block-mode 16-bit `.Z` streams and extracts valid block-mode or
 non-block-mode streams with declared widths from 9 through 16 bits. Extraction
 derives the output filename from the `.Z` archive path and never treats `.Z` as a
 directory archive.
+
+Base64 support is intentionally single-file when used as `.b64`. SuperZip writes
+a bounded `begin-base64` wrapper so the original file name can be validated on
+extraction, and it also accepts raw RFC-style `.b64` payloads by deriving the
+output filename from the archive path. It rejects invalid alphabet characters,
+partial quanta, malformed padding, payload data after padding, overlong lines,
+unsafe wrapper filenames, overwrite attempts, and trailing data after the
+wrapper trailer. Base64 has no intrinsic checksum, so optional SHA-256 remains
+the strong end-to-end archive-file integrity check.
 
 UUencode support is intentionally single-file when used as `.uue` or `.uu`.
 SuperZip writes strict `begin 644 <name>` streams and extracts one file from the
@@ -686,6 +706,34 @@ flowchart TD
     E -->|"no"| G["Reject stream and remove temp output"]
 ```
 
+## Base64 Security Contract
+
+The Base64 path is an in-process single-file text decoder and writer:
+
+1. `.b64` accepts exactly one source file and writes a bounded `begin-base64`
+   wrapper plus RFC-style 76-character payload lines.
+2. Extraction accepts either the SuperZip wrapper or a raw `.b64` payload. Raw
+   payloads derive one safe output filename from the archive path.
+3. Optional wrapper filenames are normalized through `safe_join_archive_path`
+   before any destination file is reserved.
+4. The decoder rejects invalid alphabet characters, partial final quanta,
+   malformed padding, non-whitespace payload after padding, missing wrapper
+   trailers, overlong lines, and non-whitespace data after a wrapper trailer.
+5. The decoded file is published only after the complete stream has been decoded
+   into a private temporary file.
+
+```mermaid
+flowchart TD
+    A["Open .b64 stream"] --> B{"Wrapper present?"}
+    B -->|"yes"| C["Validate begin-base64 filename"]
+    B -->|"no"| D["Derive one safe name from archive path"]
+    C --> E["Decode strict Base64 payload"]
+    D --> E
+    E --> F{"Padding and trailer valid?"}
+    F -->|"yes"| G["Atomically publish verified file"]
+    F -->|"no"| H["Reject stream and remove temp output"]
+```
+
 ## Bzip2 Security Contract
 
 The Bzip2 path is in-process through vendored libbzip2 1.0.8 and follows the
@@ -853,11 +901,12 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - Documentation update in this file, README, AGENTS, and release notes.
 
 Preferred next increments are read-only RAR, broader ARJ and SEA ARC
-compressed-method extraction, deeper ZIPX method coverage, lzip creation only
-after a vetted in-process encoder exists, and the remaining recognized-only
-legacy/container formats after backend selection and licensing review. XAR
-checksum/signature validation is also a future hardening increment before
-SuperZip can claim broad XAR compatibility. Write support for RAR is not
-planned because the common RAR creation tooling is not a permissive open format
-writer suitable for this repo. 7z creation also remains disabled until a vetted
-in-process writer path passes the same gates.
+compressed-method extraction, deeper ZIPX method coverage, XXEncode/BinHex
+single-file legacy text encodings, lzip creation only after a vetted in-process
+encoder exists, and the remaining recognized-only legacy/container formats after
+backend selection and licensing review. XAR checksum/signature validation is
+also a future hardening increment before SuperZip can claim broad XAR
+compatibility. Write support for RAR is not planned because the common RAR
+creation tooling is not a permissive open format writer suitable for this repo.
+7z creation also remains disabled until a vetted in-process writer path passes
+the same gates.

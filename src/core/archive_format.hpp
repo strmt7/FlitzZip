@@ -24,6 +24,7 @@ enum class ArchiveFormat {
     TarZstd,
     Gzip,
     UnixCompress,
+    Base64,
     Bzip2,
     Xz,
     Lzma,

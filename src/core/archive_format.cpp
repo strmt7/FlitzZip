@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 34> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 35> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -38,6 +38,7 @@ constexpr std::array<ArchiveFormatInfo, 34> kFormatRegistry{{
     {ArchiveFormat::TarZstd, "tar.zst", "TAR + Zstandard (.tar.zst, .tzst)", ".tar.zst,.tzst", true, true, false, true},
     {ArchiveFormat::Gzip, "gz", "Gzip stream (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
+    {ArchiveFormat::Base64, "b64", "Base64 encoded file (.b64)", ".b64", true, true, false, true},
     {ArchiveFormat::Bzip2, "bz2", "Bzip2 stream (.bz2)", ".bz2", true, true, false, true},
     {ArchiveFormat::Xz, "xz", "XZ stream (.xz)", ".xz", false, true, false, true},
     {ArchiveFormat::Lzma, "lzma", "LZMA stream (.lzma)", ".lzma", false, true, false, true},
@@ -59,7 +60,7 @@ constexpr std::array<ArchiveFormatInfo, 34> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 43> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 44> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -81,6 +82,7 @@ constexpr std::array<ExtensionFormatMapping, 43> kExtensionFormats{{
     {".tar", ArchiveFormat::Tar},
     {".gz", ArchiveFormat::Gzip},
     {".z", ArchiveFormat::UnixCompress},
+    {".b64", ArchiveFormat::Base64},
     {".bz2", ArchiveFormat::Bzip2},
     {".xz", ArchiveFormat::Xz},
     {".lzma", ArchiveFormat::Lzma},
@@ -231,6 +233,37 @@ bool has_uue_begin_line(std::span<const unsigned char> bytes) {
     return false;
 }
 
+// Purpose: Detect a wrapped Base64 begin line in a bounded text probe.
+// Inputs: `bytes` contains the file prefix; preamble lines are ignored only within the probe.
+// Outputs: Returns true when a line starts with `begin-base64` or `begin-base64-encoded`.
+bool has_base64_begin_line(std::span<const unsigned char> bytes) {
+    std::size_t line_start = 0;
+    while (line_start < bytes.size()) {
+        std::size_t line_end = line_start;
+        while (line_end < bytes.size() && bytes[line_end] != '\n') {
+            ++line_end;
+        }
+        auto line_size = line_end - line_start;
+        if (line_size > 0U && bytes[line_start + line_size - 1U] == '\r') {
+            --line_size;
+        }
+        constexpr std::array prefixes{
+            std::string_view{"begin-base64 "},
+            std::string_view{"begin-base64-encoded "},
+        };
+        for (const auto prefix : prefixes) {
+            const bool prefix_matches =
+                line_size > prefix.size() &&
+                std::equal(prefix.begin(), prefix.end(), bytes.begin() + static_cast<std::ptrdiff_t>(line_start));
+            if (prefix_matches) {
+                return true;
+            }
+        }
+        line_start = line_end == bytes.size() ? bytes.size() : line_end + 1U;
+    }
+    return false;
+}
+
 // Purpose: Match a fixed byte signature at an arbitrary offset.
 // Inputs: `bytes` is the file probe, `offset` is the byte offset, and `signature` is the magic sequence.
 // Outputs: Returns true when all signature bytes match at `offset`.
@@ -266,6 +299,9 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
     }
     if (starts_with_signature(bytes, {0x1F, 0x9D})) {
         return ArchiveFormat::UnixCompress;
+    }
+    if (has_base64_begin_line(bytes)) {
+        return ArchiveFormat::Base64;
     }
     if (starts_with_signature(bytes, {'B', 'Z', 'h'})) {
         return ArchiveFormat::Bzip2;
@@ -383,6 +419,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "lz";
     } else if (lowered == "compress" || lowered == "unix-compress") {
         lowered = "z";
+    } else if (lowered == "base64") {
+        lowered = "b64";
     } else if (lowered == "lzh") {
         lowered = "lha";
     } else if (lowered == "uu" || lowered == "uuencode") {

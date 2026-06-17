@@ -1,6 +1,7 @@
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
+#include "base64/base64_adapter.hpp"
 #include "bzip2/bzip2_adapter.hpp"
 #include "cab/cab_adapter.hpp"
 #include "core/archive.hpp"
@@ -152,9 +153,9 @@ void usage() {
         << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible [--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile Mixed|Compressible|Incompressible] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
-        << "  superzip_cli compress --format zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|uue|uu|cpio|cpio.gz|cpgz|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
+        << "  superzip_cli compress --format zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|b64|base64|uue|uu|cpio|cpio.gz|cpgz|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|lz|lzip|zst|zstd|z|compress|uue|uu|cab|iso|cpio|cpio.gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli extract --format auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|lz|lzip|zst|zstd|z|compress|b64|base64|uue|uu|cab|iso|cpio|cpio.gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -1111,6 +1112,9 @@ superzip::OperationStats compress_by_format(
     case superzip::ArchiveFormat::UnixCompress:
         reject_compat_create_tuning("Unix Compress", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
         return superzip::compress_unix_compress(command.sources, command.output);
+    case superzip::ArchiveFormat::Base64:
+        reject_compat_create_tuning("Base64", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        return superzip::compress_base64(command.sources, command.output);
     case superzip::ArchiveFormat::Uue:
         reject_compat_create_tuning("UUE", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
         return superzip::compress_uue(command.sources, command.output);
@@ -1260,6 +1264,9 @@ std::optional<superzip::OperationStats> extract_stream_or_tar_format(
     case superzip::ArchiveFormat::UnixCompress:
         reject_extract_tuning("Unix Compress", command);
         return superzip::extract_unix_compress_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Base64:
+        reject_extract_tuning("Base64", command);
+        return superzip::extract_base64_file(command.archive, command.output, command.overwrite);
     case superzip::ArchiveFormat::Uue:
         reject_extract_tuning("UUE", command);
         return superzip::extract_uue_file(command.archive, command.output, command.overwrite);

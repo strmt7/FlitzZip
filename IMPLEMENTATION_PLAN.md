@@ -131,6 +131,10 @@ archive options, progress snapshots, and errors.
   over the bounded CPIO adapter, preserving two-pass inner CPIO validation,
   checksum/trailer rejection, no decoded-archive disk staging, and fuzz
   coverage for CPIO metadata/path handling.
+- Added Base64 `.b64` single-file compatibility through a native bounded text
+  adapter with strict RFC-style padding validation, optional wrapper-header
+  filename validation, overwrite refusal, and verified temporary-file
+  publication.
 
 ## Validation Gates
 

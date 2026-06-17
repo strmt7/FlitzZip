@@ -28,6 +28,13 @@ The reviewed help corpus clustered into:
 
 - Features that change user data need a create, extract, verify, rollback, and
   troubleshooting story before they become visible in the GUI.
+- Destination selection is product logic, not a cosmetic detail. "Extract here"
+  style commands need a deterministic folder policy for single-file archives,
+  archives already rooted in one top-level directory, mixed-root archives, name
+  collisions, and existing destination directories.
+- Drag/drop and shell-entry workflows need parity with in-app workflows. A file
+  added by drag/drop, picker, context menu, or command line must land in the
+  same queue model and reach the same security validation before work starts.
 - Archive mutation is a separate product surface from archive creation and
   extraction. Direct edit, delete, rename, and in-place update flows require
   temporary backups, atomic publication, and corruption recovery tests.
@@ -37,6 +44,13 @@ The reviewed help corpus clustered into:
 - Split archives need explicit part discovery, ordering, size limits, missing
   part diagnostics, and a safe failure mode before extraction support is
   advertised.
+- Solid compression and multi-file block grouping must be explained and tested
+  as an accessibility tradeoff. Better ratios can make random access slower and
+  corruption impact larger, so block size, recovery behavior, and partial
+  extraction cost need evidence before a default changes.
+- Unicode filename handling must be format-specific. ZIP UTF-8 flags, Unicode
+  path extra fields, legacy code pages, TAR UTF-8 names, and non-ASCII password
+  input are separate compatibility paths with separate tests.
 - Password handling needs clear boundaries: encryption, filename encryption,
   password storage, recovery, and non-ASCII password input are separate
   features with separate threat models.
@@ -47,6 +61,14 @@ The reviewed help corpus clustered into:
   parallel extraction, high-speed archive updates, and GPU acceleration need
   benchmarks that report data size, compression level, block size, ratio,
   memory mode, CPU/GPU lane, and resource sampling interval.
+- "Skip recompression for already-compressed data" is a performance policy, not
+  a shortcut. It must be based on deterministic sampling, must not weaken
+  integrity verification, and must still report the chosen method in benchmark
+  and operation history output.
+- Parallel extraction must be format-aware. Some codecs and archive layouts are
+  inherently serial, while others can parallelize independent members or blocks;
+  the scheduler should expose this distinction instead of claiming universal
+  saturation.
 - Troubleshooting text should map directly to a diagnostic command or UI state.
   Examples include unsupported archive method, missing HIP runtime, missing
   driver, unavailable destination, locked file, mapped-drive failure, invalid
