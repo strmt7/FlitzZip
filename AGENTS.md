@@ -199,6 +199,7 @@ selects a product build:
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
 tools\lint.ps1 -CppMode Changed
+tools\compatibility_interop_smoke.ps1 -Configuration Release
 tools\security_scan.ps1
 tools\github_post_push_audit.ps1
 ```
@@ -274,6 +275,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Compatibility archive support must use in-process parsers/writers. Do not
   shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other
   host tools from product code.
+- Non-SUZIP create formats must produce standards-compatible files. When
+  changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared compatibility
+  stream writers, run `tools\compatibility_interop_smoke.ps1 -Configuration
+  Release` so independent Windows readers prove the outputs are not only
+  readable by SuperZip.
 - CPIO compatibility is limited to regular files and directories in the SVR4
   new ASCII variants. Keep links, hard-link metadata, devices, FIFOs, and
   special files rejected unless a maintainer approves a dedicated security and

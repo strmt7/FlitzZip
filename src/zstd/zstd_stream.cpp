@@ -15,7 +15,6 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kZstdStreamBufferBytes = 64U * 1024U;
-constexpr int kZstdCompressionLevel = 5;
 constexpr int kZstdMaxWindowLog = 26;
 
 // Purpose: Convert a Zstandard runtime result into a stable SuperZip error when needed.
@@ -37,6 +36,16 @@ void checked_add_stream_bytes(std::uint64_t& total, std::uint64_t bytes, const c
     total += bytes;
 }
 
+// Purpose: Validate a product compression level before passing it to libzstd.
+// Inputs: `compression_level` is the caller-selected 1-9 level.
+// Outputs: Returns the validated Zstandard level or throws `ArchiveError`.
+int zstd_compression_level(int compression_level) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("Zstandard compression level must be between 1 and 9");
+    }
+    return compression_level;
+}
+
 // Purpose: Read a filesystem file size into a 64-bit archive counter.
 // Inputs: `path` is an existing file path.
 // Outputs: Returns the file size or throws when it cannot be queried.
@@ -53,8 +62,8 @@ std::uint64_t zstd_file_size(const std::filesystem::path& path) {
 }
 
 // Purpose: Write all bytes to a binary output stream while updating a telemetry counter.
-// Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is updated.
-// Outputs: Appends bytes or throws on stream failure.
+// Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is
+// updated. Outputs: Appends bytes or throws on stream failure.
 void write_counted(std::ofstream& output, const char* bytes, std::size_t size, std::uint64_t& written) {
     if (size == 0U) {
         return;
@@ -69,8 +78,12 @@ void write_counted(std::ofstream& output, const char* bytes, std::size_t size, s
 }  // namespace
 
 class ZstdOutputStream::Buffer final : public std::streambuf {
-public:
-    explicit Buffer(const std::filesystem::path& output_path) : output_(output_path, std::ios::binary | std::ios::trunc) {
+  public:
+    // Purpose: Open a Zstandard output file and initialize the compression context.
+    // Inputs: `output_path` is the destination and `compression_level` is validated as 1-9.
+    // Outputs: Creates an active libzstd stream or throws on I/O/runtime failure.
+    explicit Buffer(const std::filesystem::path& output_path, int compression_level)
+        : output_(output_path, std::ios::binary | std::ios::trunc) {
         if (!output_) {
             throw ArchiveError("cannot create Zstandard stream: " + output_path.string());
         }
@@ -78,14 +91,12 @@ public:
         if (context_ == nullptr) {
             throw ArchiveError("failed to initialize Zstandard compressor");
         }
-        require_zstd_ok(
-            zstd_,
-            zstd_.set_compression_parameter(context_, kZstdCompressionLevelParameter, kZstdCompressionLevel),
-            "failed to set Zstandard compression level");
-        require_zstd_ok(
-            zstd_,
-            zstd_.set_compression_parameter(context_, kZstdContentChecksumParameter, 1),
-            "failed to enable Zstandard content checksum");
+        require_zstd_ok(zstd_,
+                        zstd_.set_compression_parameter(context_, kZstdCompressionLevelParameter,
+                                                        zstd_compression_level(compression_level)),
+                        "failed to set Zstandard compression level");
+        require_zstd_ok(zstd_, zstd_.set_compression_parameter(context_, kZstdContentChecksumParameter, 1),
+                        "failed to enable Zstandard content checksum");
     }
 
     ~Buffer() override {
@@ -137,7 +148,7 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type overflow(int_type ch) override {
         if (traits_type::eq_int_type(ch, traits_type::eof())) {
             return traits_type::not_eof(ch);
@@ -159,7 +170,7 @@ protected:
         return output_ ? 0 : -1;
     }
 
-private:
+  private:
     // Purpose: Compress one caller-provided uncompressed byte range.
     // Inputs: `data` points to bytes and `size` is the byte count.
     // Outputs: Writes compressed bytes to `output_` and updates byte counters.
@@ -187,9 +198,13 @@ private:
 };
 
 class ZstdInputStream::Buffer final : public std::streambuf {
-public:
+  public:
+    // Purpose: Open and initialize a bounded Zstandard decompression stream.
+    // Inputs: `archive_path` is an existing `.zst`/`.zstd` stream.
+    // Outputs: Prepares the get area and decoder state, or throws on I/O/runtime failure.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : file_(archive_path, std::ios::binary), archive_size_(zstd_file_size(archive_path)), compressed_remaining_(archive_size_) {
+        : file_(archive_path, std::ios::binary), archive_size_(zstd_file_size(archive_path)),
+          compressed_remaining_(archive_size_) {
         if (!file_) {
             throw ArchiveError("cannot open Zstandard stream: " + archive_path.string());
         }
@@ -197,10 +212,9 @@ public:
         if (context_ == nullptr) {
             throw ArchiveError("failed to initialize Zstandard decompressor");
         }
-        require_zstd_ok(
-            zstd_,
-            zstd_.set_decompression_parameter(context_, kZstdWindowLogMaxParameter, kZstdMaxWindowLog),
-            "failed to set Zstandard window limit");
+        require_zstd_ok(zstd_,
+                        zstd_.set_decompression_parameter(context_, kZstdWindowLogMaxParameter, kZstdMaxWindowLog),
+                        "failed to set Zstandard window limit");
         setg(output_buffer_.data(), output_buffer_.data(), output_buffer_.data());
     }
 
@@ -235,7 +249,7 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type underflow() override {
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
@@ -248,7 +262,7 @@ protected:
         return traits_type::eof();
     }
 
-private:
+  private:
     // Purpose: Load another bounded compressed input chunk when the decoder has consumed the current one.
     // Inputs: None.
     // Outputs: Updates the Zstandard input buffer; marks source completion after all file bytes are read.
@@ -256,7 +270,8 @@ private:
         if (input_.pos != input_.size || compressed_remaining_ == 0U) {
             return;
         }
-        const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer_.size(), compressed_remaining_));
+        const auto to_read =
+            static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer_.size(), compressed_remaining_));
         file_.read(input_buffer_.data(), static_cast<std::streamsize>(to_read));
         if (static_cast<std::size_t>(file_.gcount()) != to_read) {
             throw ArchiveError("Zstandard compressed payload is truncated");
@@ -311,8 +326,11 @@ private:
     std::array<char, kZstdStreamBufferBytes> output_buffer_{};
 };
 
-ZstdOutputStream::ZstdOutputStream(const std::filesystem::path& output_path)
-    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path)) {
+// Purpose: Construct an output stream that writes a complete checksummed Zstandard frame.
+// Inputs: `output_path` is the target file and `compression_level` is the Zstandard 1-9 setting.
+// Outputs: Installs an owned stream buffer or throws on setup failure.
+ZstdOutputStream::ZstdOutputStream(const std::filesystem::path& output_path, int compression_level)
+    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path, compression_level)) {
     rdbuf(buffer_.get());
 }
 

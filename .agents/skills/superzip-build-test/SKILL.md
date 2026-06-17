@@ -39,6 +39,7 @@ Manual lanes remain available when the plan selects them:
    tools/build.ps1 -Configuration Release
    tools/test.ps1
    tools/lint.ps1 -CppMode Changed
+   tools/compatibility_interop_smoke.ps1 -Configuration Release
    tools/security_scan.ps1
    tools/github_post_push_audit.ps1
    ```
@@ -72,6 +73,10 @@ Rules:
 - Block-size changes must validate every product option:
   `-BlockSizeKiB 256,1024,4096,16384`.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.
+- Run `tools/compatibility_interop_smoke.ps1 -Configuration Release` after
+  changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared
+  compatibility stream writers. Non-SUZIP create formats must be readable by
+  independent standard readers, not only by SuperZip.
 - Release/deployment MSIs use the default `perMachine` scope, preselect
   `C:\Program Files\SuperZip`, and require normal Windows elevation. Local
   non-admin MSI tests must explicitly configure

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/resource_limits.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <istream>
@@ -9,11 +11,13 @@
 namespace superzip {
 
 // Purpose: Stream Bzip2-compressed bytes to a file with libbzip2-managed framing.
-// Inputs: Construct with `output_path`; callers write uncompressed bytes through the `std::ostream` interface.
-// Outputs: Writes a complete `.bz2` stream; throws on I/O or compressor failure.
+// Inputs: Construct with `output_path` and a 1-9 libbzip2 block-size `compression_level`; callers write uncompressed
+// bytes through the `std::ostream` interface. Outputs: Writes a complete `.bz2` stream; throws on I/O or compressor
+// failure.
 class Bzip2OutputStream final : public std::ostream {
-public:
-    explicit Bzip2OutputStream(const std::filesystem::path& output_path);
+  public:
+    explicit Bzip2OutputStream(const std::filesystem::path& output_path,
+                               int compression_level = kDefaultCompressionLevel);
     ~Bzip2OutputStream() override;
 
     Bzip2OutputStream(const Bzip2OutputStream&) = delete;
@@ -34,7 +38,7 @@ public:
     // Outputs: Returns `.bz2` bytes written so far.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };
@@ -43,7 +47,7 @@ private:
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
 // Outputs: Provides raw uncompressed bytes and validates libbzip2 CRC/state when drained.
 class Bzip2InputStream final : public std::istream {
-public:
+  public:
     explicit Bzip2InputStream(const std::filesystem::path& archive_path);
     ~Bzip2InputStream() override;
 
@@ -65,7 +69,7 @@ public:
     // Outputs: Returns bytes produced before EOF.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };

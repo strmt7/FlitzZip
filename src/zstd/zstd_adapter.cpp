@@ -41,9 +41,7 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
 std::string zstd_output_entry_name(const std::filesystem::path& archive_path) {
     auto filename = archive_path.filename().string();
     auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.size() > 5U && lower.ends_with(".zstd")) {
         filename.resize(filename.size() - 5U);
     } else if (lower.size() > 4U && lower.ends_with(".zst")) {
@@ -59,10 +57,16 @@ std::string zstd_output_entry_name(const std::filesystem::path& archive_path) {
 
 }  // namespace
 
-OperationStats compress_zstd(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create one `.zst` stream from one regular file with bounded libzstd compression.
+// Inputs: `sources` must contain one file, `output_archive` is the target, `compression_level` is 1-9, and
+// `progress_callback` receives snapshots. Outputs: Publishes a verified Zstandard file and returns telemetry, or throws
+// on invalid input, overwrite risk, or stream failure.
+OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
+                             const std::filesystem::path& output_archive, int compression_level,
+                             const ProgressCallback& progress_callback) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("Zstandard compression level must be between 1 and 9");
+    }
     if (sources.size() != 1U) {
         throw ArchiveError("Zstandard compatibility requires exactly one regular-file source");
     }
@@ -73,8 +77,7 @@ OperationStats compress_zstd(
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
-        std::filesystem::equivalent(source_file, output_archive, equivalent_error) &&
-        !equivalent_error) {
+        std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
         throw SecurityError("refusing to overwrite the Zstandard source file: " + output_archive.string());
     }
 
@@ -91,7 +94,7 @@ OperationStats compress_zstd(
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
     try {
-        ZstdOutputStream output(temporary.file);
+        ZstdOutputStream output(temporary.file, compression_level);
         std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -134,11 +137,11 @@ OperationStats compress_zstd(
     return stats;
 }
 
-OperationStats extract_zstd_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a single-file `.zst`/`.zstd` stream to a validated destination.
+// Inputs: `archive_path`, `destination`, `overwrite`, and `progress_callback` define the extraction run.
+// Outputs: Publishes the decoded file and returns telemetry, or throws on malformed streams or unsafe paths.
+OperationStats extract_zstd_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     const auto entry_name = zstd_output_entry_name(archive_path);

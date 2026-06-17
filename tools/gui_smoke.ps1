@@ -144,7 +144,7 @@ public static class SuperZipNativeUi {
 # Purpose: Put SuperZip in a stable visible state before PrintWindow capture.
 # Inputs: `Handle` is the SuperZip HWND.
 # Outputs: Requests foreground/top ordering without creating or closing other windows.
-function Set-SuperZipForeground {
+function Show-SuperZipForeground {
     param([IntPtr]$Handle)
     [void][SuperZipNativeUi]::ShowWindow($Handle, 5)
     $swpNoSize = 0x0001
@@ -184,7 +184,7 @@ function Assert-SuperZipVisibleForCapture {
 # Purpose: Build a Win32 mouse-coordinate LPARAM.
 # Inputs: `X` and `Y` are client-area physical pixel coordinates.
 # Outputs: Returns the LPARAM expected by mouse messages.
-function New-MouseLParam {
+function ConvertTo-MouseLParam {
     param(
         [int]$X,
         [int]$Y
@@ -204,7 +204,7 @@ function Invoke-SidebarClick {
     $scale = [double]$Dpi / 96.0
     $x = [int][Math]::Round(43 * $scale)
     $y = [int][Math]::Round((93 + ($PageIndex * 63)) * $scale)
-    $lparam = New-MouseLParam -X $x -Y $y
+    $lparam = ConvertTo-MouseLParam -X $x -Y $y
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $lparam)
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
 }
@@ -222,9 +222,35 @@ function Invoke-ClientClick {
     $scale = [double]$Dpi / 96.0
     $x = [int][Math]::Round($DesignX * $scale)
     $y = [int][Math]::Round($DesignY * $scale)
-    $lparam = New-MouseLParam -X $x -Y $y
+    $lparam = ConvertTo-MouseLParam -X $x -Y $y
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $lparam)
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
+}
+
+# Purpose: Drag one client-coordinate point to another in the SuperZip window.
+# Inputs: `Handle` is the HWND, `Dpi` maps design pixels, and coordinates are 96-DPI client pixels.
+# Outputs: Posts down/move/up mouse messages for resize and slider-style controls.
+function Invoke-ClientDrag {
+    param(
+        [IntPtr]$Handle,
+        [int]$Dpi,
+        [int]$StartX,
+        [int]$StartY,
+        [int]$EndX,
+        [int]$EndY
+    )
+    $scale = [double]$Dpi / 96.0
+    $startClientX = [int][Math]::Round($StartX * $scale)
+    $startClientY = [int][Math]::Round($StartY * $scale)
+    $endClientX = [int][Math]::Round($EndX * $scale)
+    $endClientY = [int][Math]::Round($EndY * $scale)
+    $start = ConvertTo-MouseLParam -X $startClientX -Y $startClientY
+    $end = ConvertTo-MouseLParam -X $endClientX -Y $endClientY
+    [void][SuperZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $start)
+    Start-Sleep -Milliseconds 60
+    [void][SuperZipNativeUi]::PostMessage($Handle, 0x0200, [IntPtr]1, $end)
+    Start-Sleep -Milliseconds 60
+    [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $end)
 }
 
 # Purpose: Inject a file-drop payload into the SuperZip window.
@@ -395,6 +421,56 @@ function Assert-DesignRectHasDetail {
     }
 }
 
+# Purpose: Assert that a design-space rectangle contains a specific UI color family.
+# Inputs: `Path` is a PNG screenshot, `Dpi` maps design pixels to physical pixels, and `Expected*` is an RGB target.
+# Outputs: Throws when too few pixels are close to the requested color.
+function Assert-DesignRectHasColor {
+    param(
+        [string]$Path,
+        [int]$Dpi,
+        [int]$Left,
+        [int]$Top,
+        [int]$Right,
+        [int]$Bottom,
+        [int]$ClientOffsetX = 0,
+        [int]$ClientOffsetY = 0,
+        [int]$ExpectedRed,
+        [int]$ExpectedGreen,
+        [int]$ExpectedBlue,
+        [int]$Tolerance = 32,
+        [int]$MinPixels = 8
+    )
+    $scale = [double]$Dpi / 96.0
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $leftPx = [Math]::Max(0, $ClientOffsetX + [int][Math]::Round($Left * $scale))
+        $topPx = [Math]::Max(0, $ClientOffsetY + [int][Math]::Round($Top * $scale))
+        $rightPx = [Math]::Min($bitmap.Width, $ClientOffsetX + [int][Math]::Round($Right * $scale))
+        $bottomPx = [Math]::Min($bitmap.Height, $ClientOffsetY + [int][Math]::Round($Bottom * $scale))
+        if ($rightPx -le $leftPx -or $bottomPx -le $topPx) {
+            throw "Invalid visual-color rectangle in $Path."
+        }
+        $matchingPixels = 0
+        for ($x = $leftPx; $x -lt $rightPx; $x++) {
+            for ($y = $topPx; $y -lt $bottomPx; $y++) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $redMatch = [Math]::Abs([int]$pixel.R - $ExpectedRed) -le $Tolerance
+                $greenMatch = [Math]::Abs([int]$pixel.G - $ExpectedGreen) -le $Tolerance
+                $blueMatch = [Math]::Abs([int]$pixel.B - $ExpectedBlue) -le $Tolerance
+                if ($redMatch -and $greenMatch -and $blueMatch) {
+                    $matchingPixels++
+                    if ($matchingPixels -ge $MinPixels) {
+                        return
+                    }
+                }
+            }
+        }
+        throw "Expected at least $MinPixels matching pixels in $Path, found $matchingPixels."
+    } finally {
+        $bitmap.Dispose()
+    }
+}
+
 # Purpose: Force a pending SuperZip repaint before capturing visual assertions.
 # Inputs: `Handle` is the SuperZip HWND to invalidate and update.
 # Outputs: Requests synchronous client repaint; throws only if Win32 capture validation later fails.
@@ -431,7 +507,7 @@ function Get-SampledUniqueColorCount {
 # Purpose: Capture the visible SuperZip window rectangle after foreground validation.
 # Inputs: `Rect` is the current window rectangle and `Width`/`Height` are physical pixel dimensions.
 # Outputs: Returns a bitmap copied from the visible screen.
-function New-ValidatedScreenWindowCapture {
+function Get-ValidatedScreenWindowCapture {
     param(
         [IntPtr]$Handle,
         [SuperZipNativeUi+RECT]$Rect,
@@ -470,7 +546,7 @@ function Save-SuperZipScreenshot {
 
     $lastUniqueColors = 0
     for ($attempt = 1; $attempt -le 6; ++$attempt) {
-        Set-SuperZipForeground -Handle $Handle
+        Show-SuperZipForeground -Handle $Handle
         Request-SuperZipRedraw -Handle $Handle
         Start-Sleep -Milliseconds (60 + ($attempt * 60))
 
@@ -496,9 +572,9 @@ function Save-SuperZipScreenshot {
         $lastUniqueColors = Get-SampledUniqueColorCount -Bitmap $bitmap -Width $width -Height $height
         if ($lastUniqueColors -lt 8) {
             $bitmap.Dispose()
-            Set-SuperZipForeground -Handle $Handle
+            Show-SuperZipForeground -Handle $Handle
             Start-Sleep -Milliseconds 120
-            $bitmap = New-ValidatedScreenWindowCapture -Handle $Handle -Rect $rect -Width $width -Height $height
+            $bitmap = Get-ValidatedScreenWindowCapture -Handle $Handle -Rect $rect -Width $width -Height $height
             $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
             $lastUniqueColors = Get-SampledUniqueColorCount -Bitmap $bitmap -Width $width -Height $height
             if ($lastUniqueColors -lt 8) {
@@ -634,6 +710,20 @@ try {
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $dropQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $dropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 136 -DesignY 146
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 136 -DesignY 146
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 136 -DesignY 184
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 136 -DesignY 184
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 420 -StartY 146 -EndX 455 -EndY 146
+    Start-Sleep -Milliseconds 180
+    $queueColumnPath = "${basePath}-Queue-AfterTicksAndResize$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $queueColumnPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $queueColumnPath -Dpi $windowDpi -Left 126 -Top 132 -Right 620 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 240 -DesignY 172
     Start-Sleep -Milliseconds 120
 
@@ -826,6 +916,15 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 92
     Start-Sleep -Milliseconds 250
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "GPU-UpdateSpeed" -OpenX 1050 -OpenY 446 -SelectX 1050 -SelectY 242 -MenuLeft 980 -MenuTop 98 -MenuRight 1158 -MenuBottom 420 -BasePath $basePath -Extension $extension
+    $gpuMonitorPath = "${basePath}-GPU-PerformanceMonitor$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $gpuMonitorPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 63 -ExpectedGreen 181 -ExpectedBlue 221
+    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 83 -ExpectedGreen 210 -ExpectedBlue 101
+    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 237 -ExpectedGreen 179 -ExpectedBlue 61
+    Assert-DesignRectHasColor -Path $gpuMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 6
     Start-Sleep -Milliseconds 250

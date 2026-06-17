@@ -17,7 +17,6 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kBzip2StreamBufferBytes = 64U * 1024U;
-constexpr int kBzip2BlockSize100k = 9;
 constexpr int kBzip2Verbosity = 0;
 constexpr int kBzip2WorkFactor = 30;
 
@@ -85,8 +84,8 @@ std::uint64_t bzip2_file_size(const std::filesystem::path& path) {
 }
 
 // Purpose: Write all bytes to a binary output stream while updating a telemetry counter.
-// Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is updated.
-// Outputs: Appends bytes or throws on stream failure.
+// Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is
+// updated. Outputs: Appends bytes or throws on stream failure.
 void write_counted(std::ofstream& output, const char* bytes, std::size_t size, std::uint64_t& written) {
     if (size == 0U) {
         return;
@@ -98,15 +97,27 @@ void write_counted(std::ofstream& output, const char* bytes, std::size_t size, s
     checked_add_stream_bytes(written, size, "Bzip2 output");
 }
 
+// Purpose: Validate a product compression level before passing it to libbzip2.
+// Inputs: `compression_level` is the caller-selected 1-9 block-size level.
+// Outputs: Returns the validated libbzip2 block size or throws `ArchiveError`.
+int bzip2_compression_level(int compression_level) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("Bzip2 compression level must be between 1 and 9");
+    }
+    return compression_level;
+}
+
 }  // namespace
 
 class Bzip2OutputStream::Buffer final : public std::streambuf {
-public:
-    explicit Buffer(const std::filesystem::path& output_path) : output_(output_path, std::ios::binary | std::ios::trunc) {
+  public:
+    explicit Buffer(const std::filesystem::path& output_path, int compression_level)
+        : output_(output_path, std::ios::binary | std::ios::trunc) {
         if (!output_) {
             throw ArchiveError("cannot create Bzip2 stream: " + output_path.string());
         }
-        const auto status = BZ2_bzCompressInit(&stream_, kBzip2BlockSize100k, kBzip2Verbosity, kBzip2WorkFactor);
+        const auto status =
+            BZ2_bzCompressInit(&stream_, bzip2_compression_level(compression_level), kBzip2Verbosity, kBzip2WorkFactor);
         if (status != BZ_OK) {
             throw ArchiveError(std::string("failed to initialize Bzip2 compressor: ") + bzip2_status_name(status));
         }
@@ -137,7 +148,8 @@ public:
             stream_.avail_out = static_cast<unsigned int>(output_buffer_.size());
             status = BZ2_bzCompress(&stream_, BZ_FINISH);
             if (status != BZ_FINISH_OK && status != BZ_STREAM_END) {
-                throw ArchiveError(std::string("Bzip2 compression failed during finalization: ") + bzip2_status_name(status));
+                throw ArchiveError(std::string("Bzip2 compression failed during finalization: ") +
+                                   bzip2_status_name(status));
             }
             const auto produced = output_buffer_.size() - stream_.avail_out;
             write_counted(output_, output_buffer_.data(), produced, output_bytes_);
@@ -165,7 +177,7 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type overflow(int_type ch) override {
         if (traits_type::eq_int_type(ch, traits_type::eof())) {
             return traits_type::not_eof(ch);
@@ -187,7 +199,7 @@ protected:
         return output_ ? 0 : -1;
     }
 
-private:
+  private:
     // Purpose: Compress one caller-provided uncompressed byte range.
     // Inputs: `data` points to bytes and `size` is the byte count.
     // Outputs: Writes compressed bytes to `output_` and updates byte counters.
@@ -198,7 +210,8 @@ private:
         checked_add_stream_bytes(input_bytes_, size, "Bzip2 input");
         std::size_t offset = 0;
         while (offset < size) {
-            const auto chunk = std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
+            const auto chunk =
+                std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
             std::copy_n(data + offset, chunk, input_buffer_.data());
             stream_.next_in = reinterpret_cast<char*>(input_buffer_.data());
             stream_.avail_in = static_cast<unsigned int>(chunk);
@@ -227,7 +240,7 @@ private:
 };
 
 class Bzip2InputStream::Buffer final : public std::streambuf {
-public:
+  public:
     explicit Buffer(const std::filesystem::path& archive_path)
         : input_(archive_path, std::ios::binary), archive_size_(bzip2_file_size(archive_path)) {
         if (!input_) {
@@ -272,7 +285,7 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type underflow() override {
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
@@ -285,7 +298,7 @@ protected:
         return traits_type::eof();
     }
 
-private:
+  private:
     // Purpose: Fill the get area with newly decompressed bytes or finish validation.
     // Inputs: None.
     // Outputs: Updates `setg` when bytes are produced; throws on malformed Bzip2 payloads.
@@ -295,7 +308,8 @@ private:
         }
         while (true) {
             if (stream_.avail_in == 0U && compressed_remaining_ > 0U) {
-                const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer_.size(), compressed_remaining_));
+                const auto to_read =
+                    static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer_.size(), compressed_remaining_));
                 input_.read(reinterpret_cast<char*>(input_buffer_.data()), static_cast<std::streamsize>(to_read));
                 if (static_cast<std::size_t>(input_.gcount()) != to_read) {
                     throw ArchiveError("Bzip2 compressed payload is truncated");
@@ -340,7 +354,8 @@ private:
             const auto end_status = BZ2_bzDecompressEnd(&stream_);
             stream_active_ = false;
             if (end_status != BZ_OK) {
-                throw ArchiveError(std::string("failed to finalize Bzip2 decompressor: ") + bzip2_status_name(end_status));
+                throw ArchiveError(std::string("failed to finalize Bzip2 decompressor: ") +
+                                   bzip2_status_name(end_status));
             }
         }
         finished_ = true;
@@ -357,8 +372,11 @@ private:
     std::uint64_t output_bytes_ = 0;
 };
 
-Bzip2OutputStream::Bzip2OutputStream(const std::filesystem::path& output_path)
-    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path)) {
+// Purpose: Construct an output stream that writes a complete Bzip2 member.
+// Inputs: `output_path` is the target file and `compression_level` is the libbzip2 1-9 block-size setting.
+// Outputs: Installs an owned stream buffer or throws on setup failure.
+Bzip2OutputStream::Bzip2OutputStream(const std::filesystem::path& output_path, int compression_level)
+    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path, compression_level)) {
     rdbuf(buffer_.get());
 }
 

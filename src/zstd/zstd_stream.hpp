@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/resource_limits.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <istream>
@@ -9,11 +11,13 @@
 namespace superzip {
 
 // Purpose: Stream Zstandard-compressed bytes to a file with libzstd-managed framing.
-// Inputs: Construct with `output_path`; callers write uncompressed bytes through the `std::ostream` interface.
-// Outputs: Writes a complete `.zst` stream with a content checksum; throws on I/O or compressor failure.
+// Inputs: Construct with `output_path` and a 1-9 Zstandard `compression_level`; callers write uncompressed bytes
+// through the `std::ostream` interface. Outputs: Writes a complete `.zst` stream with a content checksum; throws on I/O
+// or compressor failure.
 class ZstdOutputStream final : public std::ostream {
-public:
-    explicit ZstdOutputStream(const std::filesystem::path& output_path);
+  public:
+    explicit ZstdOutputStream(const std::filesystem::path& output_path,
+                              int compression_level = kDefaultCompressionLevel);
     ~ZstdOutputStream() override;
 
     ZstdOutputStream(const ZstdOutputStream&) = delete;
@@ -34,7 +38,7 @@ public:
     // Outputs: Returns `.zst` bytes written so far.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };
@@ -43,7 +47,7 @@ private:
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
 // Outputs: Provides raw uncompressed bytes and validates Zstandard framing/checks when drained.
 class ZstdInputStream final : public std::istream {
-public:
+  public:
     explicit ZstdInputStream(const std::filesystem::path& archive_path);
     ~ZstdInputStream() override;
 
@@ -65,7 +69,7 @@ public:
     // Outputs: Returns bytes produced before EOF.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };

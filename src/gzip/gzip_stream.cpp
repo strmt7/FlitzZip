@@ -58,8 +58,8 @@ std::uint64_t gzip_file_size(const std::filesystem::path& path) {
 }
 
 // Purpose: Write all bytes to a binary output stream while updating a telemetry counter.
-// Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is updated.
-// Outputs: Appends bytes or throws on stream failure.
+// Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is
+// updated. Outputs: Appends bytes or throws on stream failure.
 void write_counted(std::ofstream& output, const unsigned char* bytes, std::size_t size, std::uint64_t& written) {
     if (size == 0U) {
         return;
@@ -69,6 +69,16 @@ void write_counted(std::ofstream& output, const unsigned char* bytes, std::size_
         throw ArchiveError("failed to write Gzip stream");
     }
     checked_add_stream_bytes(written, size, "Gzip output");
+}
+
+// Purpose: Validate a product compression level before passing it to miniz.
+// Inputs: `compression_level` is the caller-selected 1-9 level.
+// Outputs: Returns the validated miniz level or throws `ArchiveError`.
+int gzip_compression_level(int compression_level) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("Gzip compression level must be between 1 and 9");
+    }
+    return compression_level;
 }
 
 // Purpose: Write a little-endian 32-bit Gzip trailer field.
@@ -88,10 +98,8 @@ void write_gzip_le32(std::ofstream& output, std::uint32_t value, std::uint64_t& 
 // Inputs: `bytes` points to at least four bytes.
 // Outputs: Returns the decoded value.
 std::uint32_t read_gzip_le32(const unsigned char* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24U);
+    return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
 }
 
 // Purpose: Convert an unsigned file offset to the signed iostream offset type.
@@ -116,14 +124,11 @@ void seek_gzip_input(std::ifstream& input, std::uint64_t offset, const char* con
 }
 
 // Purpose: Advance over a bounded optional Gzip header field.
-// Inputs: `input` is positioned by caller, `offset` is updated, `bytes` is the skip count, `limit` is the compressed-data limit, and `field` names the field.
-// Outputs: Advances position, or throws when the field overlaps payload/trailer.
-void skip_gzip_header_bytes(
-    std::ifstream& input,
-    std::uint64_t& offset,
-    std::uint64_t bytes,
-    std::uint64_t limit,
-    const char* field) {
+// Inputs: `input` is positioned by caller, `offset` is updated, `bytes` is the skip count, `limit` is the
+// compressed-data limit, and `field` names the field. Outputs: Advances position, or throws when the field overlaps
+// payload/trailer.
+void skip_gzip_header_bytes(std::ifstream& input, std::uint64_t& offset, std::uint64_t bytes, std::uint64_t limit,
+                            const char* field) {
     if (bytes > limit - offset) {
         throw ArchiveError(std::string("Gzip ") + field + " field exceeds header bounds");
     }
@@ -132,13 +137,9 @@ void skip_gzip_header_bytes(
 }
 
 // Purpose: Skip a bounded zero-terminated optional Gzip header string.
-// Inputs: `input` is positioned at the field, `offset` is updated, `limit` is the compressed-data limit, and `field` names the field.
-// Outputs: Positions after the NUL terminator, or throws on malformed metadata.
-void skip_gzip_zero_string(
-    std::ifstream& input,
-    std::uint64_t& offset,
-    std::uint64_t limit,
-    const char* field) {
+// Inputs: `input` is positioned at the field, `offset` is updated, `limit` is the compressed-data limit, and `field`
+// names the field. Outputs: Positions after the NUL terminator, or throws on malformed metadata.
+void skip_gzip_zero_string(std::ifstream& input, std::uint64_t& offset, std::uint64_t limit, const char* field) {
     while (offset < limit) {
         char value = 0;
         input.read(&value, 1);
@@ -187,8 +188,8 @@ ParsedGzipHeader parse_gzip_stream_header(std::ifstream& input, std::uint64_t fi
             throw ArchiveError("failed to read Gzip extra field length");
         }
         offset += extra_size.size();
-        const auto bytes = static_cast<std::uint64_t>(extra_size[0]) |
-            (static_cast<std::uint64_t>(extra_size[1]) << 8U);
+        const auto bytes =
+            static_cast<std::uint64_t>(extra_size[0]) | (static_cast<std::uint64_t>(extra_size[1]) << 8U);
         skip_gzip_header_bytes(input, offset, bytes, compressed_limit, "extra");
     }
     if ((flags & kGzipFlagName) != 0U) {
@@ -221,14 +222,19 @@ ParsedGzipHeader parse_gzip_stream_header(std::ifstream& input, std::uint64_t fi
 }  // namespace
 
 class GzipOutputStream::Buffer final : public std::streambuf {
-public:
-    explicit Buffer(const std::filesystem::path& output_path) : output_(output_path, std::ios::binary | std::ios::trunc) {
+  public:
+    // Purpose: Open a Gzip output file and initialize the raw-deflate encoder.
+    // Inputs: `output_path` is the destination and `compression_level` is validated as 1-9.
+    // Outputs: Creates the wrapper header and active compressor or throws on I/O/encoder failure.
+    explicit Buffer(const std::filesystem::path& output_path, int compression_level)
+        : output_(output_path, std::ios::binary | std::ios::trunc) {
         if (!output_) {
             throw ArchiveError("cannot create Gzip stream: " + output_path.string());
         }
         const std::array<unsigned char, 10> header{0x1F, 0x8B, 8U, 0U, 0U, 0U, 0U, 0U, 0U, 255U};
         write_counted(output_, header.data(), header.size(), output_bytes_);
-        if (mz_deflateInit2(&stream_, MZ_BEST_COMPRESSION, MZ_DEFLATED, -MZ_DEFAULT_WINDOW_BITS, 9, MZ_DEFAULT_STRATEGY) != MZ_OK) {
+        if (mz_deflateInit2(&stream_, gzip_compression_level(compression_level), MZ_DEFLATED, -MZ_DEFAULT_WINDOW_BITS,
+                            9, MZ_DEFAULT_STRATEGY) != MZ_OK) {
             throw ArchiveError("failed to initialize Gzip compressor");
         }
         stream_active_ = true;
@@ -289,7 +295,7 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type overflow(int_type ch) override {
         if (traits_type::eq_int_type(ch, traits_type::eof())) {
             return traits_type::not_eof(ch);
@@ -311,7 +317,7 @@ protected:
         return output_ ? 0 : -1;
     }
 
-private:
+  private:
     // Purpose: Deflate one caller-provided uncompressed byte range.
     // Inputs: `data` points to bytes and `size` is the byte count.
     // Outputs: Writes compressed bytes to `output_` and updates CRC/ISIZE state.
@@ -323,7 +329,8 @@ private:
         checked_add_stream_bytes(input_bytes_, size, "Gzip input");
         std::size_t offset = 0;
         while (offset < size) {
-            const auto chunk = std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
+            const auto chunk =
+                std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
             std::copy_n(data + offset, chunk, input_buffer_.data());
             stream_.next_in = input_buffer_.data();
             stream_.avail_in = static_cast<unsigned int>(chunk);
@@ -353,7 +360,10 @@ private:
 };
 
 class GzipInputStream::Buffer final : public std::streambuf {
-public:
+  public:
+    // Purpose: Open and initialize a bounded raw-deflate reader for one Gzip stream.
+    // Inputs: `archive_path` is an existing `.gz` stream with a validated header/trailer.
+    // Outputs: Prepares the get area and decompressor state, or throws on I/O/format failure.
     explicit Buffer(const std::filesystem::path& archive_path)
         : input_(archive_path, std::ios::binary), archive_size_(gzip_file_size(archive_path)) {
         if (!input_) {
@@ -367,7 +377,8 @@ public:
         }
         stream_active_ = true;
         crc32_ = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, nullptr, 0));
-        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()));
+        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+             reinterpret_cast<char*>(output_buffer_.data()));
     }
 
     ~Buffer() override {
@@ -381,7 +392,8 @@ public:
     // Outputs: Throws when the Gzip member is incomplete or invalid.
     void finish() {
         while (!finished_) {
-            setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()));
+            setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+                 reinterpret_cast<char*>(output_buffer_.data()));
             fill_output();
         }
     }
@@ -400,12 +412,13 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type underflow() override {
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
         }
-        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()));
+        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+             reinterpret_cast<char*>(output_buffer_.data()));
         fill_output();
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
@@ -413,7 +426,7 @@ protected:
         return traits_type::eof();
     }
 
-private:
+  private:
     // Purpose: Fill the get area with newly decompressed bytes or finish validation.
     // Inputs: None.
     // Outputs: Updates `setg` when bytes are produced; throws on malformed Gzip payloads.
@@ -423,7 +436,8 @@ private:
         }
         while (true) {
             if (stream_.avail_in == 0U && compressed_remaining_ > 0U) {
-                const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer_.size(), compressed_remaining_));
+                const auto to_read =
+                    static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer_.size(), compressed_remaining_));
                 input_.read(reinterpret_cast<char*>(input_buffer_.data()), static_cast<std::streamsize>(to_read));
                 if (static_cast<std::size_t>(input_.gcount()) != to_read) {
                     throw ArchiveError("Gzip compressed payload is truncated");
@@ -443,10 +457,8 @@ private:
             if (produced > 0U) {
                 crc32_ = static_cast<std::uint32_t>(mz_crc32(crc32_, output_buffer_.data(), produced));
                 checked_add_stream_bytes(output_bytes_, produced, "Gzip output");
-                setg(
-                    reinterpret_cast<char*>(output_buffer_.data()),
-                    reinterpret_cast<char*>(output_buffer_.data()),
-                    reinterpret_cast<char*>(output_buffer_.data() + produced));
+                setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+                     reinterpret_cast<char*>(output_buffer_.data() + produced));
                 return;
             }
             if (status == MZ_STREAM_END) {
@@ -492,8 +504,11 @@ private:
     std::uint64_t output_bytes_ = 0;
 };
 
-GzipOutputStream::GzipOutputStream(const std::filesystem::path& output_path)
-    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path)) {
+// Purpose: Construct an output stream that writes a complete Gzip member.
+// Inputs: `output_path` is the target file and `compression_level` is the miniz 1-9 setting.
+// Outputs: Installs an owned stream buffer or throws on setup failure.
+GzipOutputStream::GzipOutputStream(const std::filesystem::path& output_path, int compression_level)
+    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path, compression_level)) {
     rdbuf(buffer_.get());
 }
 

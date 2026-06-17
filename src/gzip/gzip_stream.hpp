@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/resource_limits.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <istream>
@@ -9,11 +11,13 @@
 namespace superzip {
 
 // Purpose: Stream Gzip-compressed bytes to a file while writing a valid single-member wrapper.
-// Inputs: Construct with `output_path`; callers write uncompressed bytes through the `std::ostream` interface.
-// Outputs: Writes Gzip header, raw deflate payload, and CRC32/ISIZE trailer; throws on I/O or compressor failure.
+// Inputs: Construct with `output_path` and a 1-9 miniz `compression_level`; callers write uncompressed bytes through
+// the `std::ostream` interface. Outputs: Writes Gzip header, raw deflate payload, and CRC32/ISIZE trailer; throws on
+// I/O or compressor failure.
 class GzipOutputStream final : public std::ostream {
-public:
-    explicit GzipOutputStream(const std::filesystem::path& output_path);
+  public:
+    explicit GzipOutputStream(const std::filesystem::path& output_path,
+                              int compression_level = kDefaultCompressionLevel);
     ~GzipOutputStream() override;
 
     GzipOutputStream(const GzipOutputStream&) = delete;
@@ -34,7 +38,7 @@ public:
     // Outputs: Returns header, compressed payload, and trailer bytes written so far.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };
@@ -43,7 +47,7 @@ private:
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
 // Outputs: Provides raw uncompressed bytes and validates CRC32/ISIZE when the stream is drained.
 class GzipInputStream final : public std::istream {
-public:
+  public:
     explicit GzipInputStream(const std::filesystem::path& archive_path);
     ~GzipInputStream() override;
 
@@ -65,7 +69,7 @@ public:
     // Outputs: Returns bytes produced before modulo truncation for Gzip ISIZE.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };

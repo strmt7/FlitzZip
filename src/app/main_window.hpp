@@ -3,11 +3,13 @@
 #include "core/progress.hpp"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -45,6 +47,7 @@ enum class DropdownId {
     ExtractOverwrite,
     HistoryOperation,
     HistoryStatus,
+    GpuUpdateSpeed,
     PreferencesMemoryPolicy,
     PreferencesLogLevel,
     PreferencesLogRetention,
@@ -59,14 +62,24 @@ struct PerformanceMonitorSample {
     double io_read_bytes_per_second = 0.0;
     double io_write_bytes_per_second = 0.0;
     std::uint64_t private_bytes = 0;
+    std::uint64_t system_memory_total_bytes = 0;
+    std::uint64_t system_memory_used_bytes = 0;
     std::uint64_t vram_total_bytes = 0;
     std::uint64_t vram_free_bytes = 0;
+};
+
+struct HistoryEntry {
+    std::string operation;
+    std::string subject;
+    std::string detail;
+    bool success = true;
 };
 
 struct UiState {
     Page page = Page::Queue;
     std::vector<std::filesystem::path> queued_paths;
-    std::vector<std::string> history;
+    std::vector<bool> queued_enabled;
+    std::vector<HistoryEntry> history;
     std::string status = "Ready";
     std::string gpu_status;
     std::string gpu_runtime_name;
@@ -84,6 +97,7 @@ struct UiState {
     int log_retention_index = 0;
     int history_operation_filter_index = 0;
     int history_status_filter_index = 0;
+    int performance_update_seconds = 1;
     bool open_destination_after_operation = false;
     bool confirm_before_deleting = true;
     bool show_operation_summary = true;
@@ -125,6 +139,16 @@ class MainWindow {
         RECT add_folder{};
         RECT clear{};
         RECT table{};
+    };
+
+    struct QueueColumnLayout {
+        RECT header_checkbox{};
+        RECT checkbox{};
+        RECT name{};
+        RECT size{};
+        RECT type{};
+        RECT path{};
+        std::array<RECT, 3> resize_grips{};
     };
 
     struct CompressLayout {
@@ -319,13 +343,26 @@ class MainWindow {
     // Purpose: Draw the live performance monitor section on the GPU diagnostics page.
     // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `sample` is the latest live counter snapshot.
     // Outputs: Renders CPU, memory, process I/O, and GPU/VRAM cards with bounded bars.
-    void draw_performance_monitor(HDC dc, const RECT& monitor, const PerformanceMonitorSample& sample);
+    void draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state);
 
     // Purpose: Draw one metric card inside the live performance monitor.
-    // Inputs: `dc` is the target; text/value fields are preformatted; `ratio` controls the normalized bar fill.
-    // Outputs: Renders a bordered metric card without overflowing text.
+    // Inputs: `dc` is the target; text/value fields are preformatted; `history` contains normalized samples.
+    // Outputs: Renders a bordered Task Manager-style history graph without overflowing text.
     void draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
-                                       const std::wstring& detail, double ratio, COLORREF color);
+                                       const std::wstring& detail, std::span<const double> history, COLORREF color);
+
+    // Purpose: Draw one dual-line metric card inside the live performance monitor.
+    // Inputs: `dc` is the target; `primary_history` and `secondary_history` are normalized samples.
+    // Outputs: Renders read/write or similar paired histories with a shared graph scale.
+    void draw_dual_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
+                                            const std::wstring& detail, std::span<const double> primary_history,
+                                            std::span<const double> secondary_history, COLORREF primary,
+                                            COLORREF secondary);
+
+    // Purpose: Draw a slim operation progress bar under an action button.
+    // Inputs: `dc`, `rect`, `state`, and `operation` describe the matching active job.
+    // Outputs: Renders only while the requested operation is active.
+    void draw_operation_progress_bar(HDC dc, const RECT& rect, const UiState& state, OperationKind operation);
 
     // Purpose: Draw the preferences page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
@@ -348,9 +385,9 @@ class MainWindow {
     void draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id);
 
     // Purpose: Draw a DPI-scaled checkbox row.
-    // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
-    // styling. Outputs: Renders a checkbox and label into `dc`.
-    void draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool enabled);
+    // Inputs: `dc`, `rect`, `text`, `checked`, and `interactive` describe the visual state.
+    // Outputs: Renders a checkbox and label into `dc`.
+    void draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool checked, bool interactive = true);
 
     // Purpose: Draw a form field or select-style value box.
     // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is the current display value, and
@@ -397,6 +434,41 @@ class MainWindow {
     // Outputs: Mutates the state, writes status text, queues repaint, and returns true.
     bool checkbox_bool_setting(bool UiState::* member, const char* status);
 
+    // Purpose: Compute Queue table column rectangles from the current resizable widths.
+    // Inputs: `table` is the visible Queue table rectangle and `row` is the row or header span.
+    // Outputs: Returns fixed checkbox and resizable data-column rectangles.
+    [[nodiscard]] QueueColumnLayout queue_column_layout(const RECT& table, const RECT& row) const;
+
+    // Purpose: Keep queue selection flags aligned with queued paths while mutex is held.
+    // Inputs: None; reads and mutates `state_`.
+    // Outputs: Adds missing enabled flags, removes stale flags, and normalizes selected index.
+    void normalize_queue_selection_locked();
+
+    // Purpose: Toggle every Queue row selection from the header checkbox.
+    // Inputs: None; requires at least one queued item to have an effect.
+    // Outputs: Enables or disables every queued item and repaints.
+    bool toggle_all_queue_items();
+
+    // Purpose: Toggle a single Queue row checkbox.
+    // Inputs: `index` is the queue row to mutate.
+    // Outputs: Updates row enabled state, focus selection, and repaint status.
+    bool toggle_queue_item(std::size_t index);
+
+    // Purpose: Start a Queue column resize drag.
+    // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate.
+    // Outputs: Captures baseline column widths for subsequent mouse-move updates.
+    void begin_queue_column_resize(int separator, int x);
+
+    // Purpose: Update active Queue column resize drag.
+    // Inputs: `x` is the current client mouse coordinate.
+    // Outputs: Mutates adjacent data column widths within readable header minimums.
+    void update_queue_column_resize(int x);
+
+    // Purpose: End any active Queue column resize drag.
+    // Inputs: None.
+    // Outputs: Clears resize state and queues a repaint if a drag was active.
+    void end_queue_column_resize();
+
     // Purpose: Handle Queue page hit-testing and commands.
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
     // Outputs: Returns true when a queue control or row selection consumed the click.
@@ -421,6 +493,11 @@ class MainWindow {
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
     // Outputs: Returns true when the security review command consumed the click.
     bool handle_security_click(const RECT& content, int x, int y);
+
+    // Purpose: Start a background security verification pass for visible archive settings.
+    // Inputs: None; reads queue and opt-in settings from UI state.
+    // Outputs: Launches a Verify worker or reports missing queue input.
+    void start_security_verify();
 
     // Purpose: Handle GPU page hit-testing and commands.
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
@@ -451,6 +528,11 @@ class MainWindow {
     // Inputs: `id` identifies the dropdown and `option_index` is the zero-based selected row.
     // Outputs: Mutates the corresponding UI value, closes the menu, and queues a repaint.
     void select_dropdown_option(DropdownId id, int option_index);
+
+    // Purpose: Re-arm the live performance sampling timer after a user setting change.
+    // Inputs: `seconds` is clamped by callers to the supported 1-10 second range.
+    // Outputs: Sets the Win32 timer interval without creating additional timers.
+    void reset_performance_timer(int seconds);
 
     // Purpose: Change the active application page.
     // Inputs: `page` is the destination page enum value.
@@ -511,6 +593,11 @@ class MainWindow {
     // Inputs: `line` is a display string and should not include secrets.
     // Outputs: Mutates history state.
     void append_history(const std::string& line);
+
+    // Purpose: Add a structured operation result line to the in-memory session history.
+    // Inputs: `operation`, `subject`, `detail`, and `success` describe one completed operation.
+    // Outputs: Mutates history state.
+    void append_history_entry(std::string operation, std::string subject, std::string detail, bool success);
 
     // Purpose: Refresh visible AMD GPU status text.
     // Inputs: None.
@@ -610,6 +697,13 @@ class MainWindow {
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
     bool transition_toggle_to_ = false;
+    std::array<int, 4> queue_column_widths_{260, 110, 110, 460};
+    std::array<int, 4> queue_column_resize_start_{260, 110, 110, 460};
+    int queue_column_resize_separator_ = -1;
+    int queue_column_resize_start_x_ = 0;
+    std::array<PerformanceMonitorSample, 96> performance_history_{};
+    std::size_t performance_history_count_ = 0;
+    std::size_t performance_history_next_ = 0;
     POINT mouse_position_{-1, -1};
     POINT button_release_point_{-1, -1};
     bool mouse_inside_client_ = false;

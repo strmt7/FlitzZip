@@ -378,6 +378,7 @@ function Get-SuperZipVerificationPlan {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "brand-assets" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/verify_brand_assets.ps1") -Reason "brand assets changed or broad verification requires logo single-source-of-truth validation")
         }
         if ($scope.touchesArchiveParser -or $scope.fullEscalationRequired) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "compatibility-interop-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/compatibility_interop_smoke.ps1", "-Configuration", "Release") -Reason "compatibility archive changes must prove standard container outputs open in independent Windows readers")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "short-fuzz-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/fuzz.ps1", "-Runs", "16") -Reason "archive parser or broad changes require a bounded sanitizer/fuzzer smoke")
         }
         if ($scope.touchesPackaging -or $scope.fullEscalationRequired) {

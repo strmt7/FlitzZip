@@ -135,7 +135,8 @@ void copy_file_to_tar(const std::filesystem::path& source, std::ostream& output,
 // Purpose: Fill a fixed-size TAR header string field.
 // Inputs: `header` is the mutable header block, `offset`/`length` select the field, and `value` is ASCII metadata.
 // Outputs: Copies the value and leaves trailing NUL bytes; throws when the value does not fit.
-void put_tar_string(std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length, const std::string& value) {
+void put_tar_string(std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length,
+                    const std::string& value) {
     if (value.size() > length) {
         throw ArchiveError("TAR header field is too long: " + value);
     }
@@ -145,7 +146,8 @@ void put_tar_string(std::array<char, kTarBlockSize>& header, std::size_t offset,
 // Purpose: Write a positive TAR numeric field using octal or POSIX base-256 encoding.
 // Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is the numeric value.
 // Outputs: Encodes the field in-place; throws when the value cannot fit.
-void put_tar_number(std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length, std::uint64_t value) {
+void put_tar_number(std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length,
+                    std::uint64_t value) {
     const auto octal_digits = length - 1U;
     std::uint64_t octal_limit = 1;
     for (std::size_t i = 0; i < octal_digits; ++i) {
@@ -222,13 +224,10 @@ std::optional<TarHeaderName> split_ustar_name(const std::string& path) {
 }
 
 // Purpose: Build one TAR header block for a file, directory, or metadata payload.
-// Inputs: `path` is the header path, `typeflag` is the TAR entry type, `size` is payload size, and `mode` is the POSIX mode bits.
-// Outputs: Returns a complete checksummed 512-byte header block.
-std::array<char, kTarBlockSize> make_tar_header(
-    const std::string& path,
-    char typeflag,
-    std::uint64_t size,
-    std::uint32_t mode) {
+// Inputs: `path` is the header path, `typeflag` is the TAR entry type, `size` is payload size, and `mode` is the POSIX
+// mode bits. Outputs: Returns a complete checksummed 512-byte header block.
+std::array<char, kTarBlockSize> make_tar_header(const std::string& path, char typeflag, std::uint64_t size,
+                                                std::uint32_t mode) {
     auto fields = split_ustar_name(path);
     if (!fields) {
         throw ArchiveError("TAR path exceeds USTAR header limits without PAX metadata: " + path);
@@ -290,14 +289,10 @@ void write_pax_path_if_needed(std::ostream& output, const std::string& path, std
 }
 
 // Purpose: Emit a TAR header that may rely on an immediately preceding PAX path override.
-// Inputs: `output` is the TAR stream, `path` is the full archive path, `typeflag` and `size` define the entry, and `ordinal` labels optional PAX metadata.
-// Outputs: Writes one header and optional PAX metadata.
-void write_entry_header(
-    std::ostream& output,
-    const std::string& path,
-    char typeflag,
-    std::uint64_t size,
-    std::uint64_t ordinal) {
+// Inputs: `output` is the TAR stream, `path` is the full archive path, `typeflag` and `size` define the entry, and
+// `ordinal` labels optional PAX metadata. Outputs: Writes one header and optional PAX metadata.
+void write_entry_header(std::ostream& output, const std::string& path, char typeflag, std::uint64_t size,
+                        std::uint64_t ordinal) {
     write_pax_path_if_needed(output, path, ordinal);
     const auto header_path = split_ustar_name(path).has_value() ? path : "superzip-pax-entry";
     const auto header = make_tar_header(header_path, typeflag, size, typeflag == '5' ? 0755 : 0644);
@@ -308,9 +303,7 @@ void write_entry_header(
 // Inputs: `header` is one 512-byte TAR block.
 // Outputs: Returns true when all bytes are zero.
 bool is_zero_block(const std::array<char, kTarBlockSize>& header) {
-    return std::ranges::all_of(header, [](char ch) {
-        return ch == '\0';
-    });
+    return std::ranges::all_of(header, [](char ch) { return ch == '\0'; });
 }
 
 // Purpose: Extract a NUL-terminated string from a fixed TAR header field.
@@ -352,11 +345,8 @@ std::uint64_t parse_tar_octal(std::span<const char> field, const char* label) {
 // Purpose: Parse a positive TAR numeric field encoded as octal or POSIX base-256.
 // Inputs: `header` is the source block and `offset`/`length` select the numeric field.
 // Outputs: Returns the decoded value; throws on malformed or overflowing data.
-std::uint64_t parse_tar_number(
-    const std::array<char, kTarBlockSize>& header,
-    std::size_t offset,
-    std::size_t length,
-    const char* label) {
+std::uint64_t parse_tar_number(const std::array<char, kTarBlockSize>& header, std::size_t offset, std::size_t length,
+                               const char* label) {
     const auto field = std::span<const char>(header.data() + offset, length);
     if ((static_cast<unsigned char>(field.front()) & 0x80U) == 0) {
         return parse_tar_octal(field, label);
@@ -403,8 +393,8 @@ std::string tar_entry_path(const std::array<char, kTarBlockSize>& header, Pendin
 }
 
 // Purpose: Advance an input stream past a TAR payload and its padding.
-// Inputs: `input` is positioned at payload start, `size` is the payload byte count, and `seekable` selects seek or discard mode.
-// Outputs: Moves to the next header or throws on invalid seek.
+// Inputs: `input` is positioned at payload start, `size` is the payload byte count, and `seekable` selects seek or
+// discard mode. Outputs: Moves to the next header or throws on invalid seek.
 void skip_tar_payload(std::istream& input, std::uint64_t size, bool seekable) {
     const auto padded = checked_add_tar_bytes(size, tar_padding(size), "TAR payload size overflows");
     if (!seekable) {
@@ -492,8 +482,9 @@ std::string parse_gnu_long_name(std::string payload) {
 }
 
 // Purpose: Scan a TAR stream and validate metadata before any extraction writes occur.
-// Inputs: `input` is positioned at the TAR start, `source_label` names diagnostics, and `seekable` controls payload skipping strategy.
-// Outputs: Returns validated entry metadata and total file bytes; throws on malformed or unsafe TAR records.
+// Inputs: `input` is positioned at the TAR start, `source_label` names diagnostics, and `seekable` controls payload
+// skipping strategy. Outputs: Returns validated entry metadata and total file bytes; throws on malformed or unsafe TAR
+// records.
 TarScanResult scan_tar_stream(std::istream& input, const std::string& source_label, bool seekable) {
     (void)source_label;
     TarScanResult result;
@@ -541,7 +532,8 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
             }
             const bool directory = typeflag == '5';
             if (!directory) {
-                result.total_file_bytes = checked_add_tar_bytes(result.total_file_bytes, size, "TAR uncompressed size overflows");
+                result.total_file_bytes =
+                    checked_add_tar_bytes(result.total_file_bytes, size, "TAR uncompressed size overflows");
             }
             result.entries.push_back(TarEntryMetadata{
                 .path = entry_path,
@@ -585,13 +577,11 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Copy one already-positioned TAR payload from a stream to a verified temporary file.
-// Inputs: `input` is positioned at payload start, `entry` supplies size/path, `target` is the final extraction path, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file atomically and consumes payload padding, or throws.
-void extract_tar_stream_file_payload(
-    std::istream& input,
-    const TarEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is positioned at payload start, `entry` supplies size/path, `target` is the final extraction path,
+// and `overwrite` controls replacement. Outputs: Publishes the verified file atomically and consumes payload padding,
+// or throws.
+void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata& entry,
+                                     const std::filesystem::path& target, bool overwrite) {
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
     }
@@ -643,14 +633,12 @@ void require_matching_scanned_entry(const TarEntryMetadata& actual, const TarEnt
 }
 
 // Purpose: Extract a non-seekable TAR stream after a separate validation pass has succeeded.
-// Inputs: `input` is positioned at the TAR start, `scanned` is the validated metadata, `destination` is the extraction root, and `overwrite` controls replacement.
-// Outputs: Restores entries into `destination` while re-checking second-pass metadata against `scanned`.
-void extract_validated_tar_stream(
-    std::istream& input,
-    const TarScanResult& scanned,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `input` is positioned at the TAR start, `scanned` is the validated metadata, `destination` is the extraction
+// root, and `overwrite` controls replacement. Outputs: Restores entries into `destination` while re-checking
+// second-pass metadata against `scanned`.
+void extract_validated_tar_stream(std::istream& input, const TarScanResult& scanned,
+                                  const std::filesystem::path& destination, bool overwrite,
+                                  const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
     PendingTarExtensions pending;
@@ -728,11 +716,8 @@ void extract_validated_tar_stream(
 // Purpose: Copy one scanned TAR file payload to a verified temporary file.
 // Inputs: `input` is the archive stream, `entry` supplies size and offset, and `target` is the final extraction path.
 // Outputs: Publishes the verified file atomically or throws; leaves no known temporary payload on failure.
-void extract_tar_file_payload(
-    std::ifstream& input,
-    const TarEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entry, const std::filesystem::path& target,
+                              bool overwrite) {
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
     }
@@ -775,12 +760,10 @@ void extract_tar_file_payload(
 }
 
 // Purpose: Write a TAR stream to any output stream using shared compatibility semantics.
-// Inputs: `sources` are existing files/directories, `output` receives TAR bytes, and `progress_callback` receives synchronous snapshots.
-// Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
-TarWriteStats write_tar_stream(
-    const std::vector<std::filesystem::path>& sources,
-    std::ostream& output,
-    const ProgressCallback& progress_callback) {
+// Inputs: `sources` are existing files/directories, `output` receives TAR bytes, and `progress_callback` receives
+// synchronous snapshots. Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
+TarWriteStats write_tar_stream(const std::vector<std::filesystem::path>& sources, std::ostream& output,
+                               const ProgressCallback& progress_callback) {
     const auto manifest = build_manifest(sources);
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
@@ -789,7 +772,8 @@ TarWriteStats write_tar_stream(
     for (const auto& entry : manifest.entries) {
         progress.set_current(entry.archive_path);
         publish_progress(progress, progress_callback);
-        write_entry_header(output, entry.archive_path, entry.directory ? '5' : '0', entry.directory ? 0 : entry.size, ordinal++);
+        write_entry_header(output, entry.archive_path, entry.directory ? '5' : '0', entry.directory ? 0 : entry.size,
+                           ordinal++);
         if (!entry.directory) {
             copy_file_to_tar(entry.source_path, output, entry.size);
             write_tar_padding(output, entry.size);
@@ -808,10 +792,11 @@ TarWriteStats write_tar_stream(
 
 }  // namespace
 
-OperationStats compress_tar(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create a standards-compatible TAR archive from files and directories.
+// Inputs: `sources` are existing paths, `output_archive` is the TAR target, and `progress_callback` receives updates.
+// Outputs: Writes the archive and returns telemetry, or throws on source, path, or output failures.
+OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
+                            const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     std::ofstream output(output_archive, std::ios::binary);
     if (!output) {
@@ -832,12 +817,14 @@ OperationStats compress_tar(
     return stats;
 }
 
-OperationStats compress_tar_gzip(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create a TAR.GZ stream from files/directories with bounded in-process Gzip compression.
+// Inputs: `sources`, `output_archive`, `compression_level`, and `progress_callback` define the archive run.
+// Outputs: Writes the archive and returns telemetry, or throws on source, TAR, or Gzip failures.
+OperationStats compress_tar_gzip(const std::vector<std::filesystem::path>& sources,
+                                 const std::filesystem::path& output_archive, int compression_level,
+                                 const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    GzipOutputStream output(output_archive);
+    GzipOutputStream output(output_archive, compression_level);
     const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
 
@@ -850,12 +837,14 @@ OperationStats compress_tar_gzip(
     return stats;
 }
 
-OperationStats compress_tar_bzip2(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create a TAR.BZ2 stream from files/directories with bounded in-process Bzip2 compression.
+// Inputs: `sources`, `output_archive`, `compression_level`, and `progress_callback` define the archive run.
+// Outputs: Writes the archive and returns telemetry, or throws on source, TAR, or Bzip2 failures.
+OperationStats compress_tar_bzip2(const std::vector<std::filesystem::path>& sources,
+                                  const std::filesystem::path& output_archive, int compression_level,
+                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    Bzip2OutputStream output(output_archive);
+    Bzip2OutputStream output(output_archive, compression_level);
     const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
 
@@ -868,12 +857,14 @@ OperationStats compress_tar_bzip2(
     return stats;
 }
 
-OperationStats compress_tar_zstd(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create a TAR.ZST stream from files/directories with bounded app-local Zstandard compression.
+// Inputs: `sources`, `output_archive`, `compression_level`, and `progress_callback` define the archive run.
+// Outputs: Writes the archive and returns telemetry, or throws on source, TAR, or Zstandard failures.
+OperationStats compress_tar_zstd(const std::vector<std::filesystem::path>& sources,
+                                 const std::filesystem::path& output_archive, int compression_level,
+                                 const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    ZstdOutputStream output(output_archive);
+    ZstdOutputStream output(output_archive, compression_level);
     const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
 
@@ -886,11 +877,11 @@ OperationStats compress_tar_zstd(
     return stats;
 }
 
-OperationStats extract_tar(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a validated TAR archive into a destination directory.
+// Inputs: `archive_path`, `destination`, `overwrite`, and `progress_callback` define the extraction run.
+// Outputs: Publishes validated files/directories and returns telemetry, or throws on unsafe or malformed entries.
+OperationStats extract_tar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto scanned = scan_tar(archive_path);
     std::filesystem::create_directories(destination);
@@ -925,11 +916,11 @@ OperationStats extract_tar(
     return stats;
 }
 
-OperationStats extract_tar_gzip(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a validated TAR.GZ stream using the in-process Gzip reader.
+// Inputs: `archive_path`, `destination`, `overwrite`, and `progress_callback` define the extraction run.
+// Outputs: Publishes validated files/directories and returns telemetry, or throws on Gzip/TAR failures.
+OperationStats extract_tar_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     GzipInputStream scan_input(archive_path);
     const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
@@ -949,11 +940,11 @@ OperationStats extract_tar_gzip(
     return stats;
 }
 
-OperationStats extract_tar_bzip2(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a validated TAR.BZ2 stream using the in-process Bzip2 reader.
+// Inputs: `archive_path`, `destination`, `overwrite`, and `progress_callback` define the extraction run.
+// Outputs: Publishes validated files/directories and returns telemetry, or throws on Bzip2/TAR failures.
+OperationStats extract_tar_bzip2(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     Bzip2InputStream scan_input(archive_path);
     const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
@@ -974,13 +965,11 @@ OperationStats extract_tar_bzip2(
 }
 
 // Purpose: Extract an XZ-compressed TAR stream with two-pass TAR metadata validation.
-// Inputs: `archive_path` is the compressed TAR source, `destination` is the output root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns extraction telemetry; throws for malformed XZ/TAR data, unsafe paths, refused overwrite, or publication failures.
-OperationStats extract_tar_xz(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is the compressed TAR source, `destination` is the output root, `overwrite` controls
+// replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns extraction telemetry;
+// throws for malformed XZ/TAR data, unsafe paths, refused overwrite, or publication failures.
+OperationStats extract_tar_xz(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                              bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     XzInputStream scan_input(archive_path);
     const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
@@ -1001,13 +990,11 @@ OperationStats extract_tar_xz(
 }
 
 // Purpose: Extract a lzip-compressed TAR stream with two-pass TAR metadata validation.
-// Inputs: `archive_path` is the compressed TAR source, `destination` is the output root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns extraction telemetry; throws for malformed lzip/TAR data, unsafe paths, refused overwrite, or publication failures.
-OperationStats extract_tar_lzip(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is the compressed TAR source, `destination` is the output root, `overwrite` controls
+// replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns extraction telemetry;
+// throws for malformed lzip/TAR data, unsafe paths, refused overwrite, or publication failures.
+OperationStats extract_tar_lzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     LzipInputStream scan_input(archive_path);
     const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
@@ -1027,11 +1014,11 @@ OperationStats extract_tar_lzip(
     return stats;
 }
 
-OperationStats extract_tar_zstd(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a validated TAR.ZST stream using the app-local Zstandard reader.
+// Inputs: `archive_path`, `destination`, `overwrite`, and `progress_callback` define the extraction run.
+// Outputs: Publishes validated files/directories and returns telemetry, or throws on Zstandard/TAR failures.
+OperationStats extract_tar_zstd(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     ZstdInputStream scan_input(archive_path);
     const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);

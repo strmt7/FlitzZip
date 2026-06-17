@@ -163,7 +163,8 @@ void usage() {
            "[--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format "
            "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|b64|base64|xxe|"
-           "xxencode|uue|uu|cpio|cpio.gz|cpgz|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
+           "xxencode|uue|uu|cpio|cpio.gz|cpgz|ar --output <archive> [--compression-level <1-9>] "
+           "[--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
            "[--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
         << "  superzip_cli extract --format "
@@ -934,6 +935,7 @@ struct CliCompressCommand {
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     bool suzip_tuning_requested = false;
     int compression_level = superzip::kDefaultCompressionLevel;
+    bool compression_level_requested = false;
     bool verify_after_write = false;
     bool sha256 = false;
     bool defender_scan = false;
@@ -972,7 +974,16 @@ void reject_compat_create_tuning(std::string_view label, bool require_gpu, bool 
                                  bool suzip_tuning_requested) {
     if (require_gpu || force_cpu || suzip_tuning_requested) {
         throw superzip::ArchiveError(std::string(label) + " compatibility does not support SUZIP GPU, worker, "
-                                                          "block-size, compression-level, or verify-after-write flags");
+                                                          "block-size, or verify-after-write flags");
+    }
+}
+
+// Purpose: Reject a compression-level request for stored or fixed-level create backends.
+// Inputs: `label` names the backend and `compression_level_requested` records whether the flag was passed.
+// Outputs: Returns normally when no level was requested; throws `ArchiveError` otherwise.
+void reject_compat_compression_level(std::string_view label, bool compression_level_requested) {
+    if (compression_level_requested) {
+        throw superzip::ArchiveError(std::string(label) + " compatibility does not support compression-level flags");
     }
 }
 
@@ -1013,7 +1024,7 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
         } else if (args[i] == "--compression-level") {
             command.compression_level = require_int_arg(args, i, "--compression-level", superzip::kMinCompressionLevel,
                                                         superzip::kMaxCompressionLevel);
-            command.suzip_tuning_requested = true;
+            command.compression_level_requested = true;
         } else if (args[i] == "--verify-after-write") {
             command.verify_after_write = true;
             command.suzip_tuning_requested = true;
@@ -1046,50 +1057,57 @@ superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_form
     }
     case superzip::ArchiveFormat::Zip:
         reject_compat_create_tuning("ZIP", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_zip(command.sources, command.output);
+        return superzip::compress_zip(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::Tar:
         reject_compat_create_tuning("TAR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        reject_compat_compression_level("TAR", command.compression_level_requested);
         return superzip::compress_tar(command.sources, command.output);
     case superzip::ArchiveFormat::TarGzip:
         reject_compat_create_tuning("TAR.GZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_tar_gzip(command.sources, command.output);
+        return superzip::compress_tar_gzip(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::TarBzip2:
         reject_compat_create_tuning("TAR.BZ2", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_tar_bzip2(command.sources, command.output);
+        return superzip::compress_tar_bzip2(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::TarZstd:
         reject_compat_create_tuning("TAR.ZST", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_tar_zstd(command.sources, command.output);
+        return superzip::compress_tar_zstd(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::Gzip:
         reject_compat_create_tuning("Gzip", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_gzip(command.sources, command.output);
+        return superzip::compress_gzip(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::Bzip2:
         reject_compat_create_tuning("Bzip2", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_bzip2(command.sources, command.output);
+        return superzip::compress_bzip2(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::Zstd:
         reject_compat_create_tuning("Zstandard", command.require_gpu, command.force_cpu,
                                     command.suzip_tuning_requested);
-        return superzip::compress_zstd(command.sources, command.output);
+        return superzip::compress_zstd(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::UnixCompress:
         reject_compat_create_tuning("Unix Compress", command.require_gpu, command.force_cpu,
                                     command.suzip_tuning_requested);
+        reject_compat_compression_level("Unix Compress", command.compression_level_requested);
         return superzip::compress_unix_compress(command.sources, command.output);
     case superzip::ArchiveFormat::Base64:
         reject_compat_create_tuning("Base64", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        reject_compat_compression_level("Base64", command.compression_level_requested);
         return superzip::compress_base64(command.sources, command.output);
     case superzip::ArchiveFormat::Xxe:
         reject_compat_create_tuning("XXE", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        reject_compat_compression_level("XXE", command.compression_level_requested);
         return superzip::compress_xxe(command.sources, command.output);
     case superzip::ArchiveFormat::Uue:
         reject_compat_create_tuning("UUE", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        reject_compat_compression_level("UUE", command.compression_level_requested);
         return superzip::compress_uue(command.sources, command.output);
     case superzip::ArchiveFormat::Cpio:
         reject_compat_create_tuning("CPIO", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        reject_compat_compression_level("CPIO", command.compression_level_requested);
         return superzip::compress_cpio(command.sources, command.output);
     case superzip::ArchiveFormat::CpioGzip:
         reject_compat_create_tuning("CPIO.GZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_cpio_gzip(command.sources, command.output);
+        return superzip::compress_cpio_gzip(command.sources, command.output, command.compression_level);
     case superzip::ArchiveFormat::Ar:
         reject_compat_create_tuning("AR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        reject_compat_compression_level("AR", command.compression_level_requested);
         return superzip::compress_ar(command.sources, command.output);
     default:
         throw superzip::ArchiveError(std::string("archive format recognized but not implemented for compression: ") +

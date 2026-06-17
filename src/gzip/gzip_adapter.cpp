@@ -99,10 +99,8 @@ void write_le32(std::ofstream& output, std::uint32_t value) {
 // Inputs: `bytes` points to at least four bytes.
 // Outputs: Returns the decoded unsigned field.
 std::uint32_t read_le32(const unsigned char* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24U);
+    return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
 }
 
 // Purpose: Seek a stream to an absolute offset after bounds checking.
@@ -116,14 +114,11 @@ void seek_input(std::ifstream& input, std::uint64_t offset, const char* context)
 }
 
 // Purpose: Advance over a bounded optional Gzip header field.
-// Inputs: `input` is positioned by caller, `offset` is updated, `bytes` is the skip count, `limit` is the first compressed byte limit, and `field` names the field.
-// Outputs: Advances `offset` and stream position, or throws when the field would overlap compressed data/trailer.
-void skip_header_bytes(
-    std::ifstream& input,
-    std::uint64_t& offset,
-    std::uint64_t bytes,
-    std::uint64_t limit,
-    const char* field) {
+// Inputs: `input` is positioned by caller, `offset` is updated, `bytes` is the skip count, `limit` is the first
+// compressed byte limit, and `field` names the field. Outputs: Advances `offset` and stream position, or throws when
+// the field would overlap compressed data/trailer.
+void skip_header_bytes(std::ifstream& input, std::uint64_t& offset, std::uint64_t bytes, std::uint64_t limit,
+                       const char* field) {
     if (bytes > limit - offset) {
         throw ArchiveError(std::string("Gzip ") + field + " field exceeds header bounds");
     }
@@ -132,13 +127,11 @@ void skip_header_bytes(
 }
 
 // Purpose: Skip a bounded zero-terminated optional Gzip header string.
-// Inputs: `input` is positioned at the field start, `offset` is updated, `limit` is the first compressed byte limit, and `field` names the field.
-// Outputs: Positions the stream after the terminating NUL, or throws on unterminated/overlapping metadata.
-void skip_zero_terminated_header_field(
-    std::ifstream& input,
-    std::uint64_t& offset,
-    std::uint64_t limit,
-    const char* field) {
+// Inputs: `input` is positioned at the field start, `offset` is updated, `limit` is the first compressed byte limit,
+// and `field` names the field. Outputs: Positions the stream after the terminating NUL, or throws on
+// unterminated/overlapping metadata.
+void skip_zero_terminated_header_field(std::ifstream& input, std::uint64_t& offset, std::uint64_t limit,
+                                       const char* field) {
     while (offset < limit) {
         char value = 0;
         input.read(&value, 1);
@@ -188,8 +181,8 @@ GzipHeader parse_gzip_header(std::ifstream& input, std::uint64_t file_size) {
             throw ArchiveError("failed to read Gzip extra field length");
         }
         offset += extra_size.size();
-        const auto bytes = static_cast<std::uint64_t>(extra_size[0]) |
-            (static_cast<std::uint64_t>(extra_size[1]) << 8U);
+        const auto bytes =
+            static_cast<std::uint64_t>(extra_size[0]) | (static_cast<std::uint64_t>(extra_size[1]) << 8U);
         skip_header_bytes(input, offset, bytes, compressed_limit, "extra");
     }
     if ((flags & kGzipFlagName) != 0U) {
@@ -226,9 +219,7 @@ GzipHeader parse_gzip_header(std::ifstream& input, std::uint64_t file_size) {
 std::string gzip_output_entry_name(const std::filesystem::path& archive_path) {
     auto filename = archive_path.filename().string();
     auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.size() > 3U && lower.ends_with(".gz")) {
         filename.resize(filename.size() - 3U);
     } else {
@@ -240,31 +231,13 @@ std::string gzip_output_entry_name(const std::filesystem::path& archive_path) {
     return normalize_archive_path_key(filename);
 }
 
-}  // namespace
-
-OperationStats compress_gzip_file(
-    const std::filesystem::path& source_file,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
-    const auto started = std::chrono::steady_clock::now();
-    if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("Gzip compression requires one regular file: " + source_file.string());
-    }
-    std::error_code equivalent_error;
-    if (std::filesystem::exists(output_archive) &&
-        std::filesystem::equivalent(source_file, output_archive, equivalent_error) &&
-        !equivalent_error) {
-        throw SecurityError("refusing to overwrite the Gzip source file: " + output_archive.string());
-    }
-
-    const auto input_size = regular_file_size(source_file);
-    ProgressState progress;
-    progress.start(OperationKind::Compress, input_size, 1);
-    progress.set_current(source_file.filename().string());
-    publish_progress(progress, progress_callback);
-
-    // Reserve the final path up front, but write only to a private temporary file
-    // until the raw deflate stream and trailer are complete.
+// Purpose: Write one regular file into a temporary Gzip archive and publish it atomically.
+// Inputs: `source_file` is openable input, `output_archive` is the final target, `compression_level` is 1-9, `progress`
+// is the caller-owned progress state, and `progress_callback` receives snapshots.
+// Outputs: Publishes `output_archive` or throws after cleaning temporary compressor/output state.
+void write_gzip_archive_payload(const std::filesystem::path& source_file, const std::filesystem::path& output_archive,
+                                int compression_level, ProgressState& progress,
+                                const ProgressCallback& progress_callback) {
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open Gzip source file: " + source_file.string());
@@ -281,16 +254,8 @@ OperationStats compress_gzip_file(
 
         const std::array<unsigned char, 10> header{0x1F, 0x8B, 8U, 0U, 0U, 0U, 0U, 0U, 0U, 255U};
         write_exact(output, header.data(), header.size());
-
-        // Use miniz as a raw-deflate engine so this adapter controls the Gzip
-        // wrapper, CRC32, and ISIZE verification contract explicitly.
-        if (mz_deflateInit2(
-                &stream,
-                MZ_BEST_COMPRESSION,
-                MZ_DEFLATED,
-                -MZ_DEFAULT_WINDOW_BITS,
-                9,
-                MZ_DEFAULT_STRATEGY) != MZ_OK) {
+        if (mz_deflateInit2(&stream, compression_level, MZ_DEFLATED, -MZ_DEFAULT_WINDOW_BITS, 9, MZ_DEFAULT_STRATEGY) !=
+            MZ_OK) {
             throw ArchiveError("failed to initialize Gzip compressor");
         }
         stream_active = true;
@@ -299,9 +264,6 @@ OperationStats compress_gzip_file(
         std::array<unsigned char, kGzipBufferBytes> output_buffer{};
         auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, nullptr, 0));
         std::uint64_t processed = 0;
-
-        // Pump output until miniz consumes each bounded input chunk; this avoids
-        // retaining whole source files in memory.
         auto pump_deflate = [&](int flush) {
             int status = MZ_OK;
             do {
@@ -339,8 +301,6 @@ OperationStats compress_gzip_file(
             }
         }
 
-        // The trailer is emitted only after miniz reports end-of-stream so
-        // partially encoded archives never publish as successful outputs.
         int status = MZ_OK;
         do {
             status = pump_deflate(MZ_FINISH);
@@ -367,6 +327,36 @@ OperationStats compress_gzip_file(
         }
         throw;
     }
+}
+
+}  // namespace
+
+// Purpose: Create one `.gz` stream from one regular file with bounded raw-deflate compression.
+// Inputs: `source_file` is the existing input, `output_archive` is the final target, `compression_level` is 1-9, and
+// `progress_callback` receives snapshots. Outputs: Publishes a verified Gzip file and returns telemetry, or throws on
+// invalid input, overwrite risk, or stream failure.
+OperationStats compress_gzip_file(const std::filesystem::path& source_file, const std::filesystem::path& output_archive,
+                                  int compression_level, const ProgressCallback& progress_callback) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("Gzip compression level must be between 1 and 9");
+    }
+    const auto started = std::chrono::steady_clock::now();
+    if (!std::filesystem::is_regular_file(source_file)) {
+        throw ArchiveError("Gzip compression requires one regular file: " + source_file.string());
+    }
+    std::error_code equivalent_error;
+    if (std::filesystem::exists(output_archive) &&
+        std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
+        throw SecurityError("refusing to overwrite the Gzip source file: " + output_archive.string());
+    }
+
+    const auto input_size = regular_file_size(source_file);
+    ProgressState progress;
+    progress.start(OperationKind::Compress, input_size, 1);
+    progress.set_current(source_file.filename().string());
+    publish_progress(progress, progress_callback);
+
+    write_gzip_archive_payload(source_file, output_archive, compression_level, progress, progress_callback);
 
     progress.finish_entry();
     publish_progress(progress, progress_callback);
@@ -380,21 +370,21 @@ OperationStats compress_gzip_file(
     return stats;
 }
 
-OperationStats compress_gzip(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create one `.gz` stream from an exactly one-item source list.
+// Inputs: `sources` must contain one regular file, `output_archive` is the target, `compression_level` is 1-9, and
+// `progress_callback` receives snapshots. Outputs: Returns compression telemetry or throws when the source contract or
+// writer fails.
+OperationStats compress_gzip(const std::vector<std::filesystem::path>& sources,
+                             const std::filesystem::path& output_archive, int compression_level,
+                             const ProgressCallback& progress_callback) {
     if (sources.size() != 1U) {
         throw ArchiveError("Gzip compatibility requires exactly one regular-file source");
     }
-    return compress_gzip_file(sources.front(), output_archive, progress_callback);
+    return compress_gzip_file(sources.front(), output_archive, compression_level, progress_callback);
 }
 
-OperationStats extract_gzip_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+OperationStats extract_gzip_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);

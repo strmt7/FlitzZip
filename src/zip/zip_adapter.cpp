@@ -26,12 +26,14 @@ std::uint64_t checked_add_zip_bytes(std::uint64_t lhs, std::uint64_t rhs) {
 }  // namespace
 
 // Purpose: Create a standard ZIP archive from one or more source paths.
-// Inputs: `sources`, `output_archive`, and optional `progress_callback` describe the compatibility archive run.
-// Outputs: Writes a ZIP archive and returns operation telemetry, or throws on source/read/write failure.
-OperationStats compress_zip(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Inputs: `sources`, `output_archive`, `compression_level`, and optional `progress_callback` describe the compatibility
+// archive run. Outputs: Writes a ZIP archive and returns operation telemetry, or throws on source/read/write failure.
+OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
+                            const std::filesystem::path& output_archive, int compression_level,
+                            const ProgressCallback& progress_callback) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("ZIP compression level must be between 1 and 9");
+    }
     const auto started = std::chrono::steady_clock::now();
     const auto manifest = build_manifest(sources);
     ProgressState progress;
@@ -54,13 +56,8 @@ OperationStats compress_zip(
                 progress.finish_entry();
                 continue;
             }
-            if (!mz_zip_writer_add_file(
-                    &zip,
-                    entry.archive_path.c_str(),
-                    entry.source_path.string().c_str(),
-                    nullptr,
-                    0,
-                    MZ_BEST_COMPRESSION)) {
+            if (!mz_zip_writer_add_file(&zip, entry.archive_path.c_str(), entry.source_path.string().c_str(), nullptr,
+                                        0, static_cast<mz_uint>(compression_level))) {
                 throw ArchiveError("failed to add ZIP file: " + entry.archive_path);
             }
             progress.add_bytes(entry.size);
@@ -89,12 +86,10 @@ OperationStats compress_zip(
 
 // Purpose: Extract a standard ZIP archive with SuperZip path safety and verified final-file publication.
 // Inputs: `archive_path`, `destination`, `overwrite`, and optional `progress_callback` describe the extraction run.
-// Outputs: Restores verified ZIP entries into `destination` and returns operation telemetry, or throws on validation failure.
-OperationStats extract_zip(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Outputs: Restores verified ZIP entries into `destination` and returns operation telemetry, or throws on validation
+// failure.
+OperationStats extract_zip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_file(&zip, archive_path.string().c_str(), 0)) {

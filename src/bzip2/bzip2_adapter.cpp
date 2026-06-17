@@ -50,9 +50,7 @@ void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* co
 std::string bzip2_output_entry_name(const std::filesystem::path& archive_path) {
     auto filename = archive_path.filename().string();
     auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.size() > 4U && lower.ends_with(".bz2")) {
         filename.resize(filename.size() - 4U);
     } else {
@@ -66,18 +64,23 @@ std::string bzip2_output_entry_name(const std::filesystem::path& archive_path) {
 
 }  // namespace
 
-OperationStats compress_bzip2_file(
-    const std::filesystem::path& source_file,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create one `.bz2` stream from one regular file with bounded libbzip2 compression.
+// Inputs: `source_file` is the existing input, `output_archive` is the target, `compression_level` is 1-9, and
+// `progress_callback` receives snapshots. Outputs: Publishes a verified Bzip2 file and returns telemetry, or throws on
+// invalid input, overwrite risk, or stream failure.
+OperationStats compress_bzip2_file(const std::filesystem::path& source_file,
+                                   const std::filesystem::path& output_archive, int compression_level,
+                                   const ProgressCallback& progress_callback) {
+    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
+        throw ArchiveError("Bzip2 compression level must be between 1 and 9");
+    }
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
         throw ArchiveError("Bzip2 compression requires one regular file: " + source_file.string());
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
-        std::filesystem::equivalent(source_file, output_archive, equivalent_error) &&
-        !equivalent_error) {
+        std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
         throw SecurityError("refusing to overwrite the Bzip2 source file: " + output_archive.string());
     }
 
@@ -95,7 +98,7 @@ OperationStats compress_bzip2_file(
     bool temporary_active = true;
     std::uint64_t output_size = 0;
     try {
-        Bzip2OutputStream output(temporary.file);
+        Bzip2OutputStream output(temporary.file, compression_level);
         std::array<char, kBzip2BufferBytes> buffer{};
         for (;;) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -139,21 +142,21 @@ OperationStats compress_bzip2_file(
     return stats;
 }
 
-OperationStats compress_bzip2(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create one `.bz2` stream from an exactly one-item source list.
+// Inputs: `sources` must contain one regular file, `output_archive` is the target, `compression_level` is 1-9, and
+// `progress_callback` receives snapshots. Outputs: Returns compression telemetry or throws when the source contract or
+// writer fails.
+OperationStats compress_bzip2(const std::vector<std::filesystem::path>& sources,
+                              const std::filesystem::path& output_archive, int compression_level,
+                              const ProgressCallback& progress_callback) {
     if (sources.size() != 1U) {
         throw ArchiveError("Bzip2 compatibility requires exactly one regular-file source");
     }
-    return compress_bzip2_file(sources.front(), output_archive, progress_callback);
+    return compress_bzip2_file(sources.front(), output_archive, compression_level, progress_callback);
 }
 
-OperationStats extract_bzip2_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     const auto entry_name = bzip2_output_entry_name(archive_path);

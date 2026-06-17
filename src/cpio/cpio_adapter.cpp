@@ -143,8 +143,8 @@ void skip_file_bytes(std::istream& input, std::uint64_t size, const char* label)
 }
 
 // Purpose: Consume CPIO bytes using seeking when possible and reads otherwise.
-// Inputs: `input` is the archive stream, `size` is the byte count, `label` names the region, and `seekable` selects the fast path.
-// Outputs: Advances the stream or throws on truncation/seek failure.
+// Inputs: `input` is the archive stream, `size` is the byte count, `label` names the region, and `seekable` selects the
+// fast path. Outputs: Advances the stream or throws on truncation/seek failure.
 void skip_cpio_payload_bytes(std::istream& input, std::uint64_t size, const char* label, bool seekable) {
     if (seekable) {
         skip_file_bytes(input, size, label);
@@ -207,8 +207,8 @@ void append_cpio_hex_field(std::string& output, std::uint32_t value) {
 }
 
 // Purpose: Build one SVR4 new ASCII CPIO header.
-// Inputs: `path` is the entry name, `mode` is the CPIO mode bits, `size` is the payload size, and `ino` is a stable archive ordinal.
-// Outputs: Returns the 110-byte header string.
+// Inputs: `path` is the entry name, `mode` is the CPIO mode bits, `size` is the payload size, and `ino` is a stable
+// archive ordinal. Outputs: Returns the 110-byte header string.
 std::string make_cpio_header(std::string_view path, std::uint32_t mode, std::uint32_t size, std::uint32_t ino) {
     if (path.size() + 1U > kMaxCpioNameBytes) {
         throw ArchiveError("CPIO entry name is too long");
@@ -238,12 +238,8 @@ std::string make_cpio_header(std::string_view path, std::uint32_t mode, std::uin
 // Purpose: Write one CPIO entry header and name.
 // Inputs: `output` is the archive stream, `path` is the entry name, `mode`/`size`/`ino` are header fields.
 // Outputs: Appends header/name/alignment padding or throws on writer failure.
-void write_cpio_entry_header(
-    std::ostream& output,
-    std::string_view path,
-    std::uint32_t mode,
-    std::uint32_t size,
-    std::uint32_t ino) {
+void write_cpio_entry_header(std::ostream& output, std::string_view path, std::uint32_t mode, std::uint32_t size,
+                             std::uint32_t ino) {
     const auto header = make_cpio_header(path, mode, size, ino);
     write_cpio_bytes(output, header.data(), header.size());
     write_cpio_bytes(output, path.data(), path.size());
@@ -274,13 +270,10 @@ void copy_file_to_cpio(const std::filesystem::path& source, std::ostream& output
 }
 
 // Purpose: Copy a validated seekable CPIO file payload into a temporary output file.
-// Inputs: `input` is the archive stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file or throws without partially publishing target bytes.
-void extract_cpio_seekable_file_payload(
-    std::ifstream& input,
-    const CpioEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is the archive stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite`
+// controls replacement. Outputs: Publishes the verified file or throws without partially publishing target bytes.
+void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMetadata& entry,
+                                        const std::filesystem::path& target, bool overwrite) {
     if (entry.payload_offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError("CPIO payload offset is too large to seek safely");
     }
@@ -321,13 +314,11 @@ void extract_cpio_seekable_file_payload(
 }
 
 // Purpose: Copy a validated stream CPIO file payload into a temporary output file.
-// Inputs: `input` is positioned at payload start, `entry` supplies trusted metadata, `target` is the final path, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file atomically, consumes payload padding, and throws without partially publishing target bytes.
-void extract_cpio_stream_file_payload(
-    std::istream& input,
-    const CpioEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is positioned at payload start, `entry` supplies trusted metadata, `target` is the final path, and
+// `overwrite` controls replacement. Outputs: Publishes the verified file atomically, consumes payload padding, and
+// throws without partially publishing target bytes.
+void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetadata& entry,
+                                      const std::filesystem::path& target, bool overwrite) {
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing CPIO extraction target: " + target.string());
     }
@@ -411,7 +402,8 @@ bool classify_cpio_entry(const CpioHeader& header, const std::string& name) {
 
 // Purpose: Scan a CPIO stream and validate metadata before extraction.
 // Inputs: `input` is positioned at the CPIO start and `seekable` indicates whether payload offsets can be recorded.
-// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported entries.
+// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
+// entries.
 CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
     CpioScanResult result;
     std::vector<ArchivePathValidationEntry> validation_entries;
@@ -473,10 +465,8 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
             .check = header.check,
         });
         if (!directory) {
-            result.total_file_bytes = checked_add_cpio_bytes(
-                result.total_file_bytes,
-                header.filesize,
-                "CPIO uncompressed payload byte count overflow");
+            result.total_file_bytes = checked_add_cpio_bytes(result.total_file_bytes, header.filesize,
+                                                             "CPIO uncompressed payload byte count overflow");
         }
     }
 
@@ -486,7 +476,8 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
 
 // Purpose: Scan a seekable CPIO file and validate metadata before extraction.
 // Inputs: `archive_path` is the CPIO file to parse.
-// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported entries.
+// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
+// entries.
 CpioScanResult scan_cpio(const std::filesystem::path& archive_path) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
@@ -496,12 +487,10 @@ CpioScanResult scan_cpio(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Write a CPIO stream to any output stream using shared compatibility semantics.
-// Inputs: `sources` are existing files/directories, `output` receives CPIO bytes, and `progress_callback` receives synchronous snapshots.
-// Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
-CpioWriteStats write_cpio_stream(
-    const std::vector<std::filesystem::path>& sources,
-    std::ostream& output,
-    const ProgressCallback& progress_callback) {
+// Inputs: `sources` are existing files/directories, `output` receives CPIO bytes, and `progress_callback` receives
+// synchronous snapshots. Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
+CpioWriteStats write_cpio_stream(const std::vector<std::filesystem::path>& sources, std::ostream& output,
+                                 const ProgressCallback& progress_callback) {
     const auto manifest = build_manifest(sources);
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
@@ -513,14 +502,11 @@ CpioWriteStats write_cpio_stream(
         progress.set_current(entry.archive_path);
         publish_progress(progress, progress_callback);
         const auto name = entry.directory && entry.archive_path.ends_with('/')
-            ? std::string_view(entry.archive_path).substr(0, entry.archive_path.size() - 1U)
-            : std::string_view(entry.archive_path);
-        write_cpio_entry_header(
-            output,
-            name,
-            entry.directory ? (kCpioDirectoryMode | 0755U) : (kCpioRegularMode | 0644U),
-            entry.directory ? 0U : static_cast<std::uint32_t>(entry.size),
-            ino++);
+                              ? std::string_view(entry.archive_path).substr(0, entry.archive_path.size() - 1U)
+                              : std::string_view(entry.archive_path);
+        write_cpio_entry_header(output, name,
+                                entry.directory ? (kCpioDirectoryMode | 0755U) : (kCpioRegularMode | 0644U),
+                                entry.directory ? 0U : static_cast<std::uint32_t>(entry.size), ino++);
         if (!entry.directory) {
             copy_file_to_cpio(entry.source_path, output, entry.size);
             write_zero_padding(output, cpio_padding(entry.size));
@@ -563,14 +549,15 @@ CpioStreamRecord read_cpio_stream_record(std::istream& input) {
 
     const bool directory = classify_cpio_entry(header, raw_name);
     return CpioStreamRecord{
-        .entry = CpioEntryMetadata{
-            .path = raw_name,
-            .directory = directory,
-            .crc = header.crc,
-            .size = header.filesize,
-            .payload_offset = 0,
-            .check = header.check,
-        },
+        .entry =
+            CpioEntryMetadata{
+                .path = raw_name,
+                .directory = directory,
+                .crc = header.crc,
+                .size = header.filesize,
+                .payload_offset = 0,
+                .check = header.check,
+            },
         .trailer = false,
     };
 }
@@ -579,24 +566,19 @@ CpioStreamRecord read_cpio_stream_record(std::istream& input) {
 // Inputs: `actual` is metadata read during extraction and `expected` is first-pass validated metadata.
 // Outputs: Returns normally when path, kind, size, and CRC mode match; throws on changed streams.
 void require_matching_scanned_cpio_entry(const CpioEntryMetadata& actual, const CpioEntryMetadata& expected) {
-    if (actual.path != expected.path ||
-        actual.directory != expected.directory ||
-        actual.crc != expected.crc ||
-        actual.size != expected.size ||
-        actual.check != expected.check) {
+    if (actual.path != expected.path || actual.directory != expected.directory || actual.crc != expected.crc ||
+        actual.size != expected.size || actual.check != expected.check) {
         throw ArchiveError("CPIO stream changed between validation and extraction passes");
     }
 }
 
 // Purpose: Extract a non-seekable CPIO stream after a separate validation pass has succeeded.
-// Inputs: `input` is positioned at the CPIO start, `scanned` is trusted metadata, `destination` is the extraction root, and `overwrite` controls replacement.
-// Outputs: Restores entries into `destination` while re-checking second-pass metadata against `scanned`.
-void extract_validated_cpio_stream(
-    std::istream& input,
-    const CpioScanResult& scanned,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `input` is positioned at the CPIO start, `scanned` is trusted metadata, `destination` is the extraction root,
+// and `overwrite` controls replacement. Outputs: Restores entries into `destination` while re-checking second-pass
+// metadata against `scanned`.
+void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& scanned,
+                                   const std::filesystem::path& destination, bool overwrite,
+                                   const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
     std::size_t entry_index = 0;
@@ -632,12 +614,11 @@ void extract_validated_cpio_stream(
 }  // namespace
 
 // Purpose: Create a portable SVR4 new ASCII CPIO archive from files/directories.
-// Inputs: `sources` are filesystem roots, `output_archive` is the destination `.cpio`, and `progress_callback` receives synchronous snapshots.
-// Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError` on source, path, or writer failures.
-OperationStats compress_cpio(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Inputs: `sources` are filesystem roots, `output_archive` is the destination `.cpio`, and `progress_callback` receives
+// synchronous snapshots. Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError` on source, path,
+// or writer failures.
+OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
+                             const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     std::ofstream output(output_archive, std::ios::binary);
     if (!output) {
@@ -659,14 +640,14 @@ OperationStats compress_cpio(
 }
 
 // Purpose: Create a Gzip-compressed SVR4 new ASCII CPIO archive from files/directories.
-// Inputs: `sources` are filesystem roots, `output_archive` is the destination `.cpio.gz`/`.cpgz`, and `progress_callback` receives synchronous snapshots.
-// Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError` on source, CPIO writer, or Gzip writer failures.
-OperationStats compress_cpio_gzip(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Inputs: `sources` are filesystem roots, `output_archive` is the destination `.cpio.gz`/`.cpgz`, `compression_level`
+// is 1-9, and `progress_callback` receives synchronous snapshots. Outputs: Returns operation statistics; throws
+// `ArchiveError`/`SecurityError` on source, CPIO writer, or Gzip writer failures.
+OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sources,
+                                  const std::filesystem::path& output_archive, int compression_level,
+                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    GzipOutputStream output(output_archive);
+    GzipOutputStream output(output_archive, compression_level);
     const auto write_stats = write_cpio_stream(sources, output, progress_callback);
     output.close();
 
@@ -680,13 +661,11 @@ OperationStats compress_cpio_gzip(
 }
 
 // Purpose: Extract a seekable SVR4 new ASCII CPIO archive with two-pass validation.
-// Inputs: `archive_path` is a `.cpio` file, `destination` is the extraction root, `overwrite` controls existing targets, and `progress_callback` receives snapshots.
-// Outputs: Returns operation statistics; throws before publishing unsafe, malformed, checksum-invalid, or refused-overwrite entries.
-OperationStats extract_cpio(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is a `.cpio` file, `destination` is the extraction root, `overwrite` controls existing
+// targets, and `progress_callback` receives snapshots. Outputs: Returns operation statistics; throws before publishing
+// unsafe, malformed, checksum-invalid, or refused-overwrite entries.
+OperationStats extract_cpio(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto scanned = scan_cpio(archive_path);
     std::filesystem::create_directories(destination);
@@ -722,13 +701,11 @@ OperationStats extract_cpio(
 }
 
 // Purpose: Extract a Gzip-compressed SVR4 new ASCII CPIO archive with two independent decompression passes.
-// Inputs: `archive_path` is a `.cpio.gz`/`.cpgz` file, `destination` is the extraction root, `overwrite` controls existing targets, and `progress_callback` receives snapshots.
-// Outputs: Returns operation statistics; throws before publishing unsafe, malformed, checksum-invalid, or refused-overwrite entries.
-OperationStats extract_cpio_gzip(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is a `.cpio.gz`/`.cpgz` file, `destination` is the extraction root, `overwrite` controls
+// existing targets, and `progress_callback` receives snapshots. Outputs: Returns operation statistics; throws before
+// publishing unsafe, malformed, checksum-invalid, or refused-overwrite entries.
+OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     GzipInputStream scan_input(archive_path);
     const auto scanned = scan_cpio_stream(scan_input, false);
