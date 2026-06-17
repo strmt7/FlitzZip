@@ -35,6 +35,8 @@ Primary and project-owned sources reviewed:
 - CPGZ file extension reference: https://fileinfo.com/extension/cpgz
 - RFC 2045 Base64 content-transfer encoding: https://datatracker.ietf.org/doc/html/rfc2045
 - GNU/Arch uuencode Base64 wrapper notes: https://man.archlinux.org/man/uuencode.5.en
+- RFC 1741 MIME Content Type for BinHex Encoded Files: https://datatracker.ietf.org/doc/html/rfc1741
+- BinHex 4.0 format and CRC notes: https://files.stairways.com/other/binhex-40-specs-info.txt
 - XXEncode manual page mirror with historical variant notes: https://www.math.utah.edu/~beebe/support/myman2html/testdata/okay/xxencode.html
 - XXEncode alphabet and legacy line-structure notes: https://nerdmosis.com/tools/encode-and-decode-uuencode-xxencode
 - bzip2/libbzip2: https://sourceware.org/bzip2/
@@ -72,7 +74,7 @@ resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, CPIO.GZ, ARJ, ARC,
-LHA/LZH, WIM, XAR, DEB, RPM, Base64, XXEncode, UUencode, and legacy Unix Compress `.Z`. SuperZip's
+LHA/LZH, WIM, XAR, DEB, RPM, Base64, BinHex, XXEncode, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
 
@@ -133,6 +135,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.01 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.b64` | Yes | Yes | Single-file compatibility stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
+| `.hqx` | No | Yes | Extract-only single-file legacy transfer stream | native bounded BinHex 4.0 adapter with strict HQX alphabet, RLE expansion, path-safe header names, and header/data/resource CRC validation |
 | `.xxe` | Yes | Yes | Single-file compatibility stream | native bounded common XXEncode adapter with strict alphabet and path-safe begin-line handling |
 | `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
@@ -232,6 +235,17 @@ partial quanta, malformed padding, payload data after padding, overlong lines,
 unsafe wrapper filenames, overwrite attempts, and trailing data after the
 wrapper trailer. Base64 has no intrinsic checksum, so optional SHA-256 remains
 the strong end-to-end archive-file integrity check.
+
+BinHex support is extract-only and data-fork-only when used as `.hqx`. The
+adapter requires the standard BinHex 4.0 transfer comment, decodes only the
+documented HQX alphabet plus whitespace, expands the `0x90` RLE layer without
+unbounded buffering, validates the header, data-fork, and resource-fork CRCs,
+and publishes only the data fork. Resource-fork bytes are decoded and
+CRC-validated because they are part of the stream integrity contract, but they
+are not written to Windows output paths. Header filenames must pass the same
+path-safety validation used by archive entries before a private temporary output
+file is opened. Segmented mail-style multipart handling and BinHex creation are
+not exposed until their exact product contract and tests are deliberately added.
 
 XXEncode support is intentionally single-file when used as `.xxe`. SuperZip
 writes common `begin 644 <name>` streams using the XXEncode alphabet and extracts
@@ -725,6 +739,34 @@ flowchart TD
     E -->|"no"| G["Reject stream and remove temp output"]
 ```
 
+## BinHex Security Contract
+
+The BinHex path is an in-process extract-only text decoder:
+
+1. Accept only a bounded preamble containing the standard BinHex 4.0 transfer
+   comment followed by a payload-start colon.
+2. Decode only the HQX 64-character alphabet and ASCII whitespace until the
+   terminating colon.
+3. Expand `0x90` RLE markers as a stream and reject marker/count sequences that
+   cannot be represented by the decoded BinHex grammar.
+4. Parse the header, validate the embedded filename through
+   `safe_join_archive_path`, and validate the header CRC before reserving an
+   output target.
+5. Write only declared data-fork bytes into a private temporary file, verify the
+   data-fork CRC, decode and CRC-check the resource fork without publishing it,
+   then atomically publish the data fork only after the entire stream is valid.
+
+```mermaid
+flowchart TD
+    A["Open .hqx stream"] --> B["Find bounded BinHex marker and start colon"]
+    B --> C["Decode HQX characters and RLE stream"]
+    C --> D["Validate header name and CRC"]
+    D --> E["Write data fork to private temp file"]
+    E --> F{"Data and resource CRCs valid?"}
+    F -->|"yes"| G["Atomically publish data fork"]
+    F -->|"no"| H["Reject stream and remove temp output"]
+```
+
 ## XXEncode Security Contract
 
 The XXEncode path is an in-process single-file text decoder and writer:
@@ -947,8 +989,8 @@ Before adding a new compatibility backend, the implementation must satisfy:
 
 Preferred next increments are read-only RAR, broader ARJ and SEA ARC
 compressed-method extraction, deeper ZIPX method coverage, historical XXEncode
-count/CRC trailer support, BinHex and other single-file legacy text encodings,
-lzip creation only after a vetted in-process
+count/CRC trailer support, MacBinary and other single-file legacy transfer
+encodings, lzip creation only after a vetted in-process
 encoder exists, and the remaining recognized-only legacy/container formats after
 backend selection and licensing review. XAR checksum/signature validation is
 also a future hardening increment before SuperZip can claim broad XAR

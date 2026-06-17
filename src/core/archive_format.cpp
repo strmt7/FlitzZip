@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 36> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 37> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -51,6 +51,7 @@ constexpr std::array<ArchiveFormatInfo, 36> kFormatRegistry{{
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
+    {ArchiveFormat::Hqx, "hqx", "BinHex 4.0 (.hqx)", ".hqx", false, true, false, true},
     {ArchiveFormat::Xxe, "xxe", "XXEncoded file (.xxe)", ".xxe", true, true, false, true},
     {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
@@ -61,7 +62,7 @@ constexpr std::array<ArchiveFormatInfo, 36> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 45> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 46> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -97,6 +98,7 @@ constexpr std::array<ExtensionFormatMapping, 45> kExtensionFormats{{
     {".arj", ArchiveFormat::Arj},
     {".arc", ArchiveFormat::Arc},
     {".ark", ArchiveFormat::Arc},
+    {".hqx", ArchiveFormat::Hqx},
     {".xxe", ArchiveFormat::Xxe},
     {".uue", ArchiveFormat::Uue},
     {".uu", ArchiveFormat::Uue},
@@ -308,6 +310,21 @@ bool has_base64_begin_line(std::span<const unsigned char> bytes) {
     return false;
 }
 
+// Purpose: Detect a BinHex 4.0 transfer comment in a bounded text probe.
+// Inputs: `bytes` contains the file prefix; the encoded body is not decoded during format probing.
+// Outputs: Returns true when the standard BinHex comment and a following payload colon appear in the probe.
+bool has_hqx_comment_marker(std::span<const unsigned char> bytes) {
+    constexpr std::string_view comment = "(This file must be converted with BinHex 4.0)";
+    auto it = std::search(bytes.begin(), bytes.end(), comment.begin(), comment.end(), [](unsigned char lhs, char rhs) {
+        return lhs == static_cast<unsigned char>(rhs);
+    });
+    if (it == bytes.end()) {
+        return false;
+    }
+    it += static_cast<std::ptrdiff_t>(comment.size());
+    return std::find(it, bytes.end(), static_cast<unsigned char>(':')) != bytes.end();
+}
+
 // Purpose: Match a fixed byte signature at an arbitrary offset.
 // Inputs: `bytes` is the file probe, `offset` is the byte offset, and `signature` is the magic sequence.
 // Outputs: Returns true when all signature bytes match at `offset`.
@@ -319,6 +336,38 @@ bool matches_signature_at(
         return false;
     }
     return std::equal(signature.begin(), signature.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset));
+}
+
+// Purpose: Detect single-stream compression and text-transfer formats with stable prefix markers.
+// Inputs: `bytes` contains a bounded prefix probe and `path` supplies compound extension context for lzip TAR wrappers.
+// Outputs: Returns a concrete single-stream format or unknown when no stream marker matches.
+ArchiveFormat detect_stream_magic(std::span<const unsigned char> bytes, const std::filesystem::path& path) {
+    if (starts_with_signature(bytes, {0x1F, 0x8B})) {
+        return ArchiveFormat::Gzip;
+    }
+    if (starts_with_signature(bytes, {0x1F, 0x9D})) {
+        return ArchiveFormat::UnixCompress;
+    }
+    if (has_base64_begin_line(bytes)) {
+        return ArchiveFormat::Base64;
+    }
+    if (has_hqx_comment_marker(bytes)) {
+        return ArchiveFormat::Hqx;
+    }
+    if (starts_with_signature(bytes, {'B', 'Z', 'h'})) {
+        return ArchiveFormat::Bzip2;
+    }
+    if (starts_with_signature(bytes, {0xFD, '7', 'z', 'X', 'Z', 0x00})) {
+        return ArchiveFormat::Xz;
+    }
+    if (starts_with_signature(bytes, {'L', 'Z', 'I', 'P'})) {
+        const auto lower_name = ascii_lower(path.filename().string());
+        return (ends_with_lower(lower_name, ".tar.lz") || ends_with_lower(lower_name, ".tlz")) ? ArchiveFormat::TarLzip : ArchiveFormat::Lzip;
+    }
+    if (starts_with_signature(bytes, {0x28, 0xB5, 0x2F, 0xFD})) {
+        return ArchiveFormat::Zstd;
+    }
+    return ArchiveFormat::Unknown;
 }
 
 // Purpose: Detect archive formats with stable magic bytes before extension fallback.
@@ -338,27 +387,8 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         starts_with_signature(bytes, {'R', 'a', 'r', '!', 0x1A, 0x07, 0x01, 0x00})) {
         return ArchiveFormat::Rar;
     }
-    if (starts_with_signature(bytes, {0x1F, 0x8B})) {
-        return ArchiveFormat::Gzip;
-    }
-    if (starts_with_signature(bytes, {0x1F, 0x9D})) {
-        return ArchiveFormat::UnixCompress;
-    }
-    if (has_base64_begin_line(bytes)) {
-        return ArchiveFormat::Base64;
-    }
-    if (starts_with_signature(bytes, {'B', 'Z', 'h'})) {
-        return ArchiveFormat::Bzip2;
-    }
-    if (starts_with_signature(bytes, {0xFD, '7', 'z', 'X', 'Z', 0x00})) {
-        return ArchiveFormat::Xz;
-    }
-    if (starts_with_signature(bytes, {'L', 'Z', 'I', 'P'})) {
-        const auto lower_name = ascii_lower(path.filename().string());
-        return (ends_with_lower(lower_name, ".tar.lz") || ends_with_lower(lower_name, ".tlz")) ? ArchiveFormat::TarLzip : ArchiveFormat::Lzip;
-    }
-    if (starts_with_signature(bytes, {0x28, 0xB5, 0x2F, 0xFD})) {
-        return ArchiveFormat::Zstd;
+    if (const auto stream_format = detect_stream_magic(bytes, path); stream_format != ArchiveFormat::Unknown) {
+        return stream_format;
     }
     if (starts_with_signature(bytes, {'M', 'S', 'C', 'F'})) {
         return ArchiveFormat::Cab;
@@ -470,6 +500,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "b64";
     } else if (lowered == "lzh") {
         lowered = "lha";
+    } else if (lowered == "binhex" || lowered == "binhex4" || lowered == "binhex40") {
+        lowered = "hqx";
     } else if (lowered == "xxencode") {
         lowered = "xxe";
     } else if (lowered == "uu" || lowered == "uuencode") {

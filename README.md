@@ -31,6 +31,9 @@ verification, and single-file `.zst`/`.zstd` streams are implemented through the
 app-local libzstd DLL with frame checksum creation and bounded-window extraction.
 Single-file `.b64` streams are implemented through a bounded Base64 adapter with
 strict padding validation and optional wrapper-header filename validation.
+BinHex 4.0 `.hqx` streams are extract-only and data-fork-only: SuperZip validates
+the header, data fork, and resource fork CRCs, discards resource-fork metadata
+on Windows, and publishes only the path-safe data fork.
 Common XXEncoded `.xxe` and UUencoded `.uue`/`.uu` files are implemented as
 single-file compatibility streams with strict begin-line parsing, bounded line
 lengths, path-safe header filenames, and verified output publication. Portable `.cpio`
@@ -191,6 +194,7 @@ build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.Z
 build/Release/superzip_cli.exe compress --format b64 --output file.txt.b64 file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.b64
+build/Release/superzip_cli.exe extract --output restored file.txt.hqx
 build/Release/superzip_cli.exe compress --format xxe --output file.txt.xxe file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.xxe
 build/Release/superzip_cli.exe compress --format uue --output file.txt.uue file.txt
@@ -224,7 +228,7 @@ and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
 ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, Gzip, Bzip2, XZ, LZMA, lzip,
-Unix Compress, Base64, XXEncode, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
+Unix Compress, Base64, BinHex, XXEncode, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
 CPIO.GZ, AR, DEB, ISO, and RPM compatibility are deliberately separate from
 SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,

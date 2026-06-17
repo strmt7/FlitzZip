@@ -37,6 +37,7 @@ enum class ArchiveFormat {
     Ar,
     Arj,
     Arc,
+    Hqx,
     Xxe,
     Uue,
     Lha,

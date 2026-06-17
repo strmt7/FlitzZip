@@ -6,6 +6,7 @@
 #include <array>
 #include <fstream>
 #include <span>
+#include <string>
 
 namespace {
 
@@ -15,6 +16,14 @@ namespace {
 void write_fixture(const std::filesystem::path& path, std::span<const unsigned char> bytes) {
     std::ofstream output(path, std::ios::binary);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+// Purpose: Write a small text fixture for archive-format detection tests.
+// Inputs: `path` is the fixture location and `text` is the exact payload.
+// Outputs: Creates or replaces the fixture file.
+void write_text_fixture(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream output(path, std::ios::binary);
+    output.write(text.data(), static_cast<std::streamsize>(text.size()));
 }
 
 // Purpose: Write a minimal native archive shell for format-detection tests.
@@ -63,6 +72,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arj"), superzip::ArchiveFormat::Arj);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arc"), superzip::ArchiveFormat::Arc);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ark"), superzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.hqx"), superzip::ArchiveFormat::Hqx);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.xxe"), superzip::ArchiveFormat::Xxe);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uue"), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uu"), superzip::ArchiveFormat::Uue);
@@ -96,6 +106,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "ar.bin", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
     write_fixture(root / "arj.bin", std::array<unsigned char, 4>{0x60, 0xEA, 0x00, 0x00});
     write_fixture(root / "arc.arc", std::array<unsigned char, 2>{0x1A, 0x00});
+    write_text_fixture(root / "hqx.bin", "(This file must be converted with BinHex 4.0)\n:abc:\n");
     write_fixture(root / "rpm.bin", std::array<unsigned char, 4>{0xED, 0xAB, 0xEE, 0xDB});
     write_fixture(root / "wim.bin", std::array<unsigned char, 8>{'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00});
     write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
@@ -124,6 +135,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "ar.bin"), superzip::ArchiveFormat::Ar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "arj.bin"), superzip::ArchiveFormat::Arj);
     REQUIRE_EQ(superzip::detect_archive_format(root / "arc.arc"), superzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "hqx.bin"), superzip::ArchiveFormat::Hqx);
     REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
     REQUIRE_EQ(superzip::detect_archive_format(root / "wim.bin"), superzip::ArchiveFormat::Wim);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
@@ -170,6 +182,10 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("arj").value(), superzip::ArchiveFormat::Arj);
     REQUIRE_EQ(superzip::parse_archive_format_token("arc").value(), superzip::ArchiveFormat::Arc);
     REQUIRE_EQ(superzip::parse_archive_format_token("ark").value(), superzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(superzip::parse_archive_format_token("hqx").value(), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(superzip::parse_archive_format_token("binhex").value(), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(superzip::parse_archive_format_token("binhex4").value(), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(superzip::parse_archive_format_token("binhex40").value(), superzip::ArchiveFormat::Hqx);
     REQUIRE_EQ(superzip::parse_archive_format_token("swm").value(), superzip::ArchiveFormat::SplitWim);
 }
 

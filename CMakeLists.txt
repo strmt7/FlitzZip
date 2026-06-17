@@ -231,6 +231,7 @@ add_library(superzip_core STATIC
     src/gzip/gzip_stream.cpp
     src/gpu/gpu_codec.cpp
     src/gpu/hip_device.cpp
+    src/hqx/hqx_adapter.cpp
     src/iso/iso_adapter.cpp
     src/lha/lha_adapter.cpp
     src/lzip/lzip_adapter.cpp
@@ -401,6 +402,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_cab_compat.cpp
         tests/cpp/test_cpio_compat.cpp
         tests/cpp/test_gzip_compat.cpp
+        tests/cpp/test_hqx_compat.cpp
         tests/cpp/test_iso_compat.cpp
         tests/cpp/test_lha_compat.cpp
         tests/cpp/test_lzip_compat.cpp

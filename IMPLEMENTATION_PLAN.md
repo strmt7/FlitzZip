@@ -135,6 +135,11 @@ archive options, progress snapshots, and errors.
   adapter with strict RFC-style padding validation, optional wrapper-header
   filename validation, overwrite refusal, and verified temporary-file
   publication.
+- Added extract-only BinHex 4.0 `.hqx` data-fork compatibility through a native
+  bounded text adapter with strict HQX alphabet parsing, RLE expansion,
+  path-safe header filenames, header/data/resource CRC validation, resource
+  fork discard on Windows, overwrite refusal, and verified temporary-file
+  publication.
 - Added XXEncode `.xxe` single-file compatibility through a native bounded text
   adapter with strict alphabet validation, path-safe begin-line filenames,
   overwrite refusal, and verified temporary-file publication.

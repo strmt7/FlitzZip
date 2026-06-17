@@ -13,6 +13,7 @@
 #include "core/result.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "hqx/hqx_adapter.hpp"
 #include "iso/iso_adapter.hpp"
 #include "lha/lha_adapter.hpp"
 #include "lzip/lzip_adapter.hpp"
@@ -1271,6 +1272,9 @@ std::optional<superzip::OperationStats> extract_stream_or_tar_format(
     case superzip::ArchiveFormat::Base64:
         reject_extract_tuning("Base64", command);
         return superzip::extract_base64_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Hqx:
+        reject_extract_tuning("HQX", command);
+        return superzip::extract_hqx_file(command.archive, command.output, command.overwrite);
     case superzip::ArchiveFormat::Xxe:
         reject_extract_tuning("XXE", command);
         return superzip::extract_xxe_file(command.archive, command.output, command.overwrite);
