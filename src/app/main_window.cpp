@@ -2394,11 +2394,9 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
             draw_performance_monitor_card(dc, card, L"CPU", percentage_text(sample.cpu_percent),
                                           L"Process utilization\nAcross logical processors", cpu_span, kInfo);
         } else if (i == 1) {
-            const auto value = widen(human_bytes(static_cast<double>(sample.private_bytes)));
-            const auto detail = std::wstring(L"Private process\nSystem ") +
-                                widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes))) + L" / " +
-                                widen(human_bytes(static_cast<double>(sample.system_memory_total_bytes))) + L" (" +
-                                percentage_text(sample.system_memory_percent) + L")";
+            const auto value = widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes)));
+            const auto detail = std::wstring(L"Total used ") + percentage_text(sample.system_memory_percent) +
+                                L"\nProcess private " + widen(human_bytes(static_cast<double>(sample.private_bytes)));
             draw_performance_monitor_card(dc, card, L"Memory", value, detail, memory_span, kOk);
         } else if (i == 2) {
             const double total_io = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
@@ -2409,14 +2407,14 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
+            const auto value = has_vram ? widen(human_bytes(static_cast<double>(used))) : L"Unavailable";
             const auto utilization =
                 sample.gpu_utilization_available ? percentage_text(sample.gpu_utilization_percent) : L"Unavailable";
-            const auto detail = has_vram
-                                    ? std::wstring(L"VRAM ") + widen(human_bytes(static_cast<double>(used))) + L" / " +
-                                          widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
-                                          L"\nFree " + widen(human_bytes(static_cast<double>(sample.vram_free_bytes)))
-                                    : L"HIP VRAM unavailable\nGPU counter " + utilization;
-            draw_performance_monitor_card(dc, card, L"GPU / VRAM", utilization, detail, vram_span, kAccent);
+            const auto detail = has_vram ? std::wstring(L"VRAM total ") +
+                                               widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
+                                               L"\nGPU utilization " + utilization
+                                         : L"HIP VRAM unavailable\nGPU counter " + utilization;
+            draw_performance_monitor_card(dc, card, L"VRAM", value, detail, vram_span, kAccent);
         }
     }
 }

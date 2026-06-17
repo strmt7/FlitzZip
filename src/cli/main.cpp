@@ -344,13 +344,12 @@ std::uint64_t safe_host_memory_growth_bytes() {
     return 4ULL * 1024ULL * 1024ULL * 1024ULL;
 }
 
-// Purpose: Refuse a memory-only benchmark that would plausibly force paging or exceed the RAM-use policy.
-// Inputs: `total_bytes` is the virtual uncompressed workload size.
-// Outputs: Returns normally when host RAM can hold the generated in-memory archive and working chunks.
-void assert_memory_benchmark_budget(std::uint64_t total_bytes) {
-    auto required = checked_add_cli_u64(total_bytes, kMemoryBenchmarkReserveBytes, "memory benchmark budget overflow");
-    required = checked_add_cli_u64(
-        required,
+// Purpose: Refuse a memory-only benchmark when even one bounded archive window would exceed the RAM-use policy.
+// Inputs: None.
+// Outputs: Returns normally when host RAM can hold one generated chunk, one encoded chunk, and the reserve.
+void assert_memory_benchmark_budget() {
+    auto required = checked_add_cli_u64(
+        kMemoryBenchmarkReserveBytes,
         checked_multiply_cli_u64(superzip::kMaxArchiveChunkBytes, 2U, "memory benchmark working set overflow"),
         "memory benchmark budget overflow");
     const auto safe_growth = safe_host_memory_growth_bytes();
@@ -361,15 +360,11 @@ void assert_memory_benchmark_budget(std::uint64_t total_bytes) {
 }
 
 // Purpose: Resolve bounded in-flight work for the memory-only benchmark pipeline.
-// Inputs: `workers` is the resolved CPU worker count and `total_bytes` is the virtual workload size.
+// Inputs: `workers` is the resolved CPU worker count.
 // Outputs: Returns a queue depth that fits the 80% host RAM policy and SuperZip's in-flight limit.
-std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, std::uint64_t total_bytes) {
+std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers) {
     const auto safe_growth = safe_host_memory_growth_bytes();
-    auto baseline = checked_add_cli_u64(total_bytes, kMemoryBenchmarkReserveBytes, "memory benchmark budget overflow");
-    baseline = checked_add_cli_u64(
-        baseline,
-        checked_multiply_cli_u64(superzip::kMaxArchiveChunkBytes, 2U, "memory benchmark working set overflow"),
-        "memory benchmark budget overflow");
+    const auto baseline = kMemoryBenchmarkReserveBytes;
     if (baseline >= safe_growth) {
         return 1;
     }
@@ -464,21 +459,22 @@ void flush_one_memory_encode(std::deque<PendingMemoryEncode>& pending_encode, st
     archive[pending.index] = std::move(chunk);
 }
 
-// Purpose: Encode the synthetic memory workload without writing benchmark data to storage.
-// Inputs: `total_bytes`, `inflight`, `options`, and `codec_options` define generated chunks and backend policy;
-// `result` receives counters. Outputs: Returns an in-memory archive chunk vector with per-chunk CRC data for later
-// verification.
-std::vector<MemoryArchiveChunk> encode_memory_benchmark_archive(std::uint64_t total_bytes, std::uint32_t inflight,
-                                                                const MemoryBenchmarkOptions& options,
-                                                                const superzip::GpuCodecOptions& codec_options,
-                                                                MemoryBenchmarkResult& result) {
-    const auto chunk_count = static_cast<std::size_t>((total_bytes + superzip::kMaxArchiveChunkBytes - 1U) /
+// Purpose: Encode one synthetic memory-workload window without writing benchmark data to storage.
+// Inputs: `window_offset`/`window_bytes` select the bounded window, `total_bytes` preserves deterministic data shape,
+// `inflight`, `options`, and `codec_options` define backend policy, and `result` receives counters.
+// Outputs: Returns an in-memory archive window with per-chunk CRC data for later verification.
+std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t window_offset, std::uint64_t window_bytes,
+                                                               std::uint64_t total_bytes, std::uint32_t inflight,
+                                                               const MemoryBenchmarkOptions& options,
+                                                               const superzip::GpuCodecOptions& codec_options,
+                                                               MemoryBenchmarkResult& result) {
+    const auto chunk_count = static_cast<std::size_t>((window_bytes + superzip::kMaxArchiveChunkBytes - 1U) /
                                                       superzip::kMaxArchiveChunkBytes);
     std::vector<MemoryArchiveChunk> archive(chunk_count);
     std::deque<PendingMemoryEncode> pending_encode;
-    for (std::uint64_t offset = 0, index = 0; offset < total_bytes; ++index) {
-        const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, total_bytes - offset);
-        const auto chunk_offset = offset;
+    for (std::uint64_t offset = 0, index = 0; offset < window_bytes; ++index) {
+        const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, window_bytes - offset);
+        const auto chunk_offset = window_offset + offset;
         const auto profile = options.profile;
         pending_encode.push_back(PendingMemoryEncode{
             .index = static_cast<std::size_t>(index),
@@ -623,10 +619,10 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
     const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
-    assert_memory_benchmark_budget(total_bytes);
+    assert_memory_benchmark_budget();
 
     const auto workers = resolve_memory_benchmark_workers(options.workers);
-    const auto inflight = resolve_memory_benchmark_inflight(workers, total_bytes);
+    const auto inflight = resolve_memory_benchmark_inflight(workers);
     const auto chunk_count = static_cast<std::size_t>((total_bytes + superzip::kMaxArchiveChunkBytes - 1U) /
                                                       superzip::kMaxArchiveChunkBytes);
     const auto codec_workers = resolve_memory_codec_workers(workers, inflight, chunk_count);
@@ -649,18 +645,29 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.compression_level = options.compression_level;
 
     const auto total_started = std::chrono::steady_clock::now();
-    auto phase_started = std::chrono::steady_clock::now();
-    auto archive = encode_memory_benchmark_archive(total_bytes, inflight, options, codec_options, result);
-    result.compress_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+    const auto window_chunks = std::max<std::uint64_t>(1U, inflight);
+    const auto window_bytes = checked_multiply_cli_u64(window_chunks, superzip::kMaxArchiveChunkBytes,
+                                                       "memory benchmark window size overflows");
+    for (std::uint64_t offset = 0; offset < total_bytes;) {
+        const auto current_window = std::min<std::uint64_t>(window_bytes, total_bytes - offset);
+        auto phase_started = std::chrono::steady_clock::now();
+        auto archive = encode_memory_benchmark_window(offset, current_window, total_bytes, inflight, options,
+                                                      codec_options, result);
+        result.compress_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
-    phase_started = std::chrono::steady_clock::now();
-    verify_memory_benchmark_archive(archive, inflight, codec_options, result);
-    result.verify_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+        phase_started = std::chrono::steady_clock::now();
+        verify_memory_benchmark_archive(archive, inflight, codec_options, result);
+        result.verify_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
-    phase_started = std::chrono::steady_clock::now();
-    extract_memory_benchmark_archive(archive, inflight, codec_options, result);
-    result.extract_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
-    result.stats.entries = archive.size();
+        phase_started = std::chrono::steady_clock::now();
+        extract_memory_benchmark_archive(archive, inflight, codec_options, result);
+        result.extract_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+        offset += current_window;
+    }
+    result.stats.entries = chunk_count;
     result.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
     result.stats.gpu_runtime = superzip::snapshot_gpu_telemetry(*telemetry);
     return result;
