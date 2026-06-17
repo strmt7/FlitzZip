@@ -52,6 +52,30 @@ function Invoke-NativeTool {
     }
 }
 
+# Purpose: Fail early when a running SuperZip instance locks the build output executable.
+# Inputs: `Configuration` selects the build subdirectory that would be overwritten.
+# Outputs: Throws with an actionable message when the target GUI binary is running.
+function Assert-BuildOutputNotRunning {
+    param([Parameter(Mandatory = $true)][string]$Configuration)
+
+    $targetExe = [IO.Path]::GetFullPath((Join-Path $repo "build\$Configuration\SuperZip.exe"))
+    foreach ($process in @(Get-Process -Name "SuperZip" -ErrorAction SilentlyContinue)) {
+        $processPath = ""
+        try {
+            $processPath = [string]$process.Path
+        } catch {
+            $processPath = ""
+        }
+        if ([string]::IsNullOrWhiteSpace($processPath)) {
+            continue
+        }
+        $fullProcessPath = [IO.Path]::GetFullPath($processPath)
+        if ($fullProcessPath.Equals($targetExe, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Close the running build output before rebuilding: $targetExe"
+        }
+    }
+}
+
 $cmake = Find-CMake
 if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
@@ -74,6 +98,7 @@ $configureArgs = @(
 Invoke-NativeTool -FilePath $cmake -Arguments $configureArgs -Operation "CMake configure"
 
 if (-not $ConfigureOnly) {
+    Assert-BuildOutputNotRunning -Configuration $Configuration
     $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel")
     Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
 }

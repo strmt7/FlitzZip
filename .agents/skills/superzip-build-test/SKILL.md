@@ -93,7 +93,17 @@ Rules:
 - Brand/logo changes must start from `resources/brand/superzip-logo.svg`.
   Regenerate `resources/app/superzip.ico`, rely on the generated Win32 logo
   geometry header, and run `tools/verify_brand_assets.ps1`. Do not add alternate
-  hand-drawn logo variants.
+  hand-drawn logo variants, and do not embed README or UI logo assets from any
+  source other than the canonical SVG. AI agents may move or resize the
+  `superzip-logo-mark` group for layout and may edit surrounding text, but must
+  not modify mark path geometry, stroke styling, layer count, or
+  source-of-truth metadata.
+- Do not run builds or packaging in parallel with GUI smoke tests or an open
+  build-output `SuperZip.exe`; file locks produce misleading linker failures.
+- When a workflow, badge, verifier, or agent-routing mistake is found, read
+  `docs/engineering-learning-loop.md` and add the narrowest enforceable
+  invariant that prevents recurrence without changing product direction or
+  adding unrelated heavyweight gates.
 - LHA/LZH compatibility changes must exercise successful nested extraction,
   overwrite refusal, truncated/corrupt payload rejection, absolute-path
   rejection, parent-directory rejection, and symbolic-link rejection. Keep the

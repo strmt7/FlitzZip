@@ -151,6 +151,13 @@ variables.
 
 ## Operational Rules
 
+- The SuperZip lint stack is intentionally language-specific. It uses
+  `clang-format` for owned C/C++ files, PSScriptAnalyzer for PowerShell, Ruff
+  for Python helper scripts, yamllint for GitHub YAML, pymarkdownlnt for
+  Markdown, and cmakelang for CMake. The Python/Docker reference repository
+  pattern of separate Ruff/Mypy/Vulture/Super-Linter lanes is useful as a CI
+  shape, but SuperZip does not run linters for languages or container surfaces
+  that are not part of this Windows-native C++ product.
 - CodeQL C++ uses `build-mode: none` for the normal security workflow. This is
   deliberate: GitHub's current CodeQL C/C++ support can scan without a build,
   and removing the manual MSVC database build prevents CodeQL from dominating
@@ -202,4 +209,8 @@ variables.
 - Workflows must never create GitHub deployment records. GitHub Actions
   `environment:` blocks and `deployment:` keys are forbidden by local security
   checks.
+- Workflow `run` blocks must not interpolate `${{ github.* }}` directly. Put
+  untrusted GitHub context values in `env:` and quote the environment variables
+  inside the shell script. This is enforced locally by changed-file hygiene and
+  repo-wide security scans.
 - Refresh GitHub Security tab alerts after every security remediation push.

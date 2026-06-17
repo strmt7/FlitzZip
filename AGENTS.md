@@ -58,6 +58,16 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   product names or copy another product's UI/help text into this repository.
 - Before performing repo-wide refactoring or automatic cleanup, read
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
+- Before changing workflow security, CI badges, README logo rendering, verifier
+  behavior, or agent/tool routing, read `docs/engineering-learning-loop.md`.
+  When a mistake reveals a repeatable failure class, fix the root cause and add
+  the narrowest local invariant that prevents recurrence; do not add broad
+  process, suppressions, or unrelated gates.
+- The canonical logo artwork is the `superzip-logo-mark` group in
+  `resources/brand/superzip-logo.svg`. AI agents may move or resize that mark
+  for layout, and may edit surrounding wordmark/tagline copy, but must not alter
+  the mark path geometry, layer count, stroke width, stroke color, line joins,
+  line caps, or source-of-truth metadata.
 - Before choosing local tests, security scans, GUI smoke, fuzzing, benchmarks,
   or post-push workflow waits, read `docs/targeted-verification.md` and run
   `tools\verification_plan.ps1 -IncludeUntracked`. Use the selected checks
@@ -150,6 +160,9 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `.github/workflows/release.yml`: manual x64 release, installer smoke, beta/stable track selection, and publishing workflow.
 - `.github/workflows/scorecard.yml`: default-branch OSSF Scorecard workflow.
 - `.agents/skills/` and `mcp/`: local helper skills/MCPs for future agents.
+- `docs/engineering-learning-loop.md`: concrete mistake-to-invariant policy for
+  preventing repeated workflow, badge, branding, verifier, and agent-routing
+  failures without degrading product direction.
 
 ## Build And Test Commands
 
@@ -376,6 +389,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   C/C++ formatting, PowerShell static analysis, Python helper lint/format,
   YAML workflow lint, Markdown lint, and CMake lint. Do not add badge-only
   workflows for languages or services that are not part of the repo.
+- Workflow `run` blocks must pass GitHub context values through quoted
+  environment variables instead of direct `${{ github.* }}` interpolation.
+  CI tool installs must be version-pinned and hash-verified when the package
+  manager bootstrap is known to be mutable or runner-dependent.
+- Do not run build/package jobs in parallel with GUI smoke tests or a manually
+  opened build-output `SuperZip.exe`. The build script fails early when the
+  target GUI binary is running so agents do not misdiagnose linker file-lock
+  errors as code defects.
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
 - Product benchmark claims must sweep the production SUZIP block-size choices:

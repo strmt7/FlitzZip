@@ -37,16 +37,41 @@ jobs:
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: |
-          Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          $ErrorActionPreference = "Stop"
+          $moduleName = "PSScriptAnalyzer"
+          $version = "1.24.0"
+          $expectedSha256 = "E86C97D44BB1BC8A1DE35E753B85EA1D938F6F9F881639A181507E079BCA4556"
+          $package = Join-Path $env:RUNNER_TEMP "$moduleName.$version.nupkg"
+          $modulePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell/Modules/$moduleName/$version"
+          Invoke-WebRequest `
+            -Uri "https://www.powershellgallery.com/api/v2/package/$moduleName/$version" `
+            -OutFile $package
+          $actualSha256 = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "$moduleName $version package hash mismatch."
+          }
+          if (Test-Path -LiteralPath $modulePath) {
+            Remove-Item -LiteralPath $modulePath -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $modulePath | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($package, $modulePath)
+          Import-Module $moduleName -RequiredVersion $version -Force
       - name: Run linters
         shell: pwsh
+        env:
+          SUPERZIP_EVENT_NAME: ${{ github.event_name }}
+          SUPERZIP_BASE_REF: ${{ github.base_ref }}
+          SUPERZIP_HEAD_SHA: ${{ github.sha }}
+          SUPERZIP_BEFORE_SHA: ${{ github.event.before }}
         run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+          $ErrorActionPreference = "Stop"
+          $eventName = $env:SUPERZIP_EVENT_NAME
+          if ($eventName -eq "workflow_dispatch") {
             tools/lint.ps1 -CppMode Changed -BaseRef HEAD~1 -HeadRef HEAD
-          } elseif ("${{ github.event_name }}" -eq "pull_request") {
-            tools/lint.ps1 -CppMode Changed -BaseRef "origin/${{ github.base_ref }}" -HeadRef "${{ github.sha }}"
+          } elseif ($eventName -eq "pull_request") {
+            $baseRef = "origin/$($env:SUPERZIP_BASE_REF)"
+            tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:SUPERZIP_HEAD_SHA"
           } else {
-            tools/lint.ps1 -CppMode Changed -BaseRef "${{ github.event.before }}" -HeadRef "${{ github.sha }}"
+            tools/lint.ps1 -CppMode Changed -BaseRef "$env:SUPERZIP_BEFORE_SHA" -HeadRef "$env:SUPERZIP_HEAD_SHA"
           }

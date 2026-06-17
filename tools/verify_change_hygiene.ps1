@@ -67,6 +67,71 @@ function Test-ChangedFileTextPolicy {
     }
 }
 
+# Purpose: Return the count of leading spaces before the first non-space character.
+# Inputs: `Line` is one workflow YAML line.
+# Outputs: Returns an indentation count used for block-scalar boundary checks.
+function Get-LeadingSpaceCount {
+    param([AllowEmptyString()][string]$Line)
+
+    $match = [regex]::Match($Line, '^\s*')
+    return $match.Value.Length
+}
+
+# Purpose: Test whether one workflow YAML line references untrusted GitHub context.
+# Inputs: `Line` is a single workflow YAML line.
+# Outputs: Returns true when the line contains a GitHub context expression.
+function Test-GithubContextInterpolation {
+    param([AllowEmptyString()][string]$Line)
+
+    $expressionPrefix = [regex]::Escape('$') + [regex]::Escape(([string][char]123) + ([string][char]123))
+    return $Line -match ($expressionPrefix + '\s*github\.')
+}
+
+# Purpose: Reject direct GitHub context interpolation inside workflow `run` scripts.
+# Inputs: `Path` identifies the workflow file and `Lines` contains its text.
+# Outputs: Throws when a run block can be vulnerable to script injection.
+function Assert-NoGithubContextInRunBlock {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Lines
+    )
+
+    $inRunBlock = $false
+    $runIndent = -1
+    for ($i = 0; $i -lt $Lines.Count; ++$i) {
+        $line = $Lines[$i]
+        $trimmed = $line.Trim()
+        if ($inRunBlock -and $trimmed.Length -gt 0 -and (Get-LeadingSpaceCount -Line $line) -le $runIndent) {
+            $inRunBlock = $false
+        }
+        if ($inRunBlock -and (Test-GithubContextInterpolation -Line $line)) {
+            throw "Workflow run block interpolates github context directly. Use env indirection instead: $($Path):$($i + 1)"
+        }
+        if ($line -match '^(\s*)run\s*:\s*(\||>|$)') {
+            $inRunBlock = $true
+            $runIndent = $Matches[1].Length
+        } elseif ($line -match '^\s*run\s*:' -and (Test-GithubContextInterpolation -Line $line)) {
+            throw "Workflow run command interpolates github context directly. Use env indirection instead: $($Path):$($i + 1)"
+        }
+    }
+}
+
+# Purpose: Reject fragile PowerShell Gallery bootstrap commands in workflows.
+# Inputs: `Path` identifies the workflow and `Lines` contains its text.
+# Outputs: Throws when a workflow relies on runner-local PackageManagement provider discovery.
+function Assert-NoFragilePowerShellGalleryBootstrap {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Lines
+    )
+
+    for ($i = 0; $i -lt $Lines.Count; ++$i) {
+        if ($Lines[$i] -match 'Install-PackageProvider\s+-Name\s+NuGet') {
+            throw "Workflow must not rely on Install-PackageProvider NuGet bootstrap; use hash-checked package installation: $($Path):$($i + 1)"
+        }
+    }
+}
+
 # Purpose: Validate workflow-specific policy for changed YAML files.
 # Inputs: `Path` is repository-relative and points under `.github`.
 # Outputs: Throws when workflow changes could create deployments or hide failures/findings.
@@ -84,18 +149,20 @@ function Test-ChangedWorkflowPolicy {
     for ($i = 0; $i -lt $lines.Count; ++$i) {
         $line = $lines[$i]
         if ($line -match '^\s*environment\s*:') {
-            throw "Workflow environment blocks are forbidden because they can create GitHub deployment records: ${Path}:$($i + 1)"
+            throw "Workflow environment blocks are forbidden because they can create GitHub deployment records: $($Path):$($i + 1)"
         }
         if ($line -match '^\s*deployment\s*:') {
-            throw "Workflow deployment keys are forbidden in this repository: ${Path}:$($i + 1)"
+            throw "Workflow deployment keys are forbidden in this repository: $($Path):$($i + 1)"
         }
         if ($line -match 'continue-on-error\s*:\s*true') {
-            throw "Workflow soft-fail behavior is forbidden in ${Path}:$($i + 1)"
+            throw "Workflow soft-fail behavior is forbidden in $($Path):$($i + 1)"
         }
         if ($line -match '(--exclude|skip-dirs|ignore-globs|paths-ignore).*(src|tests|tools|third_party|\.github)') {
-            throw "Workflow scanner exclusion covers source-controlled code in ${Path}:$($i + 1)"
+            throw "Workflow scanner exclusion covers source-controlled code in $($Path):$($i + 1)"
         }
     }
+    Assert-NoGithubContextInRunBlock -Path $Path -Lines $lines
+    Assert-NoFragilePowerShellGalleryBootstrap -Path $Path -Lines $lines
 }
 
 # Purpose: Reject generated binaries introduced by the changed path set.

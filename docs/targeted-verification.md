@@ -129,6 +129,12 @@ enforced on changed C/C++ files only until a deliberate repo-wide formatting
 migration is planned and tested. Manual `workflow_dispatch` lint runs recheck
 the latest commit range.
 
+Post-incident lessons live in `docs/engineering-learning-loop.md` and are
+enforced through the hygiene/security scans when they describe a repeatable,
+locally detectable failure class. Do not turn lessons into broad heavyweight
+workflow waits; keep them as narrow invariants unless the verifier explicitly
+escalates.
+
 ## Rules For Agents
 
 1. Start with `tools\verification_plan.ps1 -IncludeUntracked`.

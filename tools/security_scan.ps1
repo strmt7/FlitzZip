@@ -67,7 +67,11 @@ function Test-WorkflowSecurityPolicy {
             if ($line -match '(--exclude|skip-dirs|ignore-globs|paths-ignore).*(src|tests|tools|third_party|\.github)') {
                 throw "Workflow scanner exclusion covers source-controlled code in $($file.FullName):$($i + 1)"
             }
+            if ($line -match 'Install-PackageProvider\s+-Name\s+NuGet') {
+                throw "Workflow must not rely on Install-PackageProvider NuGet bootstrap; use hash-checked package installation: $($file.FullName):$($i + 1)"
+            }
         }
+        Assert-NoGithubContextInRunBlock -Path $file.FullName -Lines $lines
     }
 
     $codeqlConfig = Join-Path $repo ".github\codeql\codeql-config.yml"
@@ -90,7 +94,71 @@ function Test-WorkflowSecurityPolicy {
     }
 }
 
+# Purpose: Return the count of leading spaces before the first non-space character.
+# Inputs: `Line` is one workflow YAML line.
+# Outputs: Returns an indentation count used for block-scalar boundary checks.
+function Get-LeadingSpaceCount {
+    param([AllowEmptyString()][string]$Line)
+
+    $match = [regex]::Match($Line, '^\s*')
+    return $match.Value.Length
+}
+
+# Purpose: Test whether one workflow YAML line references untrusted GitHub context.
+# Inputs: `Line` is a single workflow YAML line.
+# Outputs: Returns true when the line contains a GitHub context expression.
+function Test-GithubContextInterpolation {
+    param([AllowEmptyString()][string]$Line)
+
+    $expressionPrefix = [regex]::Escape('$') + [regex]::Escape(([string][char]123) + ([string][char]123))
+    return $Line -match ($expressionPrefix + '\s*github\.')
+}
+
+# Purpose: Reject direct GitHub context interpolation inside workflow `run` scripts.
+# Inputs: `Path` identifies the workflow file and `Lines` contains its text.
+# Outputs: Throws when a run block can be vulnerable to script injection.
+function Assert-NoGithubContextInRunBlock {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Lines
+    )
+
+    $inRunBlock = $false
+    $runIndent = -1
+    for ($i = 0; $i -lt $Lines.Count; ++$i) {
+        $line = $Lines[$i]
+        $trimmed = $line.Trim()
+        if ($inRunBlock -and $trimmed.Length -gt 0 -and (Get-LeadingSpaceCount -Line $line) -le $runIndent) {
+            $inRunBlock = $false
+        }
+        if ($inRunBlock -and (Test-GithubContextInterpolation -Line $line)) {
+            throw "Workflow run block interpolates github context directly. Use env indirection instead: $($Path):$($i + 1)"
+        }
+        if ($line -match '^(\s*)run\s*:\s*(\||>|$)') {
+            $inRunBlock = $true
+            $runIndent = $Matches[1].Length
+        } elseif ($line -match '^\s*run\s*:' -and (Test-GithubContextInterpolation -Line $line)) {
+            throw "Workflow run command interpolates github context directly. Use env indirection instead: $($Path):$($i + 1)"
+        }
+    }
+}
+
 Test-WorkflowSecurityPolicy
+
+# Purpose: Verify README badges avoid known flaky GitHub API-backed shields.
+# Inputs: Reads `README.md`.
+# Outputs: Throws when the license badge depends on the shields GitHub license endpoint.
+function Test-ReadmeBadgePolicy {
+    $readme = Get-Content -LiteralPath (Join-Path $repo "README.md") -Raw
+    if ($readme -match 'img\.shields\.io/github/license/strmt7/SuperZip') {
+        throw "README license badge must use the static AGPL-3.0 badge to avoid shields GitHub API token-pool failures."
+    }
+    if ($readme -notmatch 'resources/brand/superzip-logo\.svg') {
+        throw "README must render the product logo from resources/brand/superzip-logo.svg."
+    }
+}
+
+Test-ReadmeBadgePolicy
 
 # Purpose: Keep external product comparison names out of repo docs and source after one-time audit use.
 # Inputs: Scans source-controlled text outside generated/build folders.
@@ -180,4 +248,4 @@ Test-InstallerScopePolicy
 
 # Normalize handled native-command exit codes so pwsh returns the logical scan result.
 $global:LASTEXITCODE = 0
-Write-Host "Security scan passed."
+Write-Output "Security scan passed."

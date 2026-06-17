@@ -108,3 +108,12 @@ Workflow and release hardening rules:
   the repo. The lint lane covers C/C++ formatting, PowerShell static analysis,
   Python helper lint/format, YAML, Markdown, and CMake; do not add misleading
   badges or jobs for unused languages.
+- Workflow `run` blocks must not interpolate `${{ github.* }}` directly. Route
+  GitHub context through quoted environment variables so script-injection
+  scanners and local hygiene checks agree.
+- The canonical `superzip-logo-mark` artwork is immutable for AI agents. Text
+  around the logo can change, but the mark's path geometry and stroke contract
+  must stay under `tools/verify_brand_assets.ps1`.
+- Use `docs/engineering-learning-loop.md` for repeat mistakes: fix the root
+  cause, add a narrow invariant, and avoid broad suppressions or process-only
+  rules.

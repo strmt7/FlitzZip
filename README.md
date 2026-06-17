@@ -1,6 +1,8 @@
-![SuperZip logo](resources/brand/superzip-logo.svg)
+<p align="center">
+  <img src="resources/brand/superzip-logo.svg" alt="SuperZip logo" width="760">
+</p>
 
-[![License](https://img.shields.io/github/license/strmt7/SuperZip)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Windows CI](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/windows-ci.yml?branch=main&label=windows-ci)](https://github.com/strmt7/SuperZip/actions/workflows/windows-ci.yml)
 [![Security](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/security-code-scanning.yml?branch=main&label=security)](https://github.com/strmt7/SuperZip/actions/workflows/security-code-scanning.yml)
 [![Lint](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/lint.yml?branch=main&label=lint)](https://github.com/strmt7/SuperZip/actions/workflows/lint.yml)
@@ -272,6 +274,13 @@ Greenbone/OpenVAS integration audit. The live OpenVAS/Vulnetix scan is
 scheduled/manual and requires
 an OIDC-backed scanner configuration broker so private scanner credentials are
 never bound directly in workflow YAML.
+
+The lint workflow is language-specific for this repository: `clang-format` for
+owned C/C++ source, PSScriptAnalyzer for PowerShell, Ruff for Python helper
+scripts, yamllint for GitHub YAML, pymarkdownlnt for Markdown, and cmakelang
+for CMake. Workflow security is checked separately with actionlint, zizmor, and
+CodeQL Actions so GitHub-context injection issues are treated as security
+findings rather than style nits.
 
 ## Fuzzing
 

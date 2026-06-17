@@ -2,14 +2,14 @@
   <title id="title">SuperZip logo</title>
   <desc id="desc">A red stacked archive mark followed by the SuperZip wordmark.</desc>
   <rect width="960" height="240" rx="0" fill="#ffffff"/>
-  <g id="superzip-logo-mark" data-source-of-truth="true" transform="translate(64 36)" fill="none" stroke="#ff303a" stroke-width="16" stroke-linejoin="round" stroke-linecap="round">
+  <g id="superzip-logo-mark" data-source-of-truth="true" transform="translate(64 16)" fill="none" stroke="#ff303a" stroke-width="16" stroke-linejoin="round" stroke-linecap="round">
     <path id="superzip-logo-layer-1" d="M84 0 L168 42 L84 84 L0 42 Z"/>
     <path id="superzip-logo-layer-2" d="M84 62 L168 104 L84 146 L0 104 Z"/>
     <path id="superzip-logo-layer-3" d="M84 124 L168 166 L84 208 L0 166 Z"/>
   </g>
   <g fill="#15171c" font-family="Segoe UI, Inter, Arial, sans-serif" font-weight="700">
     <text x="280" y="128" font-size="82">SuperZip</text>
-    <text x="284" y="172" font-size="26" font-weight="600" letter-spacing="2">AMD HIP ARCHIVE ACCELERATION</text>
+    <text x="284" y="172" font-size="22" font-weight="600" letter-spacing="1.1">ULTRAFAST AMD HIP ARCHIVAL SOFTWARE</text>
   </g>
   <path d="M280 188 H852" stroke="#ff303a" stroke-width="6" stroke-linecap="round"/>
 </svg>
