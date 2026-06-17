@@ -35,6 +35,8 @@ Primary and project-owned sources reviewed:
 - CPGZ file extension reference: https://fileinfo.com/extension/cpgz
 - RFC 2045 Base64 content-transfer encoding: https://datatracker.ietf.org/doc/html/rfc2045
 - GNU/Arch uuencode Base64 wrapper notes: https://man.archlinux.org/man/uuencode.5.en
+- XXEncode manual page mirror with historical variant notes: https://www.math.utah.edu/~beebe/support/myman2html/testdata/okay/xxencode.html
+- XXEncode alphabet and legacy line-structure notes: https://nerdmosis.com/tools/encode-and-decode-uuencode-xxencode
 - bzip2/libbzip2: https://sourceware.org/bzip2/
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - Zstandard/libzstd: https://github.com/facebook/zstd
@@ -70,7 +72,7 @@ resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, CPIO.GZ, ARJ, ARC,
-LHA/LZH, WIM, XAR, DEB, RPM, Base64, UUencode, and legacy Unix Compress `.Z`. SuperZip's
+LHA/LZH, WIM, XAR, DEB, RPM, Base64, XXEncode, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
 
@@ -131,6 +133,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.01 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.b64` | Yes | Yes | Single-file compatibility stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
+| `.xxe` | Yes | Yes | Single-file compatibility stream | native bounded common XXEncode adapter with strict alphabet and path-safe begin-line handling |
 | `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.cpio.gz`, `.cpgz` | Yes | Yes | Compatibility format | native CPIO stream adapter over vendored miniz 3.1.1 raw deflate |
@@ -229,6 +232,22 @@ partial quanta, malformed padding, payload data after padding, overlong lines,
 unsafe wrapper filenames, overwrite attempts, and trailing data after the
 wrapper trailer. Base64 has no intrinsic checksum, so optional SHA-256 remains
 the strong end-to-end archive-file integrity check.
+
+XXEncode support is intentionally single-file when used as `.xxe`. SuperZip
+writes common `begin 644 <name>` streams using the XXEncode alphabet and extracts
+one file from the begin-line filename only after that name passes the same
+path-safety validation used by archive entries. Extension-based `.xxe` detection
+is authoritative for short streams because short non-empty XXEncode payloads are
+not always distinguishable from UUencode by magic alone. Extensionless detection
+is therefore conservative and only classifies clear XXEncode markers such as a
+full-length `h` payload line or the `+` zero-length terminator. The adapter
+tolerates a bounded mail-style preamble, rejects overlong lines, malformed
+payload data, missing end markers, unsafe paths, overwrite attempts, and
+non-whitespace trailing data, and publishes output only through the verified
+temporary-file path. Historical post-end byte-count and CRC trailer variants are
+not accepted until the exact trailer syntax and checksum contract are added with
+tests. For the common stream form, optional SHA-256 remains the strong
+end-to-end archive-file integrity check.
 
 UUencode support is intentionally single-file when used as `.uue` or `.uu`.
 SuperZip writes strict `begin 644 <name>` streams and extracts one file from the
@@ -706,6 +725,32 @@ flowchart TD
     E -->|"no"| G["Reject stream and remove temp output"]
 ```
 
+## XXEncode Security Contract
+
+The XXEncode path is an in-process single-file text decoder and writer:
+
+1. Accept only a bounded preamble followed by a strict `begin <octal-mode>
+   <filename>` line.
+2. Validate the begin-line filename through `safe_join_archive_path` before any
+   destination file is reserved.
+3. Decode only the XXEncode alphabet, bound every encoded line, and reject
+   declared decoded line lengths above 45 bytes.
+4. Require a documented zero-length line followed by `end`, then reject
+   non-whitespace trailing data, including historical post-end count/CRC trailer
+   variants until exact support is deliberately implemented.
+5. Publish the decoded file only after the complete stream has been decoded
+   into a private temporary file.
+
+```mermaid
+flowchart TD
+    A["Open XXEncode stream"] --> B["Scan bounded preamble"]
+    B --> C["Parse begin line and validate filename"]
+    C --> D["Decode strict XXEncode payload lines"]
+    D --> E{"Zero line and end marker valid?"}
+    E -->|"yes"| F["Atomically publish verified file"]
+    E -->|"no"| G["Reject stream and remove temp output"]
+```
+
 ## Base64 Security Contract
 
 The Base64 path is an in-process single-file text decoder and writer:
@@ -901,8 +946,9 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - Documentation update in this file, README, AGENTS, and release notes.
 
 Preferred next increments are read-only RAR, broader ARJ and SEA ARC
-compressed-method extraction, deeper ZIPX method coverage, XXEncode/BinHex
-single-file legacy text encodings, lzip creation only after a vetted in-process
+compressed-method extraction, deeper ZIPX method coverage, historical XXEncode
+count/CRC trailer support, BinHex and other single-file legacy text encodings,
+lzip creation only after a vetted in-process
 encoder exists, and the remaining recognized-only legacy/container formats after
 backend selection and licensing review. XAR checksum/signature validation is
 also a future hardening increment before SuperZip can claim broad XAR

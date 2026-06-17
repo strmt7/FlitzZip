@@ -26,6 +26,7 @@
 #include "uue/uue_adapter.hpp"
 #include "wim/wim_adapter.hpp"
 #include "xar/xar_adapter.hpp"
+#include "xxe/xxe_adapter.hpp"
 #include "xz/xz_adapter.hpp"
 #include "zstd/zstd_adapter.hpp"
 #include "zip/zip_adapter.hpp"
@@ -177,7 +178,7 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 15> formats{
+    constexpr std::array<ArchiveFormat, 16> formats{
         ArchiveFormat::SuperZip,
         ArchiveFormat::Zip,
         ArchiveFormat::Tar,
@@ -189,6 +190,7 @@ ArchiveFormat compression_format_value(int index) {
         ArchiveFormat::Zstd,
         ArchiveFormat::UnixCompress,
         ArchiveFormat::Base64,
+        ArchiveFormat::Xxe,
         ArchiveFormat::Uue,
         ArchiveFormat::Cpio,
         ArchiveFormat::CpioGzip,
@@ -202,7 +204,7 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 15> labels{
+    constexpr std::array<std::wstring_view, 16> labels{
         L"SuperZip GPU (.suzip)",
         L"ZIP compatibility (.zip)",
         L"TAR compatibility (.tar)",
@@ -214,6 +216,7 @@ std::wstring compression_format_text(int index) {
         L"Zstandard single file (.zst)",
         L"Unix Compress single file (.Z)",
         L"Base64 single file (.b64)",
+        L"XXEncoded single file (.xxe)",
         L"UUencoded single file (.uue)",
         L"CPIO compatibility (.cpio)",
         L"CPIO.GZ compatibility (.cpgz)",
@@ -250,6 +253,8 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".Z";
     case ArchiveFormat::Base64:
         return L".b64";
+    case ArchiveFormat::Xxe:
+        return L".xxe";
     case ArchiveFormat::Uue:
         return L".uue";
     case ArchiveFormat::Cpio:
@@ -347,6 +352,8 @@ OperationStats extract_detected_archive(
         return extract_unix_compress_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Base64:
         return extract_base64_file(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Xxe:
+        return extract_xxe_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Uue:
         return extract_uue_file(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Cab:
@@ -526,6 +533,7 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             compression_format_text(12),
             compression_format_text(13),
             compression_format_text(14),
+            compression_format_text(15),
         };
     case DropdownId::CompressLevel:
         return {
@@ -1819,7 +1827,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
         : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP, Gzip, Bzip2, Zstandard, Unix Compress, TAR stream formats, CAB, RPM payloads, XZ streams, and LZMA streams use streaming APIs; TAR, CPIO, AR, DEB, ISO, 7z, ARJ, and SEA ARC use bounded native adapters or allocator caps.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. Streaming codecs cover ZIP, Gzip, Bzip2, Zstandard, Unix Compress, Base64, XXEncode, UUE, TAR filters, CAB, RPM, XZ, and LZMA; container adapters keep metadata and output publication capped.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
@@ -1966,7 +1974,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, Base64, XXEncode, UUE, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -2074,7 +2082,7 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
     fill_round_rect(dc, menu, kPanel2, scale(4));
     stroke_rect(dc, menu, kAccent);
 
-    const int row_height = scale(options.size() > 10U ? 30 : 32);
+    const int row_height = scale(options.size() > 10U ? 28 : 32);
     const int selected = dropdown_selected_index(state, state.active_dropdown);
     SelectObject(dc, tiny_font_);
     for (int index = 0; index < static_cast<int>(options.size()); ++index) {
@@ -2138,7 +2146,7 @@ RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
         return RECT{};
     }
     const int gap = scale(4);
-    const int row_height = scale(options.size() > 10U ? 30 : 32);
+    const int row_height = scale(options.size() > 10U ? 28 : 32);
     const int menu_height = row_height * static_cast<int>(options.size()) + scale(2);
     int top = anchor.bottom + gap;
     int bottom = top + menu_height;
@@ -2464,7 +2472,7 @@ bool MainWindow::handle_active_dropdown_click(int x, int y) {
     const RECT anchor = dropdown_anchor_rect(active, content);
     if (contains_point(menu, x, y)) {
         const auto options = dropdown_options(active);
-        const int row_height = scale(options.size() > 10U ? 30 : 32);
+        const int row_height = scale(options.size() > 10U ? 28 : 32);
         const int option_index = row_height > 0 ? (y - menu.top - scale(1)) / row_height : -1;
         if (option_index >= 0 && option_index < static_cast<int>(options.size())) {
             select_dropdown_option(active, option_index);
@@ -2508,7 +2516,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
         std::lock_guard lock(mutex_);
         switch (id) {
         case DropdownId::CompressFormat:
-            state_.compression_format_index = std::clamp(option_index, 0, 14);
+            state_.compression_format_index = std::clamp(option_index, 0, 15);
             state_.status = "Archive format changed";
             break;
         case DropdownId::CompressLevel:
@@ -2827,6 +2835,8 @@ void MainWindow::start_compress() {
             stats = compress_unix_compress(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Base64) {
             stats = compress_base64(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::Xxe) {
+            stats = compress_xxe(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Uue) {
             stats = compress_uue(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {

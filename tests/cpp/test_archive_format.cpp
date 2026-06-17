@@ -63,6 +63,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arj"), superzip::ArchiveFormat::Arj);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arc"), superzip::ArchiveFormat::Arc);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ark"), superzip::ArchiveFormat::Arc);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.xxe"), superzip::ArchiveFormat::Xxe);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uue"), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uu"), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.lzh"), superzip::ArchiveFormat::Lha);
@@ -102,6 +103,9 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     const auto uue_begin = std::array<unsigned char, 24>{
         'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '`', '\n'};
     write_fixture(root / "uue.bin", uue_begin);
+    const auto xxe_begin = std::array<unsigned char, 24>{
+        'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '+', '\n'};
+    write_fixture(root / "xxe.bin", xxe_begin);
 
     REQUIRE_EQ(superzip::detect_archive_format(root / "zip.bin"), superzip::ArchiveFormat::Zip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "zipx.zipx"), superzip::ArchiveFormat::Zipx);
@@ -124,6 +128,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "wim.bin"), superzip::ArchiveFormat::Wim);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
     REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native.bin"), superzip::ArchiveFormat::SuperZip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "xxe.bin"), superzip::ArchiveFormat::Xxe);
     REQUIRE_EQ(superzip::detect_archive_format(root / "uue.bin"), superzip::ArchiveFormat::Uue);
 
     write_fixture(root / "package.deb", std::array<unsigned char, 8>{'!', '<', 'a', 'r', 'c', 'h', '>', '\n'});
@@ -158,6 +163,8 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("unix-compress").value(), superzip::ArchiveFormat::UnixCompress);
     REQUIRE_EQ(superzip::parse_archive_format_token("b64").value(), superzip::ArchiveFormat::Base64);
     REQUIRE_EQ(superzip::parse_archive_format_token("base64").value(), superzip::ArchiveFormat::Base64);
+    REQUIRE_EQ(superzip::parse_archive_format_token("xxe").value(), superzip::ArchiveFormat::Xxe);
+    REQUIRE_EQ(superzip::parse_archive_format_token("xxencode").value(), superzip::ArchiveFormat::Xxe);
     REQUIRE_EQ(superzip::parse_archive_format_token("uu").value(), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::parse_archive_format_token("uuencode").value(), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::parse_archive_format_token("arj").value(), superzip::ArchiveFormat::Arj);

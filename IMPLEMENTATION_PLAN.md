@@ -135,6 +135,9 @@ archive options, progress snapshots, and errors.
   adapter with strict RFC-style padding validation, optional wrapper-header
   filename validation, overwrite refusal, and verified temporary-file
   publication.
+- Added XXEncode `.xxe` single-file compatibility through a native bounded text
+  adapter with strict alphabet validation, path-safe begin-line filenames,
+  overwrite refusal, and verified temporary-file publication.
 
 ## Validation Gates
 

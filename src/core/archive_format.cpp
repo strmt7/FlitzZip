@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 35> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 36> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -51,6 +51,7 @@ constexpr std::array<ArchiveFormatInfo, 35> kFormatRegistry{{
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
+    {ArchiveFormat::Xxe, "xxe", "XXEncoded file (.xxe)", ".xxe", true, true, false, true},
     {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
@@ -60,7 +61,7 @@ constexpr std::array<ArchiveFormatInfo, 35> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 44> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 45> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -96,6 +97,7 @@ constexpr std::array<ExtensionFormatMapping, 44> kExtensionFormats{{
     {".arj", ArchiveFormat::Arj},
     {".arc", ArchiveFormat::Arc},
     {".ark", ArchiveFormat::Arc},
+    {".xxe", ArchiveFormat::Xxe},
     {".uue", ArchiveFormat::Uue},
     {".uu", ArchiveFormat::Uue},
     {".lha", ArchiveFormat::Lha},
@@ -233,6 +235,48 @@ bool has_uue_begin_line(std::span<const unsigned char> bytes) {
     return false;
 }
 
+// Purpose: Detect an XXEncode begin line without stealing generic UUencode text probes.
+// Inputs: `bytes` contains the file prefix and `path` supplies the `.xxe` extension hint for short payloads.
+// Outputs: Returns true for `.xxe` files with a strict begin line or for extensionless probes with an XXE-only length marker.
+bool has_xxe_begin_line(std::span<const unsigned char> bytes, const std::filesystem::path& path) {
+    const bool extension_hint = ends_with_lower(ascii_lower(path.filename().string()), ".xxe");
+    std::size_t line_start = 0;
+    while (line_start < bytes.size()) {
+        std::size_t line_end = line_start;
+        while (line_end < bytes.size() && bytes[line_end] != '\n') {
+            ++line_end;
+        }
+        auto line_size = line_end - line_start;
+        if (line_size > 0U && bytes[line_start + line_size - 1U] == '\r') {
+            --line_size;
+        }
+        constexpr std::string_view prefix = "begin ";
+        const bool begin_matches = line_size > prefix.size() &&
+            std::equal(prefix.begin(), prefix.end(), bytes.begin() + static_cast<std::ptrdiff_t>(line_start));
+        if (begin_matches) {
+            auto cursor = line_start + prefix.size();
+            const auto end = line_start + line_size;
+            while (cursor < end && bytes[cursor] >= '0' && bytes[cursor] <= '7') {
+                ++cursor;
+            }
+            const bool strict_header = cursor > line_start + prefix.size() && cursor + 1U < end && bytes[cursor] == ' ';
+            if (strict_header) {
+                if (extension_hint) {
+                    return true;
+                }
+                const auto next_start = line_end == bytes.size() ? bytes.size() : line_end + 1U;
+                if (next_start >= bytes.size()) {
+                    return false;
+                }
+                const auto marker = bytes[next_start];
+                return marker == static_cast<unsigned char>('h') || marker == static_cast<unsigned char>('+');
+            }
+        }
+        line_start = line_end == bytes.size() ? bytes.size() : line_end + 1U;
+    }
+    return false;
+}
+
 // Purpose: Detect a wrapped Base64 begin line in a bounded text probe.
 // Inputs: `bytes` contains the file prefix; preamble lines are ignored only within the probe.
 // Outputs: Returns true when a line starts with `begin-base64` or `begin-base64-encoded`.
@@ -360,6 +404,9 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
         matches_signature_at(bytes, 0x8801U, {'C', 'D', '0', '0', '1'})) {
         return ArchiveFormat::Iso;
     }
+    if (has_xxe_begin_line(bytes, path)) {
+        return ArchiveFormat::Xxe;
+    }
     if (has_uue_begin_line(bytes)) {
         return ArchiveFormat::Uue;
     }
@@ -423,6 +470,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "b64";
     } else if (lowered == "lzh") {
         lowered = "lha";
+    } else if (lowered == "xxencode") {
+        lowered = "xxe";
     } else if (lowered == "uu" || lowered == "uuencode") {
         lowered = "uue";
     } else if (lowered == "ark") {
