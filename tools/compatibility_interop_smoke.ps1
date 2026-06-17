@@ -41,6 +41,40 @@ function Invoke-InteropCommand {
     return @($output)
 }
 
+# Purpose: Run a native command that must fail with a specific diagnostic.
+# Inputs: `FilePath` is the executable, `Arguments` are passed verbatim, `Label` names the operation, and `ExpectedText` is matched in stderr/stdout.
+# Outputs: Returns normally only when the command fails and reports the expected diagnostic.
+function Invoke-ExpectedInteropFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$ExpectedText
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $exitCode = $process.ExitCode
+        $output = @()
+        if (Test-Path -LiteralPath $stdoutPath) {
+            $output += Get-Content -LiteralPath $stdoutPath
+        }
+        if (Test-Path -LiteralPath $stderrPath) {
+            $output += Get-Content -LiteralPath $stderrPath
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($exitCode -eq 0) {
+        throw "$Label unexpectedly succeeded. Output: $($output -join "`n")"
+    }
+    if (($output -join "`n") -notmatch [regex]::Escape($ExpectedText)) {
+        throw "$Label failed without expected diagnostic '$ExpectedText'. Output: $($output -join "`n")"
+    }
+}
+
 # Purpose: Create a deterministic text file for external-reader roundtrip checks.
 # Inputs: `Path` is the output file and `Text` is the exact payload.
 # Outputs: Creates parent directories and writes the payload.
@@ -124,26 +158,28 @@ try {
     Write-InteropTextFile -Path (Join-Path $inputTree "nested\beta.txt") -Text "beta interoperability payload"
 
     $cases = @(
-        @{ Format = "zip"; Extension = "zip"; PowerShellZip = $true },
+        @{ Format = "zip"; Extension = "zip"; PowerShellZip = $true; CompressionLevel = "9" },
         @{ Format = "tar"; Extension = "tar" },
-        @{ Format = "tar.gz"; Extension = "tar.gz" },
-        @{ Format = "tar.bz2"; Extension = "tar.bz2" },
-        @{ Format = "tar.zst"; Extension = "tar.zst" },
+        @{ Format = "tar.gz"; Extension = "tar.gz"; CompressionLevel = "9" },
+        @{ Format = "tar.bz2"; Extension = "tar.bz2"; CompressionLevel = "9" },
+        @{ Format = "tar.zst"; Extension = "tar.zst"; CompressionLevel = "9" },
         @{ Format = "cpio"; Extension = "cpio" },
-        @{ Format = "cpio.gz"; Extension = "cpgz" },
+        @{ Format = "cpio.gz"; Extension = "cpgz"; CompressionLevel = "9" },
         @{ Format = "ar"; Extension = "ar" }
     )
 
     foreach ($case in $cases) {
         $archive = Join-Path $work ("archive." + $case.Extension)
-        Invoke-InteropCommand -FilePath $cli -Arguments @(
+        $createArgs = @(
             "compress",
             "--format",
-            [string]$case.Format,
-            "--output",
-            $archive,
-            $inputTree
-        ) -Label "SuperZip create $($case.Format)" | Out-Null
+            [string]$case.Format
+        )
+        if ($case.ContainsKey("CompressionLevel")) {
+            $createArgs += @("--compression-level", [string]$case.CompressionLevel)
+        }
+        $createArgs += @("--output", $archive, $inputTree)
+        Invoke-InteropCommand -FilePath $cli -Arguments $createArgs -Label "SuperZip create $($case.Format)" | Out-Null
         if (-not (Test-Path -LiteralPath $archive)) {
             throw "SuperZip did not create expected compatibility archive: $archive"
         }
@@ -152,6 +188,20 @@ try {
         }
         Assert-LibarchiveInterop -Archive $archive -OutputRoot (Join-Path $work ("extract-" + $case.Extension)) -SourceRoot $inputRoot
         Write-Output "compat_interop format=$($case.Format) status=passed archive_bytes=$((Get-Item -LiteralPath $archive).Length)"
+    }
+
+    foreach ($format in @("tar", "cpio", "ar")) {
+        $archive = Join-Path $work ("reject-level-" + $format + ".archive")
+        Invoke-ExpectedInteropFailure -FilePath $cli -Arguments @(
+            "compress",
+            "--format",
+            $format,
+            "--compression-level",
+            "9",
+            "--output",
+            $archive,
+            $inputTree
+        ) -Label "SuperZip reject compression level for $format" -ExpectedText "does not support compression-level flags"
     }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
