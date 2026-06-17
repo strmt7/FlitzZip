@@ -9,7 +9,7 @@
   </g>
   <g fill="#15171c" font-family="Segoe UI, Inter, Arial, sans-serif" font-weight="700">
     <text x="280" y="128" font-size="82">SuperZip</text>
-    <text x="284" y="172" font-size="22" font-weight="600" letter-spacing="1.1">ULTRAFAST AMD HIP ARCHIVAL SOFTWARE</text>
+    <text x="284" y="172" font-size="21" font-weight="600" letter-spacing="0.9">ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE</text>
   </g>
-  <path d="M280 188 H852" stroke="#ff303a" stroke-width="6" stroke-linecap="round"/>
+  <path d="M280 188 H922" stroke="#ff303a" stroke-width="6" stroke-linecap="round"/>
 </svg>

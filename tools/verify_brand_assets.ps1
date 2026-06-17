@@ -115,8 +115,8 @@ function Assert-LogoTextContract {
     if ($textValues -notcontains "SuperZip") {
         throw "Canonical SuperZip SVG must contain the SuperZip wordmark."
     }
-    if ($textValues -notcontains "ULTRAFAST AMD HIP ARCHIVAL SOFTWARE") {
-        throw "Canonical SuperZip SVG must contain the approved ultrafast AMD HIP archival software tagline."
+    if ($textValues -notcontains "ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE") {
+        throw "Canonical SuperZip SVG must contain the approved ultrafast GPU-accelerated archival software tagline."
     }
 }
 
