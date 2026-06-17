@@ -393,6 +393,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   environment variables instead of direct `${{ github.* }}` interpolation.
   CI tool installs must be version-pinned and hash-verified when the package
   manager bootstrap is known to be mutable or runner-dependent.
+- CodeQL C++ must use a manual Windows 2022 build database through
+  `tools/build.ps1 -Configuration Release -CpuOnlyValidation`; build-free C/C++
+  analysis produces unacceptable parser-artifact alerts for this Win32/HIP
+  codebase and must not be restored for speed.
 - Do not run build/package jobs in parallel with GUI smoke tests or a manually
   opened build-output `SuperZip.exe`. The build script fails early when the
   target GUI binary is running so agents do not misdiagnose linker file-lock

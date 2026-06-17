@@ -108,6 +108,10 @@ Workflow and release hardening rules:
   the repo. The lint lane covers C/C++ formatting, PowerShell static analysis,
   Python helper lint/format, YAML, Markdown, and CMake; do not add misleading
   badges or jobs for unused languages.
+- Keep CodeQL C++ on `windows-2022` with `build-mode: manual` and
+  `tools/build.ps1 -Configuration Release -CpuOnlyValidation`. Build-free C/C++
+  analysis under-models this Win32/HIP/vendored-C codebase and produces
+  parser-artifact alerts; do not restore it for speed.
 - Workflow `run` blocks must not interpolate `${{ github.* }}` directly. Route
   GitHub context through quoted environment variables so script-injection
   scanners and local hygiene checks agree.

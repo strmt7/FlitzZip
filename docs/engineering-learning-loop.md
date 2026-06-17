@@ -27,6 +27,14 @@ the Security tab, released artifacts, or the product UI again.
 - Workflow waiting must use `tools\wait_relevant_workflows.ps1` and the plan's
   `workflowWaitPolicy`. Agents must not wait on completed Greenbone/OpenVAS
   integration runs or unrelated long-running workflows.
+- CodeQL C++ must use a real manual Windows build database. Build-free C/C++
+  analysis produced parser-artifact Security tab alerts for Win32/GDI+, HIP,
+  and vendored C code; `tools\verify_change_hygiene.ps1` and
+  `tools\security_scan.ps1` reject restoring `build-mode: none`.
+- Changed-file lint must validate the GitHub push base before using it. Amended
+  or force-with-lease pushes can reference a replaced sibling commit; the lint
+  workflow falls back to `HEAD~1` only after proving the event base is not
+  available in the full-history checkout.
 - Build/package commands must not run in parallel with GUI smoke tests. The
   build script checks for a running build-output `SuperZip.exe` and fails with a
   direct close-the-app message instead of surfacing a linker file-lock error.

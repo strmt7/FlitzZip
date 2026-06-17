@@ -36,7 +36,7 @@ are used, and default to read-only repository permissions.
 
 | Scanner | Purpose | Output |
 | --- | --- | --- |
-| CodeQL C++ | Whole-repository build-free analysis of archive parser, path handling, CLI, Win32 UI, and HIP boundary | GitHub code scanning |
+| CodeQL C++ | Whole-repository manual Windows build analysis of archive parser, path handling, CLI, Win32 UI, and HIP boundary | GitHub code scanning |
 | CodeQL Actions | Workflow injection and Actions misuse | GitHub code scanning |
 | Language linters | C/C++ style drift, PowerShell warnings, Python helper lint/format issues, YAML workflow issues, Markdown issues, and CMake style problems | Workflow check |
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
@@ -158,22 +158,21 @@ variables.
   pattern of separate Ruff/Mypy/Vulture/Super-Linter lanes is useful as a CI
   shape, but SuperZip does not run linters for languages or container surfaces
   that are not part of this Windows-native C++ product.
-- CodeQL C++ uses `build-mode: none` for the normal security workflow. This is
-  deliberate: GitHub's current CodeQL C/C++ support can scan without a build,
-  and removing the manual MSVC database build prevents CodeQL from dominating
-  every push security run. Do not switch back to manual build tracing unless a
-  new generated security-sensitive C++ source path requires it and the run-time
-  impact is documented.
+- CodeQL C++ uses `build-mode: manual` on `windows-2022` with
+  `tools/build.ps1 -Configuration Release -CpuOnlyValidation`. Build-free C/C++
+  analysis under-modeled SuperZip's Win32, GDI+, HIP-boundary, and vendored C
+  sources and produced parser-artifact alerts such as namespace qualifiers,
+  macros, and typed pointer arithmetic being reported as code issues. Manual
+  Windows tracing is the default security signal because it uses real compiler
+  inputs while keeping release artifacts HIP-enabled outside hosted CI.
 - Do not split CodeQL C++ by SuperZip subdirectory. Subdirectory-parallel CodeQL
   can be useful for independent interpreted-language monorepos, but SuperZip is
   one C++ product whose archive parser, path validation, CLI, GUI, and GPU
   boundary share data flow. Partial C++ databases can hide cross-component
   vulnerabilities.
-- Build-free CodeQL does not analyze generated C++ headers. SuperZip's current
-  generated Win32 logo header is deterministic visual geometry validated by
-  `tools\verify_brand_assets.ps1`; if future generated code becomes
-  security-sensitive, add a documented manual deep CodeQL lane instead of
-  weakening normal push coverage.
+- The generated Win32 logo header is deterministic visual geometry validated by
+  `tools\verify_brand_assets.ps1`; keep it covered by the manual Windows build
+  database and do not add CodeQL path exclusions for generated source.
 - The only acceptable open code-scanning alerts are the current residual OSSF
   Scorecard findings for `MaintainedID`, `CodeReviewID`, `BranchProtectionID`,
   and `CIIBestPracticesID`. `BinaryArtifactsID`, SAST alerts, dependency

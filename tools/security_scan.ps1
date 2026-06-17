@@ -74,6 +74,22 @@ function Test-WorkflowSecurityPolicy {
         Assert-NoGithubContextInRunBlock -Path $file.FullName -Lines $lines
     }
 
+    $securityWorkflow = Join-Path $repo ".github\workflows\security-code-scanning.yml"
+    if (Test-Path -LiteralPath $securityWorkflow) {
+        $securityWorkflowText = Get-Content -LiteralPath $securityWorkflow -Raw
+        if ($securityWorkflowText -match 'languages\s*:\s*c-cpp' -and $securityWorkflowText -match 'build-mode\s*:\s*none') {
+            throw "CodeQL C++ must not use build-mode none; manual Windows build tracing is required to avoid parser-artifact alerts."
+        }
+        foreach ($requiredSnippet in @(
+                'runs-on: windows-2022',
+                'build-mode: manual',
+                'tools/build.ps1 -Configuration Release -CpuOnlyValidation')) {
+            if ($securityWorkflowText -notmatch [regex]::Escape($requiredSnippet)) {
+                throw "CodeQL C++ workflow is missing required manual Windows build setting: $requiredSnippet"
+            }
+        }
+    }
+
     $codeqlConfig = Join-Path $repo ".github\codeql\codeql-config.yml"
     if (Test-Path -LiteralPath $codeqlConfig) {
         $text = Get-Content -LiteralPath $codeqlConfig -Raw

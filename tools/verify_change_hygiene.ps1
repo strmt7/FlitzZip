@@ -163,6 +163,20 @@ function Test-ChangedWorkflowPolicy {
     }
     Assert-NoGithubContextInRunBlock -Path $Path -Lines $lines
     Assert-NoFragilePowerShellGalleryBootstrap -Path $Path -Lines $lines
+    if ($Path -eq ".github/workflows/security-code-scanning.yml") {
+        $text = $lines -join "`n"
+        if ($text -match 'languages\s*:\s*c-cpp' -and $text -match 'build-mode\s*:\s*none') {
+            throw "CodeQL C++ must not use build-mode none; manual Windows build tracing is required to avoid parser-artifact alerts: $Path"
+        }
+        foreach ($requiredSnippet in @(
+                'runs-on: windows-2022',
+                'build-mode: manual',
+                'tools/build.ps1 -Configuration Release -CpuOnlyValidation')) {
+            if ($text -notmatch [regex]::Escape($requiredSnippet)) {
+                throw "CodeQL C++ workflow is missing required manual Windows build setting: $requiredSnippet"
+            }
+        }
+    }
 }
 
 # Purpose: Reject generated binaries introduced by the changed path set.

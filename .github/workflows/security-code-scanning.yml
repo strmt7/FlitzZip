@@ -16,12 +16,14 @@ concurrency:
 jobs:
   codeql-cpp:
     name: CodeQL C++
-    runs-on: ubuntu-latest
+    runs-on: windows-2022
     # Keep C++ analysis whole-repository. Do not split SuperZip into
     # subdirectory CodeQL databases because archive/parser data flow crosses
     # folders and partial databases can miss cross-component vulnerabilities.
-    # CodeQL's build-free C/C++ mode avoids the slow MSVC tracing build while
-    # keeping one database for the entire product source tree.
+    # CodeQL C++ must trace a real Windows build. Build-free C/C++ analysis
+    # under-models SuperZip's Win32, GDI+, HIP-boundary, and vendored C sources
+    # and produces parser-artifact alerts that are not acceptable security
+    # signals for this repository.
     # CodeQL needs action metadata for analysis, repository contents to build,
     # and security-events write permission to upload SARIF.
     permissions:
@@ -37,10 +39,13 @@ jobs:
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           languages: c-cpp
-          build-mode: none
+          build-mode: manual
           dependency-caching: false
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
+      - name: Build C++ database input
+        shell: pwsh
+        run: tools/build.ps1 -Configuration Release -CpuOnlyValidation
       - name: Analyze C++
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:

@@ -73,5 +73,14 @@ jobs:
             $baseRef = "origin/$($env:SUPERZIP_BASE_REF)"
             tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:SUPERZIP_HEAD_SHA"
           } else {
-            tools/lint.ps1 -CppMode Changed -BaseRef "$env:SUPERZIP_BEFORE_SHA" -HeadRef "$env:SUPERZIP_HEAD_SHA"
+            $baseRef = $env:SUPERZIP_BEFORE_SHA
+            if ([string]::IsNullOrWhiteSpace($baseRef)) {
+              $baseRef = "HEAD~1"
+            } else {
+              git cat-file -e "$baseRef^{commit}" 2>$null
+              if ($LASTEXITCODE -ne 0) {
+                $baseRef = "HEAD~1"
+              }
+            }
+            tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:SUPERZIP_HEAD_SHA"
           }
