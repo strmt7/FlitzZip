@@ -150,7 +150,7 @@ Use GitHub CLI:
 ```powershell
 gh workflow run release.yml -R strmt7/SuperZip `
   -f release_version=0.1.0 `
-  -f replace_existing=false `
+  -f replace_existing=true `
   -f release_track=beta `
   -f create_msi=true
 ```
