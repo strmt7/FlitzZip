@@ -20,11 +20,12 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/lha /out/corpus/xar
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/lha /out/corpus/xar
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
 printf 'safe/nested/file.txt' > /out/corpus/path_safety/safe-relative
+printf '070701' > /out/corpus/cpio/tiny-new-ascii
 printf 'CD001' > /out/corpus/iso/tiny-cd001
 printf 'MSCF' > /out/corpus/cab/tiny-mscf
 printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
@@ -39,6 +40,32 @@ python3 - <<'PY'
 from pathlib import Path
 import struct
 import zlib
+def cpio_padding(size):
+    return (4 - (size % 4)) % 4
+def cpio_field(value):
+    return f'{value:08X}'.encode()
+def cpio_entry(name, mode, payload=b''):
+    name_bytes = name.encode() + b'\0'
+    header = (
+        b'070701'
+        + cpio_field(1)
+        + cpio_field(mode)
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(1)
+        + cpio_field(0)
+        + cpio_field(len(payload))
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(len(name_bytes))
+        + cpio_field(0)
+    )
+    return header + name_bytes + (b'\0' * cpio_padding(len(header) + len(name_bytes))) + payload + (b'\0' * cpio_padding(len(payload)))
+Path('/out/corpus/cpio/safe-file.cpio').write_bytes(
+    cpio_entry('safe.txt', 0o100644, b'hello cpio\n') + cpio_entry('TRAILER!!!', 0)
+)
 Path('/out/corpus/sevenzip/nested-payload.7z').write_bytes(bytes([
     55, 122, 188, 175, 39, 28, 0, 3, 61, 67, 90, 149, 110, 0, 0, 0,
     0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 83, 152, 7, 164,
@@ -82,6 +109,7 @@ PY
 if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_archive_index_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/archive_index
   /out/superzip_path_safety_fuzzer -runs=$fuzzRuns -max_len=4096 /out/corpus/path_safety
+  /out/superzip_cpio_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/cpio
   /out/superzip_iso_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/iso
   /out/superzip_cab_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/cab
   /out/superzip_rpm_header_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/rpm

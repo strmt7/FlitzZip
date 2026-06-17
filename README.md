@@ -28,9 +28,11 @@ extracted through XZ Embedded, single-file legacy `.lzma` streams are extracted
 through the vendored LZMA SDK with bounded decoder allocation, single-file
 `.lz` streams are extracted through the lzip wrapper with CRC32/data-size/member-size
 verification, and single-file `.zst`/`.zstd` streams are implemented through the
-app-local libzstd DLL with frame checksum creation and bounded-window extraction. Portable `.cpio` archives are
-implemented with a native SVR4 new ASCII parser/writer for regular files and
-directories. Unix `.ar` archives are implemented with a native parser/writer for
+app-local libzstd DLL with frame checksum creation and bounded-window extraction. Portable `.cpio`
+and Gzip-filtered `.cpio.gz`/`.cpgz` archives are implemented with a native
+SVR4 new ASCII parser/writer for regular files and directories; compressed CPIO
+uses the same two-pass validation model as compressed TAR without staging a full
+decoded archive to disk. Unix `.ar` archives are implemented with a native parser/writer for
 regular-file members. Debian `.deb` package files are extracted as native
 AR-based outer containers. Basic ISO 9660 `.iso` images are extracted by a
 native read-only parser with the same pre-write path validation. RPM `.rpm`
@@ -189,6 +191,8 @@ build/Release/superzip_cli.exe compress --format uue --output file.txt.uue file.
 build/Release/superzip_cli.exe extract --output restored file.txt.uue
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.cpio
+build/Release/superzip_cli.exe compress --format cpio.gz --output archive.cpgz path\to\folder
+build/Release/superzip_cli.exe extract --output restored archive.cpgz
 build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.ar
 build/Release/superzip_cli.exe extract --format deb --output restored package.deb
@@ -214,8 +218,9 @@ and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
 ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, Gzip, Bzip2, XZ, LZMA, lzip,
-Unix Compress, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
-ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
+Unix Compress, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
+CPIO.GZ, AR, DEB, ISO, and RPM compatibility are deliberately separate from
+SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
 native `.suzip` commands because compatibility formats do not use the AMD HIP
@@ -251,7 +256,8 @@ Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
 builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
 path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
 decode/metadata handling, LZMA and lzip stream handling, ARJ metadata/stored-payload
-handling, SEA ARC/ARK metadata/unpacked-payload handling, LHA/LZH
+handling, SEA ARC/ARK metadata/unpacked-payload handling, CPIO metadata/path
+handling, LHA/LZH
 decode/metadata handling, and XAR
 TOC/payload metadata handling with address
 and undefined-behavior sanitizers:

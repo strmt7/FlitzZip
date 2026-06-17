@@ -3,6 +3,7 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "cpio/cpio_adapter.hpp"
+#include "gzip/gzip_adapter.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -25,6 +27,27 @@ constexpr std::uint32_t kTestCpioSymlinkMode = 0120777U;
 std::string read_text_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+// Purpose: Read a full binary file for corruption tests.
+// Inputs: `path` is the file to read.
+// Outputs: Returns the complete byte payload.
+std::vector<unsigned char> read_binary_file(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    std::vector<unsigned char> bytes;
+    char value = 0;
+    while (input.get(value)) {
+        bytes.push_back(static_cast<unsigned char>(value));
+    }
+    return bytes;
+}
+
+// Purpose: Write exact binary bytes for corruption tests.
+// Inputs: `path` is the destination file and `bytes` is the payload.
+// Outputs: Creates or replaces the file.
+void write_binary_file(const std::filesystem::path& path, const std::vector<unsigned char>& bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
 }
 
 // Purpose: Count regular files below a directory for no-output assertions.
@@ -161,6 +184,31 @@ TEST_CASE(cpio_roundtrip_extracts_files_and_directories) {
     REQUIRE_EQ(read_text_file(output / "input" / "root.txt"), read_text_file(input / "root.txt"));
 }
 
+// Purpose: Verify `.cpgz` roundtrip through the Gzip-filtered CPIO stream path.
+// Inputs: A temporary source tree compressed with the CPIO.GZ adapter.
+// Outputs: Throws if detection, extraction, statistics, or restored contents are wrong.
+TEST_CASE(cpio_gzip_roundtrip_extracts_files_and_directories) {
+    const auto root = test_temp_dir("cpio-gzip-roundtrip");
+    const auto input = root / "input";
+    std::filesystem::create_directories(input / "dir");
+    {
+        std::ofstream(input / "dir" / "hello.txt") << "hello from cpgz\n";
+        std::ofstream(input / "root.txt") << "compressed cpio\n";
+    }
+
+    const auto archive = root / "sample.cpgz";
+    const auto compress_stats = superzip::compress_cpio_gzip({input}, archive);
+    REQUIRE_TRUE(compress_stats.entries >= 3);
+    REQUIRE_TRUE(compress_stats.output_bytes > 0);
+    REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::CpioGzip);
+
+    const auto output = root / "output";
+    const auto extract_stats = superzip::extract_cpio_gzip(archive, output, false);
+    REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
+    REQUIRE_EQ(read_text_file(output / "input" / "dir" / "hello.txt"), read_text_file(input / "dir" / "hello.txt"));
+    REQUIRE_EQ(read_text_file(output / "input" / "root.txt"), read_text_file(input / "root.txt"));
+}
+
 // Purpose: Verify CPIO extraction rejects traversal metadata during the validation pass.
 // Inputs: A handcrafted CPIO archive containing `../escape.txt`.
 // Outputs: Throws if extraction accepts the unsafe path or writes any output.
@@ -172,6 +220,27 @@ TEST_CASE(cpio_extraction_rejects_traversal_before_output) {
     bool rejected = false;
     try {
         static_cast<void>(superzip::extract_cpio(archive, root / "out", false));
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(root / "escape.txt"));
+    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Verify CPIO.GZ extraction rejects traversal metadata during the decompressed validation pass.
+// Inputs: A handcrafted unsafe CPIO stream wrapped in a valid Gzip member.
+// Outputs: Throws if extraction accepts the unsafe path or writes any output.
+TEST_CASE(cpio_gzip_extraction_rejects_traversal_before_output) {
+    const auto root = test_temp_dir("cpio-gzip-traversal");
+    const auto plain = root / "bad.cpio";
+    const auto archive = root / "bad.cpgz";
+    write_one_entry_cpio(plain, "070701", "../escape.txt", kTestCpioRegularMode, 1, "bad", 0);
+    (void)superzip::compress_gzip_file(plain, archive);
+
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::extract_cpio_gzip(archive, root / "out", false));
     } catch (const superzip::SecurityError&) {
         rejected = true;
     }
@@ -219,6 +288,29 @@ TEST_CASE(cpio_extraction_refuses_overwrite_by_default) {
     REQUIRE_EQ(read_text_file(output / "file.txt"), "old");
 }
 
+// Purpose: Verify CPIO.GZ extraction refuses overwriting existing files unless explicitly allowed.
+// Inputs: A compressed CPIO file entry and a preexisting output file of the same name.
+// Outputs: Throws if extraction overwrites while `overwrite` is false.
+TEST_CASE(cpio_gzip_extraction_refuses_overwrite_by_default) {
+    const auto root = test_temp_dir("cpio-gzip-overwrite");
+    const auto plain = root / "overwrite.cpio";
+    const auto archive = root / "overwrite.cpgz";
+    write_one_entry_cpio(plain, "070701", "file.txt", kTestCpioRegularMode, 1, "new", 0);
+    (void)superzip::compress_gzip_file(plain, archive);
+    const auto output = root / "out";
+    std::filesystem::create_directories(output);
+    std::ofstream(output / "file.txt") << "old";
+
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::extract_cpio_gzip(archive, output, false));
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_text_file(output / "file.txt"), "old");
+}
+
 // Purpose: Verify CRC-format CPIO archives extract when their payload checksum is correct.
 // Inputs: A handcrafted `070702` CPIO entry with a valid checksum.
 // Outputs: Throws if extraction fails or restored contents differ.
@@ -251,4 +343,52 @@ TEST_CASE(cpio_crc_format_rejects_checksum_mismatch_before_output) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Verify CRC-format CPIO.GZ archives fail closed when the inner payload checksum is wrong.
+// Inputs: A valid Gzip stream around a handcrafted `070702` CPIO entry with an intentionally wrong checksum.
+// Outputs: Throws during validation before publishing any output file.
+TEST_CASE(cpio_gzip_crc_format_rejects_checksum_mismatch_before_output) {
+    const auto root = test_temp_dir("cpio-gzip-crc");
+    const auto plain = root / "bad-crc.cpio";
+    const auto archive = root / "bad-crc.cpgz";
+    const std::string payload = "payload";
+    write_one_entry_cpio(plain, "070702", "payload.txt", kTestCpioRegularMode, 1, payload, cpio_payload_sum(payload) + 1U);
+    (void)superzip::compress_gzip_file(plain, archive);
+
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::extract_cpio_gzip(archive, root / "out", false));
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Verify Gzip trailer corruption in a CPIO.GZ archive does not publish output.
+// Inputs: A valid compressed CPIO archive whose Gzip trailer CRC is corrupted.
+// Outputs: Throws before the second extraction pass and leaves the destination empty.
+TEST_CASE(cpio_gzip_rejects_gzip_crc_mismatch_before_output) {
+    const auto root = test_temp_dir("cpio-gzip-trailer-crc");
+    const auto input = root / "input";
+    std::filesystem::create_directories(input);
+    std::ofstream(input / "payload.txt") << "payload";
+    const auto archive = root / "payload.cpgz";
+    (void)superzip::compress_cpio_gzip({input}, archive);
+
+    auto bytes = read_binary_file(archive);
+    REQUIRE_TRUE(bytes.size() > 18U);
+    bytes[bytes.size() - 8U] ^= 0xFFU;
+    write_binary_file(archive, bytes);
+
+    const auto output = root / "out";
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::extract_cpio_gzip(archive, output, false));
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
 }

@@ -70,6 +70,10 @@ Workflow and release hardening rules:
   vendored LZMA SDK 26.01 decoder. Keep version, dictionary, EOS, CRC32,
   data-size, and member-size checks mandatory for every member, reject trailing
   non-member data, and publish only through verified temporary paths.
+- CPIO.GZ support must stay in-process as a Gzip-filtered SVR4 new ASCII CPIO
+  stream. Keep the two-pass validation model, reject unsafe inner paths,
+  unsupported special files, overwrite attempts, malformed Gzip trailers, and
+  `070702` checksum mismatches before publishing output.
 - The only acceptable open code-scanning findings are Scorecard
   `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
   `CIIBestPracticesID`.

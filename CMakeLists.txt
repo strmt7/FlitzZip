@@ -439,6 +439,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     )
     target_include_directories(superzip_path_safety_fuzzer PRIVATE src)
 
+    add_executable(superzip_cpio_fuzzer
+        fuzz/cpio_fuzzer.cpp
+    )
+    target_link_libraries(superzip_cpio_fuzzer PRIVATE superzip_core)
+    target_compile_definitions(superzip_cpio_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     add_executable(superzip_iso_fuzzer
         fuzz/iso_fuzzer.cpp
         src/iso/iso_adapter.cpp
@@ -511,6 +517,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     endif()
     target_compile_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_cpio_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
@@ -523,6 +530,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_arc_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_cpio_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_iso_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_cab_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_rpm_header_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)

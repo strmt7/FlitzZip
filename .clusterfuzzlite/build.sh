@@ -222,6 +222,18 @@ prepare_upstream_miniz
 build_miniz_objects "$MINIZ_UPSTREAM_SOURCE" "$OUT/miniz-objects" > "$OUT/miniz-objects.list"
 mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_UPSTREAM_SOURCE" \
+  fuzz/cpio_fuzzer.cpp \
+  src/cpio/cpio_adapter.cpp \
+  src/gzip/gzip_stream.cpp \
+  src/core/file_manifest.cpp \
+  src/core/file_publish.cpp \
+  src/core/path_safety.cpp \
+  src/core/progress.cpp \
+  "${MINIZ_OBJECTS[@]}" \
+  -o "$OUT/superzip_cpio_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_UPSTREAM_SOURCE" \
   fuzz/xar_fuzzer.cpp \
   src/xar/xar_adapter.cpp \
   src/core/file_publish.cpp \
@@ -233,6 +245,7 @@ mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
 
 cp fuzz/superzip.dict "$OUT/superzip_archive_index_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_path_safety_fuzzer.dict"
+cp fuzz/superzip.dict "$OUT/superzip_cpio_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_iso_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_cab_header_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_rpm_header_fuzzer.dict"
@@ -248,6 +261,7 @@ cp fuzz/*.options "$OUT/"
 for target in \
   superzip_archive_index_fuzzer \
   superzip_path_safety_fuzzer \
+  superzip_cpio_fuzzer \
   superzip_iso_fuzzer \
   superzip_cab_header_fuzzer \
   superzip_rpm_header_fuzzer \

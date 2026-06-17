@@ -127,6 +127,10 @@ archive options, progress snapshots, and errors.
   the vendored LZMA SDK, with lzip version/dictionary validation,
   EOS-enforced decoding, CRC32/data-size/member-size trailer checks,
   concatenated-member handling, two-pass TAR validation, and fuzz coverage.
+- Added CPIO.GZ `.cpio.gz`/`.cpgz` compatibility through the Gzip stream adapter
+  over the bounded CPIO adapter, preserving two-pass inner CPIO validation,
+  checksum/trailer rejection, no decoded-archive disk staging, and fuzz
+  coverage for CPIO metadata/path handling.
 
 ## Validation Gates
 

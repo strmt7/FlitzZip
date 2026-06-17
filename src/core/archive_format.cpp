@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 33> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 34> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -46,6 +46,7 @@ constexpr std::array<ArchiveFormatInfo, 33> kFormatRegistry{{
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
+    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO + Gzip (.cpio.gz, .cpgz)", ".cpio.gz,.cpgz", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
@@ -58,7 +59,7 @@ constexpr std::array<ArchiveFormatInfo, 33> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 41> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 43> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -75,6 +76,8 @@ constexpr std::array<ExtensionFormatMapping, 41> kExtensionFormats{{
     {".tlz", ArchiveFormat::TarLzip},
     {".tar.zst", ArchiveFormat::TarZstd},
     {".tzst", ArchiveFormat::TarZstd},
+    {".cpio.gz", ArchiveFormat::CpioGzip},
+    {".cpgz", ArchiveFormat::CpioGzip},
     {".tar", ArchiveFormat::Tar},
     {".gz", ArchiveFormat::Gzip},
     {".z", ArchiveFormat::UnixCompress},
@@ -368,6 +371,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "tar.lz";
     } else if (lowered == "tzst") {
         lowered = "tar.zst";
+    } else if (lowered == "cpgz") {
+        lowered = "cpio.gz";
     } else if (lowered == "zstd") {
         lowered = "zst";
     } else if (lowered == "gzip") {
@@ -406,7 +411,8 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
         by_extension == ArchiveFormat::TarBzip2 ||
         by_extension == ArchiveFormat::TarXz ||
         by_extension == ArchiveFormat::TarLzip ||
-        by_extension == ArchiveFormat::TarZstd) {
+        by_extension == ArchiveFormat::TarZstd ||
+        by_extension == ArchiveFormat::CpioGzip) {
         return by_extension;
     }
     const auto by_magic = detect_by_magic(read_probe_bytes(archive_path), archive_path);

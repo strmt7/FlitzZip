@@ -175,7 +175,7 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 13> formats{
+    constexpr std::array<ArchiveFormat, 14> formats{
         ArchiveFormat::SuperZip,
         ArchiveFormat::Zip,
         ArchiveFormat::Tar,
@@ -188,6 +188,7 @@ ArchiveFormat compression_format_value(int index) {
         ArchiveFormat::UnixCompress,
         ArchiveFormat::Uue,
         ArchiveFormat::Cpio,
+        ArchiveFormat::CpioGzip,
         ArchiveFormat::Ar,
     };
     const auto normalized = static_cast<std::size_t>((index % static_cast<int>(formats.size()) + static_cast<int>(formats.size())) % static_cast<int>(formats.size()));
@@ -198,7 +199,7 @@ ArchiveFormat compression_format_value(int index) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns a stable label matching the implemented GUI create backends.
 std::wstring compression_format_text(int index) {
-    constexpr std::array<std::wstring_view, 13> labels{
+    constexpr std::array<std::wstring_view, 14> labels{
         L"SuperZip GPU (.suzip)",
         L"ZIP compatibility (.zip)",
         L"TAR compatibility (.tar)",
@@ -211,6 +212,7 @@ std::wstring compression_format_text(int index) {
         L"Unix Compress single file (.Z)",
         L"UUencoded single file (.uue)",
         L"CPIO compatibility (.cpio)",
+        L"CPIO.GZ compatibility (.cpgz)",
         L"AR compatibility (.ar)",
     };
     const auto normalized = static_cast<std::size_t>((index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
@@ -246,6 +248,8 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".uue";
     case ArchiveFormat::Cpio:
         return L".cpio";
+    case ArchiveFormat::CpioGzip:
+        return L".cpgz";
     case ArchiveFormat::Ar:
         return L".ar";
     default:
@@ -343,6 +347,8 @@ OperationStats extract_detected_archive(
         return extract_iso(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Cpio:
         return extract_cpio(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::CpioGzip:
+        return extract_cpio_gzip(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Ar:
     case ArchiveFormat::Deb:
         return extract_ar(archive, output, overwrite, progress_callback);
@@ -510,6 +516,7 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             compression_format_text(10),
             compression_format_text(11),
             compression_format_text(12),
+            compression_format_text(13),
         };
     case DropdownId::CompressLevel:
         return {
@@ -1883,7 +1890,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
@@ -2398,12 +2405,15 @@ void MainWindow::close_active_dropdown() {
     }
 }
 
+// Purpose: Apply one selected dropdown option to the matching UI state field.
+// Inputs: `id` identifies the active dropdown and `option_index` is the zero-based row selected by the user.
+// Outputs: Mutates UI state, closes the dropdown, updates status text, and requests repaint.
 void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     {
         std::lock_guard lock(mutex_);
         switch (id) {
         case DropdownId::CompressFormat:
-            state_.compression_format_index = std::clamp(option_index, 0, 11);
+            state_.compression_format_index = std::clamp(option_index, 0, 13);
             state_.status = "Archive format changed";
             break;
         case DropdownId::CompressLevel:
@@ -2724,6 +2734,8 @@ void MainWindow::start_compress() {
             stats = compress_uue(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Cpio) {
             stats = compress_cpio(sources, output, progress_callback);
+        } else if (archive_format == ArchiveFormat::CpioGzip) {
+            stats = compress_cpio_gzip(sources, output, progress_callback);
         } else if (archive_format == ArchiveFormat::Ar) {
             stats = compress_ar(sources, output, progress_callback);
         } else {

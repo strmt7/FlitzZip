@@ -282,7 +282,8 @@ runs:
         $input = Join-Path $root "input"
         $extract = Join-Path $root "extract"
         $cpioExtract = Join-Path $root "extract-cpio"
-        New-Item -ItemType Directory -Force -Path $input, $extract, $cpioExtract | Out-Null
+        $cpioGzipExtract = Join-Path $root "extract-cpio-gzip"
+        New-Item -ItemType Directory -Force -Path $input, $extract, $cpioExtract, $cpioGzipExtract | Out-Null
         Set-Content -LiteralPath (Join-Path $input "alpha.txt") -Value "SuperZip release smoke $env:RELEASE_TAG"
         $cli = Join-Path $PWD "out\install-Release\bin\superzip_cli.exe"
         $dependency = & $cli dependency-check
@@ -409,6 +410,15 @@ runs:
         & $cli extract --format cpio --output $cpioExtract (Join-Path $root "archive.cpio")
         if ((Get-Content -LiteralPath (Join-Path $cpioExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
             throw "Portable CPIO smoke extraction did not preserve payload."
+        }
+        & $cli compress --format cpio.gz --output (Join-Path $root "archive.cpgz") $input
+        $cpioGzipIdentity = & $cli identify (Join-Path $root "archive.cpgz")
+        if ($cpioGzipIdentity -notmatch 'format=cpio.gz') {
+            throw "Portable CPIO.GZ smoke did not identify the .cpgz archive: $cpioGzipIdentity"
+        }
+        & $cli extract --format cpio.gz --output $cpioGzipExtract (Join-Path $root "archive.cpgz")
+        if ((Get-Content -LiteralPath (Join-Path $cpioGzipExtract "input\alpha.txt")) -notlike "SuperZip release smoke*") {
+            throw "Portable CPIO.GZ smoke extraction did not preserve payload."
         }
         $rpmExtract = Join-Path $root "extract-rpm"
         New-Item -ItemType Directory -Force -Path $rpmExtract | Out-Null
@@ -575,7 +585,7 @@ runs:
         - 64-bit Windows package only.
         - Release track: $env:RELEASE_TRACK.
         $hipLine
-        - Portable ZIP smoke-tested after staging install.
+        - Portable ZIP and compatibility-format smoke tests completed after staging install.
         - MSI built for per-machine installation under C:\Program Files\SuperZip and silent install/uninstall smoke-tested when create_msi=true.
         - Repository security scan completed before publishing.
         - SHA-256 checksum files are attached beside each package.

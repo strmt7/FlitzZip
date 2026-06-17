@@ -71,7 +71,7 @@ The workflow performs:
   present on the runner.
 - HIP-enabled build and C++ tests.
 - Local repository security scan.
-- Portable package staging, dependency check, SUZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/AR/DEB
+- Portable package staging, dependency check, SUZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/CPIO.GZ/AR/DEB
   smoke tests, and
   checksum generation.
 - MSI creation and silent install/uninstall smoke tests under the Program Files

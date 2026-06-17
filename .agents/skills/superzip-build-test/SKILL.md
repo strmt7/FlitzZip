@@ -89,3 +89,8 @@ Rules:
   overwrite refusal, corrupt trailer rejection, invalid dictionary rejection,
   unsafe TAR path rejection, and fuzz coverage. Keep extraction in process
   through SuperZip's lzip wrapper over the vendored LZMA SDK 26.01 decoder.
+- CPIO.GZ compatibility changes must exercise successful `.cpio.gz`/`.cpgz`
+  extraction, overwrite refusal, unsafe inner CPIO path rejection, inner
+  `070702` checksum rejection, Gzip trailer rejection, and CPIO parser fuzz
+  coverage. Keep the Gzip wrapper and CPIO parser in process and do not stage
+  a full decoded archive to disk.

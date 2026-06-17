@@ -76,6 +76,9 @@ The reviewed help corpus clustered into:
 - Single-file encodings and compression streams must not be presented as
   multi-entry archives. Their output filename policy, integrity limitations, and
   overwrite behavior need to be explicit.
+- Compound stream wrappers need explicit routing before generic single-stream
+  handlers. Examples include archive formats carried through compression filters
+  where the inner archive, not the outer filter, defines multi-entry behavior.
 - Split archives, package containers, self-extracting wrappers, and shell
   integrations require separate security policies before they become visible
   product features.

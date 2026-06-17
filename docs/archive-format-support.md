@@ -32,6 +32,7 @@ Primary and project-owned sources reviewed:
 - Lzip compressed-format Internet-Draft: https://datatracker.ietf.org/doc/draft-diaz-lzip/
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
+- CPGZ file extension reference: https://fileinfo.com/extension/cpgz
 - bzip2/libbzip2: https://sourceware.org/bzip2/
 - XZ Embedded: https://github.com/tukaani-project/xz-embedded
 - Zstandard/libzstd: https://github.com/facebook/zstd
@@ -66,7 +67,7 @@ URLs, and text are intentionally not recorded in this repository; only the
 resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
-ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, ARJ, ARC,
+ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, CPIO.GZ, ARJ, ARC,
 LHA/LZH, WIM, XAR, DEB, RPM, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
@@ -121,6 +122,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
+| `.cpio.gz`, `.cpgz` | Yes | Yes | Compatibility format | native CPIO stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
 | `.deb` | No | Yes | Extract-only compatibility format | native AR-based Debian outer-container adapter |
 | `.iso` | No | Yes | Extract-only compatibility format | native basic ISO 9660 adapter |
@@ -223,6 +225,14 @@ the simple payload checksum for `070702` before output. The adapter supports
 regular files and directories only; symbolic links, hard-link metadata, devices,
 FIFOs, and other special entries are rejected until SuperZip has a dedicated
 policy and UI for those objects.
+
+CPIO.GZ support treats `.cpio.gz` and `.cpgz` as Gzip-filtered CPIO streams.
+The extension receives compound-format priority over generic `.gz` detection so
+the CLI and GUI route it to the archive adapter instead of the single-file Gzip
+path. Extraction performs one decompression pass to validate the complete inner
+CPIO entry set and Gzip trailer, then a second decompression pass to publish only
+the validated entries. SuperZip does not stage a full decoded CPIO archive on
+disk.
 
 AR support covers Unix archive files with the global `!<arch>` magic. Creation
 writes BSD long-name members so nested paths are preserved without a separate
@@ -349,15 +359,23 @@ The CPIO adapter is in-process and follows the same extraction model as TAR:
 4. Create output directories and publish regular files only after copying each
    payload into a private same-directory temporary file.
 
+For `.cpio.gz`/`.cpgz`, the same contract applies after the Gzip filter. Both
+passes must finish with valid Gzip trailers, the second pass must match the
+metadata already accepted by the validation pass, and compressed CPIO must not
+be treated as a generic single-file Gzip extraction.
+
 ```mermaid
 flowchart TD
-    A["Open CPIO archive"] --> B["Scan new ASCII headers"]
-    B --> C["Validate all paths and entry kinds"]
-    C --> D{"Entry type"}
-    D -->|"directory"| E["Create directory under safe root"]
-    D -->|"regular file"| F["Copy to private temp file"]
-    F --> G["Atomically publish verified file"]
-    D -->|"link/device/FIFO/special"| H["Reject archive"]
+    A["Open CPIO or CPIO.GZ archive"] --> B{"Gzip wrapper?"}
+    B -->|"yes"| C["Pass 1: decompress and scan CPIO headers"]
+    B -->|"no"| D["Scan seekable CPIO headers"]
+    C --> E["Validate all paths and entry kinds"]
+    D --> E
+    E --> F{"Entry type"}
+    F -->|"directory"| G["Create directory under safe root"]
+    F -->|"regular file"| H["Copy to private temp file"]
+    H --> I["Atomically publish verified file"]
+    F -->|"link/device/FIFO/special"| J["Reject archive"]
 ```
 
 ## AR Security Contract
