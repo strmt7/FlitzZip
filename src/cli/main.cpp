@@ -1187,110 +1187,151 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
     return command;
 }
 
+// Purpose: Reject SUZIP-only extraction tuning on a compatibility backend.
+// Inputs: `label` names the backend family and `command` carries parsed GPU/tuning flags.
+// Outputs: Returns normally when compatibility extraction is untuned; throws `ArchiveError` otherwise.
+void reject_extract_tuning(std::string_view label, const CliExtractCommand& command) {
+    reject_compat_extract_tuning(label, command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+}
+
+// Purpose: Run native SUZIP extraction from parsed CLI options.
+// Inputs: `command` contains archive path, output directory, overwrite policy, and SUZIP tuning flags.
+// Outputs: Returns operation statistics from `extract_suzip`.
+superzip::OperationStats extract_native_suzip(const CliExtractCommand& command) {
+    superzip::ExtractOptions options;
+    options.gpu_required = command.require_gpu;
+    options.force_cpu = command.force_cpu;
+    options.overwrite = command.overwrite;
+    options.worker_count = command.workers;
+    options.max_inflight_chunks = command.inflight;
+    return superzip::extract_suzip(command.archive, command.output, options);
+}
+
+// Purpose: Run ZIP, TAR, and single-stream compatibility extraction routes.
+// Inputs: `archive_format` is concrete and `command` contains paths plus overwrite policy.
+// Outputs: Returns operation statistics when the format belongs to this group; otherwise returns empty.
+std::optional<superzip::OperationStats> extract_stream_or_tar_format(
+    superzip::ArchiveFormat archive_format,
+    const CliExtractCommand& command) {
+    switch (archive_format) {
+    case superzip::ArchiveFormat::Zip:
+    case superzip::ArchiveFormat::Zipx:
+        reject_extract_tuning("ZIP/ZIPX", command);
+        return superzip::extract_zip(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::SevenZip:
+        reject_extract_tuning("7z", command);
+        return superzip::extract_7z(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Tar:
+        reject_extract_tuning("TAR", command);
+        return superzip::extract_tar(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::TarGzip:
+        reject_extract_tuning("TAR.GZ", command);
+        return superzip::extract_tar_gzip(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::TarBzip2:
+        reject_extract_tuning("TAR.BZ2", command);
+        return superzip::extract_tar_bzip2(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::TarXz:
+        reject_extract_tuning("TAR.XZ", command);
+        return superzip::extract_tar_xz(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::TarLzip:
+        reject_extract_tuning("TAR.LZ", command);
+        return superzip::extract_tar_lzip(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::TarZstd:
+        reject_extract_tuning("TAR.ZST", command);
+        return superzip::extract_tar_zstd(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Gzip:
+        reject_extract_tuning("Gzip", command);
+        return superzip::extract_gzip_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Bzip2:
+        reject_extract_tuning("Bzip2", command);
+        return superzip::extract_bzip2_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Xz:
+        reject_extract_tuning("XZ", command);
+        return superzip::extract_xz_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Lzma:
+        reject_extract_tuning("LZMA", command);
+        return superzip::extract_lzma_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Lzip:
+        reject_extract_tuning("lzip", command);
+        return superzip::extract_lzip_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Zstd:
+        reject_extract_tuning("Zstandard", command);
+        return superzip::extract_zstd_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::UnixCompress:
+        reject_extract_tuning("Unix Compress", command);
+        return superzip::extract_unix_compress_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Uue:
+        reject_extract_tuning("UUE", command);
+        return superzip::extract_uue_file(command.archive, command.output, command.overwrite);
+    default:
+        return std::nullopt;
+    }
+}
+
+// Purpose: Run package/container compatibility extraction routes.
+// Inputs: `archive_format` is concrete and `command` contains paths plus overwrite policy.
+// Outputs: Returns operation statistics when the format belongs to this group; otherwise returns empty.
+std::optional<superzip::OperationStats> extract_container_format(
+    superzip::ArchiveFormat archive_format,
+    const CliExtractCommand& command) {
+    switch (archive_format) {
+    case superzip::ArchiveFormat::Cab:
+        reject_extract_tuning("CAB", command);
+        return superzip::extract_cab(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Iso:
+        reject_extract_tuning("ISO", command);
+        return superzip::extract_iso(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Cpio:
+        reject_extract_tuning("CPIO", command);
+        return superzip::extract_cpio(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::CpioGzip:
+        reject_extract_tuning("CPIO.GZ", command);
+        return superzip::extract_cpio_gzip(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Ar:
+    case superzip::ArchiveFormat::Deb:
+        reject_extract_tuning("AR/DEB", command);
+        return superzip::extract_ar(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Arj:
+        reject_extract_tuning("ARJ", command);
+        return superzip::extract_arj(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Arc:
+        reject_extract_tuning("ARC", command);
+        return superzip::extract_arc(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Rpm:
+        reject_extract_tuning("RPM", command);
+        return superzip::extract_rpm(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Lha:
+        reject_extract_tuning("LHA", command);
+        return superzip::extract_lha(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Wim:
+        reject_extract_tuning("WIM", command);
+        return superzip::extract_wim(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::Xar:
+        reject_extract_tuning("XAR", command);
+        return superzip::extract_xar(command.archive, command.output, command.overwrite);
+    default:
+        return std::nullopt;
+    }
+}
+
 // Purpose: Run the selected extract backend after command-line validation.
 // Inputs: `archive_format` is concrete and `command` contains parsed extraction options.
 // Outputs: Returns operation statistics; throws for unsupported formats or backend errors.
 superzip::OperationStats extract_by_format(
     superzip::ArchiveFormat archive_format,
     const CliExtractCommand& command) {
-    switch (archive_format) {
-    case superzip::ArchiveFormat::SuperZip: {
-        superzip::ExtractOptions options;
-        options.gpu_required = command.require_gpu;
-        options.force_cpu = command.force_cpu;
-        options.overwrite = command.overwrite;
-        options.worker_count = command.workers;
-        options.max_inflight_chunks = command.inflight;
-        return superzip::extract_suzip(command.archive, command.output, options);
+    if (archive_format == superzip::ArchiveFormat::SuperZip) {
+        return extract_native_suzip(command);
     }
-    case superzip::ArchiveFormat::Zip:
-    case superzip::ArchiveFormat::Zipx:
-        reject_compat_extract_tuning("ZIP/ZIPX", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_zip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::SevenZip:
-        reject_compat_extract_tuning("7z", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_7z(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Tar:
-        reject_compat_extract_tuning("TAR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_tar(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarGzip:
-        reject_compat_extract_tuning("TAR.GZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_tar_gzip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarBzip2:
-        reject_compat_extract_tuning("TAR.BZ2", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_tar_bzip2(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarXz:
-        reject_compat_extract_tuning("TAR.XZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_tar_xz(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarLzip:
-        reject_compat_extract_tuning("TAR.LZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_tar_lzip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::TarZstd:
-        reject_compat_extract_tuning("TAR.ZST", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_tar_zstd(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Gzip:
-        reject_compat_extract_tuning("Gzip", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_gzip_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Bzip2:
-        reject_compat_extract_tuning("Bzip2", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_bzip2_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Xz:
-        reject_compat_extract_tuning("XZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_xz_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Lzma:
-        reject_compat_extract_tuning("LZMA", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_lzma_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Lzip:
-        reject_compat_extract_tuning("lzip", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_lzip_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Zstd:
-        reject_compat_extract_tuning("Zstandard", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_zstd_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::UnixCompress:
-        reject_compat_extract_tuning("Unix Compress", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_unix_compress_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Uue:
-        reject_compat_extract_tuning("UUE", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_uue_file(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Cab:
-        reject_compat_extract_tuning("CAB", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_cab(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Iso:
-        reject_compat_extract_tuning("ISO", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_iso(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Cpio:
-        reject_compat_extract_tuning("CPIO", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_cpio(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::CpioGzip:
-        reject_compat_extract_tuning("CPIO.GZ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_cpio_gzip(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Ar:
-    case superzip::ArchiveFormat::Deb:
-        reject_compat_extract_tuning("AR/DEB", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_ar(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Arj:
-        reject_compat_extract_tuning("ARJ", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_arj(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Arc:
-        reject_compat_extract_tuning("ARC", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_arc(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Rpm:
-        reject_compat_extract_tuning("RPM", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_rpm(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Lha:
-        reject_compat_extract_tuning("LHA", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_lha(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Wim:
-        reject_compat_extract_tuning("WIM", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_wim(command.archive, command.output, command.overwrite);
-    case superzip::ArchiveFormat::Xar:
-        reject_compat_extract_tuning("XAR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::extract_xar(command.archive, command.output, command.overwrite);
-    default:
-        throw superzip::ArchiveError(
-            std::string("archive format recognized but not implemented for extraction: ") +
-            superzip::archive_format_info(archive_format).key);
+    if (auto result = extract_stream_or_tar_format(archive_format, command); result.has_value()) {
+        return *result;
     }
+    if (auto result = extract_container_format(archive_format, command); result.has_value()) {
+        return *result;
+    }
+    throw superzip::ArchiveError(
+        std::string("archive format recognized but not implemented for extraction: ") +
+        superzip::archive_format_info(archive_format).key);
 }
 
 // Purpose: Execute the `extract` CLI command.
