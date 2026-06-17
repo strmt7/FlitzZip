@@ -456,6 +456,58 @@ int compression_level_value(int index) {
     return levels[normalized];
 }
 
+// Purpose: Run the selected create backend for a GUI compression job.
+// Inputs: `sources`, `output`, `archive_format`, GPU options, `block_size`, `compression_level`, and progress callback.
+// Outputs: Returns backend telemetry or throws when the selected format cannot be created.
+OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
+                                    const std::filesystem::path& output, ArchiveFormat archive_format,
+                                    bool gpu_required, bool verify_after_write, std::uint32_t block_size,
+                                    int compression_level, const ProgressCallback& progress_callback) {
+    switch (archive_format) {
+    case ArchiveFormat::SuperZip: {
+        CompressOptions options;
+        options.gpu_required = gpu_required;
+        options.block_size = block_size;
+        options.compression_level = compression_level;
+        options.verify_after_write = verify_after_write;
+        return compress_suzip(sources, output, options, progress_callback);
+    }
+    case ArchiveFormat::Zip:
+        return compress_zip(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::Tar:
+        return compress_tar(sources, output, progress_callback);
+    case ArchiveFormat::TarGzip:
+        return compress_tar_gzip(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::TarBzip2:
+        return compress_tar_bzip2(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::TarZstd:
+        return compress_tar_zstd(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::Gzip:
+        return compress_gzip(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::Bzip2:
+        return compress_bzip2(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::Zstd:
+        return compress_zstd(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::UnixCompress:
+        return compress_unix_compress(sources, output, progress_callback);
+    case ArchiveFormat::Base64:
+        return compress_base64(sources, output, progress_callback);
+    case ArchiveFormat::Xxe:
+        return compress_xxe(sources, output, progress_callback);
+    case ArchiveFormat::Uue:
+        return compress_uue(sources, output, progress_callback);
+    case ArchiveFormat::Cpio:
+        return compress_cpio(sources, output, progress_callback);
+    case ArchiveFormat::CpioGzip:
+        return compress_cpio_gzip(sources, output, compression_level, progress_callback);
+    case ArchiveFormat::Ar:
+        return compress_ar(sources, output, progress_callback);
+    default:
+        throw ArchiveError(std::string("archive format recognized but not implemented for compression: ") +
+                           archive_format_info(archive_format).key);
+    }
+}
+
 // Purpose: Return the compression block-size labels shown in the Compress page.
 // Inputs: `index` is the mutable block-size selection in UI state.
 // Outputs: Returns a meaningful tuning label that maps to a supported archive block size.
@@ -700,6 +752,43 @@ std::uint64_t filetime_ticks(const FILETIME& value) {
     ticks.LowPart = value.dwLowDateTime;
     ticks.HighPart = value.dwHighDateTime;
     return ticks.QuadPart;
+}
+
+struct SystemMemoryUsage {
+    double percent = 0.0;
+    std::uint64_t total_bytes = 0;
+    std::uint64_t used_bytes = 0;
+};
+
+// Purpose: Sample the current process private memory counter.
+// Inputs: None; reads the current process through PSAPI.
+// Outputs: Returns private bytes, or zero when Windows does not provide the counter.
+std::uint64_t sample_private_memory_bytes() {
+    PROCESS_MEMORY_COUNTERS_EX memory_counters{};
+    memory_counters.cb = sizeof(memory_counters);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory_counters),
+                              sizeof(memory_counters))) {
+        return 0;
+    }
+    return static_cast<std::uint64_t>(memory_counters.PrivateUsage);
+}
+
+// Purpose: Sample physical system memory usage for the live monitor.
+// Inputs: None; reads `GlobalMemoryStatusEx`.
+// Outputs: Returns percent, total bytes, and used bytes, or zeros when unavailable.
+SystemMemoryUsage sample_system_memory_usage() {
+    MEMORYSTATUSEX memory_status{};
+    memory_status.dwLength = sizeof(memory_status);
+    if (!GlobalMemoryStatusEx(&memory_status)) {
+        return {};
+    }
+    const auto total = static_cast<std::uint64_t>(memory_status.ullTotalPhys);
+    const auto available = static_cast<std::uint64_t>(memory_status.ullAvailPhys);
+    return SystemMemoryUsage{
+        .percent = static_cast<double>(memory_status.dwMemoryLoad),
+        .total_bytes = total,
+        .used_bytes = available <= total ? total - available : 0U,
+    };
 }
 
 // Purpose: Format a percentage for compact monitor cards.
@@ -3567,48 +3656,8 @@ void MainWindow::start_compress() {
                 state_.progress = snapshot;
                 request_repaint();
             };
-            OperationStats stats;
-            if (archive_format == ArchiveFormat::SuperZip) {
-                CompressOptions options;
-                options.gpu_required = gpu_required;
-                options.block_size = block_size;
-                options.compression_level = compression_level;
-                options.verify_after_write = verify_after_write;
-                stats = compress_suzip(sources, output, options, progress_callback);
-            } else if (archive_format == ArchiveFormat::Zip) {
-                stats = compress_zip(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::Tar) {
-                stats = compress_tar(sources, output, progress_callback);
-            } else if (archive_format == ArchiveFormat::TarGzip) {
-                stats = compress_tar_gzip(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::TarBzip2) {
-                stats = compress_tar_bzip2(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::TarZstd) {
-                stats = compress_tar_zstd(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::Gzip) {
-                stats = compress_gzip(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::Bzip2) {
-                stats = compress_bzip2(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::Zstd) {
-                stats = compress_zstd(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::UnixCompress) {
-                stats = compress_unix_compress(sources, output, progress_callback);
-            } else if (archive_format == ArchiveFormat::Base64) {
-                stats = compress_base64(sources, output, progress_callback);
-            } else if (archive_format == ArchiveFormat::Xxe) {
-                stats = compress_xxe(sources, output, progress_callback);
-            } else if (archive_format == ArchiveFormat::Uue) {
-                stats = compress_uue(sources, output, progress_callback);
-            } else if (archive_format == ArchiveFormat::Cpio) {
-                stats = compress_cpio(sources, output, progress_callback);
-            } else if (archive_format == ArchiveFormat::CpioGzip) {
-                stats = compress_cpio_gzip(sources, output, compression_level, progress_callback);
-            } else if (archive_format == ArchiveFormat::Ar) {
-                stats = compress_ar(sources, output, progress_callback);
-            } else {
-                throw ArchiveError(std::string("archive format recognized but not implemented for compression: ") +
-                                   archive_format_info(archive_format).key);
-            }
+            const auto stats = compress_gui_archive(sources, output, archive_format, gpu_required, verify_after_write,
+                                                    block_size, compression_level, progress_callback);
             std::ostringstream line;
             line << "Compressed " << archive_format_info(archive_format).key << " to " << output.string() << " in "
                  << stats.seconds << "s";
@@ -3856,6 +3905,94 @@ double MainWindow::sample_gpu_utilization() {
     return std::clamp(value, 0.0, 100.0);
 }
 
+// Purpose: Sample process CPU use since the previous monitor tick.
+// Inputs: `elapsed_seconds` is the interval from the previous sample.
+// Outputs: Returns logical-processor-normalized CPU percentage and updates previous FILETIME state.
+double MainWindow::sample_process_cpu_percent(double elapsed_seconds) {
+    double cpu_percent = 0.0;
+    FILETIME creation_time{};
+    FILETIME exit_time{};
+    FILETIME kernel_time{};
+    FILETIME user_time{};
+    if (!GetProcessTimes(GetCurrentProcess(), &creation_time, &exit_time, &kernel_time, &user_time)) {
+        return cpu_percent;
+    }
+    if (elapsed_seconds > 0.0) {
+        const std::uint64_t previous_ticks =
+            filetime_ticks(last_process_kernel_time_) + filetime_ticks(last_process_user_time_);
+        const std::uint64_t current_ticks = filetime_ticks(kernel_time) + filetime_ticks(user_time);
+        const auto logical_processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+        if (current_ticks >= previous_ticks) {
+            cpu_percent = (static_cast<double>(current_ticks - previous_ticks) /
+                           (elapsed_seconds * 10000000.0 * static_cast<double>(logical_processors))) *
+                          100.0;
+            cpu_percent = std::clamp(cpu_percent, 0.0, 100.0);
+        }
+    }
+    last_process_kernel_time_ = kernel_time;
+    last_process_user_time_ = user_time;
+    return cpu_percent;
+}
+
+// Purpose: Sample process read/write transfer rates since the previous monitor tick.
+// Inputs: `elapsed_seconds` is the interval from the previous sample.
+// Outputs: Returns non-negative byte-per-second rates and updates previous I/O counters.
+MainWindow::ProcessIoRates MainWindow::sample_process_io_rates(double elapsed_seconds) {
+    ProcessIoRates rates;
+    IO_COUNTERS io_counters{};
+    if (!GetProcessIoCounters(GetCurrentProcess(), &io_counters)) {
+        return rates;
+    }
+    if (elapsed_seconds > 0.0) {
+        if (io_counters.ReadTransferCount >= last_io_read_bytes_) {
+            rates.read_bytes_per_second =
+                static_cast<double>(io_counters.ReadTransferCount - last_io_read_bytes_) / elapsed_seconds;
+        }
+        if (io_counters.WriteTransferCount >= last_io_write_bytes_) {
+            rates.write_bytes_per_second =
+                static_cast<double>(io_counters.WriteTransferCount - last_io_write_bytes_) / elapsed_seconds;
+        }
+    }
+    last_io_read_bytes_ = io_counters.ReadTransferCount;
+    last_io_write_bytes_ = io_counters.WriteTransferCount;
+    return rates;
+}
+
+// Purpose: Refresh cached HIP VRAM and visible GPU identity at a bounded cadence.
+// Inputs: `now` is the current steady-clock timestamp.
+// Outputs: Updates cached VRAM fields and GPU status text when the throttle permits a HIP query.
+void MainWindow::refresh_gpu_memory_cache(std::chrono::steady_clock::time_point now) {
+    if (last_gpu_memory_sample_time_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_gpu_memory_sample_time_).count() <
+            kGpuMemorySampleMs) {
+        return;
+    }
+    const auto info = query_gpu_info();
+    cached_vram_total_bytes_ = info.vram_total_bytes;
+    cached_vram_free_bytes_ = info.vram_free_bytes;
+    last_gpu_memory_sample_time_ = now;
+    std::lock_guard lock(mutex_);
+    state_.gpu_status = info.status;
+    state_.gpu_runtime_name = info.runtime_name;
+    state_.gpu_device_name = info.device_name;
+    state_.gpu_arch = info.gcn_arch;
+}
+
+// Purpose: Publish a completed performance sample into current UI state and graph history.
+// Inputs: `sample` is the counter set and `now` is the sample timestamp.
+// Outputs: Updates visible performance state, ring-buffer graph history, and last-sample time.
+void MainWindow::publish_performance_sample(const PerformanceMonitorSample& sample,
+                                            std::chrono::steady_clock::time_point now) {
+    {
+        std::lock_guard lock(mutex_);
+        state_.performance = sample;
+    }
+    performance_history_[performance_history_next_] = sample;
+    performance_history_next_ = (performance_history_next_ + 1U) % performance_history_.size();
+    performance_history_count_ = std::min(performance_history_count_ + 1U, performance_history_.size());
+    last_performance_sample_time_ = now;
+}
+
 // Purpose: Collect one live performance sample for the GPU diagnostics page.
 // Inputs: None; reads process, memory, I/O, optional PDH, and throttled HIP memory state.
 // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
@@ -3866,102 +4003,27 @@ void MainWindow::update_performance_sample() {
         elapsed_seconds = std::chrono::duration<double>(now - last_performance_sample_time_).count();
     }
 
-    double cpu_percent = 0.0;
-    FILETIME creation_time{};
-    FILETIME exit_time{};
-    FILETIME kernel_time{};
-    FILETIME user_time{};
-    if (GetProcessTimes(GetCurrentProcess(), &creation_time, &exit_time, &kernel_time, &user_time)) {
-        if (elapsed_seconds > 0.0) {
-            const std::uint64_t previous_ticks =
-                filetime_ticks(last_process_kernel_time_) + filetime_ticks(last_process_user_time_);
-            const std::uint64_t current_ticks = filetime_ticks(kernel_time) + filetime_ticks(user_time);
-            const auto logical_processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
-            if (current_ticks >= previous_ticks) {
-                cpu_percent = (static_cast<double>(current_ticks - previous_ticks) /
-                               (elapsed_seconds * 10000000.0 * static_cast<double>(logical_processors))) *
-                              100.0;
-                cpu_percent = std::clamp(cpu_percent, 0.0, 100.0);
-            }
-        }
-        last_process_kernel_time_ = kernel_time;
-        last_process_user_time_ = user_time;
-    }
-
-    double io_read_rate = 0.0;
-    double io_write_rate = 0.0;
-    IO_COUNTERS io_counters{};
-    if (GetProcessIoCounters(GetCurrentProcess(), &io_counters)) {
-        if (elapsed_seconds > 0.0) {
-            if (io_counters.ReadTransferCount >= last_io_read_bytes_) {
-                io_read_rate =
-                    static_cast<double>(io_counters.ReadTransferCount - last_io_read_bytes_) / elapsed_seconds;
-            }
-            if (io_counters.WriteTransferCount >= last_io_write_bytes_) {
-                io_write_rate =
-                    static_cast<double>(io_counters.WriteTransferCount - last_io_write_bytes_) / elapsed_seconds;
-            }
-        }
-        last_io_read_bytes_ = io_counters.ReadTransferCount;
-        last_io_write_bytes_ = io_counters.WriteTransferCount;
-    }
-
-    std::uint64_t private_bytes = 0;
-    PROCESS_MEMORY_COUNTERS_EX memory_counters{};
-    memory_counters.cb = sizeof(memory_counters);
-    if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory_counters),
-                             sizeof(memory_counters))) {
-        private_bytes = static_cast<std::uint64_t>(memory_counters.PrivateUsage);
-    }
-
-    double system_memory_percent = 0.0;
-    std::uint64_t system_memory_total = 0;
-    std::uint64_t system_memory_used = 0;
-    MEMORYSTATUSEX memory_status{};
-    memory_status.dwLength = sizeof(memory_status);
-    if (GlobalMemoryStatusEx(&memory_status)) {
-        system_memory_percent = static_cast<double>(memory_status.dwMemoryLoad);
-        system_memory_total = static_cast<std::uint64_t>(memory_status.ullTotalPhys);
-        const auto available = static_cast<std::uint64_t>(memory_status.ullAvailPhys);
-        system_memory_used = available <= system_memory_total ? system_memory_total - available : 0U;
-    }
-
-    if (last_gpu_memory_sample_time_ == std::chrono::steady_clock::time_point{} ||
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_gpu_memory_sample_time_).count() >=
-            kGpuMemorySampleMs) {
-        const auto info = query_gpu_info();
-        cached_vram_total_bytes_ = info.vram_total_bytes;
-        cached_vram_free_bytes_ = info.vram_free_bytes;
-        last_gpu_memory_sample_time_ = now;
-        std::lock_guard lock(mutex_);
-        state_.gpu_status = info.status;
-        state_.gpu_runtime_name = info.runtime_name;
-        state_.gpu_device_name = info.device_name;
-        state_.gpu_arch = info.gcn_arch;
-    }
-
+    const double cpu_percent = sample_process_cpu_percent(elapsed_seconds);
+    const auto io_rates = sample_process_io_rates(elapsed_seconds);
+    const auto private_bytes = sample_private_memory_bytes();
+    const auto system_memory = sample_system_memory_usage();
+    refresh_gpu_memory_cache(now);
     const double gpu_percent = sample_gpu_utilization();
+
     PerformanceMonitorSample sample;
     sample.live = true;
     sample.gpu_utilization_available = gpu_percent >= 0.0;
     sample.cpu_percent = cpu_percent;
     sample.gpu_utilization_percent = sample.gpu_utilization_available ? gpu_percent : 0.0;
-    sample.system_memory_percent = system_memory_percent;
-    sample.io_read_bytes_per_second = std::max(0.0, io_read_rate);
-    sample.io_write_bytes_per_second = std::max(0.0, io_write_rate);
+    sample.system_memory_percent = system_memory.percent;
+    sample.io_read_bytes_per_second = std::max(0.0, io_rates.read_bytes_per_second);
+    sample.io_write_bytes_per_second = std::max(0.0, io_rates.write_bytes_per_second);
     sample.private_bytes = private_bytes;
-    sample.system_memory_total_bytes = system_memory_total;
-    sample.system_memory_used_bytes = system_memory_used;
+    sample.system_memory_total_bytes = system_memory.total_bytes;
+    sample.system_memory_used_bytes = system_memory.used_bytes;
     sample.vram_total_bytes = cached_vram_total_bytes_;
     sample.vram_free_bytes = cached_vram_free_bytes_;
-    {
-        std::lock_guard lock(mutex_);
-        state_.performance = sample;
-    }
-    performance_history_[performance_history_next_] = sample;
-    performance_history_next_ = (performance_history_next_ + 1U) % performance_history_.size();
-    performance_history_count_ = std::min(performance_history_count_ + 1U, performance_history_.size());
-    last_performance_sample_time_ = now;
+    publish_performance_sample(sample, now);
 }
 
 void MainWindow::start_page_transition(Page from, Page to) {

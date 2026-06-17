@@ -151,6 +151,11 @@ class MainWindow {
         std::array<RECT, 3> resize_grips{};
     };
 
+    struct ProcessIoRates {
+        double read_bytes_per_second = 0.0;
+        double write_bytes_per_second = 0.0;
+    };
+
     struct CompressLayout {
         RECT area{};
         RECT archive_name{};
@@ -618,6 +623,26 @@ class MainWindow {
     // Inputs: None; reads process, memory, I/O, optional PDH, and throttled HIP memory state.
     // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
     void update_performance_sample();
+
+    // Purpose: Sample process CPU use since the previous monitor tick.
+    // Inputs: `elapsed_seconds` is the interval from the previous sample.
+    // Outputs: Returns logical-processor-normalized CPU percentage and updates previous FILETIME state.
+    [[nodiscard]] double sample_process_cpu_percent(double elapsed_seconds);
+
+    // Purpose: Sample process read/write transfer rates since the previous monitor tick.
+    // Inputs: `elapsed_seconds` is the interval from the previous sample.
+    // Outputs: Returns non-negative byte-per-second rates and updates previous I/O counters.
+    [[nodiscard]] ProcessIoRates sample_process_io_rates(double elapsed_seconds);
+
+    // Purpose: Refresh cached HIP VRAM and visible GPU identity at a bounded cadence.
+    // Inputs: `now` is the current steady-clock timestamp.
+    // Outputs: Updates cached VRAM fields and GPU status text when the throttle permits a HIP query.
+    void refresh_gpu_memory_cache(std::chrono::steady_clock::time_point now);
+
+    // Purpose: Publish a completed performance sample into current UI state and graph history.
+    // Inputs: `sample` is the counter set and `now` is the sample timestamp.
+    // Outputs: Updates visible performance state, ring-buffer graph history, and last-sample time.
+    void publish_performance_sample(const PerformanceMonitorSample& sample, std::chrono::steady_clock::time_point now);
 
     // Purpose: Sample Windows GPU engine utilization for this process when PDH exposes it.
     // Inputs: None; uses initialized PDH wildcard counters.
