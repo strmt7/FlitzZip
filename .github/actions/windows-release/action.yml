@@ -195,7 +195,11 @@ runs:
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+          -latest `
+          -products * `
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+          -property installationPath
         Get-Command cmake | Select-Object Source,Version
         Get-ComputerInfo | Select-Object CsSystemType,OSName,OSDisplayVersion
         if ($env:ENABLE_HIP -eq "true") {
@@ -435,7 +439,10 @@ runs:
         $cabExtract = Join-Path $root "extract-cab"
         New-Item -ItemType Directory -Force -Path $cabExtract | Out-Null
         $cabArchive = Join-Path $root "archive.cab"
-        & .\tools\new_cab_smoke_fixture.ps1 -OutputPath $cabArchive -EntryName "input\alpha.txt" -Payload "SuperZip release smoke $env:RELEASE_TAG"
+        & .\tools\new_cab_smoke_fixture.ps1 `
+          -OutputPath $cabArchive `
+          -EntryName "input\alpha.txt" `
+          -Payload "SuperZip release smoke $env:RELEASE_TAG"
         $cabIdentity = & $cli identify $cabArchive
         if ($cabIdentity -notmatch 'format=cab') {
             throw "Portable CAB smoke did not identify the CAB archive: $cabIdentity"
@@ -535,7 +542,10 @@ runs:
         $expectedCli = Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe"
         $installed = $false
         try {
-            Invoke-CheckedMsiExec -Phase "MSI install" -Arguments @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) -LogPath $installLog
+            Invoke-CheckedMsiExec `
+              -Phase "MSI install" `
+              -Arguments @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) `
+              -LogPath $installLog
             $installed = $true
             if (-not (Test-Path -LiteralPath $expectedCli)) {
                 throw "Installed CLI was not found at the release MSI Program Files path: $expectedCli"
@@ -559,7 +569,10 @@ runs:
             $global:LASTEXITCODE = 0
         } finally {
             if ($installed) {
-                Invoke-CheckedMsiExec -Phase "MSI uninstall" -Arguments @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) -LogPath $uninstallLog
+                Invoke-CheckedMsiExec `
+                  -Phase "MSI uninstall" `
+                  -Arguments @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) `
+                  -LogPath $uninstallLog
                 if (Test-Path -LiteralPath $expectedCli) {
                     throw "Installed CLI remained after MSI uninstall at $expectedCli."
                 }
@@ -586,7 +599,8 @@ runs:
         - Release track: $env:RELEASE_TRACK.
         $hipLine
         - Portable ZIP and compatibility-format smoke tests completed after staging install.
-        - MSI built for per-machine installation under C:\Program Files\SuperZip and silent install/uninstall smoke-tested when create_msi=true.
+        - MSI built for per-machine installation under C:\Program Files\SuperZip.
+        - Silent install/uninstall smoke test completed when create_msi=true.
         - Repository security scan completed before publishing.
         - SHA-256 checksum files are attached beside each package.
         "@ | Set-Content -LiteralPath $notes

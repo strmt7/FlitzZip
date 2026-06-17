@@ -24,6 +24,9 @@ feature work, use `tools/wait_relevant_workflows.ps1 -Commit <sha> -Mode
 opportunistic` only when deferral is allowed, and keep developing while runs are
 active. Before handoff or release, and always for workflow/verifier/MCP/skill or
 full-escalation changes, use `-Mode final`.
+Fuzzing is long-running and must not be waited for during routine iteration.
+Use `-Mode opportunistic -IncludeLongRunning` to sample it periodically, and use
+`-Mode final -FinalCommit` for the final handoff or release commit.
 
 Manual lanes remain available when the plan selects them:
 
@@ -31,6 +34,7 @@ Manual lanes remain available when the plan selects them:
    ```powershell
    tools/build.ps1 -Configuration Release
    tools/test.ps1
+   tools/lint.ps1 -CppMode Changed
    tools/security_scan.ps1
    tools/github_post_push_audit.ps1
    ```

@@ -61,11 +61,11 @@ function Get-SuperZipChangedPath {
     Push-Location $Script:SuperZipVerificationRepoRoot
     try {
         if (-not [string]::IsNullOrWhiteSpace($BaseRef)) {
-            $args = @("diff", "--name-only", "--diff-filter=ACDMRTUX", $BaseRef)
+            $gitArgs = @("diff", "--name-only", "--diff-filter=ACDMRTUX", $BaseRef)
             if (-not [string]::IsNullOrWhiteSpace($HeadRef)) {
-                $args += $HeadRef
+                $gitArgs += $HeadRef
             }
-            $paths += & git @args
+            $paths += & git @gitArgs
         } else {
             $paths += & git diff --name-only --diff-filter=ACDMRTUX
             $paths += & git diff --cached --name-only --diff-filter=ACDMRTUX
@@ -125,7 +125,7 @@ function Test-SuperZipAllPath {
 # Purpose: Build one executable verification command descriptor.
 # Inputs: Command metadata, executable name, argv, and rationale.
 # Outputs: Returns an ordered object suitable for JSON output and execution.
-function New-SuperZipVerificationCommand {
+function Get-SuperZipVerificationCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Id,
         [Parameter(Mandatory = $true)][string]$Stage,
@@ -238,6 +238,10 @@ function Get-SuperZipVerificationScope {
         '^mcp/',
         '^\.agents/',
         '^\.github/',
+        '^\.clang-format$',
+        '^\.pymarkdown\.json$',
+        '^\.ruff\.toml$',
+        '^\.yamllint$',
         '^\.clusterfuzzlite/',
         '^resources/',
         '^third_party/'
@@ -271,6 +275,22 @@ function Get-SuperZipVerificationScope {
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$')
     $touchesBrand = Test-SuperZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/superzip_brand_logo')
     $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$', '^\.github/actions/windows-release/', '^\.github/workflows/release\.yml$')
+    $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^\.clang-format$',
+        '^\.github/.*\.ya?ml$',
+        '^\.github/workflows/lint\.yml$',
+        '^\.pymarkdown\.json$',
+        '^\.ruff\.toml$',
+        '^\.yamllint$',
+        '^AGENTS\.md$',
+        '^README\.md$',
+        '^docs/.*\.md$',
+        '^mcp/.*\.py$',
+        '^tools/.*\.(ps1|psm1|py)$',
+        '^CMakeLists\.txt$',
+        '^cmake/',
+        '^(src|tests|fuzz)/.*\.(c|cc|cpp|h|hpp)$'
+    )
     $touchesBenchmarkCliDiff = (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/cli/main\.cpp$')) -and (Test-SuperZipDiffLine -Path @("src/cli/main.cpp") -Pattern @('benchmark', 'throughput', 'compression.?level', 'block.?size', 'workers', 'inflight', 'gpu'))
     $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)', '^docs/(performance|compression-level|compression-backend)'))
     $touchesMcp = Test-SuperZipAnyPath -Path $paths -Pattern @('^mcp/.*\.py$')
@@ -295,6 +315,7 @@ function Get-SuperZipVerificationScope {
         touchesGui = $touchesGui
         touchesBrand = $touchesBrand
         touchesPackaging = $touchesPackaging
+        touchesLintSurface = $touchesLintSurface
         touchesPerformance = $touchesPerformance
         touchesMcp = $touchesMcp
         unknownPaths = @($unknown)
@@ -328,57 +349,66 @@ function Get-SuperZipVerificationPlan {
         $hygieneArguments += [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($jsonPaths))
     }
 
-    Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "changed-hygiene" -Stage "local" -Executable "powershell" -Arguments $hygieneArguments -Reason "always scan changed files for secrets, forbidden workflow deployment keys, generated binaries, and comparison-name policy")
+    Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "changed-hygiene" -Stage "local" -Executable "powershell" -Arguments $hygieneArguments -Reason "always scan changed files for secrets, forbidden workflow deployment keys, generated binaries, and comparison-name policy")
+
+    if ($scope.touchesLintSurface -or $scope.fullEscalationRequired) {
+        Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "language-lint" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/lint.ps1", "-CppMode", "Changed", "-IncludeUntracked") -Reason "changed docs, workflow, script, CMake, or C/C++ surfaces require the fast language linter lane")
+    }
 
     if ($scope.docsOnly -and -not $scope.fullEscalationRequired) {
         $workflows = @()
     } else {
         if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "release-build" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1", "-Configuration", "Release") -Reason "compiled product, CMake, package, GUI, or broad verification changes require a Release build")
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "unit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test.ps1", "-Configuration", "Release") -Reason "compiled product or shared verification changes require the C++ test harness")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "release-build" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1", "-Configuration", "Release") -Reason "compiled product, CMake, package, GUI, or broad verification changes require a Release build")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "unit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test.ps1", "-Configuration", "Release") -Reason "compiled product or shared verification changes require the C++ test harness")
         }
         if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "changed-refactor-audit" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/refactor_audit.ps1", "-ChangedOnly", "-CheckContracts", "-MaxFunctionLines", "120", "-MaxComplexityMarkers", "35", "-FailOnFindings") -Reason "changed source and verification code must stay small, documented, and reviewable")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "changed-refactor-audit" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/refactor_audit.ps1", "-ChangedOnly", "-CheckContracts", "-MaxFunctionLines", "120", "-MaxComplexityMarkers", "35", "-FailOnFindings") -Reason "changed source and verification code must stay small, documented, and reviewable")
         }
         if ($scope.touchesVerification -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
         }
         if ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "security-scan" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/security_scan.ps1") -Reason "security boundaries, workflows, packaging, or verifier changes require repository policy checks")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "security-scan" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/security_scan.ps1") -Reason "security boundaries, workflows, packaging, or verifier changes require repository policy checks")
         }
         if ($scope.touchesGui -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "gui-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/gui_smoke.ps1", "-Configuration", "Release") -Reason "GUI or broad changes require all tabs, buttons, toggles, dropdowns, drag/drop, and screenshots")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "gui-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/gui_smoke.ps1", "-Configuration", "Release") -Reason "GUI or broad changes require all tabs, buttons, toggles, dropdowns, drag/drop, and screenshots")
         }
         if ($scope.touchesBrand -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "brand-assets" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/verify_brand_assets.ps1") -Reason "brand assets changed or broad verification requires logo single-source-of-truth validation")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "brand-assets" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/verify_brand_assets.ps1") -Reason "brand assets changed or broad verification requires logo single-source-of-truth validation")
         }
         if ($scope.touchesArchiveParser -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "short-fuzz-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/fuzz.ps1", "-Runs", "16") -Reason "archive parser or broad changes require a bounded sanitizer/fuzzer smoke")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "short-fuzz-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/fuzz.ps1", "-Runs", "16") -Reason "archive parser or broad changes require a bounded sanitizer/fuzzer smoke")
         }
         if ($scope.touchesPackaging -or $scope.fullEscalationRequired) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "package-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/package.ps1", "-Configuration", "Release") -Reason "installer, CPack, versioning, or broad changes require package validation")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "package-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/package.ps1", "-Configuration", "Release") -Reason "installer, CPack, versioning, or broad changes require package validation")
         }
         if ($scope.touchesMcp -or $scope.touchesVerification) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (New-SuperZipVerificationCommand -Id "mcp-python-compile" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "py_compile", "mcp/superzip_mcp.py") -Reason "MCP Python changes require syntax validation")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-python-compile" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "py_compile", "mcp/superzip_mcp.py") -Reason "MCP Python changes require syntax validation")
         }
     }
 
     if ($scope.touchesPerformance -or $scope.fullEscalationRequired) {
-        Add-SuperZipVerificationCommand -List $manual -Seen $manualSeen -Command (New-SuperZipVerificationCommand -Id "ram-benchmark-sweep" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/bench.ps1", "-Configuration", "Release", "-SizeMiB", "10240", "-Profile", "Mixed", "-CompressionLevel", "5", "-Iterations", "1", "-BlockSizeKiB", "256,1024,4096,16384") -Reason "performance-sensitive changes need the RAM-only CPU/GPU benchmark sweep before making speed claims" -Requirement "manual")
+        Add-SuperZipVerificationCommand -List $manual -Seen $manualSeen -Command (Get-SuperZipVerificationCommand -Id "ram-benchmark-sweep" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/bench.ps1", "-Configuration", "Release", "-SizeMiB", "10240", "-Profile", "Mixed", "-CompressionLevel", "5", "-Iterations", "1", "-BlockSizeKiB", "256,1024,4096,16384") -Reason "performance-sensitive changes need the RAM-only CPU/GPU benchmark sweep before making speed claims" -Requirement "manual")
     }
 
     $workflows = New-Object System.Collections.ArrayList
+    $longRunningWorkflows = New-Object System.Collections.ArrayList
     $workflowSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $longRunningSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($pair in @(
+        @("lint", ($scope.touchesLintSurface -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("windows-ci", ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.fullEscalationRequired)),
         @("security", ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
-        @("fuzzing", ($scope.touchesArchiveParser -or $scope.fullEscalationRequired)),
         @("greenbone-openvas-vulnetix", ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("scorecard", ($scope.touchesWorkflow -or $scope.fullEscalationRequired))
     )) {
         if ($pair[1] -and $workflowSeen.Add([string]$pair[0])) {
             [void]$workflows.Add([string]$pair[0])
         }
+    }
+    if (($scope.touchesArchiveParser -or $scope.fullEscalationRequired) -and $longRunningSeen.Add("fuzzing")) {
+        [void]$longRunningWorkflows.Add("fuzzing")
     }
 
     $postPushAuditRequired = ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)
@@ -387,7 +417,7 @@ function Get-SuperZipVerificationPlan {
     if ($scope.touchesVerification) { $immediateWaitReasons += "verification tooling, MCP, or agent skills changed" }
     if ($scope.fullEscalationRequired) { $immediateWaitReasons += "full verification escalation is required" }
     $recommendedWorkflowMode = if (@($workflows).Count -eq 0) {
-        "none"
+        if (@($longRunningWorkflows).Count -eq 0) { "none" } else { "opportunistic-long-running-final-only" }
     } elseif ($postPushAuditRequired) {
         "final"
     } else {
@@ -399,11 +429,14 @@ function Get-SuperZipVerificationPlan {
         requiredLocalCommands = @($local)
         manualLocalCommands = @($manual)
         postPushWorkflows = @($workflows)
+        longRunningPostPushWorkflows = @($longRunningWorkflows)
+        allPostPushWorkflows = @(@($workflows) + @($longRunningWorkflows))
         postPushAuditRequired = $postPushAuditRequired
         workflowWaitPolicy = [pscustomobject][ordered]@{
             immediateRequired = $postPushAuditRequired
             deferAllowed = (-not $postPushAuditRequired)
             recommendedMode = $recommendedWorkflowMode
+            longRunningNormallyDeferred = (@($longRunningWorkflows).Count -gt 0)
             reasons = @($immediateWaitReasons)
         }
         generatedAtUtc = [DateTime]::UtcNow.ToString("o")
@@ -418,7 +451,7 @@ function Invoke-SuperZipVerificationCommand {
 
     Push-Location $Script:SuperZipVerificationRepoRoot
     try {
-        Write-Host "verification command=$($Command.id) reason=$($Command.reason)"
+        Write-Output "verification command=$($Command.id) reason=$($Command.reason)"
         & $Command.executable @($Command.arguments)
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {

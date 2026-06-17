@@ -9,29 +9,29 @@ not exist only to inflate GPU utilization counters.
 ## Sources Reviewed
 
 - AMD HIP asynchronous execution documentation:
-  https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html
+  <https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_runtime_api/asynchronous.html>
 - AMD HIP performance guidance on streams:
-  https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/performance_guidelines.html
+  <https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/performance_guidelines.html>
 - AMD rocPRIM documentation:
-  https://rocm.docs.amd.com/projects/rocPRIM/en/docs-7.1.1/index.html
+  <https://rocm.docs.amd.com/projects/rocPRIM/en/docs-7.1.1/index.html>
 - rocPRIM reduce documentation:
-  https://rocm.docs.amd.com/projects/rocPRIM/en/latest/device_ops/reduce.html
+  <https://rocm.docs.amd.com/projects/rocPRIM/en/latest/device_ops/reduce.html>
 - rocPRIM scan documentation:
-  https://rocm.docs.amd.com/projects/rocPRIM/en/docs-6.0.0/device_ops/scan.html
+  <https://rocm.docs.amd.com/projects/rocPRIM/en/docs-6.0.0/device_ops/scan.html>
 - zlib CRC-32 source and combine implementation:
-  https://github.com/madler/zlib/blob/develop/crc32.c
+  <https://github.com/madler/zlib/blob/develop/crc32.c>
 - zlib manual for `crc32_combine`:
-  https://www.zlib.net/manual.html
+  <https://www.zlib.net/manual.html>
 - NVIDIA nvCOMP CRC32 API documentation, used only as evidence that GPU
   compression libraries treat CRC as a chunked low-level primitive:
-  https://docs.nvidia.com/cuda/nvcomp/crc32.html
+  <https://docs.nvidia.com/cuda/nvcomp/crc32.html>
 - Shieh et al., "A Systematic Approach for Parallel CRC Computations":
-  https://caslab.ee.ncku.edu.tw/dokuwiki/_media/research%3Acaslab_2001_jnl_01.pdf
+  <https://caslab.ee.ncku.edu.tw/dokuwiki/_media/research%3Acaslab_2001_jnl_01.pdf>
 - Liu et al., "An Efficient Parallel CRC Computing Method for High Bandwidth
   Networks and FPGA Implementation":
-  https://www.mdpi.com/2079-9292/13/22/4399
+  <https://www.mdpi.com/2079-9292/13/22/4399>
 - BLAKE3 Internet-Draft:
-  https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html
+  <https://www.ietf.org/archive/id/draft-aumasson-blake3-00.html>
 
 ## Findings
 

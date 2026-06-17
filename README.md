@@ -1,5 +1,14 @@
 ![SuperZip logo](resources/brand/superzip-logo.svg)
 
+[![License](https://img.shields.io/github/license/strmt7/SuperZip)](LICENSE)
+[![Windows CI](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/windows-ci.yml?branch=main&label=windows-ci)](https://github.com/strmt7/SuperZip/actions/workflows/windows-ci.yml)
+[![Security](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/security-code-scanning.yml?branch=main&label=security)](https://github.com/strmt7/SuperZip/actions/workflows/security-code-scanning.yml)
+[![Lint](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/lint.yml?branch=main&label=lint)](https://github.com/strmt7/SuperZip/actions/workflows/lint.yml)
+[![Fuzzing](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/fuzzing.yml?branch=main&label=fuzzing)](https://github.com/strmt7/SuperZip/actions/workflows/fuzzing.yml)
+[![Scorecard](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/scorecard.yml?branch=main&label=scorecard)](https://github.com/strmt7/SuperZip/actions/workflows/scorecard.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/strmt7/SuperZip/release.yml?branch=main&label=release)](https://github.com/strmt7/SuperZip/actions/workflows/release.yml)
+[![Commit activity](https://img.shields.io/github/commit-activity/m/strmt7/SuperZip)](https://github.com/strmt7/SuperZip/commits/main)
+
 # SuperZip
 
 SuperZip is a Windows x64 archive application built around AMD HIP acceleration.

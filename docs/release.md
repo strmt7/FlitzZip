@@ -95,7 +95,7 @@ recorded in `AGENTS.md` for agents to accept EULAs required by pinned SuperZip
 verification tooling. To package the MSI locally, set:
 
 ```powershell
-$env:SUPERZIP_ACCEPT_WIX_OSMF_EULA = "wix7"
+Set-Item Env:SUPERZIP_ACCEPT_WIX_OSMF_EULA "wix7"
 ```
 
 Then run:

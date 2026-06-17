@@ -157,4 +157,4 @@ foreach ($path in $paths) {
     Test-ChangedWorkflowPolicy -Path $path
 }
 
-Write-Host "Changed-file hygiene passed. Paths checked: $($paths.Count)."
+Write-Output "Changed-file hygiene passed. Paths checked: $($paths.Count)."

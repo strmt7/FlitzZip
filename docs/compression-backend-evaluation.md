@@ -8,23 +8,23 @@ product boundary.
 ## Sources Reviewed
 
 - hipCOMP-core:
-  https://github.com/ROCm/hipCOMP-core
+  <https://github.com/ROCm/hipCOMP-core>
 - AMD HIP SDK for Windows:
-  https://rocm.docs.amd.com/projects/install-on-windows/en/latest/index.html
+  <https://rocm.docs.amd.com/projects/install-on-windows/en/latest/index.html>
 - AMD HIP SDK Windows component support:
-  https://rocm.docs.amd.com/projects/install-on-windows/en/latest/conceptual/component-support.html
+  <https://rocm.docs.amd.com/projects/install-on-windows/en/latest/conceptual/component-support.html>
 - AMD rocPRIM:
-  https://rocm.docs.amd.com/projects/rocPRIM/en/latest/
+  <https://rocm.docs.amd.com/projects/rocPRIM/en/latest/>
 - AMD rocSPARSE:
-  https://rocm.docs.amd.com/projects/rocSPARSE/en/latest/
+  <https://rocm.docs.amd.com/projects/rocSPARSE/en/latest/>
 - Khronos OpenCL:
-  https://www.khronos.org/opencl/
+  <https://www.khronos.org/opencl/>
 - Khronos SYCL:
-  https://www.khronos.org/sycl/
+  <https://www.khronos.org/sycl/>
 - AdaptiveCpp AMD ROCm/HIP backend:
-  https://github.com/AdaptiveCpp/AdaptiveCpp
+  <https://github.com/AdaptiveCpp/AdaptiveCpp>
 - LLVM OpenMP offloading:
-  https://openmp.llvm.org/
+  <https://openmp.llvm.org/>
 
 ## Decision
 

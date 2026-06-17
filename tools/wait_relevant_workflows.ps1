@@ -10,6 +10,8 @@ param(
     [int]$TimeoutMinutes = 60,
     [int]$PollSeconds = 30,
     [switch]$Full,
+    [switch]$IncludeLongRunning,
+    [switch]$FinalCommit,
     [switch]$AllowCriticalDefer,
     [switch]$SkipPostPushAudit
 )
@@ -17,6 +19,10 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+
+if ($FinalCommit.IsPresent -and $Mode -eq "defer") {
+    throw "-FinalCommit cannot be combined with -Mode defer. Final handoff must wait for selected workflows."
+}
 
 # Purpose: Resolve the GitHub owner/repository slug for the current checkout.
 # Inputs: `Repository` may explicitly provide owner/repo; otherwise `remote.origin.url` is parsed.
@@ -101,15 +107,28 @@ function Test-SelectedWorkflowCompletion {
 
 $plan = Get-SuperZipVerificationPlan -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -SuspectGlobalBug:$Full
 $selected = if (@($WorkflowName).Count -gt 0) { @($WorkflowName) } else { @($plan.postPushWorkflows) }
+if (@($WorkflowName).Count -eq 0 -and ($IncludeLongRunning.IsPresent -or $FinalCommit.IsPresent)) {
+    $selected = @($selected) + @($plan.longRunningPostPushWorkflows)
+    $selected = @($selected | Select-Object -Unique)
+}
 if ($selected.Count -eq 0) {
-    Write-Host "No relevant post-push workflows selected for this change."
+    if (@($plan.longRunningPostPushWorkflows).Count -gt 0 -and -not ($IncludeLongRunning.IsPresent -or $FinalCommit.IsPresent)) {
+        Write-Output "Only long-running post-push workflows are selected for this change: $($plan.longRunningPostPushWorkflows -join ', ')"
+        Write-Output "Use -Mode opportunistic -IncludeLongRunning for a periodic status sample, or -Mode final -FinalCommit before final handoff."
+    } else {
+        Write-Output "No relevant post-push workflows selected for this change."
+    }
     return
+}
+if (@($plan.longRunningPostPushWorkflows).Count -gt 0 -and -not ($IncludeLongRunning.IsPresent -or $FinalCommit.IsPresent) -and @($WorkflowName).Count -eq 0) {
+    Write-Output "Long-running workflows are not waited by default: $($plan.longRunningPostPushWorkflows -join ', ')"
+    Write-Output "Use -Mode opportunistic -IncludeLongRunning to check them during iteration, or -Mode final -FinalCommit before final handoff/release."
 }
 if ($Mode -eq "defer") {
     if ($plan.workflowWaitPolicy.immediateRequired -and -not $AllowCriticalDefer.IsPresent) {
         throw "Workflow waiting cannot be deferred for this change. Reasons: $($plan.workflowWaitPolicy.reasons -join '; ')"
     }
-    Write-Host "Deferred workflow waiting for iterative development. Final handoff must wait for: $($selected -join ', ')"
+    Write-Output "Deferred workflow waiting for iterative development. Final handoff must wait for: $($selected -join ', ')"
     return
 }
 
@@ -117,25 +136,25 @@ $repositorySlug = Resolve-GitHubRepository -Repository $Repository
 $commitSha = Resolve-WorkflowCommit -Commit $Commit
 $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
 if ($Mode -eq "opportunistic") {
-    Write-Host ("Checking relevant workflows opportunistically on {0}@{1}: {2}" -f $repositorySlug, $commitSha, ($selected -join ', '))
+    Write-Output ("Checking relevant workflows opportunistically on {0}@{1}: {2}" -f $repositorySlug, $commitSha, ($selected -join ', '))
     $runs = Get-WorkflowRunForCommit -Repository $repositorySlug -Commit $commitSha
     $status = Test-SelectedWorkflowCompletion -Runs $runs -WorkflowName $selected
     if ($status.failed.Count -gt 0) {
         throw "Relevant workflow failure(s): $($status.failed -join '; ')"
     }
     if ($status.complete) {
-        Write-Host "Relevant workflows completed successfully: $($selected -join ', ')"
+        Write-Output "Relevant workflows completed successfully: $($selected -join ', ')"
         if ($plan.postPushAuditRequired -and -not $SkipPostPushAudit.IsPresent) {
             & (Join-Path $PSScriptRoot "github_post_push_audit.ps1") -Repository $repositorySlug
         }
         return
     }
-    Write-Host "Relevant workflows are not complete yet. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
-    Write-Host "Continuing without blocking because Mode=opportunistic. Run this script again with -Mode final before handoff."
+    Write-Output "Relevant workflows are not complete yet. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
+    Write-Output "Continuing without blocking because Mode=opportunistic. Run this script again with -Mode final before handoff."
     return
 }
 
-Write-Host ("Waiting for relevant workflows on {0}@{1}: {2}" -f $repositorySlug, $commitSha, ($selected -join ', '))
+Write-Output ("Waiting for relevant workflows on {0}@{1}: {2}" -f $repositorySlug, $commitSha, ($selected -join ', '))
 
 while ($true) {
     $runs = Get-WorkflowRunForCommit -Repository $repositorySlug -Commit $commitSha
@@ -144,13 +163,13 @@ while ($true) {
         throw "Relevant workflow failure(s): $($status.failed -join '; ')"
     }
     if ($status.complete) {
-        Write-Host "Relevant workflows completed successfully: $($selected -join ', ')"
+        Write-Output "Relevant workflows completed successfully: $($selected -join ', ')"
         break
     }
     if ([DateTime]::UtcNow -ge $deadline) {
         throw "Timed out waiting for relevant workflows. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
     }
-    Write-Host "Still waiting. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
+    Write-Output "Still waiting. Missing: $($status.missing -join ', ') Running: $($status.running -join ', ')"
     Start-Sleep -Seconds $PollSeconds
 }
 

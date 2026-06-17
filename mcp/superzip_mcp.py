@@ -13,7 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 COMMANDS = {
     "verification_plan": [
@@ -34,6 +33,16 @@ COMMANDS = {
         "tools/verify_changes.ps1",
         "-IncludeUntracked",
     ],
+    "lint": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/lint.ps1",
+        "-CppMode",
+        "Changed",
+    ],
     "wait_relevant_workflows": [
         "powershell",
         "-NoProfile",
@@ -53,6 +62,28 @@ COMMANDS = {
         "tools/wait_relevant_workflows.ps1",
         "-Mode",
         "opportunistic",
+    ],
+    "check_long_running_workflows": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/wait_relevant_workflows.ps1",
+        "-Mode",
+        "opportunistic",
+        "-IncludeLongRunning",
+    ],
+    "wait_final_commit_workflows": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "tools/wait_relevant_workflows.ps1",
+        "-Mode",
+        "final",
+        "-FinalCommit",
     ],
     "defer_relevant_workflows": [
         "powershell",

@@ -83,11 +83,19 @@ jobs:
 
               def get_task(self, task_id):
                   self.calls.append(("get_task", task_id))
-                  return ET.fromstring("<get_tasks_response><task><status>Done</status><progress>100</progress></task></get_tasks_response>")
+                  return ET.fromstring(
+                      "<get_tasks_response>"
+                      "<task><status>Done</status><progress>100</progress></task>"
+                      "</get_tasks_response>"
+                  )
 
               def get_report(self, report_id, details):
                   self.calls.append(("get_report", report_id, details))
-                  return ET.fromstring("<get_reports_response><report><result><severity>0.0</severity></result></report></get_reports_response>")
+                  return ET.fromstring(
+                      "<get_reports_response>"
+                      "<report><result><severity>0.0</severity></result></report>"
+                      "</get_reports_response>"
+                  )
 
               def stop_task(self, task_id):
                   self.calls.append(("stop_task", task_id))

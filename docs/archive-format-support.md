@@ -11,64 +11,64 @@ pre-write path validation used by SUZIP.
 
 Primary and project-owned sources reviewed:
 
-- 7-Zip: https://www.7-zip.org/
-- 7-Zip LZMA SDK: https://www.7-zip.org/sdk.html
-- WinRAR: https://www.win-rar.com/
-- WinZip format guide: https://www.winzip.com/en/learn/file-formats/
-- WinZip supported-format table: https://kb.winzip.com/en/130365
-- PeaZip: https://peazip.github.io/
-- PeaZip source matrix: https://github.com/peazip/PeaZip/
-- Keka: https://www.keka.io/en/
-- The Unarchiver: https://theunarchiver.com/
-- libarchive: https://www.libarchive.org/
-- GNU binutils ar: https://sourceware.org/binutils/docs/binutils/ar.html
-- ARJ technical information: https://www.opennet.ru/docs/formats/arj.txt
-- ARJ format reference mirror: https://www.fileformat.info/format/arj/corion.htm
-- Open-source ARJ implementation overview: https://arj.sourceforge.net/
-- ARC format reference mirror: https://www.fileformat.info/format/arc/corion.htm
-- ARC format implementation notes: https://www.virtualdub.org/blog2/entry_345.html
-- Nomarch ARC extractor overview: https://www.svgalib.org/rus/nomarch.html
-- Lzip manual and format specification: https://www.nongnu.org/lzip/manual/lzip_manual.html
-- Lzip compressed-format Internet-Draft: https://datatracker.ietf.org/doc/draft-diaz-lzip/
-- GNU cpio manual: https://www.gnu.org/software/cpio/manual/
-- FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
-- CPGZ file extension reference: https://fileinfo.com/extension/cpgz
-- RFC 2045 Base64 content-transfer encoding: https://datatracker.ietf.org/doc/html/rfc2045
-- GNU/Arch uuencode Base64 wrapper notes: https://man.archlinux.org/man/uuencode.5.en
-- RFC 1741 MIME Content Type for BinHex Encoded Files: https://datatracker.ietf.org/doc/html/rfc1741
-- BinHex 4.0 format and CRC notes: https://files.stairways.com/other/binhex-40-specs-info.txt
-- MacBinary II standard notes: https://files.stairways.com/other/macbinaryii-standard-info.txt
-- MacBinary format analysis and primary-source index: https://ciderpress2.com/formatdoc/MacBinary-notes.html
-- Microsoft MacBinary attachment interoperability notes: https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcmail/ec1a8b63-ae1e-47d2-ba3e-473a4b27eb45
-- XXEncode manual page mirror with historical variant notes: https://www.math.utah.edu/~beebe/support/myman2html/testdata/okay/xxencode.html
-- XXEncode alphabet and legacy line-structure notes: https://nerdmosis.com/tools/encode-and-decode-uuencode-xxencode
-- bzip2/libbzip2: https://sourceware.org/bzip2/
-- XZ Embedded: https://github.com/tukaani-project/xz-embedded
-- Zstandard/libzstd: https://github.com/facebook/zstd
-- Zstandard RFC 8878: https://www.rfc-editor.org/rfc/rfc8878
-- Lhasa LHA/LZH library: https://github.com/fragglet/lhasa
-- wimlib Windows Imaging library: https://wimlib.net/
-- XAR/libxar project: https://github.com/mackyle/xar
-- Microsoft Cabinet SDK/FDI API: https://learn.microsoft.com/en-us/windows/win32/devnotes/fdi
-- RPM package format v4: https://rpm-software-management.github.io/rpm/manual/format_v4.html
-- NanaZip: https://github.com/M2Team/NanaZip
-- GNOME File Roller: https://gitlab.gnome.org/GNOME/file-roller
-- KDE Ark: https://apps.kde.org/ark/
-- PowerArchiver: https://www.powerarchiver.com/
-- IZArc: https://www.izarc.org/
-- BetterZip: https://betterzip.app/library/betterzip/docs/archive-types/
-- Xarchiver: https://xarchiver.sourceforge.net/
-- Microsoft Windows archive support: https://support.microsoft.com/en-us/windows/zip-and-unzip-files-8d28fa72-f2f9-712f-67df-f80cf89fd4e5
-- Express Zip: https://www.nchsoftware.com/zip/index.html
-- Ashampoo ZIP Free: https://www.ashampoo.com/en-us/zip-free/detail
+- 7-Zip: <https://www.7-zip.org/>
+- 7-Zip LZMA SDK: <https://www.7-zip.org/sdk.html>
+- WinRAR: <https://www.win-rar.com/>
+- WinZip format guide: <https://www.winzip.com/en/learn/file-formats/>
+- WinZip supported-format table: <https://kb.winzip.com/en/130365>
+- PeaZip: <https://peazip.github.io/>
+- PeaZip source matrix: <https://github.com/peazip/PeaZip/>
+- Keka: <https://www.keka.io/en/>
+- The Unarchiver: <https://theunarchiver.com/>
+- libarchive: <https://www.libarchive.org/>
+- GNU binutils ar: <https://sourceware.org/binutils/docs/binutils/ar.html>
+- ARJ technical information: <https://www.opennet.ru/docs/formats/arj.txt>
+- ARJ format reference mirror: <https://www.fileformat.info/format/arj/corion.htm>
+- Open-source ARJ implementation overview: <https://arj.sourceforge.net/>
+- ARC format reference mirror: <https://www.fileformat.info/format/arc/corion.htm>
+- ARC format implementation notes: <https://www.virtualdub.org/blog2/entry_345.html>
+- Nomarch ARC extractor overview: <https://www.svgalib.org/rus/nomarch.html>
+- Lzip manual and format specification: <https://www.nongnu.org/lzip/manual/lzip_manual.html>
+- Lzip compressed-format Internet-Draft: <https://datatracker.ietf.org/doc/draft-diaz-lzip/>
+- GNU cpio manual: <https://www.gnu.org/software/cpio/manual/>
+- FreeBSD cpio format manual: <https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5>
+- CPGZ file extension reference: <https://fileinfo.com/extension/cpgz>
+- RFC 2045 Base64 content-transfer encoding: <https://datatracker.ietf.org/doc/html/rfc2045>
+- GNU/Arch uuencode Base64 wrapper notes: <https://man.archlinux.org/man/uuencode.5.en>
+- RFC 1741 MIME Content Type for BinHex Encoded Files: <https://datatracker.ietf.org/doc/html/rfc1741>
+- BinHex 4.0 format and CRC notes: <https://files.stairways.com/other/binhex-40-specs-info.txt>
+- MacBinary II standard notes: <https://files.stairways.com/other/macbinaryii-standard-info.txt>
+- MacBinary format analysis and primary-source index: <https://ciderpress2.com/formatdoc/MacBinary-notes.html>
+- Microsoft MacBinary attachment interoperability notes: <https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcmail/ec1a8b63-ae1e-47d2-ba3e-473a4b27eb45>
+- XXEncode manual page mirror with historical variant notes: <https://www.math.utah.edu/~beebe/support/myman2html/testdata/okay/xxencode.html>
+- XXEncode alphabet and legacy line-structure notes: <https://nerdmosis.com/tools/encode-and-decode-uuencode-xxencode>
+- bzip2/libbzip2: <https://sourceware.org/bzip2/>
+- XZ Embedded: <https://github.com/tukaani-project/xz-embedded>
+- Zstandard/libzstd: <https://github.com/facebook/zstd>
+- Zstandard RFC 8878: <https://www.rfc-editor.org/rfc/rfc8878>
+- Lhasa LHA/LZH library: <https://github.com/fragglet/lhasa>
+- wimlib Windows Imaging library: <https://wimlib.net/>
+- XAR/libxar project: <https://github.com/mackyle/xar>
+- Microsoft Cabinet SDK/FDI API: <https://learn.microsoft.com/en-us/windows/win32/devnotes/fdi>
+- RPM package format v4: <https://rpm-software-management.github.io/rpm/manual/format_v4.html>
+- NanaZip: <https://github.com/M2Team/NanaZip>
+- GNOME File Roller: <https://gitlab.gnome.org/GNOME/file-roller>
+- KDE Ark: <https://apps.kde.org/ark/>
+- PowerArchiver: <https://www.powerarchiver.com/>
+- IZArc: <https://www.izarc.org/>
+- BetterZip: <https://betterzip.app/library/betterzip/docs/archive-types/>
+- Xarchiver: <https://xarchiver.sourceforge.net/>
+- Microsoft Windows archive support: <https://support.microsoft.com/en-us/windows/zip-and-unzip-files-8d28fa72-f2f9-712f-67df-f80cf89fd4e5>
+- Express Zip: <https://www.nchsoftware.com/zip/index.html>
+- Ashampoo ZIP Free: <https://www.ashampoo.com/en-us/zip-free/detail>
 
 Secondary sources were used only where a current vendor page did not publish a
 complete format matrix:
 
-- B1 Free Archiver overview: https://en.wikipedia.org/wiki/B1_Free_Archiver
-- ALZip store listing: https://apps.microsoft.com/detail/9wzdncrdct3q
-- Zipware help/news: https://www.zipware.org/
-- jZip review and format table: https://www.lifewire.com/jzip-review-1356305
+- B1 Free Archiver overview: <https://en.wikipedia.org/wiki/B1_Free_Archiver>
+- ALZip store listing: <https://apps.microsoft.com/detail/9wzdncrdct3q>
+- Zipware help/news: <https://www.zipware.org/>
+- jZip review and format table: <https://www.lifewire.com/jzip-review-1356305>
 
 An additional official help corpus from a mature Windows archive application was
 reviewed on 2026-06-17 only as an external audit checklist. The product name,

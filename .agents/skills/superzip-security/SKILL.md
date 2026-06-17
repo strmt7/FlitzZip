@@ -40,6 +40,9 @@ For non-critical intermediate commits, `-Mode opportunistic` may be used only
 when `workflowWaitPolicy.deferAllowed=true`. Security, workflow, verifier, MCP,
 skill, and full-escalation changes must not be reported complete until final
 mode and any required post-push audit pass.
+Fuzzing is intentionally long-running. It is observed separately from normal
+blocking waits; check it opportunistically during iteration and include it in
+the blocking wait only for final handoff or release.
 
 Add or update tests for:
 
@@ -101,3 +104,7 @@ Workflow and release hardening rules:
   `tools/wait_relevant_workflows.ps1`, which supports final, opportunistic, and
   defer modes and also runs `tools/github_post_push_audit.ps1` when workflow or
   verifier changes require it.
+- Keep `.github/workflows/lint.yml` aligned with languages actually present in
+  the repo. The lint lane covers C/C++ formatting, PowerShell static analysis,
+  Python helper lint/format, YAML, Markdown, and CMake; do not add misleading
+  badges or jobs for unused languages.

@@ -8,10 +8,9 @@ import json
 import os
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
-
 
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9][0-9]*)\."
@@ -47,10 +46,7 @@ def parse_release_version(value: str) -> tuple[int, int, int, str | None]:
     """
     match = SEMVER_PATTERN.fullmatch(value)
     if match is None:
-        raise ValueError(
-            "release version must be SemVer without a v prefix or build metadata, "
-            "for example 0.1.0"
-        )
+        raise ValueError("release version must be SemVer without a v prefix or build metadata, for example 0.1.0")
     return int(match.group(1)), int(match.group(2)), int(match.group(3)), match.group(4)
 
 
@@ -87,11 +83,7 @@ def read_existing_tags(path: Path | None) -> set[str]:
     """
     if path is None:
         return set()
-    return {
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    }
+    return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
 
 
 def resolve_metadata(
@@ -105,15 +97,12 @@ def resolve_metadata(
     Outputs: `ReleaseMetadata`; raises ValueError when the resolved tag already exists.
     """
     release_version = (
-        validate_release_version(requested_version)
-        if requested_version.strip()
-        else read_project_version(repo_root)
+        validate_release_version(requested_version) if requested_version.strip() else read_project_version(repo_root)
     )
     release_tag = release_version
     if release_tag in existing_tags or f"v{release_tag}" in existing_tags:
         raise ValueError(
-            f"release tag {release_tag} already exists; use replace_existing=true "
-            "only with an explicit release_version"
+            f"release tag {release_tag} already exists; use replace_existing=true only with an explicit release_version"
         )
     package_base = f"SuperZip-{release_version}-win64"
     return ReleaseMetadata(

@@ -16,12 +16,12 @@ concurrency:
 jobs:
   codeql-cpp:
     name: CodeQL C++
-    runs-on: windows-2022
-    env:
-      # CodeQL overlay databases require build-mode none for traced languages.
-      # SuperZip keeps a manual C++ build for accurate MSVC extraction, so ask
-      # CodeQL to use the normal full database directly instead of falling back.
-      CODEQL_OVERLAY_DATABASE_MODE: none
+    runs-on: ubuntu-latest
+    # Keep C++ analysis whole-repository. Do not split SuperZip into
+    # subdirectory CodeQL databases because archive/parser data flow crosses
+    # folders and partial databases can miss cross-component vulnerabilities.
+    # CodeQL's build-free C/C++ mode avoids the slow MSVC tracing build while
+    # keeping one database for the entire product source tree.
     # CodeQL needs action metadata for analysis, repository contents to build,
     # and security-events write permission to upload SARIF.
     permissions:
@@ -37,13 +37,10 @@ jobs:
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           languages: c-cpp
-          build-mode: manual
+          build-mode: none
           dependency-caching: false
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
-      - name: Build C++ database
-        shell: pwsh
-        run: tools/build.ps1 -Configuration Release -CpuOnlyValidation -PackageVersion 0.1.0-security
       - name: Analyze C++
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
@@ -142,7 +139,17 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Trivy scan scope"
-          find . -maxdepth 6 \( -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.json' -o -name '*.yml' -o -name '*.yaml' -o -name '*.ps1' -o -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' \) | sort
+          find . -maxdepth 6 \
+            \( -name 'CMakeLists.txt' \
+            -o -name '*.cmake' \
+            -o -name '*.json' \
+            -o -name '*.yml' \
+            -o -name '*.yaml' \
+            -o -name '*.ps1' \
+            -o -name '*.cpp' \
+            -o -name '*.hpp' \
+            -o -name '*.c' \
+            -o -name '*.h' \) | sort
           echo "::endgroup::"
       - name: Run Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -181,14 +188,31 @@ jobs:
         run: |
           echo "::group::Semgrep scan scope"
           find . -type f \
-            \( -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' -o -name '*.ps1' -o -name '*.py' -o -name '*.yml' -o -name '*.yaml' -o -name '*.md' -o -name 'CMakeLists.txt' \) | sort
+            \( -name '*.cpp' \
+            -o -name '*.hpp' \
+            -o -name '*.c' \
+            -o -name '*.h' \
+            -o -name '*.ps1' \
+            -o -name '*.py' \
+            -o -name '*.yml' \
+            -o -name '*.yaml' \
+            -o -name '*.md' \
+            -o -name 'CMakeLists.txt' \) | sort
           echo "::endgroup::"
       - name: Run Semgrep
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-semgrep-linux.txt
-          semgrep scan --error --sarif --metrics=off --no-git-ignore --max-target-bytes 100000000 --config p/default --config p/github-actions . > semgrep-results.sarif
+          semgrep scan \
+            --error \
+            --sarif \
+            --metrics=off \
+            --no-git-ignore \
+            --max-target-bytes 100000000 \
+            --config p/default \
+            --config p/github-actions \
+            . > semgrep-results.sarif
       - name: Upload Semgrep SARIF
         if: always() && hashFiles('semgrep-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
@@ -215,7 +239,16 @@ jobs:
           set -euo pipefail
           echo "::group::DevSkim scan scope"
           find . -type f \
-            \( -name '*.cpp' -o -name '*.hpp' -o -name '*.c' -o -name '*.h' -o -name '*.ps1' -o -name '*.py' -o -name '*.yml' -o -name '*.yaml' -o -name '*.md' -o -name 'CMakeLists.txt' \) | sort
+            \( -name '*.cpp' \
+            -o -name '*.hpp' \
+            -o -name '*.c' \
+            -o -name '*.h' \
+            -o -name '*.ps1' \
+            -o -name '*.py' \
+            -o -name '*.yml' \
+            -o -name '*.yaml' \
+            -o -name '*.md' \
+            -o -name 'CMakeLists.txt' \) | sort
           echo "::endgroup::"
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0

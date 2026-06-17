@@ -58,6 +58,9 @@ repository-relative paths and produces:
 - `manualLocalCommands`: expensive commands that are relevant before making
   performance claims or release decisions.
 - `postPushWorkflows`: GitHub workflows the agent should wait for after push.
+- `longRunningPostPushWorkflows`: slow workflows, currently fuzzing, that
+  remain relevant but are checked opportunistically and waited only for final
+  handoff or release.
 - `postPushAuditRequired`: whether deployment/code-scanning audit is required.
 - `workflowWaitPolicy`: whether workflow waiting can be deferred while work is
   still in progress and the recommended wait mode for the current change.
@@ -67,12 +70,12 @@ repository-relative paths and produces:
 
 | Change area | Required local verification | Relevant post-push workflows |
 | --- | --- | --- |
-| Docs only | changed-file hygiene | none |
-| C++ source, tests, CMake | hygiene, Release build, C++ tests, changed-code refactor audit | `windows-ci` |
-| Archive parser, path safety, extraction publication | C++ checks plus security scan and short fuzz smoke | `windows-ci`, `security`, `fuzzing` |
-| GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `windows-ci` |
-| Workflows, security scanners, release actions | hygiene plus security scan | `security`, scanner-specific workflows, `scorecard` |
-| Packaging or installer files | Release build, C++ tests, security scan, package smoke | `windows-ci`, `security` |
+| Docs only | changed-file hygiene, language lint | `lint` |
+| C++ source, tests, CMake | hygiene, language lint, Release build, C++ tests, changed-code refactor audit | `lint`, `windows-ci` |
+| Archive parser, path safety, extraction publication | C++ checks plus security scan and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
+| GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci` |
+| Workflows, security scanners, release actions | hygiene, language lint, security scan | `lint`, `security`, scanner-specific workflows, `scorecard` |
+| Packaging or installer files | Release build, C++ tests, security scan, package smoke | `lint`, `windows-ci`, `security` |
 | MCP Python or verifier routing | full profile plus Python bytecode compile and selector self-test | full-profile workflow set |
 | Performance-sensitive code | normal correctness checks; RAM-only benchmark is manual before claims | workflow set from touched source |
 
@@ -86,10 +89,11 @@ The full profile is selected automatically when:
 - verification tooling, MCP command routing, or SuperZip agent skills changed;
 - a targeted local command fails under `tools\verify_changes.ps1`.
 
-The full profile remains SSD-safe. It includes build, C++ tests, security scan,
-changed-code refactor audit, selector self-tests, GUI smoke, brand verification,
-short local fuzz smoke, and package smoke. RAM-only benchmark sweeps stay manual
-unless a performance claim or tuning decision is being made.
+The full profile remains SSD-safe. It includes language lint, build, C++ tests,
+security scan, changed-code refactor audit, selector self-tests, GUI smoke,
+brand verification, short local fuzz smoke, and package smoke. RAM-only
+benchmark sweeps stay manual unless a performance claim or tuning decision is
+being made.
 
 ## Workflow Wait Strategy
 
@@ -111,6 +115,19 @@ For iterative feature work, run targeted local checks for each commit, use
 are active, and run `-Mode final` once the feature is ready for handoff. Do not
 call work complete because an opportunistic check returned before the workflows
 finished.
+
+Fuzzing is long-running by design. Do not wait for it during ordinary
+development pushes. Use `-Mode opportunistic -IncludeLongRunning` occasionally
+to check for completed fuzzing failures while continuing other work. Use
+`-Mode final -FinalCommit` only when the current commit is the final handoff,
+release, or other explicit completion point.
+
+The lint lane is also change-aware. Push and pull-request runs lint the files
+affected by the commit range and expand non-C++ languages to the whole relevant
+language only when that language's lint configuration changed. C++ formatting is
+enforced on changed C/C++ files only until a deliberate repo-wide formatting
+migration is planned and tested. Manual `workflow_dispatch` lint runs recheck
+the latest commit range.
 
 ## Rules For Agents
 

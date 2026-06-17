@@ -3,19 +3,20 @@
 This file is the operating manual for AI agents and programmers working in this repository. It follows the public AGENTS.md convention and GitHub guidance that agent instructions should cover commands, tests, project structure, code style, git workflow, and boundaries.
 
 References checked on 2026-06-16:
-- AGENTS.md format: https://github.com/agentsmd/agents.md
-- GitHub guidance on effective AGENTS.md files: https://github.blog/ai-and-ml/github-copilot/how-to-write-a-great-agents-md-lessons-from-over-2500-repositories/
-- GitHub Copilot repository instructions: https://docs.github.com/copilot/how-tos/agents/copilot-coding-agent/best-practices-for-using-copilot-to-work-on-tasks
-- OpenSSF secure development principles: https://openssf.org/blog/2023/12/03/openssf-releases-top-10-secure-software-development-guiding-principles/
-- OpenSSF secure software concise guide: https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md
-- OWASP Secure Coding Practices Quick Reference Guide: https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/
-- NIST SSDF SP 800-218 v1.1 and v1.2 draft: https://csrc.nist.gov/pubs/sp/800/218/final and https://csrc.nist.gov/pubs/sp/800/218/r1/ipd
-- CISA Secure by Design guidance: https://www.cisa.gov/securebydesign and https://www.cisa.gov/resources-tools/resources/secure-by-design
-- GitHub Actions secure-use reference: https://docs.github.com/en/actions/reference/security/secure-use
-- Microsoft high-DPI Win32 guidance: https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows
-- Microsoft Defender command-line guidance: https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus
-- CMake CPack WiX generator scope guidance: https://cmake.org/cmake/help/latest/cpack_gen/wix.html
-- Microsoft Windows Installer `ProgramFiles64Folder`: https://learn.microsoft.com/en-us/windows/win32/msi/programfiles64folder
+
+- AGENTS.md format: <https://github.com/agentsmd/agents.md>
+- GitHub guidance on effective AGENTS.md files: <https://github.blog/ai-and-ml/github-copilot/how-to-write-a-great-agents-md-lessons-from-over-2500-repositories/>
+- GitHub Copilot repository instructions: <https://docs.github.com/copilot/how-tos/agents/copilot-coding-agent/best-practices-for-using-copilot-to-work-on-tasks>
+- OpenSSF secure development principles: <https://openssf.org/blog/2023/12/03/openssf-releases-top-10-secure-software-development-guiding-principles/>
+- OpenSSF secure software concise guide: <https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md>
+- OWASP Secure Coding Practices Quick Reference Guide: <https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/>
+- NIST SSDF SP 800-218 v1.1 and v1.2 draft: <https://csrc.nist.gov/pubs/sp/800/218/final> and <https://csrc.nist.gov/pubs/sp/800/218/r1/ipd>
+- CISA Secure by Design guidance: <https://www.cisa.gov/securebydesign> and <https://www.cisa.gov/resources-tools/resources/secure-by-design>
+- GitHub Actions secure-use reference: <https://docs.github.com/en/actions/reference/security/secure-use>
+- Microsoft high-DPI Win32 guidance: <https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows>
+- Microsoft Defender command-line guidance: <https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus>
+- CMake CPack WiX generator scope guidance: <https://cmake.org/cmake/help/latest/cpack_gen/wix.html>
+- Microsoft Windows Installer `ProgramFiles64Folder`: <https://learn.microsoft.com/en-us/windows/win32/msi/programfiles64folder>
 
 ## Mission
 
@@ -67,6 +68,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   multi-commit iteration only when deferral is allowed, but final handoff,
   release work, workflow changes, verifier changes, MCP changes, skill changes,
   and full-escalation changes must complete the relevant final workflow wait.
+  Long-running fuzzing is observed but not normally waited for; check it
+  opportunistically during iteration and include it only with final/release
+  workflow waits.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
 ## Engineering Quality Baseline
@@ -140,7 +144,9 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
-- `.github/requirements/`: hash-locked Python scanner requirements for GitHub-hosted Linux jobs.
+- `.github/requirements/`: hash-locked Python scanner and linter requirements for GitHub-hosted jobs.
+- `.github/requirements/requirements-lint-windows.txt`: hash-locked Python linter requirements for the Windows lint workflow.
+- `.github/workflows/lint.yml`: language lint workflow for C/C++, PowerShell, Python helper scripts, YAML, Markdown, and CMake.
 - `.github/workflows/release.yml`: manual x64 release, installer smoke, beta/stable track selection, and publishing workflow.
 - `.github/workflows/scorecard.yml`: default-branch OSSF Scorecard workflow.
 - `.agents/skills/` and `mcp/`: local helper skills/MCPs for future agents.
@@ -169,6 +175,7 @@ selects a product build:
 ```powershell
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
+tools\lint.ps1 -CppMode Changed
 tools\security_scan.ps1
 tools\github_post_push_audit.ps1
 ```
@@ -365,6 +372,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.
+- Keep language linting active for the languages actually used by SuperZip:
+  C/C++ formatting, PowerShell static analysis, Python helper lint/format,
+  YAML workflow lint, Markdown lint, and CMake lint. Do not add badge-only
+  workflows for languages or services that are not part of the repo.
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
 - Product benchmark claims must sweep the production SUZIP block-size choices:
@@ -463,6 +474,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   before final handoff or release, and always use final mode for workflow,
   verifier, MCP, skill, or full-escalation changes. If the verifier requires a
   post-push audit, the final waiter runs `tools\github_post_push_audit.ps1`.
+  Fuzzing is a long-running observed workflow: do not block on it during normal
+  iteration, but sample it with `-IncludeLongRunning` and wait for it with
+  `-FinalCommit` when the current commit is the final handoff or release.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
   and run install/uninstall smoke tests before publishing.
 - `0.1.0` is the current beta release. Until a maintainer explicitly opens the

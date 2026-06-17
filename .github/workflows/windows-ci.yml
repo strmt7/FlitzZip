@@ -24,7 +24,11 @@ jobs:
       - name: Toolchain diagnostics
         shell: pwsh
         run: |
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
           Get-Command cmake | Select-Object Source,Version
       - name: Configure
         shell: pwsh

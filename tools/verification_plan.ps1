@@ -8,7 +8,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
 
 $plan = Get-SuperZipVerificationPlan `
@@ -23,12 +22,12 @@ if ($Json.IsPresent) {
     return
 }
 
-Write-Host "SuperZip verification plan"
-Write-Host "Changed paths: $($plan.scope.pathCount)"
+Write-Output "SuperZip verification plan"
+Write-Output "Changed paths: $($plan.scope.pathCount)"
 foreach ($path in $plan.scope.paths) {
-    Write-Host "  - $path"
+    Write-Output "  - $path"
 }
-Write-Host "Scope:"
+Write-Output "Scope:"
 foreach ($name in @(
         "docsOnly",
         "touchesCpp",
@@ -37,45 +36,55 @@ foreach ($name in @(
         "touchesSecurityBoundary",
         "touchesGui",
         "touchesPackaging",
+        "touchesLintSurface",
         "touchesVerification",
         "fullEscalationRequired")) {
-    Write-Host ("  {0}={1}" -f $name, $plan.scope.$name)
+    Write-Output ("  {0}={1}" -f $name, $plan.scope.$name)
 }
 if ($plan.scope.fullEscalationReasons.Count -gt 0) {
-    Write-Host "Escalation reasons:"
+    Write-Output "Escalation reasons:"
     foreach ($reason in $plan.scope.fullEscalationReasons) {
-        Write-Host "  - $reason"
+        Write-Output "  - $reason"
     }
 }
 
-Write-Host "Required local commands:"
+Write-Output "Required local commands:"
 foreach ($command in $plan.requiredLocalCommands) {
-    Write-Host "  [$($command.id)] $($command.command)"
-    Write-Host "      $($command.reason)"
+    Write-Output "  [$($command.id)] $($command.command)"
+    Write-Output "      $($command.reason)"
 }
 if ($plan.manualLocalCommands.Count -gt 0) {
-    Write-Host "Manual local commands:"
+    Write-Output "Manual local commands:"
     foreach ($command in $plan.manualLocalCommands) {
-        Write-Host "  [$($command.id)] $($command.command)"
-        Write-Host "      $($command.reason)"
+        Write-Output "  [$($command.id)] $($command.command)"
+        Write-Output "      $($command.reason)"
     }
 }
 if ($plan.postPushWorkflows.Count -gt 0) {
-    Write-Host "Relevant post-push workflows to wait for:"
+    Write-Output "Relevant post-push workflows to wait for:"
     foreach ($workflow in $plan.postPushWorkflows) {
-        Write-Host "  - $workflow"
+        Write-Output "  - $workflow"
     }
 } else {
-    Write-Host "Relevant post-push workflows to wait for: none"
+    Write-Output "Relevant post-push workflows to wait for: none"
 }
-Write-Host "Post-push audit required: $($plan.postPushAuditRequired)"
-Write-Host "Workflow wait policy:"
-Write-Host "  immediateRequired=$($plan.workflowWaitPolicy.immediateRequired)"
-Write-Host "  deferAllowed=$($plan.workflowWaitPolicy.deferAllowed)"
-Write-Host "  recommendedMode=$($plan.workflowWaitPolicy.recommendedMode)"
+if ($plan.longRunningPostPushWorkflows.Count -gt 0) {
+    Write-Output "Long-running workflows to observe, not normally wait for:"
+    foreach ($workflow in $plan.longRunningPostPushWorkflows) {
+        Write-Output "  - $workflow"
+    }
+} else {
+    Write-Output "Long-running workflows to observe: none"
+}
+Write-Output "Post-push audit required: $($plan.postPushAuditRequired)"
+Write-Output "Workflow wait policy:"
+Write-Output "  immediateRequired=$($plan.workflowWaitPolicy.immediateRequired)"
+Write-Output "  deferAllowed=$($plan.workflowWaitPolicy.deferAllowed)"
+Write-Output "  recommendedMode=$($plan.workflowWaitPolicy.recommendedMode)"
+Write-Output "  longRunningNormallyDeferred=$($plan.workflowWaitPolicy.longRunningNormallyDeferred)"
 if ($plan.workflowWaitPolicy.reasons.Count -gt 0) {
-    Write-Host "  reasons:"
+    Write-Output "  reasons:"
     foreach ($reason in $plan.workflowWaitPolicy.reasons) {
-        Write-Host "    - $reason"
+        Write-Output "    - $reason"
     }
 }
