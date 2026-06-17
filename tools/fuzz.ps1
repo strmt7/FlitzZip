@@ -20,7 +20,7 @@ set -euo pipefail
 mkdir -p /out
 bash .clusterfuzzlite/build.sh
 rm -rf /out/corpus
-mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/lha /out/corpus/xar
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/macbinary /out/corpus/lha /out/corpus/xar
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
@@ -34,6 +34,22 @@ printf '\135\000\000\200\000\377\377\377\377\377\377\377\377\000' > /out/corpus/
 printf 'LZIP\001\014\000' > /out/corpus/lzip/tiny-lzip-header
 printf '\140\352\000\000' > /out/corpus/arj/tiny-arj-end-marker
 printf '\032\000' > /out/corpus/arc/tiny-arc-end-marker
+python3 - <<'PY'
+from pathlib import Path
+header = bytearray(128)
+header[1] = len(b'fuzz.txt')
+header[2:10] = b'fuzz.txt'
+header[122] = 0x81
+header[123] = 0x81
+crc = 0
+for b in header[:124]:
+    crc ^= b << 8
+    for _ in range(8):
+        crc = ((crc << 1) ^ 0x1021) & 0xffff if crc & 0x8000 else (crc << 1) & 0xffff
+header[124] = crc >> 8
+header[125] = crc & 0xff
+Path('/out/corpus/macbinary/empty.macbin').write_bytes(header)
+PY
 printf '\031\216-lhd-' > /out/corpus/lha/tiny-lha-signature
 printf 'xar!' > /out/corpus/xar/tiny-xar-signature
 python3 - <<'PY'
@@ -118,6 +134,7 @@ if [ "$fuzzRuns" -gt 0 ]; then
   /out/superzip_lzip_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/lzip
   /out/superzip_arj_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/arj
   /out/superzip_arc_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/arc
+  /out/superzip_macbinary_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/macbinary
   /out/superzip_lha_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/lha
   /out/superzip_xar_fuzzer -runs=$fuzzRuns -max_len=1048576 /out/corpus/xar
 fi

@@ -140,6 +140,11 @@ archive options, progress snapshots, and errors.
   path-safe header filenames, header/data/resource CRC validation, resource
   fork discard on Windows, overwrite refusal, and verified temporary-file
   publication.
+- Added extract-only MacBinary `.macbin` and strongly header-detected `.bin`
+  data-fork compatibility through a native bounded adapter with path-safe ASCII
+  header filenames, data/resource extent validation, MacBinary II/III header CRC
+  validation, generic `.bin` false-positive protection, overwrite refusal,
+  verified temporary-file publication, and fuzz coverage.
 - Added XXEncode `.xxe` single-file compatibility through a native bounded text
   adapter with strict alphabet validation, path-safe begin-line filenames,
   overwrite refusal, and verified temporary-file publication.

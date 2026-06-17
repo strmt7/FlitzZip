@@ -20,6 +20,7 @@
 #include "lha/lha_adapter.hpp"
 #include "lzip/lzip_adapter.hpp"
 #include "lzma/lzma_adapter.hpp"
+#include "macbinary/macbinary_adapter.hpp"
 #include "rpm/rpm_adapter.hpp"
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
@@ -300,6 +301,64 @@ std::filesystem::path extraction_output_path_for(const UiState& state) {
     return safe_current_path() / L"SuperZip-extracted";
 }
 
+using CompatibilityExtractor = OperationStats (*)(
+    const std::filesystem::path&,
+    const std::filesystem::path&,
+    bool,
+    const ProgressCallback&);
+
+struct CompatibilityExtractionRoute {
+    ArchiveFormat format;
+    CompatibilityExtractor extractor;
+};
+
+// Purpose: Find the compatibility extraction adapter for a detected archive format.
+// Inputs: `archive_format` is the detected non-SUZIP format to route.
+// Outputs: Returns the matching adapter function, or null when the format has no extraction implementation.
+CompatibilityExtractor compatibility_extractor_for(ArchiveFormat archive_format) {
+    static constexpr std::array<CompatibilityExtractionRoute, 33> routes{{
+        {ArchiveFormat::Zip, extract_zip},
+        {ArchiveFormat::Zipx, extract_zip},
+        {ArchiveFormat::SevenZip, extract_7z},
+        {ArchiveFormat::Tar, extract_tar},
+        {ArchiveFormat::TarGzip, extract_tar_gzip},
+        {ArchiveFormat::TarBzip2, extract_tar_bzip2},
+        {ArchiveFormat::TarXz, extract_tar_xz},
+        {ArchiveFormat::TarLzip, extract_tar_lzip},
+        {ArchiveFormat::TarZstd, extract_tar_zstd},
+        {ArchiveFormat::Gzip, extract_gzip_file},
+        {ArchiveFormat::Bzip2, extract_bzip2_file},
+        {ArchiveFormat::Xz, extract_xz_file},
+        {ArchiveFormat::Lzma, extract_lzma_file},
+        {ArchiveFormat::Lzip, extract_lzip_file},
+        {ArchiveFormat::Zstd, extract_zstd_file},
+        {ArchiveFormat::UnixCompress, extract_unix_compress_file},
+        {ArchiveFormat::Base64, extract_base64_file},
+        {ArchiveFormat::Hqx, extract_hqx_file},
+        {ArchiveFormat::MacBinary, extract_macbinary_file},
+        {ArchiveFormat::Xxe, extract_xxe_file},
+        {ArchiveFormat::Uue, extract_uue_file},
+        {ArchiveFormat::Cab, extract_cab},
+        {ArchiveFormat::Iso, extract_iso},
+        {ArchiveFormat::Cpio, extract_cpio},
+        {ArchiveFormat::CpioGzip, extract_cpio_gzip},
+        {ArchiveFormat::Ar, extract_ar},
+        {ArchiveFormat::Deb, extract_ar},
+        {ArchiveFormat::Arj, extract_arj},
+        {ArchiveFormat::Arc, extract_arc},
+        {ArchiveFormat::Rpm, extract_rpm},
+        {ArchiveFormat::Lha, extract_lha},
+        {ArchiveFormat::Wim, extract_wim},
+        {ArchiveFormat::Xar, extract_xar},
+    }};
+
+    const auto match = std::find_if(
+        routes.begin(),
+        routes.end(),
+        [archive_format](const CompatibilityExtractionRoute& route) { return route.format == archive_format; });
+    return match == routes.end() ? nullptr : match->extractor;
+}
+
 // Purpose: Dispatch one detected archive to the matching extraction adapter.
 // Inputs: `archive_format` is the already detected format, `archive` is the input file, `output` is the extraction root, `gpu_required` controls only SUZIP, `overwrite` controls existing targets, and `progress_callback` receives progress updates.
 // Outputs: Returns extraction statistics, or throws when the format is unknown, unsupported, unsafe, or corrupt.
@@ -317,78 +376,15 @@ OperationStats extract_detected_archive(
         return extract_suzip(archive, output, options, progress_callback);
     }
 
-    // Compatibility adapters never consume SUZIP GPU tuning; they share the
-    // same overwrite and progress contract at the GUI boundary.
-    switch (archive_format) {
-    case ArchiveFormat::Zip:
-    case ArchiveFormat::Zipx:
-        return extract_zip(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::SevenZip:
-        return extract_7z(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Tar:
-        return extract_tar(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::TarGzip:
-        return extract_tar_gzip(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::TarBzip2:
-        return extract_tar_bzip2(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::TarXz:
-        return extract_tar_xz(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::TarLzip:
-        return extract_tar_lzip(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::TarZstd:
-        return extract_tar_zstd(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Gzip:
-        return extract_gzip_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Bzip2:
-        return extract_bzip2_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Xz:
-        return extract_xz_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Lzma:
-        return extract_lzma_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Lzip:
-        return extract_lzip_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Zstd:
-        return extract_zstd_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::UnixCompress:
-        return extract_unix_compress_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Base64:
-        return extract_base64_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Hqx:
-        return extract_hqx_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Xxe:
-        return extract_xxe_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Uue:
-        return extract_uue_file(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Cab:
-        return extract_cab(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Iso:
-        return extract_iso(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Cpio:
-        return extract_cpio(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::CpioGzip:
-        return extract_cpio_gzip(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Ar:
-    case ArchiveFormat::Deb:
-        return extract_ar(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Arj:
-        return extract_arj(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Arc:
-        return extract_arc(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Rpm:
-        return extract_rpm(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Lha:
-        return extract_lha(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Wim:
-        return extract_wim(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Xar:
-        return extract_xar(archive, output, overwrite, progress_callback);
-    case ArchiveFormat::Unknown:
+    if (archive_format == ArchiveFormat::Unknown) {
         throw ArchiveError("unable to detect archive format: " + archive.string());
-    default:
-        throw ArchiveError(
-            std::string("archive format recognized but not implemented for extraction: ") +
-            archive_format_info(archive_format).key);
     }
+    if (const auto extractor = compatibility_extractor_for(archive_format); extractor != nullptr) {
+        return extractor(archive, output, overwrite, progress_callback);
+    }
+    throw ArchiveError(
+        std::string("archive format recognized but not implemented for extraction: ") +
+        archive_format_info(archive_format).key);
 }
 
 // Purpose: Return the user-facing compression-level label.
@@ -1830,7 +1826,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
         : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. Streaming codecs cover ZIP, Gzip, Bzip2, Zstandard, Unix Compress, Base64, BinHex, XXEncode, UUE, TAR filters, CAB, RPM, XZ, and LZMA; container adapters keep metadata and output publication capped.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. Streaming codecs cover ZIP, Gzip, Bzip2, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, TAR filters, CAB, RPM, XZ, and LZMA; container adapters keep metadata and output publication capped.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);
@@ -1977,7 +1973,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)}, L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)}, widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, Base64, BinHex, XXEncode, UUE, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)}, L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, LZMA, lzip, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM compatibility modes. AMD HIP is the only GPU acceleration boundary; security-sensitive extraction validates paths and metadata before writing files.", kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)}, L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 

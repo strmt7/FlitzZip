@@ -237,6 +237,7 @@ add_library(superzip_core STATIC
     src/lzip/lzip_adapter.cpp
     src/lzip/lzip_stream.cpp
     src/lzma/lzma_adapter.cpp
+    src/macbinary/macbinary_adapter.cpp
     src/rpm/rpm_adapter.cpp
     src/rpm/rpm_format.cpp
     src/sevenzip/sevenzip_adapter.cpp
@@ -407,6 +408,7 @@ if(SUPERZIP_BUILD_TESTS)
         tests/cpp/test_lha_compat.cpp
         tests/cpp/test_lzip_compat.cpp
         tests/cpp/test_lzma_compat.cpp
+        tests/cpp/test_macbinary_compat.cpp
         tests/cpp/test_path_safety.cpp
         tests/cpp/test_rpm_compat.cpp
         tests/cpp/test_sevenzip_compat.cpp
@@ -518,6 +520,12 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_libraries(superzip_arc_fuzzer PRIVATE superzip_core)
     target_compile_definitions(superzip_arc_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 
+    add_executable(superzip_macbinary_fuzzer
+        fuzz/macbinary_fuzzer.cpp
+    )
+    target_link_libraries(superzip_macbinary_fuzzer PRIVATE superzip_core)
+    target_compile_definitions(superzip_macbinary_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
+
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "SUPERZIP_BUILD_FUZZERS requires a compiler with libFuzzer support.")
     endif()
@@ -534,6 +542,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_compile_options(superzip_lzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_arj_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_compile_options(superzip_arc_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_compile_options(superzip_macbinary_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_archive_index_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_path_safety_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_cpio_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
@@ -547,6 +556,7 @@ if(SUPERZIP_BUILD_FUZZERS)
     target_link_options(superzip_lzip_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_arj_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(superzip_arc_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(superzip_macbinary_fuzzer PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 install(FILES

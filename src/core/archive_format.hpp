@@ -38,6 +38,7 @@ enum class ArchiveFormat {
     Arj,
     Arc,
     Hqx,
+    MacBinary,
     Xxe,
     Uue,
     Lha,

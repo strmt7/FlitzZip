@@ -206,6 +206,15 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
   -o "$OUT/superzip_arc_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
+  fuzz/macbinary_fuzzer.cpp \
+  src/macbinary/macbinary_adapter.cpp \
+  src/core/file_publish.cpp \
+  src/core/path_safety.cpp \
+  src/core/progress.cpp \
+  -o "$OUT/superzip_macbinary_fuzzer" \
+  "$LIB_FUZZING_ENGINE"
+
 build_lhasa_objects "$OUT/lhasa-objects" > "$OUT/lhasa-objects.list"
 mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
@@ -256,6 +265,7 @@ cp fuzz/superzip.dict "$OUT/superzip_lha_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_xar_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_arj_fuzzer.dict"
 cp fuzz/superzip.dict "$OUT/superzip_arc_fuzzer.dict"
+cp fuzz/superzip.dict "$OUT/superzip_macbinary_fuzzer.dict"
 cp fuzz/*.options "$OUT/"
 
 for target in \
@@ -271,7 +281,8 @@ for target in \
   superzip_lha_fuzzer \
   superzip_xar_fuzzer \
   superzip_arj_fuzzer \
-  superzip_arc_fuzzer
+  superzip_arc_fuzzer \
+  superzip_macbinary_fuzzer
 do
   test -x "$OUT/$target"
 done

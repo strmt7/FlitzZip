@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 37> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -52,6 +52,7 @@ constexpr std::array<ArchiveFormatInfo, 37> kFormatRegistry{{
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
     {ArchiveFormat::Hqx, "hqx", "BinHex 4.0 (.hqx)", ".hqx", false, true, false, true},
+    {ArchiveFormat::MacBinary, "macbinary", "MacBinary (.macbin, header-detected .bin)", ".macbin", false, true, false, true},
     {ArchiveFormat::Xxe, "xxe", "XXEncoded file (.xxe)", ".xxe", true, true, false, true},
     {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
@@ -62,7 +63,7 @@ constexpr std::array<ArchiveFormatInfo, 37> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 46> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 47> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -99,6 +100,7 @@ constexpr std::array<ExtensionFormatMapping, 46> kExtensionFormats{{
     {".arc", ArchiveFormat::Arc},
     {".ark", ArchiveFormat::Arc},
     {".hqx", ArchiveFormat::Hqx},
+    {".macbin", ArchiveFormat::MacBinary},
     {".xxe", ArchiveFormat::Xxe},
     {".uue", ArchiveFormat::Uue},
     {".uu", ArchiveFormat::Uue},
@@ -325,6 +327,83 @@ bool has_hqx_comment_marker(std::span<const unsigned char> bytes) {
     return std::find(it, bytes.end(), static_cast<unsigned char>(':')) != bytes.end();
 }
 
+// Purpose: Read a big-endian 16-bit integer from a bounded probe buffer.
+// Inputs: `bytes` contains at least `offset + 2` bytes and `offset` is the first byte.
+// Outputs: Returns the decoded integer.
+std::uint16_t read_probe_be_u16(std::span<const unsigned char> bytes, std::size_t offset) {
+    return static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(bytes[offset]) << 8U) |
+        static_cast<std::uint16_t>(bytes[offset + 1U]));
+}
+
+// Purpose: Read a big-endian 32-bit integer from a bounded probe buffer.
+// Inputs: `bytes` contains at least `offset + 4` bytes and `offset` is the first byte.
+// Outputs: Returns the decoded integer.
+std::uint32_t read_probe_be_u32(std::span<const unsigned char> bytes, std::size_t offset) {
+    return (static_cast<std::uint32_t>(bytes[offset]) << 24U) |
+        (static_cast<std::uint32_t>(bytes[offset + 1U]) << 16U) |
+        (static_cast<std::uint32_t>(bytes[offset + 2U]) << 8U) |
+        static_cast<std::uint32_t>(bytes[offset + 3U]);
+}
+
+// Purpose: Update a CRC-16/XMODEM register with one byte for MacBinary header probing.
+// Inputs: `crc` is the mutable register and `byte` is the next header byte.
+// Outputs: Mutates `crc`.
+void update_probe_crc16_xmodem(std::uint16_t& crc, std::uint8_t byte) {
+    crc = static_cast<std::uint16_t>(crc ^ (static_cast<std::uint16_t>(byte) << 8U));
+    for (std::uint8_t bit = 0; bit < 8U; ++bit) {
+        if ((crc & 0x8000U) != 0U) {
+            crc = static_cast<std::uint16_t>((crc << 1U) ^ 0x1021U);
+        } else {
+            crc = static_cast<std::uint16_t>(crc << 1U);
+        }
+    }
+}
+
+// Purpose: Compute the MacBinary II/III header CRC over probe bytes 0 through 123.
+// Inputs: `bytes` contains at least one full 128-byte MacBinary header.
+// Outputs: Returns the expected stored CRC value.
+std::uint16_t macbinary_probe_crc(std::span<const unsigned char> bytes) {
+    std::uint16_t crc = 0;
+    for (std::size_t i = 0; i < 124U; ++i) {
+        update_probe_crc16_xmodem(crc, static_cast<std::uint8_t>(bytes[i]));
+    }
+    return crc;
+}
+
+// Purpose: Detect a strongly identifiable MacBinary II/III header in a generic binary probe.
+// Inputs: `bytes` contains the file prefix and may be shorter than a full header.
+// Outputs: Returns true only when required zero fields, filename bytes, version/signature markers, and header CRC agree.
+bool has_macbinary_header_marker(std::span<const unsigned char> bytes) {
+    if (bytes.size() < 128U || bytes[0] != 0U || bytes[74] != 0U || bytes[82] != 0U) {
+        return false;
+    }
+    const auto name_length = static_cast<std::size_t>(bytes[1]);
+    if (name_length == 0U || name_length > 63U) {
+        return false;
+    }
+    for (std::size_t i = 0; i < name_length; ++i) {
+        const auto byte = bytes[2U + i];
+        if (byte < 0x20U || byte > 0x7EU || byte == static_cast<unsigned char>(':')) {
+            return false;
+        }
+    }
+    const bool versioned = (bytes[122] == 0x81U || bytes[122] == 0x82U) &&
+        (bytes[123] == 0x81U || bytes[123] == 0x82U);
+    const bool signed_v3 = bytes[102] == static_cast<unsigned char>('m') &&
+        bytes[103] == static_cast<unsigned char>('B') &&
+        bytes[104] == static_cast<unsigned char>('I') &&
+        bytes[105] == static_cast<unsigned char>('N');
+    if (!versioned && !signed_v3) {
+        return false;
+    }
+    if ((read_probe_be_u32(bytes, 83U) & 0x80000000U) != 0U ||
+        (read_probe_be_u32(bytes, 87U) & 0x80000000U) != 0U) {
+        return false;
+    }
+    return read_probe_be_u16(bytes, 124U) == macbinary_probe_crc(bytes);
+}
+
 // Purpose: Match a fixed byte signature at an arbitrary offset.
 // Inputs: `bytes` is the file probe, `offset` is the byte offset, and `signature` is the magic sequence.
 // Outputs: Returns true when all signature bytes match at `offset`.
@@ -353,6 +432,9 @@ ArchiveFormat detect_stream_magic(std::span<const unsigned char> bytes, const st
     }
     if (has_hqx_comment_marker(bytes)) {
         return ArchiveFormat::Hqx;
+    }
+    if (has_macbinary_header_marker(bytes)) {
+        return ArchiveFormat::MacBinary;
     }
     if (starts_with_signature(bytes, {'B', 'Z', 'h'})) {
         return ArchiveFormat::Bzip2;
@@ -502,6 +584,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "lha";
     } else if (lowered == "binhex" || lowered == "binhex4" || lowered == "binhex40") {
         lowered = "hqx";
+    } else if (lowered == "macbin") {
+        lowered = "macbinary";
     } else if (lowered == "xxencode") {
         lowered = "xxe";
     } else if (lowered == "uu" || lowered == "uuencode") {

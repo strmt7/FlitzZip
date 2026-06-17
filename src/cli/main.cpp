@@ -18,6 +18,7 @@
 #include "lha/lha_adapter.hpp"
 #include "lzip/lzip_adapter.hpp"
 #include "lzma/lzma_adapter.hpp"
+#include "macbinary/macbinary_adapter.hpp"
 #include "rpm/rpm_adapter.hpp"
 #include "sevenzip/sevenzip_adapter.hpp"
 #include "tar/tar_adapter.hpp"
@@ -157,7 +158,7 @@ void usage() {
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|b64|base64|xxe|xxencode|uue|uu|cpio|cpio.gz|cpgz|ar --output <archive> [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
-        << "  superzip_cli extract --format auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|lz|lzip|zst|zstd|z|compress|b64|base64|xxe|xxencode|uue|uu|cab|iso|cpio|cpio.gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
+        << "  superzip_cli extract --format auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|lz|lzip|zst|zstd|z|compress|b64|base64|hqx|binhex|xxe|xxencode|uue|uu|macbinary|macbin|cab|iso|cpio|cpio.gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] [--defender-scan] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] [--defender-scan] <archive.suzip>\n";
 }
 
@@ -1275,6 +1276,9 @@ std::optional<superzip::OperationStats> extract_stream_or_tar_format(
     case superzip::ArchiveFormat::Hqx:
         reject_extract_tuning("HQX", command);
         return superzip::extract_hqx_file(command.archive, command.output, command.overwrite);
+    case superzip::ArchiveFormat::MacBinary:
+        reject_extract_tuning("MacBinary", command);
+        return superzip::extract_macbinary_file(command.archive, command.output, command.overwrite);
     case superzip::ArchiveFormat::Xxe:
         reject_extract_tuning("XXE", command);
         return superzip::extract_xxe_file(command.archive, command.output, command.overwrite);

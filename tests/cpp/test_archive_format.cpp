@@ -4,6 +4,7 @@
 #include "core/archive_index.hpp"
 
 #include <array>
+#include <cstdint>
 #include <fstream>
 #include <span>
 #include <string>
@@ -42,6 +43,41 @@ void write_minimal_suzip_fixture(const std::filesystem::path& path) {
     superzip::write_u64(output, index_size);
 }
 
+// Purpose: Update a CRC-16/XMODEM register for MacBinary format-detection fixtures.
+// Inputs: `crc` is the mutable register and `byte` is the next header byte.
+// Outputs: Mutates `crc`.
+void update_crc16_xmodem(std::uint16_t& crc, std::uint8_t byte) {
+    crc = static_cast<std::uint16_t>(crc ^ (static_cast<std::uint16_t>(byte) << 8U));
+    for (std::uint8_t bit = 0; bit < 8U; ++bit) {
+        if ((crc & 0x8000U) != 0U) {
+            crc = static_cast<std::uint16_t>((crc << 1U) ^ 0x1021U);
+        } else {
+            crc = static_cast<std::uint16_t>(crc << 1U);
+        }
+    }
+}
+
+// Purpose: Create a minimal MacBinary II header fixture for format-detection tests.
+// Inputs: `path` is the fixture location.
+// Outputs: Writes one 128-byte MacBinary II header with a valid CRC and zero-length forks.
+void write_minimal_macbinary_fixture(const std::filesystem::path& path) {
+    std::array<unsigned char, 128> header{};
+    constexpr std::string_view name = "payload.txt";
+    header[1] = static_cast<unsigned char>(name.size());
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        header[2U + i] = static_cast<unsigned char>(name[i]);
+    }
+    header[122] = 0x81U;
+    header[123] = 0x81U;
+    std::uint16_t crc = 0;
+    for (std::size_t i = 0; i < 124U; ++i) {
+        update_crc16_xmodem(crc, static_cast<std::uint8_t>(header[i]));
+    }
+    header[124] = static_cast<unsigned char>((crc >> 8U) & 0xFFU);
+    header[125] = static_cast<unsigned char>(crc & 0xFFU);
+    write_fixture(path, header);
+}
+
 }  // namespace
 
 TEST_CASE(archive_format_detects_real_archive_extensions) {
@@ -73,6 +109,7 @@ TEST_CASE(archive_format_detects_real_archive_extensions) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.arc"), superzip::ArchiveFormat::Arc);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.ark"), superzip::ArchiveFormat::Arc);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.hqx"), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "sample.macbin"), superzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.xxe"), superzip::ArchiveFormat::Xxe);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uue"), superzip::ArchiveFormat::Uue);
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.uu"), superzip::ArchiveFormat::Uue);
@@ -107,6 +144,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_fixture(root / "arj.bin", std::array<unsigned char, 4>{0x60, 0xEA, 0x00, 0x00});
     write_fixture(root / "arc.arc", std::array<unsigned char, 2>{0x1A, 0x00});
     write_text_fixture(root / "hqx.bin", "(This file must be converted with BinHex 4.0)\n:abc:\n");
+    write_minimal_macbinary_fixture(root / "macbinary.bin");
     write_fixture(root / "rpm.bin", std::array<unsigned char, 4>{0xED, 0xAB, 0xEE, 0xDB});
     write_fixture(root / "wim.bin", std::array<unsigned char, 8>{'M', 'S', 'W', 'I', 'M', 0x00, 0x00, 0x00});
     write_fixture(root / "xar.bin", std::array<unsigned char, 4>{'x', 'a', 'r', '!'});
@@ -136,6 +174,7 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "arj.bin"), superzip::ArchiveFormat::Arj);
     REQUIRE_EQ(superzip::detect_archive_format(root / "arc.arc"), superzip::ArchiveFormat::Arc);
     REQUIRE_EQ(superzip::detect_archive_format(root / "hqx.bin"), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "macbinary.bin"), superzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(superzip::detect_archive_format(root / "rpm.bin"), superzip::ArchiveFormat::Rpm);
     REQUIRE_EQ(superzip::detect_archive_format(root / "wim.bin"), superzip::ArchiveFormat::Wim);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xar.bin"), superzip::ArchiveFormat::Xar);
@@ -186,6 +225,8 @@ TEST_CASE(archive_format_does_not_false_positive_zip_based_containers) {
     REQUIRE_EQ(superzip::parse_archive_format_token("binhex").value(), superzip::ArchiveFormat::Hqx);
     REQUIRE_EQ(superzip::parse_archive_format_token("binhex4").value(), superzip::ArchiveFormat::Hqx);
     REQUIRE_EQ(superzip::parse_archive_format_token("binhex40").value(), superzip::ArchiveFormat::Hqx);
+    REQUIRE_EQ(superzip::parse_archive_format_token("macbinary").value(), superzip::ArchiveFormat::MacBinary);
+    REQUIRE_EQ(superzip::parse_archive_format_token("macbin").value(), superzip::ArchiveFormat::MacBinary);
     REQUIRE_EQ(superzip::parse_archive_format_token("swm").value(), superzip::ArchiveFormat::SplitWim);
 }
 

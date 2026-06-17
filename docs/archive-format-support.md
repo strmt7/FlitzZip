@@ -37,6 +37,9 @@ Primary and project-owned sources reviewed:
 - GNU/Arch uuencode Base64 wrapper notes: https://man.archlinux.org/man/uuencode.5.en
 - RFC 1741 MIME Content Type for BinHex Encoded Files: https://datatracker.ietf.org/doc/html/rfc1741
 - BinHex 4.0 format and CRC notes: https://files.stairways.com/other/binhex-40-specs-info.txt
+- MacBinary II standard notes: https://files.stairways.com/other/macbinaryii-standard-info.txt
+- MacBinary format analysis and primary-source index: https://ciderpress2.com/formatdoc/MacBinary-notes.html
+- Microsoft MacBinary attachment interoperability notes: https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcmail/ec1a8b63-ae1e-47d2-ba3e-473a4b27eb45
 - XXEncode manual page mirror with historical variant notes: https://www.math.utah.edu/~beebe/support/myman2html/testdata/okay/xxencode.html
 - XXEncode alphabet and legacy line-structure notes: https://nerdmosis.com/tools/encode-and-decode-uuencode-xxencode
 - bzip2/libbzip2: https://sourceware.org/bzip2/
@@ -74,7 +77,7 @@ resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
 ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, lzip, Zstandard, CAB, ISO, AR, CPIO, CPIO.GZ, ARJ, ARC,
-LHA/LZH, WIM, XAR, DEB, RPM, Base64, BinHex, XXEncode, UUencode, and legacy Unix Compress `.Z`. SuperZip's
+LHA/LZH, WIM, XAR, DEB, RPM, Base64, BinHex, MacBinary, XXEncode, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
 
@@ -136,6 +139,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
 | `.b64` | Yes | Yes | Single-file compatibility stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
 | `.hqx` | No | Yes | Extract-only single-file legacy transfer stream | native bounded BinHex 4.0 adapter with strict HQX alphabet, RLE expansion, path-safe header names, and header/data/resource CRC validation |
+| `.macbin`, header-detected `.bin` | No | Yes | Extract-only single-file legacy transfer stream | native bounded MacBinary adapter with path-safe header names, data/resource extent validation, and MacBinary II/III header CRC validation |
 | `.xxe` | Yes | Yes | Single-file compatibility stream | native bounded common XXEncode adapter with strict alphabet and path-safe begin-line handling |
 | `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
@@ -246,6 +250,18 @@ are not written to Windows output paths. Header filenames must pass the same
 path-safety validation used by archive entries before a private temporary output
 file is opened. Segmented mail-style multipart handling and BinHex creation are
 not exposed until their exact product contract and tests are deliberately added.
+
+MacBinary support is extract-only and data-fork-only. SuperZip recognizes
+`.macbin` by extension and recognizes ambiguous `.bin` files only when the
+128-byte header carries a valid MacBinary II/III version or `mBIN` marker plus a
+matching header CRC. Extraction validates the header zero fields, path-safe
+ASCII filename, signed fork lengths, optional secondary-header skip, data fork
+extent, resource fork extent, and optional comment extent before publishing the
+data fork. Resource-fork bytes and classic Finder metadata are not published on
+Windows; they are treated as bounded metadata whose declared extent must fit in
+the source stream. MacBinary I streams without a header CRC remain accepted only
+when explicitly selected by `.macbin` extension or `--format macbinary`, not by
+generic `.bin` extension alone.
 
 XXEncode support is intentionally single-file when used as `.xxe`. SuperZip
 writes common `begin 644 <name>` streams using the XXEncode alphabet and extracts
@@ -767,6 +783,34 @@ flowchart TD
     F -->|"no"| H["Reject stream and remove temp output"]
 ```
 
+## MacBinary Security Contract
+
+The MacBinary path is an in-process extract-only data-fork decoder:
+
+1. Accept `.macbin` by extension and generic `.bin` only when the header has
+   strong MacBinary II/III markers and a matching header CRC.
+2. Validate the 128-byte header, required zero fields, filename length, safe
+   ASCII filename bytes, signed data/resource fork lengths, and optional
+   secondary-header length before output publication.
+3. Publish only the data fork into a private temporary file; resource-fork and
+   Finder metadata extents are validated but not written.
+4. Reject truncated data forks, resource forks, secondary headers, or declared
+   comments before final-file publication.
+5. Keep MacBinary creation and resource-fork restoration disabled until the
+   Windows output policy is deliberately designed and tested.
+
+```mermaid
+flowchart TD
+    A["Open MacBinary stream"] --> B["Read 128-byte header"]
+    B --> C{"Strong .bin marker or explicit .macbin?"}
+    C -->|"no"| H["Reject or leave unrecognized"]
+    C -->|"yes"| D["Validate name, CRC when present, and fork extents"]
+    D --> E["Copy data fork to private temp file"]
+    E --> F{"Declared extents fit source stream?"}
+    F -->|"yes"| G["Atomically publish data fork"]
+    F -->|"no"| H
+```
+
 ## XXEncode Security Contract
 
 The XXEncode path is an in-process single-file text decoder and writer:
@@ -989,8 +1033,8 @@ Before adding a new compatibility backend, the implementation must satisfy:
 
 Preferred next increments are read-only RAR, broader ARJ and SEA ARC
 compressed-method extraction, deeper ZIPX method coverage, historical XXEncode
-count/CRC trailer support, MacBinary and other single-file legacy transfer
-encodings, lzip creation only after a vetted in-process
+count/CRC trailer support, additional single-file legacy transfer encodings,
+lzip creation only after a vetted in-process
 encoder exists, and the remaining recognized-only legacy/container formats after
 backend selection and licensing review. XAR checksum/signature validation is
 also a future hardening increment before SuperZip can claim broad XAR
