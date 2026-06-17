@@ -235,6 +235,28 @@ void validate_decode_layout(std::span<const std::byte> payload, std::span<const 
     }
 }
 
+// Purpose: Detect decoded streams that can be checksummed directly from the encoded raw payload.
+// Inputs: `payload`/`blocks` are validated archive metadata and `output_size` is the decoded byte count.
+// Outputs: Returns true only when the first `output_size` payload bytes are exactly the decoded stream.
+bool decoded_crc_uses_contiguous_raw_payload(std::span<const std::byte> payload,
+                                             std::span<const BlockDescriptor> blocks, std::uint64_t output_size) {
+    if (payload.size() < output_size) {
+        return false;
+    }
+    std::uint64_t decoded_offset = 0;
+    for (const auto& block : blocks) {
+        if (block.kind != BlockKind::Raw || block.encoded_offset != decoded_offset ||
+            block.encoded_len != block.uncompressed_len) {
+            return false;
+        }
+        if (block.uncompressed_len > output_size - decoded_offset) {
+            return false;
+        }
+        decoded_offset += block.uncompressed_len;
+    }
+    return decoded_offset == output_size;
+}
+
 // Purpose: Classify each input block as uniform fill, repeated pattern, or raw bytes on the AMD GPU.
 // Inputs: `input`/`input_len` are device bytes, `block_size` is bytes per block, `blocks` is device output metadata,
 // and `block_count` bounds the launch. Outputs: Writes one `DeviceBlock` per block into device memory.
@@ -907,6 +929,26 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     }
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
+
+    if (decoded_crc_uses_contiguous_raw_payload(payload, blocks, output_size)) {
+        std::byte* device_payload = nullptr;
+        const auto payload_bytes = static_cast<std::size_t>(output_size);
+        ensure_device_memory_budget(payload_bytes, "CRC raw payload");
+        record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(payload_bytes));
+        check_hip(hipMalloc(&device_payload, payload_bytes), "hipMalloc CRC raw payload");
+        try {
+            check_hip(hipMemcpy(device_payload, payload.data(), payload_bytes, hipMemcpyHostToDevice),
+                      "hipMemcpy CRC raw payload");
+            record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload_bytes));
+            const auto crc =
+                compute_crc32_device(device_payload, output_size, telemetry, "decoded raw CRC device memory");
+            check_hip(hipFree(device_payload), "hipFree CRC raw payload");
+            return crc;
+        } catch (...) {
+            (void)hipFree(device_payload);
+            throw;
+        }
+    }
 
     std::vector<DeviceBlock> host_blocks;
     host_blocks.reserve(blocks.size());
