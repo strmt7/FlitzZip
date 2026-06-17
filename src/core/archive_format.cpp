@@ -22,7 +22,7 @@ struct ExtensionFormatMapping {
     ArchiveFormat format = ArchiveFormat::Unknown;
 };
 
-constexpr std::array<ArchiveFormatInfo, 30> kFormatRegistry{{
+constexpr std::array<ArchiveFormatInfo, 31> kFormatRegistry{{
     {ArchiveFormat::Unknown, "unknown", "Unknown archive", "", false, false, false, false},
     {ArchiveFormat::Auto, "auto", "Automatic detection", "", false, true, false, false},
     {ArchiveFormat::SuperZip, "suzip", "SuperZip GPU (.suzip)", ".suzip", true, true, true, true},
@@ -46,6 +46,7 @@ constexpr std::array<ArchiveFormatInfo, 30> kFormatRegistry{{
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
+    {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
     {ArchiveFormat::Uue, "uue", "UUencoded file (.uue, .uu)", ".uue,.uu", true, true, false, true},
     {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
@@ -55,7 +56,7 @@ constexpr std::array<ArchiveFormatInfo, 30> kFormatRegistry{{
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
 }};
 
-constexpr std::array<ExtensionFormatMapping, 36> kExtensionFormats{{
+constexpr std::array<ExtensionFormatMapping, 38> kExtensionFormats{{
     {".suzip", ArchiveFormat::SuperZip},
     {".zip", ArchiveFormat::Zip},
     {".zipx", ArchiveFormat::Zipx},
@@ -83,6 +84,8 @@ constexpr std::array<ExtensionFormatMapping, 36> kExtensionFormats{{
     {".cpio", ArchiveFormat::Cpio},
     {".ar", ArchiveFormat::Ar},
     {".arj", ArchiveFormat::Arj},
+    {".arc", ArchiveFormat::Arc},
+    {".ark", ArchiveFormat::Arc},
     {".uue", ArchiveFormat::Uue},
     {".uu", ArchiveFormat::Uue},
     {".lha", ArchiveFormat::Lha},
@@ -276,6 +279,12 @@ ArchiveFormat detect_by_magic(std::span<const unsigned char> bytes, const std::f
     if (starts_with_signature(bytes, {0x60, 0xEA})) {
         return ArchiveFormat::Arj;
     }
+    if (bytes.size() >= 2U && bytes[0] == 0x1AU && bytes[1] <= 9U) {
+        const auto lower_name = ascii_lower(path.filename().string());
+        if (ends_with_lower(lower_name, ".arc") || ends_with_lower(lower_name, ".ark")) {
+            return ArchiveFormat::Arc;
+        }
+    }
     if (matches_signature_at(bytes, 2U, {'-', 'l', 'h'})) {
         return ArchiveFormat::Lha;
     }
@@ -360,6 +369,8 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token) 
         lowered = "lha";
     } else if (lowered == "uu" || lowered == "uuencode") {
         lowered = "uue";
+    } else if (lowered == "ark") {
+        lowered = "arc";
     }
     const auto it = std::ranges::find_if(kFormatRegistry, [&](const ArchiveFormatInfo& info) {
         return lowered == info.key;

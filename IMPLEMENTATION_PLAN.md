@@ -119,6 +119,10 @@ archive options, progress snapshots, and errors.
   with header CRC validation, payload CRC validation, archive-wide path
   validation, and explicit rejection of compressed/encrypted/multi-volume ARJ
   variants until a vetted decoder path is added.
+- Added read-only SEA ARC/ARK unpacked-entry extraction through a native
+  bounded parser with CRC-16/ARC payload validation, archive-wide path
+  validation, strict end-marker handling, and explicit rejection of compressed
+  methods or unrelated `.arc` file families until dedicated decoders exist.
 
 ## Validation Gates
 

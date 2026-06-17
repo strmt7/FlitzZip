@@ -41,6 +41,9 @@ and the same pre-write path validation used by other extraction adapters.
 ARJ `.arj` archives are extracted by a native read-only adapter for stored
 regular-file and directory entries; compressed ARJ methods fail explicitly until
 a vetted decoder path is added.
+SEA ARC `.arc` and `.ark` archives are extracted by a native read-only adapter
+for unpacked method-1 and method-2 regular files; compressed ARC methods and
+unrelated `.arc` formats fail explicitly.
 LHA/LZH `.lha` and `.lzh` archives are extracted with the vendored in-process
 Lhasa 0.5.0 decoder while SuperZip keeps ownership of path validation and
 verified output publication.
@@ -191,6 +194,7 @@ build/Release/superzip_cli.exe extract --format rpm --output restored package.rp
 build/Release/superzip_cli.exe extract --format cab --output restored package.cab
 build/Release/superzip_cli.exe extract --format 7z --output restored archive.7z
 build/Release/superzip_cli.exe extract --format arj --output restored archive.arj
+build/Release/superzip_cli.exe extract --format arc --output restored archive.arc
 build/Release/superzip_cli.exe extract --format lha --output restored archive.lzh
 build/Release/superzip_cli.exe extract --format wim --output restored image.wim
 build/Release/superzip_cli.exe extract --format xar --output restored archive.xar
@@ -207,7 +211,7 @@ and `--defender-scan` flags add post-write archive validation, integrity
 hashing, and Microsoft Defender checks without making those extra passes
 implicit.
 ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, Gzip, Bzip2, XZ, LZMA,
-Unix Compress, UUE, CAB, 7z, ARJ, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
+Unix Compress, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO, AR, DEB,
 ISO, and RPM compatibility are deliberately separate from SUZIP tuning.
 `--require-gpu`, `--force-cpu`, worker controls, block-size controls,
 compression-level controls, and `--verify-after-write` are accepted only on
@@ -244,7 +248,8 @@ Security-sensitive parsers are fuzzed with ClusterFuzzLite. The integration
 builds libFuzzer targets for SuperZip archive-index metadata, archive-entry
 path canonicalization, ISO metadata, CAB metadata, RPM header metadata, 7z
 decode/metadata handling, LZMA stream handling, ARJ metadata/stored-payload
-handling, LHA/LZH decode/metadata handling, and XAR
+handling, SEA ARC/ARK metadata/unpacked-payload handling, LHA/LZH
+decode/metadata handling, and XAR
 TOC/payload metadata handling with address
 and undefined-behavior sanitizers:
 

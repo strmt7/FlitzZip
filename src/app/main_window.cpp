@@ -1,6 +1,7 @@
 #include "app/main_window.hpp"
 
 #include "ar/ar_adapter.hpp"
+#include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
 #include "app/resource.h"
 #include "bzip2/bzip2_adapter.hpp"
@@ -342,6 +343,8 @@ OperationStats extract_detected_archive(
         return extract_ar(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Arj:
         return extract_arj(archive, output, overwrite, progress_callback);
+    case ArchiveFormat::Arc:
+        return extract_arc(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Rpm:
         return extract_rpm(archive, output, overwrite, progress_callback);
     case ArchiveFormat::Lha:
@@ -1687,6 +1690,9 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     draw_text(dc, RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom}, L"Selected operation details appear here after a job runs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
+// Purpose: Draw the AMD GPU diagnostics page with current runtime and resource-status details.
+// Inputs: `dc` is the double-buffered paint target, `rect` is the page bounds, and `state` supplies live GPU/status text.
+// Outputs: Renders GPU diagnostics controls and informational panels without mutating state.
 void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
@@ -1725,7 +1731,7 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
         : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)}, gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP, Gzip, Bzip2, Zstandard, Unix Compress, TAR stream formats, CAB, RPM payloads, XZ streams, and LZMA streams use streaming APIs; TAR, CPIO, AR, DEB, ISO, and 7z use bounded native adapters or allocator caps.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)}, L"Bounded chunks keep archive work from loading whole archives into RAM. ZIP, Gzip, Bzip2, Zstandard, Unix Compress, TAR stream formats, CAB, RPM payloads, XZ streams, and LZMA streams use streaming APIs; TAR, CPIO, AR, DEB, ISO, 7z, ARJ, and SEA ARC use bounded native adapters or allocator caps.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)}, state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only" : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state.performance);

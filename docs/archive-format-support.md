@@ -25,6 +25,9 @@ Primary and project-owned sources reviewed:
 - ARJ technical information: https://www.opennet.ru/docs/formats/arj.txt
 - ARJ format reference mirror: https://www.fileformat.info/format/arj/corion.htm
 - Open-source ARJ implementation overview: https://arj.sourceforge.net/
+- ARC format reference mirror: https://www.fileformat.info/format/arc/corion.htm
+- ARC format implementation notes: https://www.virtualdub.org/blog2/entry_345.html
+- Nomarch ARC extractor overview: https://www.svgalib.org/rus/nomarch.html
 - GNU cpio manual: https://www.gnu.org/software/cpio/manual/
 - FreeBSD cpio format manual: https://man.freebsd.org/cgi/man.cgi?query=cpio&sektion=5
 - bzip2/libbzip2: https://sourceware.org/bzip2/
@@ -61,7 +64,7 @@ URLs, and text are intentionally not recorded in this repository; only the
 resulting engineering implications are kept in `docs/product-behavior-audit.md`.
 
 These tools consistently cluster around real archive/container formats:
-ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, Zstandard, CAB, ISO, AR, CPIO, ARJ,
+ZIP, ZIPX, 7z, RAR, TAR, GZIP, BZIP2, XZ, LZMA, Zstandard, CAB, ISO, AR, CPIO, ARJ, ARC,
 LHA/LZH, WIM, XAR, DEB, RPM, UUencode, and legacy Unix Compress `.Z`. SuperZip's
 compatibility scope is limited to real archive/container formats with explicit
 product behavior.
@@ -128,6 +131,7 @@ already real archive/package formats in SuperZip's matrix.
 | `.tar.zst`, `.tzst` | Yes | Yes | Compatibility format | native TAR stream adapter over bundled app-local libzstd 1.5.7 runtime |
 | `.zst`, `.zstd` | Yes | Yes | Single-file compatibility stream | bundled app-local libzstd 1.5.7 runtime |
 | `.arj` | No | Yes | Extract-only stored-entry compatibility format | native bounded ARJ adapter for stored regular files/directories; compressed methods fail explicitly |
+| `.arc`, `.ark` | No | Yes | Extract-only unpacked-entry compatibility format | native bounded SEA ARC adapter for method-1/method-2 regular files; compressed methods and unrelated `.arc` families fail explicitly |
 
 The CLI exposes this matrix with:
 
@@ -249,6 +253,15 @@ member paths, entry counts, total decoded bytes, and stored payload CRCs before
 destination writes. Encrypted entries, multi-volume entries, compressed methods,
 volume labels, backup chapters, and SFX-prefixed header searching fail
 explicitly until a later increment adds a vetted decoder path and tests.
+
+SEA ARC/ARK support is intentionally extract-only and limited to the historical
+SEA ARC file family, not unrelated web-archive, game-resource, or FreeArc files
+that also use `.arc`. The native parser accepts only unpacked method 1 and
+method 2 regular-file entries, validates the sequential `0x1A` header marker,
+fixed 13-byte member name field, declared payload extent, CRC-16/ARC payload
+checksum, archive-wide path set, and final `0x1A 0x00` end marker before
+destination writes. Compressed ARC methods 3 through 9 fail explicitly until a
+later increment adds a vetted decoder path and tests.
 
 LHA/LZH support is intentionally extract-only. SuperZip embeds Lhasa 0.5.0 and
 does not call `lha.exe`, shell archive handlers, or other host tools. Lhasa is
@@ -379,6 +392,32 @@ flowchart TD
     E --> F["Create directories and publish stored files"]
     B -->|"malformed"| G["Reject archive"]
     C -->|"unsupported"| G
+    D -->|"unsafe path or CRC mismatch"| G
+```
+
+## SEA ARC/ARK Security Contract
+
+The SEA ARC/ARK path is an in-process read-only parser for the current unpacked
+entry subset:
+
+1. Parse sequential file headers with the `0x1A` marker and fixed 13-byte member
+   name field.
+2. Accept only method 1 and method 2 unpacked regular-file entries.
+3. Reject compressed methods, unrelated `.arc` file families, SFX-prefixed
+   scanning, malformed headers, trailing data after the end marker, and
+   oversized outputs before destination writes.
+4. Normalize member names and validate the full archive path set before output.
+5. Verify CRC-16/ARC during the validation pass and again during publication.
+
+```mermaid
+flowchart TD
+    A["Open SEA ARC/ARK archive"] --> B["Scan sequential headers"]
+    B --> C["Accept only unpacked methods 1 and 2"]
+    C --> D["Validate all paths and CRC-16 payloads"]
+    D --> E["Reopen archive for publish pass"]
+    E --> F["Publish unpacked files through verified temp path"]
+    B -->|"malformed or trailing data"| G["Reject archive"]
+    C -->|"compressed or unrelated format"| G
     D -->|"unsafe path or CRC mismatch"| G
 ```
 
@@ -753,10 +792,11 @@ Before adding a new compatibility backend, the implementation must satisfy:
 - CLI and GUI coverage plus malicious archive regression tests.
 - Documentation update in this file, README, AGENTS, and release notes.
 
-Preferred next increments are read-only RAR, broader ARJ compressed-method extraction, deeper ZIPX method
-coverage, and the remaining recognized-only legacy/container formats after
-backend selection and licensing review. XAR checksum/signature validation is
-also a future hardening increment before SuperZip can claim broad XAR compatibility. Write
+Preferred next increments are read-only RAR, broader ARJ and SEA ARC compressed-method
+extraction, deeper ZIPX method coverage, and the remaining recognized-only
+legacy/container formats after backend selection and licensing review. XAR
+checksum/signature validation is also a future hardening increment before
+SuperZip can claim broad XAR compatibility. Write
 support for RAR is not planned because the common RAR creation tooling is not a
 permissive open format writer suitable for this repo. 7z creation also remains
 disabled until a vetted in-process writer path passes the same gates.

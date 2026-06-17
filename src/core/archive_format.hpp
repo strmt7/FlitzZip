@@ -32,6 +32,7 @@ enum class ArchiveFormat {
     Cpio,
     Ar,
     Arj,
+    Arc,
     Uue,
     Lha,
     Wim,
