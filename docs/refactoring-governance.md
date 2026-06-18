@@ -101,7 +101,7 @@ tools\gui_smoke.ps1 -Configuration Release
 For performance or codec refactors:
 
 ```powershell
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
 build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 

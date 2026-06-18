@@ -20,10 +20,13 @@ The supported user-facing block-size choices are:
 
 | UI label | CLI value | Bytes | Intended use |
 | --- | ---: | ---: | --- |
-| 256 KiB blocks | `--block-size-kib 256` | 262,144 | Smaller latency windows and fine-grained metadata validation. |
-| 1 MiB blocks | `--block-size-kib 1024` | 1,048,576 | Default balanced path. |
-| 4 MiB blocks | `--block-size-kib 4096` | 4,194,304 | Larger transfer windows for throughput-focused runs. |
-| 16 MiB blocks | `--block-size-kib 16384` | 16,777,216 | Maximum supported block size under current resource limits. |
+| 256 KiB | `--block-size-kib 256` | 262,144 | Smallest latency window and fine-grained metadata validation. |
+| 512 KiB | `--block-size-kib 512` | 524,288 | Low-latency option with less metadata overhead than 256 KiB. |
+| 1 MiB | `--block-size-kib 1024` | 1,048,576 | Default balanced path. |
+| 2 MiB | `--block-size-kib 2048` | 2,097,152 | Mid-sized transfer window for mixed workloads. |
+| 4 MiB | `--block-size-kib 4096` | 4,194,304 | Larger transfer window for throughput-focused runs. |
+| 8 MiB | `--block-size-kib 8192` | 8,388,608 | High-throughput option below the maximum resource window. |
+| 16 MiB | `--block-size-kib 16384` | 16,777,216 | Maximum supported block size under current resource limits. |
 
 Every option must divide the 128 MiB archive chunk size exactly. Values outside
 this set are rejected by the CLI benchmark and compression parser.
@@ -64,7 +67,7 @@ layout regressions are visible in screenshots.
 Use the default RAM-only mode for performance work:
 
 ```powershell
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
 ```
 
 Run `Mixed`, `Compressible`, and `Incompressible` profiles before making release
@@ -126,7 +129,7 @@ A block-size or performance change is not complete until:
 - `tools\gui_smoke.ps1 -Configuration Release` passes and verifies the block
   dropdown, file picker queueing, folder picker queueing, and native drag/drop.
 - `tools\security_scan.ps1` passes.
-- `tools\bench.ps1` runs in memory mode for all four block sizes on a HIP host,
+- `tools\bench.ps1` runs in memory mode for all seven block sizes on a HIP host,
   or the result is explicitly recorded as not run with the reason.
 - Benchmark records include compression ratio for both CPU and GPU lanes.
 - No benchmark or test writes a multi-GB generated workload to SSD.

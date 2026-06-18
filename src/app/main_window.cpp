@@ -1,5 +1,6 @@
 #include "app/main_window.hpp"
 
+#include "app/log_retention.hpp"
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
@@ -37,6 +38,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <climits>
 #include <commdlg.h>
 #include <fstream>
 #include <cstddef>
@@ -45,6 +47,7 @@
 #include <cmath>
 #include <dwmapi.h>
 #include <knownfolders.h>
+#include <ole2.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <iomanip>
@@ -89,13 +92,17 @@ constexpr int kPageTitleTextHeight = 46;
 constexpr int kQueueCheckboxColumnWidth = 44;
 constexpr int kQueueResizeGripHalfWidth = 4;
 constexpr int kOperationProgressHeight = 5;
-constexpr int kPerformanceUpdateFieldWidth = 96;
+constexpr int kPerformanceUpdateFieldWidth = 78;
+constexpr int kClockSegmentWidth = 106;
 constexpr UINT_PTR kAnimationTimer = 7;
 constexpr UINT_PTR kSmokeAutoCloseTimer = 9;
 constexpr UINT_PTR kSmokeClosePollTimer = 10;
 constexpr UINT_PTR kProgressHoldTimer = 11;
 constexpr UINT_PTR kClockTimer = 12;
+constexpr UINT_PTR kTextTooltipTimer = 13;
 constexpr UINT kProgressHoldMs = 15000;
+constexpr UINT kClockPollMs = 50;
+constexpr UINT kTextTooltipDelayMs = 1000;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
 constexpr int kButtonReleaseTransitionMs = 130;
@@ -130,6 +137,11 @@ constexpr std::array<ArchiveFormat, 13> kCompressionCreateFormats{
 };
 constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormats.size()) - 1;
 constexpr std::array<int, 4> kPerformanceUpdateSecondsOptions{1, 3, 5, 10};
+constexpr std::array<std::uint32_t, 7> kCompressionBlockSizeOptions{
+    256U * 1024U,       512U * 1024U,       superzip::kDefaultArchiveBlockBytes, 2U * 1024U * 1024U,
+    4U * 1024U * 1024U, 8U * 1024U * 1024U, superzip::kMaxArchiveBlockBytes,
+};
+constexpr int kCompressionBlockSizeMaxIndex = static_cast<int>(kCompressionBlockSizeOptions.size()) - 1;
 
 // Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
 // Inputs: `value` is UTF-8 text.
@@ -197,6 +209,162 @@ std::filesystem::path safe_current_path() {
     }
     return path;
 }
+
+// Purpose: Convert a shell HDROP payload into filesystem paths.
+// Inputs: `drop` is a valid HDROP handle owned by the caller.
+// Outputs: Returns every nonempty path advertised by the shell payload.
+std::vector<std::filesystem::path> paths_from_hdrop(HDROP drop) {
+    std::vector<std::filesystem::path> paths;
+    if (drop == nullptr) {
+        return paths;
+    }
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    paths.reserve(count);
+    for (UINT i = 0; i < count; ++i) {
+        const UINT length = DragQueryFileW(drop, i, nullptr, 0);
+        if (length == 0) {
+            continue;
+        }
+        std::wstring path(length + 1, L'\0');
+        if (DragQueryFileW(drop, i, path.data(), length + 1) == 0) {
+            continue;
+        }
+        path.resize(length);
+        paths.emplace_back(std::move(path));
+    }
+    return paths;
+}
+
+}  // namespace
+
+class QueueDropTarget final : public IDropTarget {
+  public:
+    explicit QueueDropTarget(MainWindow& owner) : owner_(owner) {}
+
+    // Purpose: Return the COM interfaces supported by the Queue drop target.
+    // Inputs: `iid` selects the interface and `object` receives the result.
+    // Outputs: Returns `S_OK` for IUnknown/IDropTarget or `E_NOINTERFACE`.
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override {
+        if (object == nullptr) {
+            return E_POINTER;
+        }
+        if (iid == IID_IUnknown || iid == IID_IDropTarget) {
+            *object = static_cast<IDropTarget*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *object = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    // Purpose: Increment the COM lifetime count.
+    // Inputs: None.
+    // Outputs: Returns the new reference count.
+    ULONG STDMETHODCALLTYPE AddRef() override {
+        return ++ref_count_;
+    }
+
+    // Purpose: Decrement the COM lifetime count and delete when it reaches zero.
+    // Inputs: None.
+    // Outputs: Returns the remaining reference count.
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG remaining = --ref_count_;
+        if (remaining == 0U) {
+            delete this;
+        }
+        return remaining;
+    }
+
+    // Purpose: Enter shell drag/drop tracking for the Queue table.
+    // Inputs: `data`, key state, screen point, and requested effect are supplied by OLE.
+    // Outputs: Enables copy only for HDROP data over the Queue table and updates highlight state.
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
+        data_object_has_files_ = data_has_hdrop(data);
+        return update_effect(point, effect);
+    }
+
+    // Purpose: Update Queue table drag/drop highlight while the shell pointer moves.
+    // Inputs: Screen point and requested effect are supplied by OLE.
+    // Outputs: Enables copy only while still inside the Queue table.
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override {
+        return update_effect(point, effect);
+    }
+
+    // Purpose: Clear Queue drag/drop highlighting when the shell drag leaves.
+    // Inputs: None.
+    // Outputs: Clears live highlighting.
+    HRESULT STDMETHODCALLTYPE DragLeave() override {
+        owner_.set_queue_drop_highlight(false);
+        data_object_has_files_ = false;
+        return S_OK;
+    }
+
+    // Purpose: Accept a shell drop only inside the Queue table.
+    // Inputs: `data`, key state, screen point, and requested effect are supplied by OLE.
+    // Outputs: Queues dropped paths or rejects the drop with `DROPEFFECT_NONE`.
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
+        owner_.set_queue_drop_highlight(false);
+        POINT client{point.x, point.y};
+        ScreenToClient(owner_.hwnd_, &client);
+        auto paths = paths_from_data_object(data);
+        const bool accepted = owner_.accept_dropped_paths(std::move(paths), client);
+        if (effect != nullptr) {
+            *effect = accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        }
+        data_object_has_files_ = false;
+        return S_OK;
+    }
+
+  private:
+    // Purpose: Check whether an OLE data object offers shell file paths.
+    // Inputs: `data` is the OLE data object from drag/drop.
+    // Outputs: Returns true when `CF_HDROP` data can be queried.
+    static bool data_has_hdrop(IDataObject* data) {
+        if (data == nullptr) {
+            return false;
+        }
+        FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return data->QueryGetData(&format) == S_OK;
+    }
+
+    // Purpose: Extract HDROP paths from an OLE data object.
+    // Inputs: `data` is the OLE data object from a drop event.
+    // Outputs: Returns shell paths and always releases OLE storage before returning.
+    static std::vector<std::filesystem::path> paths_from_data_object(IDataObject* data) {
+        if (data == nullptr) {
+            return {};
+        }
+        FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        STGMEDIUM medium{};
+        if (data->GetData(&format, &medium) != S_OK) {
+            return {};
+        }
+        auto drop = reinterpret_cast<HDROP>(medium.hGlobal);
+        std::vector<std::filesystem::path> paths = paths_from_hdrop(drop);
+        ReleaseStgMedium(&medium);
+        return paths;
+    }
+
+    // Purpose: Convert an OLE screen point into the current Queue-table copy/drop effect.
+    // Inputs: `point` is in screen coordinates and `effect` receives the accepted operation.
+    // Outputs: Updates table highlight and returns `S_OK`.
+    HRESULT update_effect(POINTL point, DWORD* effect) {
+        POINT client{point.x, point.y};
+        ScreenToClient(owner_.hwnd_, &client);
+        const bool allowed = data_object_has_files_ && owner_.queue_drop_target_contains(client);
+        owner_.set_queue_drop_highlight(allowed);
+        if (effect != nullptr) {
+            *effect = allowed ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        }
+        return S_OK;
+    }
+
+    MainWindow& owner_;
+    std::atomic_ulong ref_count_{1};
+    bool data_object_has_files_ = false;
+};
+
+namespace {
 
 // Purpose: Create a concise history message for an optional Defender scan.
 // Inputs: `prefix` names the scanned item and `scan` is the Defender result.
@@ -477,18 +645,6 @@ std::wstring performance_update_option_text(int index) {
     return performance_update_speed_text(kPerformanceUpdateSecondsOptions[normalized]);
 }
 
-// Purpose: Return the visible history duration covered by the live performance charts.
-// Inputs: `sample_count` is the number of retained samples and `seconds` is the selected sample interval.
-// Outputs: Returns a compact label such as `Last 96 s` or `Last 8 min`.
-std::wstring performance_history_window_text(std::size_t sample_count, int seconds) {
-    const auto clamped_count = static_cast<unsigned long long>(std::max<std::size_t>(1U, sample_count));
-    const auto total_seconds = clamped_count * static_cast<unsigned long long>(std::clamp(seconds, 1, 10));
-    if (total_seconds >= 120ULL) {
-        return L"Last " + std::to_wstring((total_seconds + 30ULL) / 60ULL) + L" min";
-    }
-    return L"Last " + std::to_wstring(total_seconds) + L" s";
-}
-
 // Purpose: Map the visible compression-level selection to a miniz setting.
 // Inputs: `index` is the mutable compression-level selection in UI state.
 // Outputs: Returns one of the supported non-store compression settings: 1, 3, 5, 7, or 9.
@@ -550,11 +706,8 @@ OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& so
 // Inputs: `index` is the mutable block-size selection in UI state.
 // Outputs: Returns a meaningful tuning label that maps to a supported archive block size.
 std::wstring compression_block_size_text(int index) {
-    constexpr std::array<std::wstring_view, 4> labels{
-        L"256 KiB blocks",
-        L"1 MiB blocks",
-        L"4 MiB blocks",
-        L"16 MiB blocks",
+    constexpr std::array<std::wstring_view, kCompressionBlockSizeOptions.size()> labels{
+        L"256 KiB", L"512 KiB", L"1 MiB", L"2 MiB", L"4 MiB", L"8 MiB", L"16 MiB",
     };
     const auto normalized = static_cast<std::size_t>(
         (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
@@ -565,15 +718,10 @@ std::wstring compression_block_size_text(int index) {
 // Inputs: `index` is the mutable block-size selection in UI state.
 // Outputs: Returns a block size between `kMinArchiveBlockBytes` and `kMaxArchiveBlockBytes`.
 std::uint32_t compression_block_size_bytes(int index) {
-    constexpr std::array<std::uint32_t, 4> sizes{
-        256U * 1024U,
-        superzip::kDefaultArchiveBlockBytes,
-        4U * 1024U * 1024U,
-        superzip::kMaxArchiveBlockBytes,
-    };
-    const auto normalized = static_cast<std::size_t>(
-        (index % static_cast<int>(sizes.size()) + static_cast<int>(sizes.size())) % static_cast<int>(sizes.size()));
-    return sizes[normalized];
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(kCompressionBlockSizeOptions.size()) +
+                                                      static_cast<int>(kCompressionBlockSizeOptions.size())) %
+                                                     static_cast<int>(kCompressionBlockSizeOptions.size()));
+    return kCompressionBlockSizeOptions[normalized];
 }
 
 // Purpose: Return a label from a circular option list.
@@ -614,12 +762,7 @@ std::wstring log_level_text(int index) {
 // Inputs: `index` is the mutable preferences selection.
 // Outputs: Returns a session preference label.
 std::wstring log_retention_text(int index) {
-    constexpr std::array<std::wstring_view, 3> labels{
-        L"Current session",
-        L"7 days",
-        L"30 days",
-    };
-    return option_text(index, labels);
+    return std::wstring(log_retention_display_text(index));
 }
 
 // Purpose: Return the visible log severity label.
@@ -805,7 +948,8 @@ AppSettings settings_from_state(const UiState& state) {
     AppSettings settings;
     settings.compression_format_index = std::clamp(state.compression_format_index, 0, kCompressionFormatMaxIndex);
     settings.compression_level_index = std::clamp(state.compression_level_index, 0, 4);
-    settings.compression_block_size_index = std::clamp(state.compression_block_size_index, 0, 3);
+    settings.compression_block_size_index =
+        std::clamp(state.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
     settings.memory_policy_index = std::clamp(state.memory_policy_index, 0, 2);
     settings.log_level_index = std::clamp(state.log_level_index, 0, 2);
     settings.log_retention_index = std::clamp(state.log_retention_index, 0, 2);
@@ -858,8 +1002,8 @@ AppSettings parse_settings_json(std::string_view json) {
         json, "compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
     settings.compression_level_index =
         json_int_setting(json, "compressionLevelIndex", settings.compression_level_index, 0, 4);
-    settings.compression_block_size_index =
-        json_int_setting(json, "compressionBlockSizeIndex", settings.compression_block_size_index, 0, 3);
+    settings.compression_block_size_index = json_int_setting(
+        json, "compressionBlockSizeIndex", settings.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
     settings.memory_policy_index = json_int_setting(json, "memoryPolicyIndex", settings.memory_policy_index, 0, 2);
     settings.log_level_index = json_int_setting(json, "logLevelIndex", settings.log_level_index, 0, 2);
     settings.log_retention_index = json_int_setting(json, "logRetentionIndex", settings.log_retention_index, 0, 2);
@@ -1028,14 +1172,16 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
     case DropdownId::CompressMethod:
         return {L"AMD HIP required", L"AMD HIP preferred"};
     case DropdownId::CompressBlockSize:
-        return {
-            compression_block_size_text(0),
-            compression_block_size_text(1),
-            compression_block_size_text(2),
-            compression_block_size_text(3),
-        };
+        return [] {
+            std::vector<std::wstring> options;
+            options.reserve(kCompressionBlockSizeOptions.size());
+            for (int index = 0; index <= kCompressionBlockSizeMaxIndex; ++index) {
+                options.push_back(compression_block_size_text(index));
+            }
+            return options;
+        }();
     case DropdownId::ExtractOverwrite:
-        return {L"Ask before overwrite", L"Overwrite enabled"};
+        return {L"Ask before overwriting", L"Overwrite without asking"};
     case DropdownId::HistoryOperation:
         return {history_operation_filter_text(0), history_operation_filter_text(1), history_operation_filter_text(2),
                 history_operation_filter_text(3)};
@@ -1225,6 +1371,14 @@ bool progress_visible(const UiState& state) {
     return std::chrono::steady_clock::now() <= state.progress_visible_until;
 }
 
+// Purpose: Decide whether a tab-local progress bar should be visible.
+// Inputs: `state` is the immutable UI snapshot for one frame.
+// Outputs: Returns true only while a worker is actively publishing progress, not during the retained status hold.
+bool progress_bar_active(const UiState& state) {
+    return state.progress.operation != OperationKind::Idle &&
+           state.progress_visible_until == std::chrono::steady_clock::time_point{};
+}
+
 // Purpose: Format operation progress as a stable one-decimal percentage.
 // Inputs: `snapshot` is a worker progress sample.
 // Outputs: Returns text such as `42.7%`.
@@ -1332,7 +1486,7 @@ std::wstring entry_type_text(const std::filesystem::path& path) {
 // Outputs: Returns a display label without throwing for empty queues or unreadable probes.
 std::wstring detected_archive_format_text(const std::vector<std::filesystem::path>& paths) {
     if (paths.empty()) {
-        return L"Auto detect";
+        return L"-";
     }
     const auto format = detect_archive_format(paths.front());
     return widen(archive_format_info(format).display_name);
@@ -1482,18 +1636,26 @@ void draw_text(HDC dc, const RECT& rect, std::wstring_view text, COLORREF color,
     DrawTextW(dc, text.data(), static_cast<int>(text.size()), &copy, format);
 }
 
-// Purpose: Draw compact scale and time labels inside a live graph.
+// Purpose: Draw one graph-axis text label as a top-layer overlay.
+// Inputs: `dc` is the target, `rect` is the label box, `text` is preformatted, `color` is the text color, and
+// `format` controls alignment.
+// Outputs: Draws plain clipped text after graph lines without adding a label box or changing graph geometry.
+void draw_graph_axis_label(HDC dc, const RECT& rect, const std::wstring& text, COLORREF color, UINT format) {
+    if (text.empty() || rect.right <= rect.left || rect.bottom <= rect.top) {
+        return;
+    }
+    draw_text(dc, rect, text, color, format | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+// Purpose: Draw compact scale labels inside a live graph.
 // Inputs: `dc` is the target, `rect` is the plot area, and labels are already formatted for display.
-// Outputs: Renders unobtrusive axis text without changing the graph geometry.
-void draw_graph_axis_labels(HDC dc, const RECT& rect, const std::wstring& top_label, const std::wstring& bottom_label,
-                            const std::wstring& time_label) {
+// Outputs: Renders unobtrusive axis text above grid and graph lines without changing the graph geometry.
+void draw_graph_axis_labels(HDC dc, const RECT& rect, const std::wstring& top_label, const std::wstring& bottom_label) {
     const COLORREF axis_text = RGB(103, 127, 135);
-    draw_text(dc, RECT{rect.left + 4, rect.top + 2, rect.right - 4, rect.top + 18}, top_label, axis_text,
-              DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
-    draw_text(dc, RECT{rect.left + 4, rect.bottom - 24, rect.right - 4, rect.bottom - 6}, bottom_label, axis_text,
-              DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
-    draw_text(dc, RECT{rect.left + 4, rect.bottom - 24, rect.right - 4, rect.bottom - 6}, time_label, axis_text,
-              DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_graph_axis_label(dc, RECT{rect.right - 78, rect.top + 3, rect.right - 4, rect.top + 19}, top_label, axis_text,
+                          DT_RIGHT | DT_TOP);
+    draw_graph_axis_label(dc, RECT{rect.right - 78, rect.bottom - 20, rect.right - 4, rect.bottom - 4}, bottom_label,
+                          axis_text, DT_RIGHT | DT_TOP);
 }
 
 // Purpose: Return a rectangle inset by fixed pixel amounts.
@@ -1512,6 +1674,15 @@ RECT inset_rect(RECT rect, int dx, int dy) {
 // Outputs: Returns true when the point lies within the rectangle's half-open bounds.
 bool contains_point(const RECT& rect, int x, int y) {
     return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+}
+
+// Purpose: Append one valid keyboard-focus target.
+// Inputs: `targets` receives the target, `kind` identifies behavior, `rect` is hit geometry, and `index` is optional.
+// Outputs: Adds a target only when its rectangle has positive size.
+void append_focus_target(std::vector<FocusTarget>& targets, FocusTargetKind kind, RECT rect, int index = 0) {
+    if (rect.right > rect.left && rect.bottom > rect.top) {
+        targets.push_back(FocusTarget{kind, rect, index});
+    }
 }
 
 // Purpose: Draw the SuperZip stacked archive mark.
@@ -1780,12 +1951,22 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP), IMAGE_ICON,
                                                MulDiv(16, static_cast<int>(initial_dpi), 96),
                                                MulDiv(16, static_cast<int>(initial_dpi), 96), LR_DEFAULTCOLOR));
-    wc.hbrBackground = nullptr;
-    RegisterClassExW(&wc);
+    HBRUSH class_background = CreateSolidBrush(kBg);
+    wc.hbrBackground = class_background;
+    if (RegisterClassExW(&wc) == 0) {
+        if (class_background != nullptr) {
+            DeleteObject(class_background);
+        }
+        return 1;
+    }
 
     hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, wc.lpszClassName, L"SuperZip", style, CW_USEDEFAULT, CW_USEDEFAULT,
                             initial_width, initial_height, nullptr, nullptr, instance, this);
     if (hwnd_ == nullptr) {
+        UnregisterClassW(wc.lpszClassName, instance);
+        if (class_background != nullptr) {
+            DeleteObject(class_background);
+        }
         return 1;
     }
 
@@ -1809,7 +1990,12 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-    return static_cast<int>(msg.wParam);
+    const int exit_code = static_cast<int>(msg.wParam);
+    UnregisterClassW(wc.lpszClassName, instance);
+    if (class_background != nullptr) {
+        DeleteObject(class_background);
+    }
+    return exit_code;
 }
 
 // Purpose: Route Win32 messages from the static window procedure to the C++ instance.
@@ -1860,12 +2046,22 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         layout_and_draw(reinterpret_cast<HDC>(wparam), rect);
         return 0;
     }
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        RECT rect{};
+        GetClientRect(hwnd_, &rect);
+        if (wparam != 0U) {
+            fill_rect(reinterpret_cast<HDC>(wparam), rect, kBg);
+        }
         return 1;
+    }
     case WM_MOUSEMOVE:
         return handle_mouse_move(lparam);
     case WM_MOUSELEAVE:
         return handle_mouse_leave();
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS | DLGC_WANTTAB | DLGC_WANTCHARS;
+    case WM_KEYDOWN:
+        return handle_key_down(wparam, lparam);
     case WM_LBUTTONDOWN:
         return handle_primary_mouse_down(lparam);
     case WM_LBUTTONUP:
@@ -1927,6 +2123,7 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
         }
         SetCursor(LoadCursor(nullptr, over_resize_grip ? IDC_SIZEWE : IDC_ARROW));
     }
+    update_text_tooltip_tracking();
     request_repaint();
     return 0;
 }
@@ -1940,8 +2137,177 @@ LRESULT MainWindow::handle_mouse_leave() {
         primary_mouse_down_ = false;
     }
     mouse_tracking_ = false;
+    KillTimer(hwnd_, kTextTooltipTimer);
+    text_tooltip_cell_active_ = false;
+    text_tooltip_visible_ = false;
+    text_tooltip_text_.clear();
     request_repaint();
     return 0;
+}
+
+// Purpose: Decide whether a text value overflows the visible cell.
+// Inputs: `text` is rendered in `cell` with `font`.
+// Outputs: Returns true when the text would be ellipsized.
+bool MainWindow::text_overflows_cell(std::wstring_view text, const RECT& cell, HFONT font) const {
+    if (text.empty() || cell.right <= cell.left) {
+        return false;
+    }
+    return text_width(text, font) > (cell.right - cell.left);
+}
+
+// Purpose: Measure text with an existing GDI font.
+// Inputs: `text` is UTF-16 content and `font` is one of the window-owned fonts.
+// Outputs: Returns the text width in physical pixels, or zero when measurement is unavailable.
+int MainWindow::text_width(std::wstring_view text, HFONT font) const {
+    if (text.empty() || font == nullptr) {
+        return 0;
+    }
+    HDC dc = GetDC(hwnd_);
+    if (dc == nullptr) {
+        return 0;
+    }
+    HGDIOBJ previous = SelectObject(dc, font);
+    SIZE size{};
+    const BOOL measured =
+        GetTextExtentPoint32W(dc, text.data(), static_cast<int>(std::min<std::size_t>(text.size(), INT_MAX)), &size);
+    SelectObject(dc, previous);
+    ReleaseDC(hwnd_, dc);
+    return measured == FALSE ? 0 : size.cx;
+}
+
+// Purpose: Return the ellipsized text under the current mouse, if any.
+// Inputs: None; uses current page layout, queue/form state, and selected fonts.
+// Outputs: Returns true with cell/text set only for eligible truncated text targets.
+bool MainWindow::text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text) {
+    if (!mouse_inside_client_ || primary_mouse_down_) {
+        return false;
+    }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    return queue_text_tooltip_candidate_at_mouse(state, cell, text) ||
+           field_text_tooltip_candidate_at_mouse(state, cell, text);
+}
+
+// Purpose: Return the ellipsized Queue text under the current mouse, if any.
+// Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
+// Outputs: Returns true only for truncated Queue Name or Path cells.
+bool MainWindow::queue_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text) {
+    if (state.page != Page::Queue || state.queued_paths.empty()) {
+        return false;
+    }
+    const auto layout = queue_layout(content_rect());
+    const int header_bottom = layout.table.top + scale(36);
+    const int row_height = scale(34);
+    if (row_height <= 0 || mouse_position_.y < header_bottom || mouse_position_.y >= layout.table.bottom) {
+        return false;
+    }
+    const int row_index = (mouse_position_.y - header_bottom) / row_height;
+    if (row_index < 0 || row_index >= static_cast<int>(state.queued_paths.size())) {
+        return false;
+    }
+    const RECT row{layout.table.left, header_bottom + (row_index * row_height), layout.table.right,
+                   header_bottom + ((row_index + 1) * row_height)};
+    const auto columns = queue_column_layout(layout.table, row);
+    const auto& path = state.queued_paths[static_cast<std::size_t>(row_index)];
+    const RECT name_cell = inset_rect(columns.name, scale(8), 0);
+    const RECT path_cell = inset_rect(columns.path, scale(8), 0);
+    if (contains_point(name_cell, mouse_position_.x, mouse_position_.y)) {
+        auto value = path.filename().wstring();
+        if (text_overflows_cell(value, name_cell, tiny_font_)) {
+            cell = name_cell;
+            text = std::move(value);
+            return true;
+        }
+    }
+    if (contains_point(path_cell, mouse_position_.x, mouse_position_.y)) {
+        auto value = path.wstring();
+        if (text_overflows_cell(value, path_cell, tiny_font_)) {
+            cell = path_cell;
+            text = std::move(value);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Purpose: Return the ellipsized Compress/Extract field text under the current mouse, if any.
+// Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
+// Outputs: Returns true only for truncated Archive/Destination fields explicitly allowed by the UI contract.
+bool MainWindow::field_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text) {
+    const RECT content = content_rect();
+    if (state.page == Page::Compress) {
+        const auto layout = compress_layout(content);
+        return tooltip_candidate_for_field(layout.archive_name, compression_output_filename_for(state), cell, text) ||
+               tooltip_candidate_for_field(layout.destination, destination_directory_or_default(state).wstring(), cell,
+                                           text);
+    }
+    if (state.page == Page::Extract) {
+        const auto layout = extract_layout(content);
+        const auto archive =
+            state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
+        return tooltip_candidate_for_field(layout.archive, archive, cell, text) ||
+               tooltip_candidate_for_field(layout.destination, extraction_output_path_for(state).wstring(), cell, text);
+    }
+    return false;
+}
+
+// Purpose: Check one form field value for delayed tooltip eligibility.
+// Inputs: `field` is the full labeled field rectangle, `value` is the visible text, and `cell`/`text` receive data.
+// Outputs: Returns true only when the mouse is over a truncated value cell.
+bool MainWindow::tooltip_candidate_for_field(const RECT& field, const std::wstring& value, RECT& cell,
+                                             std::wstring& text) const {
+    const RECT value_cell = field_value_cell(field, false);
+    if (!contains_point(value_cell, mouse_position_.x, mouse_position_.y) ||
+        !text_overflows_cell(value, value_cell, tiny_font_)) {
+        return false;
+    }
+    cell = value_cell;
+    text = value;
+    return true;
+}
+
+// Purpose: Resolve the drawn value area inside a labeled field.
+// Inputs: `field` is the full labeled field rectangle and `select` reserves space for a dropdown arrow when true.
+// Outputs: Returns the value text rectangle used by both drawing and tooltip hit testing.
+RECT MainWindow::field_value_cell(const RECT& field, bool select) const {
+    const RECT box{field.left, field.top + scale(20), field.right, field.bottom};
+    return RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom};
+}
+
+// Purpose: Update delayed text-tooltip tracking from the current mouse position.
+// Inputs: None; reads current page, eligible text cells, and mouse coordinates.
+// Outputs: Arms, hides, or preserves the tooltip timer based on ellipsized hover state.
+void MainWindow::update_text_tooltip_tracking() {
+    RECT candidate_cell{};
+    std::wstring candidate_text;
+    if (!text_tooltip_candidate_at_mouse(candidate_cell, candidate_text)) {
+        KillTimer(hwnd_, kTextTooltipTimer);
+        if (text_tooltip_cell_active_ || text_tooltip_visible_) {
+            text_tooltip_cell_active_ = false;
+            text_tooltip_visible_ = false;
+            text_tooltip_text_.clear();
+            request_repaint();
+        }
+        return;
+    }
+    const bool same_cell = text_tooltip_cell_active_ && EqualRect(&text_tooltip_cell_, &candidate_cell) != FALSE &&
+                           text_tooltip_text_ == candidate_text;
+    const bool same_point =
+        text_tooltip_anchor_point_.x == mouse_position_.x && text_tooltip_anchor_point_.y == mouse_position_.y;
+    if (same_cell && same_point) {
+        return;
+    }
+    text_tooltip_cell_ = candidate_cell;
+    text_tooltip_anchor_point_ = mouse_position_;
+    text_tooltip_cell_active_ = true;
+    text_tooltip_visible_ = false;
+    text_tooltip_text_ = std::move(candidate_text);
+    KillTimer(hwnd_, kTextTooltipTimer);
+    SetTimer(hwnd_, kTextTooltipTimer, kTextTooltipDelayMs, nullptr);
+    request_repaint();
 }
 
 // Purpose: Handle primary-button press using the same geometry as rendering.
@@ -2016,42 +2382,10 @@ LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
     if (drop == nullptr) {
         return 0;
     }
-    std::string log_message;
-    LogSeverity log_severity = LogSeverity::Debug;
+    POINT drop_point{};
+    DragQueryPoint(drop, &drop_point);
     try {
-        const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-        std::vector<std::filesystem::path> dropped_paths;
-        dropped_paths.reserve(count);
-        for (UINT i = 0; i < count; ++i) {
-            const UINT length = DragQueryFileW(drop, i, nullptr, 0);
-            if (length == 0) {
-                continue;
-            }
-            std::wstring path(length + 1, L'\0');
-            if (DragQueryFileW(drop, i, path.data(), length + 1) == 0) {
-                continue;
-            }
-            path.resize(length);
-            dropped_paths.emplace_back(std::move(path));
-        }
-        std::lock_guard lock(mutex_);
-        if (dropped_paths.empty()) {
-            state_.status = "No drop items received";
-            log_severity = LogSeverity::Warning;
-            log_message = "Shell drop did not contain usable paths";
-        } else {
-            const bool was_empty = state_.queued_paths.empty();
-            for (auto& path : dropped_paths) {
-                state_.queued_paths.emplace_back(std::move(path));
-                state_.queued_enabled.push_back(true);
-            }
-            normalize_queue_selection_locked();
-            if (was_empty && !state_.queued_paths.empty()) {
-                state_.selected_queue_index = 0;
-            }
-            state_.status = "Dropped items added";
-            log_message = "Shell drop added " + std::to_string(dropped_paths.size()) + " queued item(s)";
-        }
+        (void)accept_dropped_paths(paths_from_hdrop(drop), drop_point);
     } catch (const std::exception& error) {
         DragFinish(drop);
         {
@@ -2070,12 +2404,72 @@ LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
         return 0;
     }
     DragFinish(drop);
-    if (!log_message.empty()) {
-        append_log_entry(log_severity, std::move(log_message));
-        return 0;
+    return 0;
+}
+
+// Purpose: Return whether a client point is inside the active Queue table drop target.
+// Inputs: `point` is a client-coordinate point.
+// Outputs: Returns true only on the Queue page and inside the Queue table.
+bool MainWindow::queue_drop_target_contains(POINT point) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.page != Page::Queue) {
+        return false;
+    }
+    return contains_point(queue_layout(content_rect()).table, point.x, point.y);
+}
+
+// Purpose: Append dropped paths to the Queue when the drop target is inside the Queue table.
+// Inputs: `paths` are filesystem paths from shell drag/drop and `point` is the client drop coordinate.
+// Outputs: Returns true and mutates queue state when the drop is accepted; otherwise reports rejection.
+bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, POINT point) {
+    set_queue_drop_highlight(false);
+    LogSeverity severity = LogSeverity::Debug;
+    std::string message;
+    {
+        std::lock_guard lock(mutex_);
+        if (state_.page != Page::Queue || !contains_point(queue_layout(content_rect()).table, point.x, point.y)) {
+            state_.status = "Drop files or folders inside the Queue box";
+            severity = LogSeverity::Warning;
+            message = "Shell drop rejected outside the Queue table";
+        } else if (paths.empty()) {
+            state_.status = "No drop items received";
+            severity = LogSeverity::Warning;
+            message = "Shell drop did not contain usable paths";
+        } else {
+            const bool was_empty = state_.queued_paths.empty();
+            for (auto& path : paths) {
+                state_.queued_paths.emplace_back(std::move(path));
+                state_.queued_enabled.push_back(true);
+            }
+            normalize_queue_selection_locked();
+            if (was_empty && !state_.queued_paths.empty()) {
+                state_.selected_queue_index = 0;
+            }
+            state_.status = "Dropped items added";
+            message = "Shell drop added " + std::to_string(paths.size()) + " queued item(s)";
+        }
+    }
+    if (!message.empty()) {
+        append_log_entry(severity, std::move(message));
+        return severity != LogSeverity::Warning;
     }
     request_repaint();
-    return 0;
+    return true;
+}
+
+// Purpose: Update live drag/drop highlighting for the Queue table.
+// Inputs: `active` describes whether a drag is over the allowed table drop target.
+// Outputs: Updates visual drag state and queues a repaint when changed.
+void MainWindow::set_queue_drop_highlight(bool active) {
+    if (queue_drop_highlight_ == active) {
+        return;
+    }
+    queue_drop_highlight_ = active;
+    request_repaint();
 }
 
 // Purpose: Allow shell file-drop messages through UIPI for elevated windows.
@@ -2104,6 +2498,18 @@ bool MainWindow::enable_elevated_drag_drop_messages() const {
 LRESULT MainWindow::handle_create() {
     initialize_settings();
     DragAcceptFiles(hwnd_, TRUE);
+    const HRESULT ole_status = OleInitialize(nullptr);
+    ole_initialized_ = SUCCEEDED(ole_status);
+    if (ole_initialized_) {
+        drop_target_ = new QueueDropTarget(*this);
+        if (RegisterDragDrop(hwnd_, drop_target_) != S_OK) {
+            drop_target_->Release();
+            drop_target_ = nullptr;
+            append_log_entry(LogSeverity::Warning, "OLE Queue drag/drop registration could not be applied");
+        }
+    } else {
+        append_log_entry(LogSeverity::Warning, "OLE Queue drag/drop initialization failed");
+    }
     if (!enable_elevated_drag_drop_messages()) {
         {
             std::lock_guard lock(mutex_);
@@ -2116,7 +2522,8 @@ LRESULT MainWindow::handle_create() {
     initialize_performance_monitor();
     update_performance_sample();
     reset_performance_timer(state_.performance_update_seconds);
-    SetTimer(hwnd_, kClockTimer, 1000, nullptr);
+    last_clock_text_ = current_user_time_text();
+    SetTimer(hwnd_, kClockTimer, kClockPollMs, nullptr);
     if (const UINT auto_close_ms = smoke_auto_close_ms(); auto_close_ms > 0) {
         // Smoke-only auto-close prevents orphaned GUI windows if the harness
         // exits before it can post WM_CLOSE.
@@ -2231,6 +2638,27 @@ LRESULT MainWindow::handle_timer(WPARAM wparam) {
         return 0;
     }
     if (wparam == kClockTimer) {
+        const auto current = current_user_time_text();
+        if (current != last_clock_text_) {
+            last_clock_text_ = current;
+            request_repaint();
+        }
+        return 0;
+    }
+    if (wparam == kTextTooltipTimer) {
+        KillTimer(hwnd_, kTextTooltipTimer);
+        RECT candidate_cell{};
+        std::wstring candidate_text;
+        const bool still_hovered = text_tooltip_candidate_at_mouse(candidate_cell, candidate_text);
+        const bool stationary =
+            text_tooltip_anchor_point_.x == mouse_position_.x && text_tooltip_anchor_point_.y == mouse_position_.y;
+        text_tooltip_visible_ = still_hovered && stationary && text_tooltip_cell_active_ &&
+                                EqualRect(&text_tooltip_cell_, &candidate_cell) != FALSE &&
+                                text_tooltip_text_ == candidate_text;
+        if (!text_tooltip_visible_) {
+            text_tooltip_cell_active_ = false;
+            text_tooltip_text_.clear();
+        }
         request_repaint();
         return 0;
     }
@@ -2259,8 +2687,18 @@ LRESULT MainWindow::handle_destroy() {
     KillTimer(hwnd_, kPerformanceTimer);
     KillTimer(hwnd_, kProgressHoldTimer);
     KillTimer(hwnd_, kClockTimer);
+    KillTimer(hwnd_, kTextTooltipTimer);
     KillTimer(hwnd_, kSmokeAutoCloseTimer);
     KillTimer(hwnd_, kSmokeClosePollTimer);
+    if (drop_target_ != nullptr) {
+        RevokeDragDrop(hwnd_);
+        drop_target_->Release();
+        drop_target_ = nullptr;
+    }
+    if (ole_initialized_) {
+        OleUninitialize();
+        ole_initialized_ = false;
+    }
     shutdown_performance_monitor();
     PostQuitMessage(0);
     return 0;
@@ -2284,6 +2722,9 @@ void MainWindow::paint() {
     EndPaint(hwnd_, &ps);
 }
 
+// Purpose: Draw the current frame using DPI-scaled layout regions.
+// Inputs: `dc` is the off-screen device context and `rect` is the client rectangle in physical pixels.
+// Outputs: Writes the shell, navigation, active page, overlays, and status strip into `dc`.
 void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     UiState state;
     {
@@ -2303,9 +2744,95 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     draw_top_bar(dc, top);
     draw_navigation(dc, rail, state);
     draw_content(dc, content, state);
-    draw_tab_transition(dc, content);
+    draw_tab_transition(dc, RECT{rect.left, content.top, rect.right, content.bottom});
     draw_active_dropdown(dc, content, state);
+    draw_keyboard_focus(dc, content, state);
+    draw_text_tooltip(dc);
     draw_status_bar(dc, status, state);
+}
+
+// Purpose: Return whether the mouse is currently over a live clickable target.
+// Inputs: `rect` is the clickable target and `enabled` must be false for static or disabled UI.
+// Outputs: Returns true only for enabled controls under the mouse pointer.
+bool MainWindow::interactive_hovered(const RECT& rect, bool enabled) const {
+    return enabled && mouse_inside_client_ && contains_point(rect, mouse_position_.x, mouse_position_.y);
+}
+
+// Purpose: Compute the subtle clickable hover fill used by all interactive boxes.
+// Inputs: `base` is the non-hover fill, `rect` is the clickable target, `enabled` gates interaction, and `accent`
+// selects command-button treatment.
+// Outputs: Returns a slightly lifted background color without changing borders or behavior.
+COLORREF MainWindow::interactive_fill(COLORREF base, const RECT& rect, bool enabled, bool accent) const {
+    if (!interactive_hovered(rect, enabled)) {
+        return base;
+    }
+    return blend_color(base, accent ? RGB(255, 74, 84) : RGB(63, 82, 89), accent ? 0.26 : 0.34);
+}
+
+// Purpose: Draw the shared hover background for row-like controls.
+// Inputs: `dc` is the target, `rect` is the clickable row, and `enabled` gates interaction.
+// Outputs: Adds only a subtle background lift when the row is hovered.
+void MainWindow::draw_interactive_hover_surface(HDC dc, const RECT& rect, bool enabled) {
+    if (!interactive_hovered(rect, enabled)) {
+        return;
+    }
+    fill_round_rect(dc, rect, interactive_fill(kPanel, rect, enabled), scale(3));
+}
+
+// Purpose: Draw the delayed text tooltip when an eligible ellipsized value is hovered.
+// Inputs: `dc` is the target for the current frame.
+// Outputs: Renders a compact tooltip near the source cell without affecting layout.
+void MainWindow::draw_text_tooltip(HDC dc) {
+    if (!text_tooltip_visible_ || text_tooltip_text_.empty()) {
+        return;
+    }
+    const RECT content = content_rect();
+    const int max_width = scale(620);
+    RECT measured{0, 0, max_width - scale(20), 0};
+    SelectObject(dc, tiny_font_);
+    DrawTextW(dc, text_tooltip_text_.data(), static_cast<int>(text_tooltip_text_.size()), &measured,
+              DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    const int tooltip_width =
+        std::clamp<int>(static_cast<int>(measured.right - measured.left) + scale(20), scale(160), max_width);
+    const int tooltip_height =
+        std::clamp<int>(static_cast<int>(measured.bottom - measured.top) + scale(16), scale(34), scale(132));
+    int left = std::clamp<int>(static_cast<int>(text_tooltip_cell_.left), static_cast<int>(content.left) + scale(8),
+                               static_cast<int>(content.right) - tooltip_width - scale(8));
+    int top = text_tooltip_cell_.bottom + scale(6);
+    if (top + tooltip_height > content.bottom - scale(8)) {
+        top = text_tooltip_cell_.top - tooltip_height - scale(6);
+    }
+    top = std::clamp<int>(top, static_cast<int>(content.top) + scale(8),
+                          static_cast<int>(content.bottom) - tooltip_height - scale(8));
+    const RECT tooltip{left, top, left + tooltip_width, top + tooltip_height};
+    fill_round_rect(dc, tooltip, RGB(33, 45, 50), scale(4));
+    stroke_rect(dc, tooltip, RGB(80, 99, 106));
+    draw_text(dc, inset_rect(tooltip, scale(10), scale(7)), text_tooltip_text_, kText,
+              DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+}
+
+// Purpose: Draw the keyboard focus affordance for the current target.
+// Inputs: `dc` is the target, `content` is the content area, and `state` is the copied UI state.
+// Outputs: Renders a minimal non-hover focus indicator without mutating state.
+void MainWindow::draw_keyboard_focus(HDC dc, const RECT& content, const UiState& state) {
+    const auto targets = focus_targets_for(content, state);
+    if (targets.empty()) {
+        return;
+    }
+    const int index = (keyboard_focus_index_ % static_cast<int>(targets.size()) + static_cast<int>(targets.size())) %
+                      static_cast<int>(targets.size());
+    if (targets[static_cast<std::size_t>(index)].kind == FocusTargetKind::Navigation) {
+        return;
+    }
+    RECT focus = targets[static_cast<std::size_t>(index)].rect;
+    focus = inset_rect(focus, scale(2), scale(2));
+    HPEN pen = CreatePen(PS_SOLID, std::max(1, scale(1)), RGB(99, 130, 140));
+    HGDIOBJ previous_pen = SelectObject(dc, pen);
+    HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, focus.left, focus.top, focus.right, focus.bottom, scale(4), scale(4));
+    SelectObject(dc, previous_brush);
+    SelectObject(dc, previous_pen);
+    DeleteObject(pen);
 }
 
 // Purpose: Draw the persistent product shell strip.
@@ -2377,7 +2904,7 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
     draw_line(dc, rect.left, rect.top, rect.right, rect.top, kBorder);
     const bool ready = gpu_ready(state);
     const int cy = (rect.top + rect.bottom) / 2;
-    HBRUSH dot = CreateSolidBrush(ready ? kOk : kWarn);
+    HBRUSH dot = CreateSolidBrush(ready ? kOk : kDanger);
     HGDIOBJ previous = SelectObject(dc, dot);
     Ellipse(dc, rect.left + scale(18), cy - scale(5), rect.left + scale(28), cy + scale(5));
     SelectObject(dc, previous);
@@ -2385,17 +2912,16 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
 
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{rect.left + scale(36), rect.top, rect.left + scale(202), rect.bottom},
-              ready ? L"AMD GPU Ready" : L"AMD GPU inactive", ready ? kOk : kWarn,
+              ready ? L"AMD GPU ready" : L"AMD GPU unavailable", ready ? kOk : kDanger,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, rect.left + scale(220), rect.top + scale(8), rect.left + scale(220), rect.bottom - scale(8), kBorder);
-    draw_text(dc, RECT{rect.left + scale(238), rect.top, rect.left + scale(430), rect.bottom}, widen(state.gpu_status),
-              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_line(dc, rect.left + scale(450), rect.top + scale(8), rect.left + scale(450), rect.bottom - scale(8), kBorder);
 
     if (progress_visible(state)) {
         const RECT progress_rect{rect.left + scale(468), rect.top, rect.left + scale(610), rect.bottom};
         const RECT throughput_rect{rect.left + scale(632), rect.top, rect.left + scale(824), rect.bottom};
-        const RECT remaining_rect{rect.left + scale(846), rect.top, rect.right - scale(156), rect.bottom};
+        const RECT remaining_rect{rect.left + scale(846), rect.top, rect.right - scale(kClockSegmentWidth + 20),
+                                  rect.bottom};
         draw_text(dc, progress_rect, L"Progress: " + progress_percent_text(state.progress), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         draw_text(dc, throughput_rect, L"Throughput: " + rate_text(state.progress.throughput_bytes_per_second), kMuted,
@@ -2403,10 +2929,10 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
         draw_text(dc, remaining_rect, L"Time remaining: " + progress_time_remaining_text(state.progress), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
-    draw_line(dc, rect.right - scale(132), rect.top + scale(8), rect.right - scale(132), rect.bottom - scale(8),
-              kBorder);
-    draw_text(dc, RECT{rect.right - scale(118), rect.top, rect.right - scale(16), rect.bottom},
-              current_user_time_text(), kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_line(dc, rect.right - scale(kClockSegmentWidth), rect.top + scale(8), rect.right - scale(kClockSegmentWidth),
+              rect.bottom - scale(8), kBorder);
+    draw_text(dc, RECT{rect.right - scale(kClockSegmentWidth), rect.top, rect.right, rect.bottom},
+              current_user_time_text(), kMuted, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // Purpose: Dispatch the active page renderer into the content region.
@@ -2464,6 +2990,18 @@ MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
 // Outputs: Returns a 110x36 design-pixel command rectangle aligned with Settings Apply.
 RECT MainWindow::primary_action_rect(const RECT& area) const {
     return RECT{area.right - scale(110), area.bottom - scale(54), area.right, area.bottom - scale(18)};
+}
+
+// Purpose: Return the History Clear History button rectangle with Restore Defaults-equivalent visual margins.
+// Inputs: `area` is the DPI-scaled page content area.
+// Outputs: Returns a right-aligned command rectangle sized from the active button font.
+RECT MainWindow::history_clear_button_rect(const RECT& area) const {
+    const int restore_width = scale(134);
+    const int restore_text = text_width(L"Restore Defaults", tiny_font_);
+    const int clear_text = text_width(L"Clear History", tiny_font_);
+    const int margin = std::max(scale(12), (restore_width - restore_text) / 2);
+    const int width = std::clamp(clear_text + (margin * 2), scale(92), restore_width);
+    return RECT{area.right - width, area.top, area.right, area.top + scale(34)};
 }
 
 // Purpose: Compute fixed checkbox and resizable data-column geometry for the Queue table.
@@ -2635,11 +3173,14 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
               count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
     RECT table = layout.table;
-    fill_round_rect(dc, table, kPanel, scale(4));
-    stroke_rect(dc, table, kBorder);
+    const COLORREF table_fill = queue_drop_highlight_ ? blend_color(kPanel, kInfo, 0.16) : kPanel;
+    fill_round_rect(dc, table, table_fill, scale(4));
+    stroke_rect(dc, table, queue_drop_highlight_ ? RGB(70, 116, 130) : kBorder);
     SelectObject(dc, tiny_font_);
     const int header_bottom = table.top + scale(36);
     const RECT header_row{table.left, table.top, table.right, header_bottom};
+    const RECT header_band{table.left + scale(1), table.top + scale(1), table.right - scale(1), header_bottom};
+    fill_rect(dc, header_band, blend_color(kPanel, kPanel2, 0.52));
     const auto header_columns = queue_column_layout(table, header_row);
     const bool has_entries = !state.queued_paths.empty();
     const bool all_enabled =
@@ -2660,7 +3201,9 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
         draw_line(dc, (grip.left + grip.right) / 2, table.top + scale(8), (grip.left + grip.right) / 2,
                   header_bottom - scale(8), kBorder);
     }
-    draw_line(dc, table.left, header_bottom, table.right, header_bottom, kBorder);
+    draw_line(dc, table.left + scale(1), header_bottom - scale(1), table.right - scale(1), header_bottom - scale(1),
+              RGB(73, 95, 102));
+    draw_line(dc, table.left + scale(1), header_bottom, table.right - scale(1), header_bottom, RGB(9, 15, 18));
 
     int y = header_bottom;
     if (state.queued_paths.empty()) {
@@ -2668,7 +3211,8 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
         const RECT empty_drop_zone{table.left + scale(40), table.top + scale(36), table.right - scale(40),
                                    table.bottom - scale(36)};
         draw_text(dc, empty_drop_zone, L"Drag & drop files or folders here, or use the Add files / Add folder buttons.",
-                  kMuted, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                  queue_drop_highlight_ ? kText : kMuted,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     } else {
         int row_index = 0;
         for (const auto& path : state.queued_paths) {
@@ -2679,8 +3223,9 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
             const bool enabled = static_cast<std::size_t>(row_index) >= state.queued_enabled.size()
                                      ? true
                                      : state.queued_enabled[static_cast<std::size_t>(row_index)];
-            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom},
-                      selected ? kPanel3 : (((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel));
+            const COLORREF base_row_fill = selected ? kPanel3 : (((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel);
+            const COLORREF row_fill = interactive_fill(base_row_fill, row_rect);
+            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom}, row_fill);
             draw_checkbox(dc, columns.checkbox, L"", enabled);
             draw_text(dc, inset_rect(columns.name, scale(8), 0), path.filename().wstring(), kText,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -2719,7 +3264,8 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     const bool suzip_tuning = compression_format_uses_suzip_tuning(format);
     const bool level_tuning = compression_format_uses_level(format);
     draw_field(dc, layout.archive_name, L"Archive name", compression_output_filename_for(state), false);
-    draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false);
+    draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false, true,
+               true);
     draw_field(dc, layout.format, L"Archive format", compression_format_text(state.compression_format_index), true);
     draw_field(dc, layout.compression_level, L"Compression level",
                level_tuning ? compression_level_text(state.compression_level_index) : L"-", level_tuning, level_tuning);
@@ -2737,10 +3283,10 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_text(dc, RECT{advanced.left + scale(16), advanced.top + scale(12), advanced.right, advanced.top + scale(36)},
               L"Advanced", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, layout.solid_archive, L"Solid archive", state.solid_archive);
-    draw_checkbox(dc, layout.store_timestamps, L"Store timestamps", state.store_timestamps);
-    draw_checkbox(dc, layout.delete_after_compression, L"Delete files after compression",
-                  state.delete_after_compression);
+    draw_toggle(dc, layout.solid_archive, L"Solid archive", state.solid_archive, ToggleId::SolidArchive);
+    draw_toggle(dc, layout.store_timestamps, L"Store timestamps", state.store_timestamps, ToggleId::StoreTimestamps);
+    draw_toggle(dc, layout.delete_after_compression, L"Delete files after compression", state.delete_after_compression,
+                ToggleId::DeleteAfterCompression);
     draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
 
@@ -2753,11 +3299,6 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     SelectObject(dc, tiny_font_);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
-    draw_text(dc,
-              RECT{security.left + scale(448), security.top + scale(46), security.right - scale(16),
-                   security.top + scale(114)},
-              L"Security checks remain disabled until explicitly enabled for the job or as a default in Settings.",
-              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 // Purpose: Draw the extraction settings page.
@@ -2777,11 +3318,14 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
 
     const auto archive =
         state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
-    draw_field(dc, layout.archive, L"Archive", archive, false);
-    draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false);
-    draw_field(dc, layout.path_mode, L"Archive format", detected_archive_format_text(state.queued_paths), false);
+    draw_field(dc, layout.archive, L"Archive", archive, false, true, false,
+               state.queued_paths.empty() ? kMuted : CLR_INVALID);
+    draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false, true, true);
+    draw_field(dc, layout.path_mode, L"Archive format",
+               state.queued_paths.empty() ? L"-" : detected_archive_format_text(state.queued_paths), false,
+               !state.queued_paths.empty());
     draw_field(dc, layout.overwrite_policy, L"Overwrite policy",
-               state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite", true);
+               state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting", true);
 
     RECT checks = layout.checks;
     fill_round_rect(dc, checks, kPanel, scale(4));
@@ -2790,10 +3334,10 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     draw_text(dc, RECT{checks.left + scale(16), checks.top + scale(12), checks.right, checks.top + scale(36)},
               L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, layout.verify_metadata, L"Verify archive metadata before extraction",
-                  state.verify_metadata_before_extract);
-    draw_checkbox(dc, layout.open_destination_after_extract, L"Open destination folder after extraction",
-                  state.open_destination_after_extract);
+    draw_toggle(dc, layout.verify_metadata, L"Verify archive metadata before extraction",
+                state.verify_metadata_before_extract, ToggleId::VerifyMetadata);
+    draw_toggle(dc, layout.open_destination_after_extract, L"Open destination folder after extraction",
+                state.open_destination_after_extract, ToggleId::OpenDestinationAfterExtract);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
 }
@@ -2836,7 +3380,7 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
          state.integrity_hash_opt_in ? kOk : kWarn},
         {L"Defender optional", state.defender_scan_opt_in ? L"Selected" : L"Not selected",
          state.defender_scan_opt_in ? kOk : kWarn},
-        {L"Overwrite policy", state.overwrite ? L"Overwrite enabled" : L"Ask before overwrite",
+        {L"Overwrite policy", state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting",
          state.overwrite ? kWarn : kOk},
         {L"GPU requirement", state.gpu_required ? L"AMD HIP required" : L"Fallback allowed",
          state.gpu_required ? kInfo : kWarn},
@@ -2868,7 +3412,9 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
         kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_field(
         dc, RECT{detail.left + scale(18), detail.top + scale(184), detail.right - scale(18), detail.top + scale(234)},
-        L"Archive", state.queued_paths.empty() ? L"No archive selected" : state.queued_paths.front().wstring(), false);
+        L"Archive",
+        state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring(), false,
+        true, false, state.queued_paths.empty() ? kMuted : CLR_INVALID);
     draw_field(
         dc, RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(248), detail.top + scale(302)},
         L"Files", std::to_wstring(state.queued_paths.size()), false);
@@ -2885,7 +3431,7 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"History", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, RECT{area.right - scale(142), area.top, area.right, area.top + scale(34)}, L"Clear History", false);
+    draw_button(dc, history_clear_button_rect(area), L"Clear History", false);
     draw_field(dc, RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)}, L"Operation",
                history_operation_filter_text(state.history_operation_filter_index), true);
     draw_field(dc, RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)},
@@ -3021,8 +3567,7 @@ void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const 
                                                const std::wstring& value, const std::wstring& detail,
                                                std::span<const double> history, COLORREF color,
                                                const std::wstring& graph_top_label,
-                                               const std::wstring& graph_bottom_label,
-                                               const std::wstring& graph_time_label) {
+                                               const std::wstring& graph_bottom_label) {
     fill_round_rect(dc, graph, kPanel2, scale(4));
     stroke_rect(dc, graph, kBorder);
     RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
@@ -3038,7 +3583,7 @@ void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const 
     draw_graph_grid(dc, plot);
     const RECT graph_area = inset_rect(plot, scale(1), scale(1));
     draw_graph_series(dc, graph_area, history, color);
-    draw_graph_axis_labels(dc, graph_area, graph_top_label, graph_bottom_label, graph_time_label);
+    draw_graph_axis_labels(dc, graph_area, graph_top_label, graph_bottom_label);
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
@@ -3050,8 +3595,7 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
                                                     std::span<const double> primary_history,
                                                     std::span<const double> secondary_history, COLORREF primary,
                                                     COLORREF secondary, const std::wstring& graph_top_label,
-                                                    const std::wstring& graph_bottom_label,
-                                                    const std::wstring& graph_time_label) {
+                                                    const std::wstring& graph_bottom_label) {
     fill_round_rect(dc, graph, kPanel2, scale(4));
     stroke_rect(dc, graph, kBorder);
     RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
@@ -3068,7 +3612,7 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
     const RECT inset_plot = inset_rect(plot, scale(1), scale(1));
     draw_graph_series(dc, inset_plot, primary_history, primary);
     draw_graph_series(dc, inset_plot, secondary_history, secondary);
-    draw_graph_axis_labels(dc, inset_plot, graph_top_label, graph_bottom_label, graph_time_label);
+    draw_graph_axis_labels(dc, inset_plot, graph_top_label, graph_bottom_label);
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
@@ -3112,9 +3656,9 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         RECT{monitor.left + scale(16), monitor.top + scale(12), update_speed.left - scale(18), monitor.top + scale(36)},
         L"Performance Monitor", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_text(dc,
-              RECT{update_speed.left - scale(98), update_speed.top, update_speed.left - scale(10), update_speed.bottom},
-              L"Update speed", kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(
+        dc, RECT{update_speed.left - scale(116), update_speed.top, update_speed.left - scale(10), update_speed.bottom},
+        L"Refresh interval", kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     draw_field(dc, RECT{update_speed.left, update_speed.top - scale(20), update_speed.right, update_speed.bottom}, L"",
                performance_update_speed_text(state.performance_update_seconds), true);
 
@@ -3147,9 +3691,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     const std::wstring percent_top = L"100%";
     const std::wstring zero_percent = L"0%";
     const std::wstring io_top = L"1 GiB/s";
-    const std::wstring zero_rate = L"0 B/s";
-    const std::wstring history_window =
-        performance_history_window_text(performance_history_count_, state.performance_update_seconds);
+    const std::wstring zero_gib_rate = L"0 GiB/s";
     for (int i = 0; i < 4; ++i) {
         RECT card = cards[static_cast<std::size_t>(i)];
         if (!sample.live) {
@@ -3159,11 +3701,12 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                           : i == 2 ? L"I/O"
                                                    : L"GPU",
                                           L"Collecting", L"Waiting for first sample", std::span<const double>{},
-                                          kSubtle, percent_top, zero_percent, history_window);
+                                          kSubtle, percent_top, zero_percent);
         } else if (i == 0) {
-            draw_performance_monitor_card(dc, card, L"CPU", percentage_text(sample.cpu_percent),
-                                          L"Process utilization\nAcross logical processors", cpu_span, kInfo,
-                                          percent_top, zero_percent, history_window);
+            const auto detail = std::wstring(L"CPU used (total): ") + percentage_text(sample.cpu_percent) +
+                                L"\nCPU used (dedicated): " + percentage_text(sample.process_cpu_percent);
+            draw_performance_monitor_card(dc, card, L"CPU", percentage_text(sample.cpu_percent), detail, cpu_span,
+                                          kInfo, percent_top, zero_percent);
         } else if (i == 1) {
             const auto value = percentage_text(sample.system_memory_percent);
             const auto detail = std::wstring(L"RAM used (total): ") +
@@ -3171,14 +3714,13 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                 widen(human_bytes(static_cast<double>(sample.system_memory_total_bytes))) +
                                 L"\nRAM used (dedicated): " +
                                 widen(human_bytes(static_cast<double>(sample.private_bytes)));
-            draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent,
-                                          history_window);
+            draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent);
         } else if (i == 2) {
             const double total_io = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
-            const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " +
+            const auto detail = std::wstring(L"Read: ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite: " +
                                 rate_text(sample.io_write_bytes_per_second);
             draw_dual_performance_monitor_card(dc, card, L"I/O", rate_text(total_io), detail, read_span, write_span,
-                                               kInfo, kWarn, io_top, zero_rate, history_window);
+                                               kInfo, kWarn, io_top, zero_gib_rate);
         } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
@@ -3188,10 +3730,11 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
             const auto detail =
                 has_vram ? std::wstring(L"VRAM used (total): ") + widen(human_bytes(static_cast<double>(used))) +
                                L" / " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
-                               L"\nVRAM used (dedicated): " + widen(human_bytes(static_cast<double>(used)))
+                               L"\nVRAM used (dedicated): " +
+                               widen(human_bytes(static_cast<double>(sample.process_dedicated_vram_bytes)))
                          : L"HIP VRAM unavailable\nGPU memory counter unavailable";
             draw_performance_monitor_card(dc, card, L"GPU", value, detail, vram_span, kAccent, percent_top,
-                                          zero_percent, history_window);
+                                          zero_percent);
         }
     }
 }
@@ -3228,10 +3771,12 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_text(dc, RECT{logging.left + scale(16), logging.top + scale(12), logging.right, logging.top + scale(36)},
               L"Logging", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_checkbox(dc, layout.open_destination_after_operation, L"Open destination folder after operation",
-                  state.open_destination_after_operation);
-    draw_checkbox(dc, layout.confirm_before_deleting, L"Confirm before deleting files", state.confirm_before_deleting);
-    draw_checkbox(dc, layout.show_operation_summary, L"Show operation summary", state.show_operation_summary);
+    draw_toggle(dc, layout.open_destination_after_operation, L"Open destination folder after operation",
+                state.open_destination_after_operation, ToggleId::OpenDestinationAfterOperation);
+    draw_toggle(dc, layout.confirm_before_deleting, L"Confirm before deleting files", state.confirm_before_deleting,
+                ToggleId::ConfirmBeforeDeleting);
+    draw_toggle(dc, layout.show_operation_summary, L"Show operation summary", state.show_operation_summary,
+                ToggleId::ShowOperationSummary);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
     draw_toggle(dc, layout.gpu, L"Require AMD GPU acceleration", state.gpu_required, ToggleId::GpuRequired);
@@ -3240,31 +3785,6 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
-
-    const int log_preview_left = layout.logging.left + (layout.logging.right - layout.logging.left) / 2 + scale(18);
-    draw_text(dc,
-              RECT{log_preview_left, layout.logging.top + scale(48), layout.logging.right - scale(18),
-                   layout.logging.top + scale(72)},
-              L"Current session log", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    int log_y = layout.logging.top + scale(78);
-    int rendered_logs = 0;
-    for (auto it = state.logs.rbegin(); it != state.logs.rend() && rendered_logs < 3; ++it) {
-        if (!log_entry_visible(it->severity, state.log_level_index)) {
-            continue;
-        }
-        const RECT row{log_preview_left, log_y, layout.logging.right - scale(18), log_y + scale(22)};
-        const RECT category{row.left, row.top, row.left + scale(92), row.bottom};
-        const RECT message{category.right + scale(8), row.top, row.right, row.bottom};
-        draw_text(dc, category, log_severity_text(it->severity), log_severity_color(it->severity),
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, message, widen(it->message), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        log_y += scale(24);
-        ++rendered_logs;
-    }
-    if (rendered_logs == 0) {
-        draw_text(dc, RECT{log_preview_left, log_y, layout.logging.right - scale(18), log_y + scale(44)},
-                  L"No entries match the selected log level.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    }
 }
 
 // Purpose: Render the About page brand, version, and compatibility boundary summary.
@@ -3275,10 +3795,10 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"About", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    RECT card{area.left, area.top + scale(56), area.right, area.bottom - scale(60)};
+    RECT card{area.left, area.top + scale(54), area.right, area.bottom - scale(60)};
     fill_round_rect(dc, card, kPanel, scale(4));
     stroke_rect(dc, card, kBorder);
-    RECT logo{card.left + scale(42), card.top + scale(58), card.left + scale(110), card.top + scale(132)};
+    RECT logo{card.left + scale(42), card.top + scale(56), card.left + scale(112), card.top + scale(126)};
     draw_logo(dc, logo, kAccent);
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(50), card.right - scale(40), card.top + scale(90)},
@@ -3311,15 +3831,11 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
     const bool pressed = hovered && primary_mouse_down_;
     const double release_progress = button_release_progress(rect);
     const COLORREF base_fill = active ? kAccent : kPanel2;
-    const COLORREF hover_fill = active ? RGB(226, 47, 58) : kPanel3;
     const COLORREF pressed_fill = active ? RGB(144, 22, 31) : RGB(38, 54, 60);
-    const COLORREF fill = pressed ? pressed_fill : hovered ? hover_fill : base_fill;
-    const COLORREF border = active ? (pressed ? RGB(111, 18, 26) : kAccent2) : (hovered ? kSubtle : kBorder);
+    const COLORREF fill = pressed ? pressed_fill : interactive_fill(base_fill, rect, true, active);
+    const COLORREF border = active ? (pressed ? RGB(111, 18, 26) : kAccent2) : kBorder;
     fill_round_rect(dc, rect, fill, scale(4));
     stroke_rect(dc, rect, border);
-    if (hovered && !pressed) {
-        stroke_rect(dc, inset_rect(rect, scale(1), scale(1)), active ? RGB(237, 80, 90) : RGB(75, 95, 103));
-    }
     if (release_progress < 1.0) {
         const double eased = ease_out(release_progress);
         const int inset = static_cast<int>(std::round(static_cast<double>(scale(7)) * eased));
@@ -3338,7 +3854,7 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
 // Inputs: `dc` is the target, `rect` is the fixed bar slot, `state` is copied UI state, and `operation` selects a tab.
 // Outputs: Renders no pixels unless the active progress snapshot matches the requested operation.
 void MainWindow::draw_operation_progress_bar(HDC dc, const RECT& rect, const UiState& state, OperationKind operation) {
-    if (state.progress.operation != operation || !progress_visible(state)) {
+    if (state.progress.operation != operation || !progress_bar_active(state)) {
         return;
     }
     const double ratio = std::clamp(progress_ratio(state.progress), 0.02, 1.0);
@@ -3354,6 +3870,7 @@ void MainWindow::draw_operation_progress_bar(HDC dc, const RECT& rect, const UiS
 // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
 // styling. Outputs: Renders the toggle and label into `dc`.
 void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool enabled, ToggleId id) {
+    draw_interactive_hover_surface(dc, rect, true);
     draw_text(dc, RECT{rect.left + scale(54), rect.top, rect.right, rect.bottom}, text, kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     const int cy = (rect.top + rect.bottom) / 2;
@@ -3376,10 +3893,11 @@ void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool
 // Inputs: `dc`, `rect`, `text`, `checked`, and `interactive` describe the visual state.
 // Outputs: Renders a checkbox and label into `dc`.
 void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool checked, bool interactive) {
+    draw_interactive_hover_surface(dc, rect, interactive);
     const int box_size = scale(16);
     const int cy = rect.top + ((rect.bottom - rect.top) / 2);
     RECT box{rect.left, cy - (box_size / 2), rect.left + box_size, cy - (box_size / 2) + box_size};
-    const COLORREF fill = checked ? kAccent : (interactive ? kPanel2 : kPanel);
+    const COLORREF fill = checked ? kAccent : (interactive ? interactive_fill(kPanel2, rect, true) : kPanel);
     const COLORREF stroke = checked ? kAccent2 : (interactive ? kBorder : RGB(42, 52, 56));
     const COLORREF text_color = interactive ? kText : kMuted;
     fill_rect(dc, box, fill);
@@ -3396,17 +3914,21 @@ void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bo
 
 // Purpose: Draw a form field or select-style value box.
 // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is display text, `select` adds an
-// affordance, and `enabled` controls disabled styling. Outputs: Renders label and bordered field with ellipsized value.
+// affordance, `enabled` controls disabled styling, and `clickable` enables hover without a menu arrow. Outputs: Renders
+// label and bordered field with ellipsized value.
 void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select,
-                            bool enabled) {
+                            bool enabled, bool clickable, COLORREF value_color_override) {
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{rect.left, rect.top, rect.right, rect.top + scale(18)}, label, enabled ? kMuted : kSubtle,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
     RECT box{rect.left, rect.top + scale(20), rect.right, rect.bottom};
-    fill_round_rect(dc, box, enabled ? kPanel2 : RGB(20, 28, 31), scale(3));
+    const COLORREF base = enabled ? kPanel2 : RGB(20, 28, 31);
+    fill_round_rect(dc, box, interactive_fill(base, box, enabled && (select || clickable)), scale(3));
     stroke_rect(dc, box, enabled ? kBorder : RGB(39, 50, 55));
-    draw_text(dc, RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom}, value,
-              enabled ? kText : kSubtle, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    const COLORREF value_color =
+        value_color_override == CLR_INVALID ? (enabled ? kText : kSubtle) : value_color_override;
+    draw_text(dc, field_value_cell(rect, select), value, value_color,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     if (select && enabled) {
         const int arrow_cx = box.right - scale(15);
         const int arrow_cy = (box.top + box.bottom) / 2;
@@ -3445,12 +3967,19 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
 
     const int row_height = scale(options.size() > 10U ? 28 : 32);
     const int selected = dropdown_selected_index(state, state.active_dropdown);
+    const int keyboard_selected =
+        dropdown_keyboard_index_ >= 0 && dropdown_keyboard_index_ < static_cast<int>(options.size())
+            ? dropdown_keyboard_index_
+            : selected;
     SelectObject(dc, tiny_font_);
     for (int index = 0; index < static_cast<int>(options.size()); ++index) {
         const RECT row{menu.left + scale(1), menu.top + scale(1) + (index * row_height), menu.right - scale(1),
                        menu.top + scale(1) + ((index + 1) * row_height)};
         const bool is_selected = index == selected;
-        fill_rect(dc, row, is_selected ? RGB(126, 24, 31) : ((index % 2 == 0) ? kPanel2 : kPanel));
+        const bool is_keyboard_selected = index == keyboard_selected;
+        const COLORREF base = is_selected ? RGB(126, 24, 31) : ((index % 2 == 0) ? kPanel2 : kPanel);
+        const COLORREF keyed = is_keyboard_selected && !is_selected ? RGB(46, 63, 70) : base;
+        fill_rect(dc, row, interactive_fill(keyed, row, true, is_selected));
         if (index > 0) {
             draw_line(dc, menu.left + scale(8), row.top, menu.right - scale(8), row.top, kBorder);
         }
@@ -3548,6 +4077,278 @@ RECT MainWindow::content_rect() const {
     const int rail_width = scale(kRailWidth);
     const int status_bar = scale(kStatusBar);
     return RECT{rail_width, top_bar, client.right, client.bottom - status_bar};
+}
+
+// Purpose: Return keyboard-focusable controls for the current page.
+// Inputs: `content` is the current content rectangle and `state` is a copied UI snapshot.
+// Outputs: Returns controls in Tab order using the same geometry as mouse hit testing.
+std::vector<FocusTarget> MainWindow::focus_targets_for(const RECT& content, const UiState& state) const {
+    std::vector<FocusTarget> targets;
+    targets.reserve(32);
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    const int item_height = scale(63);
+    const int nav_top = scale(kTopBar) + scale(10);
+    for (int index = 0; index < 8; ++index) {
+        append_focus_target(targets, FocusTargetKind::Navigation,
+                            RECT{client.left, nav_top + (index * item_height), client.left + scale(kRailWidth),
+                                 nav_top + ((index + 1) * item_height)},
+                            index);
+    }
+    switch (state.page) {
+    case Page::Queue:
+        add_queue_focus_targets(targets, content, state);
+        break;
+    case Page::Compress:
+        add_compress_focus_targets(targets, content, state);
+        break;
+    case Page::Extract:
+        add_extract_focus_targets(targets, content);
+        break;
+    case Page::Security: {
+        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+        append_focus_target(targets, FocusTargetKind::SecurityVerify, primary_action_rect(area));
+    } break;
+    case Page::History: {
+        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+        append_focus_target(targets, FocusTargetKind::HistoryOperation,
+                            RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)});
+        append_focus_target(
+            targets, FocusTargetKind::HistoryStatus,
+            RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)});
+        append_focus_target(targets, FocusTargetKind::HistoryClear, history_clear_button_rect(area));
+    } break;
+    case Page::Gpu:
+        append_focus_target(targets, FocusTargetKind::SystemUpdateSpeed,
+                            dropdown_anchor_rect(DropdownId::GpuUpdateSpeed, content));
+        break;
+    case Page::Settings:
+        add_settings_focus_targets(targets, content);
+        break;
+    case Page::About:
+        break;
+    }
+    return targets;
+}
+
+// Purpose: Append all Queue page keyboard-focus targets.
+// Inputs: `targets` receives controls, `content` is the content rectangle, and `state` is a copied UI snapshot.
+// Outputs: Adds Queue action buttons, header tick, and visible row targets.
+void MainWindow::add_queue_focus_targets(std::vector<FocusTarget>& targets, const RECT& content,
+                                         const UiState& state) const {
+    const auto layout = queue_layout(content);
+    append_focus_target(targets, FocusTargetKind::QueueAddFiles, layout.add_files);
+    append_focus_target(targets, FocusTargetKind::QueueAddFolder, layout.add_folder);
+    append_focus_target(targets, FocusTargetKind::QueueClear, layout.clear);
+    if (state.queued_paths.empty()) {
+        return;
+    }
+    const int header_bottom = layout.table.top + scale(36);
+    const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
+    append_focus_target(targets, FocusTargetKind::QueueHeaderCheckbox,
+                        queue_column_layout(layout.table, header_row).header_checkbox);
+    const int row_height = scale(34);
+    const int visible_rows = row_height <= 0 ? 0 : (layout.table.bottom - header_bottom) / row_height;
+    const int row_count = std::min(static_cast<int>(state.queued_paths.size()), std::max(0, visible_rows));
+    for (int index = 0; index < row_count; ++index) {
+        const int top = header_bottom + (index * row_height);
+        append_focus_target(targets, FocusTargetKind::QueueRow,
+                            RECT{layout.table.left, top, layout.table.right, top + row_height}, index);
+    }
+}
+
+// Purpose: Append all Compress page keyboard-focus targets.
+// Inputs: `targets` receives controls, `content` is the content rectangle, and `state` is a copied UI snapshot.
+// Outputs: Adds command, destination, format, tuning, and toggle targets that are currently enabled.
+void MainWindow::add_compress_focus_targets(std::vector<FocusTarget>& targets, const RECT& content,
+                                            const UiState& state) const {
+    const auto layout = compress_layout(content);
+    const auto format = compression_format_value(state.compression_format_index);
+    append_focus_target(targets, FocusTargetKind::CompressStart, layout.start);
+    append_focus_target(targets, FocusTargetKind::CompressDestination, layout.destination);
+    append_focus_target(targets, FocusTargetKind::CompressFormat, layout.format);
+    if (compression_format_uses_level(format)) {
+        append_focus_target(targets, FocusTargetKind::CompressLevel, layout.compression_level);
+    }
+    if (compression_format_uses_suzip_tuning(format)) {
+        append_focus_target(targets, FocusTargetKind::CompressMethod, layout.method);
+        append_focus_target(targets, FocusTargetKind::CompressBlockSize, layout.block_size);
+    }
+    append_focus_target(targets, FocusTargetKind::CompressSolidArchive, layout.solid_archive);
+    append_focus_target(targets, FocusTargetKind::CompressStoreTimestamps, layout.store_timestamps);
+    append_focus_target(targets, FocusTargetKind::CompressDeleteAfterCompression, layout.delete_after_compression);
+    append_focus_target(targets, FocusTargetKind::CompressVerifyAfterWrite, layout.verify);
+    append_focus_target(targets, FocusTargetKind::CompressIntegrityHash, layout.sha);
+    append_focus_target(targets, FocusTargetKind::CompressDefenderScan, layout.defender);
+}
+
+// Purpose: Append all Extract page keyboard-focus targets.
+// Inputs: `targets` receives controls and `content` is the content rectangle.
+// Outputs: Adds command, destination, overwrite, and integrity/security toggles.
+void MainWindow::add_extract_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const {
+    const auto layout = extract_layout(content);
+    append_focus_target(targets, FocusTargetKind::ExtractStart, layout.start);
+    append_focus_target(targets, FocusTargetKind::ExtractDestination, layout.destination);
+    append_focus_target(targets, FocusTargetKind::ExtractOverwrite, layout.overwrite_policy);
+    append_focus_target(targets, FocusTargetKind::ExtractVerifyMetadata, layout.verify_metadata);
+    append_focus_target(targets, FocusTargetKind::ExtractOpenDestination, layout.open_destination_after_extract);
+    append_focus_target(targets, FocusTargetKind::ExtractIntegrityHash, layout.sha);
+    append_focus_target(targets, FocusTargetKind::ExtractDefenderScan, layout.defender);
+}
+
+// Purpose: Append all Settings page keyboard-focus targets.
+// Inputs: `targets` receives controls and `content` is the content rectangle.
+// Outputs: Adds Settings buttons, toggles, and dropdowns in tab order.
+void MainWindow::add_settings_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const {
+    const auto layout = settings_layout(content);
+    append_focus_target(targets, FocusTargetKind::SettingsRestoreDefaults, layout.restore_defaults);
+    append_focus_target(targets, FocusTargetKind::SettingsApply, layout.apply);
+    append_focus_target(targets, FocusTargetKind::SettingsOpenDestination, layout.open_destination_after_operation);
+    append_focus_target(targets, FocusTargetKind::SettingsConfirmDelete, layout.confirm_before_deleting);
+    append_focus_target(targets, FocusTargetKind::SettingsShowSummary, layout.show_operation_summary);
+    append_focus_target(targets, FocusTargetKind::SettingsIntegrityHash, layout.sha);
+    append_focus_target(targets, FocusTargetKind::SettingsDefenderScan, layout.defender);
+    append_focus_target(targets, FocusTargetKind::SettingsGpuRequired, layout.gpu);
+    append_focus_target(targets, FocusTargetKind::SettingsVerifyAfterWrite, layout.verify);
+    append_focus_target(targets, FocusTargetKind::SettingsMemoryPolicy, layout.memory_policy);
+    append_focus_target(targets, FocusTargetKind::SettingsLogLevel, layout.log_level);
+    append_focus_target(targets, FocusTargetKind::SettingsLogRetention, layout.log_retention);
+}
+
+// Purpose: Normalize the current keyboard focus to a valid target index.
+// Inputs: `targets` is the current page's focus target list.
+// Outputs: Updates focus index and returns false if no target exists.
+bool MainWindow::normalize_focus_index(const std::vector<FocusTarget>& targets) {
+    if (targets.empty()) {
+        keyboard_focus_index_ = 0;
+        return false;
+    }
+    keyboard_focus_index_ =
+        (keyboard_focus_index_ % static_cast<int>(targets.size()) + static_cast<int>(targets.size())) %
+        static_cast<int>(targets.size());
+    return true;
+}
+
+// Purpose: Move keyboard focus by a signed delta through the current page's focus list.
+// Inputs: `delta` is normally +1 or -1.
+// Outputs: Mutates focus index and queues a repaint.
+bool MainWindow::move_keyboard_focus(int delta) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    const auto targets = focus_targets_for(content_rect(), state);
+    if (!normalize_focus_index(targets)) {
+        return false;
+    }
+    keyboard_focus_index_ += delta;
+    normalize_focus_index(targets);
+    request_repaint();
+    return true;
+}
+
+// Purpose: Activate a focused control with Enter or Space.
+// Inputs: `target` is the current focus target and `key` is the activating virtual key.
+// Outputs: Executes the same command/toggle/dropdown path as mouse activation.
+bool MainWindow::activate_focus_target(const FocusTarget& target, WPARAM key) {
+    if (target.kind == FocusTargetKind::Navigation) {
+        set_page(static_cast<Page>(std::clamp(target.index, 0, 7)));
+        return true;
+    }
+    if (target.kind == FocusTargetKind::QueueRow && key == VK_SPACE) {
+        return toggle_queue_item(static_cast<std::size_t>(std::max(0, target.index)));
+    }
+    const int x = (target.rect.left + target.rect.right) / 2;
+    const int y = (target.rect.top + target.rect.bottom) / 2;
+    return handle_content_click(x, y);
+}
+
+// Purpose: Move within open dropdown options or Queue rows using arrow keys.
+// Inputs: `key` is one of the supported arrow/home/end virtual keys.
+// Outputs: Updates selection or focus and returns true when consumed.
+bool MainWindow::handle_navigation_key(WPARAM key) {
+    DropdownId active = DropdownId::None;
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        active = state_.active_dropdown;
+        state = state_;
+    }
+    if (active != DropdownId::None) {
+        const auto options = dropdown_options(active);
+        if (options.empty()) {
+            return true;
+        }
+        int index = dropdown_keyboard_index_ >= 0 ? dropdown_keyboard_index_ : dropdown_selected_index(state, active);
+        if (key == VK_HOME) {
+            index = 0;
+        } else if (key == VK_END) {
+            index = static_cast<int>(options.size()) - 1;
+        } else if (key == VK_UP || key == VK_LEFT) {
+            --index;
+        } else if (key == VK_DOWN || key == VK_RIGHT) {
+            ++index;
+        }
+        dropdown_keyboard_index_ = (index % static_cast<int>(options.size()) + static_cast<int>(options.size())) %
+                                   static_cast<int>(options.size());
+        request_repaint();
+        return true;
+    }
+    if (key == VK_HOME || key == VK_END) {
+        const auto targets = focus_targets_for(content_rect(), state);
+        if (!normalize_focus_index(targets)) {
+            return false;
+        }
+        keyboard_focus_index_ = key == VK_HOME ? 0 : static_cast<int>(targets.size()) - 1;
+        request_repaint();
+        return true;
+    }
+    if (key == VK_LEFT || key == VK_UP) {
+        return move_keyboard_focus(-1);
+    }
+    if (key == VK_RIGHT || key == VK_DOWN) {
+        return move_keyboard_focus(1);
+    }
+    return false;
+}
+
+// Purpose: Handle keyboard traversal and activation with native Windows conventions.
+// Inputs: `wparam` is a virtual key and `lparam` is the raw key message payload.
+// Outputs: Moves focus, activates controls, updates dropdowns, or returns default processing.
+LRESULT MainWindow::handle_key_down(WPARAM wparam, LPARAM) {
+    if (wparam == VK_ESCAPE) {
+        close_active_dropdown();
+        return 0;
+    }
+    if (wparam == VK_TAB) {
+        return move_keyboard_focus((GetKeyState(VK_SHIFT) & 0x8000) != 0 ? -1 : 1) ? 0 : 0;
+    }
+    if (wparam == VK_UP || wparam == VK_DOWN || wparam == VK_LEFT || wparam == VK_RIGHT || wparam == VK_HOME ||
+        wparam == VK_END) {
+        return handle_navigation_key(wparam) ? 0 : 0;
+    }
+    if (wparam == VK_RETURN || wparam == VK_SPACE) {
+        DropdownId active = DropdownId::None;
+        UiState state;
+        {
+            std::lock_guard lock(mutex_);
+            active = state_.active_dropdown;
+            state = state_;
+        }
+        if (active != DropdownId::None) {
+            const int selected =
+                dropdown_keyboard_index_ >= 0 ? dropdown_keyboard_index_ : dropdown_selected_index(state, active);
+            select_dropdown_option(active, selected);
+            return 0;
+        }
+        const auto targets = focus_targets_for(content_rect(), state);
+        if (normalize_focus_index(targets)) {
+            (void)activate_focus_target(targets[static_cast<std::size_t>(keyboard_focus_index_)], wparam);
+        }
+        return 0;
+    }
+    return DefWindowProcW(hwnd_, WM_KEYDOWN, wparam, 0);
 }
 
 // Purpose: Handle clicks inside the content area.
@@ -3786,37 +4587,46 @@ bool MainWindow::handle_compress_click(const RECT& content, int x, int y) {
         return true;
     }
     if (contains_point(layout.compression_level, x, y)) {
-        std::lock_guard lock(mutex_);
-        if (compression_format_uses_level(compression_format_value(state_.compression_format_index))) {
-            state_.active_dropdown = DropdownId::CompressLevel;
-            request_repaint();
+        bool enabled = false;
+        {
+            std::lock_guard lock(mutex_);
+            enabled = compression_format_uses_level(compression_format_value(state_.compression_format_index));
+        }
+        if (enabled) {
+            open_dropdown(DropdownId::CompressLevel);
         }
         return true;
     }
     if (contains_point(layout.method, x, y)) {
-        std::lock_guard lock(mutex_);
-        if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
-            state_.active_dropdown = DropdownId::CompressMethod;
-            request_repaint();
+        bool enabled = false;
+        {
+            std::lock_guard lock(mutex_);
+            enabled = compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index));
+        }
+        if (enabled) {
+            open_dropdown(DropdownId::CompressMethod);
         }
         return true;
     }
     if (contains_point(layout.block_size, x, y)) {
-        std::lock_guard lock(mutex_);
-        if (compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index))) {
-            state_.active_dropdown = DropdownId::CompressBlockSize;
-            request_repaint();
+        bool enabled = false;
+        {
+            std::lock_guard lock(mutex_);
+            enabled = compression_format_uses_suzip_tuning(compression_format_value(state_.compression_format_index));
+        }
+        if (enabled) {
+            open_dropdown(DropdownId::CompressBlockSize);
         }
         return true;
     }
     if (contains_point(layout.solid_archive, x, y)) {
-        return checkbox_bool_setting(&UiState::solid_archive, "Solid archive setting changed");
+        return toggle_bool_setting(&UiState::solid_archive, ToggleId::SolidArchive);
     }
     if (contains_point(layout.store_timestamps, x, y)) {
-        return checkbox_bool_setting(&UiState::store_timestamps, "Timestamp setting changed");
+        return toggle_bool_setting(&UiState::store_timestamps, ToggleId::StoreTimestamps);
     }
     if (contains_point(layout.delete_after_compression, x, y)) {
-        return checkbox_bool_setting(&UiState::delete_after_compression, "Delete-after-compression setting changed");
+        return toggle_bool_setting(&UiState::delete_after_compression, ToggleId::DeleteAfterCompression);
     }
     if (contains_point(layout.verify, x, y)) {
         return toggle_bool_setting(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
@@ -3851,12 +4661,10 @@ bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
         return true;
     }
     if (contains_point(layout.verify_metadata, x, y)) {
-        return checkbox_bool_setting(&UiState::verify_metadata_before_extract,
-                                     "Extraction metadata verification setting changed");
+        return toggle_bool_setting(&UiState::verify_metadata_before_extract, ToggleId::VerifyMetadata);
     }
     if (contains_point(layout.open_destination_after_extract, x, y)) {
-        return checkbox_bool_setting(&UiState::open_destination_after_extract,
-                                     "Open destination after extraction setting changed");
+        return toggle_bool_setting(&UiState::open_destination_after_extract, ToggleId::OpenDestinationAfterExtract);
     }
     if (contains_point(layout.sha, x, y)) {
         return toggle_bool_setting(&UiState::integrity_hash_opt_in, ToggleId::IntegrityHash);
@@ -3874,7 +4682,7 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
     RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
     const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
     const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
-    const RECT clear{area.right - scale(142), area.top, area.right, area.top + scale(34)};
+    const RECT clear = history_clear_button_rect(area);
     if (handle_active_dropdown_click(x, y)) {
         return true;
     }
@@ -4026,13 +4834,13 @@ bool MainWindow::handle_settings_click(const RECT& content, int x, int y) {
         return toggle_bool_setting(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
     }
     if (contains_point(layout.open_destination_after_operation, x, y)) {
-        return checkbox_bool_setting(&UiState::open_destination_after_operation, "Open destination setting changed");
+        return toggle_bool_setting(&UiState::open_destination_after_operation, ToggleId::OpenDestinationAfterOperation);
     }
     if (contains_point(layout.confirm_before_deleting, x, y)) {
-        return checkbox_bool_setting(&UiState::confirm_before_deleting, "Delete confirmation setting changed");
+        return toggle_bool_setting(&UiState::confirm_before_deleting, ToggleId::ConfirmBeforeDeleting);
     }
     if (contains_point(layout.show_operation_summary, x, y)) {
-        return checkbox_bool_setting(&UiState::show_operation_summary, "Operation summary setting changed");
+        return toggle_bool_setting(&UiState::show_operation_summary, ToggleId::ShowOperationSummary);
     }
     if (contains_point(layout.memory_policy, x, y)) {
         open_dropdown(DropdownId::SettingsMemoryPolicy);
@@ -4082,21 +4890,29 @@ bool MainWindow::handle_active_dropdown_click(int x, int y) {
     return true;
 }
 
+// Purpose: Open one dropdown menu and seed keyboard selection to the current value.
+// Inputs: `id` identifies the dropdown to open.
+// Outputs: Updates UI state and queues a repaint.
 void MainWindow::open_dropdown(DropdownId id) {
     {
         std::lock_guard lock(mutex_);
         state_.active_dropdown = id;
         state_.status = "Dropdown opened";
+        dropdown_keyboard_index_ = dropdown_selected_index(state_, id);
     }
     request_repaint();
 }
 
+// Purpose: Close any expanded dropdown menu.
+// Inputs: None.
+// Outputs: Clears dropdown state and queues a repaint when needed.
 void MainWindow::close_active_dropdown() {
     bool changed = false;
     {
         std::lock_guard lock(mutex_);
         changed = state_.active_dropdown != DropdownId::None;
         state_.active_dropdown = DropdownId::None;
+        dropdown_keyboard_index_ = -1;
     }
     if (changed) {
         request_repaint();
@@ -4129,7 +4945,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.status = "Compression method changed";
         break;
     case DropdownId::CompressBlockSize:
-        state.compression_block_size_index = std::clamp(option_index, 0, 3);
+        state.compression_block_size_index = std::clamp(option_index, 0, kCompressionBlockSizeMaxIndex);
         state.status = "Block size changed";
         break;
     case DropdownId::ExtractOverwrite:
@@ -4148,7 +4964,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.performance_update_seconds = kPerformanceUpdateSecondsOptions[static_cast<std::size_t>(
             std::clamp(option_index, 0, static_cast<int>(kPerformanceUpdateSecondsOptions.size()) - 1))];
         feedback.performance_seconds = state.performance_update_seconds;
-        state.status = "Performance update speed changed";
+        state.status = "Refresh interval changed";
         break;
     default:
         break;
@@ -4185,16 +5001,12 @@ void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option
         break;
     case DropdownId::SettingsLogRetention:
         state.log_retention_index = std::clamp(option_index, 0, 2);
+        prune_log_entries(state.logs, std::chrono::system_clock::now(), state.log_retention_index, kMaxLogEntries);
         state.status = "Log retention changed";
         feedback.add_log = true;
         feedback.log_severity = LogSeverity::Debug;
-        if (state.log_retention_index == 1) {
-            feedback.log_message = "Log retention changed to 7 days";
-        } else if (state.log_retention_index == 2) {
-            feedback.log_message = "Log retention changed to 30 days";
-        } else {
-            feedback.log_message = "Log retention changed to Current session";
-        }
+        feedback.log_message = "Log retention changed to ";
+        feedback.log_message += log_retention_log_text(state.log_retention_index);
         break;
     default:
         break;
@@ -4215,6 +5027,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
         apply_primary_dropdown_selection(state_, id, option_index, feedback);
         apply_settings_dropdown_selection(state_, id, option_index, feedback);
         state_.active_dropdown = DropdownId::None;
+        dropdown_keyboard_index_ = -1;
         performance_seconds = feedback.performance_seconds;
         add_log = feedback.add_log;
         log_severity = feedback.log_severity;
@@ -4243,6 +5056,12 @@ void MainWindow::set_page(Page page) {
         }
         state_.page = page;
         state_.active_dropdown = DropdownId::None;
+        dropdown_keyboard_index_ = -1;
+        keyboard_focus_index_ = 0;
+        text_tooltip_cell_active_ = false;
+        text_tooltip_visible_ = false;
+        text_tooltip_text_.clear();
+        KillTimer(hwnd_, kTextTooltipTimer);
         revert_unapplied_settings = previous == Page::Settings && page != Page::Settings;
     }
     if (revert_unapplied_settings) {
@@ -4662,17 +5481,16 @@ void MainWindow::clear_expired_progress() {
     }
 }
 
-// Purpose: Append one filtered current-session log entry.
+// Purpose: Append one bounded in-memory log entry.
 // Inputs: `severity` is the visible category and `message` is safe session text.
-// Outputs: Adds a bounded in-memory row and queues repaint.
+// Outputs: Adds a timestamped row, prunes expired/over-capacity rows, and queues repaint.
 void MainWindow::append_log_entry(LogSeverity severity, std::string message) {
     {
         std::lock_guard lock(mutex_);
-        state_.logs.push_back(LogEntry{.severity = severity, .message = std::move(message)});
-        if (state_.logs.size() > kMaxLogEntries) {
-            state_.logs.erase(state_.logs.begin(),
-                              state_.logs.begin() + static_cast<std::ptrdiff_t>(state_.logs.size() - kMaxLogEntries));
-        }
+        const auto now = std::chrono::system_clock::now();
+        prune_log_entries(state_.logs, now, state_.log_retention_index, kMaxLogEntries);
+        state_.logs.push_back(LogEntry{.severity = severity, .message = std::move(message), .timestamp = now});
+        prune_log_entries(state_.logs, now, state_.log_retention_index, kMaxLogEntries);
     }
     request_repaint();
 }
@@ -4799,9 +5617,9 @@ double MainWindow::sample_gpu_utilization() {
     return std::clamp(value, 0.0, 100.0);
 }
 
-// Purpose: Sample process CPU use since the previous monitor tick.
+// Purpose: Sample SuperZip process CPU use since the previous monitor tick.
 // Inputs: `elapsed_seconds` is the interval from the previous sample.
-// Outputs: Returns logical-processor-normalized CPU percentage and updates previous FILETIME state.
+// Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
 double MainWindow::sample_process_cpu_percent(double elapsed_seconds) {
     double cpu_percent = 0.0;
     FILETIME creation_time{};
@@ -4826,6 +5644,95 @@ double MainWindow::sample_process_cpu_percent(double elapsed_seconds) {
     last_process_kernel_time_ = kernel_time;
     last_process_user_time_ = user_time;
     return cpu_percent;
+}
+
+// Purpose: Sample total system CPU use since the previous monitor tick.
+// Inputs: `elapsed_seconds` is the interval from the previous sample.
+// Outputs: Returns logical-processor-normalized CPU percentage and updates previous system FILETIME state.
+double MainWindow::sample_system_cpu_percent(double elapsed_seconds) {
+    FILETIME idle_time{};
+    FILETIME kernel_time{};
+    FILETIME user_time{};
+    if (!GetSystemTimes(&idle_time, &kernel_time, &user_time)) {
+        return 0.0;
+    }
+    double cpu_percent = 0.0;
+    if (elapsed_seconds > 0.0) {
+        const std::uint64_t previous_idle = filetime_ticks(last_system_idle_time_);
+        const std::uint64_t previous_kernel = filetime_ticks(last_system_kernel_time_);
+        const std::uint64_t previous_user = filetime_ticks(last_system_user_time_);
+        const std::uint64_t current_idle = filetime_ticks(idle_time);
+        const std::uint64_t current_kernel = filetime_ticks(kernel_time);
+        const std::uint64_t current_user = filetime_ticks(user_time);
+        const std::uint64_t previous_total = previous_kernel + previous_user;
+        const std::uint64_t current_total = current_kernel + current_user;
+        if (current_total >= previous_total && current_idle >= previous_idle) {
+            const auto total_delta = current_total - previous_total;
+            const auto idle_delta = current_idle - previous_idle;
+            if (total_delta > 0U) {
+                const auto busy_delta = total_delta > idle_delta ? total_delta - idle_delta : 0U;
+                cpu_percent = (static_cast<double>(busy_delta) / static_cast<double>(total_delta)) * 100.0;
+            }
+        }
+    }
+    last_system_idle_time_ = idle_time;
+    last_system_kernel_time_ = kernel_time;
+    last_system_user_time_ = user_time;
+    return std::clamp(cpu_percent, 0.0, 100.0);
+}
+
+// Purpose: Sample Windows GPU dedicated memory assigned to the SuperZip process.
+// Inputs: None; uses current-process PDH GPU Process Memory counters.
+// Outputs: Returns dedicated GPU memory bytes or zero when Windows does not expose the counter.
+std::uint64_t MainWindow::sample_process_dedicated_vram_bytes() const {
+    PDH_HQUERY query = nullptr;
+    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS || query == nullptr) {
+        return 0U;
+    }
+    struct QueryGuard {
+        PDH_HQUERY query = nullptr;
+        ~QueryGuard() {
+            if (query != nullptr) {
+                PdhCloseQuery(query);
+            }
+        }
+    } guard{query};
+
+    PDH_HCOUNTER counter = nullptr;
+    if (PdhAddEnglishCounterW(query, L"\\GPU Process Memory(*)\\Dedicated Usage", 0, &counter) != ERROR_SUCCESS ||
+        counter == nullptr) {
+        return 0U;
+    }
+    if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
+        return 0U;
+    }
+
+    DWORD buffer_size = 0;
+    DWORD item_count = 0;
+    PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, nullptr);
+    if (status != PDH_MORE_DATA || buffer_size == 0U || item_count == 0U) {
+        return 0U;
+    }
+    std::vector<std::byte> buffer(buffer_size);
+    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+    status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, items);
+    if (status != ERROR_SUCCESS) {
+        return 0U;
+    }
+
+    const std::wstring pid_marker = L"pid_" + std::to_wstring(GetCurrentProcessId()) + L"_";
+    std::uint64_t total = 0U;
+    for (DWORD index = 0; index < item_count; ++index) {
+        const auto& item = items[index];
+        if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr ||
+            std::wstring_view(item.szName).find(pid_marker) == std::wstring_view::npos) {
+            continue;
+        }
+        if (item.FmtValue.largeValue > 0) {
+            total += static_cast<std::uint64_t>(item.FmtValue.largeValue);
+        }
+    }
+    return total;
 }
 
 // Purpose: Sample process read/write transfer rates since the previous monitor tick.
@@ -4897,7 +5804,8 @@ void MainWindow::update_performance_sample() {
         elapsed_seconds = std::chrono::duration<double>(now - last_performance_sample_time_).count();
     }
 
-    const double cpu_percent = sample_process_cpu_percent(elapsed_seconds);
+    const double cpu_percent = sample_system_cpu_percent(elapsed_seconds);
+    const double process_cpu_percent = sample_process_cpu_percent(elapsed_seconds);
     const auto io_rates = sample_process_io_rates(elapsed_seconds);
     const auto private_bytes = sample_private_memory_bytes();
     const auto system_memory = sample_system_memory_usage();
@@ -4908,6 +5816,7 @@ void MainWindow::update_performance_sample() {
     sample.live = true;
     sample.gpu_utilization_available = gpu_percent >= 0.0;
     sample.cpu_percent = cpu_percent;
+    sample.process_cpu_percent = process_cpu_percent;
     sample.gpu_utilization_percent = sample.gpu_utilization_available ? gpu_percent : 0.0;
     sample.system_memory_percent = system_memory.percent;
     sample.io_read_bytes_per_second = std::max(0.0, io_rates.read_bytes_per_second);
@@ -4917,6 +5826,7 @@ void MainWindow::update_performance_sample() {
     sample.system_memory_used_bytes = system_memory.used_bytes;
     sample.vram_total_bytes = cached_vram_total_bytes_;
     sample.vram_free_bytes = cached_vram_free_bytes_;
+    sample.process_dedicated_vram_bytes = sample_process_dedicated_vram_bytes();
     publish_performance_sample(sample, now);
 }
 

@@ -292,20 +292,29 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_UI_REF\s+"WixUI_FeatureTree"\)') {
         throw "CMakeLists.txt must use the WiX feature tree so Create Desktop shortcut is user-selectable."
     }
+    if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_ICON\s+"\$\{CMAKE_CURRENT_SOURCE_DIR\}/resources/app/superzip\.ico"\)') {
+        throw "CMakeLists.txt must set CPACK_WIX_PRODUCT_ICON to the canonical SuperZip icon for Add/Remove Programs."
+    }
     if ($cmakeLists -notmatch 'superzip_desktop_shortcut\.wxs' -or $cmakeLists -notmatch 'superzip_wix_patch\.xml') {
-        throw "CMakeLists.txt must include the optional desktop shortcut WiX source and patch files."
+        throw "CMakeLists.txt must include the optional shortcut WiX source and patch files."
     }
 
     $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_desktop_shortcut.wxs") -Raw
     if ($desktopShortcut -notmatch 'CM_SHORTCUT_DESKTOP_OPTIONAL' -or $desktopShortcut -notmatch 'DesktopFolder') {
         throw "Optional desktop shortcut WiX source must define the MSI-owned DesktopFolder shortcut component."
     }
+    if ($desktopShortcut -notmatch 'CM_SHORTCUT_START_MENU_OPTIONAL' -or $desktopShortcut -notmatch 'ProgramMenuFolder' -or $desktopShortcut -notmatch 'CM_REMOVE_SUPERZIP_PROGRAM_MENU_FOLDER') {
+        throw "Optional Start Menu WiX source must define the MSI-owned ProgramMenuFolder shortcut component and uninstall cleanup."
+    }
     if ($desktopShortcut -notmatch 'Software\\SuperZip Technologies\\SuperZip') {
-        throw "Optional desktop shortcut registry marker must use the SuperZip Technologies publisher key."
+        throw "Optional shortcut registry markers must use the SuperZip Technologies publisher key."
     }
     $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
     if ($desktopPatch -notmatch 'Create Desktop shortcut' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"') {
         throw "WiX patch must expose the Create Desktop shortcut feature and reference its component."
+    }
+    if ($desktopPatch -notmatch 'Create Start Menu entry' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_START_MENU_OPTIONAL"') {
+        throw "WiX patch must expose the Create Start Menu entry feature and reference its component."
     }
 
     $buildScript = Get-Content -LiteralPath (Join-Path $repo "tools\build.ps1") -Raw

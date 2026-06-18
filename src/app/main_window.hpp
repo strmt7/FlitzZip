@@ -19,6 +19,8 @@
 
 namespace superzip::app {
 
+class QueueDropTarget;
+
 enum class Page {
     Queue,
     Compress,
@@ -36,6 +38,14 @@ enum class ToggleId {
     IntegrityHash,
     DefenderScan,
     GpuRequired,
+    SolidArchive,
+    StoreTimestamps,
+    DeleteAfterCompression,
+    VerifyMetadata,
+    OpenDestinationAfterExtract,
+    OpenDestinationAfterOperation,
+    ConfirmBeforeDeleting,
+    ShowOperationSummary,
 };
 
 enum class DropdownId {
@@ -59,10 +69,62 @@ enum class LogSeverity {
     Debug,
 };
 
+enum class FocusTargetKind {
+    Navigation,
+    QueueAddFiles,
+    QueueAddFolder,
+    QueueClear,
+    QueueHeaderCheckbox,
+    QueueRow,
+    CompressStart,
+    CompressDestination,
+    CompressFormat,
+    CompressLevel,
+    CompressMethod,
+    CompressBlockSize,
+    CompressSolidArchive,
+    CompressStoreTimestamps,
+    CompressDeleteAfterCompression,
+    CompressVerifyAfterWrite,
+    CompressIntegrityHash,
+    CompressDefenderScan,
+    ExtractStart,
+    ExtractDestination,
+    ExtractOverwrite,
+    ExtractVerifyMetadata,
+    ExtractOpenDestination,
+    ExtractIntegrityHash,
+    ExtractDefenderScan,
+    SecurityVerify,
+    HistoryOperation,
+    HistoryStatus,
+    HistoryClear,
+    SystemUpdateSpeed,
+    SettingsOpenDestination,
+    SettingsConfirmDelete,
+    SettingsShowSummary,
+    SettingsIntegrityHash,
+    SettingsDefenderScan,
+    SettingsGpuRequired,
+    SettingsVerifyAfterWrite,
+    SettingsMemoryPolicy,
+    SettingsLogLevel,
+    SettingsLogRetention,
+    SettingsRestoreDefaults,
+    SettingsApply,
+};
+
+struct FocusTarget {
+    FocusTargetKind kind = FocusTargetKind::Navigation;
+    RECT rect{};
+    int index = 0;
+};
+
 struct PerformanceMonitorSample {
     bool live = false;
     bool gpu_utilization_available = false;
     double cpu_percent = 0.0;
+    double process_cpu_percent = 0.0;
     double gpu_utilization_percent = 0.0;
     double system_memory_percent = 0.0;
     double io_read_bytes_per_second = 0.0;
@@ -72,6 +134,7 @@ struct PerformanceMonitorSample {
     std::uint64_t system_memory_used_bytes = 0;
     std::uint64_t vram_total_bytes = 0;
     std::uint64_t vram_free_bytes = 0;
+    std::uint64_t process_dedicated_vram_bytes = 0;
 };
 
 struct HistoryEntry {
@@ -84,12 +147,13 @@ struct HistoryEntry {
 struct LogEntry {
     LogSeverity severity = LogSeverity::Information;
     std::string message;
+    std::chrono::system_clock::time_point timestamp = std::chrono::system_clock::now();
 };
 
 struct AppSettings {
     int compression_format_index = 0;
     int compression_level_index = 2;
-    int compression_block_size_index = 1;
+    int compression_block_size_index = 2;
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
@@ -127,7 +191,7 @@ struct UiState {
     int selected_queue_index = -1;
     int compression_format_index = 0;
     int compression_level_index = 2;
-    int compression_block_size_index = 1;
+    int compression_block_size_index = 2;
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
@@ -152,6 +216,8 @@ struct UiState {
 };
 
 class MainWindow {
+    friend class QueueDropTarget;
+
   public:
     // Purpose: Construct a main window controller with default UI state.
     // Inputs: None.
@@ -255,6 +321,11 @@ class MainWindow {
     // Outputs: Returns zero for handled messages or delegates to `DefWindowProcW`.
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);
 
+    // Purpose: Handle keyboard traversal and activation with native Windows conventions.
+    // Inputs: `wparam` is a virtual key and `lparam` is the raw key message payload.
+    // Outputs: Moves focus, activates controls, updates dropdowns, or returns default processing.
+    LRESULT handle_key_down(WPARAM wparam, LPARAM lparam);
+
     // Purpose: Track pointer hover state and arm native leave notifications.
     // Inputs: `lparam` contains client-coordinate mouse position from `WM_MOUSEMOVE`.
     // Outputs: Updates hover state and returns the handled Win32 result.
@@ -264,6 +335,47 @@ class MainWindow {
     // Inputs: None; uses current capture state.
     // Outputs: Updates mouse state and returns the handled Win32 result.
     LRESULT handle_mouse_leave();
+
+    // Purpose: Update delayed text-tooltip tracking from the current mouse position.
+    // Inputs: None; reads current page, eligible text cells, and mouse coordinates.
+    // Outputs: Arms, hides, or preserves the tooltip timer based on ellipsized hover state.
+    void update_text_tooltip_tracking();
+
+    // Purpose: Return the ellipsized text under the current mouse, if any.
+    // Inputs: None; uses current page layout, queue/form state, and selected fonts.
+    // Outputs: Returns true with cell/text set only for eligible truncated text targets.
+    bool text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text);
+
+    // Purpose: Return the ellipsized Queue text under the current mouse, if any.
+    // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
+    // Outputs: Returns true only for truncated Queue Name or Path cells.
+    bool queue_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
+
+    // Purpose: Return the ellipsized Compress/Extract field text under the current mouse, if any.
+    // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
+    // Outputs: Returns true only for truncated Archive/Destination fields explicitly allowed by the UI contract.
+    bool field_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
+
+    // Purpose: Check one form field value for delayed tooltip eligibility.
+    // Inputs: `field` is the full labeled field rectangle, `value` is the visible text, and `cell`/`text` receive data.
+    // Outputs: Returns true only when the mouse is over a truncated value cell.
+    bool tooltip_candidate_for_field(const RECT& field, const std::wstring& value, RECT& cell,
+                                     std::wstring& text) const;
+
+    // Purpose: Resolve the drawn value area inside a labeled field.
+    // Inputs: `field` is the full labeled field rectangle and `select` reserves space for a dropdown arrow when true.
+    // Outputs: Returns the value text rectangle used by both drawing and tooltip hit testing.
+    [[nodiscard]] RECT field_value_cell(const RECT& field, bool select) const;
+
+    // Purpose: Decide whether a text value overflows the visible cell.
+    // Inputs: `text` is rendered in `cell` with `font`.
+    // Outputs: Returns true when the text would be ellipsized.
+    [[nodiscard]] bool text_overflows_cell(std::wstring_view text, const RECT& cell, HFONT font) const;
+
+    // Purpose: Measure text with an existing GDI font.
+    // Inputs: `text` is UTF-16 content and `font` is one of the window-owned fonts.
+    // Outputs: Returns the text width in physical pixels, or zero when measurement is unavailable.
+    [[nodiscard]] int text_width(std::wstring_view text, HFONT font) const;
 
     // Purpose: Handle primary-button press using the same geometry as rendering.
     // Inputs: `lparam` contains client-coordinate click position from `WM_LBUTTONDOWN`.
@@ -284,6 +396,21 @@ class MainWindow {
     // Inputs: `wparam` contains the HDROP handle from `WM_DROPFILES`.
     // Outputs: Updates queue selection, releases the HDROP handle, and returns the handled Win32 result.
     LRESULT handle_drop_files(WPARAM wparam);
+
+    // Purpose: Append dropped paths to the Queue when the drop target is inside the Queue table.
+    // Inputs: `paths` are filesystem paths from shell drag/drop and `point` is the client drop coordinate.
+    // Outputs: Returns true and mutates queue state when the drop is accepted; otherwise reports rejection.
+    bool accept_dropped_paths(std::vector<std::filesystem::path> paths, POINT point);
+
+    // Purpose: Update live drag/drop highlighting for the Queue table.
+    // Inputs: `active` describes whether a drag is over the allowed table drop target.
+    // Outputs: Updates visual drag state and queues a repaint when changed.
+    void set_queue_drop_highlight(bool active);
+
+    // Purpose: Return whether a client point is inside the active Queue table drop target.
+    // Inputs: `point` is a client-coordinate point.
+    // Outputs: Returns true only on the Queue page and inside the Queue table.
+    [[nodiscard]] bool queue_drop_target_contains(POINT point);
 
     // Purpose: Allow shell file-drop messages through UIPI for elevated windows.
     // Inputs: None; applies only to the main HWND and only when the process is elevated.
@@ -335,6 +462,33 @@ class MainWindow {
     // Outputs: Writes the shell, navigation, active page, and status strip into `dc`.
     void layout_and_draw(HDC dc, const RECT& rect);
 
+    // Purpose: Return whether the mouse is currently over a live clickable target.
+    // Inputs: `rect` is the clickable target and `enabled` must be false for static or disabled UI.
+    // Outputs: Returns true only for enabled controls under the mouse pointer.
+    [[nodiscard]] bool interactive_hovered(const RECT& rect, bool enabled = true) const;
+
+    // Purpose: Compute the subtle clickable hover fill used by all interactive boxes.
+    // Inputs: `base` is the non-hover fill, `rect` is the clickable target, `enabled` gates interaction, and `accent`
+    // selects command-button treatment.
+    // Outputs: Returns a slightly lifted background color without changing borders or behavior.
+    [[nodiscard]] COLORREF interactive_fill(COLORREF base, const RECT& rect, bool enabled = true,
+                                            bool accent = false) const;
+
+    // Purpose: Draw the shared hover background for row-like controls.
+    // Inputs: `dc` is the target, `rect` is the clickable row, and `enabled` gates interaction.
+    // Outputs: Adds only a subtle background lift when the row is hovered.
+    void draw_interactive_hover_surface(HDC dc, const RECT& rect, bool enabled = true);
+
+    // Purpose: Draw the keyboard focus affordance for the current target.
+    // Inputs: `dc` is the target, `content` is the content area, and `state` is the copied UI state.
+    // Outputs: Renders a minimal non-hover focus indicator without mutating state.
+    void draw_keyboard_focus(HDC dc, const RECT& content, const UiState& state);
+
+    // Purpose: Draw the delayed Queue text tooltip when an ellipsized Name or Path cell is hovered.
+    // Inputs: `dc` is the target for the current frame.
+    // Outputs: Renders a compact tooltip above the Queue table without affecting layout.
+    void draw_text_tooltip(HDC dc);
+
     // Purpose: Draw the persistent product shell strip.
     // Inputs: `dc` is the target and `rect` is the full client rectangle.
     // Outputs: Renders the brand chrome; page-specific actions stay inside their pages.
@@ -364,6 +518,11 @@ class MainWindow {
     // Inputs: `area` is the DPI-scaled page content area.
     // Outputs: Returns a 110x36 design-pixel command rectangle aligned with Settings Apply.
     [[nodiscard]] RECT primary_action_rect(const RECT& area) const;
+
+    // Purpose: Return the History Clear History button rectangle with Restore Defaults-equivalent visual margins.
+    // Inputs: `area` is the DPI-scaled page content area.
+    // Outputs: Returns a right-aligned command rectangle sized from the active button font.
+    [[nodiscard]] RECT history_clear_button_rect(const RECT& area) const;
 
     // Purpose: Compute Compress page rectangles shared by rendering and hit testing.
     // Inputs: `rect` is the content area in physical pixels.
@@ -417,24 +576,21 @@ class MainWindow {
     void draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state);
 
     // Purpose: Draw one metric card inside the live performance monitor.
-    // Inputs: `dc` is the target; text/value fields are preformatted; graph labels describe scale and time window;
+    // Inputs: `dc` is the target; text/value fields are preformatted; graph labels describe the graph scale;
     // `history` contains normalized samples. Outputs: Renders a bordered Task Manager-style history graph without
     // overflowing text.
     void draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
                                        const std::wstring& detail, std::span<const double> history, COLORREF color,
-                                       const std::wstring& graph_top_label, const std::wstring& graph_bottom_label,
-                                       const std::wstring& graph_time_label);
+                                       const std::wstring& graph_top_label, const std::wstring& graph_bottom_label);
 
     // Purpose: Draw one dual-line metric card inside the live performance monitor.
-    // Inputs: `dc` is the target; graph labels describe scale and time window; `primary_history` and
-    // `secondary_history` are normalized samples. Outputs: Renders read/write or similar paired histories with a shared
-    // graph scale.
+    // Inputs: `dc` is the target; graph labels describe scale; `primary_history` and `secondary_history` are normalized
+    // samples. Outputs: Renders read/write or similar paired histories with a shared graph scale.
     void draw_dual_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
                                             const std::wstring& detail, std::span<const double> primary_history,
                                             std::span<const double> secondary_history, COLORREF primary,
                                             COLORREF secondary, const std::wstring& graph_top_label,
-                                            const std::wstring& graph_bottom_label,
-                                            const std::wstring& graph_time_label);
+                                            const std::wstring& graph_bottom_label);
 
     // Purpose: Draw a slim operation progress bar under an action button.
     // Inputs: `dc`, `rect`, `state`, and `operation` describe the matching active job.
@@ -467,10 +623,11 @@ class MainWindow {
     void draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool checked, bool interactive = true);
 
     // Purpose: Draw a form field or select-style value box.
-    // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is the current display value, and
-    // `select` adds an affordance; `enabled` controls disabled-field styling. Outputs: Renders an ellipsized field.
+    // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is the current display value,
+    // `select` adds a menu affordance, `enabled` controls disabled styling, `clickable` enables hover without a menu
+    // arrow, and `value_color_override` optionally supplies an exact value color. Outputs: Renders an ellipsized field.
     void draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select,
-                    bool enabled = true);
+                    bool enabled = true, bool clickable = false, COLORREF value_color_override = CLR_INVALID);
 
     // Purpose: Draw the currently expanded select/dropdown menu.
     // Inputs: `dc` is the target, `content` is the active content area, and `state` is copied UI state.
@@ -511,6 +668,51 @@ class MainWindow {
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
     // Outputs: Returns true when a setting was changed and a repaint was queued.
     bool handle_content_click(int x, int y);
+
+    // Purpose: Return keyboard-focusable controls for the current page.
+    // Inputs: `content` is the current content rectangle and `state` is a copied UI snapshot.
+    // Outputs: Returns controls in Tab order using the same geometry as mouse hit testing.
+    [[nodiscard]] std::vector<FocusTarget> focus_targets_for(const RECT& content, const UiState& state) const;
+
+    // Purpose: Append all Queue page keyboard-focus targets.
+    // Inputs: `targets` receives controls, `content` is the content rectangle, and `state` is a copied UI snapshot.
+    // Outputs: Adds Queue action buttons, header tick, and visible row targets.
+    void add_queue_focus_targets(std::vector<FocusTarget>& targets, const RECT& content, const UiState& state) const;
+
+    // Purpose: Append all Compress page keyboard-focus targets.
+    // Inputs: `targets` receives controls, `content` is the content rectangle, and `state` is a copied UI snapshot.
+    // Outputs: Adds command, destination, format, tuning, and toggle targets that are currently enabled.
+    void add_compress_focus_targets(std::vector<FocusTarget>& targets, const RECT& content, const UiState& state) const;
+
+    // Purpose: Append all Extract page keyboard-focus targets.
+    // Inputs: `targets` receives controls and `content` is the content rectangle.
+    // Outputs: Adds command, destination, overwrite, and integrity/security toggles.
+    void add_extract_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const;
+
+    // Purpose: Append all Settings page keyboard-focus targets.
+    // Inputs: `targets` receives controls and `content` is the content rectangle.
+    // Outputs: Adds Settings buttons, toggles, and dropdowns in tab order.
+    void add_settings_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const;
+
+    // Purpose: Normalize the current keyboard focus to a valid target index.
+    // Inputs: `targets` is the current page's focus target list.
+    // Outputs: Updates focus index and returns false if no target exists.
+    bool normalize_focus_index(const std::vector<FocusTarget>& targets);
+
+    // Purpose: Move keyboard focus by a signed delta through the current page's focus list.
+    // Inputs: `delta` is normally +1 or -1.
+    // Outputs: Mutates focus index and queues a repaint.
+    bool move_keyboard_focus(int delta);
+
+    // Purpose: Activate a focused control with Enter or Space.
+    // Inputs: `target` is the current focus target and `key` is the activating virtual key.
+    // Outputs: Executes the same command/toggle/dropdown path as mouse activation.
+    bool activate_focus_target(const FocusTarget& target, WPARAM key);
+
+    // Purpose: Move within open dropdown options or Queue rows using arrow keys.
+    // Inputs: `key` is one of the supported arrow/home/end virtual keys.
+    // Outputs: Updates selection or focus and returns true when consumed.
+    bool handle_navigation_key(WPARAM key);
 
     // Purpose: Toggle a boolean UI-state member with the standard animated toggle feedback.
     // Inputs: `member` selects the state field and `id` identifies the visual toggle to animate.
@@ -722,9 +924,14 @@ class MainWindow {
     // Outputs: Updates `state_.performance` with CPU, RAM, I/O, GPU utilization, and VRAM values.
     void update_performance_sample();
 
-    // Purpose: Sample process CPU use since the previous monitor tick.
+    // Purpose: Sample total system CPU use since the previous monitor tick.
     // Inputs: `elapsed_seconds` is the interval from the previous sample.
-    // Outputs: Returns logical-processor-normalized CPU percentage and updates previous FILETIME state.
+    // Outputs: Returns logical-processor-normalized CPU percentage and updates previous system FILETIME state.
+    [[nodiscard]] double sample_system_cpu_percent(double elapsed_seconds);
+
+    // Purpose: Sample SuperZip process CPU use since the previous monitor tick.
+    // Inputs: `elapsed_seconds` is the interval from the previous sample.
+    // Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
     [[nodiscard]] double sample_process_cpu_percent(double elapsed_seconds);
 
     // Purpose: Sample process read/write transfer rates since the previous monitor tick.
@@ -746,6 +953,11 @@ class MainWindow {
     // Inputs: None; uses initialized PDH wildcard counters.
     // Outputs: Returns a process GPU percentage or a negative value when unavailable.
     [[nodiscard]] double sample_gpu_utilization();
+
+    // Purpose: Sample Windows GPU dedicated memory assigned to the SuperZip process.
+    // Inputs: None; uses the current process id and Windows PDH GPU Process Memory counters.
+    // Outputs: Returns dedicated GPU memory bytes or zero when the counter is unavailable.
+    [[nodiscard]] std::uint64_t sample_process_dedicated_vram_bytes() const;
 
     // Purpose: Start a bounded non-blocking page transition animation.
     // Inputs: `from` and `to` identify the tab change.
@@ -833,12 +1045,26 @@ class MainWindow {
     bool primary_mouse_down_ = false;
     bool mouse_tracking_ = false;
     bool mouse_capture_active_ = false;
+    bool queue_drop_highlight_ = false;
+    RECT text_tooltip_cell_{};
+    POINT text_tooltip_anchor_point_{-1, -1};
+    bool text_tooltip_cell_active_ = false;
+    bool text_tooltip_visible_ = false;
+    std::wstring text_tooltip_text_;
+    int keyboard_focus_index_ = 0;
+    int dropdown_keyboard_index_ = -1;
+    bool ole_initialized_ = false;
+    QueueDropTarget* drop_target_ = nullptr;
     FILETIME last_process_kernel_time_{};
     FILETIME last_process_user_time_{};
+    FILETIME last_system_idle_time_{};
+    FILETIME last_system_kernel_time_{};
+    FILETIME last_system_user_time_{};
     ULONGLONG last_io_read_bytes_ = 0;
     ULONGLONG last_io_write_bytes_ = 0;
     std::uint64_t cached_vram_total_bytes_ = 0;
     std::uint64_t cached_vram_free_bytes_ = 0;
+    std::wstring last_clock_text_;
     PDH_HQUERY gpu_query_ = nullptr;
     PDH_HCOUNTER gpu_counter_ = nullptr;
     AppSettings applied_settings_{};

@@ -23,7 +23,7 @@ Required rules:
 - The benchmark must report `memory_only=true` and `disk_write_bytes=0` for
   every forced-CPU and required-AMD-HIP lane.
 - Sweep all production block sizes when validating performance:
-  `-BlockSizeKiB 256,1024,4096,16384`.
+  `-BlockSizeKiB 256,512,1024,2048,4096,8192,16384`.
 - Compare CPU and GPU at the same compression level and report compression
   ratio. Level 5 is the standard balanced release baseline.
 - Do not run or reintroduce multi-GB filesystem benchmarks during development.
@@ -37,7 +37,7 @@ Required rules:
 Standard manual command after plan-selected correctness tests pass:
 
 ```powershell
-tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
 build/Release/superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 

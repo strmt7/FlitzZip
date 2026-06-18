@@ -152,6 +152,14 @@ try {
     if ($mainWindow -notmatch '#include "superzip_brand_logo\.hpp"') {
         throw "The Win32 app must render the in-app mark from the generated SVG geometry header."
     }
+    $drawLogoCallCount = ([regex]::Matches($mainWindow, '\bdraw_logo\s*\(')).Count - 1
+    if ($drawLogoCallCount -ne 2) {
+        throw "The Win32 app must use exactly two canonical draw_logo call sites: top bar and About page."
+    }
+    $readme = Get-Content -LiteralPath (Join-Path $repo "README.md") -Raw
+    if ($readme -notmatch '<img src="resources/brand/superzip-logo\.svg"') {
+        throw "README must render the SuperZip logo from the canonical SVG source."
+    }
     if ($mainWindow -notmatch 'ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE') {
         throw "The Win32 About page must use the canonical SuperZip SVG tagline."
     }

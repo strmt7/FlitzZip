@@ -70,9 +70,8 @@ superzip::ArchiveIndex read_test_archive_index(const std::filesystem::path& path
 // Outputs: Returns true when any file entry contains at least one matching block.
 bool archive_contains_block_kind(const superzip::ArchiveIndex& index, superzip::BlockKind kind) {
     return std::ranges::any_of(index.entries, [kind](const superzip::ArchiveEntry& entry) {
-        return std::ranges::any_of(entry.blocks, [kind](const superzip::BlockDescriptor& block) {
-            return block.kind == kind;
-        });
+        return std::ranges::any_of(entry.blocks,
+                                   [kind](const superzip::BlockDescriptor& block) { return block.kind == kind; });
     });
 }
 
@@ -98,11 +97,10 @@ struct RawArchiveTestEntry {
 };
 
 // Purpose: Write a compact handcrafted SUZIP archive with raw file entries.
-// Inputs: `path` is the archive to create and `entries` supplies normalized or intentionally malformed entry names plus payload bytes.
-// Outputs: Writes payloads, index, and footer so validation tests can exercise archive metadata without relying on production compression.
-void write_raw_test_archive(
-    const std::filesystem::path& path,
-    const std::vector<RawArchiveTestEntry>& entries) {
+// Inputs: `path` is the archive to create and `entries` supplies normalized or intentionally malformed entry names plus
+// payload bytes. Outputs: Writes payloads, index, and footer so validation tests can exercise archive metadata without
+// relying on production compression.
+void write_raw_test_archive(const std::filesystem::path& path, const std::vector<RawArchiveTestEntry>& entries) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     superzip::ArchiveIndex index;
     for (const auto& source : entries) {
@@ -111,7 +109,8 @@ void write_raw_test_archive(
         entry.uncompressed_size = source.payload.size();
         entry.payload_offset = static_cast<std::uint64_t>(file.tellp());
         entry.payload_size = source.payload.size();
-        entry.crc32 = superzip::crc32(std::as_bytes(std::span<const char>(source.payload.data(), source.payload.size())));
+        entry.crc32 =
+            superzip::crc32(std::as_bytes(std::span<const char>(source.payload.data(), source.payload.size())));
         file.write(source.payload.data(), static_cast<std::streamsize>(source.payload.size()));
         entry.blocks.push_back(superzip::BlockDescriptor{
             .kind = superzip::BlockKind::Raw,
@@ -146,11 +145,9 @@ TEST_CASE(suzip_supported_block_sizes_roundtrip_and_bound_metadata) {
         }
     }
 
-    constexpr std::array<std::uint32_t, 4> block_sizes{
-        256U * 1024U,
-        superzip::kDefaultArchiveBlockBytes,
-        4U * 1024U * 1024U,
-        superzip::kMaxArchiveBlockBytes,
+    constexpr std::array<std::uint32_t, 7> block_sizes{
+        256U * 1024U,       512U * 1024U,       superzip::kDefaultArchiveBlockBytes, 2U * 1024U * 1024U,
+        4U * 1024U * 1024U, 8U * 1024U * 1024U, superzip::kMaxArchiveBlockBytes,
     };
     for (const auto block_size : block_sizes) {
         const auto archive = root / ("archive-" + std::to_string(block_size) + ".suzip");
@@ -252,7 +249,8 @@ TEST_CASE(suzip_roundtrip_repetitive_and_randomish_files) {
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "zeros.bin"));
     REQUIRE_TRUE(std::filesystem::exists(output / "input" / "nested" / "pattern.bin"));
     REQUIRE_EQ(std::filesystem::file_size(output / "input" / "zeros.bin"), static_cast<std::uintmax_t>(256 * 1024));
-    REQUIRE_EQ(std::filesystem::file_size(output / "input" / "nested" / "pattern.bin"), static_cast<std::uintmax_t>(200000));
+    REQUIRE_EQ(std::filesystem::file_size(output / "input" / "nested" / "pattern.bin"),
+               static_cast<std::uintmax_t>(200000));
     std::filesystem::remove_all(root);
 }
 
@@ -487,9 +485,7 @@ TEST_CASE(suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks) {
     verify.overwrite = true;
     const auto extracted = superzip::extract_suzip(archive, output, verify);
     REQUIRE_TRUE(extracted.gpu_used);
-    REQUIRE_EQ(
-        std::filesystem::file_size(output / "gpu.txt"),
-        std::filesystem::file_size(input));
+    REQUIRE_EQ(std::filesystem::file_size(output / "gpu.txt"), std::filesystem::file_size(input));
     std::filesystem::remove_all(root);
 }
 
@@ -673,7 +669,8 @@ TEST_CASE(suzip_extract_removes_partial_file_after_crc_failure) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(overwrite_output), static_cast<std::uint64_t>(1));
-    REQUIRE_EQ(std::filesystem::file_size(overwrite_output / "file.bin"), static_cast<std::uintmax_t>(preserved_text.size()));
+    REQUIRE_EQ(std::filesystem::file_size(overwrite_output / "file.bin"),
+               static_cast<std::uintmax_t>(preserved_text.size()));
     std::ifstream preserved(overwrite_output / "file.bin", std::ios::binary);
     std::string actual(preserved_text.size(), '\0');
     preserved.read(actual.data(), static_cast<std::streamsize>(actual.size()));
@@ -807,12 +804,10 @@ TEST_CASE(suzip_verify_rejects_control_character_entry_path) {
 TEST_CASE(suzip_verify_rejects_duplicate_normalized_entry_paths) {
     const auto root = test_temp_dir("suzip-duplicate-paths");
     const auto archive = root / "archive.suzip";
-    write_raw_test_archive(
-        archive,
-        {
-            RawArchiveTestEntry{.path = "dir/file.txt", .payload = "first"},
-            RawArchiveTestEntry{.path = "dir//file.txt", .payload = "second"},
-        });
+    write_raw_test_archive(archive, {
+                                        RawArchiveTestEntry{.path = "dir/file.txt", .payload = "first"},
+                                        RawArchiveTestEntry{.path = "dir//file.txt", .payload = "second"},
+                                    });
 
     superzip::ExtractOptions verify;
     verify.gpu_required = false;
@@ -833,12 +828,10 @@ TEST_CASE(suzip_verify_rejects_duplicate_normalized_entry_paths) {
 TEST_CASE(suzip_extract_rejects_file_entry_with_child_entry) {
     const auto root = test_temp_dir("suzip-file-child-conflict");
     const auto archive = root / "archive.suzip";
-    write_raw_test_archive(
-        archive,
-        {
-            RawArchiveTestEntry{.path = "dir", .payload = "parent"},
-            RawArchiveTestEntry{.path = "dir/child.txt", .payload = "child"},
-        });
+    write_raw_test_archive(archive, {
+                                        RawArchiveTestEntry{.path = "dir", .payload = "parent"},
+                                        RawArchiveTestEntry{.path = "dir/child.txt", .payload = "child"},
+                                    });
 
     const auto output = root / "out";
     superzip::ExtractOptions extract;

@@ -71,7 +71,7 @@ Rules:
   report compression ratio. Use level 5 as the balanced release baseline unless
   the task is explicitly a level sweep.
 - Block-size changes must validate every product option:
-  `-BlockSizeKiB 256,1024,4096,16384`.
+  `-BlockSizeKiB 256,512,1024,2048,4096,8192,16384`.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.
 - Run `tools/compatibility_interop_smoke.ps1 -Configuration Release` after
   changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared
@@ -87,6 +87,9 @@ Rules:
 - The GUI is intentionally fixed-size for release until responsive resizing is
   deliberately rebuilt and tested. Keep PerMonitorV2 DPI behavior, crisp vector
   or multi-resolution icons, and no stretched bitmap assets.
+- Keep first-frame rendering dark and flicker-free: the Win32 class background
+  and `WM_ERASEBKGND` must use the app background color, and all normal painting
+  remains double-buffered.
 - For GUI changes, run `tools/gui_smoke.ps1 -Configuration Release`. It must
   open every tab and click/use every visible button, toggle, dropdown/select
   field, and main action path at least once, including Add files, Add folder,
@@ -94,6 +97,10 @@ Rules:
   History/Settings actions, then inspect every generated page screenshot. It
   must visibly verify Add files, Add folder, native drag/drop, and every
   dropdown menu instead of only clicking controls.
+- Do not change the left navigation rail hover/active visuals unless the user
+  explicitly requests a navigation redesign. Queue header/body separation,
+  select-all tick alignment, column resize cursors, and graph axis label
+  overlays are visual regression boundaries.
 - GUI archive-format labels must come from `archive_format_info(...).display_name`;
   do not re-create format label arrays in the app layer. Visible format labels
   use official format names only and must not add compatibility/single-file/
@@ -105,6 +112,9 @@ Rules:
   `SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT=1` and assert both persisted values and
   unapplied-draft reversion. Do not reintroduce path-valued settings
   overrides.
+- Settings log retention choices are exactly `1 week`, `2 weeks`, and
+  `1 month`, and must be enforced by timestamped pruning logic plus C++ tests;
+  label-only changes are not sufficient.
 - Elevated drag/drop must keep the narrow UIPI message allowlist for shell drop
   messages and an exception-safe HDROP handler. Do not solve elevated
   drag/drop by adding broad process privileges or bypassing Windows integrity

@@ -221,7 +221,7 @@ Benchmark only after correctness tests pass:
 ```powershell
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
 build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
@@ -424,7 +424,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Keep ClusterFuzzLite fuzzing active for archive metadata and path-handling code. Fuzz targets must exercise real product parser code and must not be placeholder functions added only to satisfy scanner heuristics.
 - Product release artifacts must be HIP-enabled. Do not publish CPU-only portable ZIPs or MSIs as SuperZip releases.
 - Product benchmark claims must sweep the production SUZIP block-size choices:
-  256 KiB, 1 MiB, 4 MiB, and 16 MiB. The benchmark harness must compare
+  256 KiB, 512 KiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, and 16 MiB. The benchmark harness must compare
   forced-CPU and required-AMD-HIP lanes in RAM and must not write multi-GB
   generated workloads to SSDs.
 - Product benchmark claims must compare CPU and GPU at the same compression
@@ -455,7 +455,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   deliberately re-enabled. Do not ship a resizable window until every page has a
   responsive layout pass, high-DPI screenshot coverage, and click-hit regression
   coverage at small, default, 4K, and high-refresh display settings.
-- Rendering must be double-buffered or otherwise flicker-free.
+- Rendering must be double-buffered or otherwise flicker-free. The Win32 class
+  background and `WM_ERASEBKGND` path must use the app's dark background so the
+  first visible frame never flashes white before custom painting.
 - Progress repaint requests must be coalesced so fast jobs or 200 Hz displays do not flood the message queue.
 - Tab transitions and toggle changes may use short non-blocking animations, but
   they must run on bounded timers, never block archive work, never grow memory
@@ -475,6 +477,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Queue, Compress, Extract, Security, History, System, Settings, and About page
   controls must remain clickable; fix the shared geometry instead of adding
   page-specific click offsets that can drift from rendering.
+- Keep the left navigation rail's existing hover/active behavior unless a
+  maintainer explicitly requests a rail redesign. Do not apply global clickable
+  hover or keyboard-focus visual changes to the rail as a side effect of
+  changing page content controls.
+- Queue table header rows must remain visually distinct from body rows through
+  a restrained header band and separator line. Keep the select-all tick aligned
+  with body ticks, keep the first column narrow, and keep Name/Size/Type/Path
+  column resizing hover cursors and minimum readable header widths intact.
 - Elevated Windows drag/drop is a supported shell workflow. Keep `WM_DROPFILES`
   and the drag-query message narrowly allowed through UIPI for elevated
   SuperZip windows, keep the HDROP handler exception-safe, and do not replace
@@ -495,6 +505,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   source.
 - Dropdown arrows must be vertically centered in their value boxes and use one
   consistent shape and inset throughout the app.
+- Live graph axis labels must render as plain top-layer text over the graph;
+  do not put min/max labels in opaque boxes, cards, badges, or other
+  backgrounds.
 - Toggle rows must rely on the switch state itself. Do not add redundant
   `Enabled` or `Disabled` text labels next to settings toggles.
 - The Settings page uses a draft/apply model. Changing a Settings control
@@ -505,6 +518,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   `SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT=1`, assert the persisted values, and
   verify that an unapplied draft is not persisted. Do not reintroduce
   path-valued settings overrides.
+- Settings log retention options are exactly `1 week`, `2 weeks`, and
+  `1 month`. They must be backed by timestamped pruning so expired in-memory
+  log rows and over-capacity rows are actually removed; keep the focused C++
+  retention tests and GUI smoke label checks passing.
 - Check all pages, not only the main queue page, when making visual changes.
 - Treat `resources/design/superzip-ui-iteration-4.png` as the current visual
   acceptance reference. Do not simplify the compact enterprise shell, command

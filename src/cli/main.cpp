@@ -67,11 +67,8 @@ namespace {
 constexpr std::uint64_t kCliMiB = 1024ULL * 1024ULL;
 constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL;
 constexpr std::array<int, 5> kBenchmarkCompressionLevels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
-constexpr std::array<std::uint32_t, 4> kBenchmarkBlockSizes{
-    256U * 1024U,
-    1024U * 1024U,
-    4096U * 1024U,
-    16384U * 1024U,
+constexpr std::array<std::uint32_t, 7> kBenchmarkBlockSizes{
+    256U * 1024U, 512U * 1024U, 1024U * 1024U, 2048U * 1024U, 4096U * 1024U, 8192U * 1024U, 16384U * 1024U,
 };
 
 struct MemoryBenchmarkOptions {
@@ -924,12 +921,15 @@ std::uint32_t require_block_size_kib_arg(const std::vector<std::string>& args, s
     const auto kib = require_u32_arg(args, index, name);
     switch (kib) {
     case 256U:
+    case 512U:
     case 1024U:
+    case 2048U:
     case 4096U:
+    case 8192U:
     case 16384U:
         return kib * 1024U;
     default:
-        throw superzip::ArchiveError("unsupported block size; use 256, 1024, 4096, or 16384 KiB");
+        throw superzip::ArchiveError("unsupported block size; use 256, 512, 1024, 2048, 4096, 8192, or 16384 KiB");
     }
 }
 

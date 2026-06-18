@@ -3,9 +3,10 @@ param(
     [int64]$SizeMiB = 10240,
     [int]$Iterations = 3,
     [ValidateSet("Memory", "Filesystem")] [string]$Mode = "Memory",
-    [ValidateSet("Mixed", "Compressible", "Incompressible")] [string]$Profile = "Mixed",
+    [Alias("Profile")]
+    [ValidateSet("Mixed", "Compressible", "Incompressible")] [string]$WorkloadProfile = "Mixed",
     [ValidateRange(1, 9)] [int]$CompressionLevel = 5,
-    [ValidateSet(256, 1024, 4096, 16384)] [int[]]$BlockSizeKiB = @(256, 1024, 4096, 16384),
+    [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)] [int[]]$BlockSizeKiB = @(256, 512, 1024, 2048, 4096, 8192, 16384),
     [ValidateRange(50, 5000)] [int]$SampleIntervalMs = 100,
     [string]$WorkRoot = $env:TEMP,
     [switch]$NoResourceCounters,
@@ -16,12 +17,23 @@ param(
 )
 
 # Purpose: Compare forced-CPU and required-AMD-HIP performance on the same generated SUZIP workload.
-# Inputs: `Configuration` selects the built CLI, `SizeMiB` controls generated data size, `Iterations` controls repeated timed runs, `Mode` selects RAM-only performance benchmarking or bounded filesystem smoke, `Profile` selects workload shape, `CompressionLevel` selects SUZIP deflate effort, `BlockSizeKiB` selects one or more production block-size choices, `SampleIntervalMs` controls resource counter cadence, `WorkRoot` controls temporary storage for explicit filesystem smoke, `ShowOperationStats` prints raw CLI stats, skip switches disable one lane, and `AllowLargeDiskWrites` is retained only to reject obsolete unsafe invocations.
+# Inputs: `Configuration` selects the built CLI, `SizeMiB` controls generated data size, `Iterations` controls repeated timed runs, `Mode` selects RAM-only performance benchmarking or bounded filesystem smoke, `WorkloadProfile` selects workload shape, `CompressionLevel` selects SUZIP deflate effort, `BlockSizeKiB` selects one or more production block-size choices, `SampleIntervalMs` controls resource counter cadence, `WorkRoot` controls temporary storage for explicit filesystem smoke, `ShowOperationStats` prints raw CLI stats, skip switches disable one lane, and `AllowLargeDiskWrites` is retained only to reject obsolete unsafe invocations.
 # Outputs: Prints per-operation CPU/GPU throughput plus aggregate speedup; throws on correctness, lane-selection, memory-budget, or unsafe-disk-write failures.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
 $MaxFilesystemSmokeMiB = 64
+$script:ShowOperationStatsEnabled = [bool]$ShowOperationStats
+
+# Purpose: Emit benchmark text through the output pipeline instead of host-only writes.
+# Inputs: `Message` is a status, table, or diagnostic line.
+# Outputs: Writes the text to the success stream.
+function Write-BenchmarkMessage {
+    param([Parameter(ValueFromPipeline = $true)][AllowEmptyString()][string]$Message)
+    process {
+        Write-Output $Message
+    }
+}
 if (-not (Test-Path $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
@@ -140,6 +152,7 @@ function Get-ProcessIoTransfer {
             }
         }
     } catch {
+        Write-Verbose "GetProcessIoCounters failed: $($_.Exception.Message)"
     }
     return [pscustomobject]@{
         ReadBytes = $null
@@ -244,7 +257,7 @@ function ConvertTo-MiBPerSecond {
 # Purpose: Summarize sampled utilization values for one CLI operation.
 # Inputs: `Samples` is a list emitted by `Get-ResourceSample`.
 # Outputs: Returns average and peak CPU/GPU/disk values; missing counters are reported as nulls.
-function Measure-ResourceSamples {
+function Measure-ResourceSample {
     param([Parameter(Mandatory = $true)]$Samples)
     $cpuSamples = @($Samples | Where-Object { $null -ne $_.Cpu } | ForEach-Object { $_.Cpu })
     $gpuSamples = @($Samples | Where-Object { $null -ne $_.Gpu } | ForEach-Object { $_.Gpu })
@@ -328,7 +341,7 @@ function Get-StatsNumber {
 # Purpose: Assert that a required-GPU benchmark operation really submitted AMD HIP work.
 # Inputs: `Stats` is a parsed CLI statistics dictionary and `Label` identifies the operation in diagnostics.
 # Outputs: Returns normally when backend HIP telemetry proves execution; throws on possible CPU fallback or missing telemetry.
-function Assert-GpuBackendStats {
+function Assert-GpuBackendStat {
     param(
         [Parameter(Mandatory = $true)]$Stats,
         [Parameter(Mandatory = $true)][string]$Label,
@@ -361,7 +374,7 @@ function Assert-GpuBackendStats {
 # Purpose: Run a CLI command, sample resource utilization, and parse operation statistics.
 # Inputs: `Arguments` is the exact CLI argument vector to execute.
 # Outputs: Returns parsed statistics plus utilization samples; throws if the command fails.
-function Invoke-SuperZipStats {
+function Invoke-SuperZipStat {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     if ($NoResourceCounters) {
         $output = & $cli @Arguments
@@ -369,8 +382,8 @@ function Invoke-SuperZipStats {
             throw "superzip_cli failed with exit code $LASTEXITCODE while running: $($Arguments -join ' ')"
         }
         $statsLine = $output | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
-        if ($ShowOperationStats) {
-            Write-Host "operation_stats $($Arguments -join ' ') :: $statsLine"
+        if ($script:ShowOperationStatsEnabled) {
+            Write-BenchmarkMessage "operation_stats $($Arguments -join ' ') :: $statsLine"
         }
         $stats = ConvertFrom-StatsLine -Line $statsLine
         foreach ($key in @(
@@ -427,11 +440,11 @@ function Invoke-SuperZipStats {
         throw "superzip_cli failed with exit code $($process.ExitCode) while running: $($Arguments -join ' '): $stderr"
     }
     $statsLine = $stdout -split "`r?`n" | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
-    if ($ShowOperationStats) {
-        Write-Host "operation_stats $($Arguments -join ' ') :: $statsLine"
+    if ($script:ShowOperationStatsEnabled) {
+        Write-BenchmarkMessage "operation_stats $($Arguments -join ' ') :: $statsLine"
     }
     $stats = ConvertFrom-StatsLine -Line $statsLine
-    $resourceStats = Measure-ResourceSamples -Samples $samples
+    $resourceStats = Measure-ResourceSample -Samples $samples
     foreach ($key in $resourceStats.Keys) {
         $stats[$key] = $resourceStats[$key]
     }
@@ -451,7 +464,7 @@ function Invoke-SuperZipStats {
 # Purpose: Query available bytes on the filesystem backing a path.
 # Inputs: `Path` is an existing or intended directory.
 # Outputs: Returns free bytes reported by the volume.
-function Get-AvailableBytes {
+function Get-AvailableByte {
     param([Parameter(Mandatory = $true)][string]$Path)
     $fullPath = [IO.Path]::GetFullPath($Path)
     $rootPath = [IO.Path]::GetPathRoot($fullPath)
@@ -476,7 +489,7 @@ function Assert-BenchmarkDiskBudget {
     $peakExtractBytes = $sourceBytes
     $safetyBytes = 2GB
     $requiredBytes = $sourceBytes + $peakArchiveBytes + $peakExtractBytes + $safetyBytes
-    $availableBytes = Get-AvailableBytes -Path $Path
+    $availableBytes = Get-AvailableByte -Path $Path
     if ($availableBytes -lt $requiredBytes) {
         $requiredGiB = [Math]::Ceiling($requiredBytes / 1GB)
         $availableGiB = [Math]::Round($availableBytes / 1GB, 1)
@@ -525,20 +538,20 @@ function Write-BenchmarkFile {
 # Purpose: Generate a selected archive workload with large files and many small entries.
 # Inputs: `Root` is the benchmark input directory, `SizeMiB` is the approximate total payload size, and `Profile` selects data compressibility.
 # Outputs: Creates deterministic files under `Root`.
-function New-BenchmarkDataset {
+function Initialize-BenchmarkDataset {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][int64]$SizeMiB,
-        [Parameter(Mandatory = $true)][ValidateSet("Mixed", "Compressible", "Incompressible")] [string]$Profile
+        [Parameter(Mandatory = $true)][ValidateSet("Mixed", "Compressible", "Incompressible")] [string]$DataProfile
     )
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $Root "small") | Out-Null
 
     $totalBytes = [int64]$SizeMiB * 1MB
-    if ($Profile -eq "Compressible") {
+    if ($DataProfile -eq "Compressible") {
         $zeroBytes = [int64]($totalBytes * 0.10)
         $textBytes = [int64]($totalBytes * 0.80)
-    } elseif ($Profile -eq "Incompressible") {
+    } elseif ($DataProfile -eq "Incompressible") {
         $zeroBytes = 0
         $textBytes = 0
     } else {
@@ -627,9 +640,9 @@ function Invoke-BenchmarkLane {
     Remove-Item -LiteralPath $outRoot -Recurse -Force -ErrorAction SilentlyContinue
 
     try {
-        $compress = Invoke-SuperZipStats -Arguments (@("compress", "--format", "suzip", $ModeFlag) + $pipelineArgs + $compressionArgs + @("--output", $archive, $SourceRoot))
-        $verify = Invoke-SuperZipStats -Arguments (@("verify", $ModeFlag) + $pipelineArgs + @($archive))
-        $extract = Invoke-SuperZipStats -Arguments (@("extract", "--format", "suzip", $ModeFlag) + $pipelineArgs + @("--output", $outRoot, $archive))
+        $compress = Invoke-SuperZipStat -Arguments (@("compress", "--format", "suzip", $ModeFlag) + $pipelineArgs + $compressionArgs + @("--output", $archive, $SourceRoot))
+        $verify = Invoke-SuperZipStat -Arguments (@("verify", $ModeFlag) + $pipelineArgs + @($archive))
+        $extract = Invoke-SuperZipStat -Arguments (@("extract", "--format", "suzip", $ModeFlag) + $pipelineArgs + @("--output", $outRoot, $archive))
 
         $expectedGpu = if ($ModeFlag -eq "--require-gpu") { "true" } else { "false" }
         foreach ($item in @($compress, $verify, $extract)) {
@@ -638,9 +651,9 @@ function Invoke-BenchmarkLane {
             }
         }
         if ($ModeFlag -eq "--require-gpu") {
-            Assert-GpuBackendStats -Stats $compress -Label "$Lane compress" -RequirePatternBlocks ($Profile -ne "Incompressible")
-            Assert-GpuBackendStats -Stats $verify -Label "$Lane verify"
-            Assert-GpuBackendStats -Stats $extract -Label "$Lane extract"
+            Assert-GpuBackendStat -Stats $compress -Label "$Lane compress" -RequirePatternBlocks ($WorkloadProfile -ne "Incompressible")
+            Assert-GpuBackendStat -Stats $verify -Label "$Lane verify"
+            Assert-GpuBackendStat -Stats $extract -Label "$Lane extract"
             if ((Get-StatsNumber -Stats $verify -Key "gpu_d2h_bytes") -le 0) {
                 throw "$Lane verify reported no device-to-host bytes in the required-GPU lane."
             }
@@ -701,10 +714,10 @@ function Invoke-MemoryBenchmarkLane {
         [Parameter(Mandatory = $true)][int]$Iteration,
         [Parameter(Mandatory = $true)][int]$BlockSizeKiB
     )
-    $stats = Invoke-SuperZipStats -Arguments @(
+    $stats = Invoke-SuperZipStat -Arguments @(
         "memory-benchmark",
         "--size-mib", "$SizeMiB",
-        "--profile", $Profile,
+        "--profile", $WorkloadProfile,
         $ModeFlag,
         "--workers", "$script:BenchmarkWorkerCount",
         "--block-size-kib", "$BlockSizeKiB",
@@ -722,7 +735,7 @@ function Invoke-MemoryBenchmarkLane {
         throw "$Lane memory benchmark reported disk_write_bytes=$($stats["disk_write_bytes"])."
     }
     if ($ModeFlag -eq "--require-gpu") {
-        Assert-GpuBackendStats -Stats $stats -Label "$Lane memory benchmark" -RequirePatternBlocks ($Profile -ne "Incompressible")
+        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequirePatternBlocks ($WorkloadProfile -ne "Incompressible")
     }
 
     return [pscustomobject]@{
@@ -836,28 +849,28 @@ if ($Mode -eq "Memory") {
         }
     }
 
-    Write-Host ""
-    Write-Host "SuperZip benchmark: $SizeMiB MiB $Profile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
+    Write-BenchmarkMessage ""
+    Write-BenchmarkMessage "SuperZip benchmark: $SizeMiB MiB $WorkloadProfile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
     if ($NoResourceCounters) {
-        Write-Host "Resource sampling: disabled"
+        Write-BenchmarkMessage "Resource sampling: disabled"
     } else {
-        Write-Host "Resource sampling: ${SampleIntervalMs} ms interval; logical-disk counters disabled in memory-only mode"
+        Write-BenchmarkMessage "Resource sampling: ${SampleIntervalMs} ms interval; logical-disk counters disabled in memory-only mode"
     }
-    Write-Host "Performance:"
+    Write-BenchmarkMessage "Performance:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
         Select-Object Lane, BlockSizeKiB, Iterations, TotalSeconds, Workers, InflightChunks, CodecWorkers, MemoryOnly, DiskWriteBytes, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs |
         Format-Table -AutoSize |
         Out-String -Width 320 |
-        Write-Host
+        Write-BenchmarkMessage
 
-    Write-Host "Resource telemetry:"
+    Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
         Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 320 |
-        Write-Host
+        Write-BenchmarkMessage
 
     foreach ($blockSize in $BlockSizeKiB) {
         $cpu = $summary | Where-Object { $_.Lane -eq "CPU" -and $_.BlockSizeKiB -eq $blockSize } | Select-Object -First 1
@@ -866,9 +879,9 @@ if ($Mode -eq "Memory") {
             continue
         }
         $speedup = $cpu.TotalSeconds / $gpu.TotalSeconds
-        Write-Host ("GPU end-to-end speedup vs forced CPU at {0} KiB blocks: {1:N2}x" -f $blockSize, $speedup)
+        Write-BenchmarkMessage ("GPU end-to-end speedup vs forced CPU at {0} KiB blocks: {1:N2}x" -f $blockSize, $speedup)
         if ($speedup -lt 1.0) {
-            Write-Host "Note: required-HIP was slower than forced CPU on this memory workload; treat that as a real optimization finding, not a pass/fail benchmark target."
+            Write-BenchmarkMessage "Note: required-HIP was slower than forced CPU on this memory workload; treat that as a real optimization finding, not a pass/fail benchmark target."
         }
     }
     return
@@ -889,7 +902,7 @@ $work = Join-Path $WorkRoot ("superzip-bench-" + [guid]::NewGuid().ToString("N")
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $sourceRoot = Join-Path $work "input"
-    New-BenchmarkDataset -Root $sourceRoot -SizeMiB $SizeMiB -Profile $Profile
+    Initialize-BenchmarkDataset -Root $sourceRoot -SizeMiB $SizeMiB -DataProfile $WorkloadProfile
 
     if (-not $SkipGpu) {
         & $cli dependency-check | Out-Host
@@ -954,29 +967,29 @@ try {
         }
     }
 
-    Write-Host ""
-    Write-Host "SuperZip benchmark: $SizeMiB MiB $Profile SUZIP workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
+    Write-BenchmarkMessage ""
+    Write-BenchmarkMessage "SuperZip benchmark: $SizeMiB MiB $WorkloadProfile SUZIP workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
     if ($NoResourceCounters) {
-        Write-Host "Resource sampling: disabled"
+        Write-BenchmarkMessage "Resource sampling: disabled"
     } else {
         $diskLabel = if ($script:BenchmarkDiskInstance) { $script:BenchmarkDiskInstance } else { "unavailable" }
-        Write-Host "Resource sampling: ${SampleIntervalMs} ms interval; disk counter instance: $diskLabel"
+        Write-BenchmarkMessage "Resource sampling: ${SampleIntervalMs} ms interval; disk counter instance: $diskLabel"
     }
-    Write-Host "Performance:"
+    Write-BenchmarkMessage "Performance:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
         Select-Object Lane, BlockSizeKiB, Iterations, Workers, InflightChunks, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs, TotalSeconds |
         Format-Table -AutoSize |
         Out-String -Width 220 |
-        Write-Host
+        Write-BenchmarkMessage
 
-    Write-Host "Resource telemetry:"
+    Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
         Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 220 |
-        Write-Host
+        Write-BenchmarkMessage
 
     foreach ($blockSize in $BlockSizeKiB) {
         $cpu = $summary | Where-Object { $_.Lane -eq "CPU" -and $_.BlockSizeKiB -eq $blockSize } | Select-Object -First 1
@@ -985,9 +998,9 @@ try {
             continue
         }
         $speedup = $cpu.TotalSeconds / $gpu.TotalSeconds
-        Write-Host ("GPU end-to-end speedup vs forced CPU at {0} KiB blocks: {1:N2}x" -f $blockSize, $speedup)
+        Write-BenchmarkMessage ("GPU end-to-end speedup vs forced CPU at {0} KiB blocks: {1:N2}x" -f $blockSize, $speedup)
         if ($speedup -lt 1.0) {
-            Write-Host "Note: required-HIP was slower than forced CPU on this workload; treat that as a real optimization finding, not a pass/fail benchmark target."
+            Write-BenchmarkMessage "Note: required-HIP was slower than forced CPU on this workload; treat that as a real optimization finding, not a pass/fail benchmark target."
         }
     }
 } finally {

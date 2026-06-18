@@ -340,13 +340,13 @@ RAM, verifies/extracts from RAM, and reports `memory_only=true` plus
 `disk_write_bytes=0` from both the forced-CPU and required-GPU benchmark lanes:
 
 ```powershell
-tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
 ```
 
 Use `-Profile Mixed`, `-Profile Compressible`, and `-Profile Incompressible`
 when characterizing a release candidate. The script refuses workloads smaller
 than 10 GiB in memory mode and sweeps the production block-size choices:
-256 KiB, 1 MiB, 4 MiB, and 16 MiB. It reports production-aligned worker
+256 KiB, 512 KiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, and 16 MiB. It reports production-aligned worker
 allocation (`Workers`, `InflightChunks`, and `CodecWorkers`) plus backend HIP
 event counters, kernel time, transfer bytes, and allocation bytes emitted by the
 SuperZip GPU backend itself. Benchmark records include compression ratio so CPU

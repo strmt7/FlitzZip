@@ -530,6 +530,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_lzip_compat.cpp
     tests/cpp/test_lzma_compat.cpp
     tests/cpp/test_macbinary_compat.cpp
+    tests/cpp/test_log_retention.cpp
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_sevenzip_compat.cpp
@@ -718,6 +719,8 @@ set(CPACK_WIX_VERSION 4)
 set(CPACK_WIX_UPGRADE_GUID "8E0D80F6-859D-4FE9-B082-F0D8048A8B57")
 set(CPACK_WIX_INSTALL_SCOPE "${SUPERZIP_MSI_INSTALL_SCOPE}")
 set(CPACK_WIX_UI_REF "WixUI_FeatureTree")
+set(CPACK_WIX_PRODUCT_ICON
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/superzip.ico")
 set(CPACK_WIX_EXTRA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/superzip_desktop_shortcut.wxs")
 set(CPACK_WIX_PATCH_FILE

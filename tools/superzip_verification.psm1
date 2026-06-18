@@ -390,7 +390,7 @@ function Get-SuperZipVerificationPlan {
     }
 
     if ($scope.touchesPerformance -or $scope.fullEscalationRequired) {
-        Add-SuperZipVerificationCommand -List $manual -Seen $manualSeen -Command (Get-SuperZipVerificationCommand -Id "ram-benchmark-sweep" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/bench.ps1", "-Configuration", "Release", "-SizeMiB", "10240", "-Profile", "Mixed", "-CompressionLevel", "5", "-Iterations", "1", "-BlockSizeKiB", "256,1024,4096,16384") -Reason "performance-sensitive changes need the RAM-only CPU/GPU benchmark sweep before making speed claims" -Requirement "manual")
+        Add-SuperZipVerificationCommand -List $manual -Seen $manualSeen -Command (Get-SuperZipVerificationCommand -Id "ram-benchmark-sweep" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/bench.ps1", "-Configuration", "Release", "-SizeMiB", "10240", "-Profile", "Mixed", "-CompressionLevel", "5", "-Iterations", "1", "-BlockSizeKiB", "256,512,1024,2048,4096,8192,16384") -Reason "performance-sensitive changes need the RAM-only CPU/GPU benchmark sweep before making speed claims" -Requirement "manual")
     }
 
     $workflows = New-Object System.Collections.ArrayList

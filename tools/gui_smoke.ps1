@@ -25,7 +25,10 @@ function Assert-GuiSourceContract {
         @{ Pattern = ('\bleve' + 'ls\b'); Message = "GUI source must not use plural compression-setting wording; compression labels are named options." },
         @{ Pattern = ('Verbose ' + 'diagnostics'); Message = "GUI log level label must be 'Debug'." },
         @{ Pattern = ('\bWarn' + 'ings\b'); Message = "GUI log level label must be singular 'Warning'." },
-        @{ Pattern = ('Session ' + 'only'); Message = "GUI log retention label must be 'Current session'." },
+        @{ Pattern = ('Session ' + 'only'); Message = "GUI log retention options must be exactly '1 week', '2 weeks', and '1 month'." },
+        @{ Pattern = ('Current ' + 'session'); Message = "GUI log retention options must not reintroduce the retired current-session option." },
+        @{ Pattern = ('\b7 ' + 'days\b'); Message = "GUI log retention options must use '1 week', not '7 days'." },
+        @{ Pattern = ('\b30 ' + 'days\b'); Message = "GUI log retention options must use '1 month', not '30 days'." },
         @{ Pattern = ('AMD GPU ' + 'Diagnostics'); Message = "The former GPU page title must remain 'System'." },
         @{ Pattern = ('Format-' + 'managed'); Message = "Unsupported compression options must render as disabled '-' fields." },
         @{ Pattern = ('Native Windows AMD HIP ' + 'archive utility'); Message = "The About page must use the canonical product tagline." },
@@ -34,6 +37,11 @@ function Assert-GuiSourceContract {
     foreach ($rule in $blockedPatterns) {
         if ($sourceText -cmatch $rule.Pattern) {
             throw $rule.Message
+        }
+    }
+    foreach ($requiredLabel in @('L"1 week"', 'L"2 weeks"', 'L"1 month"')) {
+        if (-not $sourceText.Contains($requiredLabel)) {
+            throw "GUI log retention option missing required label $requiredLabel."
         }
     }
 }
@@ -141,7 +149,7 @@ public static class SuperZipNativeUi {
         return new IntPtr(GetWindowLongPtr32(hWnd, -16));
     }
 
-    public static IntPtr CreateDropHandle(string[] paths) {
+    public static IntPtr CreateDropHandle(string[] paths, int x, int y) {
         string joined = string.Join("\0", paths) + "\0\0";
         byte[] pathBytes = System.Text.Encoding.Unicode.GetBytes(joined);
         int headerSize = Marshal.SizeOf(typeof(DROPFILES));
@@ -155,8 +163,8 @@ public static class SuperZipNativeUi {
             throw new InvalidOperationException("GlobalLock failed for HDROP payload.");
         }
         Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "pFiles"), headerSize);
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "x"), 0);
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "y"), 0);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "x"), x);
+        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "y"), y);
         Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fNC"), 0);
         Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fWide"), 1);
         Marshal.Copy(pathBytes, 0, IntPtr.Add(memory, headerSize), pathBytes.Length);
@@ -284,9 +292,15 @@ function Invoke-ClientDrag {
 function Invoke-FileDrop {
     param(
         [IntPtr]$Handle,
-        [string[]]$Paths
+        [string[]]$Paths,
+        [int]$Dpi = 96,
+        [int]$DesignX = 300,
+        [int]$DesignY = 320
     )
-    $dropHandle = [SuperZipNativeUi]::CreateDropHandle($Paths)
+    $scale = [double]$Dpi / 96.0
+    $dropX = [int][Math]::Round($DesignX * $scale)
+    $dropY = [int][Math]::Round($DesignY * $scale)
+    $dropHandle = [SuperZipNativeUi]::CreateDropHandle($Paths, $dropX, $dropY)
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0233, $dropHandle, [IntPtr]::Zero)
 }
 
@@ -820,7 +834,7 @@ try {
     Assert-QueueEmptyMessageCentered -Path $emptyQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
 
     # Queue: exercise drag/drop and row selection only. Destination, level, and Start belong to Compress/Extract.
-    Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
+    Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
     Start-Sleep -Milliseconds 350
     $dropQueuePath = "${basePath}-Queue-AfterDragDrop$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $dropQueuePath
@@ -851,7 +865,7 @@ try {
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 622 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 426 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 452 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 406
     Start-Sleep -Milliseconds 80
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 438
@@ -951,7 +965,7 @@ try {
     Start-Sleep -Milliseconds 150
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
-    Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeArchive).Path)
+    Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $smokeArchive).Path)
     Start-Sleep -Milliseconds 250
     $archiveDropQueuePath = "${basePath}-Queue-ArchiveAfterDragDrop$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $archiveDropQueuePath
@@ -983,7 +997,7 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
     Remove-Item -LiteralPath (Join-Path $smokeRoot "SuperZip-extracted") -Recurse -Force -ErrorAction SilentlyContinue
-    Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $badArchive).Path)
+    Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $badArchive).Path)
     Start-Sleep -Milliseconds 250
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
     Start-Sleep -Milliseconds 250

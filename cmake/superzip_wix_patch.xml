@@ -7,5 +7,12 @@
              AllowAbsent="yes">
       <ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"/>
     </Feature>
+    <Feature Id="StartMenuShortcutFeature"
+             Title="Create Start Menu entry"
+             Description="Create a SuperZip shortcut in the Start Menu."
+             Level="1"
+             AllowAbsent="yes">
+      <ComponentRef Id="CM_SHORTCUT_START_MENU_OPTIONAL"/>
+    </Feature>
   </CPackWiXFragment>
 </CPackWiXPatch>

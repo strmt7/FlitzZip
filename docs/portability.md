@@ -108,7 +108,7 @@ same generated data set:
 ```powershell
 tools\gpu_proof.ps1 -Configuration Release
 tools\storage_smoke.ps1 -Configuration Release
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,1024,4096,16384
+tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
 build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
@@ -118,7 +118,7 @@ counts, HIP kernel launches, HIP event time, GPU transfer bytes, compression
 level, compression ratio, and whether the system was thermally or power limited.
 Run mixed, compressible, and incompressible profiles before making release
 performance claims. Sweep every production block-size choice, currently 256 KiB,
-1 MiB, 4 MiB, and 16 MiB, before changing archive layout or performance
+512 KiB, 1 MiB, 2 MiB, 4 MiB, 8 MiB, and 16 MiB, before changing archive layout or performance
 defaults. Do not publish a GPU-only number as a product benchmark. Low GPU
 engine utilization or a required-HIP lane slower than forced CPU is an
 engineering optimization finding, not a number to hide.
