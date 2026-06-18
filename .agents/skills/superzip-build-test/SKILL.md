@@ -97,6 +97,17 @@ Rules:
   History/Settings actions, then inspect every generated page screenshot. It
   must visibly verify Add files, Add folder, native drag/drop, and every
   dropdown menu instead of only clicking controls.
+- GUI smoke source contracts must continue to reject process-cwd destination
+  defaults, process-only GPU graph sampling, VRAM-as-GPU-graph history, missing
+  Queue overflow scrolling, and unrequested System graph cadence changes.
+- Compress and Extract defaults must display the current user's Downloads known
+  folder when no destination has been applied. Do not regress to `System32` or
+  any process current directory path.
+- Queue overflow must keep the header fixed, accept drops only inside the table,
+  keep row/header tick hit testing aligned, and prove scrollbar rendering in
+  screenshots when queued rows exceed visible capacity.
+- The System GPU graph and headline value must show total system GPU engine
+  utilization. Keep VRAM total and SuperZip dedicated VRAM as detail rows only.
 - Do not change the left navigation rail hover/active visuals unless the user
   explicitly requests a navigation redesign. Queue header/body separation,
   select-all tick alignment, column resize cursors, and graph axis label

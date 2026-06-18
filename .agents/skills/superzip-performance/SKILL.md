@@ -33,6 +33,13 @@ Required rules:
   fallback telemetry as GPU work.
 - Propagate verified benchmark improvements into production code paths. Do not
   keep benchmark-only optimizations.
+- The System page GPU graph and headline value are total system GPU engine
+  utilization from OS counters. VRAM total and SuperZip dedicated VRAM are
+  detail rows only; do not use VRAM percentage or process-only GPU samples as
+  the graph source.
+- Do not change System graph history length, sampling cadence, or horizontal
+  progression while fixing labels or counter semantics unless the task
+  explicitly asks for graph-cadence work.
 
 Standard manual command after plan-selected correctness tests pass:
 

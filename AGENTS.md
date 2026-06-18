@@ -67,6 +67,22 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   When a mistake reveals a repeatable failure class, fix the root cause and add
   the narrowest local invariant that prevents recurrence; do not add broad
   process, suppressions, or unrelated gates.
+- Before broad bug hunting or native Windows GUI debugging, read
+  `docs/debugging-strategy.md`. Reproduce the exact input path first, then
+  trace hit testing, focus, state mutation, worker launch, backend result,
+  progress/status publication, and repaint behavior before patching.
+- GUI destination defaults must resolve the current user's Downloads known
+  folder. Do not use the process current directory as a Compress or Extract
+  default; elevated launches can otherwise point at system directories.
+- The System page GPU graph and headline value represent total system GPU engine
+  utilization. VRAM total and process-dedicated VRAM remain detail rows only.
+  Do not replace the GPU graph with VRAM percentage or process-only GPU usage.
+- Do not alter System graph history length, sampling cadence, or x-step
+  behavior unless the maintainer explicitly requests graph-cadence work. Axis
+  label clipping fixes must not change graph progression.
+- Queue overflow must keep the header fixed, keep row checkbox hit testing
+  aligned with the visible row, keep drag/drop accepted only inside the Queue
+  table, and expose a scrollbar only when rows overflow the body.
 - The canonical logo artwork is the `superzip-logo-mark` group in
   `resources/brand/superzip-logo.svg`. AI agents may move or resize that mark
   for layout, and may edit surrounding wordmark/tagline copy, but must not alter
@@ -167,6 +183,8 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
 - `docs/engineering-learning-loop.md`: concrete mistake-to-invariant policy for
   preventing repeated workflow, badge, branding, verifier, and agent-routing
   failures without degrading product direction.
+- `docs/debugging-strategy.md`: sanitized native Windows C++ debugging workflow
+  for GUI, worker, telemetry, installer, and archive-operation defects.
 
 ## Build And Test Commands
 

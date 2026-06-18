@@ -92,6 +92,9 @@ constexpr int kPageHeaderHeight = 34;
 constexpr int kPageTitleTextHeight = 46;
 constexpr int kQueueCheckboxColumnWidth = 44;
 constexpr int kQueueResizeGripHalfWidth = 4;
+constexpr int kQueueHeaderHeight = 36;
+constexpr int kQueueRowHeight = 34;
+constexpr int kQueueScrollbarWidth = 12;
 constexpr int kOperationProgressHeight = 5;
 constexpr int kPerformanceUpdateFieldWidth = 78;
 constexpr int kClockSegmentWidth = 106;
@@ -209,6 +212,30 @@ std::filesystem::path safe_current_path() {
         return L".";
     }
     return path;
+}
+
+// Purpose: Resolve the current user's Downloads known folder for archive output defaults.
+// Inputs: None; asks Windows for the interactive user's Downloads folder.
+// Outputs: Returns Downloads when available, `%USERPROFILE%\Downloads` as a secondary fallback, or the current path.
+std::filesystem::path current_user_downloads_directory() {
+    PWSTR downloads = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &downloads);
+    if (SUCCEEDED(result) && downloads != nullptr && downloads[0] != L'\0') {
+        std::filesystem::path path(downloads);
+        CoTaskMemFree(downloads);
+        return path;
+    }
+    if (downloads != nullptr) {
+        CoTaskMemFree(downloads);
+    }
+
+    wchar_t profile[MAX_PATH]{};
+    constexpr DWORD profile_capacity = static_cast<DWORD>(sizeof(profile) / sizeof(profile[0]));
+    const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", profile, profile_capacity);
+    if (length > 0 && length < profile_capacity) {
+        return std::filesystem::path(profile) / L"Downloads";
+    }
+    return safe_current_path();
 }
 
 // Purpose: Convert a shell HDROP payload into filesystem paths.
@@ -425,14 +452,14 @@ std::string operation_for_job_label(std::string_view label) {
     return "Failure";
 }
 
-// Purpose: Resolve the selected destination directory or the process directory.
+// Purpose: Resolve the selected destination directory or the current user's Downloads folder.
 // Inputs: `state` is the copied UI state.
-// Outputs: Returns a usable destination folder path for display and jobs.
+// Outputs: Returns a usable destination folder path for display and jobs without depending on process cwd.
 std::filesystem::path destination_directory_or_default(const UiState& state) {
     if (!state.destination_directory.empty()) {
         return state.destination_directory;
     }
-    return safe_current_path();
+    return current_user_downloads_directory();
 }
 
 // Purpose: Map the visible compression-format selection to an archive format.
@@ -531,12 +558,12 @@ std::filesystem::path compression_output_path_for(const UiState& state) {
 
 // Purpose: Resolve the visible extraction output path.
 // Inputs: `state` is the copied UI state.
-// Outputs: Returns the selected destination, or a default extraction folder when none is selected.
+// Outputs: Returns the selected destination, or a Downloads-based extraction folder when none is selected.
 std::filesystem::path extraction_output_path_for(const UiState& state) {
     if (!state.destination_directory.empty()) {
         return state.destination_directory;
     }
-    return safe_current_path() / L"SuperZip-extracted";
+    return current_user_downloads_directory() / L"SuperZip-extracted";
 }
 
 using CompatibilityExtractor = OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
@@ -1599,7 +1626,7 @@ void draw_graph_axis_label(HDC dc, const RECT& rect, const std::wstring& text, C
     if (text.empty() || rect.right <= rect.left || rect.bottom <= rect.top) {
         return;
     }
-    draw_text(dc, rect, text, color, format | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, rect, text, color, format | DT_SINGLELINE | DT_NOPREFIX);
 }
 
 // Purpose: Draw compact scale labels inside a live graph.
@@ -1615,19 +1642,19 @@ void draw_graph_axis_labels(HDC dc, const RECT& rect, const std::wstring& top_la
     if (!bottom_label.empty()) {
         GetTextExtentPoint32W(dc, bottom_label.data(), static_cast<int>(bottom_label.size()), &bottom_size);
     }
-    const int right_padding = 10;
-    const int requested_width = std::max<int>(static_cast<int>(top_size.cx), static_cast<int>(bottom_size.cx)) + 10;
-    const int available_width = std::max<int>(0, rect.right - rect.left - right_padding - 2);
-    const int label_width = std::clamp(requested_width, 48, std::max(48, available_width));
+    const int right_padding = 12;
+    const int requested_width = std::max<int>(static_cast<int>(top_size.cx), static_cast<int>(bottom_size.cx)) + 18;
+    const int available_width = std::max<int>(48, rect.right - rect.left - right_padding - 2);
+    const int label_width = std::min(std::max(requested_width, 48), available_width);
     const int label_height =
-        std::max<int>(16, std::max<int>(static_cast<int>(top_size.cy), static_cast<int>(bottom_size.cy)) + 4);
+        std::max<int>(18, std::max<int>(static_cast<int>(top_size.cy), static_cast<int>(bottom_size.cy)) + 6);
     draw_graph_axis_label(dc,
-                          RECT{rect.right - label_width - right_padding, rect.top + 4, rect.right - right_padding,
-                               rect.top + 4 + label_height},
+                          RECT{rect.right - label_width - right_padding, rect.top + 5, rect.right - right_padding,
+                               rect.top + 5 + label_height},
                           top_label, axis_text, DT_RIGHT | DT_TOP);
     draw_graph_axis_label(dc,
-                          RECT{rect.right - label_width - right_padding, rect.bottom - label_height - 6,
-                               rect.right - right_padding, rect.bottom - 6},
+                          RECT{rect.right - label_width - right_padding, rect.bottom - label_height - 5,
+                               rect.right - right_padding, rect.bottom - 5},
                           bottom_label, axis_text, DT_RIGHT | DT_TOP);
 }
 
@@ -2029,6 +2056,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     }
     case WM_MOUSEMOVE:
         return handle_mouse_move(lparam);
+    case WM_MOUSEWHEEL:
+        return handle_mouse_wheel(wparam, lparam);
     case WM_MOUSELEAVE:
         return handle_mouse_leave();
     case WM_GETDLGCODE:
@@ -2066,6 +2095,8 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
     mouse_inside_client_ = true;
     if (primary_mouse_down_ && queue_column_resize_separator_ >= 0) {
         update_queue_column_resize(mouse_position_.x);
+    } else if (primary_mouse_down_ && queue_scroll_dragging_) {
+        update_queue_scroll_drag(mouse_position_.y);
     }
     if (!mouse_tracking_) {
         TRACKMOUSEEVENT event{};
@@ -2077,18 +2108,19 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
     if (queue_column_resize_separator_ >= 0) {
         SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
     } else {
-        Page page = Page::Queue;
+        UiState state;
         {
             std::lock_guard lock(mutex_);
-            page = state_.page;
+            state = state_;
         }
         bool over_resize_grip = false;
-        if (page == Page::Queue) {
+        if (state.page == Page::Queue) {
             const auto layout = queue_layout(content_rect());
-            const int header_bottom = layout.table.top + scale(36);
+            const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
             if (mouse_position_.y >= layout.table.top && mouse_position_.y < header_bottom) {
                 const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
-                const auto columns = queue_column_layout(layout.table, header_row);
+                const auto columns =
+                    queue_column_layout(queue_columns_table(layout.table, state.queued_paths.size()), header_row);
                 over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
                     return contains_point(grip, mouse_position_.x, mouse_position_.y);
                 });
@@ -2172,18 +2204,23 @@ bool MainWindow::queue_text_tooltip_candidate_at_mouse(const UiState& state, REC
         return false;
     }
     const auto layout = queue_layout(content_rect());
-    const int header_bottom = layout.table.top + scale(36);
-    const int row_height = scale(34);
-    if (row_height <= 0 || mouse_position_.y < header_bottom || mouse_position_.y >= layout.table.bottom) {
+    const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
+    const int row_height = scale(kQueueRowHeight);
+    const RECT columns_table = queue_columns_table(layout.table, state.queued_paths.size());
+    if (row_height <= 0 || mouse_position_.y < header_bottom || mouse_position_.y >= layout.table.bottom ||
+        mouse_position_.x >= columns_table.right) {
         return false;
     }
-    const int row_index = (mouse_position_.y - header_bottom) / row_height;
+    const int first_visible_row =
+        std::clamp(queue_scroll_first_row_, 0, queue_max_scroll_offset(layout.table, state.queued_paths.size()));
+    const int visible_index = (mouse_position_.y - header_bottom) / row_height;
+    const int row_index = first_visible_row + visible_index;
     if (row_index < 0 || row_index >= static_cast<int>(state.queued_paths.size())) {
         return false;
     }
-    const RECT row{layout.table.left, header_bottom + (row_index * row_height), layout.table.right,
-                   header_bottom + ((row_index + 1) * row_height)};
-    const auto columns = queue_column_layout(layout.table, row);
+    const RECT row{columns_table.left, header_bottom + (visible_index * row_height), columns_table.right,
+                   header_bottom + ((visible_index + 1) * row_height)};
+    const auto columns = queue_column_layout(columns_table, row);
     const auto& path = state.queued_paths[static_cast<std::size_t>(row_index)];
     const RECT name_cell = inset_rect(columns.name, scale(8), 0);
     const RECT path_cell = inset_rect(columns.path, scale(8), 0);
@@ -2327,6 +2364,7 @@ LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
         mouse_capture_active_ = false;
     }
     end_queue_column_resize();
+    end_queue_scroll_drag();
     if (mouse_inside_client_) {
         start_button_release_animation(mouse_position_);
     }
@@ -2341,7 +2379,37 @@ LRESULT MainWindow::handle_capture_changed() {
     primary_mouse_down_ = false;
     mouse_capture_active_ = false;
     end_queue_column_resize();
+    end_queue_scroll_drag();
     request_repaint();
+    return 0;
+}
+
+// Purpose: Scroll the Queue table with native mouse-wheel semantics.
+// Inputs: `wparam` contains wheel delta and `lparam` contains screen coordinates.
+// Outputs: Updates the first visible Queue row when the pointer is over an overflowing Queue table.
+LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
+    POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    ScreenToClient(hwnd_, &point);
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.page != Page::Queue || state.queued_paths.empty()) {
+        return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
+    }
+    const auto layout = queue_layout(content_rect());
+    if (!contains_point(layout.table, point.x, point.y) ||
+        queue_max_scroll_offset(layout.table, state.queued_paths.size()) == 0) {
+        return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
+    }
+
+    queue_wheel_delta_remainder_ += GET_WHEEL_DELTA_WPARAM(wparam);
+    const int wheel_steps = queue_wheel_delta_remainder_ / WHEEL_DELTA;
+    queue_wheel_delta_remainder_ %= WHEEL_DELTA;
+    if (wheel_steps != 0) {
+        (void)scroll_queue_rows(-wheel_steps * 3);
+    }
     return 0;
 }
 
@@ -2421,6 +2489,7 @@ bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, 
             normalize_queue_selection_locked();
             if (was_empty && !state_.queued_paths.empty()) {
                 state_.selected_queue_index = 0;
+                queue_scroll_first_row_ = 0;
             }
             state_.status = "Dropped items added";
             message = "Shell drop added " + std::to_string(paths.size()) + " queued item(s)";
@@ -3021,6 +3090,144 @@ MainWindow::QueueColumnLayout MainWindow::queue_column_layout(const RECT& table,
     return columns;
 }
 
+// Purpose: Reserve Queue table body space for an overflow scrollbar when needed.
+// Inputs: `table` is the full table rectangle and `row_count` is the number of queued entries.
+// Outputs: Returns the column layout table with the scrollbar gutter removed only when rows overflow.
+RECT MainWindow::queue_columns_table(const RECT& table, std::size_t row_count) const {
+    RECT columns = table;
+    if (queue_max_scroll_offset(table, row_count) > 0) {
+        columns.right -= scale(kQueueScrollbarWidth + 8);
+    }
+    return columns;
+}
+
+// Purpose: Count the number of complete Queue rows visible below the fixed header.
+// Inputs: `table` is the full Queue table rectangle.
+// Outputs: Returns a non-negative visible row count.
+int MainWindow::queue_visible_row_count(const RECT& table) const {
+    const int body_height = std::max(0, static_cast<int>(table.bottom - (table.top + scale(kQueueHeaderHeight))));
+    const int row_height = std::max(1, scale(kQueueRowHeight));
+    return std::max(0, body_height / row_height);
+}
+
+// Purpose: Compute the largest valid first visible Queue row.
+// Inputs: `table` is the full Queue table rectangle and `row_count` is the number of queued entries.
+// Outputs: Returns zero when no scrolling is needed, otherwise the maximum scroll offset.
+int MainWindow::queue_max_scroll_offset(const RECT& table, std::size_t row_count) const {
+    const int visible_rows = queue_visible_row_count(table);
+    const int rows = static_cast<int>(std::min<std::size_t>(row_count, static_cast<std::size_t>(INT_MAX)));
+    return std::max(0, rows - visible_rows);
+}
+
+// Purpose: Clamp Queue scroll state after queue or viewport changes.
+// Inputs: `table` is the visible table and `row_count` is the current queue size.
+// Outputs: Keeps `queue_scroll_first_row_` inside the valid range.
+void MainWindow::clamp_queue_scroll_offset(const RECT& table, std::size_t row_count) {
+    queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_, 0, queue_max_scroll_offset(table, row_count));
+}
+
+// Purpose: Return the Queue scrollbar track inside the table body.
+// Inputs: `table` is the full Queue table rectangle.
+// Outputs: Returns a narrow body-only track rectangle.
+RECT MainWindow::queue_scrollbar_track_rect(const RECT& table) const {
+    const int width = scale(kQueueScrollbarWidth);
+    return RECT{table.right - width - scale(6), table.top + scale(kQueueHeaderHeight) + scale(8),
+                table.right - scale(6), table.bottom - scale(8)};
+}
+
+// Purpose: Return the Queue scrollbar thumb for the current scroll position.
+// Inputs: `table` is the full table and `row_count` is the number of queued entries.
+// Outputs: Returns an empty rectangle when no scrollbar is required.
+RECT MainWindow::queue_scrollbar_thumb_rect(const RECT& table, std::size_t row_count) const {
+    const int max_offset = queue_max_scroll_offset(table, row_count);
+    if (max_offset <= 0 || row_count == 0U) {
+        return RECT{};
+    }
+    const RECT track = queue_scrollbar_track_rect(table);
+    const int track_height = std::max(1, static_cast<int>(track.bottom - track.top));
+    const int visible_rows = std::max(1, queue_visible_row_count(table));
+    const int rows = static_cast<int>(std::min<std::size_t>(row_count, static_cast<std::size_t>(INT_MAX)));
+    const int min_thumb = scale(32);
+    const int thumb_height =
+        std::clamp((track_height * visible_rows) / std::max(visible_rows, rows), min_thumb, track_height);
+    const int travel = std::max(0, track_height - thumb_height);
+    const int top = track.top + (travel * std::clamp(queue_scroll_first_row_, 0, max_offset)) / max_offset;
+    return RECT{track.left, top, track.right, top + thumb_height};
+}
+
+// Purpose: Move the Queue table by a row delta.
+// Inputs: `delta_rows` is positive for down and negative for up.
+// Outputs: Mutates the first visible row and queues repaint when the visible range changes.
+bool MainWindow::scroll_queue_rows(int delta_rows) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.page != Page::Queue || state.queued_paths.empty()) {
+        return false;
+    }
+    const auto layout = queue_layout(content_rect());
+    const int previous = queue_scroll_first_row_;
+    queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_ + delta_rows, 0,
+                                         queue_max_scroll_offset(layout.table, state.queued_paths.size()));
+    if (queue_scroll_first_row_ == previous) {
+        return false;
+    }
+    request_repaint();
+    return true;
+}
+
+// Purpose: Start dragging the Queue scrollbar thumb.
+// Inputs: `y` is the current client mouse y-coordinate and `table`/`row_count` describe the visible table.
+// Outputs: Captures the drag baseline when scrolling is possible.
+void MainWindow::begin_queue_scroll_drag(int y, const RECT& table, std::size_t row_count) {
+    if (queue_max_scroll_offset(table, row_count) <= 0) {
+        return;
+    }
+    queue_scroll_dragging_ = true;
+    queue_scroll_drag_start_y_ = y;
+    queue_scroll_drag_start_offset_ = queue_scroll_first_row_;
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+}
+
+// Purpose: Update Queue scroll position from a scrollbar-thumb drag.
+// Inputs: `y` is the current client mouse y-coordinate.
+// Outputs: Mutates the first visible row and queues repaint when the thumb moves to another row.
+void MainWindow::update_queue_scroll_drag(int y) {
+    if (!queue_scroll_dragging_) {
+        return;
+    }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    const auto layout = queue_layout(content_rect());
+    const int max_offset = queue_max_scroll_offset(layout.table, state.queued_paths.size());
+    if (max_offset <= 0) {
+        queue_scroll_first_row_ = 0;
+        return;
+    }
+    const RECT track = queue_scrollbar_track_rect(layout.table);
+    const RECT thumb = queue_scrollbar_thumb_rect(layout.table, state.queued_paths.size());
+    const int travel = std::max(1, static_cast<int>((track.bottom - track.top) - (thumb.bottom - thumb.top)));
+    const int delta_rows = std::lround(static_cast<double>(y - queue_scroll_drag_start_y_) *
+                                       static_cast<double>(max_offset) / static_cast<double>(travel));
+    const int previous = queue_scroll_first_row_;
+    queue_scroll_first_row_ = std::clamp(queue_scroll_drag_start_offset_ + delta_rows, 0, max_offset);
+    if (queue_scroll_first_row_ != previous) {
+        request_repaint();
+    }
+}
+
+// Purpose: End any active Queue scrollbar drag.
+// Inputs: None.
+// Outputs: Clears scrollbar drag state.
+void MainWindow::end_queue_scroll_drag() {
+    queue_scroll_dragging_ = false;
+}
+
 // Purpose: Compute Compress page rectangles shared by rendering and hit testing.
 // Inputs: `rect` is the content area in physical pixels.
 // Outputs: Returns DPI-scaled Compress page control rectangles.
@@ -3124,11 +3331,10 @@ MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
     return layout;
 }
 
-// Purpose: Draw the queue page with the file/folder selection table only.
-// Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
-// Outputs: Renders queue selection controls; operation configuration remains on later pages.
-void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state) {
-    const auto layout = queue_layout(rect);
+// Purpose: Draw Queue page title and queue-management commands.
+// Inputs: `dc` is the paint target, `layout` holds DPI-scaled rectangles, and `state` is the copied UI state.
+// Outputs: Renders the title, Add files, Add folder, Clear, and item-count controls.
+void MainWindow::draw_queue_toolbar(HDC dc, const QueueLayout& layout, const UiState& state) {
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, layout.add_files.left - scale(18), area.top + scale(kPageTitleTextHeight)},
@@ -3144,17 +3350,18 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
               RECT{layout.add_files.left - scale(120), area.top, layout.add_files.left - scale(18),
                    area.top + scale(kPageHeaderHeight)},
               count_text, kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+}
 
-    RECT table = layout.table;
-    const COLORREF table_fill = queue_drop_highlight_ ? blend_color(kPanel, kInfo, 0.16) : kPanel;
-    fill_round_rect(dc, table, table_fill, scale(4));
-    stroke_rect(dc, table, queue_drop_highlight_ ? RGB(70, 116, 130) : kBorder);
+// Purpose: Draw the fixed Queue table header row.
+// Inputs: `dc` is the paint target, `table`/`columns_table` describe table geometry, and `state` is copied UI state.
+// Outputs: Renders select-all checkbox, column titles, resize separators, and header/body divider.
+void MainWindow::draw_queue_table_header(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state) {
     SelectObject(dc, tiny_font_);
-    const int header_bottom = table.top + scale(36);
+    const int header_bottom = table.top + scale(kQueueHeaderHeight);
     const RECT header_row{table.left, table.top, table.right, header_bottom};
     const RECT header_band{table.left + scale(1), table.top + scale(1), table.right - scale(1), header_bottom};
     fill_rect(dc, header_band, blend_color(kPanel, kPanel2, 0.52));
-    const auto header_columns = queue_column_layout(table, header_row);
+    const auto header_columns = queue_column_layout(columns_table, header_row);
     const bool has_entries = !state.queued_paths.empty();
     const bool all_enabled =
         has_entries && state.queued_enabled.size() >= state.queued_paths.size() &&
@@ -3177,44 +3384,101 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
     draw_line(dc, table.left + scale(1), header_bottom - scale(1), table.right - scale(1), header_bottom - scale(1),
               RGB(73, 95, 102));
     draw_line(dc, table.left + scale(1), header_bottom, table.right - scale(1), header_bottom, RGB(9, 15, 18));
+}
 
-    int y = header_bottom;
-    if (state.queued_paths.empty()) {
-        SelectObject(dc, body_font_);
-        const RECT empty_drop_zone{table.left + scale(40), table.top + scale(36), table.right - scale(40),
-                                   table.bottom - scale(36)};
-        draw_text(dc, empty_drop_zone, L"Drag & drop files or folders here, or use the Add files / Add folder buttons.",
-                  queue_drop_highlight_ ? kText : kMuted,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    } else {
-        int row_index = 0;
-        for (const auto& path : state.queued_paths) {
-            const int row_bottom = y + scale(34);
-            const bool selected = row_index == state.selected_queue_index;
-            const RECT row_rect{table.left, y, table.right, row_bottom};
-            const auto columns = queue_column_layout(table, row_rect);
-            const bool enabled = static_cast<std::size_t>(row_index) >= state.queued_enabled.size()
-                                     ? true
-                                     : state.queued_enabled[static_cast<std::size_t>(row_index)];
-            const COLORREF base_row_fill = selected ? kPanel3 : (((y / scale(34)) % 2 == 0) ? kPanel2 : kPanel);
-            const COLORREF row_fill = interactive_fill(base_row_fill, row_rect);
-            fill_rect(dc, RECT{table.left + scale(1), y + scale(1), table.right - scale(1), row_bottom}, row_fill);
-            draw_checkbox(dc, columns.checkbox, L"", enabled);
-            draw_text(dc, inset_rect(columns.name, scale(8), 0), path.filename().wstring(), kText,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, inset_rect(columns.size, scale(8), 0), entry_size_text(path), kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, inset_rect(columns.type, scale(8), 0), entry_type_text(path), kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, inset_rect(columns.path, scale(8), 0), path.wstring(), kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            y = row_bottom;
-            ++row_index;
-            if (y > table.bottom - scale(34)) {
-                break;
-            }
+// Purpose: Draw Queue empty-state drag/drop guidance.
+// Inputs: `dc` is the paint target and `table` is the Queue table rectangle.
+// Outputs: Renders centered muted or highlighted drop text without changing queue state.
+void MainWindow::draw_queue_empty_state(HDC dc, const RECT& table) {
+    SelectObject(dc, body_font_);
+    const RECT empty_drop_zone{table.left + scale(40), table.top + scale(36), table.right - scale(40),
+                               table.bottom - scale(36)};
+    draw_text(dc, empty_drop_zone, L"Drag & drop files or folders here, or use the Add files / Add folder buttons.",
+              queue_drop_highlight_ ? kText : kMuted,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+// Purpose: Draw the visible Queue body rows below the fixed header.
+// Inputs: `dc` is the paint target, `table`/`columns_table` describe geometry, `state` is copied UI state, and
+// `first_visible_row` is the first queued item to render.
+// Outputs: Renders clipped row backgrounds, row checkboxes, and text columns.
+void MainWindow::draw_queue_table_rows(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state,
+                                       int first_visible_row) {
+    const int saved = SaveDC(dc);
+    const int header_bottom = table.top + scale(kQueueHeaderHeight);
+    const int row_height = scale(kQueueRowHeight);
+    IntersectClipRect(dc, columns_table.left + scale(1), header_bottom, columns_table.right - scale(1),
+                      table.bottom - scale(1));
+    const int visible_rows = std::max(0, queue_visible_row_count(table));
+    for (int visible_index = 0; visible_index < visible_rows; ++visible_index) {
+        const int row_index = first_visible_row + visible_index;
+        if (row_index >= static_cast<int>(state.queued_paths.size())) {
+            break;
         }
+        const auto& path = state.queued_paths[static_cast<std::size_t>(row_index)];
+        const int y = header_bottom + (visible_index * row_height);
+        const int row_bottom = y + row_height;
+        const bool selected = row_index == state.selected_queue_index;
+        const RECT row_rect{columns_table.left, y, columns_table.right, row_bottom};
+        const auto columns = queue_column_layout(columns_table, row_rect);
+        const bool enabled = static_cast<std::size_t>(row_index) >= state.queued_enabled.size()
+                                 ? true
+                                 : state.queued_enabled[static_cast<std::size_t>(row_index)];
+        const COLORREF base_row_fill = selected ? kPanel3 : ((row_index % 2 == 0) ? kPanel2 : kPanel);
+        const COLORREF row_fill = interactive_fill(base_row_fill, row_rect);
+        fill_rect(dc, RECT{columns_table.left + scale(1), y + scale(1), columns_table.right - scale(1), row_bottom},
+                  row_fill);
+        draw_checkbox(dc, columns.checkbox, L"", enabled);
+        draw_text(dc, inset_rect(columns.name, scale(8), 0), path.filename().wstring(), kText,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, inset_rect(columns.size, scale(8), 0), entry_size_text(path), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, inset_rect(columns.type, scale(8), 0), entry_type_text(path), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        draw_text(dc, inset_rect(columns.path, scale(8), 0), path.wstring(), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
+    RestoreDC(dc, saved);
+}
+
+// Purpose: Draw the Queue overflow scrollbar when rows exceed visible capacity.
+// Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the queue size, and
+// `max_scroll` is the largest valid first visible row.
+// Outputs: Renders the body-only scrollbar track and thumb when overflow exists.
+void MainWindow::draw_queue_scrollbar(HDC dc, const RECT& table, std::size_t row_count, int max_scroll) {
+    if (max_scroll <= 0) {
+        return;
+    }
+    const RECT track = queue_scrollbar_track_rect(table);
+    const RECT thumb = queue_scrollbar_thumb_rect(table, row_count);
+    fill_round_rect(dc, track, RGB(18, 28, 32), scale(5));
+    const COLORREF thumb_fill = interactive_fill(RGB(64, 83, 90), thumb);
+    fill_round_rect(dc, thumb, thumb_fill, scale(5));
+}
+
+// Purpose: Draw the queue page with the file/folder selection table only.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
+// Outputs: Renders queue selection controls; operation configuration remains on later pages.
+void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state) {
+    const auto layout = queue_layout(rect);
+    draw_queue_toolbar(dc, layout, state);
+
+    const RECT table = layout.table;
+    const COLORREF table_fill = queue_drop_highlight_ ? blend_color(kPanel, kInfo, 0.16) : kPanel;
+    fill_round_rect(dc, table, table_fill, scale(4));
+    stroke_rect(dc, table, queue_drop_highlight_ ? RGB(70, 116, 130) : kBorder);
+
+    const int max_scroll = queue_max_scroll_offset(table, state.queued_paths.size());
+    const int first_visible_row = std::clamp(queue_scroll_first_row_, 0, max_scroll);
+    const RECT columns_table = queue_columns_table(table, state.queued_paths.size());
+    draw_queue_table_header(dc, table, columns_table, state);
+
+    if (state.queued_paths.empty()) {
+        draw_queue_empty_state(dc, table);
+        return;
+    }
+    draw_queue_table_rows(dc, table, columns_table, state, first_visible_row);
+    draw_queue_scrollbar(dc, table, state.queued_paths.size(), max_scroll);
 }
 
 // Purpose: Draw the compression settings page.
@@ -3617,7 +3881,7 @@ RECT MainWindow::performance_update_speed_rect(const RECT& monitor) const {
 
 // Purpose: Draw the live performance monitor section on the System page.
 // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `state` contains the latest counters.
-// Outputs: Renders CPU, total RAM, process read/write I/O, and VRAM history cards.
+// Outputs: Renders CPU, total RAM, process read/write I/O, and total GPU utilization history cards.
 void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state) {
     const auto& sample = state.performance;
     fill_round_rect(dc, monitor, kPanel, scale(4));
@@ -3639,7 +3903,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     std::array<double, 96> memory{};
     std::array<double, 96> read{};
     std::array<double, 96> write{};
-    std::array<double, 96> vram{};
+    std::array<double, 96> gpu{};
     const auto sample_at = [this](std::size_t index) -> const PerformanceMonitorSample& {
         const auto start = performance_history_next_ + performance_history_.size() - performance_history_count_;
         return performance_history_[(start + index) % performance_history_.size()];
@@ -3650,9 +3914,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         memory[i] = item.system_memory_percent / 100.0;
         read[i] = std::min(1.0, item.io_read_bytes_per_second / (1024.0 * 1024.0 * 1024.0));
         write[i] = std::min(1.0, item.io_write_bytes_per_second / (1024.0 * 1024.0 * 1024.0));
-        vram[i] = item.vram_total_bytes == 0U ? 0.0
-                                              : static_cast<double>(item.vram_total_bytes - item.vram_free_bytes) /
-                                                    static_cast<double>(item.vram_total_bytes);
+        gpu[i] = item.gpu_utilization_available ? item.gpu_utilization_percent / 100.0 : 0.0;
     }
 
     const auto cards = performance_monitor_card_rects(monitor);
@@ -3660,7 +3922,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     const std::span<const double> memory_span(memory.data(), performance_history_count_);
     const std::span<const double> read_span(read.data(), performance_history_count_);
     const std::span<const double> write_span(write.data(), performance_history_count_);
-    const std::span<const double> vram_span(vram.data(), performance_history_count_);
+    const std::span<const double> gpu_span(gpu.data(), performance_history_count_);
     const std::wstring percent_top = L"100%";
     const std::wstring zero_percent = L"0%";
     const std::wstring io_top = L"1 GiB/s";
@@ -3697,16 +3959,15 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
-            const double vram_percent =
-                has_vram ? (static_cast<double>(used) / static_cast<double>(sample.vram_total_bytes)) * 100.0 : 0.0;
-            const auto value = has_vram ? percentage_text(vram_percent) : L"Unavailable";
+            const auto value =
+                sample.gpu_utilization_available ? percentage_text(sample.gpu_utilization_percent) : L"Unavailable";
             const auto detail =
                 has_vram ? std::wstring(L"VRAM used (total): ") + widen(human_bytes(static_cast<double>(used))) +
                                L" / " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
                                L"\nVRAM used (dedicated): " +
                                widen(human_bytes(static_cast<double>(sample.process_dedicated_vram_bytes)))
                          : L"HIP VRAM unavailable\nGPU memory counter unavailable";
-            draw_performance_monitor_card(dc, card, L"GPU", value, detail, vram_span, kAccent, percent_top,
+            draw_performance_monitor_card(dc, card, L"GPU", value, detail, gpu_span, kAccent, percent_top,
                                           zero_percent);
         }
     }
@@ -4116,17 +4377,21 @@ void MainWindow::add_queue_focus_targets(std::vector<FocusTarget>& targets, cons
     if (state.queued_paths.empty()) {
         return;
     }
-    const int header_bottom = layout.table.top + scale(36);
+    const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
+    const RECT columns_table = queue_columns_table(layout.table, state.queued_paths.size());
     const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
     append_focus_target(targets, FocusTargetKind::QueueHeaderCheckbox,
-                        queue_column_layout(layout.table, header_row).header_checkbox);
-    const int row_height = scale(34);
-    const int visible_rows = row_height <= 0 ? 0 : (layout.table.bottom - header_bottom) / row_height;
+                        queue_column_layout(columns_table, header_row).header_checkbox);
+    const int row_height = scale(kQueueRowHeight);
+    const int visible_rows = queue_visible_row_count(layout.table);
     const int row_count = std::min(static_cast<int>(state.queued_paths.size()), std::max(0, visible_rows));
+    const int first_visible_row =
+        std::clamp(queue_scroll_first_row_, 0, queue_max_scroll_offset(layout.table, state.queued_paths.size()));
     for (int index = 0; index < row_count; ++index) {
         const int top = header_bottom + (index * row_height);
         append_focus_target(targets, FocusTargetKind::QueueRow,
-                            RECT{layout.table.left, top, layout.table.right, top + row_height}, index);
+                            RECT{columns_table.left, top, columns_table.right, top + row_height},
+                            first_visible_row + index);
     }
 }
 
@@ -4267,6 +4532,34 @@ bool MainWindow::handle_navigation_key(WPARAM key) {
                                    static_cast<int>(options.size());
         request_repaint();
         return true;
+    }
+    if (state.page == Page::Queue && !state.queued_paths.empty() && (key == VK_UP || key == VK_DOWN)) {
+        const auto targets = focus_targets_for(content_rect(), state);
+        if (!normalize_focus_index(targets)) {
+            return false;
+        }
+        const auto& target = targets[static_cast<std::size_t>(keyboard_focus_index_)];
+        if (target.kind == FocusTargetKind::QueueRow) {
+            const auto layout = queue_layout(content_rect());
+            const int row_count =
+                static_cast<int>(std::min<std::size_t>(state.queued_paths.size(), static_cast<std::size_t>(INT_MAX)));
+            const int visible_rows = std::max(1, queue_visible_row_count(layout.table));
+            const int next_row = std::clamp(target.index + (key == VK_DOWN ? 1 : -1), 0, std::max(0, row_count - 1));
+            {
+                std::lock_guard lock(mutex_);
+                state_.selected_queue_index = next_row;
+            }
+            const int max_scroll = queue_max_scroll_offset(layout.table, state.queued_paths.size());
+            if (next_row < queue_scroll_first_row_) {
+                queue_scroll_first_row_ = next_row;
+            } else if (next_row >= queue_scroll_first_row_ + visible_rows) {
+                queue_scroll_first_row_ = next_row - visible_rows + 1;
+            }
+            queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_, 0, max_scroll);
+            keyboard_focus_index_ = 4 + (next_row - queue_scroll_first_row_);
+            request_repaint();
+            return true;
+        }
     }
     if (key == VK_HOME || key == VK_END) {
         const auto targets = focus_targets_for(content_rect(), state);
@@ -4502,11 +4795,19 @@ bool MainWindow::handle_queue_click(const RECT& content, int x, int y) {
         clear_queue();
         return true;
     }
-    const int header_bottom = layout.table.top + scale(36);
-    const int row_height = scale(34);
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    clamp_queue_scroll_offset(layout.table, state.queued_paths.size());
+    const RECT columns_table = queue_columns_table(layout.table, state.queued_paths.size());
+    const int max_scroll = queue_max_scroll_offset(layout.table, state.queued_paths.size());
+    const int header_bottom = layout.table.top + scale(kQueueHeaderHeight);
+    const int row_height = scale(kQueueRowHeight);
     if (y >= layout.table.top && y < header_bottom) {
         const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
-        const auto columns = queue_column_layout(layout.table, header_row);
+        const auto columns = queue_column_layout(columns_table, header_row);
         for (int separator = 0; separator < static_cast<int>(columns.resize_grips.size()); ++separator) {
             if (contains_point(columns.resize_grips[static_cast<std::size_t>(separator)], x, y)) {
                 begin_queue_column_resize(separator, x);
@@ -4518,11 +4819,28 @@ bool MainWindow::handle_queue_click(const RECT& content, int x, int y) {
         }
         return true;
     }
+    if (max_scroll > 0) {
+        const RECT track = queue_scrollbar_track_rect(layout.table);
+        const RECT thumb = queue_scrollbar_thumb_rect(layout.table, state.queued_paths.size());
+        if (contains_point(thumb, x, y)) {
+            begin_queue_scroll_drag(y, layout.table, state.queued_paths.size());
+            return true;
+        }
+        if (contains_point(track, x, y)) {
+            const int visible_rows = std::max(1, queue_visible_row_count(layout.table));
+            (void)scroll_queue_rows(y < thumb.top ? -visible_rows : visible_rows);
+            return true;
+        }
+    }
     if (y >= header_bottom && y < layout.table.bottom && row_height > 0) {
-        const int index = (y - header_bottom) / row_height;
-        const RECT row{layout.table.left, header_bottom + (index * row_height), layout.table.right,
-                       header_bottom + ((index + 1) * row_height)};
-        const auto columns = queue_column_layout(layout.table, row);
+        if (x >= columns_table.right) {
+            return true;
+        }
+        const int visible_index = (y - header_bottom) / row_height;
+        const int index = queue_scroll_first_row_ + visible_index;
+        const RECT row{columns_table.left, header_bottom + (visible_index * row_height), columns_table.right,
+                       header_bottom + ((visible_index + 1) * row_height)};
+        const auto columns = queue_column_layout(columns_table, row);
         if (contains_point(columns.checkbox, x, y)) {
             return toggle_queue_item(static_cast<std::size_t>(std::max(0, index)));
         }
@@ -5071,6 +5389,7 @@ void MainWindow::add_files() {
         }
         if (was_empty && !state_.queued_paths.empty()) {
             state_.selected_queue_index = 0;
+            queue_scroll_first_row_ = 0;
         }
         normalize_queue_selection_locked();
         state_.status = "Smoke files added";
@@ -5106,6 +5425,7 @@ void MainWindow::add_files() {
     }
     if (was_empty && !state_.queued_paths.empty()) {
         state_.selected_queue_index = 0;
+        queue_scroll_first_row_ = 0;
     }
     normalize_queue_selection_locked();
     request_repaint();
@@ -5126,6 +5446,7 @@ void MainWindow::add_folder() {
         state_.queued_enabled.push_back(true);
         if (was_empty) {
             state_.selected_queue_index = 0;
+            queue_scroll_first_row_ = 0;
         }
         normalize_queue_selection_locked();
         state_.status = "Smoke folder added";
@@ -5154,6 +5475,7 @@ void MainWindow::add_folder() {
         state_.queued_enabled.push_back(true);
         if (was_empty) {
             state_.selected_queue_index = 0;
+            queue_scroll_first_row_ = 0;
         }
         normalize_queue_selection_locked();
     }
@@ -5169,6 +5491,8 @@ void MainWindow::clear_queue() {
         state_.queued_paths.clear();
         state_.queued_enabled.clear();
         state_.selected_queue_index = -1;
+        queue_scroll_first_row_ = 0;
+        queue_wheel_delta_remainder_ = 0;
     }
     request_repaint();
 }
@@ -5549,6 +5873,9 @@ void MainWindow::reset_performance_timer(int seconds) {
     SetTimer(hwnd_, kPerformanceTimer, interval, nullptr);
 }
 
+// Purpose: Sample total Windows GPU engine utilization when PDH exposes it.
+// Inputs: None; uses initialized PDH wildcard counters.
+// Outputs: Returns total system GPU percentage or a negative value when unavailable.
 double MainWindow::sample_gpu_utilization() {
     if (gpu_query_ == nullptr || gpu_counter_ == nullptr) {
         return -1.0;
@@ -5570,10 +5897,7 @@ double MainWindow::sample_gpu_utilization() {
         return -1.0;
     }
 
-    const std::wstring pid_marker = L"pid_" + std::to_wstring(GetCurrentProcessId()) + L"_";
-    double process_total = 0.0;
     double system_total = 0.0;
-    bool found_process_sample = false;
     for (DWORD index = 0; index < item_count; ++index) {
         const auto& item = items[index];
         if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr) {
@@ -5581,13 +5905,8 @@ double MainWindow::sample_gpu_utilization() {
         }
         const double value = std::max(0.0, item.FmtValue.doubleValue);
         system_total += value;
-        if (std::wstring_view(item.szName).find(pid_marker) != std::wstring_view::npos) {
-            process_total += value;
-            found_process_sample = true;
-        }
     }
-    const double value = found_process_sample ? process_total : system_total;
-    return std::clamp(value, 0.0, 100.0);
+    return std::clamp(system_total, 0.0, 100.0);
 }
 
 // Purpose: Sample SuperZip process CPU use since the previous monitor tick.

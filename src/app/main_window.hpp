@@ -387,6 +387,11 @@ class MainWindow {
     // Outputs: Releases capture, updates mouse state, queues animation, and returns the handled Win32 result.
     LRESULT handle_primary_mouse_up(LPARAM lparam);
 
+    // Purpose: Scroll the Queue table with native mouse-wheel semantics.
+    // Inputs: `wparam` contains wheel delta and `lparam` contains screen coordinates.
+    // Outputs: Updates the first visible Queue row when the pointer is over an overflowing Queue table.
+    LRESULT handle_mouse_wheel(WPARAM wparam, LPARAM lparam);
+
     // Purpose: Normalize mouse state after Windows changes capture ownership.
     // Inputs: None.
     // Outputs: Clears pressed/capture flags and returns the handled Win32 result.
@@ -729,6 +734,84 @@ class MainWindow {
     // Outputs: Returns fixed checkbox and resizable data-column rectangles.
     [[nodiscard]] QueueColumnLayout queue_column_layout(const RECT& table, const RECT& row) const;
 
+    // Purpose: Draw Queue page title and queue-management commands.
+    // Inputs: `dc` is the paint target, `layout` holds DPI-scaled rectangles, and `state` is the copied UI state.
+    // Outputs: Renders the title, Add files, Add folder, Clear, and item-count controls.
+    void draw_queue_toolbar(HDC dc, const QueueLayout& layout, const UiState& state);
+
+    // Purpose: Draw the fixed Queue table header row.
+    // Inputs: `dc` is the paint target, `table`/`columns_table` describe table geometry, and `state` is copied UI
+    // state. Outputs: Renders select-all checkbox, column titles, resize separators, and header/body divider.
+    void draw_queue_table_header(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state);
+
+    // Purpose: Draw Queue empty-state drag/drop guidance.
+    // Inputs: `dc` is the paint target and `table` is the Queue table rectangle.
+    // Outputs: Renders centered muted or highlighted drop text without changing queue state.
+    void draw_queue_empty_state(HDC dc, const RECT& table);
+
+    // Purpose: Draw the visible Queue body rows below the fixed header.
+    // Inputs: `dc` is the paint target, `table`/`columns_table` describe geometry, `state` is copied UI state, and
+    // `first_visible_row` is the first queued item to render.
+    // Outputs: Renders clipped row backgrounds, row checkboxes, and text columns.
+    void draw_queue_table_rows(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state,
+                               int first_visible_row);
+
+    // Purpose: Draw the Queue overflow scrollbar when rows exceed visible capacity.
+    // Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the queue size, and
+    // `max_scroll` is the largest valid first visible row.
+    // Outputs: Renders the body-only scrollbar track and thumb when overflow exists.
+    void draw_queue_scrollbar(HDC dc, const RECT& table, std::size_t row_count, int max_scroll);
+
+    // Purpose: Reserve Queue table body space for an overflow scrollbar when needed.
+    // Inputs: `table` is the full table rectangle and `row_count` is the number of queued entries.
+    // Outputs: Returns the column layout table with the scrollbar gutter removed only when rows overflow.
+    [[nodiscard]] RECT queue_columns_table(const RECT& table, std::size_t row_count) const;
+
+    // Purpose: Count the number of complete Queue rows visible below the fixed header.
+    // Inputs: `table` is the full Queue table rectangle.
+    // Outputs: Returns a non-negative visible row count.
+    [[nodiscard]] int queue_visible_row_count(const RECT& table) const;
+
+    // Purpose: Compute the largest valid first visible Queue row.
+    // Inputs: `table` is the full Queue table rectangle and `row_count` is the number of queued entries.
+    // Outputs: Returns zero when no scrolling is needed, otherwise the maximum scroll offset.
+    [[nodiscard]] int queue_max_scroll_offset(const RECT& table, std::size_t row_count) const;
+
+    // Purpose: Clamp Queue scroll state after queue or viewport changes.
+    // Inputs: `table` is the visible table and `row_count` is the current queue size.
+    // Outputs: Keeps `queue_scroll_first_row_` inside the valid range.
+    void clamp_queue_scroll_offset(const RECT& table, std::size_t row_count);
+
+    // Purpose: Return the Queue scrollbar track inside the table body.
+    // Inputs: `table` is the full Queue table rectangle.
+    // Outputs: Returns a narrow body-only track rectangle.
+    [[nodiscard]] RECT queue_scrollbar_track_rect(const RECT& table) const;
+
+    // Purpose: Return the Queue scrollbar thumb for the current scroll position.
+    // Inputs: `table` is the full table and `row_count` is the number of queued entries.
+    // Outputs: Returns an empty rectangle when no scrollbar is required.
+    [[nodiscard]] RECT queue_scrollbar_thumb_rect(const RECT& table, std::size_t row_count) const;
+
+    // Purpose: Move the Queue table by a row delta.
+    // Inputs: `delta_rows` is positive for down and negative for up.
+    // Outputs: Mutates the first visible row and queues repaint when the visible range changes.
+    bool scroll_queue_rows(int delta_rows);
+
+    // Purpose: Start dragging the Queue scrollbar thumb.
+    // Inputs: `y` is the current client mouse y-coordinate and `table`/`row_count` describe the visible table.
+    // Outputs: Captures the drag baseline when scrolling is possible.
+    void begin_queue_scroll_drag(int y, const RECT& table, std::size_t row_count);
+
+    // Purpose: Update Queue scroll position from a scrollbar-thumb drag.
+    // Inputs: `y` is the current client mouse y-coordinate.
+    // Outputs: Mutates the first visible row and queues repaint when the thumb moves to another row.
+    void update_queue_scroll_drag(int y);
+
+    // Purpose: End any active Queue scrollbar drag.
+    // Inputs: None.
+    // Outputs: Clears scrollbar drag state.
+    void end_queue_scroll_drag();
+
     // Purpose: Keep queue selection flags aligned with queued paths while mutex is held.
     // Inputs: None; reads and mutates `state_`.
     // Outputs: Adds missing enabled flags, removes stale flags, and normalizes selected index.
@@ -949,9 +1032,9 @@ class MainWindow {
     // Outputs: Updates visible performance state, ring-buffer graph history, and last-sample time.
     void publish_performance_sample(const PerformanceMonitorSample& sample, std::chrono::steady_clock::time_point now);
 
-    // Purpose: Sample Windows GPU engine utilization for this process when PDH exposes it.
+    // Purpose: Sample total Windows GPU engine utilization when PDH exposes it.
     // Inputs: None; uses initialized PDH wildcard counters.
-    // Outputs: Returns a process GPU percentage or a negative value when unavailable.
+    // Outputs: Returns total system GPU percentage or a negative value when unavailable.
     [[nodiscard]] double sample_gpu_utilization();
 
     // Purpose: Sample Windows GPU dedicated memory assigned to the SuperZip process.
@@ -1036,6 +1119,11 @@ class MainWindow {
     std::array<int, 4> queue_column_resize_start_{260, 110, 110, 460};
     int queue_column_resize_separator_ = -1;
     int queue_column_resize_start_x_ = 0;
+    int queue_scroll_first_row_ = 0;
+    int queue_scroll_drag_start_y_ = 0;
+    int queue_scroll_drag_start_offset_ = 0;
+    int queue_wheel_delta_remainder_ = 0;
+    bool queue_scroll_dragging_ = false;
     std::array<PerformanceMonitorSample, 96> performance_history_{};
     std::size_t performance_history_count_ = 0;
     std::size_t performance_history_next_ = 0;

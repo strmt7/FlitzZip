@@ -6,6 +6,8 @@ description: Plan, audit, and execute behavior-preserving SuperZip refactors wit
 # SuperZip Refactoring Skill
 
 Read `docs/refactoring-governance.md` before editing code.
+Read `docs/debugging-strategy.md` before broad bug hunting or GUI/product
+defect work.
 Read `docs/targeted-verification.md` before choosing checks.
 
 Required sequence:
@@ -42,6 +44,10 @@ Rules:
 - For GUI refactors, run the plan-selected GUI smoke. The classifier selects
   `tools/gui_smoke.ps1 -Configuration Release` for GUI changes and full
   escalation.
+- GUI refactors must preserve existing behavior unless the maintainer asks for
+  the behavior change: Downloads defaults, Queue fixed-header scrolling,
+  table-only drag/drop, total-GPU graph semantics, and System graph cadence are
+  explicit regression boundaries.
 - New or changed functions must stay small enough to avoid CodeQL
   poorly-documented/large-function findings. If a changed function approaches
   120 lines or mixes multiple responsibilities, split it before pushing.

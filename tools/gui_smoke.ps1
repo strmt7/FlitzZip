@@ -44,6 +44,21 @@ function Assert-GuiSourceContract {
             throw "GUI log retention option missing required label $requiredLabel."
         }
     }
+    if ($sourceText -cmatch 'found_process_sample') {
+        throw "System GPU utilization graph must not prefer process-only PDH samples."
+    }
+    if ($sourceText -cmatch 'vram_span') {
+        throw "System GPU graph must plot total GPU utilization, not VRAM history."
+    }
+    if (-not $sourceText.Contains('current_user_downloads_directory')) {
+        throw "GUI destination defaults must resolve the current user's Downloads folder instead of process cwd."
+    }
+    if (-not $sourceText.Contains('queue_scrollbar_thumb_rect') -or -not $sourceText.Contains('WM_MOUSEWHEEL')) {
+        throw "Queue overflow must keep a fixed header and expose a working scrollbar/wheel path."
+    }
+    if (-not $sourceText.Contains('std::array<PerformanceMonitorSample, 96> performance_history_')) {
+        throw "System graph history cadence must not be changed without an explicit graph-cadence task."
+    }
 }
 
 Assert-GuiSourceContract
@@ -757,6 +772,7 @@ $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
 $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
 $badArchive = Join-Path $smokeRoot "invalid-input.suzip"
+$overflowFiles = @()
 $smokeCloseFile = Join-Path $smokeRoot "close.request"
 $smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "SuperZip"
 $smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
@@ -764,6 +780,12 @@ New-Item -ItemType Directory -Force -Path $smokeSettingsDir | Out-Null
 Set-Content -LiteralPath $smokeInput -Value "SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
+foreach ($index in 1..28) {
+    $path = Join-Path $smokeRoot ("overflow-{0:D2}.txt" -f $index)
+    Set-Content -LiteralPath $path -Value "Queue overflow smoke item $index" -NoNewline
+    $overflowFiles += (Resolve-Path -LiteralPath $path).Path
+}
+$queuePickerSelection = (@((Resolve-Path -LiteralPath $smokeInput).Path) + $overflowFiles) -join ';'
 Set-Content -LiteralPath $badArchive -Value "not a valid SuperZip archive" -NoNewline
 Remove-Item -LiteralPath $smokeArchive -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
@@ -779,7 +801,7 @@ $previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SM
 $previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
 $previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeRoot, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", (Resolve-Path -LiteralPath $smokeInput).Path, "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", $queuePickerSelection, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "90000", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
@@ -826,6 +848,13 @@ try {
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $pickerQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
+    Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 1148 -Top 170 -Right 1166 -Bottom 640 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 3
+    Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 1158 -StartY 186 -EndX 1158 -EndY 344
+    Start-Sleep -Milliseconds 180
+    $scrolledQueuePath = "${basePath}-Queue-AfterScrollbarDrag$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $scrolledQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $scrolledQueuePath -Dpi $windowDpi -Left 126 -Top 132 -Right 620 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
     $emptyQueuePath = "${basePath}-Queue-EmptyDropZone$extension"
