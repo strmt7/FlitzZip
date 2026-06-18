@@ -2510,9 +2510,10 @@ void MainWindow::draw_queue_page(HDC dc, const RECT& rect, const UiState& state)
     int y = header_bottom;
     if (state.queued_paths.empty()) {
         SelectObject(dc, body_font_);
-        draw_text(dc, RECT{table.left + scale(40), y, table.right - scale(40), table.bottom},
-                  L"Drag & drop files or folders here, or use the Add files / Add folder buttons.", kMuted,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        const RECT empty_drop_zone{table.left + scale(40), table.top + scale(36), table.right - scale(40),
+                                   table.bottom - scale(36)};
+        draw_text(dc, empty_drop_zone, L"Drag & drop files or folders here, or use the Add files / Add folder buttons.",
+                  kMuted, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     } else {
         int row_index = 0;
         for (const auto& path : state.queued_paths) {

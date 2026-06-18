@@ -493,6 +493,66 @@ function Assert-DesignRectHasColor {
     }
 }
 
+# Purpose: Assert that the Queue empty-state prompt is centered in the drop-zone panel.
+# Inputs: `Path` is a Queue screenshot, `Dpi` maps design pixels, and client offsets account for window chrome.
+# Outputs: Throws when the muted prompt pixels are absent or their bounding center drifts away from the panel center.
+function Assert-QueueEmptyMessageCentered {
+    param(
+        [string]$Path,
+        [int]$Dpi,
+        [int]$ClientOffsetX = 0,
+        [int]$ClientOffsetY = 0
+    )
+    $scale = [double]$Dpi / 96.0
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $leftPx = [Math]::Max(0, $ClientOffsetX + [int][Math]::Round(156 * $scale))
+        $topPx = [Math]::Max(0, $ClientOffsetY + [int][Math]::Round(166 * $scale))
+        $rightPx = [Math]::Min($bitmap.Width, $ClientOffsetX + [int][Math]::Round(1130 * $scale))
+        $bottomPx = [Math]::Min($bitmap.Height, $ClientOffsetY + [int][Math]::Round(668 * $scale))
+        if ($rightPx -le $leftPx -or $bottomPx -le $topPx) {
+            throw "Invalid Queue empty-message rectangle in $Path."
+        }
+
+        $matchingPixels = 0
+        $minX = $rightPx
+        $minY = $bottomPx
+        $maxX = $leftPx
+        $maxY = $topPx
+        for ($x = $leftPx; $x -lt $rightPx; $x++) {
+            for ($y = $topPx; $y -lt $bottomPx; $y++) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                if (Test-ColorNear -Color $pixel -Red 151 -Green 168 -Blue 174 -Tolerance 70) {
+                    $matchingPixels++
+                    $minX = [Math]::Min($minX, $x)
+                    $minY = [Math]::Min($minY, $y)
+                    $maxX = [Math]::Max($maxX, $x)
+                    $maxY = [Math]::Max($maxY, $y)
+                }
+            }
+        }
+
+        if ($matchingPixels -lt 80) {
+            throw "Queue empty-state prompt was not visibly rendered in $Path."
+        }
+
+        $actualCenterX = ($minX + $maxX) / 2.0
+        $actualCenterY = ($minY + $maxY) / 2.0
+        $expectedCenterX = $ClientOffsetX + (643 * $scale)
+        $expectedCenterY = $ClientOffsetY + (417 * $scale)
+        $maxDeltaX = [Math]::Max(18, [int][Math]::Round(42 * $scale))
+        $maxDeltaY = [Math]::Max(10, [int][Math]::Round(20 * $scale))
+        if ([Math]::Abs($actualCenterX - $expectedCenterX) -gt $maxDeltaX) {
+            throw "Queue empty-state prompt is not horizontally centered in $Path."
+        }
+        if ([Math]::Abs($actualCenterY - $expectedCenterY) -gt $maxDeltaY) {
+            throw "Queue empty-state prompt is not vertically centered in $Path."
+        }
+    } finally {
+        $bitmap.Dispose()
+    }
+}
+
 # Purpose: Force a pending SuperZip repaint before capturing visual assertions.
 # Inputs: `Handle` is the SuperZip HWND to invalidate and update.
 # Outputs: Requests synchronous client repaint; throws only if Win32 capture validation later fails.
@@ -751,6 +811,10 @@ try {
     Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
+    $emptyQueuePath = "${basePath}-Queue-EmptyDropZone$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $emptyQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-QueueEmptyMessageCentered -Path $emptyQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
 
     # Queue: exercise drag/drop and row selection only. Destination, level, and Start belong to Compress/Extract.
     Invoke-FileDrop -Handle $windowHandle -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)
