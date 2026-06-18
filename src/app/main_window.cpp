@@ -450,6 +450,18 @@ std::wstring performance_update_option_text(int index) {
     return performance_update_speed_text(std::clamp(index, 0, 9) + 1);
 }
 
+// Purpose: Return the visible history duration covered by the live performance charts.
+// Inputs: `sample_count` is the number of retained samples and `seconds` is the selected sample interval.
+// Outputs: Returns a compact label such as `Last 96 s` or `Last 8 min`.
+std::wstring performance_history_window_text(std::size_t sample_count, int seconds) {
+    const auto clamped_count = static_cast<unsigned long long>(std::max<std::size_t>(1U, sample_count));
+    const auto total_seconds = clamped_count * static_cast<unsigned long long>(std::clamp(seconds, 1, 10));
+    if (total_seconds >= 120ULL) {
+        return L"Last " + std::to_wstring((total_seconds + 30ULL) / 60ULL) + L" min";
+    }
+    return L"Last " + std::to_wstring(total_seconds) + L" s";
+}
+
 // Purpose: Map the visible compression-level selection to a miniz setting.
 // Inputs: `index` is the mutable compression-level selection in UI state.
 // Outputs: Returns one of the supported non-store compression settings: 1, 3, 5, 7, or 9.
@@ -1304,28 +1316,45 @@ void draw_graph_grid(HDC dc, const RECT& rect) {
 
 // Purpose: Draw one normalized history series inside a graph rectangle.
 // Inputs: `dc` is the target, `rect` is the plot area, `values` are clamped 0-1 samples, and `color` is the line.
-// Outputs: Renders a crisp one-pixel polyline; empty input produces no line.
+// Outputs: Renders a filled Task Manager-style trend area and crisp polyline; empty input produces no line.
 void draw_graph_series(HDC dc, const RECT& rect, std::span<const double> values, COLORREF color) {
     if (values.empty()) {
         return;
     }
-    HPEN pen = CreatePen(PS_SOLID, 1, color);
-    HGDIOBJ previous = SelectObject(dc, pen);
     const int width = std::max(1, static_cast<int>(rect.right - rect.left - 1));
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top - 1));
+    std::vector<POINT> points;
+    points.reserve(values.size() + 2U);
+    points.push_back(POINT{rect.left, rect.bottom});
     for (std::size_t index = 0; index < values.size(); ++index) {
         const double x_ratio =
             values.size() == 1U ? 1.0 : static_cast<double>(index) / static_cast<double>(values.size() - 1U);
         const double y_ratio = 1.0 - std::clamp(values[index], 0.0, 1.0);
         const int x = rect.left + static_cast<int>(std::round(x_ratio * static_cast<double>(width)));
         const int y = rect.top + static_cast<int>(std::round(y_ratio * static_cast<double>(height)));
-        if (index == 0U) {
-            MoveToEx(dc, x, y, nullptr);
+        points.push_back(POINT{x, y});
+    }
+    points.push_back(POINT{rect.right, rect.bottom});
+
+    const COLORREF fill_color = blend_color(color, RGB(17, 27, 31), 0.72);
+    HBRUSH brush = CreateSolidBrush(fill_color);
+    HGDIOBJ previous_brush = SelectObject(dc, brush);
+    HGDIOBJ previous_pen_for_fill = SelectObject(dc, GetStockObject(NULL_PEN));
+    Polygon(dc, points.data(), static_cast<int>(points.size()));
+    SelectObject(dc, previous_pen_for_fill);
+    SelectObject(dc, previous_brush);
+    DeleteObject(brush);
+
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ previous_pen = SelectObject(dc, pen);
+    for (std::size_t index = 1; index + 1U < points.size(); ++index) {
+        if (index == 1U) {
+            MoveToEx(dc, points[index].x, points[index].y, nullptr);
         } else {
-            LineTo(dc, x, y);
+            LineTo(dc, points[index].x, points[index].y);
         }
     }
-    SelectObject(dc, previous);
+    SelectObject(dc, previous_pen);
     DeleteObject(pen);
 }
 
@@ -1337,6 +1366,20 @@ void draw_text(HDC dc, const RECT& rect, std::wstring_view text, COLORREF color,
     SetTextColor(dc, color);
     RECT copy = rect;
     DrawTextW(dc, text.data(), static_cast<int>(text.size()), &copy, format);
+}
+
+// Purpose: Draw compact scale and time labels inside a live graph.
+// Inputs: `dc` is the target, `rect` is the plot area, and labels are already formatted for display.
+// Outputs: Renders unobtrusive axis text without changing the graph geometry.
+void draw_graph_axis_labels(HDC dc, const RECT& rect, const std::wstring& top_label, const std::wstring& bottom_label,
+                            const std::wstring& time_label) {
+    const COLORREF axis_text = RGB(103, 127, 135);
+    draw_text(dc, RECT{rect.left + 4, rect.top + 2, rect.right - 4, rect.top + 18}, top_label, axis_text,
+              DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{rect.left + 4, rect.bottom - 24, rect.right - 4, rect.bottom - 6}, bottom_label, axis_text,
+              DT_RIGHT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, RECT{rect.left + 4, rect.bottom - 24, rect.right - 4, rect.bottom - 6}, time_label, axis_text,
+              DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // Purpose: Return a rectangle inset by fixed pixel amounts.
@@ -2821,7 +2864,10 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
 // Outputs: Renders a bordered Task Manager-style history graph without overflowing text.
 void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label,
                                                const std::wstring& value, const std::wstring& detail,
-                                               std::span<const double> history, COLORREF color) {
+                                               std::span<const double> history, COLORREF color,
+                                               const std::wstring& graph_top_label,
+                                               const std::wstring& graph_bottom_label,
+                                               const std::wstring& graph_time_label) {
     fill_round_rect(dc, graph, kPanel2, scale(4));
     stroke_rect(dc, graph, kBorder);
     RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
@@ -2835,7 +2881,9 @@ void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const 
     draw_text(dc, value_rect, value, color, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, tiny_font_);
     draw_graph_grid(dc, plot);
-    draw_graph_series(dc, inset_rect(plot, scale(1), scale(1)), history, color);
+    const RECT graph_area = inset_rect(plot, scale(1), scale(1));
+    draw_graph_series(dc, graph_area, history, color);
+    draw_graph_axis_labels(dc, graph_area, graph_top_label, graph_bottom_label, graph_time_label);
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
@@ -2846,7 +2894,9 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
                                                     const std::wstring& value, const std::wstring& detail,
                                                     std::span<const double> primary_history,
                                                     std::span<const double> secondary_history, COLORREF primary,
-                                                    COLORREF secondary) {
+                                                    COLORREF secondary, const std::wstring& graph_top_label,
+                                                    const std::wstring& graph_bottom_label,
+                                                    const std::wstring& graph_time_label) {
     fill_round_rect(dc, graph, kPanel2, scale(4));
     stroke_rect(dc, graph, kBorder);
     RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
@@ -2863,6 +2913,7 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
     const RECT inset_plot = inset_rect(plot, scale(1), scale(1));
     draw_graph_series(dc, inset_plot, primary_history, primary);
     draw_graph_series(dc, inset_plot, secondary_history, secondary);
+    draw_graph_axis_labels(dc, inset_plot, graph_top_label, graph_bottom_label, graph_time_label);
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
@@ -2909,6 +2960,12 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     const std::span<const double> read_span(read.data(), performance_history_count_);
     const std::span<const double> write_span(write.data(), performance_history_count_);
     const std::span<const double> vram_span(vram.data(), performance_history_count_);
+    const std::wstring percent_top = L"100%";
+    const std::wstring zero_percent = L"0%";
+    const std::wstring io_top = L"1 GiB/s";
+    const std::wstring zero_rate = L"0 B/s";
+    const std::wstring history_window =
+        performance_history_window_text(performance_history_count_, state.performance_update_seconds);
     for (int i = 0; i < 4; ++i) {
         RECT card{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top,
                   monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
@@ -2919,21 +2976,23 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                           : i == 2 ? L"I/O"
                                                    : L"VRAM",
                                           L"Collecting", L"Waiting for first sample", std::span<const double>{},
-                                          kSubtle);
+                                          kSubtle, percent_top, zero_percent, history_window);
         } else if (i == 0) {
             draw_performance_monitor_card(dc, card, L"CPU", percentage_text(sample.cpu_percent),
-                                          L"Process utilization\nAcross logical processors", cpu_span, kInfo);
+                                          L"Process utilization\nAcross logical processors", cpu_span, kInfo,
+                                          percent_top, zero_percent, history_window);
         } else if (i == 1) {
             const auto value = widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes)));
             const auto detail = std::wstring(L"Total used ") + percentage_text(sample.system_memory_percent) +
                                 L"\nProcess private " + widen(human_bytes(static_cast<double>(sample.private_bytes)));
-            draw_performance_monitor_card(dc, card, L"Memory", value, detail, memory_span, kOk);
+            draw_performance_monitor_card(dc, card, L"Memory", value, detail, memory_span, kOk, percent_top,
+                                          zero_percent, history_window);
         } else if (i == 2) {
             const double total_io = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
             const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " +
                                 rate_text(sample.io_write_bytes_per_second);
             draw_dual_performance_monitor_card(dc, card, L"I/O", rate_text(total_io), detail, read_span, write_span,
-                                               kInfo, kWarn);
+                                               kInfo, kWarn, io_top, zero_rate, history_window);
         } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
@@ -2944,7 +3003,8 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                                widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
                                                L"\nGPU utilization " + utilization
                                          : L"HIP VRAM unavailable\nGPU counter " + utilization;
-            draw_performance_monitor_card(dc, card, L"VRAM", value, detail, vram_span, kAccent);
+            draw_performance_monitor_card(dc, card, L"VRAM", value, detail, vram_span, kAccent, percent_top,
+                                          zero_percent, history_window);
         }
     }
 }

@@ -69,11 +69,12 @@ References checked on 2026-06-18:
 - Double-buffering rationale:
   <https://learn.microsoft.com/en-us/dotnet/desktop/winforms/advanced/how-to-reduce-graphics-flicker-with-double-buffering-for-forms-and-controls>
 
-The GPU diagnostics page uses Task Manager-style history cards: a current
-value, short explanatory detail, a subtle grid, and a bounded ring-buffer graph.
-The visible cards are CPU usage, total used system RAM, process read/write I/O,
-and used GPU VRAM. Current values must remain visible alongside graphs; a graph
-without the live number is a regression.
+The System page uses Task Manager-style history cards: a current value, short
+explanatory detail, a subtle grid, scale/time labels, and a bounded
+ring-buffer graph with a filled trend plus a crisp line. The visible cards are
+CPU usage, total used system RAM, process read/write I/O, and used GPU VRAM.
+Current values must remain visible alongside graphs; a graph without the live
+number is a regression.
 
 Sampling is deliberately bounded. The update-speed dropdown offers exactly
 1-10 seconds, maps directly to the Win32 timer interval, and re-arms the timer

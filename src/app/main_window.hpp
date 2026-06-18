@@ -416,18 +416,24 @@ class MainWindow {
     void draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state);
 
     // Purpose: Draw one metric card inside the live performance monitor.
-    // Inputs: `dc` is the target; text/value fields are preformatted; `history` contains normalized samples.
-    // Outputs: Renders a bordered Task Manager-style history graph without overflowing text.
+    // Inputs: `dc` is the target; text/value fields are preformatted; graph labels describe scale and time window;
+    // `history` contains normalized samples. Outputs: Renders a bordered Task Manager-style history graph without
+    // overflowing text.
     void draw_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
-                                       const std::wstring& detail, std::span<const double> history, COLORREF color);
+                                       const std::wstring& detail, std::span<const double> history, COLORREF color,
+                                       const std::wstring& graph_top_label, const std::wstring& graph_bottom_label,
+                                       const std::wstring& graph_time_label);
 
     // Purpose: Draw one dual-line metric card inside the live performance monitor.
-    // Inputs: `dc` is the target; `primary_history` and `secondary_history` are normalized samples.
-    // Outputs: Renders read/write or similar paired histories with a shared graph scale.
+    // Inputs: `dc` is the target; graph labels describe scale and time window; `primary_history` and
+    // `secondary_history` are normalized samples. Outputs: Renders read/write or similar paired histories with a shared
+    // graph scale.
     void draw_dual_performance_monitor_card(HDC dc, const RECT& graph, const wchar_t* label, const std::wstring& value,
                                             const std::wstring& detail, std::span<const double> primary_history,
                                             std::span<const double> secondary_history, COLORREF primary,
-                                            COLORREF secondary);
+                                            COLORREF secondary, const std::wstring& graph_top_label,
+                                            const std::wstring& graph_bottom_label,
+                                            const std::wstring& graph_time_label);
 
     // Purpose: Draw a slim operation progress bar under an action button.
     // Inputs: `dc`, `rect`, `state`, and `operation` describe the matching active job.
