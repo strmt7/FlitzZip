@@ -3956,14 +3956,14 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
         if (index > 0) {
             draw_line(dc, menu.left + scale(8), row.top, menu.right - scale(8), row.top, kBorder);
         }
+        const RECT text_rect{row.left + scale(12), row.top, row.right - scale(38), row.bottom};
         if (is_selected) {
             const int check_mid = (row.top + row.bottom) / 2;
-            draw_line(dc, row.left + scale(12), check_mid, row.left + scale(17), check_mid + scale(5), kText);
-            draw_line(dc, row.left + scale(17), check_mid + scale(5), row.left + scale(27), check_mid - scale(6),
+            draw_line(dc, row.right - scale(28), check_mid, row.right - scale(23), check_mid + scale(5), kText);
+            draw_line(dc, row.right - scale(23), check_mid + scale(5), row.right - scale(13), check_mid - scale(6),
                       kText);
         }
-        draw_text(dc, RECT{row.left + scale(36), row.top, row.right - scale(12), row.bottom},
-                  options[static_cast<std::size_t>(index)], is_selected ? kText : kMuted,
+        draw_text(dc, text_rect, options[static_cast<std::size_t>(index)], is_selected ? kText : kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 }
