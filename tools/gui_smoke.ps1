@@ -26,10 +26,13 @@ function Assert-GuiSourceContract {
         @{ Pattern = ('Verbose ' + 'diagnostics'); Message = "GUI log level label must be 'Debug'." },
         @{ Pattern = ('\bWarn' + 'ings\b'); Message = "GUI log level label must be singular 'Warning'." },
         @{ Pattern = ('Session ' + 'only'); Message = "GUI log retention label must be 'Current session'." },
-        @{ Pattern = ('AMD GPU ' + 'Diagnostics'); Message = "The former GPU page title must remain 'System'." }
+        @{ Pattern = ('AMD GPU ' + 'Diagnostics'); Message = "The former GPU page title must remain 'System'." },
+        @{ Pattern = ('Format-' + 'managed'); Message = "Unsupported compression options must render as disabled '-' fields." },
+        @{ Pattern = ('Native Windows AMD HIP ' + 'archive utility'); Message = "The About page must use the canonical product tagline." },
+        @{ Pattern = ('L"Det' + 'ails"'); Message = "The status bar must show the clock instead of the retired Details label." }
     )
     foreach ($rule in $blockedPatterns) {
-        if ($sourceText -match $rule.Pattern) {
+        if ($sourceText -cmatch $rule.Pattern) {
             throw $rule.Message
         }
     }
@@ -845,7 +848,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
     Start-Sleep -Milliseconds 120
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 706 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 622 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 426 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 452 -BasePath $basePath -Extension $extension
@@ -928,7 +931,7 @@ try {
     Remove-Item -LiteralPath $expectedCpioGz -Force -ErrorAction SilentlyContinue
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 659
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 575
     Start-Sleep -Milliseconds 160
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdCpioGz = $false
@@ -941,44 +944,6 @@ try {
     }
     if (-not $createdCpioGz) {
         throw "GUI compression did not create expected non-empty CPIO.GZ archive at $expectedCpioGz."
-    }
-
-    $expectedBase64 = Join-Path $smokeRoot "SuperZip-output.b64"
-    Remove-Item -LiteralPath $expectedBase64 -Force -ErrorAction SilentlyContinue
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 547
-    Start-Sleep -Milliseconds 160
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
-    $createdBase64 = $false
-    foreach ($attempt in 1..50) {
-        Start-Sleep -Milliseconds 100
-        if ((Test-Path -LiteralPath $expectedBase64) -and ((Get-Item -LiteralPath $expectedBase64).Length -gt 0)) {
-            $createdBase64 = $true
-            break
-        }
-    }
-    if (-not $createdBase64) {
-        throw "GUI compression did not create expected non-empty Base64 archive at $expectedBase64."
-    }
-
-    $expectedXxe = Join-Path $smokeRoot "SuperZip-output.xxe"
-    Remove-Item -LiteralPath $expectedXxe -Force -ErrorAction SilentlyContinue
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 575
-    Start-Sleep -Milliseconds 160
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
-    $createdXxe = $false
-    foreach ($attempt in 1..50) {
-        Start-Sleep -Milliseconds 100
-        if ((Test-Path -LiteralPath $expectedXxe) -and ((Get-Item -LiteralPath $expectedXxe).Length -gt 0)) {
-            $createdXxe = $true
-            break
-        }
-    }
-    if (-not $createdXxe) {
-        throw "GUI compression did not create expected non-empty XXEncode archive at $expectedXxe."
     }
 
     # Extract: return to Queue, clear inputs, drop a valid archive, then exercise extract controls.
@@ -1047,9 +1012,7 @@ try {
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 5
     Start-Sleep -Milliseconds 250
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 92
-    Start-Sleep -Milliseconds 250
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed" -OpenX 1050 -OpenY 446 -SelectX 1050 -SelectY 242 -MenuLeft 980 -MenuTop 98 -MenuRight 1158 -MenuBottom 420 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed" -OpenX 1160 -OpenY 446 -SelectX 1160 -SelectY 554 -MenuLeft 1070 -MenuTop 470 -MenuRight 1220 -MenuBottom 606 -BasePath $basePath -Extension $extension
     $systemMonitorPath = "${basePath}-System-PerformanceMonitor$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle

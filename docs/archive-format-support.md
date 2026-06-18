@@ -137,11 +137,11 @@ already real archive/package formats in SuperZip's matrix.
 | `.lzma` | No | Yes | Extract-only single-file legacy LZMA-Alone stream | vendored LZMA SDK 26.01 decoder with SuperZip path/publish pipeline |
 | `.lz` | No | Yes | Extract-only single-file lzip stream | native lzip wrapper checks over vendored LZMA SDK 26.01 decoder |
 | `.Z` | Yes | Yes | Single-file compatibility stream | native bounded Unix Compress LZW adapter |
-| `.b64` | Yes | Yes | Single-file compatibility stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
+| `.b64` | No | Yes | Extract-only single-file legacy transfer stream | native bounded Base64 adapter with strict padding and optional wrapper-header validation |
 | `.hqx` | No | Yes | Extract-only single-file legacy transfer stream | native bounded BinHex 4.0 adapter with strict HQX alphabet, RLE expansion, path-safe header names, and header/data/resource CRC validation |
 | `.macbin`, header-detected `.bin` | No | Yes | Extract-only single-file legacy transfer stream | native bounded MacBinary adapter with path-safe header names, data/resource extent validation, and MacBinary II/III header CRC validation |
-| `.xxe` | Yes | Yes | Single-file compatibility stream | native bounded common XXEncode adapter with strict alphabet and path-safe begin-line handling |
-| `.uue`, `.uu` | Yes | Yes | Single-file compatibility stream | native bounded UUencode adapter with path-safe begin-line handling |
+| `.xxe` | No | Yes | Extract-only single-file legacy transfer stream | native bounded common XXEncode adapter with strict alphabet and path-safe begin-line handling |
+| `.uue`, `.uu` | No | Yes | Extract-only single-file legacy transfer stream | native bounded UUencode adapter with path-safe begin-line handling |
 | `.cpio` | Yes | Yes | Compatibility format | native SVR4 new ASCII CPIO adapter |
 | `.cpio.gz`, `.cpgz` | Yes | Yes | Compatibility format | native CPIO stream adapter over vendored miniz 3.1.1 raw deflate |
 | `.ar` | Yes | Yes | Compatibility format | native Unix AR adapter |
@@ -231,10 +231,10 @@ non-block-mode streams with declared widths from 9 through 16 bits. Extraction
 derives the output filename from the `.Z` archive path and never treats `.Z` as a
 directory archive.
 
-Base64 support is intentionally single-file when used as `.b64`. SuperZip writes
-a bounded `begin-base64` wrapper so the original file name can be validated on
-extraction, and it also accepts raw RFC-style `.b64` payloads by deriving the
-output filename from the archive path. It rejects invalid alphabet characters,
+Base64 support is extract-only when used as `.b64`. SuperZip accepts a bounded
+`begin-base64` wrapper so the original file name can be validated on extraction,
+and it also accepts raw RFC-style `.b64` payloads by deriving the output filename
+from the archive path. It rejects invalid alphabet characters,
 partial quanta, malformed padding, payload data after padding, overlong lines,
 unsafe wrapper filenames, overwrite attempts, and trailing data after the
 wrapper trailer. Base64 has no intrinsic checksum, so optional SHA-256 remains
@@ -263,9 +263,8 @@ the source stream. MacBinary I streams without a header CRC remain accepted only
 when explicitly selected by `.macbin` extension or `--format macbinary`, not by
 generic `.bin` extension alone.
 
-XXEncode support is intentionally single-file when used as `.xxe`. SuperZip
-writes common `begin 644 <name>` streams using the XXEncode alphabet and extracts
-one file from the begin-line filename only after that name passes the same
+XXEncode support is extract-only when used as `.xxe`. SuperZip extracts one file
+from the begin-line filename only after that name passes the same
 path-safety validation used by archive entries. Extension-based `.xxe` detection
 is authoritative for short streams because short non-empty XXEncode payloads are
 not always distinguishable from UUencode by magic alone. Extensionless detection
@@ -279,14 +278,14 @@ not accepted until the exact trailer syntax and checksum contract are added with
 tests. For the common stream form, optional SHA-256 remains the strong
 end-to-end archive-file integrity check.
 
-UUencode support is intentionally single-file when used as `.uue` or `.uu`.
-SuperZip writes strict `begin 644 <name>` streams and extracts one file from the
-begin-line filename only after that name passes the same path-safety validation
-used by archive entries. The adapter tolerates a bounded mail-style preamble,
-rejects overlong lines, malformed payload data, missing end markers, unsafe
-paths, and non-whitespace trailing data, and publishes output only through the
-verified temporary-file path. UUencode has no intrinsic checksum, so optional
-SHA-256 remains the strong end-to-end archive-file integrity check.
+UUencode support is extract-only when used as `.uue` or `.uu`. SuperZip extracts
+one file from the begin-line filename only after that name passes the same
+path-safety validation used by archive entries. The adapter tolerates a bounded
+mail-style preamble, rejects overlong lines, malformed payload data, missing end
+markers, unsafe paths, and non-whitespace trailing data, and publishes output
+only through the verified temporary-file path. UUencode has no intrinsic
+checksum, so optional SHA-256 remains the strong end-to-end archive-file
+integrity check.
 
 CPIO support covers the SVR4 new ASCII formats with magic values `070701` and
 `070702`. Creation writes `070701`. Extraction accepts both variants and verifies
@@ -732,7 +731,7 @@ flowchart TD
 
 ## UUE Security Contract
 
-The UUE path is an in-process single-file text decoder and writer:
+The UUE path is an in-process single-file text decoder:
 
 1. Accept only a bounded preamble followed by a strict `begin <octal-mode>
    <filename>` line.
@@ -813,7 +812,7 @@ flowchart TD
 
 ## XXEncode Security Contract
 
-The XXEncode path is an in-process single-file text decoder and writer:
+The XXEncode path is an in-process single-file text decoder:
 
 1. Accept only a bounded preamble followed by a strict `begin <octal-mode>
    <filename>` line.
@@ -839,18 +838,16 @@ flowchart TD
 
 ## Base64 Security Contract
 
-The Base64 path is an in-process single-file text decoder and writer:
+The Base64 path is an in-process single-file text decoder:
 
-1. `.b64` accepts exactly one source file and writes a bounded `begin-base64`
-   wrapper plus RFC-style 76-character payload lines.
-2. Extraction accepts either the SuperZip wrapper or a raw `.b64` payload. Raw
+1. Extraction accepts either the SuperZip wrapper or a raw `.b64` payload. Raw
    payloads derive one safe output filename from the archive path.
-3. Optional wrapper filenames are normalized through `safe_join_archive_path`
+2. Optional wrapper filenames are normalized through `safe_join_archive_path`
    before any destination file is reserved.
-4. The decoder rejects invalid alphabet characters, partial final quanta,
+3. The decoder rejects invalid alphabet characters, partial final quanta,
    malformed padding, non-whitespace payload after padding, missing wrapper
    trailers, overlong lines, and non-whitespace data after a wrapper trailer.
-5. The decoded file is published only after the complete stream has been decoded
+4. The decoded file is published only after the complete stream has been decoded
    into a private temporary file.
 
 ```mermaid

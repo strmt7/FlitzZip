@@ -262,6 +262,19 @@ TEST_CASE(archive_format_display_names_are_precise_user_facing_format_names) {
                std::string("UUencode (.uue, .uu)"));
 }
 
+TEST_CASE(archive_format_transfer_encodings_are_extract_only) {
+    const auto& base64 = superzip::archive_format_info(superzip::ArchiveFormat::Base64);
+    const auto& xxe = superzip::archive_format_info(superzip::ArchiveFormat::Xxe);
+    const auto& uue = superzip::archive_format_info(superzip::ArchiveFormat::Uue);
+
+    REQUIRE_TRUE(!base64.can_create);
+    REQUIRE_TRUE(base64.can_extract);
+    REQUIRE_TRUE(!xxe.can_create);
+    REQUIRE_TRUE(xxe.can_extract);
+    REQUIRE_TRUE(!uue.can_create);
+    REQUIRE_TRUE(uue.can_extract);
+}
+
 TEST_CASE(archive_format_prefers_compound_tar_extensions_over_stream_magic) {
     const auto root = test_temp_dir("archive-format-compound");
     write_fixture(root / "logs.tar.gz", std::array<unsigned char, 2>{0x1F, 0x8B});

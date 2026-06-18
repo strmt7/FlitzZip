@@ -89,14 +89,19 @@ constexpr int kPageTitleTextHeight = 46;
 constexpr int kQueueCheckboxColumnWidth = 44;
 constexpr int kQueueResizeGripHalfWidth = 4;
 constexpr int kOperationProgressHeight = 5;
+constexpr int kPerformanceUpdateFieldWidth = 96;
 constexpr UINT_PTR kAnimationTimer = 7;
 constexpr UINT_PTR kSmokeAutoCloseTimer = 9;
 constexpr UINT_PTR kSmokeClosePollTimer = 10;
+constexpr UINT_PTR kProgressHoldTimer = 11;
+constexpr UINT_PTR kClockTimer = 12;
+constexpr UINT kProgressHoldMs = 15000;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
 constexpr int kButtonReleaseTransitionMs = 130;
 constexpr UINT kDragQueryMessage = 0x0049;
 constexpr std::size_t kMaxLogEntries = 128;
+constexpr std::wstring_view kProductTagline = L"ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE";
 
 constexpr COLORREF kBg = RGB(12, 17, 20);
 constexpr COLORREF kShell = RGB(15, 22, 26);
@@ -116,6 +121,15 @@ constexpr COLORREF kInfo = RGB(63, 181, 221);
 constexpr COLORREF kDanger = RGB(236, 73, 73);
 constexpr UINT_PTR kPerformanceTimer = 8;
 constexpr UINT kGpuMemorySampleMs = 1000;
+
+constexpr std::array<ArchiveFormat, 13> kCompressionCreateFormats{
+    ArchiveFormat::SuperZip, ArchiveFormat::Zip,          ArchiveFormat::Tar,  ArchiveFormat::TarGzip,
+    ArchiveFormat::TarBzip2, ArchiveFormat::TarZstd,      ArchiveFormat::Gzip, ArchiveFormat::Bzip2,
+    ArchiveFormat::Zstd,     ArchiveFormat::UnixCompress, ArchiveFormat::Cpio, ArchiveFormat::CpioGzip,
+    ArchiveFormat::Ar,
+};
+constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormats.size()) - 1;
+constexpr std::array<int, 4> kPerformanceUpdateSecondsOptions{1, 3, 5, 10};
 
 // Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
 // Inputs: `value` is UTF-8 text.
@@ -231,16 +245,10 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    constexpr std::array<ArchiveFormat, 16> formats{
-        ArchiveFormat::SuperZip, ArchiveFormat::Zip,          ArchiveFormat::Tar,      ArchiveFormat::TarGzip,
-        ArchiveFormat::TarBzip2, ArchiveFormat::TarZstd,      ArchiveFormat::Gzip,     ArchiveFormat::Bzip2,
-        ArchiveFormat::Zstd,     ArchiveFormat::UnixCompress, ArchiveFormat::Base64,   ArchiveFormat::Xxe,
-        ArchiveFormat::Uue,      ArchiveFormat::Cpio,         ArchiveFormat::CpioGzip, ArchiveFormat::Ar,
-    };
-    const auto normalized =
-        static_cast<std::size_t>((index % static_cast<int>(formats.size()) + static_cast<int>(formats.size())) %
-                                 static_cast<int>(formats.size()));
-    return formats[normalized];
+    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(kCompressionCreateFormats.size()) +
+                                                      static_cast<int>(kCompressionCreateFormats.size())) %
+                                                     static_cast<int>(kCompressionCreateFormats.size()));
+    return kCompressionCreateFormats[normalized];
 }
 
 // Purpose: Return the user-facing compression-format label.
@@ -275,12 +283,6 @@ std::wstring compression_format_extension(ArchiveFormat format) {
         return L".zst";
     case ArchiveFormat::UnixCompress:
         return L".Z";
-    case ArchiveFormat::Base64:
-        return L".b64";
-    case ArchiveFormat::Xxe:
-        return L".xxe";
-    case ArchiveFormat::Uue:
-        return L".uue";
     case ArchiveFormat::Cpio:
         return L".cpio";
     case ArchiveFormat::CpioGzip:
@@ -435,19 +437,44 @@ std::wstring compression_level_text(int index) {
     return std::wstring(labels[normalized]);
 }
 
+// Purpose: Normalize a performance-sampling interval to the closest supported GUI option.
+// Inputs: `seconds` is a persisted or in-memory sampling interval.
+// Outputs: Returns one of 1, 3, 5, or 10 seconds.
+int normalize_performance_update_seconds(int seconds) {
+    return *std::min_element(
+        kPerformanceUpdateSecondsOptions.begin(), kPerformanceUpdateSecondsOptions.end(),
+        [seconds](int left, int right) { return std::abs(left - seconds) < std::abs(right - seconds); });
+}
+
+// Purpose: Resolve the dropdown row for a normalized performance-sampling interval.
+// Inputs: `seconds` is a persisted or in-memory sampling interval.
+// Outputs: Returns a zero-based index in `kPerformanceUpdateSecondsOptions`.
+int performance_update_index_for_seconds(int seconds) {
+    const int normalized = normalize_performance_update_seconds(seconds);
+    const auto found =
+        std::find(kPerformanceUpdateSecondsOptions.begin(), kPerformanceUpdateSecondsOptions.end(), normalized);
+    return found == kPerformanceUpdateSecondsOptions.end()
+               ? 0
+               : static_cast<int>(std::distance(kPerformanceUpdateSecondsOptions.begin(), found));
+}
+
 // Purpose: Return a compact label for the live performance sampling interval.
-// Inputs: `seconds` is a user-facing interval that is clamped to 1-10 seconds.
-// Outputs: Returns a localized-free English label for the dropdown and field.
+// Inputs: `seconds` is a user-facing interval normalized to supported choices.
+// Outputs: Returns a compact label such as `1 s`.
 std::wstring performance_update_speed_text(int seconds) {
-    const int clamped = std::clamp(seconds, 1, 10);
-    return std::to_wstring(clamped) + (clamped == 1 ? L" second" : L" seconds");
+    const int clamped = normalize_performance_update_seconds(seconds);
+    return std::to_wstring(clamped) + L" s";
 }
 
 // Purpose: Return the dropdown option text for one live performance update interval.
 // Inputs: `index` is a zero-based dropdown row.
-// Outputs: Returns the matching 1-10 second label.
+// Outputs: Returns the matching 1, 3, 5, or 10 second label.
 std::wstring performance_update_option_text(int index) {
-    return performance_update_speed_text(std::clamp(index, 0, 9) + 1);
+    const auto normalized =
+        static_cast<std::size_t>((index % static_cast<int>(kPerformanceUpdateSecondsOptions.size()) +
+                                  static_cast<int>(kPerformanceUpdateSecondsOptions.size())) %
+                                 static_cast<int>(kPerformanceUpdateSecondsOptions.size()));
+    return performance_update_speed_text(kPerformanceUpdateSecondsOptions[normalized]);
 }
 
 // Purpose: Return the visible history duration covered by the live performance charts.
@@ -507,12 +534,6 @@ OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& so
         return compress_zstd(sources, output, compression_level, progress_callback);
     case ArchiveFormat::UnixCompress:
         return compress_unix_compress(sources, output, progress_callback);
-    case ArchiveFormat::Base64:
-        return compress_base64(sources, output, progress_callback);
-    case ArchiveFormat::Xxe:
-        return compress_xxe(sources, output, progress_callback);
-    case ArchiveFormat::Uue:
-        return compress_uue(sources, output, progress_callback);
     case ArchiveFormat::Cpio:
         return compress_cpio(sources, output, progress_callback);
     case ArchiveFormat::CpioGzip:
@@ -761,7 +782,7 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
     state.memory_policy_index = settings.memory_policy_index;
     state.log_level_index = settings.log_level_index;
     state.log_retention_index = settings.log_retention_index;
-    state.performance_update_seconds = settings.performance_update_seconds;
+    state.performance_update_seconds = normalize_performance_update_seconds(settings.performance_update_seconds);
     state.open_destination_after_operation = settings.open_destination_after_operation;
     state.confirm_before_deleting = settings.confirm_before_deleting;
     state.show_operation_summary = settings.show_operation_summary;
@@ -782,13 +803,13 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
 // Outputs: Returns a validated settings snapshot suitable for persistence.
 AppSettings settings_from_state(const UiState& state) {
     AppSettings settings;
-    settings.compression_format_index = std::clamp(state.compression_format_index, 0, 15);
+    settings.compression_format_index = std::clamp(state.compression_format_index, 0, kCompressionFormatMaxIndex);
     settings.compression_level_index = std::clamp(state.compression_level_index, 0, 4);
     settings.compression_block_size_index = std::clamp(state.compression_block_size_index, 0, 3);
     settings.memory_policy_index = std::clamp(state.memory_policy_index, 0, 2);
     settings.log_level_index = std::clamp(state.log_level_index, 0, 2);
     settings.log_retention_index = std::clamp(state.log_retention_index, 0, 2);
-    settings.performance_update_seconds = std::clamp(state.performance_update_seconds, 1, 10);
+    settings.performance_update_seconds = normalize_performance_update_seconds(state.performance_update_seconds);
     settings.open_destination_after_operation = state.open_destination_after_operation;
     settings.confirm_before_deleting = state.confirm_before_deleting;
     settings.show_operation_summary = state.show_operation_summary;
@@ -833,8 +854,8 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 // Outputs: Returns settings with missing or malformed values replaced by defaults.
 AppSettings parse_settings_json(std::string_view json) {
     AppSettings settings;
-    settings.compression_format_index =
-        json_int_setting(json, "compressionFormatIndex", settings.compression_format_index, 0, 15);
+    settings.compression_format_index = json_int_setting(
+        json, "compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
     settings.compression_level_index =
         json_int_setting(json, "compressionLevelIndex", settings.compression_level_index, 0, 4);
     settings.compression_block_size_index =
@@ -842,8 +863,8 @@ AppSettings parse_settings_json(std::string_view json) {
     settings.memory_policy_index = json_int_setting(json, "memoryPolicyIndex", settings.memory_policy_index, 0, 2);
     settings.log_level_index = json_int_setting(json, "logLevelIndex", settings.log_level_index, 0, 2);
     settings.log_retention_index = json_int_setting(json, "logRetentionIndex", settings.log_retention_index, 0, 2);
-    settings.performance_update_seconds =
-        json_int_setting(json, "performanceUpdateSeconds", settings.performance_update_seconds, 1, 10);
+    settings.performance_update_seconds = normalize_performance_update_seconds(
+        json_int_setting(json, "performanceUpdateSeconds", settings.performance_update_seconds, 1, 10));
     settings.open_destination_after_operation =
         json_bool_setting(json, "openDestinationAfterOperation", settings.open_destination_after_operation);
     settings.confirm_before_deleting =
@@ -991,15 +1012,14 @@ std::wstring history_status_filter_text(int index) {
 // Outputs: Returns ordered labels matching the selectable rows.
 std::vector<std::wstring> dropdown_options(DropdownId id) {
     switch (id) {
-    case DropdownId::CompressFormat:
-        return {
-            compression_format_text(0),  compression_format_text(1),  compression_format_text(2),
-            compression_format_text(3),  compression_format_text(4),  compression_format_text(5),
-            compression_format_text(6),  compression_format_text(7),  compression_format_text(8),
-            compression_format_text(9),  compression_format_text(10), compression_format_text(11),
-            compression_format_text(12), compression_format_text(13), compression_format_text(14),
-            compression_format_text(15),
-        };
+    case DropdownId::CompressFormat: {
+        std::vector<std::wstring> formats;
+        formats.reserve(kCompressionCreateFormats.size());
+        for (int index = 0; index <= kCompressionFormatMaxIndex; ++index) {
+            formats.push_back(compression_format_text(index));
+        }
+        return formats;
+    }
     case DropdownId::CompressLevel:
         return {
             compression_level_text(0), compression_level_text(1), compression_level_text(2),
@@ -1023,10 +1043,10 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
         return {history_status_filter_text(0), history_status_filter_text(1), history_status_filter_text(2)};
     case DropdownId::GpuUpdateSpeed:
         return {
-            performance_update_option_text(0), performance_update_option_text(1), performance_update_option_text(2),
-            performance_update_option_text(3), performance_update_option_text(4), performance_update_option_text(5),
-            performance_update_option_text(6), performance_update_option_text(7), performance_update_option_text(8),
-            performance_update_option_text(9),
+            performance_update_option_text(0),
+            performance_update_option_text(1),
+            performance_update_option_text(2),
+            performance_update_option_text(3),
         };
     case DropdownId::SettingsMemoryPolicy:
         return {memory_policy_text(0), memory_policy_text(1), memory_policy_text(2)};
@@ -1060,7 +1080,7 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
     case DropdownId::HistoryStatus:
         return state.history_status_filter_index;
     case DropdownId::GpuUpdateSpeed:
-        return std::clamp(state.performance_update_seconds, 1, 10) - 1;
+        return performance_update_index_for_seconds(state.performance_update_seconds);
     case DropdownId::SettingsMemoryPolicy:
         return state.memory_policy_index;
     case DropdownId::SettingsLogLevel:
@@ -1177,11 +1197,105 @@ std::wstring percentage_text(double value) {
     return out.str();
 }
 
+// Purpose: Compute a bounded progress ratio from byte or entry counters.
+// Inputs: `snapshot` is a worker progress sample with optional totals.
+// Outputs: Returns 0.0-1.0; returns 0.0 when no total is available.
+double progress_ratio(const ProgressSnapshot& snapshot) {
+    if (snapshot.total_bytes > 0U) {
+        return std::clamp(static_cast<double>(snapshot.processed_bytes) / static_cast<double>(snapshot.total_bytes),
+                          0.0, 1.0);
+    }
+    if (snapshot.total_entries > 0U) {
+        return std::clamp(static_cast<double>(snapshot.completed_entries) / static_cast<double>(snapshot.total_entries),
+                          0.0, 1.0);
+    }
+    return 0.0;
+}
+
+// Purpose: Decide whether the copied progress sample should still be drawn.
+// Inputs: `state` is the immutable UI snapshot for one frame.
+// Outputs: Returns true for active progress and for completed progress still inside its hold window.
+bool progress_visible(const UiState& state) {
+    if (state.progress.operation == OperationKind::Idle) {
+        return false;
+    }
+    if (state.progress_visible_until == std::chrono::steady_clock::time_point{}) {
+        return true;
+    }
+    return std::chrono::steady_clock::now() <= state.progress_visible_until;
+}
+
+// Purpose: Format operation progress as a stable one-decimal percentage.
+// Inputs: `snapshot` is a worker progress sample.
+// Outputs: Returns text such as `42.7%`.
+std::wstring progress_percent_text(const ProgressSnapshot& snapshot) {
+    return percentage_text(progress_ratio(snapshot) * 100.0);
+}
+
 // Purpose: Format a throughput value for compact monitor cards.
 // Inputs: `bytes_per_second` is a nonnegative byte rate.
 // Outputs: Returns a UTF-16 string with `/s` suffix.
 std::wstring rate_text(double bytes_per_second) {
     return widen(human_bytes(bytes_per_second) + "/s");
+}
+
+// Purpose: Format a remaining-duration estimate for the compact status strip.
+// Inputs: `seconds` is a nonnegative floating-point estimate.
+// Outputs: Returns a compact value using sec, min, h, and d units, or `--` when invalid.
+std::wstring duration_remaining_text(double seconds) {
+    if (!std::isfinite(seconds) || seconds < 0.0) {
+        return L"--";
+    }
+    auto total = static_cast<unsigned long long>(std::ceil(seconds));
+    if (total < 60ULL) {
+        return std::to_wstring(total) + L" sec";
+    }
+    if (total < 3600ULL) {
+        const auto minutes = total / 60ULL;
+        const auto remainder = total % 60ULL;
+        return remainder == 0ULL ? std::to_wstring(minutes) + L" min"
+                                 : std::to_wstring(minutes) + L" min " + std::to_wstring(remainder) + L" sec";
+    }
+    if (total < 86400ULL) {
+        const auto hours = total / 3600ULL;
+        const auto minutes = (total % 3600ULL) / 60ULL;
+        return minutes == 0ULL ? std::to_wstring(hours) + L" h"
+                               : std::to_wstring(hours) + L" h " + std::to_wstring(minutes) + L" min";
+    }
+    const auto days = total / 86400ULL;
+    const auto hours = (total % 86400ULL) / 3600ULL;
+    return hours == 0ULL ? std::to_wstring(days) + L" d"
+                         : std::to_wstring(days) + L" d " + std::to_wstring(hours) + L" h";
+}
+
+// Purpose: Estimate remaining operation time from total work and average throughput.
+// Inputs: `snapshot` is a worker progress sample whose throughput is average bytes per second since start.
+// Outputs: Returns formatted remaining time or `--` when the estimate is unavailable.
+std::wstring progress_time_remaining_text(const ProgressSnapshot& snapshot) {
+    if (progress_ratio(snapshot) >= 1.0) {
+        return L"0 sec";
+    }
+    if (snapshot.total_bytes <= snapshot.processed_bytes || snapshot.throughput_bytes_per_second <= 0.0) {
+        return L"--";
+    }
+    const auto remaining_bytes = snapshot.total_bytes - snapshot.processed_bytes;
+    return duration_remaining_text(static_cast<double>(remaining_bytes) / snapshot.throughput_bytes_per_second);
+}
+
+// Purpose: Format the current local time for the status strip.
+// Inputs: None; reads the local system clock.
+// Outputs: Returns fixed 12-hour text as `H:MM:SS am/pm` without a leading hour zero.
+std::wstring current_user_time_text() {
+    SYSTEMTIME local_time{};
+    GetLocalTime(&local_time);
+    const bool is_pm = local_time.wHour >= 12U;
+    const WORD hour12_raw = static_cast<WORD>(local_time.wHour % 12U);
+    const WORD hour12 = hour12_raw == 0U ? 12U : hour12_raw;
+    std::wostringstream out;
+    out << static_cast<unsigned int>(hour12) << L":" << std::setfill(L'0') << std::setw(2)
+        << static_cast<unsigned int>(local_time.wMinute) << L":" << std::setw(2)
+        << static_cast<unsigned int>(local_time.wSecond) << (is_pm ? L" pm" : L" am");
+    return out.str();
 }
 
 // Purpose: Safely format a filesystem entry size for the queue table.
@@ -1666,7 +1780,7 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(IDI_SUPERZIP_APP), IMAGE_ICON,
                                                MulDiv(16, static_cast<int>(initial_dpi), 96),
                                                MulDiv(16, static_cast<int>(initial_dpi), 96), LR_DEFAULTCOLOR));
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    wc.hbrBackground = nullptr;
     RegisterClassExW(&wc);
 
     hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, wc.lpszClassName, L"SuperZip", style, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -1746,6 +1860,8 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         layout_and_draw(reinterpret_cast<HDC>(wparam), rect);
         return 0;
     }
+    case WM_ERASEBKGND:
+        return 1;
     case WM_MOUSEMOVE:
         return handle_mouse_move(lparam);
     case WM_MOUSELEAVE:
@@ -1791,6 +1907,25 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
     }
     if (queue_column_resize_separator_ >= 0) {
         SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+    } else {
+        Page page = Page::Queue;
+        {
+            std::lock_guard lock(mutex_);
+            page = state_.page;
+        }
+        bool over_resize_grip = false;
+        if (page == Page::Queue) {
+            const auto layout = queue_layout(content_rect());
+            const int header_bottom = layout.table.top + scale(36);
+            if (mouse_position_.y >= layout.table.top && mouse_position_.y < header_bottom) {
+                const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
+                const auto columns = queue_column_layout(layout.table, header_row);
+                over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
+                    return contains_point(grip, mouse_position_.x, mouse_position_.y);
+                });
+            }
+        }
+        SetCursor(LoadCursor(nullptr, over_resize_grip ? IDC_SIZEWE : IDC_ARROW));
     }
     request_repaint();
     return 0;
@@ -1981,6 +2116,7 @@ LRESULT MainWindow::handle_create() {
     initialize_performance_monitor();
     update_performance_sample();
     reset_performance_timer(state_.performance_update_seconds);
+    SetTimer(hwnd_, kClockTimer, 1000, nullptr);
     if (const UINT auto_close_ms = smoke_auto_close_ms(); auto_close_ms > 0) {
         // Smoke-only auto-close prevents orphaned GUI windows if the harness
         // exits before it can post WM_CLOSE.
@@ -2090,6 +2226,14 @@ LRESULT MainWindow::handle_timer(WPARAM wparam) {
         request_repaint();
         return 0;
     }
+    if (wparam == kProgressHoldTimer) {
+        clear_expired_progress();
+        return 0;
+    }
+    if (wparam == kClockTimer) {
+        request_repaint();
+        return 0;
+    }
     if (wparam == kSmokeAutoCloseTimer) {
         DestroyWindow(hwnd_);
         return 0;
@@ -2113,6 +2257,8 @@ LRESULT MainWindow::handle_destroy() {
     // telemetry sampling, and smoke cleanup cannot outlive the HWND.
     KillTimer(hwnd_, kAnimationTimer);
     KillTimer(hwnd_, kPerformanceTimer);
+    KillTimer(hwnd_, kProgressHoldTimer);
+    KillTimer(hwnd_, kClockTimer);
     KillTimer(hwnd_, kSmokeAutoCloseTimer);
     KillTimer(hwnd_, kSmokeClosePollTimer);
     shutdown_performance_monitor();
@@ -2210,22 +2356,22 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
             fill_round_rect(dc, surface, kPanel2, scale(4));
             stroke_rect(dc, surface, RGB(70, 91, 99));
         }
-        RECT icon{item.left + scale(28), item.top + scale(8), item.left + scale(58), item.top + scale(38)};
-        RECT label{item.left + scale(4), item.top + scale(40), item.right - scale(4), item.bottom - scale(3)};
+        const int icon_size = scale(30);
+        const int icon_left = item.left + ((item.right - item.left) - icon_size) / 2;
+        const int icon_top = item.top + ((item.bottom - item.top) - icon_size) / 2;
+        RECT icon{icon_left, icon_top, icon_left + icon_size, icon_top + icon_size};
         if (pressed) {
             OffsetRect(&icon, scale(1), scale(1));
-            OffsetRect(&label, scale(1), scale(1));
         }
         const COLORREF nav_color = active ? kText : hovered ? RGB(198, 211, 215) : kMuted;
         draw_nav_icon(dc, page, icon, nav_color);
-        draw_text(dc, label, page_name(page), nav_color, DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
         y += item_height;
     }
 }
 
-// Purpose: Draw the persistent AMD GPU and operation status strip.
+// Purpose: Draw the persistent AMD GPU, operation progress, and local-clock status strip.
 // Inputs: `dc` is the target, `rect` is the status-strip rectangle, and `state` is the copied UI state.
-// Outputs: Renders backend status, throughput, VRAM placeholder, and details affordance.
+// Outputs: Renders backend status, stable progress columns when active, and the user's locale-formatted time.
 void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state) {
     fill_rect(dc, rect, kShell);
     draw_line(dc, rect.left, rect.top, rect.right, rect.top, kBorder);
@@ -2245,13 +2391,22 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
     draw_text(dc, RECT{rect.left + scale(238), rect.top, rect.left + scale(430), rect.bottom}, widen(state.gpu_status),
               kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_line(dc, rect.left + scale(450), rect.top + scale(8), rect.left + scale(450), rect.bottom - scale(8), kBorder);
-    const auto speed = human_bytes(state.progress.throughput_bytes_per_second) + "/s";
-    draw_text(dc, RECT{rect.left + scale(468), rect.top, rect.left + scale(620), rect.bottom},
-              widen("Throughput " + speed), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    if (progress_visible(state)) {
+        const RECT progress_rect{rect.left + scale(468), rect.top, rect.left + scale(610), rect.bottom};
+        const RECT throughput_rect{rect.left + scale(632), rect.top, rect.left + scale(824), rect.bottom};
+        const RECT remaining_rect{rect.left + scale(846), rect.top, rect.right - scale(156), rect.bottom};
+        draw_text(dc, progress_rect, L"Progress: " + progress_percent_text(state.progress), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, throughput_rect, L"Throughput: " + rate_text(state.progress.throughput_bytes_per_second), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, remaining_rect, L"Time remaining: " + progress_time_remaining_text(state.progress), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
     draw_line(dc, rect.right - scale(132), rect.top + scale(8), rect.right - scale(132), rect.bottom - scale(8),
               kBorder);
-    draw_text(dc, RECT{rect.right - scale(118), rect.top, rect.right - scale(16), rect.bottom}, L"Details", kMuted,
-              DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{rect.right - scale(118), rect.top, rect.right - scale(16), rect.bottom},
+              current_user_time_text(), kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // Purpose: Dispatch the active page renderer into the content region.
@@ -2424,12 +2579,12 @@ MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
     layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54),
                                    layout.area.right - scale(126), layout.area.bottom - scale(18)};
     layout.apply = primary_action_rect(layout.area);
-    layout.general = RECT{layout.area.left, layout.area.top + scale(56), layout.area.left + scale(470),
-                          layout.area.top + scale(224)};
+    const int panel_top = layout.area.top + scale(54);
+    const int panel_bottom = panel_top + scale(168);
+    layout.general = RECT{layout.area.left, panel_top, layout.area.left + scale(470), panel_bottom};
     layout.security = RECT{layout.general.left, layout.general.bottom + scale(16), layout.general.right,
                            layout.general.bottom + scale(176)};
-    layout.performance =
-        RECT{layout.general.right + scale(18), layout.general.top, layout.area.right, layout.area.top + scale(224)};
+    layout.performance = RECT{layout.general.right + scale(18), layout.general.top, layout.area.right, panel_bottom};
     layout.logging = RECT{layout.performance.left, layout.performance.bottom + scale(16), layout.area.right,
                           layout.performance.bottom + scale(176)};
     layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(48),
@@ -2567,12 +2722,12 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false);
     draw_field(dc, layout.format, L"Archive format", compression_format_text(state.compression_format_index), true);
     draw_field(dc, layout.compression_level, L"Compression level",
-               level_tuning ? compression_level_text(state.compression_level_index) : L"Format-managed", level_tuning);
+               level_tuning ? compression_level_text(state.compression_level_index) : L"-", level_tuning, level_tuning);
     draw_field(dc, layout.method, L"Compression method",
-               suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"Format-managed",
+               suzip_tuning ? (state.gpu_required ? L"AMD HIP required" : L"AMD HIP preferred") : L"-", suzip_tuning,
                suzip_tuning);
     draw_field(dc, layout.block_size, L"Block size",
-               suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"Format-managed",
+               suzip_tuning ? compression_block_size_text(state.compression_block_size_index) : L"-", suzip_tuning,
                suzip_tuning);
 
     RECT advanced = layout.advanced;
@@ -2802,7 +2957,6 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"System", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, RECT{area.right - scale(110), area.top, area.right, area.top + scale(34)}, L"Refresh", false);
 
     const bool ready = gpu_ready(state);
     RECT top{area.left, area.top + scale(54), area.right, area.top + scale(142)};
@@ -2833,8 +2987,8 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(12), gpu.right, gpu.top + scale(36)}, L"GPU", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(12), memory.right, memory.top + scale(36)},
-              L"Memory", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(12), memory.right, memory.top + scale(36)}, L"RAM",
+              kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(12), accel.right, accel.top + scale(36)},
               L"Acceleration", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
@@ -2847,9 +3001,9 @@ void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
               gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(
         dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)},
-        L"Bounded chunks keep archive work from loading whole archives into RAM. Streaming codecs cover ZIP, Gzip, "
-        L"Bzip2, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, TAR filters, CAB, RPM, XZ, and "
-        L"LZMA; container adapters keep metadata and output publication capped.",
+        L"Bounded chunks keep archive work from loading whole archives into RAM. Archive and compression adapters "
+        L"cover ZIP, TAR filters, Gzip, Bzip2, Zstandard, Unix Compress, CAB, RPM, XZ, and LZMA; legacy transfer "
+        L"decoders remain extract-only and path-validated.",
         kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc,
               RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)},
@@ -2918,6 +3072,32 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
     draw_text(dc, detail_rect, detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
+// Purpose: Return the four live-monitor card rectangles shared by rendering and hit testing.
+// Inputs: `monitor` is the complete Performance Monitor panel.
+// Outputs: Returns CPU, RAM, I/O, and GPU card rectangles in display order.
+std::array<RECT, 4> MainWindow::performance_monitor_card_rects(const RECT& monitor) const {
+    const int graph_top = monitor.top + scale(58);
+    const int graph_bottom = monitor.bottom - scale(18);
+    const int graph_w = (monitor.right - monitor.left - scale(86)) / 4;
+    std::array<RECT, 4> cards{};
+    for (int i = 0; i < 4; ++i) {
+        cards[static_cast<std::size_t>(i)] =
+            RECT{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top,
+                 monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
+    }
+    return cards;
+}
+
+// Purpose: Return the System update-speed field rectangle aligned to the GPU card.
+// Inputs: `monitor` is the complete Performance Monitor panel.
+// Outputs: Returns a narrow same-row field rectangle whose right edge matches the GPU card.
+RECT MainWindow::performance_update_speed_rect(const RECT& monitor) const {
+    const auto cards = performance_monitor_card_rects(monitor);
+    const RECT gpu_card = cards.back();
+    const int box_w = scale(kPerformanceUpdateFieldWidth);
+    return RECT{gpu_card.right - box_w, monitor.top + scale(10), gpu_card.right, monitor.top + scale(40)};
+}
+
 // Purpose: Draw the live performance monitor section on the System page.
 // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `state` contains the latest counters.
 // Outputs: Renders CPU, total RAM, process read/write I/O, and VRAM history cards.
@@ -2926,12 +3106,17 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     fill_round_rect(dc, monitor, kPanel, scale(4));
     stroke_rect(dc, monitor, kBorder);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{monitor.left + scale(16), monitor.top + scale(12), monitor.right, monitor.top + scale(36)},
-              L"Performance Monitor", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_field(
+    const RECT update_speed = performance_update_speed_rect(monitor);
+    draw_text(
         dc,
-        RECT{monitor.right - scale(190), monitor.top + scale(8), monitor.right - scale(16), monitor.top + scale(52)},
-        L"Update speed", performance_update_speed_text(state.performance_update_seconds), true);
+        RECT{monitor.left + scale(16), monitor.top + scale(12), update_speed.left - scale(18), monitor.top + scale(36)},
+        L"Performance Monitor", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(dc, tiny_font_);
+    draw_text(dc,
+              RECT{update_speed.left - scale(98), update_speed.top, update_speed.left - scale(10), update_speed.bottom},
+              L"Update speed", kMuted, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    draw_field(dc, RECT{update_speed.left, update_speed.top - scale(20), update_speed.right, update_speed.bottom}, L"",
+               performance_update_speed_text(state.performance_update_seconds), true);
 
     std::array<double, 96> cpu{};
     std::array<double, 96> memory{};
@@ -2953,9 +3138,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                                     static_cast<double>(item.vram_total_bytes);
     }
 
-    const int graph_top = monitor.top + scale(68);
-    const int graph_bottom = monitor.bottom - scale(18);
-    const int graph_w = (monitor.right - monitor.left - scale(86)) / 4;
+    const auto cards = performance_monitor_card_rects(monitor);
     const std::span<const double> cpu_span(cpu.data(), performance_history_count_);
     const std::span<const double> memory_span(memory.data(), performance_history_count_);
     const std::span<const double> read_span(read.data(), performance_history_count_);
@@ -2968,14 +3151,13 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
     const std::wstring history_window =
         performance_history_window_text(performance_history_count_, state.performance_update_seconds);
     for (int i = 0; i < 4; ++i) {
-        RECT card{monitor.left + scale(18) + i * (graph_w + scale(16)), graph_top,
-                  monitor.left + scale(18) + i * (graph_w + scale(16)) + graph_w, graph_bottom};
+        RECT card = cards[static_cast<std::size_t>(i)];
         if (!sample.live) {
             draw_performance_monitor_card(dc, card,
                                           i == 0   ? L"CPU"
-                                          : i == 1 ? L"Memory"
+                                          : i == 1 ? L"RAM"
                                           : i == 2 ? L"I/O"
-                                                   : L"VRAM",
+                                                   : L"GPU",
                                           L"Collecting", L"Waiting for first sample", std::span<const double>{},
                                           kSubtle, percent_top, zero_percent, history_window);
         } else if (i == 0) {
@@ -2983,11 +3165,14 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                           L"Process utilization\nAcross logical processors", cpu_span, kInfo,
                                           percent_top, zero_percent, history_window);
         } else if (i == 1) {
-            const auto value = widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes)));
-            const auto detail = std::wstring(L"Total used ") + percentage_text(sample.system_memory_percent) +
-                                L"\nProcess private " + widen(human_bytes(static_cast<double>(sample.private_bytes)));
-            draw_performance_monitor_card(dc, card, L"Memory", value, detail, memory_span, kOk, percent_top,
-                                          zero_percent, history_window);
+            const auto value = percentage_text(sample.system_memory_percent);
+            const auto detail = std::wstring(L"RAM used (total): ") +
+                                widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes))) + L" / " +
+                                widen(human_bytes(static_cast<double>(sample.system_memory_total_bytes))) +
+                                L"\nRAM used (dedicated): " +
+                                widen(human_bytes(static_cast<double>(sample.private_bytes)));
+            draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent,
+                                          history_window);
         } else if (i == 2) {
             const double total_io = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
             const auto detail = std::wstring(L"Read ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite " +
@@ -2997,14 +3182,15 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
-            const auto value = has_vram ? widen(human_bytes(static_cast<double>(used))) : L"Unavailable";
-            const auto utilization =
-                sample.gpu_utilization_available ? percentage_text(sample.gpu_utilization_percent) : L"Unavailable";
-            const auto detail = has_vram ? std::wstring(L"VRAM total ") +
-                                               widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
-                                               L"\nGPU utilization " + utilization
-                                         : L"HIP VRAM unavailable\nGPU counter " + utilization;
-            draw_performance_monitor_card(dc, card, L"VRAM", value, detail, vram_span, kAccent, percent_top,
+            const double vram_percent =
+                has_vram ? (static_cast<double>(used) / static_cast<double>(sample.vram_total_bytes)) * 100.0 : 0.0;
+            const auto value = has_vram ? percentage_text(vram_percent) : L"Unavailable";
+            const auto detail =
+                has_vram ? std::wstring(L"VRAM used (total): ") + widen(human_bytes(static_cast<double>(used))) +
+                               L" / " + widen(human_bytes(static_cast<double>(sample.vram_total_bytes))) +
+                               L"\nVRAM used (dedicated): " + widen(human_bytes(static_cast<double>(used)))
+                         : L"HIP VRAM unavailable\nGPU memory counter unavailable";
+            draw_performance_monitor_card(dc, card, L"GPU", value, detail, vram_span, kAccent, percent_top,
                                           zero_percent, history_window);
         }
     }
@@ -3086,6 +3272,9 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
 // Outputs: Draws into `dc`; does not mutate archive state or perform I/O.
 void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    SelectObject(dc, title_font_);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"About", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     RECT card{area.left, area.top + scale(56), area.right, area.bottom - scale(60)};
     fill_round_rect(dc, card, kPanel, scale(4));
     stroke_rect(dc, card, kBorder);
@@ -3096,16 +3285,19 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
               L"SuperZip", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)},
-              L"Native Windows AMD HIP archive utility", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              std::wstring(kProductTagline), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)},
-              widen(std::string("Version ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)},
-              L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
-              L"LZMA, lzip, Zstandard, Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, LHA/LZH, "
-              L"CPIO, AR, DEB, ISO, and RPM standard-format handling. AMD HIP is the only GPU acceleration boundary; "
-              L"security-sensitive extraction validates paths and metadata before writing files.",
-              kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+              L"Author: Efstratios Mitridis", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, RECT{card.left + scale(142), card.top + scale(158), card.right - scale(40), card.top + scale(190)},
+              widen(std::string("Version: ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(
+        dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)},
+        L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
+        L"LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM standard "
+        L"archive/compression handling. Legacy transfer decoders remain extract-only. AMD HIP is the only GPU "
+        L"acceleration boundary; security-sensitive extraction validates paths and metadata before writing output.",
+        kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)},
               L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted,
               DT_LEFT | DT_TOP | DT_WORDBREAK);
@@ -3146,17 +3338,10 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
 // Inputs: `dc` is the target, `rect` is the fixed bar slot, `state` is copied UI state, and `operation` selects a tab.
 // Outputs: Renders no pixels unless the active progress snapshot matches the requested operation.
 void MainWindow::draw_operation_progress_bar(HDC dc, const RECT& rect, const UiState& state, OperationKind operation) {
-    if (state.progress.operation != operation || state.progress.operation == OperationKind::Idle) {
+    if (state.progress.operation != operation || !progress_visible(state)) {
         return;
     }
-    double ratio = 0.0;
-    if (state.progress.total_bytes > 0U) {
-        ratio = static_cast<double>(state.progress.processed_bytes) / static_cast<double>(state.progress.total_bytes);
-    } else if (state.progress.total_entries > 0U) {
-        ratio =
-            static_cast<double>(state.progress.completed_entries) / static_cast<double>(state.progress.total_entries);
-    }
-    ratio = std::clamp(ratio, 0.02, 1.0);
+    const double ratio = std::clamp(progress_ratio(state.progress), 0.02, 1.0);
     fill_round_rect(dc, rect, RGB(34, 50, 56), scale(4));
     RECT fill = rect;
     fill.right = fill.left + static_cast<int>(std::round(static_cast<double>(fill.right - fill.left) * ratio));
@@ -3191,7 +3376,9 @@ void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool
 // Inputs: `dc`, `rect`, `text`, `checked`, and `interactive` describe the visual state.
 // Outputs: Renders a checkbox and label into `dc`.
 void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool checked, bool interactive) {
-    RECT box{rect.left, rect.top + scale(6), rect.left + scale(16), rect.top + scale(22)};
+    const int box_size = scale(16);
+    const int cy = rect.top + ((rect.bottom - rect.top) / 2);
+    RECT box{rect.left, cy - (box_size / 2), rect.left + box_size, cy - (box_size / 2) + box_size};
     const COLORREF fill = checked ? kAccent : (interactive ? kPanel2 : kPanel);
     const COLORREF stroke = checked ? kAccent2 : (interactive ? kBorder : RGB(42, 52, 56));
     const COLORREF text_color = interactive ? kText : kMuted;
@@ -3208,18 +3395,19 @@ void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bo
 }
 
 // Purpose: Draw a form field or select-style value box.
-// Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is display text, and `select` adds an
-// affordance. Outputs: Renders label and bordered field with ellipsized value.
-void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select) {
+// Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is display text, `select` adds an
+// affordance, and `enabled` controls disabled styling. Outputs: Renders label and bordered field with ellipsized value.
+void MainWindow::draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select,
+                            bool enabled) {
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{rect.left, rect.top, rect.right, rect.top + scale(18)}, label, kMuted,
+    draw_text(dc, RECT{rect.left, rect.top, rect.right, rect.top + scale(18)}, label, enabled ? kMuted : kSubtle,
               DT_LEFT | DT_TOP | DT_SINGLELINE);
     RECT box{rect.left, rect.top + scale(20), rect.right, rect.bottom};
-    fill_round_rect(dc, box, kPanel2, scale(3));
-    stroke_rect(dc, box, kBorder);
-    draw_text(dc, RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom}, value, kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (select) {
+    fill_round_rect(dc, box, enabled ? kPanel2 : RGB(20, 28, 31), scale(3));
+    stroke_rect(dc, box, enabled ? kBorder : RGB(39, 50, 55));
+    draw_text(dc, RECT{box.left + scale(10), box.top, box.right - scale(select ? 30 : 10), box.bottom}, value,
+              enabled ? kText : kSubtle, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (select && enabled) {
         const int arrow_cx = box.right - scale(15);
         const int arrow_cy = (box.top + box.bottom) / 2;
         POINT arrow[3] = {
@@ -3303,8 +3491,8 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
     }
     case DropdownId::GpuUpdateSpeed: {
         const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        const int monitor_top = area.top + scale(342);
-        return RECT{area.right - scale(190), monitor_top + scale(8), area.right - scale(16), monitor_top + scale(52)};
+        const RECT monitor{area.left, area.top + scale(342), area.right, area.bottom};
+        return performance_update_speed_rect(monitor);
     }
     case DropdownId::SettingsMemoryPolicy:
         return settings_layout(content).memory_policy;
@@ -3346,21 +3534,11 @@ RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
     return RECT{anchor.left, top, anchor.right, bottom};
 }
 
+// Purpose: Draw the permanent top accent rule for the content surface.
+// Inputs: `dc` is the target and `rect` is the content surface rectangle.
+// Outputs: Renders a stable accent line without page-change animation.
 void MainWindow::draw_tab_transition(HDC dc, const RECT& rect) {
-    const double progress = page_transition_progress();
-    if (progress >= 1.0) {
-        return;
-    }
-    const int width = rect.right - rect.left;
-    const double eased = ease_out(progress);
-    const int line_width = static_cast<int>(std::round(static_cast<double>(width) * eased));
-    const int sweep_width = scale(52);
-    const int sweep_left = rect.left + std::max(0, line_width - sweep_width);
-    const int sweep_right = std::min(static_cast<int>(rect.right), sweep_left + sweep_width);
-    const COLORREF soft = blend_color(kBg, kAccent, 0.22 * (1.0 - progress));
-    fill_rect(dc, RECT{rect.left, rect.top, rect.left + std::max(scale(12), line_width), rect.top + scale(2)}, kAccent);
-    fill_rect(dc, RECT{sweep_left, rect.top + scale(2), sweep_right, rect.top + scale(5)}, soft);
-    fill_rect(dc, RECT{rect.left, rect.top, rect.left + scale(3), rect.bottom}, soft);
+    fill_rect(dc, RECT{rect.left, rect.top, rect.right, rect.top + scale(2)}, kAccent);
 }
 
 RECT MainWindow::content_rect() const {
@@ -3758,11 +3936,7 @@ void MainWindow::start_security_verify() {
         [this, sources, integrity, defender] {
             ProgressState progress;
             progress.start(OperationKind::Verify, sources.size(), sources.size());
-            auto publish = [this, &progress] {
-                std::lock_guard lock(mutex_);
-                state_.progress = progress.snapshot();
-                request_repaint();
-            };
+            auto publish = [this, &progress] { publish_progress_snapshot(progress.snapshot()); };
             for (const auto& path : sources) {
                 progress.set_current(path.filename().string());
                 publish();
@@ -3792,12 +3966,10 @@ void MainWindow::start_security_verify() {
         "Verifying");
 }
 
-// Purpose: Handle GPU page hit-testing and commands.
+// Purpose: Handle System page hit-testing and commands.
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
-// Outputs: Returns true when the GPU refresh command consumed the click.
+// Outputs: Returns true when the update-speed dropdown consumed the click.
 bool MainWindow::handle_gpu_click(const RECT& content, int x, int y) {
-    RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-    const RECT refresh{area.right - scale(110), area.top, area.right, area.top + scale(34)};
     const RECT update_speed = dropdown_anchor_rect(DropdownId::GpuUpdateSpeed, content);
     if (handle_active_dropdown_click(x, y)) {
         return true;
@@ -3806,12 +3978,7 @@ bool MainWindow::handle_gpu_click(const RECT& content, int x, int y) {
         open_dropdown(DropdownId::GpuUpdateSpeed);
         return true;
     }
-    if (!contains_point(refresh, x, y)) {
-        return false;
-    }
-    refresh_gpu_status();
-    request_repaint();
-    return true;
+    return false;
 }
 
 // Purpose: Handle Settings page hit-testing and commands.
@@ -3950,7 +4117,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
                                       DropdownSelectionFeedback& feedback) {
     switch (id) {
     case DropdownId::CompressFormat:
-        state.compression_format_index = std::clamp(option_index, 0, 15);
+        state.compression_format_index = std::clamp(option_index, 0, kCompressionFormatMaxIndex);
         state.status = "Archive format changed";
         break;
     case DropdownId::CompressLevel:
@@ -3978,7 +4145,8 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.status = "History status filter changed";
         break;
     case DropdownId::GpuUpdateSpeed:
-        state.performance_update_seconds = std::clamp(option_index, 0, 9) + 1;
+        state.performance_update_seconds = kPerformanceUpdateSecondsOptions[static_cast<std::size_t>(
+            std::clamp(option_index, 0, static_cast<int>(kPerformanceUpdateSecondsOptions.size()) - 1))];
         feedback.performance_seconds = state.performance_update_seconds;
         state.status = "Performance update speed changed";
         break;
@@ -4064,13 +4232,12 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
 
 // Purpose: Change the active application page and discard unapplied Settings drafts when leaving Settings.
 // Inputs: `page` is the destination page.
-// Outputs: Mutates page state, starts transition animation, and restores the last applied Settings snapshot if needed.
+// Outputs: Mutates page state and restores the last applied Settings snapshot if needed.
 void MainWindow::set_page(Page page) {
-    Page previous;
     bool revert_unapplied_settings = false;
     {
         std::lock_guard lock(mutex_);
-        previous = state_.page;
+        const Page previous = state_.page;
         if (previous == page) {
             return;
         }
@@ -4081,7 +4248,6 @@ void MainWindow::set_page(Page page) {
     if (revert_unapplied_settings) {
         revert_settings_draft();
     }
-    start_page_transition(previous, page);
     request_repaint();
 }
 
@@ -4311,11 +4477,7 @@ void MainWindow::start_compress() {
     run_job(
         [this, sources, output, archive_format, gpu_required, integrity, defender, verify_after_write, block_size,
          compression_level] {
-            auto progress_callback = [this](const ProgressSnapshot& snapshot) {
-                std::lock_guard lock(mutex_);
-                state_.progress = snapshot;
-                request_repaint();
-            };
+            auto progress_callback = [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot(snapshot); };
             const auto stats = compress_gui_archive(sources, output, archive_format, gpu_required, verify_after_write,
                                                     block_size, compression_level, progress_callback);
             std::ostringstream line;
@@ -4383,11 +4545,7 @@ void MainWindow::start_extract() {
                     throw SecurityError("Microsoft Defender did not report the archive as clean: " + archive.string());
                 }
             }
-            auto progress_callback = [this](const ProgressSnapshot& snapshot) {
-                std::lock_guard lock(mutex_);
-                state_.progress = snapshot;
-                request_repaint();
-            };
+            auto progress_callback = [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot(snapshot); };
             const auto archive_format = detect_archive_format(archive);
             const auto stats =
                 extract_detected_archive(archive_format, archive, output, gpu_required, overwrite, progress_callback);
@@ -4419,17 +4577,20 @@ void MainWindow::run_job(std::function<void()> job, std::string label) {
     {
         std::lock_guard lock(mutex_);
         state_.status = label;
+        state_.progress = {};
+        state_.progress_visible_until = {};
     }
+    KillTimer(hwnd_, kProgressHoldTimer);
     worker_ = std::thread([this, job = std::move(job), failure_operation] {
         try {
             job();
             std::lock_guard lock(mutex_);
             state_.status = "Ready";
-            state_.progress = {};
+            retain_progress_after_stop_locked(true);
         } catch (const std::exception& error) {
             std::lock_guard lock(mutex_);
             state_.status = std::string("Error: ") + error.what();
-            state_.progress = {};
+            retain_progress_after_stop_locked(false);
             state_.history.push_back(HistoryEntry{
                 .operation = failure_operation,
                 .subject = state_.status,
@@ -4441,6 +4602,64 @@ void MainWindow::run_job(std::function<void()> job, std::string label) {
         request_repaint();
     });
     request_repaint();
+}
+
+// Purpose: Publish one active operation progress snapshot to the UI.
+// Inputs: `snapshot` is an immutable worker progress sample.
+// Outputs: Replaces visible progress, cancels any completed-progress hold timer, and queues repaint.
+void MainWindow::publish_progress_snapshot(const ProgressSnapshot& snapshot) {
+    {
+        std::lock_guard lock(mutex_);
+        state_.progress = snapshot;
+        state_.progress_visible_until = {};
+    }
+    KillTimer(hwnd_, kProgressHoldTimer);
+    request_repaint();
+}
+
+// Purpose: Keep the last progress sample visible after an operation stops.
+// Inputs: `mark_complete` fills known totals for successful work; caller must hold `mutex_`.
+// Outputs: Arms the 15-second clear timer or clears idle progress.
+void MainWindow::retain_progress_after_stop_locked(bool mark_complete) {
+    if (state_.progress.operation == OperationKind::Idle) {
+        state_.progress_visible_until = {};
+        return;
+    }
+    if (mark_complete) {
+        if (state_.progress.total_bytes > 0U) {
+            state_.progress.processed_bytes = state_.progress.total_bytes;
+        }
+        if (state_.progress.total_entries > 0U) {
+            state_.progress.completed_entries = state_.progress.total_entries;
+        }
+    }
+    state_.progress_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(kProgressHoldMs);
+    if (hwnd_ != nullptr) {
+        SetTimer(hwnd_, kProgressHoldTimer, kProgressHoldMs, nullptr);
+    }
+}
+
+// Purpose: Clear retained progress after its hold interval expires.
+// Inputs: None; reads the synchronized progress hold timestamp.
+// Outputs: Clears visible progress and queues repaint when the deadline has elapsed.
+void MainWindow::clear_expired_progress() {
+    bool should_kill_timer = false;
+    {
+        std::lock_guard lock(mutex_);
+        if (state_.progress_visible_until == std::chrono::steady_clock::time_point{}) {
+            should_kill_timer = true;
+        } else if (std::chrono::steady_clock::now() < state_.progress_visible_until) {
+            return;
+        } else {
+            state_.progress = {};
+            state_.progress_visible_until = {};
+            should_kill_timer = true;
+        }
+    }
+    if (should_kill_timer) {
+        KillTimer(hwnd_, kProgressHoldTimer);
+        request_repaint();
+    }
 }
 
 // Purpose: Append one filtered current-session log entry.
@@ -4528,13 +4747,13 @@ void MainWindow::shutdown_performance_monitor() {
 }
 
 // Purpose: Re-arm the live performance sampling timer at the selected interval.
-// Inputs: `seconds` is clamped to the supported 1-10 second range.
+// Inputs: `seconds` is normalized to one of the supported 1, 3, 5, or 10 second ranges.
 // Outputs: Replaces the existing timer interval for the main window.
 void MainWindow::reset_performance_timer(int seconds) {
     if (hwnd_ == nullptr) {
         return;
     }
-    const auto interval = static_cast<UINT>(std::clamp(seconds, 1, 10) * 1000);
+    const auto interval = static_cast<UINT>(normalize_performance_update_seconds(seconds) * 1000);
     KillTimer(hwnd_, kPerformanceTimer);
     SetTimer(hwnd_, kPerformanceTimer, interval, nullptr);
 }

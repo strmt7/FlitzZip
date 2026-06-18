@@ -152,6 +152,12 @@ try {
     if ($mainWindow -notmatch '#include "superzip_brand_logo\.hpp"') {
         throw "The Win32 app must render the in-app mark from the generated SVG geometry header."
     }
+    if ($mainWindow -notmatch 'ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE') {
+        throw "The Win32 About page must use the canonical SuperZip SVG tagline."
+    }
+    if ($mainWindow -match 'Native Windows AMD HIP archive utility') {
+        throw "The Win32 About page must not use the retired product tagline."
+    }
 
     Write-Output "Brand asset verification passed."
 } finally {

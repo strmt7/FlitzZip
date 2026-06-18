@@ -40,7 +40,7 @@ through the vendored LZMA SDK with bounded decoder allocation, single-file
 `.lz` streams are extracted through the lzip wrapper with CRC32/data-size/member-size
 verification, and single-file `.zst`/`.zstd` streams are implemented through the
 app-local libzstd DLL with frame checksum creation and bounded-window extraction.
-Single-file `.b64` streams are implemented through a bounded Base64 adapter with
+Single-file `.b64` streams are extracted through a bounded Base64 adapter with
 strict padding validation and optional wrapper-header filename validation.
 BinHex 4.0 `.hqx` streams are extract-only and data-fork-only: SuperZip validates
 the header, data fork, and resource fork CRCs, discards resource-fork metadata
@@ -48,7 +48,7 @@ on Windows, and publishes only the path-safe data fork.
 MacBinary `.macbin` streams and strongly header-identified MacBinary `.bin`
 streams are extract-only and data-fork-only: SuperZip validates fork extents,
 path-safe header filenames, and MacBinary II/III header CRCs when present.
-Common XXEncoded `.xxe` and UUencoded `.uue`/`.uu` files are implemented as
+Common XXEncoded `.xxe` and UUencoded `.uue`/`.uu` files are extracted as
 single-file compatibility streams with strict begin-line parsing, bounded line
 lengths, path-safe header filenames, and verified output publication. Portable `.cpio`
 and Gzip-filtered `.cpio.gz`/`.cpgz` archives are implemented with a native
@@ -206,13 +206,10 @@ build/Release/superzip_cli.exe compress --format zst --output file.txt.zst file.
 build/Release/superzip_cli.exe extract --output restored file.txt.zst
 build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.Z
-build/Release/superzip_cli.exe compress --format b64 --output file.txt.b64 file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.b64
 build/Release/superzip_cli.exe extract --output restored file.txt.hqx
 build/Release/superzip_cli.exe extract --format macbinary --output restored file.macbin
-build/Release/superzip_cli.exe compress --format xxe --output file.txt.xxe file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.xxe
-build/Release/superzip_cli.exe compress --format uue --output file.txt.uue file.txt
 build/Release/superzip_cli.exe extract --output restored file.txt.uue
 build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
 build/Release/superzip_cli.exe extract --output restored archive.cpio

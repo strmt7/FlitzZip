@@ -162,8 +162,8 @@ void usage() {
            "[--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] "
            "[--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format "
-           "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|b64|base64|xxe|"
-           "xxencode|uue|uu|cpio|cpio.gz|cpgz|ar --output <archive> [--compression-level <1-9>] "
+           "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|cpio.gz|"
+           "cpgz|ar --output <archive> [--compression-level <1-9>] "
            "[--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
            "[--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
@@ -1093,18 +1093,6 @@ superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_form
                                     command.suzip_tuning_requested);
         reject_compat_compression_level("Unix Compress", command.compression_level_requested);
         return superzip::compress_unix_compress(command.sources, command.output);
-    case superzip::ArchiveFormat::Base64:
-        reject_compat_create_tuning("Base64", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        reject_compat_compression_level("Base64", command.compression_level_requested);
-        return superzip::compress_base64(command.sources, command.output);
-    case superzip::ArchiveFormat::Xxe:
-        reject_compat_create_tuning("XXE", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        reject_compat_compression_level("XXE", command.compression_level_requested);
-        return superzip::compress_xxe(command.sources, command.output);
-    case superzip::ArchiveFormat::Uue:
-        reject_compat_create_tuning("UUE", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        reject_compat_compression_level("UUE", command.compression_level_requested);
-        return superzip::compress_uue(command.sources, command.output);
     case superzip::ArchiveFormat::Cpio:
         reject_compat_create_tuning("CPIO", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
         reject_compat_compression_level("CPIO", command.compression_level_requested);

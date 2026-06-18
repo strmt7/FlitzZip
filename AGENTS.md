@@ -49,6 +49,10 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/archive-format-support.md`. Do not add ZIP-container aliases as
   user-facing archive formats unless a maintainer explicitly requests package
   inspection.
+- Base64, XXEncode, and UUencode are legacy transfer encodings, not archive
+  compression formats. Keep them extract-only in public create/compress
+  selectors, CLI help, docs, and tests unless a maintainer explicitly approves a
+  separate encoding feature area.
 - Before changing the native `.suzip` format, extension handling, or format
   detection, read `docs/native-suzip-format.md`. `.suzip` is a native versioned
   archive format with SUZIP footer/index magic and AMD HIP block semantics, not

@@ -121,6 +121,7 @@ struct UiState {
     std::string gpu_device_name;
     std::string gpu_arch;
     ProgressSnapshot progress;
+    std::chrono::steady_clock::time_point progress_visible_until{};
     PerformanceMonitorSample performance;
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
@@ -467,13 +468,24 @@ class MainWindow {
 
     // Purpose: Draw a form field or select-style value box.
     // Inputs: `dc` is the target, `rect` is the box, `label` names the field, `value` is the current display value, and
-    // `select` adds an affordance. Outputs: Renders label and bordered field with ellipsized value.
-    void draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select);
+    // `select` adds an affordance; `enabled` controls disabled-field styling. Outputs: Renders an ellipsized field.
+    void draw_field(HDC dc, const RECT& rect, const wchar_t* label, const std::wstring& value, bool select,
+                    bool enabled = true);
 
     // Purpose: Draw the currently expanded select/dropdown menu.
     // Inputs: `dc` is the target, `content` is the active content area, and `state` is copied UI state.
     // Outputs: Renders an overlay menu above page content when a dropdown is active.
     void draw_active_dropdown(HDC dc, const RECT& content, const UiState& state);
+
+    // Purpose: Return the System monitor card grid used by rendering and hit testing.
+    // Inputs: `monitor` is the performance monitor panel rectangle.
+    // Outputs: Returns the four equal-width graph card rectangles.
+    [[nodiscard]] std::array<RECT, 4> performance_monitor_card_rects(const RECT& monitor) const;
+
+    // Purpose: Return the System update-speed field rectangle.
+    // Inputs: `monitor` is the performance monitor panel rectangle.
+    // Outputs: Returns a narrow rectangle aligned to the GPU card's right edge and monitor header row.
+    [[nodiscard]] RECT performance_update_speed_rect(const RECT& monitor) const;
 
     // Purpose: Resolve the owning field rectangle for a dropdown.
     // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
@@ -485,9 +497,9 @@ class MainWindow {
     // Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
     [[nodiscard]] RECT dropdown_menu_rect(DropdownId id, const RECT& content) const;
 
-    // Purpose: Draw the active page transition affordance.
+    // Purpose: Draw the permanent content accent rule.
     // Inputs: `dc` is the target and `rect` is the content area.
-    // Outputs: Renders a short accent progress line while a tab transition is active.
+    // Outputs: Renders a stable accent line without page-change animation.
     void draw_tab_transition(HDC dc, const RECT& rect);
 
     // Purpose: Return the current content rectangle used by renderers and hit tests.
@@ -659,6 +671,21 @@ class MainWindow {
     // Inputs: `job` is the work closure and `label` is the status text shown while it runs.
     // Outputs: Updates status/history/progress and queues repaints; catches worker exceptions into UI state.
     void run_job(std::function<void()> job, std::string label);
+
+    // Purpose: Publish one active operation progress snapshot to the UI.
+    // Inputs: `snapshot` is an immutable worker progress sample.
+    // Outputs: Replaces visible progress, cancels any completed-progress hold timer, and queues repaint.
+    void publish_progress_snapshot(const ProgressSnapshot& snapshot);
+
+    // Purpose: Keep the last progress sample visible after an operation stops.
+    // Inputs: `mark_complete` fills known totals for successful work; caller must hold `mutex_`.
+    // Outputs: Arms the 15-second clear timer or clears idle progress.
+    void retain_progress_after_stop_locked(bool mark_complete);
+
+    // Purpose: Clear retained progress after its hold interval expires.
+    // Inputs: None; reads the synchronized progress hold timestamp.
+    // Outputs: Clears visible progress and queues repaint when the deadline has elapsed.
+    void clear_expired_progress();
 
     // Purpose: Append one filtered current-session log entry.
     // Inputs: `severity` is the visible category and `message` is safe session text.
