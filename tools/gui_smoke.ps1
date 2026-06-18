@@ -59,6 +59,27 @@ function Assert-GuiSourceContract {
     if (-not $sourceText.Contains('std::array<PerformanceMonitorSample, 96> performance_history_')) {
         throw "System graph history cadence must not be changed without an explicit graph-cadence task."
     }
+    if (-not $sourceText.Contains('Remove selected')) {
+        throw "Queue must expose a Remove selected action when checked rows exist."
+    }
+    if (-not $sourceText.Contains('draw_extract_overwrite_prompt')) {
+        throw "Extract Ask-before-overwriting policy must use a SuperZip-owned in-app modal."
+    }
+    if ($sourceText -cmatch 'MessageBoxW') {
+        throw "Product confirmations must not use native MessageBoxW; use SuperZip-owned modal surfaces."
+    }
+    if (-not $sourceText.Contains('history_column_resize_separator_')) {
+        throw "History table must keep Queue-equivalent column resizing support."
+    }
+    if (-not $sourceText.Contains('constexpr UINT kTextTooltipDelayMs = 500')) {
+        throw "Truncated text tooltip delay must remain 0.5 seconds."
+    }
+    if (-not $sourceText.Contains('performance_update_seconds = 3')) {
+        throw "System Performance Monitor default refresh interval must remain 3 seconds."
+    }
+    if ($sourceText -cmatch 'L"Session"') {
+        throw "History rows must use the real completion time, not the literal Session label."
+    }
 }
 
 Assert-GuiSourceContract
@@ -132,6 +153,9 @@ public static class SuperZipNativeUi {
 
     [DllImport("user32.dll")]
     public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
@@ -273,6 +297,18 @@ function Invoke-ClientClick {
     $lparam = ConvertTo-MouseLParam -X $x -Y $y
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $lparam)
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
+}
+
+# Purpose: Send one keyboard activation to the SuperZip window.
+# Inputs: `Handle` is the HWND and `VirtualKey` is a Win32 VK_* code.
+# Outputs: Posts key-down and key-up messages for keyboard-accessibility smoke checks.
+function Invoke-ClientKey {
+    param(
+        [IntPtr]$Handle,
+        [int]$VirtualKey
+    )
+    [void][SuperZipNativeUi]::SendMessage($Handle, 0x0100, [IntPtr]$VirtualKey, [IntPtr]::Zero)
+    [void][SuperZipNativeUi]::SendMessage($Handle, 0x0101, [IntPtr]$VirtualKey, [IntPtr]::Zero)
 }
 
 # Purpose: Drag one client-coordinate point to another in the SuperZip window.
@@ -849,6 +885,20 @@ try {
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Assert-DesignRectHasDetail -Path $pickerQueuePath -Dpi $windowDpi -Left 1148 -Top 170 -Right 1166 -Bottom 640 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 3
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 505 -DesignY 91
+    Start-Sleep -Milliseconds 180
+    $removeSelectedQueuePath = "${basePath}-Queue-AfterRemoveSelected$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $removeSelectedQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-QueueEmptyMessageCentered -Path $removeSelectedQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
+    Start-Sleep -Milliseconds 150
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1032 -DesignY 91
+    Start-Sleep -Milliseconds 150
+    $pickerReloadedQueuePath = "${basePath}-Queue-AfterPickersReloaded$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $pickerReloadedQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $pickerReloadedQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 1158 -StartY 186 -EndX 1158 -EndY 344
     Start-Sleep -Milliseconds 180
     $scrolledQueuePath = "${basePath}-Queue-AfterScrollbarDrag$extension"
@@ -1004,7 +1054,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 520 -DesignY 227
     Start-Sleep -Milliseconds 120
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite" -OpenX 540 -OpenY 296 -SelectX 540 -SelectY 370 -MenuLeft 458 -MenuTop 326 -MenuRight 778 -MenuBottom 392 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 417
     Start-Sleep -Milliseconds 80
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 449
@@ -1019,6 +1069,20 @@ try {
     Start-Sleep -Milliseconds 120
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     Start-Sleep -Seconds 2
+    $extractOutput = Join-Path $smokeRoot "SuperZip-extracted"
+    New-Item -ItemType Directory -Force -Path $extractOutput | Out-Null
+    Set-Content -LiteralPath (Join-Path $extractOutput "existing-output.txt") -Value "Existing extraction output" -NoNewline
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Ask" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 266 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
+    Start-Sleep -Milliseconds 250
+    $overwritePromptPath = "${basePath}-Extract-OverwritePrompt$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $overwritePromptPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $overwritePromptPath -Dpi $windowDpi -Left 290 -Top 250 -Right 910 -Bottom 510 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 876 -DesignY 478
+    Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x1B
+    Start-Sleep -Milliseconds 300
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Revert" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
 
     # Extract failure: queue a corrupt SUZIP and verify History exposes a real Failure row.
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
@@ -1050,6 +1114,12 @@ try {
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyFailurePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasColor -Path $historyFailurePath -Dpi $windowDpi -Left 700 -Top 210 -Right 1138 -Bottom 470 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 236 -ExpectedGreen 73 -ExpectedBlue 73 -Tolerance 42 -MinPixels 4
+    Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 430 -StartY 205 -EndX 468 -EndY 205
+    Start-Sleep -Milliseconds 180
+    $historyResizePath = "${basePath}-History-AfterColumnResize$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyResizePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $historyResizePath -Dpi $windowDpi -Left 116 -Top 200 -Right 1138 -Bottom 260 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1100 -DesignY 90
     Start-Sleep -Milliseconds 250
 

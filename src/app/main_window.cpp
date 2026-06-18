@@ -106,7 +106,7 @@ constexpr UINT_PTR kClockTimer = 12;
 constexpr UINT_PTR kTextTooltipTimer = 13;
 constexpr UINT kProgressHoldMs = 15000;
 constexpr UINT kClockPollMs = 50;
-constexpr UINT kTextTooltipDelayMs = 1000;
+constexpr UINT kTextTooltipDelayMs = 500;
 constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
 constexpr int kButtonReleaseTransitionMs = 130;
@@ -1443,20 +1443,40 @@ std::wstring progress_time_remaining_text(const ProgressSnapshot& snapshot) {
     return duration_remaining_text(static_cast<double>(remaining_bytes) / snapshot.throughput_bytes_per_second);
 }
 
+// Purpose: Format one local wall-clock time for visible UI tables and status text.
+// Inputs: `time_point` is a system-clock value to present in the user's local timezone.
+// Outputs: Returns fixed 12-hour text as `H:MM:SS AM/PM` without a leading hour zero.
+std::wstring local_time_text(std::chrono::system_clock::time_point time_point) {
+    constexpr ULONGLONG kUnixEpochFiletimeTicks = 116444736000000000ULL;
+    const auto ticks_since_unix_epoch =
+        std::chrono::duration_cast<std::chrono::duration<long long, std::ratio<1, 10000000>>>(
+            time_point.time_since_epoch())
+            .count();
+    ULARGE_INTEGER utc_ticks{};
+    utc_ticks.QuadPart = static_cast<ULONGLONG>(ticks_since_unix_epoch) + kUnixEpochFiletimeTicks;
+    FILETIME utc_file_time{utc_ticks.LowPart, utc_ticks.HighPart};
+    FILETIME local_file_time{};
+    SYSTEMTIME local_time{};
+    if (FileTimeToLocalFileTime(&utc_file_time, &local_file_time) == FALSE ||
+        FileTimeToSystemTime(&local_file_time, &local_time) == FALSE) {
+        return L"-";
+    }
+    const int hour24 = std::clamp(static_cast<int>(local_time.wHour), 0, 23);
+    const bool is_pm = hour24 >= 12;
+    const int hour12_raw = hour24 % 12;
+    const int hour12 = hour12_raw == 0 ? 12 : hour12_raw;
+    std::wostringstream out;
+    out << hour12 << L":" << std::setfill(L'0') << std::setw(2)
+        << std::clamp(static_cast<int>(local_time.wMinute), 0, 59) << L":" << std::setw(2)
+        << std::clamp(static_cast<int>(local_time.wSecond), 0, 59) << (is_pm ? L" PM" : L" AM");
+    return out.str();
+}
+
 // Purpose: Format the current local time for the status strip.
 // Inputs: None; reads the local system clock.
-// Outputs: Returns fixed 12-hour text as `H:MM:SS am/pm` without a leading hour zero.
+// Outputs: Returns fixed 12-hour text as `H:MM:SS AM/PM` without a leading hour zero.
 std::wstring current_user_time_text() {
-    SYSTEMTIME local_time{};
-    GetLocalTime(&local_time);
-    const bool is_pm = local_time.wHour >= 12U;
-    const WORD hour12_raw = static_cast<WORD>(local_time.wHour % 12U);
-    const WORD hour12 = hour12_raw == 0U ? 12U : hour12_raw;
-    std::wostringstream out;
-    out << static_cast<unsigned int>(hour12) << L":" << std::setfill(L'0') << std::setw(2)
-        << static_cast<unsigned int>(local_time.wMinute) << L":" << std::setw(2)
-        << static_cast<unsigned int>(local_time.wSecond) << (is_pm ? L" pm" : L" am");
-    return out.str();
+    return local_time_text(std::chrono::system_clock::now());
 }
 
 // Purpose: Safely format a filesystem entry size for the queue table.
@@ -1496,6 +1516,9 @@ std::wstring detected_archive_format_text(const std::vector<std::filesystem::pat
         return L"-";
     }
     const auto format = detect_archive_format(paths.front());
+    if (format == ArchiveFormat::Unknown) {
+        return L"-";
+    }
     return widen(archive_format_info(format).display_name);
 }
 
@@ -2095,6 +2118,8 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
     mouse_inside_client_ = true;
     if (primary_mouse_down_ && queue_column_resize_separator_ >= 0) {
         update_queue_column_resize(mouse_position_.x);
+    } else if (primary_mouse_down_ && history_column_resize_separator_ >= 0) {
+        update_history_column_resize(mouse_position_.x);
     } else if (primary_mouse_down_ && queue_scroll_dragging_) {
         update_queue_scroll_drag(mouse_position_.y);
     }
@@ -2105,13 +2130,19 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
         event.hwndTrack = hwnd_;
         mouse_tracking_ = TrackMouseEvent(&event) != FALSE;
     }
-    if (queue_column_resize_separator_ >= 0) {
+    if (queue_column_resize_separator_ >= 0 || history_column_resize_separator_ >= 0) {
         SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
     } else {
         UiState state;
         {
             std::lock_guard lock(mutex_);
             state = state_;
+        }
+        if (state.extract_overwrite_prompt_visible) {
+            SetCursor(LoadCursor(nullptr, IDC_ARROW));
+            update_text_tooltip_tracking();
+            request_repaint();
+            return 0;
         }
         bool over_resize_grip = false;
         if (state.page == Page::Queue) {
@@ -2121,6 +2152,18 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
                 const RECT header_row{layout.table.left, layout.table.top, layout.table.right, header_bottom};
                 const auto columns =
                     queue_column_layout(queue_columns_table(layout.table, state.queued_paths.size()), header_row);
+                over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
+                    return contains_point(grip, mouse_position_.x, mouse_position_.y);
+                });
+            }
+        }
+        if (state.page == Page::History) {
+            const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
+            const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+            const int header_bottom = table.top + scale(kQueueHeaderHeight);
+            if (mouse_position_.y >= table.top && mouse_position_.y < header_bottom) {
+                const RECT header_row{table.left, table.top, table.right, header_bottom};
+                const auto columns = history_column_layout(table, header_row);
                 over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
                     return contains_point(grip, mouse_position_.x, mouse_position_.y);
                 });
@@ -2191,6 +2234,9 @@ bool MainWindow::text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text)
     {
         std::lock_guard lock(mutex_);
         state = state_;
+    }
+    if (state.extract_overwrite_prompt_visible) {
+        return false;
     }
     return queue_text_tooltip_candidate_at_mouse(state, cell, text) ||
            field_text_tooltip_candidate_at_mouse(state, cell, text);
@@ -2335,6 +2381,16 @@ LRESULT MainWindow::handle_primary_mouse_down(LPARAM lparam) {
     mouse_capture_active_ = true;
     request_repaint();
 
+    bool modal_visible = false;
+    {
+        std::lock_guard lock(mutex_);
+        modal_visible = state_.extract_overwrite_prompt_visible;
+    }
+    if (modal_visible) {
+        (void)handle_extract_overwrite_prompt_click(x, y);
+        return 0;
+    }
+
     const int rail_width = scale(kRailWidth);
     const int top_bar = scale(kTopBar);
     if (y < top_bar) {
@@ -2364,6 +2420,7 @@ LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
         mouse_capture_active_ = false;
     }
     end_queue_column_resize();
+    end_history_column_resize();
     end_queue_scroll_drag();
     if (mouse_inside_client_) {
         start_button_release_animation(mouse_position_);
@@ -2379,6 +2436,7 @@ LRESULT MainWindow::handle_capture_changed() {
     primary_mouse_down_ = false;
     mouse_capture_active_ = false;
     end_queue_column_resize();
+    end_history_column_resize();
     end_queue_scroll_drag();
     request_repaint();
     return 0;
@@ -2792,6 +2850,7 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     draw_keyboard_focus(dc, content, state);
     draw_text_tooltip(dc);
     draw_status_bar(dc, status, state);
+    draw_extract_overwrite_prompt(dc, rect, state);
 }
 
 // Purpose: Return whether the mouse is currently over a live clickable target.
@@ -2854,10 +2913,82 @@ void MainWindow::draw_text_tooltip(HDC dc) {
               DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 }
 
+// Purpose: Return the centered extraction overwrite modal panel.
+// Inputs: `rect` is the full client area.
+// Outputs: Returns a DPI-scaled panel rectangle using the main-window visual system.
+RECT MainWindow::extract_overwrite_prompt_rect(const RECT& rect) const {
+    const int width = scale(620);
+    const int height = scale(258);
+    const int left = rect.left + ((rect.right - rect.left) - width) / 2;
+    const int top = rect.top + ((rect.bottom - rect.top) - height) / 2;
+    return RECT{left, top, left + width, top + height};
+}
+
+// Purpose: Return modal action button rectangles in Continue/Cancel order.
+// Inputs: `modal` is the overwrite prompt panel rectangle.
+// Outputs: Returns two right-aligned button rectangles.
+std::array<RECT, 2> MainWindow::extract_overwrite_prompt_buttons(const RECT& modal) const {
+    const int button_height = scale(36);
+    const int gap = scale(12);
+    const int cancel_width = scale(110);
+    const int continue_width = scale(142);
+    const int bottom = modal.bottom - scale(22);
+    const RECT cancel{modal.right - scale(22) - cancel_width, bottom - button_height, modal.right - scale(22), bottom};
+    const RECT allow{cancel.left - gap - continue_width, cancel.top, cancel.left - gap, cancel.bottom};
+    return {allow, cancel};
+}
+
+// Purpose: Draw the SuperZip-owned extraction overwrite confirmation modal.
+// Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal text.
+// Outputs: Renders no pixels unless the overwrite confirmation is active.
+void MainWindow::draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const UiState& state) {
+    if (!state.extract_overwrite_prompt_visible) {
+        return;
+    }
+    const RECT workspace{content_rect().left, content_rect().top, rect.right, content_rect().bottom};
+    fill_rect(dc, workspace, RGB(7, 11, 13));
+    const RECT modal = extract_overwrite_prompt_rect(workspace);
+    fill_round_rect(dc, modal, kPanel, scale(6));
+    stroke_rect(dc, modal, RGB(72, 93, 101));
+    fill_rect(dc, RECT{modal.left, modal.top, modal.right, modal.top + scale(3)}, kAccent);
+
+    SelectObject(dc, small_font_);
+    draw_text(dc, RECT{modal.left + scale(24), modal.top + scale(18), modal.right - scale(24), modal.top + scale(54)},
+              L"Confirm overwrite", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    SelectObject(dc, tiny_font_);
+    const RECT message{modal.left + scale(24), modal.top + scale(68), modal.right - scale(24), modal.top + scale(122)};
+    draw_text(dc, message,
+              L"The extraction destination already contains items, or SuperZip cannot prove it is empty. Continue only "
+              L"if archive entries may replace existing files when their paths conflict.",
+              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+    const RECT destination{modal.left + scale(24), modal.top + scale(132), modal.right - scale(24),
+                           modal.top + scale(186)};
+    draw_field(dc, destination, L"Destination", state.extract_overwrite_prompt_destination, false, true);
+
+    const auto buttons = extract_overwrite_prompt_buttons(modal);
+    draw_button(dc, buttons[0], L"Allow overwrite", true);
+    draw_button(dc, buttons[1], L"Cancel", false);
+
+    const int focus_index = std::clamp(modal_focus_index_, 0, 1);
+    RECT focus = inset_rect(buttons[static_cast<std::size_t>(focus_index)], -scale(3), -scale(3));
+    HPEN pen = CreatePen(PS_SOLID, std::max(1, scale(1)), RGB(99, 130, 140));
+    HGDIOBJ previous_pen = SelectObject(dc, pen);
+    HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, focus.left, focus.top, focus.right, focus.bottom, scale(5), scale(5));
+    SelectObject(dc, previous_brush);
+    SelectObject(dc, previous_pen);
+    DeleteObject(pen);
+}
+
 // Purpose: Draw the keyboard focus affordance for the current target.
 // Inputs: `dc` is the target, `content` is the content area, and `state` is the copied UI state.
 // Outputs: Renders a minimal non-hover focus indicator without mutating state.
 void MainWindow::draw_keyboard_focus(HDC dc, const RECT& content, const UiState& state) {
+    if (state.extract_overwrite_prompt_visible) {
+        return;
+    }
     const auto targets = focus_targets_for(content, state);
     if (targets.empty()) {
         return;
@@ -3024,6 +3155,10 @@ MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
         RECT{layout.clear.left - scale(12) - scale(108), header_top, layout.clear.left - scale(12), header_bottom};
     layout.add_files = RECT{layout.add_folder.left - scale(12) - scale(96), header_top,
                             layout.add_folder.left - scale(12), header_bottom};
+    const int remove_width = scale(136);
+    const int remove_left =
+        layout.area.left + ((layout.add_files.left - scale(28) - layout.area.left) - remove_width) / 2;
+    layout.remove_selected = RECT{remove_left, header_top, remove_left + remove_width, header_bottom};
     layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom};
     return layout;
 }
@@ -3086,6 +3221,49 @@ MainWindow::QueueColumnLayout MainWindow::queue_column_layout(const RECT& table,
         RECT{columns.name.right - grip, row.top, columns.name.right + grip, row.bottom},
         RECT{columns.size.right - grip, row.top, columns.size.right + grip, row.bottom},
         RECT{columns.type.right - grip, row.top, columns.type.right + grip, row.bottom},
+    };
+    return columns;
+}
+
+// Purpose: Compute fixed-header resizable columns for the History table.
+// Inputs: `table` is the full History table and `row` is the header or one body row.
+// Outputs: Returns rectangles shared by rendering and hit testing.
+MainWindow::HistoryColumnLayout MainWindow::history_column_layout(const RECT& table, const RECT& row) const {
+    HistoryColumnLayout columns{};
+    const int left_padding = scale(14);
+    const int right_padding = scale(16);
+    const int available =
+        std::max(scale(360), static_cast<int>(table.right - table.left) - left_padding - right_padding);
+    const std::array<int, 4> minimums{scale(110), scale(90), scale(180), scale(90)};
+    std::array<int, 4> widths{};
+    int requested = 0;
+    for (std::size_t i = 0; i < widths.size(); ++i) {
+        widths[i] = std::max(minimums[i], scale(history_column_widths_[i]));
+        requested += widths[i];
+    }
+    if (requested != available && requested > 0) {
+        const double ratio = static_cast<double>(available) / static_cast<double>(requested);
+        int used = 0;
+        for (std::size_t i = 0; i + 1U < widths.size(); ++i) {
+            widths[i] = std::max(minimums[i], static_cast<int>(std::round(static_cast<double>(widths[i]) * ratio)));
+            used += widths[i];
+        }
+        widths.back() = std::max(minimums.back(), available - used);
+    }
+
+    int left = table.left + left_padding;
+    columns.time = RECT{left, row.top, left + widths[0], row.bottom};
+    left = columns.time.right;
+    columns.operation = RECT{left, row.top, left + widths[1], row.bottom};
+    left = columns.operation.right;
+    columns.archive = RECT{left, row.top, left + widths[2], row.bottom};
+    left = columns.archive.right;
+    columns.status = RECT{left, row.top, table.right - right_padding, row.bottom};
+    const int grip = scale(kQueueResizeGripHalfWidth);
+    columns.resize_grips = {
+        RECT{columns.time.right - grip, row.top, columns.time.right + grip, row.bottom},
+        RECT{columns.operation.right - grip, row.top, columns.operation.right + grip, row.bottom},
+        RECT{columns.archive.right - grip, row.top, columns.archive.right + grip, row.bottom},
     };
     return columns;
 }
@@ -3333,13 +3511,16 @@ MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
 
 // Purpose: Draw Queue page title and queue-management commands.
 // Inputs: `dc` is the paint target, `layout` holds DPI-scaled rectangles, and `state` is the copied UI state.
-// Outputs: Renders the title, Add files, Add folder, Clear, and item-count controls.
+// Outputs: Renders the title, optional Remove selected, Add files, Add folder, Clear, and item-count controls.
 void MainWindow::draw_queue_toolbar(HDC dc, const QueueLayout& layout, const UiState& state) {
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, layout.add_files.left - scale(18), area.top + scale(kPageTitleTextHeight)},
               L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
+    if (has_selected_queue_items(state)) {
+        draw_button(dc, layout.remove_selected, L"Remove selected", false);
+    }
     draw_button(dc, layout.add_files, L"+ Add files", false);
     draw_button(dc, layout.add_folder, L"+ Add folder", false);
     draw_button(dc, layout.clear, L"Clear", false);
@@ -3558,9 +3739,9 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     draw_field(dc, layout.archive, L"Archive", archive, false, true, false,
                state.queued_paths.empty() ? kMuted : CLR_INVALID);
     draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false, true, true);
-    draw_field(dc, layout.path_mode, L"Archive format",
-               state.queued_paths.empty() ? L"-" : detected_archive_format_text(state.queued_paths), false,
-               !state.queued_paths.empty());
+    const std::wstring detected_format =
+        state.queued_paths.empty() ? std::wstring(L"-") : detected_archive_format_text(state.queued_paths);
+    draw_field(dc, layout.path_mode, L"Archive format", detected_format, false, detected_format != L"-");
     draw_field(dc, layout.overwrite_policy, L"Overwrite policy",
                state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting", true);
 
@@ -3678,18 +3859,29 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     fill_round_rect(dc, table, kPanel, scale(4));
     stroke_rect(dc, table, kBorder);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{table.left + scale(14), table.top, table.left + scale(150), table.top + scale(34)}, L"Time",
-              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(160), table.top, table.left + scale(290), table.top + scale(34)},
-              L"Operation", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(300), table.top, table.left + scale(620), table.top + scale(34)}, L"Archive",
-              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{table.left + scale(632), table.top, table.right - scale(16), table.top + scale(34)}, L"Status",
-              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_line(dc, table.left, table.top + scale(34), table.right, table.top + scale(34), kBorder);
-    int y = table.top + scale(34);
+    const int header_bottom = table.top + scale(kQueueHeaderHeight);
+    const RECT header_row{table.left, table.top, table.right, header_bottom};
+    const RECT header_band{table.left + scale(1), table.top + scale(1), table.right - scale(1), header_bottom};
+    fill_rect(dc, header_band, blend_color(kPanel, kPanel2, 0.52));
+    const auto header_columns = history_column_layout(table, header_row);
+    draw_text(dc, inset_rect(header_columns.time, scale(8), 0), L"Time", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, inset_rect(header_columns.operation, scale(8), 0), L"Operation", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, inset_rect(header_columns.archive, scale(8), 0), L"Archive", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, inset_rect(header_columns.status, scale(8), 0), L"Status", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    for (const auto& grip : header_columns.resize_grips) {
+        draw_line(dc, (grip.left + grip.right) / 2, table.top + scale(8), (grip.left + grip.right) / 2,
+                  header_bottom - scale(8), kBorder);
+    }
+    draw_line(dc, table.left + scale(1), header_bottom - scale(1), table.right - scale(1), header_bottom - scale(1),
+              RGB(73, 95, 102));
+    draw_line(dc, table.left + scale(1), header_bottom, table.right - scale(1), header_bottom, RGB(9, 15, 18));
+    int y = header_bottom;
     if (state.history.empty()) {
-        draw_text(dc, RECT{table.left + scale(18), y + scale(28), table.right - scale(18), y + scale(70)},
+        draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
                   L"No completed operations in this session yet.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else {
         bool rendered_any = false;
@@ -3705,15 +3897,16 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
                 continue;
             }
             const int bottom = y + scale(34);
-            draw_text(dc, RECT{table.left + scale(14), y, table.left + scale(150), bottom}, L"Session", kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, RECT{table.left + scale(160), y, table.left + scale(290), bottom}, widen(entry.operation),
-                      kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            draw_text(dc, RECT{table.left + scale(300), y, table.left + scale(620), bottom}, widen(entry.subject),
-                      kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, RECT{table.left + scale(632), y, table.right - scale(16), bottom},
-                      entry.success ? L"Success" : L"Failure", entry.success ? kOk : kDanger,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            const RECT row{table.left, y, table.right, bottom};
+            const auto columns = history_column_layout(table, row);
+            draw_text(dc, inset_rect(columns.time, scale(8), 0), local_time_text(entry.timestamp), kMuted,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, inset_rect(columns.operation, scale(8), 0), widen(entry.operation), kText,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, inset_rect(columns.archive, scale(8), 0), widen(entry.subject), kMuted,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, inset_rect(columns.status, scale(8), 0), entry.success ? L"Success" : L"Failure",
+                      entry.success ? kOk : kDanger, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             y = bottom;
             rendered_any = true;
             if (y > table.bottom - scale(34)) {
@@ -3721,7 +3914,7 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
             }
         }
         if (!rendered_any) {
-            draw_text(dc, RECT{table.left + scale(18), y + scale(28), table.right - scale(18), y + scale(70)},
+            draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
                       L"No operations match the current filters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
         }
     }
@@ -4371,6 +4564,9 @@ std::vector<FocusTarget> MainWindow::focus_targets_for(const RECT& content, cons
 void MainWindow::add_queue_focus_targets(std::vector<FocusTarget>& targets, const RECT& content,
                                          const UiState& state) const {
     const auto layout = queue_layout(content);
+    if (has_selected_queue_items(state)) {
+        append_focus_target(targets, FocusTargetKind::QueueRemoveSelected, layout.remove_selected);
+    }
     append_focus_target(targets, FocusTargetKind::QueueAddFiles, layout.add_files);
     append_focus_target(targets, FocusTargetKind::QueueAddFolder, layout.add_folder);
     append_focus_target(targets, FocusTargetKind::QueueClear, layout.clear);
@@ -4556,7 +4752,14 @@ bool MainWindow::handle_navigation_key(WPARAM key) {
                 queue_scroll_first_row_ = next_row - visible_rows + 1;
             }
             queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_, 0, max_scroll);
-            keyboard_focus_index_ = 4 + (next_row - queue_scroll_first_row_);
+            const auto refreshed_targets = focus_targets_for(content_rect(), state);
+            for (int target_index = 0; target_index < static_cast<int>(refreshed_targets.size()); ++target_index) {
+                const auto& refreshed = refreshed_targets[static_cast<std::size_t>(target_index)];
+                if (refreshed.kind == FocusTargetKind::QueueRow && refreshed.index == next_row) {
+                    keyboard_focus_index_ = target_index;
+                    break;
+                }
+            }
             request_repaint();
             return true;
         }
@@ -4583,6 +4786,14 @@ bool MainWindow::handle_navigation_key(WPARAM key) {
 // Inputs: `wparam` is a virtual key and `lparam` is the raw key message payload.
 // Outputs: Moves focus, activates controls, updates dropdowns, or returns default processing.
 LRESULT MainWindow::handle_key_down(WPARAM wparam, LPARAM) {
+    bool modal_visible = false;
+    {
+        std::lock_guard lock(mutex_);
+        modal_visible = state_.extract_overwrite_prompt_visible;
+    }
+    if (modal_visible) {
+        return handle_extract_overwrite_prompt_key(wparam) ? 0 : 0;
+    }
     if (wparam == VK_ESCAPE) {
         close_active_dropdown();
         return 0;
@@ -4648,6 +4859,51 @@ bool MainWindow::handle_content_click(int x, int y) {
     return false;
 }
 
+// Purpose: Handle mouse activation while the overwrite confirmation modal is active.
+// Inputs: `x` and `y` are client coordinates.
+// Outputs: Consumes every click, continuing or cancelling only when an action button is hit.
+bool MainWindow::handle_extract_overwrite_prompt_click(int x, int y) {
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    const RECT workspace{content_rect().left, content_rect().top, client.right, content_rect().bottom};
+    const auto buttons = extract_overwrite_prompt_buttons(extract_overwrite_prompt_rect(workspace));
+    if (contains_point(buttons[0], x, y)) {
+        modal_focus_index_ = 0;
+        continue_extract_overwrite_prompt();
+        return true;
+    }
+    if (contains_point(buttons[1], x, y)) {
+        modal_focus_index_ = 1;
+        cancel_extract_overwrite_prompt();
+        return true;
+    }
+    return true;
+}
+
+// Purpose: Handle keyboard activation while the overwrite confirmation modal is active.
+// Inputs: `key` is the pressed virtual key.
+// Outputs: Consumes modal navigation, Continue, Cancel, and Escape actions.
+bool MainWindow::handle_extract_overwrite_prompt_key(WPARAM key) {
+    if (key == VK_ESCAPE) {
+        cancel_extract_overwrite_prompt();
+        return true;
+    }
+    if (key == VK_TAB || key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN) {
+        modal_focus_index_ = modal_focus_index_ == 0 ? 1 : 0;
+        request_repaint();
+        return true;
+    }
+    if (key == VK_RETURN || key == VK_SPACE) {
+        if (modal_focus_index_ == 0) {
+            continue_extract_overwrite_prompt();
+        } else {
+            cancel_extract_overwrite_prompt();
+        }
+        return true;
+    }
+    return true;
+}
+
 // Purpose: Toggle a boolean UI-state member with the standard animated toggle feedback.
 // Inputs: `member` selects the state field and `id` identifies the visual toggle to animate.
 // Outputs: Mutates the state, starts the toggle animation, queues repaint, and returns true.
@@ -4695,6 +4951,18 @@ void MainWindow::normalize_queue_selection_locked() {
     }
 }
 
+// Purpose: Test whether a copied Queue state has at least one checked row.
+// Inputs: `state` is a stable UI snapshot with queue paths and checkbox flags.
+// Outputs: Returns true only when at least one queued item is selected for operations.
+bool MainWindow::has_selected_queue_items(const UiState& state) const {
+    for (std::size_t index = 0; index < state.queued_paths.size(); ++index) {
+        if (index >= state.queued_enabled.size() || state.queued_enabled[index]) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Purpose: Toggle all queued items from the header checkbox.
 // Inputs: None.
 // Outputs: Mutates every row enable flag and queues a repaint.
@@ -4729,6 +4997,42 @@ bool MainWindow::toggle_queue_item(std::size_t index) {
         state_.queued_enabled[index] = !state_.queued_enabled[index];
         state_.selected_queue_index = static_cast<int>(index);
         state_.status = state_.queued_enabled[index] ? "Queue item selected" : "Queue item deselected";
+    }
+    request_repaint();
+    return true;
+}
+
+// Purpose: Remove every checked Queue row.
+// Inputs: None; reads the current queue and checkbox state.
+// Outputs: Deletes selected queue entries, preserves unchecked entries, resets scroll bounds, and queues repaint.
+bool MainWindow::remove_selected_queue_items() {
+    std::size_t removed = 0;
+    {
+        std::lock_guard lock(mutex_);
+        normalize_queue_selection_locked();
+        std::vector<std::filesystem::path> remaining_paths;
+        std::vector<bool> remaining_enabled;
+        remaining_paths.reserve(state_.queued_paths.size());
+        remaining_enabled.reserve(state_.queued_enabled.size());
+        for (std::size_t index = 0; index < state_.queued_paths.size(); ++index) {
+            const bool selected = index >= state_.queued_enabled.size() || state_.queued_enabled[index];
+            if (selected) {
+                ++removed;
+                continue;
+            }
+            remaining_paths.push_back(state_.queued_paths[index]);
+            remaining_enabled.push_back(false);
+        }
+        if (removed == 0) {
+            state_.status = "No queue items selected";
+            return true;
+        }
+        state_.queued_paths = std::move(remaining_paths);
+        state_.queued_enabled = std::move(remaining_enabled);
+        state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
+        queue_scroll_first_row_ = 0;
+        queue_wheel_delta_remainder_ = 0;
+        state_.status = "Removed " + std::to_string(removed) + " selected queue item" + (removed == 1 ? "" : "s");
     }
     request_repaint();
     return true;
@@ -4775,6 +5079,47 @@ void MainWindow::end_queue_column_resize() {
     request_repaint();
 }
 
+// Purpose: Start resizing adjacent History data columns.
+// Inputs: `separator` is the 0-2 data-column boundary and `x` is the initial mouse coordinate.
+// Outputs: Stores resize baseline state.
+void MainWindow::begin_history_column_resize(int separator, int x) {
+    history_column_resize_separator_ = std::clamp(separator, 0, 2);
+    history_column_resize_start_x_ = x;
+    history_column_resize_start_ = history_column_widths_;
+    SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+}
+
+// Purpose: Update History data-column widths while preserving readable minimums.
+// Inputs: `x` is the current mouse coordinate.
+// Outputs: Resizes the two columns adjacent to the active separator.
+void MainWindow::update_history_column_resize(int x) {
+    if (history_column_resize_separator_ < 0) {
+        return;
+    }
+    constexpr std::array<int, 4> minimums{110, 90, 180, 90};
+    const int left_index = history_column_resize_separator_;
+    const int right_index = left_index + 1;
+    const int delta =
+        std::lround(static_cast<double>(x - history_column_resize_start_x_) * 96.0 / static_cast<double>(dpi_));
+    const int pair_total = history_column_resize_start_[left_index] + history_column_resize_start_[right_index];
+    const int left = std::clamp(history_column_resize_start_[left_index] + delta, minimums[left_index],
+                                pair_total - minimums[right_index]);
+    history_column_widths_[left_index] = left;
+    history_column_widths_[right_index] = pair_total - left;
+    request_repaint();
+}
+
+// Purpose: End an active History data-column resize.
+// Inputs: None.
+// Outputs: Clears resize state and queues one final repaint.
+void MainWindow::end_history_column_resize() {
+    if (history_column_resize_separator_ < 0) {
+        return;
+    }
+    history_column_resize_separator_ = -1;
+    request_repaint();
+}
+
 // Purpose: Handle Queue page hit-testing and commands.
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
 // Outputs: Returns true when a queue control or row selection consumed the click.
@@ -4782,6 +5127,14 @@ bool MainWindow::handle_queue_click(const RECT& content, int x, int y) {
     const auto layout = queue_layout(content);
     if (handle_active_dropdown_click(x, y)) {
         return true;
+    }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (has_selected_queue_items(state) && contains_point(layout.remove_selected, x, y)) {
+        return remove_selected_queue_items();
     }
     if (contains_point(layout.add_files, x, y)) {
         add_files();
@@ -4794,11 +5147,6 @@ bool MainWindow::handle_queue_click(const RECT& content, int x, int y) {
     if (contains_point(layout.clear, x, y)) {
         clear_queue();
         return true;
-    }
-    UiState state;
-    {
-        std::lock_guard lock(mutex_);
-        state = state_;
     }
     clamp_queue_scroll_offset(layout.table, state.queued_paths.size());
     const RECT columns_table = queue_columns_table(layout.table, state.queued_paths.size());
@@ -4974,6 +5322,8 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
     const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
     const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
     const RECT clear = history_clear_button_rect(area);
+    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const int header_bottom = table.top + scale(kQueueHeaderHeight);
     if (handle_active_dropdown_click(x, y)) {
         return true;
     }
@@ -4987,6 +5337,17 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
     }
     if (contains_point(clear, x, y)) {
         clear_history();
+        return true;
+    }
+    if (y >= table.top && y < header_bottom) {
+        const RECT header_row{table.left, table.top, table.right, header_bottom};
+        const auto columns = history_column_layout(table, header_row);
+        for (int separator = 0; separator < static_cast<int>(columns.resize_grips.size()); ++separator) {
+            if (contains_point(columns.resize_grips[static_cast<std::size_t>(separator)], x, y)) {
+                begin_history_column_resize(separator, x);
+                return true;
+            }
+        }
         return true;
     }
     return false;
@@ -5613,46 +5974,97 @@ void MainWindow::start_compress() {
         "Compressing");
 }
 
-// Purpose: Start a background extraction job from the current GUI queue.
-// Inputs: None; reads queued archive, destination, security, and GPU options from synchronized UI state.
-// Outputs: Launches a worker job, updates progress/history/status, blocks unclean pre-scans, or requests repaint when
-// no archive is selected.
-void MainWindow::start_extract() {
-    std::vector<std::filesystem::path> sources;
-    bool gpu_required = true;
-    bool overwrite = false;
-    bool integrity = false;
-    bool defender = false;
-    std::filesystem::path output;
+// Purpose: Detect whether Ask-before-overwriting needs user confirmation.
+// Inputs: `destination` is the extraction root.
+// Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
+bool MainWindow::extract_overwrite_prompt_needed(const std::filesystem::path& destination) const {
+    std::error_code error;
+    if (!std::filesystem::exists(destination, error) && !error) {
+        return false;
+    }
+    if (!error && std::filesystem::is_directory(destination, error) && !error) {
+        std::filesystem::directory_iterator iterator(destination,
+                                                     std::filesystem::directory_options::skip_permission_denied, error);
+        if (!error && iterator == std::filesystem::directory_iterator{}) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Purpose: Open the SuperZip-owned overwrite confirmation modal for a pending extract job.
+// Inputs: `request` is the fully captured job request to run if the user continues.
+// Outputs: Stores the pending job, updates modal UI state, clears progress, and queues repaint.
+void MainWindow::show_extract_overwrite_prompt(ExtractJobRequest request) {
     {
         std::lock_guard lock(mutex_);
-        normalize_queue_selection_locked();
-        for (std::size_t i = 0; i < state_.queued_paths.size(); ++i) {
-            if (state_.queued_enabled[i]) {
-                sources.push_back(state_.queued_paths[i]);
-            }
-        }
-        gpu_required = state_.gpu_required;
-        overwrite = state_.overwrite;
-        integrity = state_.integrity_hash_opt_in;
-        defender = state_.defender_scan_opt_in;
-        output = extraction_output_path_for(state_);
+        pending_extract_job_ = std::move(request);
+        pending_extract_job_active_ = true;
+        modal_focus_index_ = 1;
+        state_.active_dropdown = DropdownId::None;
+        state_.extract_overwrite_prompt_visible = true;
+        state_.extract_overwrite_prompt_destination = pending_extract_job_.output.wstring();
+        state_.status = "Confirm overwrite policy";
+        state_.progress = {};
+        state_.progress_visible_until = {};
     }
-    if (sources.empty()) {
-        {
-            std::lock_guard lock(mutex_);
-            state_.status = "Select an archive before starting extraction";
-        }
-        request_repaint();
-        return;
+    KillTimer(hwnd_, kProgressHoldTimer);
+    request_repaint();
+}
+
+// Purpose: Cancel the pending overwrite confirmation.
+// Inputs: None.
+// Outputs: Clears modal and pending job state without starting extraction.
+void MainWindow::cancel_extract_overwrite_prompt() {
+    {
+        std::lock_guard lock(mutex_);
+        pending_extract_job_ = {};
+        pending_extract_job_active_ = false;
+        state_.extract_overwrite_prompt_visible = false;
+        state_.extract_overwrite_prompt_destination.clear();
+        state_.status = "Extraction cancelled before overwriting";
+        state_.progress = {};
+        state_.progress_visible_until = {};
     }
+    KillTimer(hwnd_, kProgressHoldTimer);
+    request_repaint();
+}
+
+// Purpose: Continue the pending extract job with overwrite enabled for this job only.
+// Inputs: None.
+// Outputs: Clears modal state and starts the captured extraction job.
+void MainWindow::continue_extract_overwrite_prompt() {
+    ExtractJobRequest request;
+    {
+        std::lock_guard lock(mutex_);
+        if (!pending_extract_job_active_) {
+            return;
+        }
+        request = pending_extract_job_;
+        request.overwrite = true;
+        pending_extract_job_ = {};
+        pending_extract_job_active_ = false;
+        state_.extract_overwrite_prompt_visible = false;
+        state_.extract_overwrite_prompt_destination.clear();
+        state_.status = "Overwrite approved for this extraction";
+    }
+    request_repaint();
+    launch_extract_job(std::move(request));
+}
+
+// Purpose: Launch a captured extraction job on the background worker.
+// Inputs: `request` contains archive, destination, GPU, security, and overwrite choices.
+// Outputs: Starts the worker, updates progress/history/status, and performs pre/post security scans.
+void MainWindow::launch_extract_job(ExtractJobRequest request) {
     run_job(
-        [this, archive = sources.front(), output, gpu_required, overwrite, integrity, defender] {
-            if (integrity) {
+        [this, request = std::move(request)] {
+            const auto& archive = request.archive;
+            const auto& output = request.output;
+            if (request.integrity) {
                 const auto hash = hash_file(archive, IntegrityMode::Sha256);
                 append_history_entry("Security", archive.filename().string(), "SHA-256 " + hash.hex_digest, true);
             }
-            if (defender) {
+            if (request.defender) {
                 const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
                 append_history_entry("Security", archive.filename().string(),
                                      defender_history_status("Defender archive", pre_scan),
@@ -5663,13 +6075,13 @@ void MainWindow::start_extract() {
             }
             auto progress_callback = [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot(snapshot); };
             const auto archive_format = detect_archive_format(archive);
-            const auto stats =
-                extract_detected_archive(archive_format, archive, output, gpu_required, overwrite, progress_callback);
+            const auto stats = extract_detected_archive(archive_format, archive, output, request.gpu_required,
+                                                        request.overwrite, progress_callback);
             std::ostringstream line;
             line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
                  << stats.seconds << "s";
             append_history_entry("Extract", archive.filename().string(), line.str(), true);
-            if (defender) {
+            if (request.defender) {
                 const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
                 append_history_entry("Security", output.filename().string(),
                                      defender_history_status("Defender output", post_scan),
@@ -5677,6 +6089,43 @@ void MainWindow::start_extract() {
             }
         },
         "Extracting");
+}
+
+// Purpose: Start a background extraction job from the current GUI queue.
+// Inputs: None; reads queued archive, destination, security, and GPU options from synchronized UI state.
+// Outputs: Launches a worker job, updates progress/history/status, blocks unclean pre-scans, or requests repaint when
+// no archive is selected.
+void MainWindow::start_extract() {
+    std::vector<std::filesystem::path> sources;
+    ExtractJobRequest request;
+    {
+        std::lock_guard lock(mutex_);
+        normalize_queue_selection_locked();
+        for (std::size_t i = 0; i < state_.queued_paths.size(); ++i) {
+            if (state_.queued_enabled[i]) {
+                sources.push_back(state_.queued_paths[i]);
+            }
+        }
+        request.gpu_required = state_.gpu_required;
+        request.overwrite = state_.overwrite;
+        request.integrity = state_.integrity_hash_opt_in;
+        request.defender = state_.defender_scan_opt_in;
+        request.output = extraction_output_path_for(state_);
+    }
+    if (sources.empty()) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "Select an archive before starting extraction";
+        }
+        request_repaint();
+        return;
+    }
+    request.archive = sources.front();
+    if (!request.overwrite && extract_overwrite_prompt_needed(request.output)) {
+        show_extract_overwrite_prompt(std::move(request));
+        return;
+    }
+    launch_extract_job(std::move(request));
 }
 
 // Purpose: Run one long operation on the background worker thread.

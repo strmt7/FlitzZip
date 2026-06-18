@@ -87,6 +87,12 @@ Rules:
 - The GUI is intentionally fixed-size for release until responsive resizing is
   deliberately rebuilt and tested. Keep PerMonitorV2 DPI behavior, crisp vector
   or multi-resolution icons, and no stretched bitmap assets.
+- SuperZip-owned confirmations, prompts, secondary windows, and modal surfaces
+  must use the same visual system, typography, colors, spacing, focus behavior,
+  and interaction quality as the main window. Do not use raw `MessageBoxW` or
+  other platform-default product dialogs for SuperZip confirmations. OS-owned
+  file/folder pickers, UAC/elevation prompts, Defender/security broker prompts,
+  crash dialogs, and installer privilege prompts are the normal exceptions.
 - Keep first-frame rendering dark and flicker-free: the Win32 class background
   and `WM_ERASEBKGND` must use the app background color, and all normal painting
   remains double-buffered.

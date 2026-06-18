@@ -73,6 +73,7 @@ enum class FocusTargetKind {
     Navigation,
     QueueAddFiles,
     QueueAddFolder,
+    QueueRemoveSelected,
     QueueClear,
     QueueHeaderCheckbox,
     QueueRow,
@@ -142,6 +143,7 @@ struct HistoryEntry {
     std::string subject;
     std::string detail;
     bool success = true;
+    std::chrono::system_clock::time_point timestamp = std::chrono::system_clock::now();
 };
 
 struct LogEntry {
@@ -157,7 +159,7 @@ struct AppSettings {
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
-    int performance_update_seconds = 1;
+    int performance_update_seconds = 3;
     bool open_destination_after_operation = false;
     bool confirm_before_deleting = true;
     bool show_operation_summary = true;
@@ -197,7 +199,7 @@ struct UiState {
     int log_retention_index = 0;
     int history_operation_filter_index = 0;
     int history_status_filter_index = 0;
-    int performance_update_seconds = 1;
+    int performance_update_seconds = 3;
     bool open_destination_after_operation = false;
     bool confirm_before_deleting = true;
     bool show_operation_summary = true;
@@ -212,6 +214,8 @@ struct UiState {
     bool integrity_hash_opt_in = false;
     bool defender_scan_opt_in = false;
     bool verify_after_write_opt_in = false;
+    bool extract_overwrite_prompt_visible = false;
+    std::wstring extract_overwrite_prompt_destination;
     DropdownId active_dropdown = DropdownId::None;
 };
 
@@ -237,6 +241,7 @@ class MainWindow {
   private:
     struct QueueLayout {
         RECT area{};
+        RECT remove_selected{};
         RECT add_files{};
         RECT add_folder{};
         RECT clear{};
@@ -251,6 +256,23 @@ class MainWindow {
         RECT type{};
         RECT path{};
         std::array<RECT, 3> resize_grips{};
+    };
+
+    struct HistoryColumnLayout {
+        RECT time{};
+        RECT operation{};
+        RECT archive{};
+        RECT status{};
+        std::array<RECT, 3> resize_grips{};
+    };
+
+    struct ExtractJobRequest {
+        std::filesystem::path archive;
+        std::filesystem::path output;
+        bool gpu_required = true;
+        bool overwrite = false;
+        bool integrity = false;
+        bool defender = false;
     };
 
     struct ProcessIoRates {
@@ -494,6 +516,21 @@ class MainWindow {
     // Outputs: Renders a compact tooltip above the Queue table without affecting layout.
     void draw_text_tooltip(HDC dc);
 
+    // Purpose: Draw the SuperZip-owned extraction overwrite confirmation modal.
+    // Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal text.
+    // Outputs: Renders no pixels unless the overwrite confirmation is active.
+    void draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const UiState& state);
+
+    // Purpose: Return the centered extraction overwrite modal panel.
+    // Inputs: `rect` is the full client area.
+    // Outputs: Returns a DPI-scaled panel rectangle using the main-window visual system.
+    [[nodiscard]] RECT extract_overwrite_prompt_rect(const RECT& rect) const;
+
+    // Purpose: Return modal action button rectangles in Continue/Cancel order.
+    // Inputs: `modal` is the overwrite prompt panel rectangle.
+    // Outputs: Returns two right-aligned button rectangles.
+    [[nodiscard]] std::array<RECT, 2> extract_overwrite_prompt_buttons(const RECT& modal) const;
+
     // Purpose: Draw the persistent product shell strip.
     // Inputs: `dc` is the target and `rect` is the full client rectangle.
     // Outputs: Renders the brand chrome; page-specific actions stay inside their pages.
@@ -674,6 +711,16 @@ class MainWindow {
     // Outputs: Returns true when a setting was changed and a repaint was queued.
     bool handle_content_click(int x, int y);
 
+    // Purpose: Handle mouse activation while the overwrite confirmation modal is active.
+    // Inputs: `x` and `y` are client coordinates.
+    // Outputs: Consumes every click, continuing or cancelling only when an action button is hit.
+    bool handle_extract_overwrite_prompt_click(int x, int y);
+
+    // Purpose: Handle keyboard activation while the overwrite confirmation modal is active.
+    // Inputs: `key` is the pressed virtual key.
+    // Outputs: Consumes modal navigation, Continue, Cancel, and Escape actions.
+    bool handle_extract_overwrite_prompt_key(WPARAM key);
+
     // Purpose: Return keyboard-focusable controls for the current page.
     // Inputs: `content` is the current content rectangle and `state` is a copied UI snapshot.
     // Outputs: Returns controls in Tab order using the same geometry as mouse hit testing.
@@ -734,9 +781,14 @@ class MainWindow {
     // Outputs: Returns fixed checkbox and resizable data-column rectangles.
     [[nodiscard]] QueueColumnLayout queue_column_layout(const RECT& table, const RECT& row) const;
 
+    // Purpose: Compute History table column rectangles from the current resizable widths.
+    // Inputs: `table` is the visible History table rectangle and `row` is the row or header span.
+    // Outputs: Returns resizable Time, Operation, Archive, and Status column rectangles.
+    [[nodiscard]] HistoryColumnLayout history_column_layout(const RECT& table, const RECT& row) const;
+
     // Purpose: Draw Queue page title and queue-management commands.
     // Inputs: `dc` is the paint target, `layout` holds DPI-scaled rectangles, and `state` is the copied UI state.
-    // Outputs: Renders the title, Add files, Add folder, Clear, and item-count controls.
+    // Outputs: Renders the title, optional Remove selected, Add files, Add folder, Clear, and item-count controls.
     void draw_queue_toolbar(HDC dc, const QueueLayout& layout, const UiState& state);
 
     // Purpose: Draw the fixed Queue table header row.
@@ -817,6 +869,11 @@ class MainWindow {
     // Outputs: Adds missing enabled flags, removes stale flags, and normalizes selected index.
     void normalize_queue_selection_locked();
 
+    // Purpose: Test whether a copied Queue state has at least one checked row.
+    // Inputs: `state` is a stable UI snapshot with queue paths and checkbox flags.
+    // Outputs: Returns true only when at least one queued item is selected for operations.
+    [[nodiscard]] bool has_selected_queue_items(const UiState& state) const;
+
     // Purpose: Toggle every Queue row selection from the header checkbox.
     // Inputs: None; requires at least one queued item to have an effect.
     // Outputs: Enables or disables every queued item and repaints.
@@ -826,6 +883,11 @@ class MainWindow {
     // Inputs: `index` is the queue row to mutate.
     // Outputs: Updates row enabled state, focus selection, and repaint status.
     bool toggle_queue_item(std::size_t index);
+
+    // Purpose: Remove every checked Queue row.
+    // Inputs: None; reads the current queue and checkbox state.
+    // Outputs: Deletes selected queue entries, preserves unchecked entries, resets scroll bounds, and queues repaint.
+    bool remove_selected_queue_items();
 
     // Purpose: Start a Queue column resize drag.
     // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate.
@@ -841,6 +903,21 @@ class MainWindow {
     // Inputs: None.
     // Outputs: Clears resize state and queues a repaint if a drag was active.
     void end_queue_column_resize();
+
+    // Purpose: Start a History column resize drag using the same adjacent-column model as Queue.
+    // Inputs: `separator` identifies the boundary between adjacent resizable columns and `x` is the mouse coordinate.
+    // Outputs: Captures baseline column widths for subsequent mouse-move updates.
+    void begin_history_column_resize(int separator, int x);
+
+    // Purpose: Update active History column resize drag.
+    // Inputs: `x` is the current client mouse coordinate.
+    // Outputs: Mutates adjacent data column widths within readable header minimums.
+    void update_history_column_resize(int x);
+
+    // Purpose: End any active History column resize drag.
+    // Inputs: None.
+    // Outputs: Clears resize state and queues a repaint if a drag was active.
+    void end_history_column_resize();
 
     // Purpose: Handle Queue page hit-testing and commands.
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
@@ -951,6 +1028,31 @@ class MainWindow {
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
     void start_extract();
+
+    // Purpose: Detect whether Ask-before-overwriting needs user confirmation.
+    // Inputs: `destination` is the extraction root.
+    // Outputs: Returns true when the destination exists and is non-empty or cannot be proven empty.
+    [[nodiscard]] bool extract_overwrite_prompt_needed(const std::filesystem::path& destination) const;
+
+    // Purpose: Open the SuperZip-owned overwrite confirmation modal for a pending extract job.
+    // Inputs: `request` is the fully captured job request to run if the user continues.
+    // Outputs: Stores the pending job, updates modal UI state, clears progress, and queues repaint.
+    void show_extract_overwrite_prompt(ExtractJobRequest request);
+
+    // Purpose: Cancel the pending overwrite confirmation.
+    // Inputs: None.
+    // Outputs: Clears modal and pending job state without starting extraction.
+    void cancel_extract_overwrite_prompt();
+
+    // Purpose: Continue the pending extract job with overwrite enabled for this job only.
+    // Inputs: None.
+    // Outputs: Clears modal state and starts the captured extraction job.
+    void continue_extract_overwrite_prompt();
+
+    // Purpose: Launch a captured extraction job on the background worker.
+    // Inputs: `request` contains archive, destination, GPU, security, and overwrite choices.
+    // Outputs: Starts the worker, updates progress/history/status, and performs pre/post security scans.
+    void launch_extract_job(ExtractJobRequest request);
 
     // Purpose: Run an archive operation on a single background worker.
     // Inputs: `job` is the work closure and `label` is the status text shown while it runs.
@@ -1119,6 +1221,10 @@ class MainWindow {
     std::array<int, 4> queue_column_resize_start_{260, 110, 110, 460};
     int queue_column_resize_separator_ = -1;
     int queue_column_resize_start_x_ = 0;
+    std::array<int, 4> history_column_widths_{150, 140, 620, 150};
+    std::array<int, 4> history_column_resize_start_{150, 140, 620, 150};
+    int history_column_resize_separator_ = -1;
+    int history_column_resize_start_x_ = 0;
     int queue_scroll_first_row_ = 0;
     int queue_scroll_drag_start_y_ = 0;
     int queue_scroll_drag_start_offset_ = 0;
@@ -1141,6 +1247,9 @@ class MainWindow {
     std::wstring text_tooltip_text_;
     int keyboard_focus_index_ = 0;
     int dropdown_keyboard_index_ = -1;
+    int modal_focus_index_ = 1;
+    ExtractJobRequest pending_extract_job_{};
+    bool pending_extract_job_active_ = false;
     bool ole_initialized_ = false;
     QueueDropTarget* drop_target_ = nullptr;
     FILETIME last_process_kernel_time_{};

@@ -29,6 +29,13 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
+- SuperZip-owned secondary windows, confirmations, prompts, and modal surfaces
+  must use the same visual system, typography, colors, spacing, focus behavior,
+  and interaction quality as the main window. Do not use raw `MessageBoxW` or
+  other platform-default product dialogs for SuperZip confirmations. OS-owned
+  brokered surfaces such as common file/folder pickers, UAC elevation prompts,
+  Defender prompts, crash dialogs, and installer privilege prompts are the only
+  normal exceptions, and any new exception must be documented at the call site.
 - Maintainer authorization is recorded for AI agents to accept EULAs required
   by pinned SuperZip build, benchmark, packaging, and verification tooling, such
   as the WiX v7 OSMF EULA, when that acceptance is necessary to run repository
