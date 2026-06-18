@@ -19,6 +19,7 @@ namespace {
 
 constexpr std::uint32_t kPatternSampleBytes = 4096U;
 constexpr std::uint32_t kCrcSegmentBytes = 64U * 1024U;
+constexpr std::uint32_t kMaterializeSegmentBytes = 64U * 1024U;
 
 struct DeviceBlock {
     std::uint8_t kind;
@@ -349,6 +350,12 @@ __global__ void analyze_blocks_kernel(const std::byte* input, std::size_t input_
     }
 }
 
+// Purpose: Locate the decoded block that contains one output byte offset.
+// Inputs: `blocks`/`block_count` describe a validated decoded layout and `output_offset` is a byte position.
+// Outputs: Returns a block index less than `block_count`, or `block_count` if metadata is inconsistent.
+__device__ std::uint32_t find_decoded_block(const DeviceBlock* blocks, std::uint32_t block_count,
+                                            std::size_t output_offset);
+
 // Purpose: Decode fill/raw block metadata into output bytes on the AMD GPU.
 // Inputs: `payload`, `blocks`, `block_count`, `output`, and `output_len` are device pointers/counts validated by the
 // host path. Outputs: Writes decoded bytes into `output`.
@@ -370,6 +377,42 @@ __global__ void materialize_blocks_kernel(const std::byte* payload, const Device
             output[output_index] = payload[block.encoded_offset + in_block];
         } else if (block.kind == 3) {
             output[output_index] = payload[block.encoded_offset + (in_block % block.encoded_len)];
+        }
+    }
+}
+
+// Purpose: Decode fill/raw/pattern metadata over fixed output segments to improve occupancy for large SUZIP blocks.
+// Inputs: `payload`, `blocks`, `block_count`, `output`, and `output_len` are validated device buffers and bounds.
+// Outputs: Writes decoded bytes into `output`; invalid metadata leaves affected bytes untouched instead of OOB access.
+__global__ void materialize_segments_kernel(const std::byte* payload, const DeviceBlock* blocks,
+                                            std::uint32_t block_count, std::byte* output, std::size_t output_len) {
+    const auto segment_start = static_cast<std::size_t>(blockIdx.x) * kMaterializeSegmentBytes;
+    if (segment_start >= output_len) {
+        return;
+    }
+    const auto segment_end = min(segment_start + static_cast<std::size_t>(kMaterializeSegmentBytes), output_len);
+    const auto first_block = find_decoded_block(blocks, block_count, segment_start);
+    for (auto pos = segment_start + threadIdx.x; pos < segment_end; pos += blockDim.x) {
+        auto block_index = first_block;
+        while (block_index < block_count) {
+            const auto block_start = static_cast<std::size_t>(blocks[block_index].output_offset);
+            const auto block_end = block_start + static_cast<std::size_t>(blocks[block_index].uncompressed_len);
+            if (pos >= block_start && pos < block_end) {
+                break;
+            }
+            ++block_index;
+        }
+        if (block_index >= block_count) {
+            continue;
+        }
+        const auto& block = blocks[block_index];
+        const auto in_block = pos - static_cast<std::size_t>(block.output_offset);
+        if (block.kind == 1) {
+            output[pos] = static_cast<std::byte>(block.fill_value);
+        } else if (block.kind == 0) {
+            output[pos] = payload[block.encoded_offset + in_block];
+        } else if (block.kind == 3 && block.encoded_len != 0U) {
+            output[pos] = payload[block.encoded_offset + (in_block % block.encoded_len)];
         }
     }
 }
@@ -907,15 +950,19 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
                   "hipMemcpy decode blocks");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
         constexpr int threads = 256;
-        const auto grid = static_cast<unsigned int>(host_blocks.size());
-        auto events = make_hip_event_pair("create materialize_blocks_kernel events");
-        check_hip(hipEventRecord(events.start, nullptr), "record materialize_blocks_kernel start");
-        materialize_blocks_kernel<<<grid, threads>>>(device_payload, device_blocks,
-                                                     static_cast<std::uint32_t>(host_blocks.size()), device_output,
-                                                     output.size());
-        check_hip(hipGetLastError(), "launch materialize_blocks_kernel");
-        check_hip(hipEventRecord(events.stop, nullptr), "record materialize_blocks_kernel stop");
-        finish_measured_kernel(telemetry, events, "synchronize materialize_blocks_kernel");
+        const auto segments = (output.size() + kMaterializeSegmentBytes - 1U) / kMaterializeSegmentBytes;
+        if (segments > std::numeric_limits<unsigned int>::max()) {
+            throw GpuError("decode materialize segment count exceeds HIP launch limits");
+        }
+        const auto grid = static_cast<unsigned int>(segments);
+        auto events = make_hip_event_pair("create materialize_segments_kernel events");
+        check_hip(hipEventRecord(events.start, nullptr), "record materialize_segments_kernel start");
+        materialize_segments_kernel<<<grid, threads>>>(device_payload, device_blocks,
+                                                       static_cast<std::uint32_t>(host_blocks.size()), device_output,
+                                                       output.size());
+        check_hip(hipGetLastError(), "launch materialize_segments_kernel");
+        check_hip(hipEventRecord(events.stop, nullptr), "record materialize_segments_kernel stop");
+        finish_measured_kernel(telemetry, events, "synchronize materialize_segments_kernel");
         check_hip(hipMemcpy(output.data(), device_output, output.size(), hipMemcpyDeviceToHost), "hipMemcpy output");
         record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(output.size()));
         check_hip(hipFree(device_payload), "hipFree payload");
