@@ -1,7 +1,7 @@
 #include "app/drop_payload.hpp"
 #include "test_util.hpp"
 
-#include <cstring>
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,8 +77,8 @@ TestGlobalHandle make_wide_drop_payload(const std::vector<std::wstring>& paths) 
     header->fWide = TRUE;
     auto* cursor = reinterpret_cast<wchar_t*>(raw + sizeof(superzip::app::detail::DropFilesHeader));
     for (const auto& path : paths) {
-        std::memcpy(cursor, path.data(), path.size() * sizeof(wchar_t));
-        cursor += path.size() + 1U;
+        cursor = std::copy(path.begin(), path.end(), cursor);
+        ++cursor;
     }
     *cursor = L'\0';
     GlobalUnlock(handle.get());
@@ -103,8 +103,8 @@ TestGlobalHandle make_ansi_drop_payload(const std::vector<std::string_view>& pat
     header->fWide = FALSE;
     auto* cursor = reinterpret_cast<char*>(raw + sizeof(superzip::app::detail::DropFilesHeader));
     for (const auto path : paths) {
-        std::memcpy(cursor, path.data(), path.size());
-        cursor += path.size() + 1U;
+        cursor = std::copy(path.begin(), path.end(), cursor);
+        ++cursor;
     }
     *cursor = '\0';
     GlobalUnlock(handle.get());
