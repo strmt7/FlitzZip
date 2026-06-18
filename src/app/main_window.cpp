@@ -765,52 +765,6 @@ std::wstring log_retention_text(int index) {
     return std::wstring(log_retention_display_text(index));
 }
 
-// Purpose: Return the visible log severity label.
-// Inputs: `severity` is the session log category.
-// Outputs: Returns the label used in the Settings log preview.
-std::wstring log_severity_text(LogSeverity severity) {
-    switch (severity) {
-    case LogSeverity::Information:
-        return L"Information";
-    case LogSeverity::Warning:
-        return L"Warning";
-    case LogSeverity::Debug:
-        return L"Debug";
-    }
-    return L"Information";
-}
-
-// Purpose: Return the category color for one session log entry.
-// Inputs: `severity` is the log category.
-// Outputs: Returns the matching UI color.
-COLORREF log_severity_color(LogSeverity severity) {
-    switch (severity) {
-    case LogSeverity::Information:
-        return kInfo;
-    case LogSeverity::Warning:
-        return kWarn;
-    case LogSeverity::Debug:
-        return kMuted;
-    }
-    return kInfo;
-}
-
-// Purpose: Decide whether a log entry is visible for the selected log level.
-// Inputs: `severity` is an entry category and `log_level_index` is the Settings selection.
-// Outputs: Returns true when the entry should appear in the current-session log preview.
-bool log_entry_visible(LogSeverity severity, int log_level_index) {
-    switch (std::clamp(log_level_index, 0, 2)) {
-    case 0:
-        return severity == LogSeverity::Information || severity == LogSeverity::Warning;
-    case 1:
-        return severity == LogSeverity::Warning;
-    case 2:
-        return true;
-    default:
-        return false;
-    }
-}
-
 // Purpose: Return a JSON-safe string literal for a path or status field.
 // Inputs: `value` is UTF-8 text that may contain JSON metacharacters.
 // Outputs: Returns a quoted JSON string with control characters escaped.
@@ -1490,31 +1444,6 @@ std::wstring detected_archive_format_text(const std::vector<std::filesystem::pat
     }
     const auto format = detect_archive_format(paths.front());
     return widen(archive_format_info(format).display_name);
-}
-
-// Purpose: Map a page enum to a navigation label.
-// Inputs: `page` is the active or target page.
-// Outputs: Returns a UTF-16 label for rendering.
-std::wstring page_name(Page page) {
-    switch (page) {
-    case Page::Queue:
-        return L"Queue";
-    case Page::Compress:
-        return L"Compress";
-    case Page::Extract:
-        return L"Extract";
-    case Page::Security:
-        return L"Security";
-    case Page::History:
-        return L"History";
-    case Page::Gpu:
-        return L"System";
-    case Page::Settings:
-        return L"Settings";
-    case Page::About:
-        return L"About";
-    }
-    return L"SuperZip";
 }
 
 // Purpose: Fill a rectangle with one solid color.
