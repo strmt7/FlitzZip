@@ -160,6 +160,10 @@ tools/package.ps1 -Configuration Release -CreateMsi
 The MSI build defaults to the release deployment scope: per-machine install
 under `C:\Program Files\SuperZip`. Like normal Windows desktop software, that
 installer requires elevation when installed by a non-admin user.
+Windows owns the UAC consent prompt, so the MSI cannot shorten an unanswered
+admin-rights prompt from inside the package. SuperZip-owned installer launch and
+release validation paths use bounded waits instead: MSI install and uninstall
+smoke phases time out after 300 seconds instead of waiting indefinitely.
 The installer offers `Create Desktop shortcut` as an optional MSI feature rather
 than silently creating a desktop shortcut.
 

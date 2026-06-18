@@ -47,6 +47,10 @@ the Security tab, released artifacts, or the product UI again.
   `replace <version>`, and both `tools\verify_change_hygiene.ps1` and
   `tools\security_scan.ps1` reject release workflow/action edits that remove
   that safeguard.
+- Installer process waits are bounded. `tools\security_scan.ps1` rejects
+  release workflow edits that restore unbounded `Start-Process -Wait` calls for
+  HIP SDK setup or MSI install/uninstall smoke tests, and the MSI smoke timeout
+  must remain 300 seconds by default.
 
 ## Adding A New Lesson
 

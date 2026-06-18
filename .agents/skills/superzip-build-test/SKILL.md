@@ -82,6 +82,10 @@ Rules:
   non-admin MSI tests must explicitly configure
   `tools\build.ps1 -Configuration Release -MsiInstallScope perUser`; never
   publish that per-user MSI as a product release.
+- Installer launch and release-validation waits must be bounded. MSI
+  install/uninstall smoke phases default to 300 seconds, and HIP SDK installer
+  setup must fail explicitly on timeout. Windows UAC consent is OS-owned and
+  cannot be timed from inside the MSI.
 - Product installers must expose a user-visible `Create Desktop shortcut`
   option. Treat silent shortcut creation as an installer bug.
 - The GUI is intentionally fixed-size for release until responsive resizing is

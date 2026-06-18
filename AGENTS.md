@@ -460,6 +460,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
+- SuperZip-owned installer launch, release, and smoke-test paths must use
+  bounded waits. MSI install and uninstall phases default to a 300-second
+  timeout, and HIP SDK installer setup in hosted release validation must time
+  out explicitly instead of waiting indefinitely. The Windows UAC consent prompt
+  is OS-owned and cannot be timed from inside the MSI; do not claim otherwise.
 - Installer UI must offer an explicit `Create Desktop shortcut` choice. Keep
   the option visible to the user instead of silently creating or suppressing the
   shortcut.

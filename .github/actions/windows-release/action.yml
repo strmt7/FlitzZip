@@ -195,7 +195,16 @@ runs:
             throw "HIP SDK installer SHA-256 mismatch."
         }
         $installLog = Join-Path $env:RUNNER_TEMP "amd-hip-sdk-install.log"
-        $process = Start-Process -FilePath $installer -ArgumentList @("-install", "-log", $installLog) -PassThru -Wait
+        $hipInstallTimeoutSeconds = 20 * 60
+        $process = Start-Process -FilePath $installer -ArgumentList @("-install", "-log", $installLog) -PassThru
+        if (-not $process.WaitForExit($hipInstallTimeoutSeconds * 1000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $timeoutMessage = "AMD HIP SDK installer timed out after $hipInstallTimeoutSeconds seconds."
+            $timeoutMessage += " Check whether an installer or elevation prompt was left unanswered."
+            $timeoutMessage += " See $installLog."
+            throw $timeoutMessage
+        }
+        $process.Refresh()
         if ($process.ExitCode -ne 0) {
             throw "AMD HIP SDK installer failed with exit code $($process.ExitCode). See $installLog."
         }
@@ -535,9 +544,10 @@ runs:
             }
         }
 
-        # Purpose: Run msiexec and fail with the corresponding verbose log tail.
-        # Inputs: Phase names the operation; Arguments are passed to msiexec.exe; LogPath is the verbose log location.
-        # Outputs: Returns no value when msiexec exits 0; throws with diagnostics on any non-zero exit code.
+        # Purpose: Run msiexec with a short bounded wait and fail with the matching verbose log tail.
+        # Inputs: Phase names the operation, Arguments are passed to msiexec.exe, LogPath is the verbose log location,
+        # and TimeoutSeconds bounds stale installer/elevation waits.
+        # Outputs: Returns no value when msiexec exits 0; throws with diagnostics on timeout or non-zero exit code.
         function Invoke-CheckedMsiExec {
             param(
                 [Parameter(Mandatory = $true)]
@@ -545,9 +555,16 @@ runs:
                 [Parameter(Mandatory = $true)]
                 [string[]]$Arguments,
                 [Parameter(Mandatory = $true)]
-                [string]$LogPath
+                [string]$LogPath,
+                [int]$TimeoutSeconds = 300
             )
-            $process = Start-Process msiexec.exe -ArgumentList $Arguments -PassThru -Wait
+            $process = Start-Process -FilePath msiexec.exe -ArgumentList $Arguments -PassThru
+            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                Write-MsiLogTail -Path $LogPath -Label $Phase
+                throw "$Phase timed out after $TimeoutSeconds seconds. Check whether an installer or elevation prompt was left unanswered."
+            }
+            $process.Refresh()
             if ($process.ExitCode -ne 0) {
                 Write-MsiLogTail -Path $LogPath -Label $Phase
                 throw "$Phase failed with exit code $($process.ExitCode)."
@@ -563,7 +580,8 @@ runs:
             Invoke-CheckedMsiExec `
               -Phase "MSI install" `
               -Arguments @("/i", $msi, "/qn", "/norestart", "/L*v", $installLog) `
-              -LogPath $installLog
+              -LogPath $installLog `
+              -TimeoutSeconds 300
             $installed = $true
             if (-not (Test-Path -LiteralPath $expectedCli)) {
                 throw "Installed CLI was not found at the release MSI Program Files path: $expectedCli"
@@ -590,7 +608,8 @@ runs:
                 Invoke-CheckedMsiExec `
                   -Phase "MSI uninstall" `
                   -Arguments @("/x", $msi, "/qn", "/norestart", "/L*v", $uninstallLog) `
-                  -LogPath $uninstallLog
+                  -LogPath $uninstallLog `
+                  -TimeoutSeconds 300
                 if (Test-Path -LiteralPath $expectedCli) {
                     throw "Installed CLI remained after MSI uninstall at $expectedCli."
                 }
@@ -618,7 +637,7 @@ runs:
         $hipLine
         - Portable ZIP and compatibility-format smoke tests completed after staging install.
         - MSI built for per-machine installation under C:\Program Files\SuperZip.
-        - Silent install/uninstall smoke test completed when create_msi=true.
+        - Silent install/uninstall smoke test completed with 5-minute timeouts per MSI phase.
         - Repository security scan completed before publishing.
         - SHA-256 checksum files are attached beside each package.
         "@ | Set-Content -LiteralPath $notes

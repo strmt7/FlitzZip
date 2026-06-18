@@ -329,6 +329,21 @@ function Test-InstallerScopePolicy {
     if ($releaseAction -notmatch '\$expectedCli\s*=\s*Join-Path\s+\$env:ProgramFiles\s+"SuperZip\\bin\\superzip_cli\.exe"') {
         throw "Release workflow must validate the installed CLI under Program Files."
     }
+    if ($releaseAction -match 'Start-Process\s+-FilePath\s+\$installer[^\r\n]*-Wait') {
+        throw "HIP SDK installer launches in the release workflow must use a bounded WaitForExit timeout, not unbounded Start-Process -Wait."
+    }
+    if ($releaseAction -match 'Start-Process\s+(?:-FilePath\s+)?msiexec\.exe[^\r\n]*-Wait') {
+        throw "Release MSI smoke tests must use a bounded WaitForExit timeout, not unbounded Start-Process -Wait."
+    }
+    if ($releaseAction -notmatch 'AMD HIP SDK installer timed out after \$hipInstallTimeoutSeconds seconds') {
+        throw "Release workflow must fail stale HIP SDK installer waits with an explicit bounded-timeout message."
+    }
+    if ($releaseAction -notmatch '\[int\]\$TimeoutSeconds\s*=\s*300') {
+        throw "Release MSI install/uninstall smoke tests must default to a 300-second stale-wait timeout."
+    }
+    if ($releaseAction -notmatch 'installer or elevation prompt was left unanswered') {
+        throw "Release installer timeout messages must explain that unanswered elevation prompts are a possible cause."
+    }
 }
 
 Test-InstallerScopePolicy

@@ -20,6 +20,12 @@ The product MSI defaults to per-machine installation under
 `C:\Program Files\SuperZip`. Installing that MSI uses the standard Windows
 elevation prompt when the user lacks administrator rights.
 
+That elevation prompt belongs to Windows, not to SuperZip's MSI UI. SuperZip
+cannot enforce a countdown inside an unanswered UAC prompt. SuperZip-owned
+automation and future installer wrappers must instead bound their wait around
+the installer process and fail clearly when the prompt or installer remains
+unanswered for too long.
+
 For local coding and installer tests that must not require admin rights, build a
 separate per-user MSI with `tools\build.ps1 -MsiInstallScope perUser`. Keep that
 artifact local to development or CI validation; product releases must use the

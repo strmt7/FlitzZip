@@ -15,6 +15,13 @@ The MSI defaults to the release deployment scope: per-machine install under
 requires elevation when the installing user does not already have administrator
 rights.
 
+The Windows elevation prompt is controlled by the operating system before the
+per-machine MSI can make changes. The MSI cannot shorten that OS-owned prompt
+from inside the package. SuperZip-owned installer launchers, release validation,
+and smoke tests must therefore use bounded waits around the installer process:
+MSI install and uninstall phases fail after 300 seconds, and hosted HIP SDK
+installer setup has its own explicit timeout.
+
 The MSI exposes `Create Desktop shortcut` as an optional installer feature. Do
 not use CPack's unconditional `CPACK_CREATE_DESKTOP_LINKS`; the desktop shortcut
 must be an MSI-owned component selected through the installer UI so uninstall can
@@ -78,7 +85,9 @@ The workflow performs:
   smoke tests, and
   checksum generation.
 - MSI creation and silent install/uninstall smoke tests under the Program Files
-  release install path when requested.
+  release install path when requested. Each MSI install/uninstall phase has a
+  300-second stale-wait timeout so an unanswered installer or elevation prompt
+  cannot block validation indefinitely.
 - GitHub release creation with attached SHA-256 files.
 
 Release notes must list the actual fixes, created assets, validation work, and
