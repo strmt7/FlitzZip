@@ -1,5 +1,6 @@
 #include "app/main_window.hpp"
 
+#include "app/drop_payload.hpp"
 #include "app/log_retention.hpp"
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
@@ -232,7 +233,10 @@ std::vector<std::filesystem::path> paths_from_hdrop(HDROP drop) {
         path.resize(length);
         paths.emplace_back(std::move(path));
     }
-    return paths;
+    if (!paths.empty()) {
+        return paths;
+    }
+    return paths_from_dropfiles_global(reinterpret_cast<HGLOBAL>(drop));
 }
 
 }  // namespace
@@ -339,9 +343,31 @@ class QueueDropTarget final : public IDropTarget {
         if (data->GetData(&format, &medium) != S_OK) {
             return {};
         }
-        auto drop = reinterpret_cast<HDROP>(medium.hGlobal);
-        std::vector<std::filesystem::path> paths = paths_from_hdrop(drop);
-        ReleaseStgMedium(&medium);
+        struct MediumGuard {
+            // Purpose: Release OLE storage exactly once when extracting shell drop paths.
+            // Inputs: `value` points to the STGMEDIUM returned by `IDataObject::GetData`.
+            // Outputs: Stores the medium reference for scope-exit cleanup.
+            explicit MediumGuard(STGMEDIUM& value) : medium(value) {}
+
+            MediumGuard(const MediumGuard&) = delete;
+            MediumGuard& operator=(const MediumGuard&) = delete;
+
+            // Purpose: Release the OLE storage returned by `IDataObject::GetData`.
+            // Inputs: None.
+            // Outputs: Calls `ReleaseStgMedium` exactly once.
+            ~MediumGuard() {
+                ReleaseStgMedium(&medium);
+            }
+
+            STGMEDIUM& medium;
+        } guard{medium};
+        if (medium.tymed != TYMED_HGLOBAL || medium.hGlobal == nullptr) {
+            return {};
+        }
+        std::vector<std::filesystem::path> paths = paths_from_dropfiles_global(medium.hGlobal);
+        if (paths.empty()) {
+            paths = paths_from_hdrop(reinterpret_cast<HDROP>(medium.hGlobal));
+        }
         return paths;
     }
 
@@ -1581,10 +1607,28 @@ void draw_graph_axis_label(HDC dc, const RECT& rect, const std::wstring& text, C
 // Outputs: Renders unobtrusive axis text above grid and graph lines without changing the graph geometry.
 void draw_graph_axis_labels(HDC dc, const RECT& rect, const std::wstring& top_label, const std::wstring& bottom_label) {
     const COLORREF axis_text = RGB(103, 127, 135);
-    draw_graph_axis_label(dc, RECT{rect.right - 78, rect.top + 3, rect.right - 4, rect.top + 19}, top_label, axis_text,
-                          DT_RIGHT | DT_TOP);
-    draw_graph_axis_label(dc, RECT{rect.right - 78, rect.bottom - 20, rect.right - 4, rect.bottom - 4}, bottom_label,
-                          axis_text, DT_RIGHT | DT_TOP);
+    SIZE top_size{};
+    SIZE bottom_size{};
+    if (!top_label.empty()) {
+        GetTextExtentPoint32W(dc, top_label.data(), static_cast<int>(top_label.size()), &top_size);
+    }
+    if (!bottom_label.empty()) {
+        GetTextExtentPoint32W(dc, bottom_label.data(), static_cast<int>(bottom_label.size()), &bottom_size);
+    }
+    const int right_padding = 10;
+    const int requested_width = std::max<int>(static_cast<int>(top_size.cx), static_cast<int>(bottom_size.cx)) + 10;
+    const int available_width = std::max<int>(0, rect.right - rect.left - right_padding - 2);
+    const int label_width = std::clamp(requested_width, 48, std::max(48, available_width));
+    const int label_height =
+        std::max<int>(16, std::max<int>(static_cast<int>(top_size.cy), static_cast<int>(bottom_size.cy)) + 4);
+    draw_graph_axis_label(dc,
+                          RECT{rect.right - label_width - right_padding, rect.top + 4, rect.right - right_padding,
+                               rect.top + 4 + label_height},
+                          top_label, axis_text, DT_RIGHT | DT_TOP);
+    draw_graph_axis_label(dc,
+                          RECT{rect.right - label_width - right_padding, rect.bottom - label_height - 6,
+                               rect.right - right_padding, rect.bottom - 6},
+                          bottom_label, axis_text, DT_RIGHT | DT_TOP);
 }
 
 // Purpose: Return a rectangle inset by fixed pixel amounts.
@@ -2417,8 +2461,9 @@ bool MainWindow::enable_elevated_drag_drop_messages() const {
         return true;
     }
     const BOOL drop_allowed = ChangeWindowMessageFilterEx(hwnd_, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+    const BOOL copy_allowed = ChangeWindowMessageFilterEx(hwnd_, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
     const BOOL query_allowed = ChangeWindowMessageFilterEx(hwnd_, kDragQueryMessage, MSGFLT_ALLOW, nullptr);
-    return drop_allowed != FALSE && query_allowed != FALSE;
+    return drop_allowed != FALSE && copy_allowed != FALSE && query_allowed != FALSE;
 }
 
 // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
@@ -3016,16 +3061,15 @@ MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
     ExtractLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.start = primary_action_rect(layout.area);
-    layout.archive =
-        RECT{layout.area.left, layout.area.top + scale(54), layout.area.right, layout.area.top + scale(104)};
-    layout.destination =
-        RECT{layout.area.left, layout.area.top + scale(124), layout.area.right, layout.area.top + scale(174)};
-    layout.path_mode = RECT{layout.area.left, layout.area.top + scale(194), layout.area.left + scale(320),
-                            layout.area.top + scale(244)};
-    layout.overwrite_policy = RECT{layout.area.left + scale(342), layout.area.top + scale(194),
-                                   layout.area.left + scale(662), layout.area.top + scale(244)};
+    const int left = layout.area.left;
+    const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
+    const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
+    layout.archive = RECT{left, layout.area.top + scale(54), left + field_w, layout.area.top + scale(104)};
+    layout.destination = RECT{mid, layout.area.top + scale(54), mid + field_w, layout.area.top + scale(104)};
+    layout.path_mode = RECT{left, layout.area.top + scale(124), left + field_w, layout.area.top + scale(174)};
+    layout.overwrite_policy = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
     layout.checks =
-        RECT{layout.area.left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(402)};
+        RECT{layout.area.left, layout.area.top + scale(200), layout.area.right, layout.area.top + scale(332)};
     layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48),
                                   layout.checks.left + scale(420), layout.checks.top + scale(78)};
     layout.open_destination_after_extract = RECT{layout.checks.left + scale(18), layout.checks.top + scale(80),
@@ -3736,12 +3780,12 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     draw_text(dc, RECT{card.left + scale(142), card.top + scale(94), card.right - scale(40), card.top + scale(122)},
               std::wstring(kProductTagline), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{card.left + scale(142), card.top + scale(132), card.right - scale(40), card.top + scale(164)},
+    draw_text(dc, RECT{card.left + scale(142), card.top + scale(130), card.right - scale(40), card.top + scale(150)},
               L"Author: Efstratios Mitridis", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{card.left + scale(142), card.top + scale(158), card.right - scale(40), card.top + scale(190)},
+    draw_text(dc, RECT{card.left + scale(142), card.top + scale(146), card.right - scale(40), card.top + scale(166)},
               widen(std::string("Version: ") + SUPERZIP_VERSION), kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(
-        dc, RECT{card.left + scale(42), card.top + scale(200), card.right - scale(42), card.top + scale(310)},
+        dc, RECT{card.left + scale(42), card.top + scale(184), card.right - scale(42), card.top + scale(294)},
         L"SuperZip separates native .suzip GPU archive jobs from ZIP, TAR, compressed TAR/CPIO, Gzip, Bzip2, XZ, "
         L"LZMA, lzip, Zstandard, Unix Compress, CAB, 7z, LHA/LZH, CPIO, AR, DEB, ISO, and RPM standard "
         L"archive/compression handling. Legacy transfer decoders remain extract-only. AMD HIP is the only GPU "

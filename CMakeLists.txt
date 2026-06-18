@@ -523,6 +523,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_cab_compat.cpp
     tests/cpp/test_compat_compression_levels.cpp
     tests/cpp/test_cpio_compat.cpp
+    tests/cpp/test_drop_payload.cpp
     tests/cpp/test_gzip_compat.cpp
     tests/cpp/test_hqx_compat.cpp
     tests/cpp/test_iso_compat.cpp
