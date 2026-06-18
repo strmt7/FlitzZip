@@ -497,8 +497,10 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   affects the current draft only; leaving Settings without `Apply` must restore
   the last applied snapshot. `Apply` must atomically persist the validated
   per-user configuration to `%LOCALAPPDATA%\SuperZip\settings.json`; GUI smoke
-  must redirect this path with `SUPERZIP_GUI_SMOKE_SETTINGS_PATH`, assert the
-  persisted values, and verify that an unapplied draft is not persisted.
+  must redirect to the fixed temp smoke settings file with
+  `SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT=1`, assert the persisted values, and
+  verify that an unapplied draft is not persisted. Do not reintroduce
+  path-valued settings overrides.
 - Check all pages, not only the main queue page, when making visual changes.
 - Treat `resources/design/superzip-ui-iteration-4.png` as the current visual
   acceptance reference. Do not simplify the compact enterprise shell, command

@@ -681,7 +681,9 @@ $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
 $badArchive = Join-Path $smokeRoot "invalid-input.suzip"
 $smokeCloseFile = Join-Path $smokeRoot "close.request"
-$smokeSettingsFile = Join-Path $smokeRoot "settings.json"
+$smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "SuperZip"
+$smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
+New-Item -ItemType Directory -Force -Path $smokeSettingsDir | Out-Null
 Set-Content -LiteralPath $smokeInput -Value "SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
@@ -698,13 +700,13 @@ $previousSmokeFiles = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_
 $previousSmokeFolder = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", "Process")
 $previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
 $previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
-$previousSmokeSettingsPath = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_PATH", "Process")
+$previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeRoot, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", (Resolve-Path -LiteralPath $smokeInput).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "90000", "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_PATH", $smokeSettingsFile, "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "1", "Process")
 
 $previousDpiContext = [SuperZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = Start-Process -FilePath $exe -PassThru
@@ -1064,7 +1066,7 @@ try {
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", $previousSmokeFolder, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", $previousSmokeAutoClose, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $previousSmokeCloseFile, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_PATH", $previousSmokeSettingsPath, "Process")
+    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", $previousSmokeSettingsRedirect, "Process")
     Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
     if ($cleanupFailure) {
         throw $cleanupFailure

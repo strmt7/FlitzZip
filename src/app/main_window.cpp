@@ -887,15 +887,15 @@ std::string settings_to_json(const AppSettings& settings) {
 }
 
 // Purpose: Resolve the per-user SuperZip settings file path.
-// Inputs: None; uses Windows Known Folders.
-// Outputs: Returns `%LOCALAPPDATA%\SuperZip\settings.json` or throws on lookup failure.
+// Inputs: None; uses Windows Known Folders, or a fixed temp file when GUI smoke redirect is explicitly enabled.
+// Outputs: Returns a trusted settings path or throws on lookup failure.
 std::filesystem::path settings_file_path() {
-    wchar_t smoke_path[32768]{};
-    constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
-    const DWORD smoke_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_PATH", smoke_path, smoke_path_capacity);
-    if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
-        return std::filesystem::path(smoke_path);
+    wchar_t smoke_redirect[8]{};
+    constexpr DWORD smoke_redirect_capacity = static_cast<DWORD>(sizeof(smoke_redirect) / sizeof(smoke_redirect[0]));
+    const DWORD smoke_redirect_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
+    if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
+        return std::filesystem::temp_directory_path() / L"SuperZip" / L"gui-smoke-settings.json";
     }
     PWSTR local_app_data = nullptr;
     const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data);
@@ -1904,7 +1904,6 @@ LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
 // Inputs: None; applies only to the main HWND and only when the process is elevated.
 // Outputs: Returns true when no extra filter is needed or the narrow filter was applied.
 bool MainWindow::enable_elevated_drag_drop_messages() const {
-    BOOL elevated = FALSE;
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
         return true;
@@ -3876,6 +3875,103 @@ void MainWindow::close_active_dropdown() {
     }
 }
 
+struct DropdownSelectionFeedback {
+    int performance_seconds = 0;
+    bool add_log = false;
+    LogSeverity log_severity = LogSeverity::Information;
+    std::string log_message;
+};
+
+// Purpose: Apply a non-Settings dropdown choice to synchronized UI state.
+// Inputs: `state` is locked UI state, `id` is the dropdown, `option_index` is the selected row, and `feedback` receives
+// side effects. Outputs: Mutates `state`; unsupported IDs are ignored.
+void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_index,
+                                      DropdownSelectionFeedback& feedback) {
+    switch (id) {
+    case DropdownId::CompressFormat:
+        state.compression_format_index = std::clamp(option_index, 0, 15);
+        state.status = "Archive format changed";
+        break;
+    case DropdownId::CompressLevel:
+        state.compression_level_index = std::clamp(option_index, 0, 4);
+        state.status = "Compression level changed";
+        break;
+    case DropdownId::CompressMethod:
+        state.gpu_required = option_index == 0;
+        state.status = "Compression method changed";
+        break;
+    case DropdownId::CompressBlockSize:
+        state.compression_block_size_index = std::clamp(option_index, 0, 3);
+        state.status = "Block size changed";
+        break;
+    case DropdownId::ExtractOverwrite:
+        state.overwrite = option_index == 1;
+        state.status = "Overwrite policy changed";
+        break;
+    case DropdownId::HistoryOperation:
+        state.history_operation_filter_index = std::clamp(option_index, 0, 3);
+        state.status = "History operation filter changed";
+        break;
+    case DropdownId::HistoryStatus:
+        state.history_status_filter_index = std::clamp(option_index, 0, 2);
+        state.status = "History status filter changed";
+        break;
+    case DropdownId::GpuUpdateSpeed:
+        state.performance_update_seconds = std::clamp(option_index, 0, 9) + 1;
+        feedback.performance_seconds = state.performance_update_seconds;
+        state.status = "Performance update speed changed";
+        break;
+    default:
+        break;
+    }
+}
+
+// Purpose: Apply a Settings dropdown choice to synchronized UI state.
+// Inputs: `state` is locked UI state, `id` is the dropdown, `option_index` is the selected row, and `feedback` receives
+// log data. Outputs: Mutates `state`; unsupported IDs are ignored.
+void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option_index,
+                                       DropdownSelectionFeedback& feedback) {
+    switch (id) {
+    case DropdownId::SettingsMemoryPolicy:
+        state.memory_policy_index = std::clamp(option_index, 0, 2);
+        state.status = "Memory policy changed";
+        feedback.add_log = true;
+        feedback.log_severity = LogSeverity::Debug;
+        feedback.log_message = "Memory policy changed";
+        break;
+    case DropdownId::SettingsLogLevel:
+        state.log_level_index = std::clamp(option_index, 0, 2);
+        state.status = "Log level changed";
+        feedback.add_log = true;
+        if (state.log_level_index == 1) {
+            feedback.log_severity = LogSeverity::Warning;
+            feedback.log_message = "Log level changed to Warning";
+        } else if (state.log_level_index == 2) {
+            feedback.log_severity = LogSeverity::Debug;
+            feedback.log_message = "Log level changed to Debug";
+        } else {
+            feedback.log_severity = LogSeverity::Information;
+            feedback.log_message = "Log level changed to Information";
+        }
+        break;
+    case DropdownId::SettingsLogRetention:
+        state.log_retention_index = std::clamp(option_index, 0, 2);
+        state.status = "Log retention changed";
+        feedback.add_log = true;
+        feedback.log_severity = LogSeverity::Debug;
+        if (state.log_retention_index == 1) {
+            feedback.log_message = "Log retention changed to 7 days";
+        } else if (state.log_retention_index == 2) {
+            feedback.log_message = "Log retention changed to 30 days";
+        } else {
+            feedback.log_message = "Log retention changed to Current session";
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 // Purpose: Apply one selected dropdown option to the matching UI state field.
 // Inputs: `id` identifies the active dropdown and `option_index` is the zero-based row selected by the user.
 // Outputs: Mutates UI state, closes the dropdown, updates status text, and requests repaint.
@@ -3886,94 +3982,14 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     std::string log_message;
     {
         std::lock_guard lock(mutex_);
-        switch (id) {
-        case DropdownId::CompressFormat:
-            state_.compression_format_index = std::clamp(option_index, 0, 15);
-            state_.status = "Archive format changed";
-            break;
-        case DropdownId::CompressLevel:
-            state_.compression_level_index = std::clamp(option_index, 0, 4);
-            state_.status = "Compression level changed";
-            break;
-        case DropdownId::CompressMethod:
-            state_.gpu_required = option_index == 0;
-            state_.status = "Compression method changed";
-            break;
-        case DropdownId::CompressBlockSize:
-            state_.compression_block_size_index = std::clamp(option_index, 0, 3);
-            state_.status = "Block size changed";
-            break;
-        case DropdownId::ExtractOverwrite:
-            state_.overwrite = option_index == 1;
-            state_.status = "Overwrite policy changed";
-            break;
-        case DropdownId::HistoryOperation:
-            state_.history_operation_filter_index = std::clamp(option_index, 0, 3);
-            state_.status = "History operation filter changed";
-            break;
-        case DropdownId::HistoryStatus:
-            state_.history_status_filter_index = std::clamp(option_index, 0, 2);
-            state_.status = "History status filter changed";
-            break;
-        case DropdownId::GpuUpdateSpeed:
-            state_.performance_update_seconds = std::clamp(option_index, 0, 9) + 1;
-            performance_seconds = state_.performance_update_seconds;
-            state_.status = "Performance update speed changed";
-            break;
-        case DropdownId::SettingsMemoryPolicy:
-            state_.memory_policy_index = std::clamp(option_index, 0, 2);
-            state_.status = "Memory policy changed";
-            add_log = true;
-            log_severity = LogSeverity::Debug;
-            log_message = "Memory policy changed";
-            break;
-        case DropdownId::SettingsLogLevel:
-            state_.log_level_index = std::clamp(option_index, 0, 2);
-            state_.status = "Log level changed";
-            add_log = true;
-            log_severity = LogSeverity::Information;
-            switch (state_.log_level_index) {
-            case 0:
-                log_message = "Log level changed to Information";
-                break;
-            case 1:
-                log_severity = LogSeverity::Warning;
-                log_message = "Log level changed to Warning";
-                break;
-            case 2:
-                log_severity = LogSeverity::Debug;
-                log_message = "Log level changed to Debug";
-                break;
-            default:
-                log_message = "Log level changed";
-                break;
-            }
-            break;
-        case DropdownId::SettingsLogRetention:
-            state_.log_retention_index = std::clamp(option_index, 0, 2);
-            state_.status = "Log retention changed";
-            add_log = true;
-            log_severity = LogSeverity::Debug;
-            log_message = "Log retention changed to ";
-            switch (state_.log_retention_index) {
-            case 0:
-                log_message += "Current session";
-                break;
-            case 1:
-                log_message += "7 days";
-                break;
-            case 2:
-                log_message += "30 days";
-                break;
-            default:
-                log_message += "selected policy";
-                break;
-            }
-            break;
-        case DropdownId::None:
-            break;
-        }
+        DropdownSelectionFeedback feedback;
+        apply_primary_dropdown_selection(state_, id, option_index, feedback);
+        apply_settings_dropdown_selection(state_, id, option_index, feedback);
         state_.active_dropdown = DropdownId::None;
+        performance_seconds = feedback.performance_seconds;
+        add_log = feedback.add_log;
+        log_severity = feedback.log_severity;
+        log_message = std::move(feedback.log_message);
     }
     if (performance_seconds > 0) {
         reset_performance_timer(performance_seconds);

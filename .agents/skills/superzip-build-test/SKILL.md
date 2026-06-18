@@ -101,8 +101,10 @@ Rules:
 - Settings changes are draft-only until `Apply`; leaving Settings without
   `Apply` must restore the last applied snapshot. `Apply` must atomically write
   the validated per-user settings JSON under Local AppData, and GUI smoke must
-  redirect that path with `SUPERZIP_GUI_SMOKE_SETTINGS_PATH` and assert both
-  persisted values and unapplied-draft reversion.
+  redirect to the fixed temp smoke settings file with
+  `SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT=1` and assert both persisted values and
+  unapplied-draft reversion. Do not reintroduce path-valued settings
+  overrides.
 - Elevated drag/drop must keep the narrow UIPI message allowlist for shell drop
   messages and an exception-safe HDROP handler. Do not solve elevated
   drag/drop by adding broad process privileges or bypassing Windows integrity
