@@ -482,12 +482,12 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t win
                                  [chunk_offset, total_bytes, profile, want, codec_options]() {
                                      std::vector<std::byte> input(static_cast<std::size_t>(want));
                                      fill_memory_benchmark_chunk(input, chunk_offset, total_bytes, profile);
-                                     auto encoded = superzip::encode_chunk(
-                                         std::span<const std::byte>(input.data(), input.size()), codec_options);
-                                     const auto chunk_crc =
-                                         encoded.source_crc32_available
-                                             ? encoded.source_crc32
-                                             : superzip::crc32(std::span<const std::byte>(input.data(), input.size()));
+                                     auto encoded = superzip::encode_owned_chunk(std::move(input), codec_options);
+                                     if (!encoded.source_crc32_available) {
+                                         throw superzip::ArchiveError(
+                                             "owned memory benchmark encode did not return a source CRC");
+                                     }
+                                     const auto chunk_crc = encoded.source_crc32;
                                      return MemoryArchiveChunk{
                                          .encoded = std::move(encoded),
                                          .crc32 = chunk_crc,

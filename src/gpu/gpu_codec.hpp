@@ -7,6 +7,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace superzip {
 
@@ -130,25 +131,28 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options);
 
 // Purpose: Encode a chunk into SuperZip block descriptors and payload bytes.
 // Inputs: `input` is the uncompressed chunk and `options` selects block size plus required-GPU or forced-CPU behavior.
-// Outputs: Returns descriptors, encoded payload, and whether GPU work was used; throws `GpuError` if GPU is required but unavailable.
+// Outputs: Returns descriptors, encoded payload, and whether GPU work was used; throws `GpuError` if GPU is required
+// but unavailable.
 EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOptions& options);
 
+// Purpose: Encode a caller-owned chunk while allowing zero-copy publication of raw HIP payloads.
+// Inputs: `input` owns the uncompressed bytes and may be moved from; `options` selects block size plus backend policy.
+// Outputs: Returns descriptors, payload, and a source CRC; throws `GpuError` if GPU is required but unavailable.
+EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOptions& options);
+
 // Purpose: Decode encoded SuperZip block payload back into caller-provided output memory.
-// Inputs: `payload` and `blocks` come from validated archive metadata, `output` is the exact uncompressed destination buffer, and `options` controls required-GPU or forced-CPU behavior.
-// Outputs: Writes decoded bytes into `output` and returns true when AMD HIP executed; throws `ArchiveError` or `GpuError` on invalid block layout or unavailable required GPU.
-bool decode_chunk(
-    std::span<const std::byte> payload,
-    std::span<const BlockDescriptor> blocks,
-    std::span<std::byte> output,
-    const GpuCodecOptions& options);
+// Inputs: `payload` and `blocks` come from validated archive metadata, `output` is the exact uncompressed destination
+// buffer, and `options` controls required-GPU or forced-CPU behavior. Outputs: Writes decoded bytes into `output` and
+// returns true when AMD HIP executed; throws `ArchiveError` or `GpuError` on invalid block layout or unavailable
+// required GPU.
+bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                  std::span<std::byte> output, const GpuCodecOptions& options);
 
 // Purpose: Decode enough chunk content to compute its ZIP-compatible CRC-32.
-// Inputs: `payload` and `blocks` come from validated archive metadata, `output_size` is the exact decoded byte count, and `options` controls required-GPU or forced-CPU behavior.
-// Outputs: Returns the decoded chunk CRC and whether AMD HIP executed; throws `ArchiveError` or `GpuError` on invalid block layout or unavailable required GPU.
-DecodedChunkCrc crc_decoded_chunk(
-    std::span<const std::byte> payload,
-    std::span<const BlockDescriptor> blocks,
-    std::uint64_t output_size,
-    const GpuCodecOptions& options);
+// Inputs: `payload` and `blocks` come from validated archive metadata, `output_size` is the exact decoded byte count,
+// and `options` controls required-GPU or forced-CPU behavior. Outputs: Returns the decoded chunk CRC and whether AMD
+// HIP executed; throws `ArchiveError` or `GpuError` on invalid block layout or unavailable required GPU.
+DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                  std::uint64_t output_size, const GpuCodecOptions& options);
 
 }  // namespace superzip

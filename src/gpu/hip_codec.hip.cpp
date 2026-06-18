@@ -8,6 +8,7 @@
 #include <limits>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 #include <hip/hip_runtime.h>
 
@@ -709,11 +710,16 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
 }
 
 // Purpose: Classify one uncompressed chunk on the AMD GPU and compute its source CRC in VRAM.
-// Inputs: `input` is a bounded host chunk and `options` supplies block size plus telemetry.
-// Outputs: Returns fill/raw/pattern block descriptors, encoded payload bytes, and GPU source CRC metadata.
-EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOptions& options) {
+// Inputs: `input` is a bounded host chunk, `owned_input` optionally owns the same bytes, and `options` supplies tuning.
+// Outputs: Returns fill/raw/pattern descriptors, payload bytes, and GPU source CRC; may move `owned_input` after
+// success.
+EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
+                                   const GpuCodecOptions& options) {
     if (input.empty()) {
-        return {};
+        EncodedChunk empty;
+        empty.source_crc32 = 0;
+        empty.source_crc32_available = true;
+        return empty;
     }
     auto* telemetry = options.telemetry.get();
     record_gpu_encode_chunk(telemetry);
@@ -758,7 +764,6 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
         out.source_crc32 = source_crc32;
         out.source_crc32_available = true;
         out.blocks.reserve(block_count);
-        out.payload.reserve(input.size());
         std::uint64_t encoded_offset = 0;
         bool all_raw = true;
         std::uint64_t pattern_blocks = 0;
@@ -797,9 +802,14 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
         }
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
         if (all_raw) {
-            out.payload.resize(input.size());
-            std::copy(input.begin(), input.end(), out.payload.begin());
+            if (owned_input != nullptr) {
+                out.payload = std::move(*owned_input);
+            } else {
+                out.payload.resize(input.size());
+                std::copy(input.begin(), input.end(), out.payload.begin());
+            }
         } else {
+            out.payload.reserve(input.size());
             for (std::uint32_t i = 0; i < block_count; ++i) {
                 if (device_results[i].kind == 1) {
                     continue;
@@ -819,6 +829,20 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
         (void)hipFree(device_blocks);
         throw;
     }
+}
+
+// Purpose: Classify one borrowed uncompressed chunk through AMD HIP.
+// Inputs: `input` is a bounded host chunk and `options` supplies block size plus telemetry.
+// Outputs: Returns descriptors, encoded payload bytes, and GPU source CRC metadata.
+EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOptions& options) {
+    return encode_chunk_hip_impl(input, nullptr, options);
+}
+
+// Purpose: Classify one owned uncompressed chunk through AMD HIP.
+// Inputs: `input` owns bytes for the duration of the call and `options` supplies block size plus telemetry.
+// Outputs: Returns descriptors, payload, and GPU source CRC; moves `input` into payload only for all-raw chunks.
+EncodedChunk encode_owned_chunk_hip(std::vector<std::byte>& input, const GpuCodecOptions& options) {
+    return encode_chunk_hip_impl(std::span<const std::byte>(input.data(), input.size()), &input, options);
 }
 
 // Purpose: Decode GPU-supported block kinds into a caller-provided host buffer through AMD HIP.
