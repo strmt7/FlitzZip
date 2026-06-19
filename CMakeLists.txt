@@ -446,7 +446,7 @@ else()
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=0)
 endif()
 
-add_executable(superzip_cli src/cli/main.cpp)
+add_executable(superzip_cli src/cli/main.cpp src/cli/memory_benchmark.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
 superzip_copy_zstd_runtime(superzip_cli)
 superzip_copy_wimlib_runtime(superzip_cli)
