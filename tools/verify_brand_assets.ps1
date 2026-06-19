@@ -222,11 +222,16 @@ try {
     if ($cmakeLists -notmatch "generate_brand_logo_header\.ps1" -or $cmakeLists -notmatch "superzip_brand_logo\.hpp") {
         throw "CMake must generate the Win32 logo header from the canonical SVG."
     }
-    $mainWindow = Get-Content -LiteralPath (Join-Path $repo "src\app\main_window.cpp") -Raw
-    if ($mainWindow -notmatch '#include "superzip_brand_logo\.hpp"') {
+    $renderSupport = Get-Content -LiteralPath (Join-Path $repo "src\app\main_window_render_support.cpp") -Raw
+    if ($renderSupport -notmatch '#include "superzip_brand_logo\.hpp"' -or
+        $renderSupport -notmatch 'brand::kSuperZipLogoMarkLayers') {
         throw "The Win32 app must render the in-app mark from the generated SVG geometry header."
     }
-    $drawLogoCallCount = ([regex]::Matches($mainWindow, '\bdraw_logo\s*\(')).Count - 1
+    $drawLogoCallSource = @(
+        Get-Content -LiteralPath (Join-Path $repo "src\app\main_window_shell_render.cpp") -Raw
+        Get-Content -LiteralPath (Join-Path $repo "src\app\main_window_pages.cpp") -Raw
+    ) -join "`n"
+    $drawLogoCallCount = ([regex]::Matches($drawLogoCallSource, '\bdraw_logo\s*\(')).Count
     if ($drawLogoCallCount -ne 2) {
         throw "The Win32 app must use exactly two canonical draw_logo call sites: top bar and About page."
     }
@@ -234,10 +239,14 @@ try {
     if ($readme -notmatch '<img src="resources/brand/superzip-logo\.svg"') {
         throw "README must render the SuperZip logo from the canonical SVG source."
     }
-    if ($mainWindow -notmatch 'ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE') {
+    $taglineSource = @(
+        Get-Content -LiteralPath (Join-Path $repo "src\app\main_window_support.hpp") -Raw
+        Get-Content -LiteralPath (Join-Path $repo "src\app\main_window_pages.cpp") -Raw
+    ) -join "`n"
+    if ($taglineSource -notmatch 'ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE') {
         throw "The Win32 About page must use the canonical SuperZip SVG tagline."
     }
-    if ($mainWindow -match 'Native Windows AMD HIP archive utility') {
+    if ($taglineSource -match 'Native Windows AMD HIP archive utility') {
         throw "The Win32 About page must not use the retired product tagline."
     }
 

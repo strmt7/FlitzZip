@@ -475,8 +475,29 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
     DEPENDS "${SUPERZIP_BRAND_LOGO_HEADER}"
     COMMENT "Preparing canonical SuperZip logo header")
 
-  add_executable(SuperZip WIN32 src/app/main.cpp src/app/main_window.cpp
-                                src/app/SuperZip.rc)
+  add_executable(
+    SuperZip
+      WIN32
+      src/app/main.cpp
+      src/app/main_window.cpp
+      src/app/main_window_archive_support.cpp
+      src/app/main_window_commands.cpp
+      src/app/main_window_controls.cpp
+      src/app/main_window_dragdrop.cpp
+      src/app/main_window_dropdowns.cpp
+      src/app/main_window_extract_jobs.cpp
+      src/app/main_window_focus.cpp
+      src/app/main_window_input.cpp
+      src/app/main_window_layout.cpp
+      src/app/main_window_monitor.cpp
+      src/app/main_window_page_clicks.cpp
+      src/app/main_window_pages.cpp
+      src/app/main_window_queue_interaction.cpp
+      src/app/main_window_render_support.cpp
+      src/app/main_window_settings_timers.cpp
+      src/app/main_window_shell_render.cpp
+      src/app/main_window_startup_support.cpp
+      src/app/SuperZip.rc)
   add_dependencies(SuperZip superzip_brand_logo_header)
   target_include_directories(SuperZip PRIVATE "${SUPERZIP_GENERATED_DIR}")
   target_link_libraries(

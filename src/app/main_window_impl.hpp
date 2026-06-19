@@ -1,0 +1,46 @@
+﻿#pragma once
+
+#include "app/main_window.hpp"
+#include "app/main_window_support.hpp"
+
+#include "app/drop_payload.hpp"
+#include "app/log_retention.hpp"
+#include "app/resource.h"
+#include "core/archive.hpp"
+#include "core/archive_format.hpp"
+#include "core/defender_scan.hpp"
+#include "core/integrity.hpp"
+#include "core/result.hpp"
+#include "gpu/gpu_codec.hpp"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cctype>
+#include <climits>
+#include <cmath>
+#include <commdlg.h>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <dwmapi.h>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iomanip>
+#include <knownfolders.h>
+#include <mutex>
+#include <psapi.h>
+#include <ranges>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <span>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <thread>
+#include <utility>
+#include <vector>
+#include <windows.h>
+#include <windowsx.h>
