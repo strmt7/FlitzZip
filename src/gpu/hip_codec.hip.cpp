@@ -8,6 +8,7 @@
 #include <chrono>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +20,12 @@ GpuInfo query_hip_gpu_info();
 namespace {
 
 using namespace hip_detail;
+
+constexpr unsigned int kGpuPrefixSegmentThreads = 256U;
+constexpr unsigned int kGpuPrefixBytesPerThread = kGpuPrefixSegmentBytes / kGpuPrefixSegmentThreads;
+constexpr unsigned int kGpuPrefixMaxThreadWords = 8U;
+
+static_assert(kGpuPrefixSegmentBytes % kGpuPrefixSegmentThreads == 0U);
 
 __device__ __constant__ std::uint32_t kDeviceCrc32Table[256] = {
     0x00000000U, 0x77073096U, 0xEE0E612CU, 0x990951BAU, 0x076DC419U, 0x706AF48FU, 0xE963A535U, 0x9E6495A3U, 0x0EDB8832U,
@@ -59,6 +66,235 @@ __global__ void verify_analysis_candidates_kernel(const std::byte* input, std::s
                                                   std::uint32_t block_size, const DeviceBlock* candidates,
                                                   std::uint32_t* mismatches, std::uint32_t block_count,
                                                   std::uint32_t segments_per_block);
+
+struct PrefixDecodeSegment {
+    std::uint64_t table_offset;
+    std::uint64_t bitstream_offset;
+    std::uint64_t output_offset;
+    std::uint32_t segment_index;
+    std::uint32_t decoded_len;
+};
+
+// Purpose: Return the static prefix-code bit width for one byte.
+// Inputs: `value` is an uncompressed byte.
+// Outputs: Returns the number of bits emitted by the GPU prefix codec.
+__device__ std::uint32_t gpu_prefix_width(std::uint8_t value) {
+    if (value <= 3U) {
+        return 3U;
+    }
+    if (value <= 19U) {
+        return 6U;
+    }
+    if (value <= 83U) {
+        return 9U;
+    }
+    return 11U;
+}
+
+// Purpose: Return the static prefix-code bits for one byte in little-bit order.
+// Inputs: `value` is an uncompressed byte and `width` receives the bit count.
+// Outputs: Returns the code bits packed from least-significant to most-significant bit.
+__device__ std::uint32_t gpu_prefix_code(std::uint8_t value, std::uint32_t& width) {
+    width = gpu_prefix_width(value);
+    if (value <= 3U) {
+        return static_cast<std::uint32_t>(value) << 1U;
+    }
+    if (value <= 19U) {
+        return 0x1U | ((static_cast<std::uint32_t>(value) - 4U) << 2U);
+    }
+    if (value <= 83U) {
+        return 0x3U | ((static_cast<std::uint32_t>(value) - 20U) << 3U);
+    }
+    return 0x7U | ((static_cast<std::uint32_t>(value) - 84U) << 3U);
+}
+
+// Purpose: Read one little-endian 32-bit value from device payload memory.
+// Inputs: `bytes` points at at least four bytes.
+// Outputs: Returns the decoded offset value.
+__device__ std::uint32_t gpu_prefix_read_u32(const std::byte* bytes) {
+    return static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[0])) |
+           (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[1])) << 8U) |
+           (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[2])) << 16U) |
+           (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[3])) << 24U);
+}
+
+// Purpose: Read one bit from a GPU prefix segment.
+// Inputs: `stream` is a byte-aligned encoded segment and `bit_pos` is advanced in place.
+// Outputs: Returns the bit, or zero if malformed metadata points past the encoded segment.
+__device__ std::uint32_t gpu_prefix_read_bit(const std::byte* stream, std::uint32_t& bit_pos,
+                                             std::uint32_t limit_bits) {
+    if (bit_pos >= limit_bits) {
+        return 0U;
+    }
+    const auto byte_index = bit_pos / 8U;
+    const auto bit_index = bit_pos % 8U;
+    ++bit_pos;
+    return (static_cast<std::uint8_t>(stream[byte_index]) >> bit_index) & 1U;
+}
+
+// Purpose: Read a small little-bit-order field from a GPU prefix segment.
+// Inputs: `stream`, `bit_pos`, `limit_bits`, and `width` describe the encoded field.
+// Outputs: Returns the decoded field; malformed short segments decode as zero-padded.
+__device__ std::uint32_t gpu_prefix_read_bits(const std::byte* stream, std::uint32_t& bit_pos, std::uint32_t limit_bits,
+                                              std::uint32_t width) {
+    std::uint32_t value = 0;
+    for (std::uint32_t bit = 0; bit < width; ++bit) {
+        value |= gpu_prefix_read_bit(stream, bit_pos, limit_bits) << bit;
+    }
+    return value;
+}
+
+// Purpose: Decode one byte from the static GPU prefix code.
+// Inputs: `stream`, `bit_pos`, and `limit_bits` describe one encoded segment.
+// Outputs: Returns the decoded byte; invalid high-byte payloads clamp to zero.
+__device__ std::byte gpu_prefix_decode_byte(const std::byte* stream, std::uint32_t& bit_pos, std::uint32_t limit_bits) {
+    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
+        return static_cast<std::byte>(gpu_prefix_read_bits(stream, bit_pos, limit_bits, 2U));
+    }
+    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
+        return static_cast<std::byte>(4U + gpu_prefix_read_bits(stream, bit_pos, limit_bits, 4U));
+    }
+    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
+        return static_cast<std::byte>(20U + gpu_prefix_read_bits(stream, bit_pos, limit_bits, 6U));
+    }
+    const auto high = gpu_prefix_read_bits(stream, bit_pos, limit_bits, 8U);
+    return high <= 171U ? static_cast<std::byte>(84U + high) : std::byte{0};
+}
+
+// Purpose: Return one worker thread's contiguous byte range inside a prefix segment.
+// Inputs: `block_len`, `segment`, and `thread_id` describe the decoded block and GPU worker.
+// Outputs: Writes an inclusive start and exclusive end offset relative to the archive block.
+__device__ void gpu_prefix_thread_range(std::size_t block_len, std::uint32_t segment, std::uint32_t thread_id,
+                                        std::size_t& start, std::size_t& end) {
+    const auto segment_start = static_cast<std::size_t>(segment) * kGpuPrefixSegmentBytes;
+    start = segment_start + (static_cast<std::size_t>(thread_id) * kGpuPrefixBytesPerThread);
+    end = min(start + static_cast<std::size_t>(kGpuPrefixBytesPerThread), block_len);
+    if (start > block_len) {
+        start = block_len;
+    }
+}
+
+// Purpose: Compute one worker thread's prefix-code bit count for a contiguous byte range.
+// Inputs: `input`, `block_start`, `start`, and `end` describe readable device input bytes.
+// Outputs: Returns the number of encoded bits for the worker range.
+__device__ std::uint32_t gpu_prefix_range_bit_count(const std::byte* input, std::size_t block_start, std::size_t start,
+                                                    std::size_t end) {
+    std::uint32_t bits = 0;
+    for (auto pos = start; pos < end; ++pos) {
+        bits += gpu_prefix_width(static_cast<std::uint8_t>(input[block_start + pos]));
+    }
+    return bits;
+}
+
+// Purpose: Compute an exclusive block-local prefix sum over per-thread bit counts.
+// Inputs: `sums` is shared storage for one prefix segment and `local_bits` is the current thread contribution.
+// Outputs: Returns this thread's starting bit offset within the encoded segment.
+__device__ std::uint32_t gpu_prefix_exclusive_scan(std::uint32_t* sums, std::uint32_t local_bits) {
+    const auto thread_id = static_cast<std::uint32_t>(threadIdx.x);
+    sums[thread_id] = local_bits;
+    __syncthreads();
+    for (std::uint32_t offset = 1U; offset < kGpuPrefixSegmentThreads; offset <<= 1U) {
+        const auto add = thread_id >= offset ? sums[thread_id - offset] : 0U;
+        __syncthreads();
+        sums[thread_id] += add;
+        __syncthreads();
+    }
+    return sums[thread_id] - local_bits;
+}
+
+// Purpose: Compute encoded byte counts for fixed-size prefix-code segments.
+// Inputs: `input` is a device chunk, `block_start`/`block_len` select one archive block, and `segment_lengths`
+// receives one byte count per segment. Outputs: Writes aligned compressed byte counts for the static prefix codec.
+__global__ void prefix_segment_lengths_kernel(const std::byte* input, std::size_t block_start, std::size_t block_len,
+                                              std::uint32_t* segment_lengths, std::uint32_t segment_count) {
+    const auto segment = static_cast<std::uint32_t>(blockIdx.x);
+    if (segment >= segment_count) {
+        return;
+    }
+    __shared__ std::uint32_t sums[kGpuPrefixSegmentThreads];
+    const auto thread_id = static_cast<std::uint32_t>(threadIdx.x);
+    std::size_t start = 0;
+    std::size_t end = 0;
+    gpu_prefix_thread_range(block_len, segment, thread_id, start, end);
+    sums[thread_id] = gpu_prefix_range_bit_count(input, block_start, start, end);
+    __syncthreads();
+    for (std::uint32_t offset = kGpuPrefixSegmentThreads / 2U; offset > 0U; offset >>= 1U) {
+        if (thread_id < offset) {
+            sums[thread_id] += sums[thread_id + offset];
+        }
+        __syncthreads();
+    }
+    if (thread_id == 0U) {
+        const auto bytes = (sums[0] + 7U) / 8U;
+        segment_lengths[segment] = (bytes + 3U) & ~3U;
+    }
+}
+
+// Purpose: Pack fixed-size byte segments with SuperZip's static GPU prefix code.
+// Inputs: `input` is a device chunk, `segment_offsets` contains 4-byte-aligned output offsets, and `encoded` is zeroed
+// output storage. Outputs: Writes the prefix bitstream for each segment independently.
+__global__ void prefix_pack_segments_kernel(const std::byte* input, std::size_t block_start, std::size_t block_len,
+                                            const std::uint32_t* segment_offsets, std::byte* encoded,
+                                            std::uint32_t segment_count) {
+    const auto segment = static_cast<std::uint32_t>(blockIdx.x);
+    if (segment >= segment_count) {
+        return;
+    }
+    __shared__ std::uint32_t sums[kGpuPrefixSegmentThreads];
+    const auto thread_id = static_cast<std::uint32_t>(threadIdx.x);
+    std::size_t start = 0;
+    std::size_t end = 0;
+    gpu_prefix_thread_range(block_len, segment, thread_id, start, end);
+    const auto local_bits = gpu_prefix_range_bit_count(input, block_start, start, end);
+    const auto thread_bit_base = gpu_prefix_exclusive_scan(sums, local_bits);
+    if (local_bits == 0U) {
+        return;
+    }
+    unsigned int scratch[kGpuPrefixMaxThreadWords] = {};
+    auto local_bit_pos = thread_bit_base % 32U;
+    for (auto pos = start; pos < end; ++pos) {
+        std::uint32_t width = 0;
+        const auto code = gpu_prefix_code(static_cast<std::uint8_t>(input[block_start + pos]), width);
+        for (std::uint32_t bit = 0; bit < width; ++bit) {
+            if (((code >> bit) & 1U) != 0U) {
+                scratch[local_bit_pos / 32U] |= 1U << (local_bit_pos % 32U);
+            }
+            ++local_bit_pos;
+        }
+    }
+    auto* segment_words = reinterpret_cast<unsigned int*>(encoded + segment_offsets[segment]);
+    const auto word_base = thread_bit_base / 32U;
+    const auto word_count = ((thread_bit_base % 32U) + local_bits + 31U) / 32U;
+    for (std::uint32_t word = 0; word < word_count; ++word) {
+        if (scratch[word] != 0U) {
+            atomicOr(segment_words + word_base + word, scratch[word]);
+        }
+    }
+}
+
+// Purpose: Decode GPU prefix segments into the final device output buffer.
+// Inputs: `payload` is the encoded archive payload, `plans` describes each prefix segment, and `output` is decoded
+// storage. Outputs: Writes decoded bytes for every prefix segment.
+__global__ void materialize_prefix_segments_kernel(const std::byte* payload, const PrefixDecodeSegment* plans,
+                                                   std::uint32_t plan_count, std::byte* output) {
+    const auto plan_index = static_cast<std::uint32_t>(blockIdx.x);
+    if (plan_index >= plan_count) {
+        return;
+    }
+    const auto& plan = plans[plan_index];
+    const auto* table = payload + plan.table_offset;
+    const auto encoded_start = gpu_prefix_read_u32(table + (static_cast<std::size_t>(plan.segment_index) * 4U));
+    const auto encoded_end = gpu_prefix_read_u32(table + ((static_cast<std::size_t>(plan.segment_index) + 1U) * 4U));
+    if (encoded_end < encoded_start) {
+        return;
+    }
+    const auto* stream = payload + plan.bitstream_offset + encoded_start;
+    const auto limit_bits = (encoded_end - encoded_start) * 8U;
+    std::uint32_t bit_pos = 0;
+    for (std::uint32_t i = 0; i < plan.decoded_len; ++i) {
+        output[plan.output_offset + i] = gpu_prefix_decode_byte(stream, bit_pos, limit_bits);
+    }
+}
 
 // Purpose: Return the device memory needed to verify provisional encode candidates.
 // Inputs: `block_count` is the number of archive blocks and `needs_verification` selects the active path.
@@ -127,6 +363,155 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
         (void)hipFree(device_mismatches);
         throw;
     }
+}
+
+// Purpose: Append a little-endian 32-bit value to a byte vector.
+// Inputs: `output` is the destination payload and `value` is the table value.
+// Outputs: Appends four bytes.
+void append_prefix_u32(std::vector<std::byte>& output, std::uint32_t value) {
+    for (std::uint32_t shift = 0; shift < 32U; shift += 8U) {
+        output.push_back(static_cast<std::byte>((value >> shift) & 0xFFU));
+    }
+}
+
+// Purpose: Try static-prefix GPU compression for one raw archive block.
+// Inputs: `device_input` is the already-uploaded chunk, `block_start` and `block_len` select one block, and
+// `telemetry` records HIP allocations, transfers, and kernels. Outputs: Returns a compact block payload when smaller
+// than raw storage; otherwise returns empty.
+std::optional<std::vector<std::byte>> encode_prefix_block_device(const std::byte* device_input, std::size_t block_start,
+                                                                 std::size_t block_len, GpuTelemetry* telemetry) {
+    if (block_len < kGpuPrefixSegmentBytes) {
+        return std::nullopt;
+    }
+    const auto segment_count64 = (block_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    if (segment_count64 > std::numeric_limits<std::uint32_t>::max()) {
+        throw GpuError("GPU prefix segment count exceeds HIP launch limits");
+    }
+    const auto segment_count = static_cast<std::uint32_t>(segment_count64);
+    const auto segment_table_bytes =
+        checked_multiply_bytes(segment_count, sizeof(std::uint32_t), "GPU prefix segment lengths");
+    std::uint32_t* device_lengths = nullptr;
+    check_hip(hipMalloc(&device_lengths, segment_table_bytes), "hipMalloc prefix segment lengths");
+    record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(segment_table_bytes));
+    try {
+        auto length_events = make_hip_event_pair("create prefix_segment_lengths_kernel events");
+        check_hip(hipEventRecord(length_events.start, nullptr), "record prefix_segment_lengths_kernel start");
+        prefix_segment_lengths_kernel<<<segment_count, kGpuPrefixSegmentThreads>>>(device_input, block_start, block_len,
+                                                                                   device_lengths, segment_count);
+        check_hip(hipGetLastError(), "launch prefix_segment_lengths_kernel");
+        check_hip(hipEventRecord(length_events.stop, nullptr), "record prefix_segment_lengths_kernel stop");
+        finish_measured_kernel(telemetry, length_events, "synchronize prefix_segment_lengths_kernel");
+
+        std::vector<std::uint32_t> segment_lengths(segment_count);
+        check_hip(hipMemcpy(segment_lengths.data(), device_lengths, segment_table_bytes, hipMemcpyDeviceToHost),
+                  "hipMemcpy prefix segment lengths");
+        record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(segment_table_bytes));
+        check_hip(hipFree(device_lengths), "hipFree prefix segment lengths");
+        device_lengths = nullptr;
+
+        std::vector<std::uint32_t> offsets(static_cast<std::size_t>(segment_count) + 1U, 0U);
+        for (std::uint32_t i = 0; i < segment_count; ++i) {
+            if (segment_lengths[i] > std::numeric_limits<std::uint32_t>::max() - offsets[i]) {
+                throw GpuError("GPU prefix encoded block size overflows");
+            }
+            offsets[static_cast<std::size_t>(i) + 1U] = offsets[i] + segment_lengths[i];
+        }
+        const auto table_bytes = checked_multiply_bytes(offsets.size(), sizeof(std::uint32_t), "GPU prefix table");
+        const auto bitstream_bytes = static_cast<std::size_t>(offsets.back());
+        const auto payload_bytes = checked_add_bytes(table_bytes, bitstream_bytes, "GPU prefix payload");
+        if (bitstream_bytes == 0U || payload_bytes >= block_len) {
+            return std::nullopt;
+        }
+
+        std::uint32_t* device_offsets = nullptr;
+        std::byte* device_encoded = nullptr;
+        check_hip(hipMalloc(&device_offsets, table_bytes), "hipMalloc prefix segment offsets");
+        check_hip(hipMalloc(&device_encoded, bitstream_bytes), "hipMalloc prefix payload");
+        record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(table_bytes + bitstream_bytes));
+        try {
+            check_hip(hipMemcpy(device_offsets, offsets.data(), table_bytes, hipMemcpyHostToDevice),
+                      "hipMemcpy prefix segment offsets");
+            record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(table_bytes));
+            check_hip(hipMemset(device_encoded, 0, bitstream_bytes), "hipMemset prefix payload");
+
+            auto pack_events = make_hip_event_pair("create prefix_pack_segments_kernel events");
+            check_hip(hipEventRecord(pack_events.start, nullptr), "record prefix_pack_segments_kernel start");
+            prefix_pack_segments_kernel<<<segment_count, kGpuPrefixSegmentThreads>>>(
+                device_input, block_start, block_len, device_offsets, device_encoded, segment_count);
+            check_hip(hipGetLastError(), "launch prefix_pack_segments_kernel");
+            check_hip(hipEventRecord(pack_events.stop, nullptr), "record prefix_pack_segments_kernel stop");
+            finish_measured_kernel(telemetry, pack_events, "synchronize prefix_pack_segments_kernel");
+
+            std::vector<std::byte> bitstream(bitstream_bytes);
+            check_hip(hipMemcpy(bitstream.data(), device_encoded, bitstream_bytes, hipMemcpyDeviceToHost),
+                      "hipMemcpy prefix payload");
+            record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(bitstream_bytes));
+            check_hip(hipFree(device_offsets), "hipFree prefix segment offsets");
+            device_offsets = nullptr;
+            check_hip(hipFree(device_encoded), "hipFree prefix payload");
+            device_encoded = nullptr;
+
+            std::vector<std::byte> payload;
+            payload.reserve(payload_bytes);
+            for (const auto offset : offsets) {
+                append_prefix_u32(payload, offset);
+            }
+            payload.insert(payload.end(), bitstream.begin(), bitstream.end());
+            return payload;
+        } catch (...) {
+            (void)hipFree(device_offsets);
+            (void)hipFree(device_encoded);
+            throw;
+        }
+    } catch (...) {
+        (void)hipFree(device_lengths);
+        throw;
+    }
+}
+
+// Purpose: Replace all-raw HIP chunks with smaller GPU prefix blocks where the static codec is effective.
+// Inputs: `device_input`, `input`, `block_size`, and `block_count` describe one uploaded archive chunk.
+// Outputs: Returns a new encoded chunk when at least one block is prefix-compressed; otherwise returns empty.
+std::optional<EncodedChunk> encode_all_raw_prefix_chunk_device(const std::byte* device_input,
+                                                               std::span<const std::byte> input,
+                                                               std::uint32_t block_size, std::uint32_t block_count,
+                                                               GpuTelemetry* telemetry) {
+    EncodedChunk out;
+    out.blocks.reserve(block_count);
+    std::uint64_t payload_offset = 0;
+    std::uint64_t prefix_blocks = 0;
+    for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
+        const auto start = static_cast<std::size_t>(block_index) * block_size;
+        const auto len = std::min<std::size_t>(block_size, input.size() - start);
+        auto prefix_payload = encode_prefix_block_device(device_input, start, len, telemetry);
+        if (prefix_payload) {
+            if (prefix_payload->size() > std::numeric_limits<std::uint32_t>::max()) {
+                throw GpuError("GPU prefix block exceeds block metadata limit");
+            }
+            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::GpuPrefix,
+                                                 .fill_value = 0,
+                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
+                                                 .encoded_offset = payload_offset,
+                                                 .encoded_len = static_cast<std::uint32_t>(prefix_payload->size())});
+            out.payload.insert(out.payload.end(), prefix_payload->begin(), prefix_payload->end());
+            payload_offset += prefix_payload->size();
+            ++prefix_blocks;
+        } else {
+            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Raw,
+                                                 .fill_value = 0,
+                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
+                                                 .encoded_offset = payload_offset,
+                                                 .encoded_len = static_cast<std::uint32_t>(len)});
+            out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(start),
+                               input.begin() + static_cast<std::ptrdiff_t>(start + len));
+            payload_offset += len;
+        }
+    }
+    if (prefix_blocks == 0U) {
+        return std::nullopt;
+    }
+    record_gpu_prefix_blocks(telemetry, prefix_blocks);
+    return out;
 }
 
 // Purpose: Convert verified encode candidates into SUZIP block descriptors.
@@ -556,6 +941,74 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     }
 }
 
+// Purpose: Build GPU decode plans for every prefix-coded segment in one decoded chunk.
+// Inputs: `host_blocks` is the validated device-block table with decoded output offsets.
+// Outputs: Returns one decode plan per 4 KiB prefix segment.
+std::vector<PrefixDecodeSegment> build_prefix_decode_segments(std::span<const DeviceBlock> host_blocks) {
+    std::vector<PrefixDecodeSegment> plans;
+    for (const auto& block : host_blocks) {
+        if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuPrefix)) {
+            continue;
+        }
+        const auto segment_count = (block.uncompressed_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+        const auto table_bytes = static_cast<std::uint64_t>(segment_count + 1U) * sizeof(std::uint32_t);
+        plans.reserve(plans.size() + segment_count);
+        for (std::uint32_t segment = 0; segment < segment_count; ++segment) {
+            const auto decoded_offset = static_cast<std::uint64_t>(segment) * kGpuPrefixSegmentBytes;
+            const auto remaining = block.uncompressed_len - static_cast<std::uint32_t>(decoded_offset);
+            plans.push_back(PrefixDecodeSegment{
+                .table_offset = block.encoded_offset,
+                .bitstream_offset = block.encoded_offset + table_bytes,
+                .output_offset = block.output_offset + decoded_offset,
+                .segment_index = segment,
+                .decoded_len = std::min<std::uint32_t>(kGpuPrefixSegmentBytes, remaining),
+            });
+        }
+    }
+    return plans;
+}
+
+// Purpose: Identify native GPU prefix blocks in a decoded block table.
+// Inputs: `block` is one parsed SUZIP block descriptor.
+// Outputs: Returns true when the descriptor uses the GPU static-prefix encoding.
+bool is_gpu_prefix_block(const BlockDescriptor& block) {
+    return block.kind == BlockKind::GpuPrefix;
+}
+
+// Purpose: Launch GPU prefix materialization for the prefix-coded portions of one decoded chunk.
+// Inputs: `device_payload`, `device_output`, and `plans` describe already validated prefix segments.
+// Outputs: Writes decoded prefix bytes into `device_output`; throws on HIP errors.
+void materialize_prefix_segments_device(const std::byte* device_payload, std::byte* device_output,
+                                        std::span<const PrefixDecodeSegment> plans, GpuTelemetry* telemetry) {
+    if (plans.empty()) {
+        return;
+    }
+    if (plans.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw GpuError("GPU prefix decode segment count exceeds HIP launch limits");
+    }
+    const auto plan_bytes = checked_multiply_bytes(plans.size(), sizeof(PrefixDecodeSegment), "prefix decode plans");
+    PrefixDecodeSegment* device_plans = nullptr;
+    check_hip(hipMalloc(&device_plans, plan_bytes), "hipMalloc prefix decode plans");
+    record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
+    try {
+        check_hip(hipMemcpy(device_plans, plans.data(), plan_bytes, hipMemcpyHostToDevice),
+                  "hipMemcpy prefix decode plans");
+        record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
+        auto events = make_hip_event_pair("create materialize_prefix_segments_kernel events");
+        check_hip(hipEventRecord(events.start, nullptr), "record materialize_prefix_segments_kernel start");
+        materialize_prefix_segments_kernel<<<static_cast<unsigned int>(plans.size()), 1>>>(
+            device_payload, device_plans, static_cast<std::uint32_t>(plans.size()), device_output);
+        check_hip(hipGetLastError(), "launch materialize_prefix_segments_kernel");
+        check_hip(hipEventRecord(events.stop, nullptr), "record materialize_prefix_segments_kernel stop");
+        finish_measured_kernel(telemetry, events, "synchronize materialize_prefix_segments_kernel");
+        check_hip(hipFree(device_plans), "hipFree prefix decode plans");
+        device_plans = nullptr;
+    } catch (...) {
+        (void)hipFree(device_plans);
+        throw;
+    }
+}
+
 }  // namespace
 
 // Purpose: Run a HIP-only workload that proves the AMD GPU can execute sustained kernels.
@@ -692,6 +1145,13 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
         if (all_raw) {
+            if (auto prefix_encoded =
+                    encode_all_raw_prefix_chunk_device(device_input, input, block_size, block_count, telemetry)) {
+                prefix_encoded->source_crc32 = source_crc32;
+                prefix_encoded->source_crc32_available = true;
+                check_hip(hipFree(device_input), "hipFree input");
+                return std::move(*prefix_encoded);
+            }
             if (owned_input != nullptr) {
                 out.payload = std::move(*owned_input);
             } else {
@@ -760,6 +1220,7 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
         });
         output_offset += block.uncompressed_len;
     }
+    const auto prefix_plans = build_prefix_decode_segments(host_blocks);
 
     std::byte* device_payload = nullptr;
     std::byte* device_output = nullptr;
@@ -798,6 +1259,7 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
         check_hip(hipGetLastError(), "launch materialize_segments_kernel");
         check_hip(hipEventRecord(events.stop, nullptr), "record materialize_segments_kernel stop");
         finish_measured_kernel(telemetry, events, "synchronize materialize_segments_kernel");
+        materialize_prefix_segments_device(device_payload, device_output, prefix_plans, telemetry);
         check_hip(hipMemcpy(output.data(), device_output, output.size(), hipMemcpyDeviceToHost), "hipMemcpy output");
         record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(output.size()));
         check_hip(hipFree(device_payload), "hipFree payload");
@@ -828,13 +1290,20 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
         }
     }
     auto* telemetry = options.telemetry.get();
-    record_gpu_decode_chunk(telemetry);
     const auto info = query_hip_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
     }
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
+
+    if (std::ranges::any_of(blocks, is_gpu_prefix_block)) {
+        std::vector<std::byte> decoded(static_cast<std::size_t>(output_size));
+        decode_chunk_hip(payload, blocks, decoded, options);
+        return crc32(std::span<const std::byte>(decoded.data(), decoded.size()));
+    }
+
+    record_gpu_decode_chunk(telemetry);
 
     if (decoded_crc_uses_contiguous_raw_payload(payload, blocks, output_size)) {
         std::byte* device_payload = nullptr;

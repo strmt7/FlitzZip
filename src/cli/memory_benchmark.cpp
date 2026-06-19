@@ -200,6 +200,33 @@ std::uint8_t randomish_benchmark_byte(std::uint64_t index) {
     return static_cast<std::uint8_t>(value >> 56U);
 }
 
+// Purpose: Generate a deterministic low-entropy byte that is not a fill or periodic pattern.
+// Inputs: `index` is the zero-based virtual byte offset inside the low-entropy region.
+// Outputs: Returns one reproducible byte from a biased distribution similar to already-compressed scientific chunks.
+std::uint8_t low_entropy_benchmark_byte(std::uint64_t index) {
+    const auto bucket = static_cast<std::uint32_t>((static_cast<std::uint64_t>(randomish_benchmark_byte(index)) << 2U) |
+                                                   (randomish_benchmark_byte(index + 0xA5A5A5A5ULL) & 0x03U));
+    if (bucket < 180U) {
+        return 1U;
+    }
+    if (bucket < 330U) {
+        return 0U;
+    }
+    if (bucket < 450U) {
+        return 2U;
+    }
+    if (bucket < 520U) {
+        return 3U;
+    }
+    if (bucket < 720U) {
+        return static_cast<std::uint8_t>(4U + (bucket % 16U));
+    }
+    if (bucket < 900U) {
+        return static_cast<std::uint8_t>(20U + (bucket % 64U));
+    }
+    return static_cast<std::uint8_t>(84U + (bucket % 172U));
+}
+
 // Purpose: Fill a benchmark chunk with deterministic compressible or incompressible data.
 // Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,
 // and `profile` selects data shape.
@@ -208,12 +235,15 @@ void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t g
                                  const std::string& profile) {
     std::uint64_t zero_limit = 0;
     std::uint64_t text_limit = 0;
+    std::uint64_t low_entropy_limit = 0;
     if (profile == "Compressible") {
         zero_limit = total_bytes / 10U;
         text_limit = zero_limit + ((total_bytes / 10U) * 8U);
+        low_entropy_limit = text_limit;
     } else if (profile == "Mixed") {
         zero_limit = total_bytes / 4U;
         text_limit = zero_limit + (total_bytes / 4U);
+        low_entropy_limit = text_limit + (total_bytes / 4U);
     } else if (profile != "Incompressible") {
         throw superzip::ArchiveError("unknown memory benchmark profile: " + profile);
     }
@@ -227,6 +257,8 @@ void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t g
             buffer[i] = std::byte{0};
         } else if (pos < text_limit) {
             buffer[i] = static_cast<std::byte>(text[pos % text_len]);
+        } else if (pos < low_entropy_limit) {
+            buffer[i] = static_cast<std::byte>(low_entropy_benchmark_byte(pos - text_limit));
         } else {
             buffer[i] = static_cast<std::byte>(randomish_benchmark_byte(pos));
         }
@@ -457,7 +489,9 @@ void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
               << " gpu_encode_chunks=" << candidate.gpu.stats.gpu_runtime.encode_chunks
               << " gpu_decode_chunks=" << candidate.gpu.stats.gpu_runtime.decode_chunks
               << " gpu_kernel_launches=" << candidate.gpu.stats.gpu_runtime.kernel_launches
-              << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms << " memory_only=true"
+              << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms
+              << " gpu_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.pattern_blocks
+              << " gpu_prefix_blocks=" << candidate.gpu.stats.gpu_runtime.prefix_blocks << " memory_only=true"
               << " disk_write_bytes=0"
               << "\n";
 }
@@ -493,6 +527,9 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 
 }  // namespace
 
+// Purpose: Print one machine-readable memory benchmark result line.
+// Inputs: `result` contains operation statistics, benchmark settings, and RAM-only proof fields.
+// Outputs: Writes the result fields to stdout without mutating benchmark state.
 void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
     const auto& stats = result.stats;
     std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
@@ -506,7 +543,8 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
               << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
               << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
-              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks << " seconds=" << stats.seconds
+              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
+              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
               << " extract_seconds=" << result.extract_seconds
@@ -591,6 +629,9 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     return result;
 }
 
+// Purpose: Execute the RAM-only CPU/GPU benchmark suite and print parseable recommendation lines.
+// Inputs: `options` selects profile, compression level, block-size sweep, and tuning mode.
+// Outputs: Writes `suite_case` and `suite_recommendation` lines to stdout; throws on benchmark failures.
 void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
     std::vector<std::uint32_t> block_sizes;
     if (options.tune) {
@@ -619,7 +660,9 @@ void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
               << " compression_level=" << recommendation.compression_level
               << " block_size_kib=" << (recommendation.block_size / 1024U) << " gpu_score=" << recommendation.gpu_score
               << " speedup_vs_cpu=" << recommendation.speedup
-              << " compression_ratio=" << recommendation.compression_ratio << " memory_only=true"
+              << " compression_ratio=" << recommendation.compression_ratio
+              << " gpu_pattern_blocks=" << recommendation.gpu.stats.gpu_runtime.pattern_blocks
+              << " gpu_prefix_blocks=" << recommendation.gpu.stats.gpu_runtime.prefix_blocks << " memory_only=true"
               << " disk_write_bytes=0"
               << "\n";
 }

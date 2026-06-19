@@ -109,7 +109,8 @@ void print_stats(const superzip::OperationStats& stats) {
               << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
               << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
               << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
-              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks << " seconds=" << stats.seconds
+              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
+              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes) << "\n";
 }

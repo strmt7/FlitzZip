@@ -84,11 +84,11 @@ function ConvertTo-WindowsArgument {
 # Purpose: Assert that one required-GPU operation submitted AMD HIP work.
 # Inputs: `Stats` is a parsed CLI statistics dictionary and `Label` identifies the operation.
 # Outputs: Throws if counters suggest CPU fallback, missing telemetry, or no HIP execution.
-function Assert-GpuProofStats {
+function Assert-GpuProofStat {
     param(
         [Parameter(Mandatory = $true)]$Stats,
         [Parameter(Mandatory = $true)][string]$Label,
-        [bool]$RequirePatternBlocks = $false
+        [bool]$RequireNativeCompressedBlocks = $false
     )
     if ($Stats["gpu_used"] -ne "true") {
         throw "$Label did not report gpu_used=true."
@@ -98,8 +98,11 @@ function Assert-GpuProofStats {
             throw "$Label reported non-positive $key."
         }
     }
-    if ($RequirePatternBlocks -and (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_pattern_blocks") -le 0) {
-        throw "$Label reported no GPU-compressed pattern blocks."
+    $nativeCompressedBlocks =
+        (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_pattern_blocks") +
+        (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_prefix_blocks")
+    if ($RequireNativeCompressedBlocks -and $nativeCompressedBlocks -le 0) {
+        throw "$Label reported no GPU-compressed native blocks."
     }
 }
 
@@ -112,7 +115,7 @@ function Invoke-StatsCommand {
     if ($LASTEXITCODE -ne 0) {
         throw "superzip_cli failed with exit code $LASTEXITCODE while running: $($Arguments -join ' ')"
     }
-    $output | Write-Host
+    $output | ForEach-Object { Write-Information -MessageData $_ -InformationAction Continue }
     $statsLine = $output | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
     return ConvertFrom-StatsLine -Line $statsLine
 }
@@ -171,7 +174,7 @@ function Write-ProofFile {
     }
 }
 
-& $cli dependency-check | Write-Host
+& $cli dependency-check | ForEach-Object { Write-Information -MessageData $_ -InformationAction Continue }
 if ($LASTEXITCODE -ne 0) {
     throw "GPU proof requires a HIP build with an available AMD GPU."
 }
@@ -199,10 +202,10 @@ try {
     $verify = Invoke-StatsCommand -Arguments @("verify", "--require-gpu", "--workers", "16", $archive)
     $extract = Invoke-StatsCommand -Arguments @("extract", "--format", "suzip", "--require-gpu", "--workers", "16", "--overwrite", "--output", $outRoot, $archive)
 
-    Assert-GpuProofStats -Stats $compress -Label "compress" -RequirePatternBlocks $true
-    Assert-GpuProofStats -Stats $compressVerified -Label "compress --verify-after-write" -RequirePatternBlocks $true
-    Assert-GpuProofStats -Stats $verify -Label "verify"
-    Assert-GpuProofStats -Stats $extract -Label "extract"
+    Assert-GpuProofStat -Stats $compress -Label "compress" -RequireNativeCompressedBlocks $true
+    Assert-GpuProofStat -Stats $compressVerified -Label "compress --verify-after-write" -RequireNativeCompressedBlocks $true
+    Assert-GpuProofStat -Stats $verify -Label "verify"
+    Assert-GpuProofStat -Stats $extract -Label "extract"
     if ((Get-RequiredStatsNumber -Stats $compress -Key "output_bytes") -ge (Get-RequiredStatsNumber -Stats $compress -Key "input_bytes")) {
         throw "required-GPU compression did not reduce the proof workload size."
     }
@@ -223,7 +226,7 @@ try {
             throw "Restored file hash mismatch: $relative"
         }
     }
-    Write-Host "GPU proof passed: required-GPU commands submitted AMD HIP kernels and restored data correctly."
+    Write-Information -MessageData "GPU proof passed: required-GPU commands submitted AMD HIP kernels and restored data correctly." -InformationAction Continue
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

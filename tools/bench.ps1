@@ -345,7 +345,7 @@ function Assert-GpuBackendStat {
     param(
         [Parameter(Mandatory = $true)]$Stats,
         [Parameter(Mandatory = $true)][string]$Label,
-        [bool]$RequirePatternBlocks = $false
+        [bool]$RequireNativeCompressedBlocks = $false
     )
     if ($Stats["gpu_used"] -ne "true") {
         throw "$Label did not report gpu_used=true in the required-GPU lane."
@@ -366,8 +366,11 @@ function Assert-GpuBackendStat {
     if ($null -eq $allocBytes -or $allocBytes -le 0) {
         throw "$Label reported no AMD HIP device allocation bytes in the required-GPU lane."
     }
-    if ($RequirePatternBlocks -and (Get-StatsNumber -Stats $Stats -Key "gpu_pattern_blocks") -le 0) {
-        throw "$Label reported no GPU-compressed pattern blocks in the required-GPU lane."
+    $nativeCompressedBlocks =
+        (Get-StatsNumber -Stats $Stats -Key "gpu_pattern_blocks") +
+        (Get-StatsNumber -Stats $Stats -Key "gpu_prefix_blocks")
+    if ($RequireNativeCompressedBlocks -and $nativeCompressedBlocks -le 0) {
+        throw "$Label reported no GPU-compressed native blocks in the required-GPU lane."
     }
 }
 
@@ -651,7 +654,7 @@ function Invoke-BenchmarkLane {
             }
         }
         if ($ModeFlag -eq "--require-gpu") {
-            Assert-GpuBackendStat -Stats $compress -Label "$Lane compress" -RequirePatternBlocks ($WorkloadProfile -ne "Incompressible")
+            Assert-GpuBackendStat -Stats $compress -Label "$Lane compress" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
             Assert-GpuBackendStat -Stats $verify -Label "$Lane verify"
             Assert-GpuBackendStat -Stats $extract -Label "$Lane extract"
             if ((Get-StatsNumber -Stats $verify -Key "gpu_d2h_bytes") -le 0) {
@@ -694,6 +697,7 @@ function Invoke-BenchmarkLane {
             GpuKernelLaunches = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_kernel_launches" })
             GpuKernelMs = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_kernel_ms" })
             GpuPatternBlocks = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_pattern_blocks" })
+            GpuPrefixBlocks = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_prefix_blocks" })
             GpuH2DMiB = (Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_h2d_bytes" })) / 1MB
             GpuD2HMiB = (Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_d2h_bytes" })) / 1MB
             GpuAllocMiB = (Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_device_allocation_bytes" })) / 1MB
@@ -735,7 +739,7 @@ function Invoke-MemoryBenchmarkLane {
         throw "$Lane memory benchmark reported disk_write_bytes=$($stats["disk_write_bytes"])."
     }
     if ($ModeFlag -eq "--require-gpu") {
-        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequirePatternBlocks ($WorkloadProfile -ne "Incompressible")
+        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
     }
 
     return [pscustomobject]@{
@@ -771,6 +775,7 @@ function Invoke-MemoryBenchmarkLane {
         GpuKernelLaunches = Get-StatsNumber -Stats $stats -Key "gpu_kernel_launches"
         GpuKernelMs = Get-StatsNumber -Stats $stats -Key "gpu_kernel_ms"
         GpuPatternBlocks = Get-StatsNumber -Stats $stats -Key "gpu_pattern_blocks"
+        GpuPrefixBlocks = Get-StatsNumber -Stats $stats -Key "gpu_prefix_blocks"
         GpuH2DMiB = (Get-StatsNumber -Stats $stats -Key "gpu_h2d_bytes") / 1MB
         GpuD2HMiB = (Get-StatsNumber -Stats $stats -Key "gpu_d2h_bytes") / 1MB
         GpuAllocMiB = (Get-StatsNumber -Stats $stats -Key "gpu_device_allocation_bytes") / 1MB
@@ -843,6 +848,7 @@ if ($Mode -eq "Memory") {
             GpuKernelMs = $gpuKernelMs
             GpuKernelDutyPct = $gpuKernelDutyPct
             GpuPatternBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPatternBlocks })
+            GpuPrefixBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPrefixBlocks })
             GpuH2DMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuH2DMiB })
             GpuD2HMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuD2HMiB })
             GpuAllocMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuAllocMiB })
@@ -867,7 +873,7 @@ if ($Mode -eq "Memory") {
     Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
+        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuPrefixBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 320 |
         Write-BenchmarkMessage
@@ -961,6 +967,7 @@ try {
             GpuKernelMs = $gpuKernelMs
             GpuKernelDutyPct = $gpuKernelDutyPct
             GpuPatternBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPatternBlocks })
+            GpuPrefixBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPrefixBlocks })
             GpuH2DMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuH2DMiB })
             GpuD2HMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuD2HMiB })
             GpuAllocMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuAllocMiB })
@@ -986,7 +993,7 @@ try {
     Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
+        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuPrefixBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 220 |
         Write-BenchmarkMessage

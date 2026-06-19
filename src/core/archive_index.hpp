@@ -12,9 +12,10 @@
 
 namespace superzip {
 
-constexpr std::uint32_t kSuperZipMagic = 0x505A5553;  // SUZP
+constexpr std::uint32_t kSuperZipMagic = 0x505A5553;        // SUZP
 constexpr std::uint32_t kSuperZipFooterMagic = 0x465A5553;  // SUZF
-constexpr std::uint32_t kSuperZipVersion = 1;
+constexpr std::uint32_t kSuperZipMinReadableVersion = 1;
+constexpr std::uint32_t kSuperZipVersion = 2;
 
 struct ArchiveEntry {
     std::string path;
@@ -33,13 +34,14 @@ struct ArchiveIndex {
 };
 
 // Purpose: Serialize the archive index and footer to an output stream.
-// Inputs: `output` must be an open binary stream positioned after payload data; `index` contains validated entry metadata and block descriptors.
-// Outputs: Writes bytes to `output`; throws `ArchiveError` when stream writes fail.
+// Inputs: `output` must be an open binary stream positioned after payload data; `index` contains validated entry
+// metadata and block descriptors. Outputs: Writes bytes to `output`; throws `ArchiveError` when stream writes fail.
 void write_archive_index(std::ostream& output, const ArchiveIndex& index);
 
 // Purpose: Read and validate the SuperZip archive index and footer from an input stream.
 // Inputs: `input` must be an open binary stream positioned anywhere in the archive.
-// Outputs: Returns a validated `ArchiveIndex`; throws `ArchiveError` on bad magic, version, truncation, or inconsistent metadata.
+// Outputs: Returns a validated `ArchiveIndex`; throws `ArchiveError` on bad magic, version, truncation, or inconsistent
+// metadata.
 ArchiveIndex read_archive_index(std::istream& input);
 
 // Purpose: Write a little-endian unsigned 16-bit integer to a binary stream.

@@ -79,6 +79,7 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
     merge_gpu_counter(target->d2h_bytes, source.d2h_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->kernel_microseconds, source.kernel_microseconds.load(std::memory_order_relaxed));
 }
 
@@ -149,6 +150,7 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         .d2h_bytes = telemetry.d2h_bytes.load(std::memory_order_relaxed),
         .device_allocation_bytes = telemetry.device_allocation_bytes.load(std::memory_order_relaxed),
         .pattern_blocks = telemetry.pattern_blocks.load(std::memory_order_relaxed),
+        .prefix_blocks = telemetry.prefix_blocks.load(std::memory_order_relaxed),
         .kernel_ms = static_cast<double>(telemetry.kernel_microseconds.load(std::memory_order_relaxed)) / 1000.0,
     };
 }
@@ -186,6 +188,15 @@ void record_gpu_device_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t b
 void record_gpu_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
     if (telemetry) {
         telemetry->pattern_blocks.fetch_add(count, std::memory_order_relaxed);
+    }
+}
+
+// Purpose: Add GPU static-prefix block count telemetry for one archive operation.
+// Inputs: `telemetry` may be null and `count` is the number of prefix-compressed blocks emitted.
+// Outputs: Atomically updates telemetry when present.
+void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
+    if (telemetry) {
+        telemetry->prefix_blocks.fetch_add(count, std::memory_order_relaxed);
     }
 }
 

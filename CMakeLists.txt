@@ -409,7 +409,11 @@ if(SUPERZIP_ENABLE_HIP)
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec.hip.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
     COMMENT "Compiling AMD HIP codec object"
     VERBATIM)

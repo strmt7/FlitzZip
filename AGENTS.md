@@ -69,7 +69,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Before changing the native `.suzip` format, extension handling, or format
   detection, read `docs/native-suzip-format.md`. `.suzip` is a native versioned
   archive format with SUZIP footer/index magic and AMD HIP block semantics, not
-  a cosmetic ZIP extension.
+  a cosmetic ZIP extension. Version 2 required-HIP archives may use GPU
+  static-prefix blocks; do not replace them with CPU-deflate fallback or present
+  GPU CRC/classification work as evidence of general GPU entropy compression.
 - Before adding product behavior learned from a mature archive tool, read
   `docs/product-behavior-audit.md`. Capture logic only; do not record external
   product names or copy another product's UI/help text into this repository.
@@ -267,6 +269,9 @@ development, CPU/GPU benchmarking must stay RAM-only to avoid unnecessary SSD
 wear. Do not run multi-GB generated filesystem benchmarks. The only normal
 storage validation is `tools\storage_smoke.ps1` or `tools\bench.ps1 -Mode
 Filesystem` with a bounded smoke payload of at most 64 MiB.
+The Mixed profile must continue to include a low-entropy non-pattern region so
+required-HIP compression regressions are visible without writing large
+workloads to storage.
 
 Parser fuzzing is automatic in GitHub Actions. Local sanitizer fuzzing requires
 Docker and uses ClusterFuzzLite's Clang/libFuzzer toolchain:

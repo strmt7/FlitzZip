@@ -91,7 +91,8 @@ struct ArchiveValidationSummary {
 // Inputs: `kind` is a native SUZIP block encoding kind.
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
 bool block_has_payload(BlockKind kind) {
-    return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern;
+    return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
+           kind == BlockKind::GpuPrefix;
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -313,7 +314,7 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
         throw ArchiveError("archive footer is missing");
     }
     const auto version = read_u32(input);
-    if (version != kSuperZipVersion) {
+    if (version < kSuperZipMinReadableVersion || version > kSuperZipVersion) {
         throw ArchiveError("unsupported archive footer version");
     }
     const auto index_offset = read_u64(input);
@@ -539,6 +540,7 @@ GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuR
                                                    "GPU allocation byte counter overflows"),
         .pattern_blocks =
             checked_add_u64(lhs.pattern_blocks, rhs.pattern_blocks, "GPU pattern block counter overflows"),
+        .prefix_blocks = checked_add_u64(lhs.prefix_blocks, rhs.prefix_blocks, "GPU prefix block counter overflows"),
         .kernel_ms = lhs.kernel_ms + rhs.kernel_ms,
     };
 }
@@ -552,6 +554,15 @@ std::uint64_t sum_block_sizes(const std::vector<BlockDescriptor>& blocks) {
         total = checked_add_u64(total, block.uncompressed_len, "entry block sizes overflow");
     }
     return total;
+}
+
+// Purpose: Return the serialized byte count of a GPU prefix block's per-segment offset table.
+// Inputs: `decoded_len` is the block's uncompressed byte length.
+// Outputs: Returns the required table bytes; throws before overflow.
+std::uint64_t gpu_prefix_table_bytes(std::uint32_t decoded_len) {
+    const auto segment_count =
+        (static_cast<std::uint64_t>(decoded_len) + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    return checked_add_u64(segment_count, 1U, "GPU prefix segment count overflows") * sizeof(std::uint32_t);
 }
 
 // Purpose: Validate archive entry metadata before decoding or extraction.
@@ -569,7 +580,7 @@ void validate_entry_metadata(const ArchiveEntry& entry) {
     for (std::size_t i = 0; i < entry.blocks.size(); ++i) {
         const auto& block = entry.blocks[i];
         if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
-            block.kind != BlockKind::Pattern) {
+            block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix) {
             throw ArchiveError("archive block has unknown encoding kind");
         }
         if (block.uncompressed_len == 0) {
@@ -611,6 +622,17 @@ void validate_entry_metadata(const ArchiveEntry& entry) {
             }
             raw_payload_cursor =
                 checked_add_u64(raw_payload_cursor, block.encoded_len, "GPU pattern block payload size overflows");
+        }
+        if (block.kind == BlockKind::GpuPrefix) {
+            const auto table_bytes = gpu_prefix_table_bytes(block.uncompressed_len);
+            if (block.encoded_len <= table_bytes || block.encoded_len >= block.uncompressed_len) {
+                throw ArchiveError("GPU prefix block metadata is invalid");
+            }
+            if (block.encoded_offset != raw_payload_cursor) {
+                throw ArchiveError("GPU prefix block payload is sparse or overlapping: " + entry.path);
+            }
+            raw_payload_cursor =
+                checked_add_u64(raw_payload_cursor, block.encoded_len, "GPU prefix block payload size overflows");
         }
     }
     if (sum_block_sizes(entry.blocks) != entry.uncompressed_size) {

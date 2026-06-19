@@ -27,7 +27,10 @@ mode, so the product exposes the non-store levels.
 
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
 GUI, and `tools\bench.ps1`. Benchmarks may sweep all five levels, but release
-throughput claims must identify the selected level and compression ratio.
+throughput claims must identify the selected level and compression ratio. The
+required-HIP v2 native codec can emit GPU fill, GPU pattern, and GPU
+static-prefix blocks; the static-prefix path is selected by measured block
+savings rather than by pretending to be Deflate or Zstandard.
 
 ## Benchmark Score
 
@@ -72,6 +75,12 @@ recommendation refuses candidates whose compression ratio is more than 2%
 worse than the balanced level-5 default candidate. That prevents the autotuner
 from simply selecting weaker compression to inflate speed.
 
+The Mixed benchmark profile must include fill-like bytes, repeated text,
+low-entropy non-pattern bytes, and incompressible bytes. The low-entropy region
+is required because real chunked scientific data can already be filtered or
+compressed before archiving; a benchmark made only of zero/text/random regions
+would not detect required-HIP codecs that fail to compact those streams.
+
 ## Required Evidence
 
 Every benchmark-suite or release benchmark record must include:
@@ -82,6 +91,9 @@ Every benchmark-suite or release benchmark record must include:
 - `memory_only=true` and `disk_write_bytes=0`.
 - Required-GPU proof: nonzero HIP kernel launches, HIP event time,
   host-to-device transfer bytes, and device allocation bytes.
+- Native GPU compression proof: `gpu_prefix_blocks` or `gpu_pattern_blocks`
+  must be nonzero when a benchmark claims required-HIP payload compression
+  rather than only GPU CRC/materialization work.
 - Block size and worker allocation.
 
 ## SSD-Wear Boundary

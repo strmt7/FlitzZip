@@ -142,6 +142,50 @@ inline void ensure_device_memory_budget(std::size_t required_bytes, const char* 
     }
 }
 
+// Purpose: Read one little-endian prefix-table entry from a host-side GPU-prefix payload span.
+// Inputs: `prefix_payload` is the encoded block payload and `offset` is the table byte offset.
+// Outputs: Returns the decoded offset; throws when the table is truncated.
+inline std::uint32_t read_gpu_prefix_table_u32(std::span<const std::byte> prefix_payload, std::size_t offset) {
+    if (offset > prefix_payload.size() || prefix_payload.size() - offset < sizeof(std::uint32_t)) {
+        throw ArchiveError("GPU prefix decode table is truncated");
+    }
+    std::uint32_t value = 0;
+    for (std::size_t i = 0; i < sizeof(std::uint32_t); ++i) {
+        value |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(prefix_payload[offset + i])) << (i * 8U);
+    }
+    return value;
+}
+
+// Purpose: Validate a GPU-prefix payload table before any HIP kernel reads table-controlled offsets.
+// Inputs: `payload`, `block`, and `decoded_len` describe one already bounds-checked archive block.
+// Outputs: Returns normally for a monotonic table that covers exactly the bitstream; throws on malformed metadata.
+inline void validate_gpu_prefix_payload_table(std::span<const std::byte> payload, const BlockDescriptor& block,
+                                              std::size_t decoded_len) {
+    const auto offset = static_cast<std::size_t>(block.encoded_offset);
+    const auto encoded_len = static_cast<std::size_t>(block.encoded_len);
+    const auto segment_count = (decoded_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+    if (segment_count == 0 || encoded_len <= table_bytes || encoded_len >= decoded_len) {
+        throw ArchiveError("GPU prefix decode block metadata is invalid");
+    }
+    const auto prefix_payload = payload.subspan(offset, encoded_len);
+    const auto bitstream_bytes = encoded_len - table_bytes;
+    auto previous = read_gpu_prefix_table_u32(prefix_payload, 0);
+    if (previous != 0U) {
+        throw ArchiveError("GPU prefix decode table must start at zero");
+    }
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+        const auto next = read_gpu_prefix_table_u32(prefix_payload, (segment + 1U) * sizeof(std::uint32_t));
+        if (next < previous || next > bitstream_bytes) {
+            throw ArchiveError("GPU prefix decode table is not monotonic");
+        }
+        previous = next;
+    }
+    if (previous != bitstream_bytes) {
+        throw ArchiveError("GPU prefix decode payload has trailing bytes");
+    }
+}
+
 // Purpose: Validate block layout before launching the HIP decode kernel.
 // Inputs: `payload`, `blocks`, `output`, and `block_size` are caller-provided decode spans.
 // Outputs: Returns normally for a dense fill/raw layout; throws `ArchiveError` before any kernel can read out of
@@ -196,6 +240,19 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
             if (encoded_len > payload.size() - offset) {
                 throw ArchiveError("GPU pattern decode block exceeds payload buffer");
             }
+        } else if (block.kind == BlockKind::GpuPrefix) {
+            const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+            const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+            if (block.encoded_len <= table_bytes || block.encoded_len >= block.uncompressed_len ||
+                block.encoded_offset > payload.size()) {
+                throw ArchiveError("GPU prefix decode block metadata is invalid");
+            }
+            const auto offset = static_cast<std::size_t>(block.encoded_offset);
+            const auto encoded_len = static_cast<std::size_t>(block.encoded_len);
+            if (encoded_len > payload.size() - offset) {
+                throw ArchiveError("GPU prefix decode block exceeds payload buffer");
+            }
+            validate_gpu_prefix_payload_table(payload, block, len);
         } else {
             throw ArchiveError("decode block has unknown encoding kind");
         }

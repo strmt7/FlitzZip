@@ -22,6 +22,9 @@ existing Windows-native, AMD HIP-only product boundary.
   <https://rocm.docs.amd.com/projects/rocPRIM/en/latest/device_ops/reduce.html>
 - ROCm hipCOMP-core:
   <https://github.com/ROCm/hipCOMP-core>
+- Zarr v2 storage specification, reviewed to understand chunked array
+  metadata and compressor declarations:
+  <https://zarr-specs.readthedocs.io/en/latest/v2/v2.0.html>
 - Microsoft DirectStorage GDeflate sample notes:
   <https://github.com/microsoft/DirectStorage/blob/main/GDeflate/README.md>
 - Microsoft DirectStorage GPU decompression deep dive:
@@ -113,8 +116,10 @@ benchmark proves a win.
 
 The current `.suzip` HIP path performs real AMD HIP work and is measured with
 nonzero kernel launches, HIP event time, transfer bytes, and required-GPU
-failure behavior. It is not yet a fully GPU-resident general-purpose
-compression pipeline. The remaining gaps are:
+failure behavior. Version 2 can also emit native GPU static-prefix blocks for
+low-entropy byte streams, which gives required-HIP jobs real compact
+GPU-decodable payloads without CPU Deflate fallback. It is still not a fully
+GPU-resident general-purpose compression pipeline. The remaining gaps are:
 
 - Input and output are still host-resident archive buffers around each HIP
   stage.
@@ -123,59 +128,84 @@ compression pipeline. The remaining gaps are:
 - Several helpers still allocate and free device memory per operation.
 - There is no multi-stream copy/compute overlap in the production codec path.
 - The native `.suzip` compression model is currently block classification,
-  compact fill/pattern representation, raw payloads, GPU materialization, and
-  GPU CRC. It is not a GPU DEFLATE, Zstandard, ANS, or GDeflate implementation.
+  compact fill/pattern representation, static low-entropy prefix coding, raw
+  payloads, GPU materialization, and GPU CRC. It is not a GPU DEFLATE,
+  Zstandard, ANS, LZ dictionary, or GDeflate implementation.
 
 This distinction matters. Dramatic GPU utilization gains require a larger
 codec-pipeline redesign, not only GUI polish or benchmark settings.
 
-## Implemented 2026-06-19 Optimization
+## Implemented 2026-06-19 Codec Fix
 
-The accepted code change in this iteration replaces the previous per-block HIP
-classifier kernel with a two-stage analysis path:
+The accepted code changes in this iteration fix a real ratio defect in the
+required-HIP native path while preserving the AMD-only GPU boundary:
+
+1. `.suzip` version 2 adds a native GPU static-prefix block kind for low-entropy
+   byte streams that are neither fill nor short periodic patterns.
+2. Required-HIP compression may emit raw, fill, GPU-pattern, or GPU-prefix
+   blocks, but still must not emit CPU Deflate blocks.
+3. The GPU prefix encoder uses 4 KiB independently decodable segments, computes
+   segment bit counts on HIP, packs segment bitstreams on HIP with 256 threads
+   per segment, and validates extraction through the normal archive CRC path.
+4. Verification and extraction can decode GPU-prefix blocks on HIP when
+   required-GPU mode is selected; CPU decoding remains available only for normal
+   non-required compatibility reads of native archives.
+5. The benchmark workload now includes a deterministic low-entropy non-pattern
+   region in the Mixed profile so the root failure class remains visible in
+   RAM-only CPU/GPU sweeps.
+
+The earlier classifier optimization remains in place:
 
 1. The host selects provisional raw, fill, or short-pattern candidates from a
    bounded sample of each block.
-2. HIP verifies only provisional fill/pattern candidates across 64 KiB tiles.
-3. Raw-only chunks skip the analysis kernel entirely.
-4. The obsolete one-workgroup-per-archive-block classifier kernel was removed.
+2. HIP verifies provisional fill/pattern candidates across 64 KiB tiles.
+3. Raw-only chunks skip the fill/pattern verification kernel.
 
-This directly addresses the earlier under-utilization defect where large
-archive blocks launched too little GPU work. A 16 MiB `.suzip` block now maps to
-many 64 KiB verification tiles when the block needs full verification, which is
-closer to the tiled parallelism pattern used by high-throughput GPU
-decompression systems.
+This directly addresses two defects: large archive blocks launched too little
+GPU work, and required-HIP archives had no compact representation for
+low-entropy non-pattern data.
+
+## Zarr-Style Ratio Reproduction
+
+A maintainer-provided 542.5 MiB Zarr-style directory with 1,411 regular files
+and 1,827 directories reproduced the ratio defect. The Zarr metadata declared a
+chunk compressor, so many payload chunks were low-entropy streams rather than
+plain text or fill patterns.
+
+| Path | Output bytes | Ratio | Native block evidence |
+| --- | ---: | ---: | --- |
+| Old required-HIP `.suzip` | 569,234,175 | 1.00069 | 1,412 raw blocks, no compact native blocks |
+| Fixed required-HIP `.suzip` v2 | 403,457,469 | 0.709263 | 1,400 GPU-prefix blocks, 12 raw blocks, 0 CPU Deflate blocks |
+
+The fixed archive passed required-HIP verification and required-HIP extraction.
+The extracted tree then passed a SHA-256 comparison for every restored file:
+zero mismatches and zero extra files.
 
 ## RAM-Only Benchmark Evidence
 
-All commands below used the Release build, compression level 5, a 10 GiB
-generated workload, and the default memory-only benchmark mode. Every lane
-reported `memory_only=true` and `disk_write_bytes=0`.
+The command below used the Release build, compression level 5, a 10 GiB
+generated Mixed workload, and the default memory-only benchmark mode. Every
+lane reported `memory_only=true` and `disk_write_bytes=0`.
 
 ```powershell
 tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Compressible -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Incompressible -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
-| Profile | Block size | CPU total seconds | GPU total seconds | GPU speedup | GPU ratio | GPU kernels | GPU kernel ms |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Mixed | 256 KiB | 11.18347 | 5.09647 | 2.19x | 0.500086 | 280 | 1717.16 |
-| Mixed | 1 MiB | 10.70752 | 5.09854 | 2.10x | 0.500021 | 280 | 1483.22 |
-| Mixed | 16 MiB | 10.40370 | 5.15498 | 2.02x | 0.500001 | 280 | 1674.02 |
-| Compressible | 256 KiB | 12.81949 | 4.82557 | 2.66x | 0.100275 | 312 | 1711.21 |
-| Compressible | 1 MiB | 7.67506 | 4.85892 | 1.58x | 0.100069 | 312 | 1900.10 |
-| Compressible | 16 MiB | 7.69025 | 4.86277 | 1.58x | 0.100004 | 312 | 1919.56 |
-| Incompressible | 256 KiB | 14.79763 | 5.63064 | 2.63x | 1.000000 | 240 | 1848.86 |
-| Incompressible | 1 MiB | 15.20185 | 5.59309 | 2.72x | 1.000000 | 240 | 1614.90 |
-| Incompressible | 16 MiB | 14.63231 | 5.66550 | 2.58x | 1.000000 | 240 | 1639.78 |
+| Block size | CPU total seconds | GPU total seconds | GPU speedup | CPU ratio | GPU ratio | GPU kernels | GPU kernel ms | GPU pattern blocks | GPU prefix blocks |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 256 KiB | 17.63206 | 14.22199 | 1.24x | 0.439201 | 0.425743 | 31,040 | 3668.58 | 10,240 | 10,240 |
+| 512 KiB | 15.08117 | 10.72676 | 1.41x | 0.439115 | 0.425698 | 15,680 | 3196.23 | 5,120 | 5,120 |
+| 1 MiB | 14.97491 | 9.50097 | 1.58x | 0.439084 | 0.425676 | 8,000 | 3059.16 | 2,560 | 2,560 |
+| 2 MiB | 14.89909 | 8.85762 | 1.68x | 0.439069 | 0.425665 | 4,160 | 3008.47 | 1,280 | 1,280 |
+| 4 MiB | 14.94820 | 8.41256 | 1.78x | 0.439061 | 0.425659 | 2,240 | 2975.87 | 640 | 640 |
+| 8 MiB | 14.95788 | 8.45319 | 1.77x | 0.439058 | 0.425656 | 1,280 | 3035.12 | 320 | 320 |
+| 16 MiB | 14.72284 | 8.29575 | 1.77x | 0.439056 | 0.425655 | 800 | 2882.01 | 160 | 160 |
 
-The built-in tuner selected 1 MiB for the Mixed profile:
+The built-in tuner selected 16 MiB for the revised Mixed profile:
 
-| Compression level | Block size | GPU score | Speedup vs CPU | Ratio | Memory only | Disk writes |
-| ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| 5 | 1 MiB | 67481 | 2.17737x | 0.500021 | true | 0 |
+| Compression level | Block size | GPU score | Speedup vs CPU | Ratio | GPU pattern blocks | GPU prefix blocks | Memory only | Disk writes |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| 5 | 16 MiB | 39114 | 1.82845x | 0.425655 | 160 | 160 | true | 0 |
 
 ## Accepted Performance Direction
 

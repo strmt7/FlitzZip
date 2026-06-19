@@ -9,6 +9,7 @@ enum class BlockKind : std::uint8_t {
     Fill = 1,
     Deflate = 2,
     Pattern = 3,
+    GpuPrefix = 4,
 };
 
 struct BlockDescriptor {

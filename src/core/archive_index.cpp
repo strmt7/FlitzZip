@@ -18,8 +18,7 @@ constexpr std::uint64_t kMinimumBlockMetadataBytes = 18U;
 // Purpose: Write an unsigned integer in little-endian byte order.
 // Inputs: `output` is an open binary stream and `value` is the integral value.
 // Outputs: Appends `sizeof(T)` bytes; throws `ArchiveError` on stream failure.
-template <typename T>
-void write_le(std::ostream& output, T value) {
+template <typename T> void write_le(std::ostream& output, T value) {
     for (std::size_t i = 0; i < sizeof(T); ++i) {
         output.put(static_cast<char>((static_cast<std::uint64_t>(value) >> (i * 8U)) & 0xFFU));
     }
@@ -31,8 +30,7 @@ void write_le(std::ostream& output, T value) {
 // Purpose: Read an unsigned integer in little-endian byte order.
 // Inputs: `input` is an open binary stream positioned at the integer.
 // Outputs: Returns the decoded value; throws `ArchiveError` on truncation.
-template <typename T>
-T read_le(std::istream& input) {
+template <typename T> T read_le(std::istream& input) {
     std::uint64_t value = 0;
     for (std::size_t i = 0; i < sizeof(T); ++i) {
         const int ch = input.get();
@@ -46,7 +44,8 @@ T read_le(std::istream& input) {
 
 // Purpose: Query the number of bytes left in a seekable metadata stream.
 // Inputs: `input` is the archive-index stream after a successful read.
-// Outputs: Returns remaining bytes when the stream is seekable; returns empty without changing caller-visible stream state otherwise.
+// Outputs: Returns remaining bytes when the stream is seekable; returns empty without changing caller-visible stream
+// state otherwise.
 std::optional<std::uint64_t> stream_bytes_remaining(std::istream& input) {
     const auto original_state = input.rdstate();
     const auto current = input.tellg();
@@ -70,13 +69,11 @@ std::optional<std::uint64_t> stream_bytes_remaining(std::istream& input) {
 }
 
 // Purpose: Reject record counts that cannot fit in the remaining metadata bytes.
-// Inputs: `input` is the seekable index stream, `count` is the declared record count, and `minimum_record_bytes` is the smallest valid encoded record.
-// Outputs: Returns normally when the count is plausible; throws `ArchiveError` before any large reserve on impossible counts.
-void reject_count_exceeding_stream(
-    std::istream& input,
-    std::uint64_t count,
-    std::uint64_t minimum_record_bytes,
-    const char* message) {
+// Inputs: `input` is the seekable index stream, `count` is the declared record count, and `minimum_record_bytes` is the
+// smallest valid encoded record. Outputs: Returns normally when the count is plausible; throws `ArchiveError` before
+// any large reserve on impossible counts.
+void reject_count_exceeding_stream(std::istream& input, std::uint64_t count, std::uint64_t minimum_record_bytes,
+                                   const char* message) {
     const auto remaining = stream_bytes_remaining(input);
     if (remaining.has_value() && count > (*remaining / minimum_record_bytes)) {
         throw ArchiveError(message);
@@ -85,7 +82,8 @@ void reject_count_exceeding_stream(
 
 // Purpose: Reject archive-index shapes that would exceed bounded parser memory.
 // Inputs: `index` is the in-memory metadata tree about to be serialized.
-// Outputs: Returns normally for bounded indexes; throws `ArchiveError` before count truncation or oversized metadata emission.
+// Outputs: Returns normally for bounded indexes; throws `ArchiveError` before count truncation or oversized metadata
+// emission.
 void reject_unbounded_index_shape(const ArchiveIndex& index) {
     if (index.entries.size() > kMaxArchiveEntries) {
         throw ArchiveError("archive entry count exceeds SuperZip resource limit");
@@ -158,6 +156,9 @@ void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
     }
 }
 
+// Purpose: Read and validate a serialized SUZIP archive index.
+// Inputs: `input` is positioned at the beginning of the serialized index.
+// Outputs: Returns parsed metadata or throws `ArchiveError` for malformed or unsupported indexes.
 ArchiveIndex read_archive_index(std::istream& input) {
     ArchiveIndex index;
     const auto magic = read_u32(input);
@@ -165,14 +166,15 @@ ArchiveIndex read_archive_index(std::istream& input) {
         throw ArchiveError("not a SuperZip archive");
     }
     const auto version = read_u32(input);
-    if (version != kSuperZipVersion) {
+    if (version < kSuperZipMinReadableVersion || version > kSuperZipVersion) {
         throw ArchiveError("unsupported SuperZip archive version");
     }
     const auto entry_count = read_u32(input);
     if (entry_count > kMaxArchiveEntries) {
         throw ArchiveError("archive entry count is unreasonable");
     }
-    reject_count_exceeding_stream(input, entry_count, kMinimumEntryMetadataBytes, "archive entry count exceeds index size");
+    reject_count_exceeding_stream(input, entry_count, kMinimumEntryMetadataBytes,
+                                  "archive entry count exceeds index size");
     index.entries.reserve(entry_count);
     std::uint64_t total_blocks = 0;
     for (std::uint32_t i = 0; i < entry_count; ++i) {
@@ -200,7 +202,8 @@ ArchiveIndex read_archive_index(std::istream& input) {
             throw ArchiveError("archive total block count is unreasonable");
         }
         total_blocks += block_count;
-        reject_count_exceeding_stream(input, block_count, kMinimumBlockMetadataBytes, "archive block count exceeds index size");
+        reject_count_exceeding_stream(input, block_count, kMinimumBlockMetadataBytes,
+                                      "archive block count exceeds index size");
         entry.blocks.reserve(block_count);
         for (std::uint32_t j = 0; j < block_count; ++j) {
             const int kind_raw = input.get();
@@ -215,6 +218,8 @@ ArchiveIndex read_archive_index(std::istream& input) {
                 kind = BlockKind::Deflate;
             } else if (kind_raw == static_cast<int>(BlockKind::Pattern)) {
                 kind = BlockKind::Pattern;
+            } else if (kind_raw == static_cast<int>(BlockKind::GpuPrefix)) {
+                kind = BlockKind::GpuPrefix;
             } else if (kind_raw != static_cast<int>(BlockKind::Raw)) {
                 throw ArchiveError("archive block has unknown encoding kind");
             }

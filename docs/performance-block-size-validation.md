@@ -11,6 +11,8 @@ CLI arguments, and archive-core resource limits.
 - Keep development benchmarks RAM-only for both lanes.
 - Exercise every production SUZIP block-size option.
 - Compare CPU and GPU at the same compression level and record compression ratio.
+- Keep the Mixed profile broad enough to include low-entropy non-pattern data,
+  not only fill, repeated text, and random bytes.
 - Preserve a tiny filesystem smoke only to prove archive write/read wiring.
 - Prevent benchmark-only behavior from diverging from production code paths.
 

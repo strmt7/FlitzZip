@@ -33,6 +33,7 @@ struct GpuRuntimeStats {
     std::uint64_t d2h_bytes = 0;
     std::uint64_t device_allocation_bytes = 0;
     std::uint64_t pattern_blocks = 0;
+    std::uint64_t prefix_blocks = 0;
     double kernel_ms = 0.0;
 };
 
@@ -44,6 +45,7 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> d2h_bytes{0};
     std::atomic<std::uint64_t> device_allocation_bytes{0};
     std::atomic<std::uint64_t> pattern_blocks{0};
+    std::atomic<std::uint64_t> prefix_blocks{0};
     std::atomic<std::uint64_t> kernel_microseconds{0};
 };
 
@@ -113,6 +115,11 @@ void record_gpu_device_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t b
 // Inputs: `telemetry` is optional operation-owned telemetry and `count` is the number of compact pattern blocks.
 // Outputs: Atomically adds the block count when telemetry is present.
 void record_gpu_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count);
+
+// Purpose: Record GPU-compressed static-prefix blocks emitted by the AMD HIP encoder.
+// Inputs: `telemetry` is optional operation-owned telemetry and `count` is the number of compact prefix blocks.
+// Outputs: Atomically adds the block count when telemetry is present.
+void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count);
 
 // Purpose: Record one AMD HIP kernel launch and its device-event elapsed time.
 // Inputs: `telemetry` is optional operation-owned telemetry and `milliseconds` is measured with HIP events.
