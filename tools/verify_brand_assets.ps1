@@ -71,6 +71,79 @@ function Assert-LogoMarkNotClipped {
     }
 }
 
+# Purpose: Return the visible stroked mark bounds inside the SVG viewBox.
+# Inputs: `Mark` is the canonical SVG mark group.
+# Outputs: Returns min/max X/Y values including stroke padding.
+function Get-LogoMarkBound {
+    param([Parameter(Mandatory = $true)]$Mark)
+
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $translation = ConvertFrom-SvgTranslate -Transform ($Mark.GetAttribute("transform"))
+    $strokePadding = [double]::Parse($Mark.GetAttribute("stroke-width"), $culture) / 2.0
+    $allNumbers = foreach ($path in @($Mark.ChildNodes | Where-Object { $_.LocalName -eq "path" })) {
+        [regex]::Matches($path.GetAttribute("d"), "[-+]?(?:\d+(?:\.\d*)?|\.\d+)") | ForEach-Object {
+            [double]::Parse($_.Value, $culture)
+        }
+    }
+    $xValues = for ($i = 0; $i -lt $allNumbers.Count; $i += 2) { $allNumbers[$i] + $translation.X }
+    $yValues = for ($i = 1; $i -lt $allNumbers.Count; $i += 2) { $allNumbers[$i] + $translation.Y }
+    return [pscustomobject]@{
+        MinX = (($xValues | Measure-Object -Minimum).Minimum - $strokePadding)
+        MaxX = (($xValues | Measure-Object -Maximum).Maximum + $strokePadding)
+        MinY = (($yValues | Measure-Object -Minimum).Minimum - $strokePadding)
+        MaxY = (($yValues | Measure-Object -Maximum).Maximum + $strokePadding)
+    }
+}
+
+# Purpose: Verify the README logo banner keeps symmetric underline and outer whitespace geometry.
+# Inputs: `Document` is the parsed SVG and `Mark` is the canonical logo mark group.
+# Outputs: Throws when the tagline underline or canvas margins drift from the approved symmetric layout.
+function Assert-LogoBannerSymmetry {
+    param(
+        [Parameter(Mandatory = $true)]$Document,
+        [Parameter(Mandatory = $true)]$Mark
+    )
+
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $viewBox = $Document.DocumentElement.GetAttribute("viewBox")
+    if ($viewBox -notmatch '^\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*$') {
+        throw "resources\brand\superzip-logo.svg must define a numeric viewBox."
+    }
+    $viewMinX = [double]::Parse($Matches[1], $culture)
+    $viewMaxX = $viewMinX + [double]::Parse($Matches[3], $culture)
+    $tagline = $Document.GetElementsByTagName("text") |
+        Where-Object { $_.InnerText -eq "ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE" } |
+        Select-Object -First 1
+    if ($null -eq $tagline) {
+        throw "Canonical SuperZip SVG tagline text was not found."
+    }
+    if ($tagline.GetAttribute("lengthAdjust") -ne "spacing" -or -not $tagline.HasAttribute("textLength")) {
+        throw "Canonical SuperZip SVG tagline must use textLength with spacing-only adjustment for deterministic symmetry."
+    }
+    $taglineX = [double]::Parse($tagline.GetAttribute("x"), $culture)
+    $taglineRight = $taglineX + [double]::Parse($tagline.GetAttribute("textLength"), $culture)
+    $rule = $Document.GetElementsByTagName("path") |
+        Where-Object { $_.GetAttribute("stroke") -eq "#ff303a" -and $_.GetAttribute("stroke-width") -eq "6" } |
+        Select-Object -First 1
+    if ($null -eq $rule -or $rule.GetAttribute("d") -notmatch '^\s*M\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s+[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s+H\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*$') {
+        throw "Canonical SuperZip SVG underline must be a simple horizontal path."
+    }
+    $lineStart = [double]::Parse($Matches[1], $culture)
+    $lineEnd = [double]::Parse($Matches[2], $culture)
+    $leftExtension = $taglineX - $lineStart
+    $rightExtension = $lineEnd - $taglineRight
+    $markBounds = Get-LogoMarkBound -Mark $Mark
+    $leftMargin = $markBounds.MinX - $viewMinX
+    $rightMargin = $viewMaxX - $lineEnd
+    $epsilon = 0.01
+    if ([Math]::Abs($leftExtension - $rightExtension) -gt $epsilon) {
+        throw "Canonical SuperZip SVG underline extensions are not symmetric."
+    }
+    if ([Math]::Abs($leftMargin - $rightMargin) -gt $epsilon) {
+        throw "Canonical SuperZip SVG outer white margins are not symmetric."
+    }
+}
+
 # Purpose: Verify AI agents did not modify the canonical logo mark artwork.
 # Inputs: `Mark` is the `superzip-logo-mark` group from the canonical SVG.
 # Outputs: Throws when mark paths, stroke style, or source-of-truth metadata change.
@@ -130,6 +203,7 @@ try {
     Assert-LogoMarkArtworkContract -Mark $mark
     Assert-LogoTextContract -Document $document
     Assert-LogoMarkNotClipped -Document $document -Mark $mark
+    Assert-LogoBannerSymmetry -Document $document -Mark $mark
 
     $generatedHeader = Join-Path $work "superzip_brand_logo.hpp"
     & (Join-Path $repo "tools\generate_brand_logo_header.ps1") -SvgPath $svg -OutputPath $generatedHeader
