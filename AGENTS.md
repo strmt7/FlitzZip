@@ -52,6 +52,12 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   `docs/performance-block-size-validation.md` and
   `docs/compression-level-and-benchmark-suite.md`, then keep the RAM-only
   benchmark gates intact.
+- Before changing GPU/UI performance architecture, GPU utilization claims, HIP
+  execution strategy, or any assertion about GPU-accelerated GUI behavior, read
+  `docs/gpu-accelerated-ui-and-codec-research.md`. GPU-rendered UI work is not
+  archive acceleration evidence; archive acceleration claims require required-HIP
+  codec telemetry and RAM-only CPU/GPU comparisons at the same compression level
+  and ratio.
 - Before changing archive-format recognition or compatibility support, read
   `docs/archive-format-support.md`. Do not add ZIP-container aliases as
   user-facing archive formats unless a maintainer explicitly requests package

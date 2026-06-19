@@ -5,10 +5,11 @@ description: Validate SuperZip CPU/GPU performance, RAM-only benchmarks, compres
 
 # SuperZip Performance Skill
 
-Read `docs/performance-block-size-validation.md` and
-`docs/compression-level-and-benchmark-suite.md` before editing performance code,
-benchmark scripts, compression-level UI, block-size UI, or benchmark
-documentation.
+Read `docs/performance-block-size-validation.md`,
+`docs/compression-level-and-benchmark-suite.md`, and
+`docs/gpu-accelerated-ui-and-codec-research.md` before editing performance
+code, benchmark scripts, compression-level UI, block-size UI, GPU/UI
+performance architecture, or benchmark documentation.
 Run `tools/verification_plan.ps1 -IncludeUntracked` before choosing checks.
 The plan marks RAM-only benchmark sweeps as manual commands when performance
 code or performance claims are touched.
@@ -40,6 +41,14 @@ Required rules:
 - Do not change System graph history length, sampling cadence, or horizontal
   progression while fixing labels or counter semantics unless the task
   explicitly asks for graph-cadence work.
+- Do not treat GPU-rendered UI, Direct2D/Composition work, or visual polish as
+  evidence of archive GPU acceleration. Archive acceleration claims require
+  required-HIP codec telemetry and RAM-only CPU/GPU comparisons.
+- Dramatic GPU performance work must target batched, bounded, asynchronous HIP
+  codec execution, not benchmark-only changes. Any pinned host memory,
+  persistent device workspace, stream, HIP graph, or rocPRIM change must prove
+  bounded RAM/VRAM use and pass the full Mixed/Compressible/Incompressible
+  10 GiB memory-only profile sweep before release claims.
 
 Standard manual command after plan-selected correctness tests pass:
 

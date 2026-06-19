@@ -18,6 +18,7 @@ GpuInfo query_hip_gpu_info();
 namespace {
 
 constexpr std::uint32_t kPatternSampleBytes = 4096U;
+constexpr std::uint32_t kAnalyzeSegmentBytes = 64U * 1024U;
 constexpr std::uint32_t kCrcSegmentBytes = 64U * 1024U;
 constexpr std::uint32_t kMaterializeSegmentBytes = 64U * 1024U;
 
@@ -259,94 +260,304 @@ bool decoded_crc_uses_contiguous_raw_payload(std::span<const std::byte> payload,
     return decoded_offset == output_size;
 }
 
-// Purpose: Classify each input block as uniform fill, repeated pattern, or raw bytes on the AMD GPU.
-// Inputs: `input`/`input_len` are device bytes, `block_size` is bytes per block, `blocks` is device output metadata,
-// and `block_count` bounds the launch. Outputs: Writes one `DeviceBlock` per block into device memory.
-__global__ void analyze_blocks_kernel(const std::byte* input, std::size_t input_len, std::uint32_t block_size,
-                                      DeviceBlock* blocks, std::uint32_t block_count) {
-    const auto block_index = static_cast<std::uint32_t>(blockIdx.x);
+// Purpose: Detect a possible fill block from a bounded host sample before GPU verification.
+// Inputs: `bytes` is one archive block and `value` receives the sampled repeated byte.
+// Outputs: Returns true when the sampled prefix is uniform; the GPU still verifies the full block.
+bool sampled_block_is_fill(std::span<const std::byte> bytes, std::uint8_t& value) {
+    if (bytes.empty()) {
+        value = 0;
+        return true;
+    }
+    value = static_cast<std::uint8_t>(bytes.front());
+    const auto sample_len = std::min<std::size_t>(bytes.size(), kPatternSampleBytes);
+    for (std::size_t index = 1; index < sample_len; ++index) {
+        if (static_cast<std::uint8_t>(bytes[index]) != value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Purpose: Check whether a sampled prefix repeats with one candidate period.
+// Inputs: `bytes` is a sampled archive block prefix and `period` is the candidate byte period.
+// Outputs: Returns true when every sampled byte follows the period.
+bool sampled_period_matches(std::span<const std::byte> bytes, std::uint32_t period) {
+    for (std::size_t index = period; index < bytes.size(); ++index) {
+        if (bytes[index] != bytes[index % period]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Purpose: Pick one short repeated-pattern candidate from a bounded host sample.
+// Inputs: `bytes` is one non-fill archive block.
+// Outputs: Returns a 2..kMaxGpuPatternBytes period for GPU verification, or zero when no sampled period exists.
+std::uint16_t sampled_pattern_period(std::span<const std::byte> bytes) {
+    if (bytes.size() < 4U) {
+        return 0;
+    }
+    const auto sample_len = std::min<std::size_t>(bytes.size(), kPatternSampleBytes);
+    const auto sample = bytes.first(sample_len);
+    const auto max_period =
+        std::min<std::size_t>({kMaxGpuPatternBytes, bytes.size() / 2U, sample_len > 0U ? sample_len - 1U : 0U});
+    for (std::uint32_t period = 2U; period <= max_period; ++period) {
+        if (sample[period] != sample.front()) {
+            continue;
+        }
+        if (sampled_period_matches(sample, period)) {
+            return static_cast<std::uint16_t>(period);
+        }
+    }
+    return 0;
+}
+
+// Purpose: Build per-block encode candidates that the GPU can verify in fixed-size parallel tiles.
+// Inputs: `input`, `block_size`, and `block_count` describe one bounded archive chunk.
+// Outputs: Returns raw/fill/pattern candidates; non-raw candidates are provisional until HIP verification succeeds.
+std::vector<DeviceBlock> build_encode_analysis_candidates(std::span<const std::byte> input, std::uint32_t block_size,
+                                                          std::uint32_t block_count) {
+    std::vector<DeviceBlock> candidates;
+    candidates.reserve(block_count);
+    for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
+        const auto start = static_cast<std::size_t>(block_index) * block_size;
+        const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - start));
+        const auto block = input.subspan(start, len);
+        std::uint8_t fill = 0;
+        if (sampled_block_is_fill(block, fill)) {
+            candidates.push_back(DeviceBlock{
+                .kind = static_cast<std::uint8_t>(BlockKind::Fill),
+                .fill_value = fill,
+                .reserved = 0,
+                .uncompressed_len = len,
+                .encoded_offset = 0,
+                .output_offset = 0,
+                .encoded_len = 0,
+            });
+            continue;
+        }
+        if (const auto period = sampled_pattern_period(block); period != 0U) {
+            candidates.push_back(DeviceBlock{
+                .kind = static_cast<std::uint8_t>(BlockKind::Pattern),
+                .fill_value = 0,
+                .reserved = 0,
+                .uncompressed_len = len,
+                .encoded_offset = 0,
+                .output_offset = 0,
+                .encoded_len = period,
+            });
+            continue;
+        }
+        candidates.push_back(DeviceBlock{
+            .kind = static_cast<std::uint8_t>(BlockKind::Raw),
+            .fill_value = 0,
+            .reserved = 0,
+            .uncompressed_len = len,
+            .encoded_offset = 0,
+            .output_offset = 0,
+            .encoded_len = len,
+        });
+    }
+    return candidates;
+}
+
+// Purpose: Determine whether any provisional block needs full HIP verification.
+// Inputs: `candidates` is the host-built candidate block table.
+// Outputs: Returns true when at least one fill or pattern candidate must be verified on the GPU.
+bool has_non_raw_analysis_candidate(std::span<const DeviceBlock> candidates) {
+    for (const auto& candidate : candidates) {
+        if (candidate.kind != static_cast<std::uint8_t>(BlockKind::Raw)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Purpose: Declare the tiled HIP candidate verifier before host helper dispatch.
+// Inputs: See the definition below.
+// Outputs: Writes per-block mismatch flags into device memory.
+__global__ void verify_analysis_candidates_kernel(const std::byte* input, std::size_t input_len,
+                                                  std::uint32_t block_size, const DeviceBlock* candidates,
+                                                  std::uint32_t* mismatches, std::uint32_t block_count,
+                                                  std::uint32_t segments_per_block);
+
+// Purpose: Return the device memory needed to verify provisional encode candidates.
+// Inputs: `block_count` is the number of archive blocks and `needs_verification` selects the active path.
+// Outputs: Returns zero when all candidates are raw, otherwise candidate plus mismatch table bytes.
+std::size_t encode_analysis_device_bytes(std::uint32_t block_count, bool needs_verification) {
+    if (!needs_verification) {
+        return 0;
+    }
+    const auto candidate_table_bytes = checked_multiply_bytes(block_count, sizeof(DeviceBlock), "encode candidates");
+    const auto mismatch_table_bytes = checked_multiply_bytes(block_count, sizeof(std::uint32_t), "encode mismatches");
+    return checked_add_bytes(candidate_table_bytes, mismatch_table_bytes, "encode analysis memory");
+}
+
+// Purpose: Resolve a provisional candidate kind after GPU verification.
+// Inputs: `candidate` is the host candidate and `mismatch` is the GPU-produced rejection flag.
+// Outputs: Returns the verified block kind, or Raw when the candidate failed full verification.
+std::uint8_t verified_candidate_kind(const DeviceBlock& candidate, std::uint32_t mismatch) {
+    return mismatch == 0U ? candidate.kind : static_cast<std::uint8_t>(BlockKind::Raw);
+}
+
+// Purpose: Verify sampled fill/pattern candidates on the GPU with tiled parallel work.
+// Inputs: `device_input` is the chunk in VRAM, `input_len`, `block_size`, and `candidates` describe encode work, and
+// `telemetry` records HIP transfers, allocations, and kernel time.
+// Outputs: Returns one mismatch flag per archive block; all zeros when no candidate verification is needed.
+std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::byte* device_input,
+                                                                    std::size_t input_len, std::uint32_t block_size,
+                                                                    std::span<const DeviceBlock> candidates,
+                                                                    GpuTelemetry* telemetry) {
+    std::vector<std::uint32_t> mismatches(candidates.size(), 0U);
+    if (!has_non_raw_analysis_candidate(candidates)) {
+        return mismatches;
+    }
+    const auto block_count = static_cast<std::uint32_t>(candidates.size());
+    const auto candidate_table_bytes = checked_multiply_bytes(block_count, sizeof(DeviceBlock), "encode candidates");
+    const auto mismatch_table_bytes = checked_multiply_bytes(block_count, sizeof(std::uint32_t), "encode mismatches");
+    DeviceBlock* device_candidates = nullptr;
+    std::uint32_t* device_mismatches = nullptr;
+    check_hip(hipMalloc(&device_candidates, candidate_table_bytes), "hipMalloc encode candidates");
+    check_hip(hipMalloc(&device_mismatches, mismatch_table_bytes), "hipMalloc encode mismatches");
+    try {
+        check_hip(hipMemcpy(device_candidates, candidates.data(), candidate_table_bytes, hipMemcpyHostToDevice),
+                  "hipMemcpy encode candidates");
+        record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_table_bytes));
+        check_hip(hipMemset(device_mismatches, 0, mismatch_table_bytes), "hipMemset encode mismatches");
+        const auto segments_per_block = static_cast<std::uint32_t>(
+            (static_cast<std::uint64_t>(block_size) + kAnalyzeSegmentBytes - 1U) / kAnalyzeSegmentBytes);
+        const auto grid64 = static_cast<std::uint64_t>(segments_per_block) * block_count;
+        if (grid64 > std::numeric_limits<unsigned int>::max()) {
+            throw GpuError("encode candidate segment count exceeds HIP launch limits");
+        }
+        auto events = make_hip_event_pair("create verify_analysis_candidates_kernel events");
+        check_hip(hipEventRecord(events.start, nullptr), "record verify_analysis_candidates_kernel start");
+        verify_analysis_candidates_kernel<<<static_cast<unsigned int>(grid64), 256>>>(
+            device_input, input_len, block_size, device_candidates, device_mismatches, block_count, segments_per_block);
+        check_hip(hipGetLastError(), "launch verify_analysis_candidates_kernel");
+        check_hip(hipEventRecord(events.stop, nullptr), "record verify_analysis_candidates_kernel stop");
+        finish_measured_kernel(telemetry, events, "synchronize verify_analysis_candidates_kernel");
+        check_hip(hipMemcpy(mismatches.data(), device_mismatches, mismatch_table_bytes, hipMemcpyDeviceToHost),
+                  "hipMemcpy encode mismatches");
+        record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(mismatch_table_bytes));
+        check_hip(hipFree(device_candidates), "hipFree encode candidates");
+        check_hip(hipFree(device_mismatches), "hipFree encode mismatches");
+        return mismatches;
+    } catch (...) {
+        (void)hipFree(device_candidates);
+        (void)hipFree(device_mismatches);
+        throw;
+    }
+}
+
+// Purpose: Convert verified encode candidates into SUZIP block descriptors.
+// Inputs: `candidates` and `mismatches` describe one encoded chunk after GPU verification.
+// Outputs: Populates `out.blocks`, returns true when every block is raw, and records the encoded payload size.
+bool append_verified_encode_descriptors(EncodedChunk& out, std::span<const DeviceBlock> candidates,
+                                        std::span<const std::uint32_t> mismatches, std::uint64_t& encoded_offset,
+                                        std::uint64_t& pattern_blocks) {
+    bool all_raw = true;
+    out.blocks.reserve(candidates.size());
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const auto& candidate = candidates[i];
+        const auto len = static_cast<std::size_t>(candidate.uncompressed_len);
+        const auto effective_kind = verified_candidate_kind(candidate, mismatches[i]);
+        if (effective_kind == static_cast<std::uint8_t>(BlockKind::Fill)) {
+            all_raw = false;
+            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Fill,
+                                                 .fill_value = candidate.fill_value,
+                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
+                                                 .encoded_offset = encoded_offset,
+                                                 .encoded_len = 0});
+        } else if (effective_kind == static_cast<std::uint8_t>(BlockKind::Pattern)) {
+            all_raw = false;
+            ++pattern_blocks;
+            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Pattern,
+                                                 .fill_value = 0,
+                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
+                                                 .encoded_offset = encoded_offset,
+                                                 .encoded_len = candidate.encoded_len});
+            encoded_offset += candidate.encoded_len;
+        } else {
+            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Raw,
+                                                 .fill_value = 0,
+                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
+                                                 .encoded_offset = encoded_offset,
+                                                 .encoded_len = static_cast<std::uint32_t>(len)});
+            encoded_offset += len;
+        }
+    }
+    return all_raw;
+}
+
+// Purpose: Append compact verified GPU payload bytes for non-fill SUZIP blocks.
+// Inputs: `input`, `block_size`, `candidates`, and `mismatches` describe verified encode output.
+// Outputs: Mutates `out.payload` with raw or compact pattern bytes in descriptor order.
+void append_verified_encode_payload(EncodedChunk& out, std::span<const std::byte> input, std::uint32_t block_size,
+                                    std::span<const DeviceBlock> candidates,
+                                    std::span<const std::uint32_t> mismatches) {
+    out.payload.reserve(input.size());
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const auto effective_kind = verified_candidate_kind(candidates[i], mismatches[i]);
+        if (effective_kind == static_cast<std::uint8_t>(BlockKind::Fill)) {
+            continue;
+        }
+        const auto start = i * static_cast<std::size_t>(block_size);
+        const auto len = static_cast<std::size_t>(candidates[i].uncompressed_len);
+        const auto encoded_len = effective_kind == static_cast<std::uint8_t>(BlockKind::Pattern)
+                                     ? static_cast<std::size_t>(candidates[i].encoded_len)
+                                     : len;
+        out.payload.insert(out.payload.end(), input.begin() + start, input.begin() + start + encoded_len);
+    }
+}
+
+// Purpose: Verify provisional fill/pattern encode candidates over fixed-size GPU tiles.
+// Inputs: `input`, `block_size`, `candidates`, and `segments_per_block` describe candidate work; `mismatches` is one
+// flag per block. Outputs: Atomically marks blocks whose sampled candidate does not describe the full block.
+__global__ void verify_analysis_candidates_kernel(const std::byte* input, std::size_t input_len,
+                                                  std::uint32_t block_size, const DeviceBlock* candidates,
+                                                  std::uint32_t* mismatches, std::uint32_t block_count,
+                                                  std::uint32_t segments_per_block) {
+    const auto global_segment = static_cast<std::uint32_t>(blockIdx.x);
+    const auto block_index = global_segment / segments_per_block;
     if (block_index >= block_count) {
         return;
     }
-    const std::size_t start = static_cast<std::size_t>(block_index) * block_size;
-    const std::size_t end = min(start + block_size, input_len);
-    __shared__ int mismatch;
-    __shared__ unsigned int first_value;
-    __shared__ unsigned int selected_period;
-    if (threadIdx.x == 0) {
-        mismatch = 0;
-        selected_period = 0;
-        first_value = start < end ? static_cast<unsigned int>(input[start]) & 0xFFU : 0U;
-    }
-    __syncthreads();
-    for (std::size_t pos = start + threadIdx.x; pos < end; pos += blockDim.x) {
-        if ((static_cast<unsigned int>(input[pos]) & 0xFFU) != first_value) {
-            atomicExch(&mismatch, 1);
-        }
-    }
-    __syncthreads();
-    if (threadIdx.x == 0) {
-        const auto len = static_cast<std::uint32_t>(end - start);
-        blocks[block_index].kind = mismatch == 0 ? 1 : 0;
-        blocks[block_index].fill_value = static_cast<std::uint8_t>(first_value);
-        blocks[block_index].reserved = 0;
-        blocks[block_index].uncompressed_len = len;
-        blocks[block_index].encoded_offset = 0;
-        blocks[block_index].encoded_len = mismatch == 0 ? 0 : len;
-    }
-    __syncthreads();
-
-    const auto len = static_cast<std::uint32_t>(end - start);
-    if (mismatch == 0 || len < 4U) {
+    const auto& candidate = candidates[block_index];
+    if (candidate.kind == static_cast<std::uint8_t>(BlockKind::Raw)) {
         return;
     }
-
-    const auto max_period = min(static_cast<std::uint32_t>(kMaxGpuPatternBytes), len / 2U);
-    const auto sample_len = min(len, static_cast<std::uint32_t>(kPatternSampleBytes));
-    for (std::uint32_t period = 2; period <= max_period; ++period) {
-        if (selected_period != 0U) {
-            break;
-        }
-        if ((static_cast<unsigned int>(input[start + period]) & 0xFFU) != first_value) {
-            continue;
-        }
-        if (threadIdx.x == 0) {
-            mismatch = 0;
-        }
-        __syncthreads();
-        for (std::uint32_t pos = period + threadIdx.x; pos < sample_len; pos += blockDim.x) {
-            const auto actual = static_cast<unsigned int>(input[start + pos]) & 0xFFU;
-            const auto expected = static_cast<unsigned int>(input[start + (pos % period)]) & 0xFFU;
-            if (actual != expected) {
-                atomicExch(&mismatch, 1);
-            }
-        }
-        __syncthreads();
-        if (mismatch != 0) {
-            continue;
-        }
-        if (threadIdx.x == 0) {
-            mismatch = 0;
-        }
-        __syncthreads();
-        for (std::uint32_t pos = sample_len + threadIdx.x; pos < len; pos += blockDim.x) {
-            const auto actual = static_cast<unsigned int>(input[start + pos]) & 0xFFU;
-            const auto expected = static_cast<unsigned int>(input[start + (pos % period)]) & 0xFFU;
-            if (actual != expected) {
-                atomicExch(&mismatch, 1);
-            }
-        }
-        __syncthreads();
-        if (mismatch == 0 && threadIdx.x == 0) {
-            selected_period = period;
-        }
-        __syncthreads();
+    const auto segment_index = global_segment % segments_per_block;
+    const auto block_start = static_cast<std::size_t>(block_index) * block_size;
+    const auto block_end = min(block_start + static_cast<std::size_t>(candidate.uncompressed_len), input_len);
+    const auto segment_start = block_start + static_cast<std::size_t>(segment_index) * kAnalyzeSegmentBytes;
+    if (segment_start >= block_end) {
+        return;
     }
-
-    if (threadIdx.x == 0 && selected_period != 0U) {
-        blocks[block_index].kind = 3;
-        blocks[block_index].fill_value = 0;
-        blocks[block_index].encoded_len = selected_period;
+    const auto segment_end = min(segment_start + static_cast<std::size_t>(kAnalyzeSegmentBytes), block_end);
+    bool mismatch = false;
+    if (candidate.kind == static_cast<std::uint8_t>(BlockKind::Fill)) {
+        for (auto pos = segment_start + threadIdx.x; pos < segment_end; pos += blockDim.x) {
+            if ((static_cast<unsigned int>(input[pos]) & 0xFFU) != candidate.fill_value) {
+                mismatch = true;
+                break;
+            }
+        }
+    } else if (candidate.kind == static_cast<std::uint8_t>(BlockKind::Pattern) && candidate.encoded_len >= 2U &&
+               candidate.encoded_len <= kMaxGpuPatternBytes && candidate.encoded_len < candidate.uncompressed_len) {
+        const auto period = static_cast<std::size_t>(candidate.encoded_len);
+        for (auto pos = segment_start + threadIdx.x; pos < segment_end; pos += blockDim.x) {
+            const auto expected = input[block_start + ((pos - block_start) % period)];
+            if (input[pos] != expected) {
+                mismatch = true;
+                break;
+            }
+        }
+    } else {
+        mismatch = true;
+    }
+    if (mismatch) {
+        atomicExch(&mismatches[block_index], 1U);
     }
 }
 
@@ -776,73 +987,30 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         throw GpuError("encode block count exceeds HIP launch limits");
     }
     const auto block_count = static_cast<std::uint32_t>(computed_block_count);
-    const auto block_table_bytes = checked_multiply_bytes(block_count, sizeof(DeviceBlock), "encode block table");
-    const auto required_bytes = checked_add_bytes(input.size(), block_table_bytes, "encode device memory");
+    auto host_candidates = build_encode_analysis_candidates(input, block_size, block_count);
+    const bool needs_candidate_verification = has_non_raw_analysis_candidate(host_candidates);
+    const auto analysis_bytes = encode_analysis_device_bytes(block_count, needs_candidate_verification);
+    const auto required_bytes = checked_add_bytes(input.size(), analysis_bytes, "encode device memory");
     ensure_device_memory_budget(required_bytes, "encode");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
 
     std::byte* device_input = nullptr;
-    DeviceBlock* device_blocks = nullptr;
     check_hip(hipMalloc(&device_input, input.size()), "hipMalloc input");
-    check_hip(hipMalloc(&device_blocks, sizeof(DeviceBlock) * block_count), "hipMalloc block table");
     try {
         check_hip(hipMemcpy(device_input, input.data(), input.size(), hipMemcpyHostToDevice), "hipMemcpy input");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
         const auto source_crc32 = compute_crc32_device(device_input, static_cast<std::uint64_t>(input.size()),
                                                        telemetry, "encode CRC device memory");
-        auto events = make_hip_event_pair("create analyze_blocks_kernel events");
-        check_hip(hipEventRecord(events.start, nullptr), "record analyze_blocks_kernel start");
-        analyze_blocks_kernel<<<block_count, 256>>>(device_input, input.size(), block_size, device_blocks, block_count);
-        check_hip(hipGetLastError(), "launch analyze_blocks_kernel");
-        check_hip(hipEventRecord(events.stop, nullptr), "record analyze_blocks_kernel stop");
-        finish_measured_kernel(telemetry, events, "synchronize analyze_blocks_kernel");
-
-        std::vector<DeviceBlock> device_results(block_count);
-        check_hip(
-            hipMemcpy(device_results.data(), device_blocks, sizeof(DeviceBlock) * block_count, hipMemcpyDeviceToHost),
-            "hipMemcpy block table");
-        record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
+        const auto mismatches = verify_encode_analysis_candidates_device(device_input, input.size(), block_size,
+                                                                         host_candidates, telemetry);
 
         EncodedChunk out;
         out.source_crc32 = source_crc32;
         out.source_crc32_available = true;
-        out.blocks.reserve(block_count);
         std::uint64_t encoded_offset = 0;
-        bool all_raw = true;
         std::uint64_t pattern_blocks = 0;
-        for (std::uint32_t i = 0; i < block_count; ++i) {
-            const auto len = static_cast<std::size_t>(device_results[i].uncompressed_len);
-            if (device_results[i].kind == 1) {
-                all_raw = false;
-                out.blocks.push_back(BlockDescriptor{
-                    .kind = BlockKind::Fill,
-                    .fill_value = device_results[i].fill_value,
-                    .uncompressed_len = static_cast<std::uint32_t>(len),
-                    .encoded_offset = encoded_offset,
-                    .encoded_len = 0,
-                });
-            } else if (device_results[i].kind == 3) {
-                all_raw = false;
-                ++pattern_blocks;
-                out.blocks.push_back(BlockDescriptor{
-                    .kind = BlockKind::Pattern,
-                    .fill_value = 0,
-                    .uncompressed_len = static_cast<std::uint32_t>(len),
-                    .encoded_offset = encoded_offset,
-                    .encoded_len = device_results[i].encoded_len,
-                });
-                encoded_offset += device_results[i].encoded_len;
-            } else {
-                out.blocks.push_back(BlockDescriptor{
-                    .kind = BlockKind::Raw,
-                    .fill_value = 0,
-                    .uncompressed_len = static_cast<std::uint32_t>(len),
-                    .encoded_offset = encoded_offset,
-                    .encoded_len = static_cast<std::uint32_t>(len),
-                });
-                encoded_offset += len;
-            }
-        }
+        const bool all_raw =
+            append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
         if (all_raw) {
             if (owned_input != nullptr) {
@@ -852,24 +1020,12 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
                 std::copy(input.begin(), input.end(), out.payload.begin());
             }
         } else {
-            out.payload.reserve(input.size());
-            for (std::uint32_t i = 0; i < block_count; ++i) {
-                if (device_results[i].kind == 1) {
-                    continue;
-                }
-                const auto start = static_cast<std::size_t>(i) * block_size;
-                const auto len = static_cast<std::size_t>(device_results[i].uncompressed_len);
-                const auto encoded_len =
-                    device_results[i].kind == 3 ? static_cast<std::size_t>(device_results[i].encoded_len) : len;
-                out.payload.insert(out.payload.end(), input.begin() + start, input.begin() + start + encoded_len);
-            }
+            append_verified_encode_payload(out, input, block_size, host_candidates, mismatches);
         }
         check_hip(hipFree(device_input), "hipFree input");
-        check_hip(hipFree(device_blocks), "hipFree block table");
         return out;
     } catch (...) {
         (void)hipFree(device_input);
-        (void)hipFree(device_blocks);
         throw;
     }
 }
