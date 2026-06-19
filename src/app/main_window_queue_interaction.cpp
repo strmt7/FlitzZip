@@ -141,6 +141,39 @@ void MainWindow::normalize_queue_selection_locked() {
     }
 }
 
+// Purpose: Append filesystem paths to the Queue through one shared mutation path.
+// Inputs: `paths` are selected or dropped filesystem paths and `status` is the visible status after success.
+// Outputs: Returns the number of nonempty paths appended, updates selection/scroll state, and repaints on success.
+std::size_t MainWindow::append_queued_paths(std::vector<std::filesystem::path> paths, std::string status) {
+    std::size_t added = 0;
+    {
+        std::lock_guard lock(mutex_);
+        const bool was_empty = state_.queued_paths.empty();
+        state_.queued_paths.reserve(state_.queued_paths.size() + paths.size());
+        state_.queued_enabled.reserve(state_.queued_enabled.size() + paths.size());
+        for (auto& path : paths) {
+            if (path.empty()) {
+                continue;
+            }
+            state_.queued_paths.emplace_back(std::move(path));
+            state_.queued_enabled.push_back(true);
+            ++added;
+        }
+        if (added == 0U) {
+            return 0U;
+        }
+        normalize_queue_selection_locked();
+        if (was_empty) {
+            state_.selected_queue_index = 0;
+            queue_scroll_first_row_ = 0;
+            queue_wheel_delta_remainder_ = 0;
+        }
+        state_.status = std::move(status);
+    }
+    request_repaint();
+    return added;
+}
+
 // Purpose: Test whether a copied Queue state has at least one checked row.
 // Inputs: `state` is a stable UI snapshot with queue paths and checkbox flags.
 // Outputs: Returns true only when at least one queued item is selected for operations.

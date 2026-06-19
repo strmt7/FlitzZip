@@ -19,7 +19,6 @@
 #include <cctype>
 #include <climits>
 #include <cmath>
-#include <commdlg.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -36,6 +35,8 @@
 #include <shlobj.h>
 #include <span>
 #include <sstream>
+#include <shobjidl.h>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>

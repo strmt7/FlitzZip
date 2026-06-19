@@ -138,6 +138,22 @@ TEST_CASE(drop_payload_parses_wide_file_list) {
     REQUIRE_EQ(paths[1].wstring(), std::wstring(L"C:\\SuperZip\\nested\\folder"));
 }
 
+TEST_CASE(drop_payload_parses_large_wide_file_list) {
+    std::vector<std::wstring> expected;
+    expected.reserve(512U);
+    for (int index = 0; index < 512; ++index) {
+        expected.emplace_back(std::wstring(L"C:\\SuperZip\\bulk\\file-") + std::to_wstring(index) + L".txt");
+    }
+    const auto handle = make_wide_drop_payload(expected);
+
+    const auto paths = superzip::app::paths_from_dropfiles_global(handle.get());
+
+    REQUIRE_EQ(paths.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        REQUIRE_EQ(paths[index].wstring(), expected[index]);
+    }
+}
+
 TEST_CASE(drop_payload_parses_ansi_file_list) {
     const auto handle = make_ansi_drop_payload({"C:\\SuperZip\\ascii.txt", "C:\\SuperZip\\plain-folder"});
 

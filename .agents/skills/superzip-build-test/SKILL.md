@@ -116,6 +116,11 @@ Rules:
 - Queue overflow must keep the header fixed, accept drops only inside the table,
   keep row/header tick hit testing aligned, and prove scrollbar rendering in
   screenshots when queued rows exceed visible capacity.
+- Queue Add files, Add folder, and destination selection must use the modern
+  Windows shell picker (`IFileOpenDialog`) without fixed `OPENFILENAMEW`
+  selection buffers, `SHBrowseForFolderW`, `SHGetPathFromIDListW`, or `MAX_PATH`
+  assumptions. GUI smoke must exercise picker insertion and a many-file HDROP
+  payload before Queue input changes are accepted.
 - The System GPU graph and headline value must show total system GPU engine
   utilization. Keep VRAM total and SuperZip dedicated VRAM as detail rows only.
 - Do not change the left navigation rail hover/active visuals unless the user

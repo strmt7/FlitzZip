@@ -93,6 +93,9 @@ public static class SuperZipNativeUi {
     public static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
 
     [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr GlobalFree(IntPtr hMem);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
     public static extern IntPtr GlobalLock(IntPtr hMem);
 
     [DllImport("kernel32.dll", SetLastError=true)]
@@ -109,21 +112,28 @@ public static class SuperZipNativeUi {
         string joined = string.Join("\0", paths) + "\0\0";
         byte[] pathBytes = System.Text.Encoding.Unicode.GetBytes(joined);
         int headerSize = Marshal.SizeOf(typeof(DROPFILES));
-        int totalSize = headerSize + pathBytes.Length;
-        IntPtr handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, new UIntPtr((uint)totalSize));
+        ulong totalSize = checked((ulong)headerSize + (ulong)pathBytes.LongLength);
+        IntPtr handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, new UIntPtr(totalSize));
         if (handle == IntPtr.Zero) {
             throw new InvalidOperationException("GlobalAlloc failed for HDROP payload.");
         }
         IntPtr memory = GlobalLock(handle);
         if (memory == IntPtr.Zero) {
+            GlobalFree(handle);
             throw new InvalidOperationException("GlobalLock failed for HDROP payload.");
         }
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "pFiles"), headerSize);
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "x"), x);
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "y"), y);
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fNC"), 0);
-        Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fWide"), 1);
-        Marshal.Copy(pathBytes, 0, IntPtr.Add(memory, headerSize), pathBytes.Length);
+        try {
+            Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "pFiles"), headerSize);
+            Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "x"), x);
+            Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "y"), y);
+            Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fNC"), 0);
+            Marshal.WriteInt32(memory, (int)Marshal.OffsetOf(typeof(DROPFILES), "fWide"), 1);
+            Marshal.Copy(pathBytes, 0, IntPtr.Add(memory, headerSize), pathBytes.Length);
+        } catch {
+            GlobalUnlock(handle);
+            GlobalFree(handle);
+            throw;
+        }
         GlobalUnlock(handle);
         return handle;
     }
@@ -132,16 +142,15 @@ public static class SuperZipNativeUi {
 
 # Purpose: Put SuperZip in a stable visible state before PrintWindow capture.
 # Inputs: `Handle` is the SuperZip HWND.
-# Outputs: Requests foreground/top ordering without creating or closing other windows.
+# Outputs: Moves only the SuperZip window to a visible capture origin and requests foreground/top ordering.
 function Show-SuperZipForeground {
     param([IntPtr]$Handle)
     [void][SuperZipNativeUi]::ShowWindow($Handle, 5)
     $swpNoSize = 0x0001
-    $swpNoMove = 0x0002
     $swpShowWindow = 0x0040
-    $flags = $swpNoSize -bor $swpNoMove -bor $swpShowWindow
-    [void][SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr](-1), 0, 0, 0, 0, $flags)
-    [void][SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr](-2), 0, 0, 0, 0, $flags)
+    $flags = $swpNoSize -bor $swpShowWindow
+    [void][SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr](-1), 8, 8, 0, 0, $flags)
+    [void][SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr](-2), 8, 8, 0, 0, $flags)
     [void][SuperZipNativeUi]::BringWindowToTop($Handle)
     [void][SuperZipNativeUi]::SetForegroundWindow($Handle)
 }

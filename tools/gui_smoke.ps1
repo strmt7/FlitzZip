@@ -71,6 +71,12 @@ function Assert-GuiSourceContract {
     if (-not $sourceText.Contains('history_column_resize_separator_')) {
         throw "History table must keep Queue-equivalent column resizing support."
     }
+    if ($sourceText -cmatch 'OPENFILENAMEW|GetOpenFileNameW|SHBrowseForFolderW|SHGetPathFromIDListW') {
+        throw "Queue Add files/Add folder must use the modern shell picker without fixed legacy buffers."
+    }
+    if (-not $sourceText.Contains('IFileOpenDialog') -or -not $sourceText.Contains('append_queued_paths')) {
+        throw "Queue Add files, Add folder, and drag/drop must share modern shell selection and queue append paths."
+    }
     if (-not $sourceText.Contains('constexpr UINT kTextTooltipDelayMs = 500')) {
         throw "Truncated text tooltip delay must remain 0.5 seconds."
     }
@@ -83,6 +89,11 @@ function Assert-GuiSourceContract {
 }
 
 Assert-GuiSourceContract
+
+$smokeSource = Get-Content -Raw -LiteralPath $PSCommandPath
+if (-not $smokeSource.Contains('Queue-AfterBulkDragDrop')) {
+    throw "GUI smoke must exercise a many-file Queue drag/drop payload."
+}
 
 Import-Module (Join-Path $PSScriptRoot "SuperZip.GuiSmoke.Ui.psm1") -Force
 
@@ -112,6 +123,7 @@ $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
 $badArchive = Join-Path $smokeRoot "invalid-input.suzip"
 $overflowFiles = @()
+$bulkDropFiles = @()
 $smokeCloseFile = Join-Path $smokeRoot "close.request"
 $smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "SuperZip"
 $smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
@@ -123,6 +135,11 @@ foreach ($index in 1..28) {
     $path = Join-Path $smokeRoot ("overflow-{0:D2}.txt" -f $index)
     Set-Content -LiteralPath $path -Value "Queue overflow smoke item $index" -NoNewline
     $overflowFiles += (Resolve-Path -LiteralPath $path).Path
+}
+foreach ($index in 1..72) {
+    $path = Join-Path $smokeRoot ("bulk-drop-{0:D2}.txt" -f $index)
+    Set-Content -LiteralPath $path -Value "Bulk Queue drag/drop smoke item $index" -NoNewline
+    $bulkDropFiles += (Resolve-Path -LiteralPath $path).Path
 }
 $queuePickerSelection = (@((Resolve-Path -LiteralPath $smokeInput).Path) + $overflowFiles) -join ';'
 Set-Content -LiteralPath $badArchive -Value "not a valid SuperZip archive" -NoNewline
@@ -214,6 +231,20 @@ try {
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $emptyQueuePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-QueueEmptyMessageCentered -Path $emptyQueuePath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
+
+    Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths $bulkDropFiles
+    Start-Sleep -Milliseconds 450
+    $bulkDropQueuePath = "${basePath}-Queue-AfterBulkDragDrop$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $bulkDropQueuePath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $bulkDropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 520 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
+    Assert-DesignRectHasDetail -Path $bulkDropQueuePath -Dpi $windowDpi -Left 1148 -Top 170 -Right 1166 -Bottom 640 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 3
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
+    Start-Sleep -Milliseconds 150
+    $emptyAfterBulkDropPath = "${basePath}-Queue-AfterBulkDropClear$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $emptyAfterBulkDropPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-QueueEmptyMessageCentered -Path $emptyAfterBulkDropPath -Dpi $windowDpi -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
 
     # Queue: exercise drag/drop and row selection only. Destination, level, and Start belong to Compress/Extract.
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $smokeInput).Path)

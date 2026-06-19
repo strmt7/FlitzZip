@@ -379,8 +379,4 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
     return 0;
 }
 
-// Purpose: Append native shell-dropped paths to the queue.
-// Inputs: `wparam` contains the HDROP handle from `WM_DROPFILES`.
-// Outputs: Updates queue selection, releases the HDROP handle, and returns the handled Win32 result.
-
 }  // namespace superzip::app

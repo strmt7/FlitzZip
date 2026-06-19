@@ -18,6 +18,231 @@
 
 namespace superzip::app {
 
+namespace {
+
+template <typename Interface> class ComPtr final {
+  public:
+    // Purpose: Create an empty COM pointer wrapper.
+    // Inputs: None.
+    // Outputs: Stores a null interface pointer.
+    ComPtr() = default;
+
+    ComPtr(const ComPtr&) = delete;
+    ComPtr& operator=(const ComPtr&) = delete;
+
+    // Purpose: Release the owned COM interface pointer.
+    // Inputs: None.
+    // Outputs: Calls `Release` on the stored pointer when present.
+    ~ComPtr() {
+        reset();
+    }
+
+    // Purpose: Prepare this wrapper as an output parameter for COM APIs.
+    // Inputs: None.
+    // Outputs: Releases any existing pointer and returns storage for a new pointer.
+    Interface** put() noexcept {
+        reset();
+        return &value_;
+    }
+
+    // Purpose: Access the owned COM interface pointer.
+    // Inputs: None.
+    // Outputs: Returns the raw interface pointer without transferring ownership.
+    [[nodiscard]] Interface* get() const noexcept {
+        return value_;
+    }
+
+    // Purpose: Access COM interface members.
+    // Inputs: None.
+    // Outputs: Returns the raw interface pointer for member calls.
+    [[nodiscard]] Interface* operator->() const noexcept {
+        return value_;
+    }
+
+  private:
+    // Purpose: Release the currently stored COM pointer.
+    // Inputs: None.
+    // Outputs: Clears the wrapper after calling `Release` when needed.
+    void reset() noexcept {
+        if (value_ != nullptr) {
+            value_->Release();
+            value_ = nullptr;
+        }
+    }
+
+    Interface* value_ = nullptr;
+};
+
+class CoTaskMemWideString final {
+  public:
+    CoTaskMemWideString(const CoTaskMemWideString&) = delete;
+    CoTaskMemWideString& operator=(const CoTaskMemWideString&) = delete;
+
+    // Purpose: Create an empty task-allocator string wrapper.
+    // Inputs: None.
+    // Outputs: Stores a null string pointer.
+    CoTaskMemWideString() = default;
+
+    // Purpose: Release a shell string allocated with `CoTaskMemAlloc`.
+    // Inputs: None.
+    // Outputs: Calls `CoTaskMemFree` for a non-null pointer.
+    ~CoTaskMemWideString() {
+        CoTaskMemFree(value_);
+    }
+
+    // Purpose: Prepare this wrapper as an output parameter for shell APIs.
+    // Inputs: None.
+    // Outputs: Frees the current string and returns storage for a new pointer.
+    PWSTR* put() noexcept {
+        CoTaskMemFree(value_);
+        value_ = nullptr;
+        return &value_;
+    }
+
+    // Purpose: Access the stored shell string.
+    // Inputs: None.
+    // Outputs: Returns the UTF-16 pointer without transferring ownership.
+    [[nodiscard]] PWSTR get() const noexcept {
+        return value_;
+    }
+
+  private:
+    PWSTR value_ = nullptr;
+};
+
+// Purpose: Format an HRESULT for concise diagnostics.
+// Inputs: `result` is the HRESULT returned by a Win32 or COM API.
+// Outputs: Returns a lowercase hexadecimal HRESULT string.
+std::string hresult_text(HRESULT result) {
+    std::ostringstream text;
+    text << "0x" << std::hex << static_cast<unsigned long>(result);
+    return text.str();
+}
+
+// Purpose: Convert a failed HRESULT into an exception with operation context.
+// Inputs: `result` is an HRESULT and `operation` names the failed operation.
+// Outputs: Throws `std::runtime_error` only when `result` is a failure code.
+void require_succeeded(HRESULT result, const char* operation) {
+    if (FAILED(result)) {
+        throw std::runtime_error(std::string(operation) + " failed (" + hresult_text(result) + ")");
+    }
+}
+
+// Purpose: Parse GUI smoke file-selection paths from an environment override.
+// Inputs: None; reads `SUPERZIP_GUI_SMOKE_FILE_SELECTION` from the current process.
+// Outputs: Returns semicolon-separated filesystem paths, or an empty vector when the override is absent.
+std::vector<std::filesystem::path> smoke_file_selection_paths() {
+    wchar_t smoke_paths[32768]{};
+    constexpr DWORD smoke_paths_capacity = static_cast<DWORD>(sizeof(smoke_paths) / sizeof(smoke_paths[0]));
+    const DWORD smoke_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
+    std::vector<std::filesystem::path> paths;
+    if (smoke_length == 0 || smoke_length >= smoke_paths_capacity) {
+        return paths;
+    }
+    std::wstring_view encoded(smoke_paths, smoke_length);
+    std::size_t start = 0;
+    while (start <= encoded.size()) {
+        const std::size_t end = encoded.find(L';', start);
+        const auto part = encoded.substr(start, end == std::wstring_view::npos ? std::wstring_view::npos : end - start);
+        if (!part.empty()) {
+            paths.emplace_back(std::wstring(part));
+        }
+        if (end == std::wstring_view::npos) {
+            break;
+        }
+        start = end + 1U;
+    }
+    return paths;
+}
+
+// Purpose: Read a single GUI smoke folder-selection path from an environment override.
+// Inputs: None; reads `SUPERZIP_GUI_SMOKE_FOLDER_SELECTION` from the current process.
+// Outputs: Returns the selected folder path, or an empty path when the override is absent.
+std::filesystem::path smoke_folder_selection_path() {
+    wchar_t smoke_path[32768]{};
+    constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
+    const DWORD smoke_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
+    if (smoke_length == 0 || smoke_length >= smoke_path_capacity) {
+        return {};
+    }
+    return std::filesystem::path(smoke_path);
+}
+
+// Purpose: Return the filesystem path represented by one shell item.
+// Inputs: `item` is a filesystem shell item returned by `IFileOpenDialog`.
+// Outputs: Returns the absolute filesystem path or throws when the shell cannot provide one.
+std::filesystem::path shell_item_filesystem_path(IShellItem* item) {
+    if (item == nullptr) {
+        return {};
+    }
+    CoTaskMemWideString path;
+    require_succeeded(item->GetDisplayName(SIGDN_FILESYSPATH, path.put()), "Shell item path lookup");
+    return path.get() == nullptr ? std::filesystem::path{} : std::filesystem::path(path.get());
+}
+
+// Purpose: Open the modern Windows shell picker for multi-file selection.
+// Inputs: `owner` is the SuperZip window owner for modality.
+// Outputs: Returns every selected filesystem file path, or an empty vector on user cancel.
+std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
+    ComPtr<IFileOpenDialog> dialog;
+    require_succeeded(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.put())),
+                      "File picker creation");
+    DWORD options = 0;
+    require_succeeded(dialog->GetOptions(&options), "File picker option query");
+    require_succeeded(dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST |
+                                         FOS_PATHMUSTEXIST),
+                      "File picker option update");
+    dialog->SetTitle(L"Add files to SuperZip");
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        return {};
+    }
+    require_succeeded(shown, "File picker display");
+
+    ComPtr<IShellItemArray> items;
+    require_succeeded(dialog->GetResults(items.put()), "File picker result query");
+    DWORD count = 0;
+    require_succeeded(items->GetCount(&count), "File picker result count");
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(count);
+    for (DWORD index = 0; index < count; ++index) {
+        ComPtr<IShellItem> item;
+        require_succeeded(items->GetItemAt(index, item.put()), "File picker item lookup");
+        auto path = shell_item_filesystem_path(item.get());
+        if (!path.empty()) {
+            paths.emplace_back(std::move(path));
+        }
+    }
+    return paths;
+}
+
+// Purpose: Open the modern Windows shell picker for folder selection.
+// Inputs: `owner` is the SuperZip window owner for modality and `title` is the dialog caption.
+// Outputs: Returns the selected filesystem folder path, or an empty path on user cancel.
+std::filesystem::path selected_folder_from_dialog(HWND owner, PCWSTR title) {
+    ComPtr<IFileOpenDialog> dialog;
+    require_succeeded(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.put())),
+                      "Folder picker creation");
+    DWORD options = 0;
+    require_succeeded(dialog->GetOptions(&options), "Folder picker option query");
+    require_succeeded(dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST),
+                      "Folder picker option update");
+    dialog->SetTitle(title);
+    const HRESULT shown = dialog->Show(owner);
+    if (shown == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        return {};
+    }
+    require_succeeded(shown, "Folder picker display");
+
+    ComPtr<IShellItem> item;
+    require_succeeded(dialog->GetResult(item.put()), "Folder picker result query");
+    return shell_item_filesystem_path(item.get());
+}
+
+}  // namespace
+
 // Purpose: Switch the active page and reset page-local interaction state.
 // Inputs: `page` is the requested page.
 // Outputs: Mutates UI page state, reverts unapplied Settings edits when leaving Settings, and queues repaint.
@@ -46,124 +271,55 @@ void MainWindow::set_page(Page page) {
 }
 
 // Purpose: Open the Windows file picker and append selected files to the queue.
-// Inputs: None; user selection comes from the common dialog or GUI smoke-test environment.
+// Inputs: None; user selection comes from the shell picker or GUI smoke-test environment.
 // Outputs: Mutates queued paths and queues a repaint when files are selected.
 void MainWindow::add_files() {
-    wchar_t smoke_paths[32768]{};
-    constexpr DWORD smoke_paths_capacity = static_cast<DWORD>(sizeof(smoke_paths) / sizeof(smoke_paths[0]));
-    const DWORD smoke_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FILE_SELECTION", smoke_paths, smoke_paths_capacity);
-    if (smoke_length > 0 && smoke_length < smoke_paths_capacity) {
-        std::lock_guard lock(mutex_);
-        const bool was_empty = state_.queued_paths.empty();
-        std::wstring_view paths(smoke_paths, smoke_length);
-        std::size_t start = 0;
-        while (start <= paths.size()) {
-            const std::size_t end = paths.find(L';', start);
-            const auto part =
-                paths.substr(start, end == std::wstring_view::npos ? std::wstring_view::npos : end - start);
-            if (!part.empty()) {
-                state_.queued_paths.emplace_back(std::wstring(part));
-                state_.queued_enabled.push_back(true);
-            }
-            if (end == std::wstring_view::npos) {
-                break;
-            }
-            start = end + 1;
-        }
-        if (was_empty && !state_.queued_paths.empty()) {
-            state_.selected_queue_index = 0;
-            queue_scroll_first_row_ = 0;
-        }
-        normalize_queue_selection_locked();
-        state_.status = "Smoke files added";
-        request_repaint();
+    auto smoke_paths = smoke_file_selection_paths();
+    if (!smoke_paths.empty()) {
+        (void)append_queued_paths(std::move(smoke_paths), "Smoke files added");
         return;
     }
 
-    OPENFILENAMEW ofn{};
-    wchar_t files[8192]{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = hwnd_;
-    ofn.lpstrFile = files;
-    ofn.nMaxFile = 8192;
-    ofn.lpstrTitle = L"Add files to SuperZip";
-    ofn.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST;
-    if (!GetOpenFileNameW(&ofn)) {
-        return;
-    }
-    std::lock_guard lock(mutex_);
-    std::filesystem::path dir(files);
-    wchar_t* cursor = files + dir.wstring().size() + 1;
-    const bool was_empty = state_.queued_paths.empty();
-    if (*cursor == L'\0') {
-        state_.queued_paths.push_back(dir);
-        state_.queued_enabled.push_back(true);
-    } else {
-        while (*cursor != L'\0') {
-            std::filesystem::path name(cursor);
-            state_.queued_paths.push_back(dir / name);
-            state_.queued_enabled.push_back(true);
-            cursor += name.wstring().size() + 1;
+    try {
+        auto selected = selected_files_from_dialog(hwnd_);
+        if (!selected.empty()) {
+            (void)append_queued_paths(std::move(selected), "Files added");
         }
+    } catch (const std::exception& error) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = std::string("Add files failed: ") + error.what();
+        }
+        append_log_entry(LogSeverity::Warning, "File picker failed");
     }
-    if (was_empty && !state_.queued_paths.empty()) {
-        state_.selected_queue_index = 0;
-        queue_scroll_first_row_ = 0;
-    }
-    normalize_queue_selection_locked();
-    request_repaint();
 }
 
 // Purpose: Open the Windows folder picker and append a selected folder to the queue.
-// Inputs: None; user selection comes from the shell folder picker or GUI smoke-test environment.
+// Inputs: None; user selection comes from the shell picker or GUI smoke-test environment.
 // Outputs: Mutates queued paths and queues a repaint when a folder is selected.
 void MainWindow::add_folder() {
-    wchar_t smoke_path[32768]{};
-    constexpr DWORD smoke_path_capacity = static_cast<DWORD>(sizeof(smoke_path) / sizeof(smoke_path[0]));
-    const DWORD smoke_length =
-        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", smoke_path, smoke_path_capacity);
-    if (smoke_length > 0 && smoke_length < smoke_path_capacity) {
-        std::lock_guard lock(mutex_);
-        const bool was_empty = state_.queued_paths.empty();
-        state_.queued_paths.emplace_back(smoke_path);
-        state_.queued_enabled.push_back(true);
-        if (was_empty) {
-            state_.selected_queue_index = 0;
-            queue_scroll_first_row_ = 0;
-        }
-        normalize_queue_selection_locked();
-        state_.status = "Smoke folder added";
-        request_repaint();
+    auto smoke_path = smoke_folder_selection_path();
+    if (!smoke_path.empty()) {
+        std::vector<std::filesystem::path> paths;
+        paths.emplace_back(std::move(smoke_path));
+        (void)append_queued_paths(std::move(paths), "Smoke folder added");
         return;
     }
 
-    BROWSEINFOW browse{};
-    browse.hwndOwner = hwnd_;
-    browse.lpszTitle = L"Add folder to SuperZip";
-    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
-    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&browse);
-    if (pidl == nullptr) {
-        return;
-    }
-    wchar_t path[MAX_PATH]{};
-    const BOOL ok = SHGetPathFromIDListW(pidl, path);
-    CoTaskMemFree(pidl);
-    if (!ok || path[0] == L'\0') {
-        return;
-    }
-    {
-        std::lock_guard lock(mutex_);
-        const bool was_empty = state_.queued_paths.empty();
-        state_.queued_paths.emplace_back(path);
-        state_.queued_enabled.push_back(true);
-        if (was_empty) {
-            state_.selected_queue_index = 0;
-            queue_scroll_first_row_ = 0;
+    try {
+        auto selected = selected_folder_from_dialog(hwnd_, L"Add folder to SuperZip");
+        if (!selected.empty()) {
+            std::vector<std::filesystem::path> paths;
+            paths.emplace_back(std::move(selected));
+            (void)append_queued_paths(std::move(paths), "Folder added");
         }
-        normalize_queue_selection_locked();
+    } catch (const std::exception& error) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = std::string("Add folder failed: ") + error.what();
+        }
+        append_log_entry(LogSeverity::Warning, "Folder picker failed");
     }
-    request_repaint();
 }
 
 // Purpose: Remove every queued path and reset row selection state.
@@ -190,7 +346,7 @@ void MainWindow::clear_history() {
 }
 
 // Purpose: Open the Windows folder picker for destination selection.
-// Inputs: None; user selection comes from the shell dialog or smoke-test environment override.
+// Inputs: None; user selection comes from the shell picker or smoke-test environment override.
 // Outputs: Updates the destination directory and queues a repaint when selected.
 void MainWindow::choose_destination() {
     wchar_t smoke_path[32768]{};
@@ -205,24 +361,19 @@ void MainWindow::choose_destination() {
         return;
     }
 
-    BROWSEINFOW browse{};
-    browse.hwndOwner = hwnd_;
-    browse.lpszTitle = L"Choose SuperZip destination";
-    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
-    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&browse);
-    if (pidl == nullptr) {
-        return;
-    }
-    wchar_t path[MAX_PATH]{};
-    const BOOL ok = SHGetPathFromIDListW(pidl, path);
-    CoTaskMemFree(pidl);
-    if (!ok || path[0] == L'\0') {
-        return;
-    }
-    {
-        std::lock_guard lock(mutex_);
-        state_.destination_directory = path;
-        state_.status = "Destination selected";
+    try {
+        auto selected = selected_folder_from_dialog(hwnd_, L"Choose SuperZip destination");
+        if (!selected.empty()) {
+            std::lock_guard lock(mutex_);
+            state_.destination_directory = std::move(selected);
+            state_.status = "Destination selected";
+        }
+    } catch (const std::exception& error) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = std::string("Destination selection failed: ") + error.what();
+        }
+        append_log_entry(LogSeverity::Warning, "Destination picker failed");
     }
     request_repaint();
 }

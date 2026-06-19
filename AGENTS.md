@@ -96,6 +96,11 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Queue overflow must keep the header fixed, keep row checkbox hit testing
   aligned with the visible row, keep drag/drop accepted only inside the Queue
   table, and expose a scrollbar only when rows overflow the body.
+- Queue Add files, Add folder, and destination selection must use the modern
+  Windows shell picker (`IFileOpenDialog`) without fixed `OPENFILENAMEW`
+  selection buffers, `SHBrowseForFolderW`, `SHGetPathFromIDListW`, or `MAX_PATH`
+  assumptions. GUI smoke must exercise both picker-driven queue insertion and a
+  many-file HDROP drag/drop payload before Queue input changes are accepted.
 - The canonical logo artwork is the `superzip-logo-mark` group in
   `resources/brand/superzip-logo.svg`. AI agents may move or resize that mark
   for layout, and may edit surrounding wordmark/tagline copy, but must not alter

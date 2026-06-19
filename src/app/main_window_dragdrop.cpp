@@ -167,10 +167,9 @@ class QueueDropTarget final : public IDropTarget {
     bool data_object_has_files_ = false;
 };
 
-// Purpose: Construct a main window controller with default UI state.
-// Inputs: None.
-// Outputs: Initializes fields only; the native HWND is created by `run`.
-
+// Purpose: Append native shell-dropped paths to the queue.
+// Inputs: `wparam` contains the HDROP handle from `WM_DROPFILES`.
+// Outputs: Updates queue selection, releases the HDROP handle, and returns the handled Win32 result.
 LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
     // Native shell drag/drop is a queue regression boundary and is covered by
     // the GUI smoke harness with an injected HDROP payload.
@@ -225,6 +224,7 @@ bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, 
     set_queue_drop_highlight(false);
     LogSeverity severity = LogSeverity::Debug;
     std::string message;
+    bool may_append = false;
     {
         std::lock_guard lock(mutex_);
         if (state_.page != Page::Queue || !contains_point(queue_layout(content_rect()).table, point.x, point.y)) {
@@ -236,25 +236,24 @@ bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, 
             severity = LogSeverity::Warning;
             message = "Shell drop did not contain usable paths";
         } else {
-            const bool was_empty = state_.queued_paths.empty();
-            for (auto& path : paths) {
-                state_.queued_paths.emplace_back(std::move(path));
-                state_.queued_enabled.push_back(true);
-            }
-            normalize_queue_selection_locked();
-            if (was_empty && !state_.queued_paths.empty()) {
-                state_.selected_queue_index = 0;
-                queue_scroll_first_row_ = 0;
-            }
-            state_.status = "Dropped items added";
-            message = "Shell drop added " + std::to_string(paths.size()) + " queued item(s)";
+            may_append = true;
         }
     }
-    if (!message.empty()) {
+    if (!may_append) {
         append_log_entry(severity, std::move(message));
-        return severity != LogSeverity::Warning;
+        return false;
     }
-    request_repaint();
+
+    const std::size_t added = append_queued_paths(std::move(paths), "Dropped items added");
+    if (added == 0U) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "No drop items received";
+        }
+        append_log_entry(LogSeverity::Warning, "Shell drop did not contain usable paths");
+        return false;
+    }
+    append_log_entry(LogSeverity::Debug, "Shell drop added " + std::to_string(added) + " queued item(s)");
     return true;
 }
 
@@ -293,7 +292,6 @@ bool MainWindow::enable_elevated_drag_drop_messages() const {
 // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
 // Inputs: None.
 // Outputs: Arms timers and returns the handled Win32 result.
-
 LRESULT MainWindow::handle_create() {
     initialize_settings();
     DragAcceptFiles(hwnd_, TRUE);

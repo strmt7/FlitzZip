@@ -588,6 +588,11 @@ class MainWindow {
     // Outputs: Adds missing enabled flags, removes stale flags, and normalizes selected index.
     void normalize_queue_selection_locked();
 
+    // Purpose: Append filesystem paths to the Queue through one shared mutation path.
+    // Inputs: `paths` are selected or dropped filesystem paths and `status` is the visible status after success.
+    // Outputs: Returns the number of nonempty paths appended, updates selection/scroll state, and repaints on success.
+    std::size_t append_queued_paths(std::vector<std::filesystem::path> paths, std::string status);
+
     // Purpose: Test whether a copied Queue state has at least one checked row.
     // Inputs: `state` is a stable UI snapshot with queue paths and checkbox flags.
     // Outputs: Returns true only when at least one queued item is selected for operations.
@@ -709,12 +714,12 @@ class MainWindow {
     void set_page(Page page);
 
     // Purpose: Open the Windows file picker and append selected files to the queue.
-    // Inputs: None; user selection comes from the common dialog.
+    // Inputs: None; user selection comes from the shell picker or smoke-test environment.
     // Outputs: Mutates queued paths and queues a repaint when files are selected.
     void add_files();
 
     // Purpose: Open the Windows folder picker and append a selected folder to the queue.
-    // Inputs: None; user selection comes from the shell folder picker.
+    // Inputs: None; user selection comes from the shell picker or smoke-test environment.
     // Outputs: Mutates queued paths and queues a repaint when a folder is selected.
     void add_folder();
 
