@@ -243,13 +243,12 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
                                      layout.start.bottom + scale(4) + scale(kOperationProgressHeight)},
                                 state, OperationKind::Extract);
 
-    const auto archive =
-        state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
-    draw_field(dc, layout.archive, L"Archive", archive, false, true, false,
-               state.queued_paths.empty() ? kMuted : CLR_INVALID);
+    const auto selected_archives = selected_extract_archive_paths(state);
+    const auto archive = selected_extract_archive_text(selected_archives);
+    draw_field(dc, layout.archive, L"Archive path", archive, false, true, false,
+               selected_archives.empty() ? kMuted : CLR_INVALID);
     draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false, true, true);
-    const std::wstring detected_format =
-        state.queued_paths.empty() ? std::wstring(L"-") : detected_archive_format_text(state.queued_paths);
+    const std::wstring detected_format = selected_extract_archive_format_text(selected_archives);
     draw_field(dc, layout.path_mode, L"Format", detected_format, false, detected_format != L"-");
     draw_field(dc, layout.overwrite_policy, L"Overwrite policy",
                state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting", true);

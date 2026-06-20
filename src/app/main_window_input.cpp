@@ -210,8 +210,7 @@ bool MainWindow::field_text_tooltip_candidate_at_mouse(const UiState& state, REC
     }
     if (state.page == Page::Extract) {
         const auto layout = extract_layout(content);
-        const auto archive =
-            state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring();
+        const auto archive = selected_extract_archive_text(selected_extract_archive_paths(state));
         return tooltip_candidate_for_field(layout.archive, archive, cell, text) ||
                tooltip_candidate_for_field(layout.destination, extraction_output_path_for(state).wstring(), cell, text);
     }

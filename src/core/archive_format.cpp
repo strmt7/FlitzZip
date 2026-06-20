@@ -689,6 +689,16 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     return by_extension;
 }
 
+// Purpose: Detect a supported archive format from registered filename extensions without probing file content.
+// Inputs: `archive_path` supplies only the candidate filename; the filesystem is not touched.
+// Outputs: Returns a registered extension format, or `ArchiveFormat::Unknown` for unsupported/excluded extensions.
+ArchiveFormat detect_archive_format_by_extension(const std::filesystem::path& archive_path) {
+    if (has_excluded_zip_container_extension(archive_path)) {
+        return ArchiveFormat::Unknown;
+    }
+    return detect_by_extension(archive_path);
+}
+
 std::string archive_format_key_list(bool include_auto) {
     std::ostringstream out;
     bool first = true;

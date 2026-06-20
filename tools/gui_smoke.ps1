@@ -100,11 +100,35 @@ function Assert-GuiSourceContract {
     if (-not $sourceText.Contains('IFileOpenDialog') -or -not $sourceText.Contains('append_queued_paths')) {
         throw "Queue Add files, Add folder, and drag/drop must share modern shell selection and queue append paths."
     }
+    if (-not $sourceText.Contains('detect_archive_format_by_extension(path)') -or
+        -not $sourceText.Contains('return L"Archive";')) {
+        throw "Queue Type must classify supported archive files as Archive through extension-only detection."
+    }
+    foreach ($requiredExtractSource in @(
+        'selected_extract_archive_paths',
+        'Multiple selected archives',
+        'L"Archive path"',
+        'extraction_outputs_for_archives',
+        'request.archives'
+    )) {
+        if (-not $sourceText.Contains($requiredExtractSource)) {
+            throw "Extract page must support selected one-or-many archive extraction; missing $requiredExtractSource."
+        }
+    }
+    if (-not $sourceText.Contains('constexpr std::size_t kFullGraphSampleCapacity = 96U') -or
+        -not $sourceText.Contains('first_x')) {
+        throw "Performance graphs must not stretch startup samples across the full plot."
+    }
     if (-not $sourceText.Contains('constexpr UINT kTextTooltipDelayMs = 500')) {
         throw "Truncated text tooltip delay must remain 0.5 seconds."
     }
     if (-not $sourceText.Contains('performance_update_seconds = 3')) {
         throw "System Performance Monitor default refresh interval must remain 3 seconds."
+    }
+    if (-not $sourceText.Contains('sample_total_dedicated_vram_used_bytes') -or
+        -not $sourceText.Contains('reconcile_vram_usage') -or
+        -not (Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/cpp/test_resource_usage.cpp')).Contains('vram_reconciliation_keeps_process_usage_under_total_usage')) {
+        throw "VRAM total/dedicated display must use centralized, tested Windows dedicated-memory reconciliation."
     }
     if ($sourceText -cmatch 'L"Session"') {
         throw "History rows must use the real completion time, not the literal Session label."
@@ -160,10 +184,13 @@ function Assert-SettingsValue {
 }
 
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
+$smokeDestination = Join-Path $smokeRoot "SuperZip-destination"
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
+$smokeInputTwo = Join-Path $smokeRoot "drag-drop-input-two.txt"
 $smokeFolder = Join-Path $smokeRoot "folder-input"
 $smokeArchive = Join-Path $smokeRoot "valid-input.suzip"
+$smokeArchiveTwo = Join-Path $smokeRoot "valid-input-two.suzip"
 $badArchive = Join-Path $smokeRoot "invalid-input.suzip"
 $overflowFiles = @()
 $bulkDropFiles = @()
@@ -171,7 +198,10 @@ $smokeCloseFile = Join-Path $smokeRoot "close.request"
 $smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "SuperZip"
 $smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
 New-Item -ItemType Directory -Force -Path $smokeSettingsDir | Out-Null
+Remove-Item -LiteralPath $smokeDestination -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $smokeDestination | Out-Null
 Set-Content -LiteralPath $smokeInput -Value "SuperZip GUI smoke input" -NoNewline
+Set-Content -LiteralPath $smokeInputTwo -Value "Second SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
 foreach ($index in 1..28) {
@@ -187,11 +217,16 @@ foreach ($index in 1..72) {
 $queuePickerSelection = (@((Resolve-Path -LiteralPath $smokeInput).Path) + $overflowFiles) -join ';'
 Set-Content -LiteralPath $badArchive -Value "not a valid SuperZip archive" -NoNewline
 Remove-Item -LiteralPath $smokeArchive -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $smokeArchiveTwo -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $smokeSettingsFile -Force -ErrorAction SilentlyContinue
 & (Join-Path $repo "build\$Configuration\superzip_cli.exe") compress --format suzip --output $smokeArchive --force-cpu $smokeInput | Out-Null
+& (Join-Path $repo "build\$Configuration\superzip_cli.exe") compress --format suzip --output $smokeArchiveTwo --force-cpu $smokeInputTwo | Out-Null
 if (-not (Test-Path -LiteralPath $smokeArchive)) {
     throw "Could not create valid SUZIP archive for GUI extract smoke."
+}
+if (-not (Test-Path -LiteralPath $smokeArchiveTwo)) {
+    throw "Could not create second valid SUZIP archive for GUI multi-extract smoke."
 }
 $previousSmokeDestination = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", "Process")
 $previousSmokeFiles = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", "Process")
@@ -203,7 +238,7 @@ $smokeAutoCloseMs = 300000
 if ($smokeAutoCloseMs -lt 240000) {
     throw "GUI smoke auto-close timeout must leave enough time for the full tab/control pass."
 }
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeRoot, "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeDestination, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", $queuePickerSelection, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", [string]$smokeAutoCloseMs, "Process")
@@ -343,7 +378,7 @@ try {
     Start-Sleep -Milliseconds 140
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 583
     Start-Sleep -Milliseconds 140
-    $expectedZstd = Join-Path $smokeRoot "SuperZip-output.zst"
+    $expectedZstd = Join-Path $smokeDestination "SuperZip-output.zst"
     Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 6
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -360,7 +395,7 @@ try {
     }
     Start-Sleep -Milliseconds 300
 
-    $expectedTarZstd = Join-Path $smokeRoot "SuperZip-output.tar.zst"
+    $expectedTarZstd = Join-Path $smokeDestination "SuperZip-output.tar.zst"
     Remove-Item -LiteralPath $expectedTarZstd -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 8
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -377,7 +412,7 @@ try {
     }
     Start-Sleep -Milliseconds 300
 
-    $expectedTarGz = Join-Path $smokeRoot "SuperZip-output.tar.gz"
+    $expectedTarGz = Join-Path $smokeDestination "SuperZip-output.tar.gz"
     Remove-Item -LiteralPath $expectedTarGz -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 2
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -393,7 +428,7 @@ try {
         throw "GUI compression did not create expected non-empty TAR.GZ archive at $expectedTarGz."
     }
 
-    $expectedCpioGz = Join-Path $smokeRoot "SuperZip-output.cpgz"
+    $expectedCpioGz = Join-Path $smokeDestination "SuperZip-output.cpgz"
     Remove-Item -LiteralPath $expectedCpioGz -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 16
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
@@ -410,6 +445,7 @@ try {
     }
 
     # Extract: return to Queue, clear inputs, drop a valid archive, then exercise extract controls.
+    $extractOutput = $smokeDestination
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
     Start-Sleep -Milliseconds 150
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
@@ -422,6 +458,8 @@ try {
     Assert-DesignRectHasDetail -Path $archiveDropQueuePath -Dpi $windowDpi -Left 126 -Top 168 -Right 560 -Bottom 204 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 4
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
     Start-Sleep -Milliseconds 250
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
+    Start-Sleep -Milliseconds 120
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 520 -DesignY 227
     Start-Sleep -Milliseconds 120
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
@@ -438,8 +476,53 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 453
     Start-Sleep -Milliseconds 120
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
-    Start-Sleep -Seconds 2
-    $extractOutput = Join-Path $smokeRoot "SuperZip-extracted"
+    $singleExtracted = Join-Path $extractOutput "drag-drop-input.txt"
+    foreach ($attempt in 1..50) {
+        if (Test-Path -LiteralPath $singleExtracted) {
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not (Test-Path -LiteralPath $singleExtracted)) {
+        throw "GUI single-archive extraction did not restore expected file at $singleExtracted."
+    }
+
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
+    Start-Sleep -Milliseconds 150
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
+    Start-Sleep -Milliseconds 150
+    Remove-Item -LiteralPath $extractOutput -Recurse -Force -ErrorAction SilentlyContinue
+    Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @(
+        (Resolve-Path -LiteralPath $smokeArchive).Path,
+        (Resolve-Path -LiteralPath $smokeArchiveTwo).Path
+    )
+    Start-Sleep -Milliseconds 250
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
+    Start-Sleep -Milliseconds 250
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
+    $multiFirst = Join-Path $extractOutput "valid-input\drag-drop-input.txt"
+    $multiSecond = Join-Path $extractOutput "valid-input-two\drag-drop-input-two.txt"
+    foreach ($attempt in 1..50) {
+        if ((Test-Path -LiteralPath $multiFirst) -and (Test-Path -LiteralPath $multiSecond)) {
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not (Test-Path -LiteralPath $multiFirst) -or -not (Test-Path -LiteralPath $multiSecond)) {
+        throw "GUI multi-archive extraction did not restore both expected files under $extractOutput."
+    }
+
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
+    Start-Sleep -Milliseconds 150
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
+    Start-Sleep -Milliseconds 150
+    Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $smokeArchive).Path)
+    Start-Sleep -Milliseconds 250
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
+    Start-Sleep -Milliseconds 250
+    Remove-Item -LiteralPath $extractOutput -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $extractOutput | Out-Null
     Set-Content -LiteralPath (Join-Path $extractOutput "existing-output.txt") -Value "Existing extraction output" -NoNewline
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Ask" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 266 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension

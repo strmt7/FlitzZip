@@ -1,5 +1,7 @@
 #include "app/main_window_impl.hpp"
 
+#include "core/resource_usage.hpp"
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -230,6 +232,58 @@ std::uint64_t MainWindow::sample_process_dedicated_vram_bytes() const {
     return total;
 }
 
+// Purpose: Sample Windows-visible total dedicated GPU memory usage.
+// Inputs: None; reads PDH GPU Adapter Memory wildcard counters for dedicated usage.
+// Outputs: Returns the summed dedicated usage bytes, or zero when the counter is unavailable.
+std::uint64_t MainWindow::sample_total_dedicated_vram_used_bytes() const {
+    PDH_HQUERY query = nullptr;
+    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS || query == nullptr) {
+        return 0U;
+    }
+    struct QueryGuard {
+        PDH_HQUERY query = nullptr;
+        ~QueryGuard() {
+            if (query != nullptr) {
+                PdhCloseQuery(query);
+            }
+        }
+    } guard{query};
+
+    PDH_HCOUNTER counter = nullptr;
+    if (PdhAddEnglishCounterW(query, L"\\GPU Adapter Memory(*)\\Dedicated Usage", 0, &counter) != ERROR_SUCCESS ||
+        counter == nullptr) {
+        return 0U;
+    }
+    if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
+        return 0U;
+    }
+
+    DWORD buffer_size = 0;
+    DWORD item_count = 0;
+    PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, nullptr);
+    if (status != PDH_MORE_DATA || buffer_size == 0U || item_count == 0U) {
+        return 0U;
+    }
+    std::vector<std::byte> buffer(buffer_size);
+    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+    status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, items);
+    if (status != ERROR_SUCCESS) {
+        return 0U;
+    }
+
+    std::uint64_t total = 0U;
+    for (DWORD index = 0; index < item_count; ++index) {
+        const auto& item = items[index];
+        if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr) {
+            continue;
+        }
+        if (item.FmtValue.largeValue > 0) {
+            total += static_cast<std::uint64_t>(item.FmtValue.largeValue);
+        }
+    }
+    return total;
+}
+
 // Purpose: Sample process read/write transfer rates since the previous monitor tick.
 // Inputs: `elapsed_seconds` is the interval from the previous sample.
 // Outputs: Returns non-negative byte-per-second rates and updates previous I/O counters.
@@ -306,6 +360,10 @@ void MainWindow::update_performance_sample() {
     const auto system_memory = sample_system_memory_usage();
     refresh_gpu_memory_cache(now);
     const double gpu_percent = sample_gpu_utilization();
+    const auto process_dedicated_vram_bytes = sample_process_dedicated_vram_bytes();
+    const auto adapter_dedicated_vram_used_bytes = sample_total_dedicated_vram_used_bytes();
+    const auto vram_usage = reconcile_vram_usage(cached_vram_total_bytes_, cached_vram_free_bytes_,
+                                                 adapter_dedicated_vram_used_bytes, process_dedicated_vram_bytes);
 
     PerformanceMonitorSample sample;
     sample.live = true;
@@ -319,9 +377,11 @@ void MainWindow::update_performance_sample() {
     sample.private_bytes = private_bytes;
     sample.system_memory_total_bytes = system_memory.total_bytes;
     sample.system_memory_used_bytes = system_memory.used_bytes;
-    sample.vram_total_bytes = cached_vram_total_bytes_;
-    sample.vram_free_bytes = cached_vram_free_bytes_;
-    sample.process_dedicated_vram_bytes = sample_process_dedicated_vram_bytes();
+    sample.vram_total_bytes = vram_usage.total_capacity_bytes;
+    sample.vram_free_bytes = sample.vram_total_bytes >= vram_usage.total_used_bytes
+                                 ? sample.vram_total_bytes - vram_usage.total_used_bytes
+                                 : 0U;
+    sample.process_dedicated_vram_bytes = vram_usage.process_dedicated_bytes;
     publish_performance_sample(sample, now);
 }
 

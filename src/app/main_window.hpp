@@ -748,7 +748,7 @@ class MainWindow {
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
     void start_compress();
 
-    // Purpose: Start a background SuperZip extraction job from the first queued archive.
+    // Purpose: Start a background SuperZip extraction job from selected queued archives.
     // Inputs: None; reads queued paths from UI state.
     // Outputs: Launches a worker thread or no-ops when the queue is empty or another worker is running.
     void start_extract();
@@ -868,6 +868,11 @@ class MainWindow {
     // Outputs: Returns dedicated GPU memory bytes or zero when the counter is unavailable.
     [[nodiscard]] std::uint64_t sample_process_dedicated_vram_bytes() const;
 
+    // Purpose: Sample total Windows dedicated GPU memory currently used by all processes/adapters.
+    // Inputs: None; uses Windows PDH GPU Adapter Memory counters without mutating app state.
+    // Outputs: Returns dedicated VRAM usage bytes, or zero when Windows does not expose the counter.
+    [[nodiscard]] std::uint64_t sample_total_dedicated_vram_used_bytes() const;
+
     // Purpose: Start a bounded non-blocking page transition animation.
     // Inputs: `from` and `to` identify the tab change.
     // Outputs: Arms the animation timer and queues repaint frames.
@@ -942,8 +947,8 @@ class MainWindow {
     ToggleId transition_toggle_ = ToggleId::None;
     bool transition_toggle_from_ = false;
     bool transition_toggle_to_ = false;
-    std::array<int, 4> queue_column_widths_{260, 110, 110, 460};
-    std::array<int, 4> queue_column_resize_start_{260, 110, 110, 460};
+    std::array<int, 4> queue_column_widths_{276, 100, 96, 468};
+    std::array<int, 4> queue_column_resize_start_{276, 100, 96, 468};
     int queue_column_resize_separator_ = -1;
     int queue_column_resize_start_x_ = 0;
     std::array<int, 4> history_column_widths_{150, 140, 620, 150};

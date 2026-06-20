@@ -17,6 +17,93 @@
 #endif
 
 namespace superzip::app {
+namespace {
+
+// Purpose: Replace filesystem-hostile characters in a derived folder name.
+// Inputs: `value` is a filename stem chosen from a user-selected archive path.
+// Outputs: Returns a valid local folder component, never empty.
+std::wstring sanitize_extract_folder_component(std::wstring value) {
+    for (wchar_t& ch : value) {
+        if (ch < 32 || ch == L'<' || ch == L'>' || ch == L':' || ch == L'"' || ch == L'/' || ch == L'\\' ||
+            ch == L'|' || ch == L'?' || ch == L'*') {
+            ch = L'_';
+        }
+    }
+    while (!value.empty() && (value.back() == L'.' || value.back() == L' ')) {
+        value.pop_back();
+    }
+    if (value.empty()) {
+        return L"archive";
+    }
+    return value;
+}
+
+// Purpose: Return a lowercase ASCII-only copy for registered extension suffix matching.
+// Inputs: `value` is a Windows filename or registered extension string.
+// Outputs: Returns `value` with only ASCII `A-Z` folded to lowercase.
+std::wstring ascii_lower_wide(std::wstring value) {
+    for (wchar_t& ch : value) {
+        if (ch >= L'A' && ch <= L'Z') {
+            ch = static_cast<wchar_t>(ch - L'A' + L'a');
+        }
+    }
+    return value;
+}
+
+// Purpose: Derive a display-safe output folder base from an archive filename.
+// Inputs: `archive` is a selected archive path with a registered extension.
+// Outputs: Returns the filename with the full registered extension removed, sanitized for a local folder component.
+std::wstring extract_folder_base_name(const std::filesystem::path& archive) {
+    auto filename = archive.filename().wstring();
+    const auto format = detect_archive_format_by_extension(archive);
+    const auto extension = widen(archive_format_extension_info_for_path(format, archive).extension);
+    const auto lowered_filename = ascii_lower_wide(filename);
+    const auto lowered_extension = ascii_lower_wide(extension);
+    if (!extension.empty() && lowered_filename.size() > lowered_extension.size() &&
+        lowered_filename.compare(lowered_filename.size() - lowered_extension.size(), lowered_extension.size(),
+                                 lowered_extension) == 0) {
+        filename.resize(filename.size() - extension.size());
+    } else {
+        filename = archive.stem().wstring();
+    }
+    return sanitize_extract_folder_component(std::move(filename));
+}
+
+// Purpose: Derive the per-archive output folder for multi-archive extraction.
+// Inputs: `archive` is the selected archive path and `existing` contains names already assigned in this job.
+// Outputs: Returns a unique folder name under the common extraction root and records the chosen name.
+std::filesystem::path unique_extract_folder_name(const std::filesystem::path& archive,
+                                                 std::vector<std::wstring>& existing) {
+    const auto base = extract_folder_base_name(archive);
+    std::wstring candidate = base;
+    int suffix = 2;
+    while (std::ranges::find(existing, candidate) != existing.end()) {
+        candidate = base + L" (" + std::to_wstring(suffix) + L")";
+        ++suffix;
+    }
+    existing.push_back(candidate);
+    return std::filesystem::path(candidate);
+}
+
+// Purpose: Build extraction destinations for one or many selected archives.
+// Inputs: `archives` is non-empty and `root` is the selected extraction destination.
+// Outputs: Returns one destination per archive; single-archive behavior preserves `root` exactly.
+std::vector<std::filesystem::path> extraction_outputs_for_archives(const std::vector<std::filesystem::path>& archives,
+                                                                   const std::filesystem::path& root) {
+    if (archives.size() <= 1U) {
+        return {root};
+    }
+    std::vector<std::filesystem::path> outputs;
+    std::vector<std::wstring> names;
+    outputs.reserve(archives.size());
+    names.reserve(archives.size());
+    for (const auto& archive : archives) {
+        outputs.push_back(root / unique_extract_folder_name(archive, names));
+    }
+    return outputs;
+}
+
+}  // namespace
 
 // Purpose: Detect whether Ask-before-overwriting needs user confirmation.
 // Inputs: `destination` is the extraction root.
@@ -102,40 +189,46 @@ void MainWindow::continue_extract_overwrite_prompt() {
 void MainWindow::launch_extract_job(ExtractJobRequest request) {
     run_job(
         [this, request = std::move(request)] {
-            const auto& archive = request.archive;
-            const auto& output = request.output;
-            if (request.integrity) {
-                const auto hash = hash_path(archive, IntegrityMode::Sha256);
-                append_history_entry("Security", archive.filename().string(), integrity_history_status("Archive", hash),
-                                     true);
-            }
-            if (request.defender) {
-                const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
-                append_history_entry("Security", archive.filename().string(),
-                                     defender_history_status("Defender archive", pre_scan),
-                                     !pre_scan.attempted || pre_scan.clean);
-                if (pre_scan.attempted && !pre_scan.clean) {
-                    throw SecurityError("Microsoft Defender did not report the archive as clean: " + archive.string());
+            const auto outputs = extraction_outputs_for_archives(request.archives, request.output);
+            for (std::size_t index = 0; index < request.archives.size(); ++index) {
+                const auto& archive = request.archives[index];
+                const auto& output = outputs[index];
+                if (request.integrity) {
+                    const auto hash = hash_path(archive, IntegrityMode::Sha256);
+                    append_history_entry("Security", archive.filename().string(),
+                                         integrity_history_status("Archive", hash), true);
                 }
-            }
-            auto progress_callback = [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot(snapshot); };
-            const auto archive_format = detect_archive_format(archive);
-            const auto stats = extract_detected_archive(archive_format, archive, output, request.gpu_required,
-                                                        request.overwrite, progress_callback);
-            std::ostringstream line;
-            line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
-                 << stats.seconds << "s";
-            append_history_entry("Extract", archive.filename().string(), line.str(), true);
-            if (request.integrity) {
-                const auto hash = hash_path(output, IntegrityMode::Sha256);
-                append_history_entry("Security", output.filename().string(), integrity_history_status("Output", hash),
-                                     true);
-            }
-            if (request.defender) {
-                const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-                append_history_entry("Security", output.filename().string(),
-                                     defender_history_status("Defender output", post_scan),
-                                     !post_scan.attempted || post_scan.clean);
+                if (request.defender) {
+                    const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
+                    append_history_entry("Security", archive.filename().string(),
+                                         defender_history_status("Defender archive", pre_scan),
+                                         !pre_scan.attempted || pre_scan.clean);
+                    if (pre_scan.attempted && !pre_scan.clean) {
+                        throw SecurityError("Microsoft Defender did not report the archive as clean: " +
+                                            archive.string());
+                    }
+                }
+                auto progress_callback = [this](const ProgressSnapshot& snapshot) {
+                    publish_progress_snapshot(snapshot);
+                };
+                const auto archive_format = detect_archive_format(archive);
+                const auto stats = extract_detected_archive(archive_format, archive, output, request.gpu_required,
+                                                            request.overwrite, progress_callback);
+                std::ostringstream line;
+                line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
+                     << stats.seconds << "s";
+                append_history_entry("Extract", archive.filename().string(), line.str(), true);
+                if (request.integrity) {
+                    const auto hash = hash_path(output, IntegrityMode::Sha256);
+                    append_history_entry("Security", output.filename().string(),
+                                         integrity_history_status("Output", hash), true);
+                }
+                if (request.defender) {
+                    const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
+                    append_history_entry("Security", output.filename().string(),
+                                         defender_history_status("Defender output", post_scan),
+                                         !post_scan.attempted || post_scan.clean);
+                }
             }
         },
         "Extracting");
@@ -146,23 +239,18 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
 // Outputs: Launches a worker job, updates progress/history/status, blocks unclean pre-scans, or requests repaint when
 // no archive is selected.
 void MainWindow::start_extract() {
-    std::vector<std::filesystem::path> sources;
     ExtractJobRequest request;
     {
         std::lock_guard lock(mutex_);
         normalize_queue_selection_locked();
-        for (std::size_t i = 0; i < state_.queued_paths.size(); ++i) {
-            if (state_.queued_enabled[i]) {
-                sources.push_back(state_.queued_paths[i]);
-            }
-        }
+        request.archives = selected_extract_archive_paths(state_);
         request.gpu_required = state_.gpu_required;
         request.overwrite = state_.overwrite;
         request.integrity = state_.integrity_hash_opt_in;
         request.defender = state_.defender_scan_opt_in;
         request.output = extraction_output_path_for(state_);
     }
-    if (sources.empty()) {
+    if (request.archives.empty()) {
         {
             std::lock_guard lock(mutex_);
             state_.status = "Select an archive before starting extraction";
@@ -170,7 +258,6 @@ void MainWindow::start_extract() {
         request_repaint();
         return;
     }
-    request.archive = sources.front();
     if (!request.overwrite && extract_overwrite_prompt_needed(request.output)) {
         show_extract_overwrite_prompt(std::move(request));
         return;

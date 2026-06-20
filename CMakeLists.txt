@@ -311,6 +311,7 @@ add_library(
   src/core/integrity.cpp
   src/core/path_safety.cpp
   src/core/progress.cpp
+  src/core/resource_usage.cpp
   src/cpio/cpio_adapter.cpp
   src/gzip/gzip_adapter.cpp
   src/gzip/gzip_stream.cpp
@@ -588,6 +589,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_log_retention.cpp
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp
+    tests/cpp/test_resource_usage.cpp
     tests/cpp/test_sevenzip_compat.cpp
     tests/cpp/test_suzip_gpu_prefix.cpp
     tests/cpp/test_tar_bzip2_compat.cpp

@@ -258,13 +258,17 @@ std::wstring entry_size_text(const std::filesystem::path& path) {
 
 // Purpose: Return a user-facing entry type for a queued path.
 // Inputs: `path` is a file or folder path that may no longer exist.
-// Outputs: Returns `Folder`, `File`, or `Missing`.
+// Outputs: Returns `Folder`, `Archive`, `File`, or `Missing`; archive detection is extension-only and non-blocking.
 std::wstring entry_type_text(const std::filesystem::path& path) {
     std::error_code ec;
     if (std::filesystem::is_directory(path, ec)) {
         return L"Folder";
     }
     if (std::filesystem::is_regular_file(path, ec)) {
+        const auto extension_format = detect_archive_format_by_extension(path);
+        if (archive_format_info(extension_format).can_extract) {
+            return L"Archive";
+        }
         return L"File";
     }
     return L"Missing";
@@ -282,6 +286,62 @@ std::wstring detected_archive_format_text(const std::vector<std::filesystem::pat
         return L"-";
     }
     return widen(archive_format_extension_info_for_path(format, paths.front()).display_name);
+}
+
+// Purpose: Collect selected queue entries that can be extracted as archives by extension.
+// Inputs: `state` is a stable UI snapshot; only regular-file queue rows with selected ticks are considered.
+// Outputs: Returns selected archive paths in queue order without reading file content.
+std::vector<std::filesystem::path> selected_extract_archive_paths(const UiState& state) {
+    std::vector<std::filesystem::path> archives;
+    archives.reserve(state.queued_paths.size());
+    for (std::size_t index = 0; index < state.queued_paths.size(); ++index) {
+        const bool selected = index >= state.queued_enabled.size() || state.queued_enabled[index];
+        if (!selected) {
+            continue;
+        }
+        std::error_code ec;
+        const auto& path = state.queued_paths[index];
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            continue;
+        }
+        const auto extension_format = detect_archive_format_by_extension(path);
+        if (archive_format_info(extension_format).can_extract) {
+            archives.push_back(path);
+        }
+    }
+    return archives;
+}
+
+// Purpose: Format the Extract page archive-path field for zero, one, or multiple selected archives.
+// Inputs: `archives` is the selected archive list returned by `selected_extract_archive_paths`.
+// Outputs: Returns muted placeholder text, the single path, or the fixed multiple-selection text.
+std::wstring selected_extract_archive_text(const std::vector<std::filesystem::path>& archives) {
+    if (archives.empty()) {
+        return L"Select an archive from the queue";
+    }
+    if (archives.size() == 1U) {
+        return archives.front().wstring();
+    }
+    return L"Multiple selected archives";
+}
+
+// Purpose: Format the Extract page format field from selected archive extensions.
+// Inputs: `archives` is the selected archive list; every path must be classified cheaply by extension.
+// Outputs: Returns one extension display name when all selected archives share a format, otherwise `-`.
+std::wstring selected_extract_archive_format_text(const std::vector<std::filesystem::path>& archives) {
+    if (archives.empty()) {
+        return L"-";
+    }
+    const auto first_format = detect_archive_format_by_extension(archives.front());
+    if (!archive_format_info(first_format).can_extract) {
+        return L"-";
+    }
+    for (const auto& archive : archives) {
+        if (detect_archive_format_by_extension(archive) != first_format) {
+            return L"-";
+        }
+    }
+    return widen(archive_format_extension_info_for_path(first_format, archives.front()).display_name);
 }
 
 // Purpose: Fill a rectangle with one solid color.
@@ -358,18 +418,25 @@ void draw_graph_series(HDC dc, const RECT& rect, std::span<const double> values,
     }
     const int width = std::max(1, static_cast<int>(rect.right - rect.left - 1));
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top - 1));
+    const int left = static_cast<int>(rect.left);
+    const int right = static_cast<int>(rect.right);
+    constexpr std::size_t kFullGraphSampleCapacity = 96U;
+    const std::size_t capacity = std::max<std::size_t>(values.size(), kFullGraphSampleCapacity);
+    const double sample_step =
+        capacity <= 1U ? static_cast<double>(width) : static_cast<double>(width) / static_cast<double>(capacity - 1U);
+    const double first_x =
+        static_cast<double>(rect.right - 1) - (static_cast<double>(values.size() - 1U) * sample_step);
     std::vector<POINT> points;
     points.reserve(values.size() + 2U);
-    points.push_back(POINT{rect.left, rect.bottom});
+    points.push_back(POINT{std::clamp(static_cast<int>(std::round(first_x)), left, right), rect.bottom});
     for (std::size_t index = 0; index < values.size(); ++index) {
-        const double x_ratio =
-            values.size() == 1U ? 1.0 : static_cast<double>(index) / static_cast<double>(values.size() - 1U);
         const double y_ratio = 1.0 - std::clamp(values[index], 0.0, 1.0);
-        const int x = rect.left + static_cast<int>(std::round(x_ratio * static_cast<double>(width)));
+        const int x =
+            std::clamp(static_cast<int>(std::round(first_x + (static_cast<double>(index) * sample_step))), left, right);
         const int y = rect.top + static_cast<int>(std::round(y_ratio * static_cast<double>(height)));
         points.push_back(POINT{x, y});
     }
-    points.push_back(POINT{rect.right, rect.bottom});
+    points.push_back(POINT{points[points.size() - 1U].x, rect.bottom});
 
     const COLORREF fill_color = blend_color(color, RGB(17, 27, 31), 0.72);
     HBRUSH brush = CreateSolidBrush(fill_color);
@@ -382,11 +449,16 @@ void draw_graph_series(HDC dc, const RECT& rect, std::span<const double> values,
 
     HPEN pen = CreatePen(PS_SOLID, 1, color);
     HGDIOBJ previous_pen = SelectObject(dc, pen);
-    for (std::size_t index = 1; index + 1U < points.size(); ++index) {
-        if (index == 1U) {
-            MoveToEx(dc, points[index].x, points[index].y, nullptr);
-        } else {
-            LineTo(dc, points[index].x, points[index].y);
+    if (values.size() == 1U) {
+        MoveToEx(dc, points[1].x, points[1].y, nullptr);
+        LineTo(dc, std::min(points[1].x + 1, rect.right), points[1].y);
+    } else {
+        for (std::size_t index = 1; index + 1U < points.size(); ++index) {
+            if (index == 1U) {
+                MoveToEx(dc, points[index].x, points[index].y, nullptr);
+            } else {
+                LineTo(dc, points[index].x, points[index].y);
+            }
         }
     }
     SelectObject(dc, previous_pen);

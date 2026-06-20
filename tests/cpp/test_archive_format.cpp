@@ -286,6 +286,15 @@ TEST_CASE(archive_format_extension_display_names_are_exact_per_extension) {
         std::string("Zstandard (.zst)"));
 }
 
+TEST_CASE(archive_format_extension_only_detection_uses_registry_without_magic_probe) {
+    const auto root = test_temp_dir("archive-format-extension-only");
+    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "logs.tar.gz"), superzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "logs.tgz"), superzip::ArchiveFormat::TarGzip);
+    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "payload.Z"), superzip::ArchiveFormat::UnixCompress);
+    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "sample.docx"), superzip::ArchiveFormat::Unknown);
+    REQUIRE_EQ(superzip::detect_archive_format_by_extension(root / "folder"), superzip::ArchiveFormat::Unknown);
+}
+
 TEST_CASE(archive_format_transfer_encodings_are_extract_only) {
     const auto& base64 = superzip::archive_format_info(superzip::ArchiveFormat::Base64);
     const auto& xxe = superzip::archive_format_info(superzip::ArchiveFormat::Xxe);

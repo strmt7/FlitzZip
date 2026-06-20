@@ -104,6 +104,11 @@ std::optional<ArchiveFormat> parse_archive_format_token(std::string_view token);
 // Outputs: Returns the detected format or `ArchiveFormat::Unknown` without throwing for unreadable probes.
 ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path);
 
+// Purpose: Detect a supported archive format from filename extensions only.
+// Inputs: `archive_path` is the candidate file path; no filesystem or content reads are performed.
+// Outputs: Returns the extension-mapped format, or `ArchiveFormat::Unknown` for unsupported/excluded extensions.
+ArchiveFormat detect_archive_format_by_extension(const std::filesystem::path& archive_path);
+
 // Purpose: Render supported format keys for help text.
 // Inputs: `include_auto` controls whether the synthetic `auto` token is listed.
 // Outputs: Returns a comma-separated token list.

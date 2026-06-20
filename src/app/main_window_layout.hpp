@@ -2,6 +2,7 @@
 
 #include <array>
 #include <filesystem>
+#include <vector>
 
 #include <windows.h>
 
@@ -35,7 +36,7 @@ struct HistoryColumnLayout {
 };
 
 struct ExtractJobRequest {
-    std::filesystem::path archive;
+    std::vector<std::filesystem::path> archives;
     std::filesystem::path output;
     bool gpu_required = true;
     bool overwrite = false;
