@@ -211,6 +211,24 @@ workloads are not recommended, and notes that newer nvCOMP algorithms such as
 DEFLATE, GDEFLATE, ANS, and zSTD are not part of that repository yet. Therefore
 it remains a research dependency candidate rather than a production shortcut.
 
+## Implemented 2026-06-20 Block-Selective GPU Prefix Blocks
+
+The accepted code changes in this iteration close a mixed-block ratio defect in
+the required-HIP native path:
+
+1. Prefix-code evaluation now applies to every verified raw block inside a
+   chunk, not only to chunks where every block is raw.
+2. Fill and pattern blocks in the same chunk are preserved unchanged, while
+   eligible raw blocks may be replaced by static or adaptive GPU-prefix blocks
+   only when the measured encoded payload is smaller.
+3. Required-HIP archives still must not emit CPU Deflate blocks. The fallback
+   for an uneconomical GPU-prefix candidate remains the existing GPU-verified
+   fill, pattern, or raw block representation.
+4. A regression test now creates a mixed chunk containing a fill block followed
+   by a low-entropy raw block and proves that the low-entropy raw block becomes
+   a GPU-prefix block, then verifies and extracts the archive with required
+   HIP.
+
 ## Zarr-Style Ratio Reproduction
 
 A maintainer-provided 542.5 MiB Zarr-style directory with 1,411 regular files
@@ -223,10 +241,24 @@ plain text or fill patterns.
 | Old required-HIP `.suzip` | 569,234,175 | 1.00069 | 1,412 raw blocks, no compact native blocks |
 | Fixed required-HIP `.suzip` v2/v3 level 5 | 403,457,451 | 0.709263 | Static GPU-prefix blocks, 0 CPU Deflate blocks |
 | Adaptive required-HIP `.suzip` v3 level 9 | 400,381,293 | 0.703855 | Adaptive GPU-prefix blocks where smaller, 0 CPU Deflate blocks |
+| Same-input SuperZip ZIP level 5 | 400,176,189 | 0.703494 | Standards-compatible ZIP path through miniz |
+| Same-input independent ZIP level 5 | 399,577,914 | 0.702443 | Local external comparison only; not a repository dependency |
 
 The fixed archive passed required-HIP verification and required-HIP extraction.
 The extracted tree then passed a SHA-256 comparison for every restored file:
 zero mismatches and zero extra files.
+
+The same-input 2026-06-20 smoke confirmed that current `.suzip` no longer keeps
+that folder near its original size. It also exposed a remaining production
+performance gap: the folder contains many small files, so the current native
+writer launches GPU encode and verify work per file entry. The measured level-5
+required-HIP no-verify compression run emitted 1,400 GPU-prefix blocks but also
+4,212 HIP kernel launches and about 30.50 seconds of HIP kernel time. With
+`--verify-after-write`, the same input required 7,023 total HIP kernel launches
+and about 62.45 seconds of HIP kernel time because verification decodes every
+entry. A durable speed fix for this workload needs a bounded small-entry
+batching design or a persistent HIP workspace/stream design; it should not be
+solved with hidden CPU Deflate fallback or by weakening required-HIP semantics.
 
 ## RAM-Only Benchmark Evidence
 
@@ -240,19 +272,20 @@ tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -Compressio
 
 | Block size | CPU total seconds | GPU total seconds | GPU speedup | CPU ratio | GPU ratio | GPU kernels | GPU kernel ms | GPU pattern blocks | GPU prefix blocks |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 256 KiB | 18.82518 | 8.72078 | 2.16x | 0.439201 | 0.425743 | 360 | 3234.67 | 10,240 | 10,240 |
-| 512 KiB | 15.89611 | 8.33921 | 1.91x | 0.439115 | 0.425698 | 360 | 2948.98 | 5,120 | 5,120 |
-| 1 MiB | 15.26502 | 8.10087 | 1.88x | 0.439084 | 0.425676 | 360 | 2851.74 | 2,560 | 2,560 |
-| 2 MiB | 15.86586 | 8.10106 | 1.96x | 0.439069 | 0.425665 | 360 | 3082.99 | 1,280 | 1,280 |
-| 4 MiB | 15.14438 | 7.83491 | 1.93x | 0.439061 | 0.425659 | 360 | 2898.87 | 640 | 640 |
-| 8 MiB | 14.79936 | 7.42327 | 1.99x | 0.439058 | 0.425656 | 360 | 3127.86 | 320 | 320 |
-| 16 MiB | 14.70505 | 7.72789 | 1.90x | 0.439056 | 0.425655 | 360 | 3706.63 | 160 | 160 |
+| 256 KiB | 16.09866 | 8.35037 | 1.93x | 0.439201 | 0.425743 | 360 | 2955.68 | 10,240 | 10,240 |
+| 512 KiB | 14.98367 | 7.87814 | 1.90x | 0.439115 | 0.425698 | 360 | 2969.21 | 5,120 | 5,120 |
+| 1 MiB | 14.93346 | 7.67386 | 1.95x | 0.439084 | 0.425676 | 360 | 2875.34 | 2,560 | 2,560 |
+| 2 MiB | 14.80519 | 7.62835 | 1.94x | 0.439069 | 0.425665 | 360 | 2889.80 | 1,280 | 1,280 |
+| 4 MiB | 14.83379 | 7.52817 | 1.97x | 0.439061 | 0.425659 | 360 | 2908.20 | 640 | 640 |
+| 8 MiB | 14.86088 | 7.41113 | 2.01x | 0.439058 | 0.425656 | 360 | 2860.30 | 320 | 320 |
+| 16 MiB | 14.74788 | 7.57451 | 1.95x | 0.439056 | 0.425655 | 360 | 2843.21 | 160 | 160 |
 
-The built-in tuner selected 4 MiB for the same level-5 Mixed profile:
+The built-in tuner selected 8 MiB for the same level-5 Mixed profile on the
+same host state:
 
 | Compression level | Block size | GPU score | Speedup vs CPU | Ratio | GPU pattern blocks | GPU prefix blocks | Memory only | Disk writes |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| 5 | 4 MiB | 43078 | 2.01936x | 0.425659 | 640 | 640 | true | 0 |
+| 5 | 8 MiB | 43348 | 2.03853x | 0.425656 | 320 | 320 | true | 0 |
 
 The same runs recorded exact input/output bytes:
 
@@ -293,7 +326,10 @@ Short-term accepted work:
    checksummed on the device.
 3. Add profiler-assisted evidence with HIP API timing and system GPU telemetry
    before claiming a bottleneck is solved.
-4. Evaluate compact metadata tables for non-raw blocks only, so raw-heavy mixed
+4. Batch small regular-file entries into bounded GPU work windows or reuse a
+   persistent HIP workspace so many-file folders do not pay one full allocation
+   and kernel-launch sequence per file.
+5. Evaluate compact metadata tables for non-raw blocks only, so raw-heavy mixed
    workloads do not launch verification work that immediately returns.
 
 Medium-term accepted work:

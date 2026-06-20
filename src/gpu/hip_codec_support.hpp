@@ -528,21 +528,22 @@ inline bool has_non_raw_analysis_candidate(std::span<const DeviceBlock> candidat
     return false;
 }
 
-// Purpose: Evaluate static GPU-prefix blocks for one uploaded all-raw native chunk.
-// Inputs: `device_input`, host `input`, block settings, and `telemetry` describe the chunk.
+// Purpose: Evaluate static GPU-prefix blocks for verified raw blocks inside one uploaded native chunk.
+// Inputs: `device_input`, host `input`, block settings, `source_blocks`, and `telemetry` describe verified blocks.
 // Outputs: Returns an encoded native chunk when static prefix blocks improve size; otherwise returns empty.
-std::optional<EncodedChunk> encode_all_raw_prefix_chunk_device(const std::byte* device_input,
-                                                               std::span<const std::byte> input,
-                                                               std::uint32_t block_size, std::uint32_t block_count,
-                                                               GpuTelemetry* telemetry);
+std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                                       std::uint32_t block_size,
+                                                       std::span<const BlockDescriptor> source_blocks,
+                                                       GpuTelemetry* telemetry);
 
-// Purpose: Evaluate adaptive GPU-prefix blocks for one uploaded all-raw native chunk.
-// Inputs: `device_input`, host `input`, block settings, `compression_level`, and `telemetry` describe the chunk.
+// Purpose: Evaluate adaptive GPU-prefix blocks for verified raw blocks inside one uploaded native chunk.
+// Inputs: `device_input`, host `input`, block settings, `source_blocks`, `compression_level`, and `telemetry` describe
+// the chunk.
 // Outputs: Returns an encoded native chunk when adaptive blocks improve size; otherwise returns empty.
-std::optional<EncodedChunk> encode_all_raw_adaptive_prefix_chunk_device(const std::byte* device_input,
-                                                                        std::span<const std::byte> input,
-                                                                        std::uint32_t block_size,
-                                                                        std::uint32_t block_count,
-                                                                        int compression_level, GpuTelemetry* telemetry);
+std::optional<EncodedChunk> encode_adaptive_prefix_chunk_device(const std::byte* device_input,
+                                                                std::span<const std::byte> input,
+                                                                std::uint32_t block_size,
+                                                                std::span<const BlockDescriptor> source_blocks,
+                                                                int compression_level, GpuTelemetry* telemetry);
 
 }  // namespace superzip::hip_detail

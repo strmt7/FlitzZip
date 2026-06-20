@@ -47,6 +47,39 @@ void write_low_entropy_payload(const std::filesystem::path& path, std::size_t by
     }
 }
 
+// Purpose: Write one fill block followed by one low-entropy raw block in the same chunk.
+// Inputs: `path` is the destination file and `block_bytes` is the byte count for each half.
+// Outputs: Creates a two-block file that must preserve fill encoding while prefix-compressing the raw half.
+void write_fill_then_low_entropy_payload(const std::filesystem::path& path, std::size_t block_bytes) {
+    std::ofstream out(path, std::ios::binary);
+    REQUIRE_TRUE(out.is_open());
+    for (std::size_t i = 0; i < block_bytes; ++i) {
+        out.put('\0');
+    }
+    std::uint32_t state = 0xB10C5A11U;
+    for (std::size_t i = 0; i < block_bytes; ++i) {
+        state = (state * 1664525U) + 1013904223U;
+        const auto bucket = (state >> 16U) & 1023U;
+        unsigned char value = 0;
+        if (bucket < 180U) {
+            value = 1;
+        } else if (bucket < 330U) {
+            value = 0;
+        } else if (bucket < 450U) {
+            value = 2;
+        } else if (bucket < 520U) {
+            value = 3;
+        } else if (bucket < 720U) {
+            value = static_cast<unsigned char>(4U + (bucket % 16U));
+        } else if (bucket < 900U) {
+            value = static_cast<unsigned char>(20U + (bucket % 64U));
+        } else {
+            value = static_cast<unsigned char>(84U + (bucket % 172U));
+        }
+        out.put(static_cast<char>(value));
+    }
+}
+
 // Purpose: Write deterministic high-byte low-entropy data that requires adaptive GPU prefix coding to compress well.
 // Inputs: `path` is the destination file and `byte_count` is the exact payload size.
 // Outputs: Creates or replaces `path` with a biased distribution whose frequent bytes are not low numeric values.
@@ -145,6 +178,53 @@ TEST_CASE(suzip_required_gpu_prefix_blocks_compress_low_entropy_payload) {
     REQUIRE_TRUE(extracted.gpu_used);
     REQUIRE_EQ(std::filesystem::file_size(output / "low-entropy.bin"), source_size);
     REQUIRE_TRUE(files_are_equal(output / "low-entropy.bin", input));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify raw blocks inside a mixed fill/raw chunk still receive GPU prefix compression.
+// Inputs: A two-block payload where the first block is fill-compressed and the second is low-entropy raw data.
+// Outputs: Throws if the raw block stays uncompressed only because the same chunk also contains a fill block.
+TEST_CASE(suzip_required_gpu_prefix_blocks_compress_raw_blocks_inside_mixed_chunk) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+
+    const auto root = test_temp_dir("suzip-required-gpu-mixed-prefix");
+    const auto input = root / "mixed-fill-low-entropy.bin";
+    write_fill_then_low_entropy_payload(input, 1024U * 1024U);
+    const auto source_size = std::filesystem::file_size(input);
+    const auto archive = root / "archive.suzip";
+
+    superzip::CompressOptions compress;
+    compress.gpu_required = true;
+    compress.force_cpu = false;
+    compress.chunk_size = 2U * 1024U * 1024U;
+    compress.block_size = 1024U * 1024U;
+    compress.verify_after_write = true;
+    const auto compressed = superzip::compress_suzip({input}, archive, compress);
+    REQUIRE_TRUE(compressed.gpu_used);
+    REQUIRE_TRUE(compressed.gpu_runtime.prefix_blocks > 0U);
+    REQUIRE_TRUE(compressed.output_bytes < source_size);
+
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::Fill));
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::GpuPrefix));
+    REQUIRE_TRUE(!archive_contains_block_kind(index, superzip::BlockKind::Deflate));
+
+    superzip::ExtractOptions verify;
+    verify.gpu_required = true;
+    verify.force_cpu = false;
+    verify.chunk_size = 2U * 1024U * 1024U;
+    verify.block_size = 1024U * 1024U;
+    const auto verified = superzip::verify_suzip(archive, verify);
+    REQUIRE_TRUE(verified.gpu_used);
+
+    const auto output = root / "out";
+    verify.overwrite = true;
+    const auto extracted = superzip::extract_suzip(archive, output, verify);
+    REQUIRE_TRUE(extracted.gpu_used);
+    REQUIRE_EQ(std::filesystem::file_size(output / "mixed-fill-low-entropy.bin"), source_size);
+    REQUIRE_TRUE(files_are_equal(output / "mixed-fill-low-entropy.bin", input));
     std::filesystem::remove_all(root);
 }
 

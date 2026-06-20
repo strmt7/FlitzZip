@@ -238,22 +238,24 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
     }
 }
 
-// Purpose: Choose the smallest GPU-native all-raw replacement allowed by the compression level.
-// Inputs: `device_input`, `input`, block settings, `compression_level`, and `telemetry` describe one uploaded chunk.
+// Purpose: Choose the smallest GPU-native replacement for verified raw blocks allowed by the compression level.
+// Inputs: `device_input`, `input`, block settings, `source_blocks`, `compression_level`, and `telemetry` describe one
+// uploaded chunk.
 // Outputs: Returns the best GPU-native encoded chunk, or empty when raw storage is smallest.
-std::optional<EncodedChunk> encode_all_raw_native_chunk_device(const std::byte* device_input,
-                                                               std::span<const std::byte> input,
-                                                               std::uint32_t block_size, std::uint32_t block_count,
-                                                               int compression_level, GpuTelemetry* telemetry) {
-    auto fixed = encode_all_raw_prefix_chunk_device(device_input, input, block_size, block_count, telemetry);
+std::optional<EncodedChunk> encode_native_prefix_chunk_device(const std::byte* device_input,
+                                                              std::span<const std::byte> input,
+                                                              std::uint32_t block_size,
+                                                              std::span<const BlockDescriptor> source_blocks,
+                                                              int compression_level, GpuTelemetry* telemetry) {
+    auto fixed = encode_prefix_chunk_device(device_input, input, block_size, source_blocks, telemetry);
     if (compression_level < 7) {
         if (fixed) {
             record_gpu_prefix_blocks(telemetry, count_emitted_prefix_blocks(*fixed));
         }
         return fixed;
     }
-    auto adaptive = encode_all_raw_adaptive_prefix_chunk_device(device_input, input, block_size, block_count,
-                                                                compression_level, telemetry);
+    auto adaptive = encode_adaptive_prefix_chunk_device(device_input, input, block_size, source_blocks,
+                                                        compression_level, telemetry);
     if (!adaptive) {
         if (fixed) {
             record_gpu_prefix_blocks(telemetry, count_emitted_prefix_blocks(*fixed));
@@ -992,14 +994,17 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         const bool all_raw =
             append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
-        if (all_raw) {
-            if (auto prefix_encoded = encode_all_raw_native_chunk_device(device_input, input, block_size, block_count,
-                                                                         options.compression_level, telemetry)) {
+        if (std::ranges::any_of(out.blocks,
+                                [](const BlockDescriptor& block) { return block.kind == BlockKind::Raw; })) {
+            if (auto prefix_encoded = encode_native_prefix_chunk_device(device_input, input, block_size, out.blocks,
+                                                                        options.compression_level, telemetry)) {
                 prefix_encoded->source_crc32 = source_crc32;
                 prefix_encoded->source_crc32_available = true;
                 check_hip(hipFree(device_input), "hipFree input");
                 return std::move(*prefix_encoded);
             }
+        }
+        if (all_raw) {
             if (owned_input != nullptr) {
                 out.payload = std::move(*owned_input);
             } else {

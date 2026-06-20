@@ -115,6 +115,11 @@ Allowed storage checks:
   deletes it after SHA-256 comparison.
 - `tools\bench.ps1 -Mode Filesystem` only as a capped smoke path of at most
   64 MiB. This mode is not a CPU/GPU performance benchmark.
+- A maintainer-requested real-world regression smoke against an existing input
+  tree, when the issue cannot be reproduced by the RAM-only benchmark alone.
+  Keep it bounded, record input bytes and output bytes, delete temporary
+  archives immediately after measurement, and do not treat it as a CPU/GPU
+  benchmark or release throughput claim.
 
 Not allowed during development:
 

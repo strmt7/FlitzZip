@@ -150,18 +150,74 @@ __global__ void prefix_pack_segments_batch_kernel(const std::byte* input, const 
     }
 }
 
-// Purpose: Build chunk-wide prefix segment plans for every raw block large enough to encode.
-// Inputs: `input_size`, `block_size`, and `block_count` describe one bounded archive chunk.
-// Outputs: Returns host block plans and appends one device segment plan per 4 KiB prefix segment.
+// Purpose: Return the expected block byte range for one verified descriptor.
+// Inputs: `input_size`, `block_size`, `block_index`, and `block` describe one dense block in the chunk.
+// Outputs: Returns the block start; throws if verified metadata no longer matches the chunk layout.
+std::size_t checked_block_start(std::size_t input_size, std::uint32_t block_size, std::uint32_t block_index,
+                                const BlockDescriptor& block) {
+    const auto start = static_cast<std::size_t>(block_index) * block_size;
+    if (start > input_size || block.uncompressed_len > input_size - start) {
+        throw GpuError("GPU prefix source block exceeds uploaded chunk");
+    }
+    return start;
+}
+
+// Purpose: Append an unmodified verified non-prefix block to a rebuilt encoded chunk.
+// Inputs: `out`, `source_block`, `input`, `block_start`, and `payload_offset` describe the fallback block.
+// Outputs: Mutates `out` and `payload_offset` with raw/fill/pattern payload bytes in descriptor order.
+void append_fallback_block(EncodedChunk& out, const BlockDescriptor& source_block, std::span<const std::byte> input,
+                           std::size_t block_start, std::uint64_t& payload_offset) {
+    const auto len = static_cast<std::size_t>(source_block.uncompressed_len);
+    if (source_block.kind == BlockKind::Fill) {
+        out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Fill,
+                                             .fill_value = source_block.fill_value,
+                                             .uncompressed_len = source_block.uncompressed_len,
+                                             .encoded_offset = payload_offset,
+                                             .encoded_len = 0});
+        return;
+    }
+    if (source_block.kind == BlockKind::Pattern) {
+        const auto period = static_cast<std::size_t>(source_block.encoded_len);
+        if (period == 0 || period > len) {
+            throw GpuError("GPU prefix fallback pattern block is invalid");
+        }
+        out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Pattern,
+                                             .fill_value = 0,
+                                             .uncompressed_len = source_block.uncompressed_len,
+                                             .encoded_offset = payload_offset,
+                                             .encoded_len = source_block.encoded_len});
+        out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(block_start),
+                           input.begin() + static_cast<std::ptrdiff_t>(block_start + period));
+        payload_offset += period;
+        return;
+    }
+    if (source_block.kind != BlockKind::Raw) {
+        throw GpuError("GPU prefix fallback block kind is not supported");
+    }
+    out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Raw,
+                                         .fill_value = 0,
+                                         .uncompressed_len = source_block.uncompressed_len,
+                                         .encoded_offset = payload_offset,
+                                         .encoded_len = source_block.uncompressed_len});
+    out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(block_start),
+                       input.begin() + static_cast<std::ptrdiff_t>(block_start + len));
+    payload_offset += len;
+}
+
+// Purpose: Build chunk-wide prefix segment plans for verified raw blocks large enough to encode.
+// Inputs: `input_size`, `block_size`, and `source_blocks` describe one bounded archive chunk.
+// Outputs: Returns host block plans and appends one device segment plan per eligible 4 KiB prefix segment.
 std::vector<PrefixEncodeBlockPlan> build_prefix_encode_plans(std::size_t input_size, std::uint32_t block_size,
-                                                             std::uint32_t block_count,
+                                                             std::span<const BlockDescriptor> source_blocks,
                                                              std::vector<PrefixEncodeSegmentPlan>& segment_plans) {
     std::vector<PrefixEncodeBlockPlan> block_plans;
-    block_plans.reserve(block_count);
-    for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
-        const auto start = static_cast<std::size_t>(block_index) * block_size;
-        const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input_size - start));
-        const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    block_plans.reserve(source_blocks.size());
+    for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
+        const auto& source_block = source_blocks[block_index];
+        const auto start = checked_block_start(input_size, block_size, block_index, source_block);
+        const auto len = source_block.uncompressed_len;
+        const bool eligible = source_block.kind == BlockKind::Raw && len >= kGpuPrefixSegmentBytes;
+        const auto segment_count = eligible ? (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes : 0U;
         PrefixEncodeBlockPlan block_plan{
             .block_start = start,
             .block_len = len,
@@ -354,15 +410,18 @@ void append_prefix_payload(EncodedChunk& out, const PrefixEncodeBlockPlan& block
 
 }  // namespace
 
-// Purpose: Replace all-raw HIP chunks with smaller GPU prefix blocks where the static codec is effective.
-// Inputs: `device_input`, `input`, `block_size`, and `block_count` describe one uploaded archive chunk.
+// Purpose: Replace verified raw HIP blocks with smaller GPU prefix blocks where the static codec is effective.
+// Inputs: `device_input`, `input`, `block_size`, and `source_blocks` describe one uploaded archive chunk.
 // Outputs: Returns a new encoded chunk when at least one block is prefix-compressed; otherwise returns empty.
-std::optional<EncodedChunk> encode_all_raw_prefix_chunk_device(const std::byte* device_input,
-                                                               std::span<const std::byte> input,
-                                                               std::uint32_t block_size, std::uint32_t block_count,
-                                                               GpuTelemetry* telemetry) {
+std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                                       std::uint32_t block_size,
+                                                       std::span<const BlockDescriptor> source_blocks,
+                                                       GpuTelemetry* telemetry) {
     std::vector<PrefixEncodeSegmentPlan> length_plans;
-    auto block_plans = build_prefix_encode_plans(input.size(), block_size, block_count, length_plans);
+    auto block_plans = build_prefix_encode_plans(input.size(), block_size, source_blocks, length_plans);
+    if (length_plans.empty()) {
+        return std::nullopt;
+    }
     const auto segment_lengths = compute_prefix_lengths_batch_device(device_input, length_plans, telemetry);
     auto selection = select_prefix_blocks_for_batch(block_plans, segment_lengths);
     if (selection.prefix_blocks == 0U) {
@@ -370,11 +429,12 @@ std::optional<EncodedChunk> encode_all_raw_prefix_chunk_device(const std::byte* 
     }
     auto bitstream = pack_prefix_segments_batch_device(device_input, selection, telemetry);
     EncodedChunk out;
-    out.blocks.reserve(block_count);
+    out.blocks.reserve(source_blocks.size());
     out.payload.reserve(input.size());
     std::uint64_t payload_offset = 0;
-    for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
+    for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
         const auto& block_plan = block_plans[block_index];
+        const auto& source_block = source_blocks[block_index];
         const auto len = static_cast<std::size_t>(block_plan.block_len);
         if (block_plan.use_prefix) {
             const auto table_bytes =
@@ -392,15 +452,7 @@ std::optional<EncodedChunk> encode_all_raw_prefix_chunk_device(const std::byte* 
             append_prefix_payload(out, block_plan, bitstream);
             payload_offset += prefix_payload_size;
         } else {
-            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Raw,
-                                                 .fill_value = 0,
-                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
-                                                 .encoded_offset = payload_offset,
-                                                 .encoded_len = static_cast<std::uint32_t>(len)});
-            const auto start = block_plan.block_start;
-            out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(start),
-                               input.begin() + static_cast<std::ptrdiff_t>(start + len));
-            payload_offset += len;
+            append_fallback_block(out, source_block, input, block_plan.block_start, payload_offset);
         }
     }
     return out;

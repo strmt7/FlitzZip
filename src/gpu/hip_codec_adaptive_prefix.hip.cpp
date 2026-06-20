@@ -183,20 +183,77 @@ build_adaptive_prefix_codebook(std::span<const std::byte> block, int compression
     return codebook;
 }
 
-// Purpose: Build host adaptive-prefix plans and device code tables for one uploaded chunk.
-// Inputs: `input`, `block_size`, `block_count`, and `compression_level` describe one bounded archive chunk.
+// Purpose: Return the expected block byte range for one verified descriptor.
+// Inputs: `input_size`, `block_size`, `block_index`, and `block` describe one dense block in the chunk.
+// Outputs: Returns the block start; throws if verified metadata no longer matches the chunk layout.
+std::size_t checked_block_start(std::size_t input_size, std::uint32_t block_size, std::uint32_t block_index,
+                                const BlockDescriptor& block) {
+    const auto start = static_cast<std::size_t>(block_index) * block_size;
+    if (start > input_size || block.uncompressed_len > input_size - start) {
+        throw GpuError("GPU adaptive prefix source block exceeds uploaded chunk");
+    }
+    return start;
+}
+
+// Purpose: Append an unmodified verified non-prefix block to a rebuilt encoded chunk.
+// Inputs: `out`, `source_block`, `input`, `block_start`, and `payload_offset` describe the fallback block.
+// Outputs: Mutates `out` and `payload_offset` with raw/fill/pattern payload bytes in descriptor order.
+void append_fallback_block(EncodedChunk& out, const BlockDescriptor& source_block, std::span<const std::byte> input,
+                           std::size_t block_start, std::uint64_t& payload_offset) {
+    const auto len = static_cast<std::size_t>(source_block.uncompressed_len);
+    if (source_block.kind == BlockKind::Fill) {
+        out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Fill,
+                                             .fill_value = source_block.fill_value,
+                                             .uncompressed_len = source_block.uncompressed_len,
+                                             .encoded_offset = payload_offset,
+                                             .encoded_len = 0});
+        return;
+    }
+    if (source_block.kind == BlockKind::Pattern) {
+        const auto period = static_cast<std::size_t>(source_block.encoded_len);
+        if (period == 0 || period > len) {
+            throw GpuError("GPU adaptive prefix fallback pattern block is invalid");
+        }
+        out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Pattern,
+                                             .fill_value = 0,
+                                             .uncompressed_len = source_block.uncompressed_len,
+                                             .encoded_offset = payload_offset,
+                                             .encoded_len = source_block.encoded_len});
+        out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(block_start),
+                           input.begin() + static_cast<std::ptrdiff_t>(block_start + period));
+        payload_offset += period;
+        return;
+    }
+    if (source_block.kind != BlockKind::Raw) {
+        throw GpuError("GPU adaptive prefix fallback block kind is not supported");
+    }
+    out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Raw,
+                                         .fill_value = 0,
+                                         .uncompressed_len = source_block.uncompressed_len,
+                                         .encoded_offset = payload_offset,
+                                         .encoded_len = source_block.uncompressed_len});
+    out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(block_start),
+                       input.begin() + static_cast<std::ptrdiff_t>(block_start + len));
+    payload_offset += len;
+}
+
+// Purpose: Build host adaptive-prefix plans and device code tables for verified raw blocks inside one uploaded chunk.
+// Inputs: `input`, `block_size`, `source_blocks`, and `compression_level` describe one bounded archive chunk.
 // Outputs: Returns block plans while filling segment plans and code tables.
 std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const std::byte> input,
-                                                                 std::uint32_t block_size, std::uint32_t block_count,
+                                                                 std::uint32_t block_size,
+                                                                 std::span<const BlockDescriptor> source_blocks,
                                                                  int compression_level,
                                                                  std::vector<AdaptiveEncodeSegmentPlan>& segment_plans,
                                                                  std::vector<AdaptiveEncodeTable>& code_tables) {
     std::vector<AdaptiveEncodeBlockPlan> block_plans;
-    block_plans.reserve(block_count);
-    for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
-        const auto start = static_cast<std::size_t>(block_index) * block_size;
-        const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - start));
-        const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    block_plans.reserve(source_blocks.size());
+    for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
+        const auto& source_block = source_blocks[block_index];
+        const auto start = checked_block_start(input.size(), block_size, block_index, source_block);
+        const auto len = source_block.uncompressed_len;
+        const bool eligible = source_block.kind == BlockKind::Raw && len >= kGpuPrefixSegmentBytes;
+        const auto segment_count = eligible ? (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes : 0U;
         AdaptiveEncodeBlockPlan block_plan{
             .block_start = start,
             .block_len = len,
@@ -418,17 +475,18 @@ void append_adaptive_prefix_payload(EncodedChunk& out, const AdaptiveEncodeBlock
 
 }  // namespace
 
-// Purpose: Replace all-raw HIP chunks with adaptive GPU prefix blocks when per-block codebooks improve size.
-// Inputs: `device_input`, `input`, `block_size`, `block_count`, and `compression_level` describe one uploaded chunk.
+// Purpose: Replace verified raw HIP blocks with adaptive GPU prefix blocks when per-block codebooks improve size.
+// Inputs: `device_input`, `input`, `block_size`, `source_blocks`, and `compression_level` describe one uploaded chunk.
 // Outputs: Returns a new encoded chunk when adaptive blocks are useful; otherwise returns empty.
-std::optional<EncodedChunk>
-encode_all_raw_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
-                                            std::uint32_t block_size, std::uint32_t block_count, int compression_level,
-                                            GpuTelemetry* telemetry) {
+std::optional<EncodedChunk> encode_adaptive_prefix_chunk_device(const std::byte* device_input,
+                                                                std::span<const std::byte> input,
+                                                                std::uint32_t block_size,
+                                                                std::span<const BlockDescriptor> source_blocks,
+                                                                int compression_level, GpuTelemetry* telemetry) {
     std::vector<AdaptiveEncodeSegmentPlan> length_plans;
     std::vector<AdaptiveEncodeTable> code_tables;
     auto block_plans =
-        build_adaptive_encode_plans(input, block_size, block_count, compression_level, length_plans, code_tables);
+        build_adaptive_encode_plans(input, block_size, source_blocks, compression_level, length_plans, code_tables);
     if (length_plans.empty()) {
         return std::nullopt;
     }
@@ -440,11 +498,12 @@ encode_all_raw_adaptive_prefix_chunk_device(const std::byte* device_input, std::
     }
     auto bitstream = pack_adaptive_prefix_segments_batch_device(device_input, selection, code_tables, telemetry);
     EncodedChunk out;
-    out.blocks.reserve(block_count);
+    out.blocks.reserve(source_blocks.size());
     out.payload.reserve(input.size());
     std::uint64_t payload_offset = 0;
-    for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
+    for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
         const auto& block_plan = block_plans[block_index];
+        const auto& source_block = source_blocks[block_index];
         const auto len = static_cast<std::size_t>(block_plan.block_len);
         if (block_plan.use_adaptive) {
             const auto table_bytes = checked_multiply_bytes(block_plan.offsets.size(), sizeof(std::uint32_t),
@@ -464,15 +523,7 @@ encode_all_raw_adaptive_prefix_chunk_device(const std::byte* device_input, std::
             append_adaptive_prefix_payload(out, block_plan, bitstream);
             payload_offset += prefix_payload_size;
         } else {
-            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::Raw,
-                                                 .fill_value = 0,
-                                                 .uncompressed_len = static_cast<std::uint32_t>(len),
-                                                 .encoded_offset = payload_offset,
-                                                 .encoded_len = static_cast<std::uint32_t>(len)});
-            const auto start = block_plan.block_start;
-            out.payload.insert(out.payload.end(), input.begin() + static_cast<std::ptrdiff_t>(start),
-                               input.begin() + static_cast<std::ptrdiff_t>(start + len));
-            payload_offset += len;
+            append_fallback_block(out, source_block, input, block_plan.block_start, payload_offset);
         }
     }
     return out;
