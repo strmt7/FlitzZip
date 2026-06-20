@@ -129,7 +129,9 @@ gaps are:
 - The current codec copies complete source chunks to VRAM and copies decoded
   chunks back for extraction.
 - Several helpers still allocate and free device memory per operation.
-- There is no multi-stream copy/compute overlap in the production codec path.
+- Measured HIP kernel work now uses per-thread streams for independent async
+  chunk workers, but copies, allocations, and several staging steps are still
+  synchronous around each operation.
 - The native `.suzip` compression model is currently block classification,
   compact fill/pattern representation, static and adaptive low-entropy prefix
   coding, raw payloads, GPU materialization, and GPU CRC. It is not a GPU
@@ -229,6 +231,28 @@ the required-HIP native path:
    a GPU-prefix block, then verifies and extracts the archive with required
    HIP.
 
+## Implemented 2026-06-20 Per-Thread HIP Kernel Streams
+
+The accepted code changes in this iteration move measured codec and diagnostic
+kernel submissions from the legacy default stream to `hipStreamPerThread`.
+This preserves the archive format, compression ratios, CRC ordering,
+required-HIP behavior, and bounded memory model while allowing independent
+async chunk futures to submit their HIP kernel stages without serializing on
+one process-wide default stream.
+
+This is deliberately a narrow production change:
+
+1. It does not add pinned host memory, persistent scratch buffers, HIP graphs,
+   or asynchronous copy pipelines.
+2. It does not reduce the number of kernels launched by a chunk.
+3. It does not change CPU fallback policy or allow required-GPU jobs to succeed
+   without HIP.
+4. It is supported by the 10 GiB RAM-only Mixed benchmark sweep below.
+
+A separate experiment fused prefix CRC calculation into prefix pack kernels. It
+reduced kernel launches but increased end-to-end wall time on the 10 GiB Mixed
+profile, so that experiment was removed and is not part of the product path.
+
 ## Zarr-Style Ratio Reproduction
 
 A maintainer-provided 542.5 MiB Zarr-style directory with 1,411 regular files
@@ -272,20 +296,24 @@ tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -Compressio
 
 | Block size | CPU total seconds | GPU total seconds | GPU speedup | CPU ratio | GPU ratio | GPU kernels | GPU kernel ms | GPU pattern blocks | GPU prefix blocks |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 256 KiB | 16.09866 | 8.35037 | 1.93x | 0.439201 | 0.425743 | 360 | 2955.68 | 10,240 | 10,240 |
-| 512 KiB | 14.98367 | 7.87814 | 1.90x | 0.439115 | 0.425698 | 360 | 2969.21 | 5,120 | 5,120 |
-| 1 MiB | 14.93346 | 7.67386 | 1.95x | 0.439084 | 0.425676 | 360 | 2875.34 | 2,560 | 2,560 |
-| 2 MiB | 14.80519 | 7.62835 | 1.94x | 0.439069 | 0.425665 | 360 | 2889.80 | 1,280 | 1,280 |
-| 4 MiB | 14.83379 | 7.52817 | 1.97x | 0.439061 | 0.425659 | 360 | 2908.20 | 640 | 640 |
-| 8 MiB | 14.86088 | 7.41113 | 2.01x | 0.439058 | 0.425656 | 360 | 2860.30 | 320 | 320 |
-| 16 MiB | 14.74788 | 7.57451 | 1.95x | 0.439056 | 0.425655 | 360 | 2843.21 | 160 | 160 |
+| 256 KiB | 16.40945 | 8.27146 | 1.98x | 0.439201 | 0.425743 | 360 | 9668.19 | 10,240 | 10,240 |
+| 512 KiB | 15.81600 | 7.86658 | 2.01x | 0.439115 | 0.425698 | 360 | 7125.59 | 5,120 | 5,120 |
+| 1 MiB | 15.78530 | 7.62064 | 2.07x | 0.439084 | 0.425676 | 360 | 8703.08 | 2,560 | 2,560 |
+| 2 MiB | 15.64054 | 7.51127 | 2.08x | 0.439069 | 0.425665 | 360 | 8526.32 | 1,280 | 1,280 |
+| 4 MiB | 15.58776 | 7.31352 | 2.13x | 0.439061 | 0.425659 | 360 | 8853.89 | 640 | 640 |
+| 8 MiB | 15.53286 | 7.26154 | 2.14x | 0.439058 | 0.425656 | 360 | 8320.15 | 320 | 320 |
+| 16 MiB | 15.71676 | 7.56083 | 2.08x | 0.439056 | 0.425655 | 360 | 9603.57 | 160 | 160 |
 
-The built-in tuner selected 8 MiB for the same level-5 Mixed profile on the
+With per-thread streams, summed HIP event time can exceed wall-clock time
+because independent worker submissions may overlap. Treat `GPU kernel ms` as
+accumulated device work, not elapsed benchmark time.
+
+The built-in tuner selected 4 MiB for the same level-5 Mixed profile on the
 same host state:
 
 | Compression level | Block size | GPU score | Speedup vs CPU | Ratio | GPU pattern blocks | GPU prefix blocks | Memory only | Disk writes |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| 5 | 8 MiB | 43348 | 2.03853x | 0.425656 | 320 | 320 | true | 0 |
+| 5 | 4 MiB | 45047 | 2.23993x | 0.425659 | 640 | 640 | true | 0 |
 
 The same runs recorded exact input/output bytes:
 
@@ -342,8 +370,9 @@ Medium-term accepted work:
 3. Evaluate pinned staging buffers only after proving that the pinned-RAM budget
    is bounded and released. Pinned memory must never push total system RAM usage
    above the repository's resource-safety policy.
-4. Use HIP streams to overlap H2D, kernel, and D2H stages only when correctness
-   tests prove no lifetime, ordering, or telemetry regression.
+4. Extend the current per-thread kernel stream work into a fully bounded async
+   copy/compute pipeline only when correctness tests prove no lifetime,
+   ordering, or telemetry regression.
 5. Consider rocPRIM for ordered scans/reductions if it removes custom GPU code
    and improves the 10 GiB RAM-only profile sweep.
 

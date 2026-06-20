@@ -260,6 +260,7 @@ tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
 tools\lint.ps1 -CppMode Changed
 tools\compatibility_interop_smoke.ps1 -Configuration Release
+tools\format_matrix_smoke.ps1 -Configuration Release
 tools\security_scan.ps1
 tools\github_post_push_audit.ps1
 ```
@@ -343,6 +344,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   stream writers, run `tools\compatibility_interop_smoke.ps1 -Configuration
   Release` so independent Windows readers prove the outputs are not only
   readable by SuperZip.
+- When changing the archive-format registry, CLI format routing, create/extract
+  capability flags, auto-detection, overwrite behavior, or any user-visible
+  adapter contract, run `tools\format_matrix_smoke.ps1 -Configuration Release`.
+  The matrix must stay registry-driven: every create-capable format must
+  create, auto-identify, extract, refuse accidental overwrite, validate aliases
+  where present, and reject incompatible source shapes or compression-level
+  flags according to its documented contract. Extract-only formats must keep
+  executable C++ fixture coverage.
 - CPIO compatibility is limited to regular files and directories in the SVR4
   new ASCII variants. Keep links, hard-link metadata, devices, FIFOs, and
   special files rejected unless a maintainer approves a dedicated security and

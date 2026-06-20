@@ -112,6 +112,7 @@ Assert-Selector ($sourcePlan.workflowWaitPolicy.recommendedMode -eq "opportunist
 $archivePlan = Get-SuperZipVerificationPlan -ChangedPath @("src/zip/zip_adapter.cpp")
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "security-scan") "archive parser changes must run security scan"
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "compatibility-interop-smoke") "archive parser changes must run external compatibility interop smoke"
+Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "format-matrix-smoke") "archive parser changes must run the registry-wide format matrix smoke"
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "short-fuzz-smoke") "archive parser changes must run short fuzz smoke"
 Assert-Selector (-not (Test-Workflow -Plan $archivePlan -Name "fuzzing")) "archive parser changes must not block normal waits on fuzzing"
 Assert-Selector (Test-LongRunningWorkflow -Plan $archivePlan -Name "fuzzing") "archive parser changes must still observe fuzzing as a long-running workflow"
@@ -137,6 +138,7 @@ Assert-Selector $verifierPlan.scope.fullEscalationRequired "verification tool ch
 Assert-Selector (Test-RequiredCommand -Plan $verifierPlan -Id "verification-selector-self-test") "verification tool changes must self-test selector"
 Assert-Selector (Test-RequiredCommand -Plan $verifierPlan -Id "package-smoke") "full escalation must include package smoke"
 Assert-Selector (Test-RequiredCommand -Plan $verifierPlan -Id "compatibility-interop-smoke") "full escalation must include external compatibility interop smoke"
+Assert-Selector (Test-RequiredCommand -Plan $verifierPlan -Id "format-matrix-smoke") "full escalation must include the registry-wide format matrix smoke"
 Assert-Selector (Test-Workflow -Plan $verifierPlan -Name "greenbone-openvas-vulnetix") "full escalation must include Greenbone/Vulnetix workflow"
 Assert-Selector (Test-LongRunningWorkflow -Plan $verifierPlan -Name "fuzzing") "full escalation must observe fuzzing without making it a normal blocking wait"
 Assert-Selector $verifierPlan.workflowWaitPolicy.immediateRequired "verification changes must require immediate final workflow waiting"

@@ -255,7 +255,7 @@ function Get-SuperZipVerificationScope {
 
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^tools/(superzip_verification\.psm1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
+        '^tools/(superzip_verification\.psm1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^mcp/',
         '^\.agents/skills/'
     )
@@ -379,6 +379,7 @@ function Get-SuperZipVerificationPlan {
         }
         if ($scope.touchesArchiveParser -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "compatibility-interop-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/compatibility_interop_smoke.ps1", "-Configuration", "Release") -Reason "compatibility archive changes must prove standard container outputs open in independent Windows readers")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "format-matrix-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/format_matrix_smoke.ps1", "-Configuration", "Release") -Reason "archive format, CLI, parser, or broad changes must exercise every registered format's create/extract contract")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "short-fuzz-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/fuzz.ps1", "-Runs", "16") -Reason "archive parser or broad changes require a bounded sanitizer/fuzzer smoke")
         }
         if ($scope.touchesPackaging -or $scope.fullEscalationRequired) {

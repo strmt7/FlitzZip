@@ -85,6 +85,12 @@ Rules:
   changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared
   compatibility stream writers. Non-SUZIP create formats must be readable by
   independent standard readers, not only by SuperZip.
+- Run `tools/format_matrix_smoke.ps1 -Configuration Release` after changing
+  the archive-format registry, CLI format routing, create/extract capability
+  flags, archive auto-detection, overwrite policy, or any adapter whose CLI
+  support should be visible to users. The matrix is registry-driven and must
+  fail when a supported format lacks create/extract coverage or rejects the
+  wrong contract.
 - Release/deployment MSIs use the default `perMachine` scope, preselect
   `C:\Program Files\SuperZip`, and require normal Windows elevation. Local
   non-admin MSI tests must explicitly configure

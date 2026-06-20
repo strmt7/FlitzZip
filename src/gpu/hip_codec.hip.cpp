@@ -219,11 +219,11 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
             throw GpuError("encode candidate segment count exceeds HIP launch limits");
         }
         auto events = make_hip_event_pair("create verify_analysis_candidates_kernel events");
-        check_hip(hipEventRecord(events.start, nullptr), "record verify_analysis_candidates_kernel start");
-        verify_analysis_candidates_kernel<<<static_cast<unsigned int>(grid64), 256>>>(
+        check_hip(hipEventRecord(events.start, hipStreamPerThread), "record verify_analysis_candidates_kernel start");
+        verify_analysis_candidates_kernel<<<static_cast<unsigned int>(grid64), 256, 0, hipStreamPerThread>>>(
             device_input, input_len, block_size, device_candidates, device_mismatches, block_count, segments_per_block);
         check_hip(hipGetLastError(), "launch verify_analysis_candidates_kernel");
-        check_hip(hipEventRecord(events.stop, nullptr), "record verify_analysis_candidates_kernel stop");
+        check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record verify_analysis_candidates_kernel stop");
         finish_measured_kernel(telemetry, events, "synchronize verify_analysis_candidates_kernel");
         check_hip(hipMemcpy(mismatches.data(), device_mismatches, mismatch_table_bytes, hipMemcpyDeviceToHost),
                   "hipMemcpy encode mismatches");
@@ -638,11 +638,11 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
         constexpr int threads = 256;
         const auto grid = static_cast<unsigned int>((segments + threads - 1U) / threads);
         auto events = make_hip_event_pair("create crc32_segments_kernel events");
-        check_hip(hipEventRecord(events.start, nullptr), "record crc32_segments_kernel start");
-        crc32_segments_kernel<<<grid, threads>>>(device_input, static_cast<std::size_t>(input_len), device_segments,
-                                                 segments);
+        check_hip(hipEventRecord(events.start, hipStreamPerThread), "record crc32_segments_kernel start");
+        crc32_segments_kernel<<<grid, threads, 0, hipStreamPerThread>>>(
+            device_input, static_cast<std::size_t>(input_len), device_segments, segments);
         check_hip(hipGetLastError(), "launch crc32_segments_kernel");
-        check_hip(hipEventRecord(events.stop, nullptr), "record crc32_segments_kernel stop");
+        check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record crc32_segments_kernel stop");
         finish_measured_kernel(telemetry, events, "synchronize crc32_segments_kernel");
 
         std::vector<DeviceCrcSegment> host_segments(segments);
@@ -677,12 +677,12 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
         constexpr int threads = 256;
         const auto grid = static_cast<unsigned int>((segments + threads - 1U) / threads);
         auto events = make_hip_event_pair("create decoded_crc32_segments_kernel events");
-        check_hip(hipEventRecord(events.start, nullptr), "record decoded_crc32_segments_kernel start");
-        decoded_crc32_segments_kernel<<<grid, threads>>>(device_payload, device_blocks, block_count,
-                                                         static_cast<std::size_t>(output_len), device_segments,
-                                                         segments);
+        check_hip(hipEventRecord(events.start, hipStreamPerThread), "record decoded_crc32_segments_kernel start");
+        decoded_crc32_segments_kernel<<<grid, threads, 0, hipStreamPerThread>>>(
+            device_payload, device_blocks, block_count, static_cast<std::size_t>(output_len), device_segments,
+            segments);
         check_hip(hipGetLastError(), "launch decoded_crc32_segments_kernel");
-        check_hip(hipEventRecord(events.stop, nullptr), "record decoded_crc32_segments_kernel stop");
+        check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record decoded_crc32_segments_kernel stop");
         finish_measured_kernel(telemetry, events, "synchronize decoded_crc32_segments_kernel");
 
         std::vector<DeviceCrcSegment> host_segments(segments);
@@ -766,11 +766,11 @@ void materialize_non_prefix_segments_device(const std::byte* device_payload, con
         throw GpuError("decode materialize segment count exceeds HIP launch limits");
     }
     auto events = make_hip_event_pair("create materialize_segments_kernel events");
-    check_hip(hipEventRecord(events.start, nullptr), "record materialize_segments_kernel start");
-    materialize_segments_kernel<<<static_cast<unsigned int>(segments), threads>>>(
+    check_hip(hipEventRecord(events.start, hipStreamPerThread), "record materialize_segments_kernel start");
+    materialize_segments_kernel<<<static_cast<unsigned int>(segments), threads, 0, hipStreamPerThread>>>(
         device_payload, device_blocks, static_cast<std::uint32_t>(host_blocks.size()), device_output, output_len);
     check_hip(hipGetLastError(), "launch materialize_segments_kernel");
-    check_hip(hipEventRecord(events.stop, nullptr), "record materialize_segments_kernel stop");
+    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record materialize_segments_kernel stop");
     finish_measured_kernel(telemetry, events, "synchronize materialize_segments_kernel");
 }
 
@@ -794,11 +794,11 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
                   "hipMemcpy prefix decode plans");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
         auto events = make_hip_event_pair("create materialize_prefix_segments_kernel events");
-        check_hip(hipEventRecord(events.start, nullptr), "record materialize_prefix_segments_kernel start");
-        materialize_prefix_segments_kernel<<<static_cast<unsigned int>(plans.size()), 1>>>(
+        check_hip(hipEventRecord(events.start, hipStreamPerThread), "record materialize_prefix_segments_kernel start");
+        materialize_prefix_segments_kernel<<<static_cast<unsigned int>(plans.size()), 1, 0, hipStreamPerThread>>>(
             device_payload, device_plans, static_cast<std::uint32_t>(plans.size()), device_output);
         check_hip(hipGetLastError(), "launch materialize_prefix_segments_kernel");
-        check_hip(hipEventRecord(events.stop, nullptr), "record materialize_prefix_segments_kernel stop");
+        check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record materialize_prefix_segments_kernel stop");
         finish_measured_kernel(telemetry, events, "synchronize materialize_prefix_segments_kernel");
         check_hip(hipFree(device_plans), "hipFree prefix decode plans");
         device_plans = nullptr;
@@ -904,10 +904,11 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
         std::uint32_t seed = 0xA5A5A5A5U;
         while (std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() < options.seconds) {
             auto events = make_hip_event_pair("create diagnostic_compute_kernel events");
-            check_hip(hipEventRecord(events.start, nullptr), "record diagnostic_compute_kernel start");
-            diagnostic_compute_kernel<<<blocks, threads>>>(device_data, words, seed, options.inner_iterations);
+            check_hip(hipEventRecord(events.start, hipStreamPerThread), "record diagnostic_compute_kernel start");
+            diagnostic_compute_kernel<<<blocks, threads, 0, hipStreamPerThread>>>(device_data, words, seed,
+                                                                                  options.inner_iterations);
             check_hip(hipGetLastError(), "launch diagnostic_compute_kernel");
-            check_hip(hipEventRecord(events.stop, nullptr), "record diagnostic_compute_kernel stop");
+            check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record diagnostic_compute_kernel stop");
             check_hip(hipEventSynchronize(events.stop), "synchronize diagnostic_compute_kernel");
             float milliseconds = 0.0F;
             check_hip(hipEventElapsedTime(&milliseconds, events.start, events.stop), "time diagnostic_compute_kernel");
@@ -917,11 +918,11 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
         }
 
         auto checksum_events = make_hip_event_pair("create diagnostic_checksum_kernel events");
-        check_hip(hipEventRecord(checksum_events.start, nullptr), "record diagnostic_checksum_kernel start");
-        diagnostic_checksum_kernel<<<blocks, threads, threads * sizeof(unsigned long long)>>>(device_data, words,
-                                                                                              device_partials);
+        check_hip(hipEventRecord(checksum_events.start, hipStreamPerThread), "record diagnostic_checksum_kernel start");
+        diagnostic_checksum_kernel<<<blocks, threads, threads * sizeof(unsigned long long), hipStreamPerThread>>>(
+            device_data, words, device_partials);
         check_hip(hipGetLastError(), "launch diagnostic_checksum_kernel");
-        check_hip(hipEventRecord(checksum_events.stop, nullptr), "record diagnostic_checksum_kernel stop");
+        check_hip(hipEventRecord(checksum_events.stop, hipStreamPerThread), "record diagnostic_checksum_kernel stop");
         check_hip(hipEventSynchronize(checksum_events.stop), "synchronize diagnostic_checksum_kernel");
         float checksum_ms = 0.0F;
         check_hip(hipEventElapsedTime(&checksum_ms, checksum_events.start, checksum_events.stop),

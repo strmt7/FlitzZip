@@ -72,7 +72,7 @@ repository-relative paths and produces:
 | --- | --- | --- |
 | Docs only | changed-file hygiene, language lint | `lint` |
 | C++ source, tests, CMake | hygiene, language lint, Release build, C++ tests, changed-code refactor audit | `lint`, `windows-ci` |
-| Archive parser, path safety, extraction publication | C++ checks plus external compatibility interop smoke, security scan, and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
+| Archive parser, path safety, extraction publication | C++ checks plus external compatibility interop smoke, registry-wide format matrix smoke, security scan, and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
 | GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci` |
 | Workflows, security scanners, release actions | hygiene, language lint, security scan | `lint`, `security`, scanner-specific workflows, `scorecard` |
 | Packaging or installer files | Release build, C++ tests, security scan, package smoke | `lint`, `windows-ci`, `security` |
@@ -90,10 +90,11 @@ The full profile is selected automatically when:
 - a targeted local command fails under `tools\verify_changes.ps1`.
 
 The full profile remains SSD-safe. It includes language lint, build, C++ tests,
-external compatibility interop smoke, security scan, changed-code refactor
-audit, selector self-tests, GUI smoke, brand verification, short local fuzz
-smoke, and package smoke. RAM-only benchmark sweeps stay manual unless a
-performance claim or tuning decision is being made.
+external compatibility interop smoke, the registry-wide format matrix smoke,
+security scan, changed-code refactor audit, selector self-tests, GUI smoke,
+brand verification, short local fuzz smoke, and package smoke. RAM-only
+benchmark sweeps stay manual unless a performance claim or tuning decision is
+being made.
 
 ## Workflow Wait Strategy
 
