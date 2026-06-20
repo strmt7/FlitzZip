@@ -42,6 +42,10 @@ TEST_CASE(integrity_sha256_matches_known_digest) {
     const auto result = superzip::hash_file(path, superzip::IntegrityMode::Sha256);
     REQUIRE_TRUE(result.attempted);
     REQUIRE_EQ(result.algorithm, std::string("SHA-256"));
+    REQUIRE_EQ(result.target, std::string("file"));
+    REQUIRE_EQ(result.bytes_hashed, 3ULL);
+    REQUIRE_EQ(result.files_hashed, 1ULL);
+    REQUIRE_EQ(result.directories_hashed, 0ULL);
     constexpr std::array<std::string_view, 8> expected_parts{
         "ba7816bf", "8f01cfea", "414140de", "5dae2223", "b00361a3", "96177a9c", "b410ff61", "f20015ad",
     };
@@ -50,6 +54,58 @@ TEST_CASE(integrity_sha256_matches_known_digest) {
         expected_digest += part;
     }
     REQUIRE_EQ(result.hex_digest, expected_digest);
+}
+
+// Purpose: Verify path hashing supports deterministic directory-tree digests.
+// Inputs: A temporary directory with nested regular files.
+// Outputs: Throws if ordering, counters, byte totals, or content sensitivity are wrong.
+TEST_CASE(integrity_hash_path_directory_is_deterministic_and_content_sensitive) {
+    const auto root = test_temp_dir("integrity-directory");
+    const auto tree = root / "tree";
+    const auto nested = tree / "nested";
+    std::filesystem::create_directories(nested);
+    {
+        std::ofstream out(tree / "b.txt", std::ios::binary);
+        out << "bravo";
+    }
+    {
+        std::ofstream out(nested / "a.txt", std::ios::binary);
+        out << "alpha";
+    }
+
+    const auto first = superzip::hash_path(tree, superzip::IntegrityMode::Sha256);
+    const auto second = superzip::hash_path(tree, superzip::IntegrityMode::Sha256);
+    REQUIRE_TRUE(first.attempted);
+    REQUIRE_EQ(first.algorithm, std::string("SHA-256"));
+    REQUIRE_EQ(first.target, std::string("directory"));
+    REQUIRE_EQ(first.bytes_hashed, 10ULL);
+    REQUIRE_EQ(first.files_hashed, 2ULL);
+    REQUIRE_EQ(first.directories_hashed, 2ULL);
+    REQUIRE_EQ(first.hex_digest, second.hex_digest);
+
+    {
+        std::ofstream out(nested / "a.txt", std::ios::binary | std::ios::trunc);
+        out << "alpha!";
+    }
+    const auto changed = superzip::hash_path(tree, superzip::IntegrityMode::Sha256);
+    REQUIRE_TRUE(first.hex_digest != changed.hex_digest);
+    REQUIRE_EQ(changed.bytes_hashed, 11ULL);
+}
+
+// Purpose: Verify enabled path hashing rejects absent targets.
+// Inputs: A deliberately missing temporary path and `IntegrityMode::Sha256`.
+// Outputs: Throws if the missing target is not rejected as an archive error.
+TEST_CASE(integrity_hash_path_rejects_missing_target) {
+    const auto root = test_temp_dir("integrity-missing-target");
+    const auto missing = root / "missing";
+
+    bool rejected = false;
+    try {
+        (void)superzip::hash_path(missing, superzip::IntegrityMode::Sha256);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }
 
 // Purpose: Verify parallel chunk CRCs can be combined into the same value as a single pass.

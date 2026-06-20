@@ -2,12 +2,17 @@
 
 #include "core/result.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <knownfolders.h>
+#include <shlobj.h>
 #endif
 
 namespace superzip {
@@ -50,6 +55,75 @@ class UniqueHandle {
   private:
     HANDLE handle_ = nullptr;
 };
+
+// Purpose: Resolve a trusted Windows Known Folder path.
+// Inputs: `folder_id` is the requested known folder and `fallback` is used when Windows cannot resolve it.
+// Outputs: Returns a nonempty absolute folder path without trusting mutable process environment variables.
+std::filesystem::path known_folder_path(REFKNOWNFOLDERID folder_id, const std::filesystem::path& fallback) {
+    PWSTR raw_path = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, &raw_path);
+    if (FAILED(result) || raw_path == nullptr) {
+        return fallback;
+    }
+    std::filesystem::path path(raw_path);
+    CoTaskMemFree(raw_path);
+    return path.empty() ? fallback : path;
+}
+
+// Purpose: Locate the newest Microsoft Defender platform MpCmdRun executable.
+// Inputs: None; uses ProgramData and the versioned Defender Platform directory.
+// Outputs: Returns the latest version-named MpCmdRun path, or empty when no platform copy is available.
+std::optional<std::filesystem::path> latest_platform_defender_executable() {
+    const auto platform_root =
+        known_folder_path(FOLDERID_ProgramData, L"C:\\ProgramData") / L"Microsoft" / L"Windows Defender" / L"Platform";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(platform_root, ec) || ec) {
+        return std::nullopt;
+    }
+    std::vector<std::filesystem::path> candidates;
+    std::filesystem::directory_iterator iterator(platform_root, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    const std::filesystem::directory_iterator end;
+    while (iterator != end) {
+        const auto directory = iterator->path();
+        const auto executable = directory / L"MpCmdRun.exe";
+        std::error_code directory_ec;
+        std::error_code executable_ec;
+        if (std::filesystem::is_directory(directory, directory_ec) && !directory_ec &&
+            std::filesystem::exists(executable, executable_ec) && !executable_ec) {
+            candidates.push_back(directory);
+        }
+        iterator.increment(ec);
+        if (ec) {
+            return std::nullopt;
+        }
+    }
+    if (candidates.empty()) {
+        return std::nullopt;
+    }
+    std::ranges::sort(candidates, [](const auto& left, const auto& right) {
+        return left.filename().wstring() > right.filename().wstring();
+    });
+    return candidates.front() / L"MpCmdRun.exe";
+}
+
+// Purpose: Locate the best available Microsoft Defender MpCmdRun executable.
+// Inputs: None; uses official Platform-first lookup with Program Files fallback.
+// Outputs: Returns an executable path when present, or empty when Defender is unavailable.
+std::optional<std::filesystem::path> defender_executable_path() {
+    if (auto platform = latest_platform_defender_executable(); platform.has_value()) {
+        return platform;
+    }
+    const auto fallback =
+        known_folder_path(FOLDERID_ProgramFiles, L"C:\\Program Files") / L"Windows Defender" / L"MpCmdRun.exe";
+    std::error_code ec;
+    if (std::filesystem::exists(fallback, ec) && !ec) {
+        return fallback;
+    }
+    return std::nullopt;
+}
 #endif
 
 // Purpose: Build a result for Defender being unavailable before a scan starts.
@@ -132,13 +206,13 @@ DefenderScanResult scan_with_windows_defender(const std::filesystem::path& path,
 #ifndef _WIN32
     return {};
 #else
-    const auto defender = std::filesystem::path("C:/Program Files/Windows Defender/MpCmdRun.exe");
-    if (!std::filesystem::exists(defender)) {
+    const auto defender = defender_executable_path();
+    if (!defender.has_value()) {
         return defender_unavailable_result(kDefenderUnavailableExitCode);
     }
 
     std::wstring command = L"\"";
-    command += defender.wstring();
+    command += defender->wstring();
     command += L"\" -Scan -ScanType 3 -File \"";
     command += path.wstring();
     command += L"\" -DisableRemediation";

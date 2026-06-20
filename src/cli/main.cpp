@@ -172,13 +172,17 @@ void reject_unsupported_cli_format(superzip::ArchiveFormat format, std::string_v
     }
 }
 
-// Purpose: Print SHA-256 integrity data for an archive.
-// Inputs: `path` is an existing file to hash.
-// Outputs: Writes algorithm and digest lines to stdout; throws if hashing fails.
-void print_integrity_hash(const std::filesystem::path& path) {
-    const auto hash = superzip::hash_file(path, superzip::IntegrityMode::Sha256);
-    std::cout << "integrity_algorithm=" << hash.algorithm << "\n";
-    std::cout << "integrity_sha256=" << hash.hex_digest << "\n";
+// Purpose: Print SHA-256 integrity data for a file or directory target.
+// Inputs: `path` is an existing file or directory and `key_prefix` scopes the stable key/value names.
+// Outputs: Writes algorithm, target type, digest, and counter lines to stdout; throws if hashing fails.
+void print_integrity_hash(const std::filesystem::path& path, std::string_view key_prefix = "integrity") {
+    const auto hash = superzip::hash_path(path, superzip::IntegrityMode::Sha256);
+    std::cout << key_prefix << "_algorithm=" << hash.algorithm << "\n";
+    std::cout << key_prefix << "_target=" << hash.target << "\n";
+    std::cout << key_prefix << "_sha256=" << hash.hex_digest << "\n";
+    std::cout << key_prefix << "_bytes=" << hash.bytes_hashed << "\n";
+    std::cout << key_prefix << "_files=" << hash.files_hashed << "\n";
+    std::cout << key_prefix << "_directories=" << hash.directories_hashed << "\n";
 }
 
 // Purpose: Run and print an opt-in Microsoft Defender scan result.
@@ -722,6 +726,9 @@ int run_extract_command(const std::vector<std::string>& args) {
     const auto archive_format = resolve_cli_archive_format(command.format, command.archive, true);
     reject_unsupported_cli_format(archive_format, "extract");
     print_stats(extract_by_format(archive_format, command));
+    if (command.sha256) {
+        print_integrity_hash(command.output, "output_integrity");
+    }
     if (command.defender_scan) {
         print_defender_scan(command.output, false);
     }

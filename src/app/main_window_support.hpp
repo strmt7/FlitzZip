@@ -4,6 +4,7 @@
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
 #include "core/defender_scan.hpp"
+#include "core/integrity.hpp"
 #include "core/progress.hpp"
 
 #include <array>
@@ -128,6 +129,11 @@ std::filesystem::path current_user_downloads_directory();
 // Inputs: drop is a valid HDROP handle owned by the caller.
 // Outputs: Returns every nonempty path advertised by the shell payload.
 std::vector<std::filesystem::path> paths_from_hdrop(HDROP drop);
+
+// Purpose: Create a concise history message for an optional SHA-256 integrity check.
+// Inputs: `prefix` names the hashed target and `result` is the completed integrity result.
+// Outputs: Returns a user-visible status string with digest and directory-tree counters when applicable.
+std::string integrity_history_status(std::string_view prefix, const IntegrityResult& result);
 
 // Purpose: Create a concise history message for an optional Defender scan.
 // Inputs: prefix names the scanned item and scan is the Defender result.

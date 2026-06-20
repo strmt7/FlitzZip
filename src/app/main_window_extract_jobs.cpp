@@ -105,8 +105,9 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
             const auto& archive = request.archive;
             const auto& output = request.output;
             if (request.integrity) {
-                const auto hash = hash_file(archive, IntegrityMode::Sha256);
-                append_history_entry("Security", archive.filename().string(), "SHA-256 " + hash.hex_digest, true);
+                const auto hash = hash_path(archive, IntegrityMode::Sha256);
+                append_history_entry("Security", archive.filename().string(), integrity_history_status("Archive", hash),
+                                     true);
             }
             if (request.defender) {
                 const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
@@ -125,6 +126,11 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
             line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
                  << stats.seconds << "s";
             append_history_entry("Extract", archive.filename().string(), line.str(), true);
+            if (request.integrity) {
+                const auto hash = hash_path(output, IntegrityMode::Sha256);
+                append_history_entry("Security", output.filename().string(), integrity_history_status("Output", hash),
+                                     true);
+            }
             if (request.defender) {
                 const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
                 append_history_entry("Security", output.filename().string(),

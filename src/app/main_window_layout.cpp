@@ -82,7 +82,11 @@ MainWindow::QueueColumnLayout MainWindow::queue_column_layout(const RECT& table,
         widths.back() = std::max(minimums.back(), available - used);
     }
 
-    columns.header_checkbox = RECT{table.left + scale(10), row.top, table.left + checkbox_width - scale(8), row.bottom};
+    const int checkbox_target_size = scale(24);
+    const int checkbox_left = table.left + std::max(0, (checkbox_width - checkbox_target_size) / 2);
+    const int checkbox_top = row.top + std::max(0, (static_cast<int>(row.bottom - row.top) - checkbox_target_size) / 2);
+    columns.header_checkbox =
+        RECT{checkbox_left, checkbox_top, checkbox_left + checkbox_target_size, checkbox_top + checkbox_target_size};
     columns.checkbox = columns.header_checkbox;
     int left = table.left + checkbox_width;
     columns.name = RECT{left, row.top, left + widths[0], row.bottom};

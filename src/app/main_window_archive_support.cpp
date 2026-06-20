@@ -104,6 +104,19 @@ bool settings_uses_v1_format_rows(std::string_view json) {
 
 }  // namespace
 
+// Purpose: Create a concise history message for an optional SHA-256 integrity check.
+// Inputs: `prefix` names the hashed target and `result` is the completed integrity result.
+// Outputs: Returns a user-visible status string with digest and directory-tree counters when applicable.
+std::string integrity_history_status(std::string_view prefix, const IntegrityResult& result) {
+    std::ostringstream message;
+    message << prefix << ' ' << result.algorithm << ' ' << result.hex_digest;
+    if (result.target == "directory") {
+        message << " (" << result.files_hashed << " files, " << result.directories_hashed << " folders, "
+                << human_bytes(static_cast<double>(result.bytes_hashed)) << ")";
+    }
+    return message.str();
+}
+
 // Purpose: Create a concise history message for an optional Defender scan.
 // Inputs: `prefix` names the scanned item and `scan` is the Defender result.
 // Outputs: Returns a user-visible status string that distinguishes clean, timeout, failed, and unavailable states.

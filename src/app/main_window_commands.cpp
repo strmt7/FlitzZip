@@ -439,8 +439,9 @@ void MainWindow::start_compress() {
                  << stats.seconds << "s";
             append_history_entry("Compress", output.filename().string(), line.str(), true);
             if (integrity) {
-                const auto hash = hash_file(output, IntegrityMode::Sha256);
-                append_history_entry("Security", output.filename().string(), "SHA-256 " + hash.hex_digest, true);
+                const auto hash = hash_path(output, IntegrityMode::Sha256);
+                append_history_entry("Security", output.filename().string(), integrity_history_status("Archive", hash),
+                                     true);
             }
             if (defender) {
                 const auto scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);

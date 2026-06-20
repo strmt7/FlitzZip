@@ -302,9 +302,10 @@ void MainWindow::start_security_verify() {
                 if (!std::filesystem::exists(path, ec)) {
                     throw SecurityError("queued path does not exist: " + path.string());
                 }
-                if (integrity && std::filesystem::is_regular_file(path, ec)) {
-                    const auto hash = hash_file(path, IntegrityMode::Sha256);
-                    append_history_entry("Security", path.filename().string(), "SHA-256 " + hash.hex_digest, true);
+                if (integrity) {
+                    const auto hash = hash_path(path, IntegrityMode::Sha256);
+                    append_history_entry("Security", path.filename().string(), integrity_history_status("Path", hash),
+                                         true);
                 }
                 if (defender) {
                     const auto scan = scan_with_windows_defender(path, DefenderScanMode::FullPath);

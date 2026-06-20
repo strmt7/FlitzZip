@@ -42,7 +42,9 @@ The repository ships local scripts for:
 SuperZip includes an opt-in Microsoft Defender hook for Windows 11 systems. It
 uses the local `MpCmdRun.exe` command with path scanning and
 `-DisableRemediation`, so SuperZip can ask Defender for a scan result without
-silently deleting or quarantining user files from inside the app.
+silently deleting or quarantining user files from inside the app. Runtime lookup
+prefers the newest versioned Defender Platform copy under ProgramData and falls
+back to the Program Files copy only when the platform copy is unavailable.
 
 This setting must remain opt-in. It can be surfaced in Settings for:
 
@@ -59,9 +61,14 @@ not clean if it times out.
 ## Optional Integrity Hashing
 
 SuperZip always stores and verifies CRC-32 for archive corruption detection.
-Users can opt in to stronger SHA-256 integrity hashing for archive files or
-post-extraction verification. This is intentionally separate from the mandatory
-CRC path because SHA-256 costs extra I/O on large archives.
+Users can opt in to stronger SHA-256 integrity hashing for archive files,
+selected queue paths, and post-extraction output verification. Regular files
+use standard SHA-256 over file bytes. Directories use a deterministic
+SuperZip tree digest that hashes stable relative paths, file sizes, and file
+payload bytes in sorted order; reparse points and unsupported entry types are
+rejected instead of being silently skipped. This is intentionally separate from
+the mandatory CRC path because SHA-256 costs extra I/O on large archives and
+large output trees.
 
 Compression can also opt in to `--verify-after-write`, which immediately reads
 the completed `.suzip` archive through the normal verifier. This extra pass is
@@ -73,12 +80,15 @@ The CLI exposes:
 ```powershell
 build/Release/superzip_cli.exe compress --format suzip --verify-after-write --output archive.suzip path\to\folder
 build/Release/superzip_cli.exe verify --sha256 archive.suzip
-build/Release/superzip_cli.exe extract --defender-scan --output restored archive.suzip
+build/Release/superzip_cli.exe extract --sha256 --defender-scan --output restored archive.suzip
 build/Release/superzip_cli.exe extract --defender-scan --output restored archive.tar
 ```
 
 The GUI Settings page must keep SHA-256 hashing disabled by default and label
 it as an extra integrity check, not encryption or malware scanning.
+Compress, Extract, and Security use the same hashing path as the CLI: created
+archives, input archives, selected queue paths, and restored output folders all
+produce visible history rows when SHA-256 is enabled.
 
 The CLI and GUI both keep Defender scans opt-in. When Defender actively scans a
 source archive before extraction and does not report it as clean, extraction is

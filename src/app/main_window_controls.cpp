@@ -88,11 +88,19 @@ void MainWindow::draw_toggle(HDC dc, const RECT& rect, const wchar_t* text, bool
 // Inputs: `dc`, `rect`, `text`, `checked`, and `interactive` describe the visual state.
 // Outputs: Renders a checkbox and label into `dc`.
 void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bool checked, bool interactive) {
-    draw_interactive_hover_surface(dc, rect, interactive);
+    const bool has_label = text != nullptr && text[0] != L'\0';
     const int box_size = scale(16);
+    const int hover_padding = scale(4);
+    const int hover_size = box_size + (hover_padding * 2);
     const int cy = rect.top + ((rect.bottom - rect.top) / 2);
-    RECT box{rect.left, cy - (box_size / 2), rect.left + box_size, cy - (box_size / 2) + box_size};
-    const COLORREF fill = checked ? kAccent : (interactive ? interactive_fill(kPanel2, rect, true) : kPanel);
+    const int hover_left =
+        has_label ? rect.left : rect.left + std::max(0, (static_cast<int>(rect.right - rect.left) - hover_size) / 2);
+    RECT hover_rect{hover_left, cy - (hover_size / 2), hover_left + hover_size, cy + (hover_size / 2)};
+    const int box_left = has_label ? rect.left : hover_rect.left + hover_padding;
+    RECT box{box_left, cy - (box_size / 2), box_left + box_size, cy - (box_size / 2) + box_size};
+    const RECT paint_rect = has_label ? rect : hover_rect;
+    draw_interactive_hover_surface(dc, paint_rect, interactive);
+    const COLORREF fill = checked ? kAccent : (interactive ? interactive_fill(kPanel2, paint_rect, true) : kPanel);
     const COLORREF stroke = checked ? kAccent2 : (interactive ? kBorder : RGB(42, 52, 56));
     const COLORREF text_color = interactive ? kText : kMuted;
     fill_rect(dc, box, fill);
@@ -101,7 +109,7 @@ void MainWindow::draw_checkbox(HDC dc, const RECT& rect, const wchar_t* text, bo
         draw_line(dc, box.left + scale(3), box.top + scale(8), box.left + scale(7), box.bottom - scale(4), kText);
         draw_line(dc, box.left + scale(7), box.bottom - scale(4), box.right - scale(3), box.top + scale(4), kText);
     }
-    if (text != nullptr && text[0] != L'\0') {
+    if (has_label) {
         draw_text(dc, RECT{rect.left + scale(26), rect.top, rect.right, rect.bottom}, text, text_color,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }

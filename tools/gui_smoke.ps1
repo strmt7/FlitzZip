@@ -72,6 +72,28 @@ function Assert-GuiSourceContract {
     if (-not $sourceText.Contains('history_column_resize_separator_')) {
         throw "History table must keep Queue-equivalent column resizing support."
     }
+    if ($sourceText.Contains('draw_interactive_hover_surface(dc, rect, interactive);')) {
+        throw "Empty checkbox hover must not paint a row-sized placeholder surface."
+    }
+    if (-not $sourceText.Contains('const bool has_label = text != nullptr && text[0] != L''\0'';') -or
+        -not $sourceText.Contains('const RECT paint_rect = has_label ? rect : hover_rect;')) {
+        throw "Checkbox hover rendering must use a tight hover surface when there is no label text."
+    }
+    if (-not $sourceText.Contains('const int checkbox_target_size = scale(24);')) {
+        throw "Queue checkbox hit/focus targets must stay tightly centered around the visible tick."
+    }
+    foreach ($requiredSecurityCall in @(
+        'hash_path(output, IntegrityMode::Sha256)',
+        'hash_path(archive, IntegrityMode::Sha256)',
+        'hash_path(path, IntegrityMode::Sha256)',
+        'scan_with_windows_defender(output, DefenderScanMode::FullPath)',
+        'scan_with_windows_defender(archive, DefenderScanMode::FullPath)',
+        'scan_with_windows_defender(path, DefenderScanMode::FullPath)'
+    )) {
+        if (-not $sourceText.Contains($requiredSecurityCall)) {
+            throw "GUI security options must call the real integrity and Defender paths; missing $requiredSecurityCall."
+        }
+    }
     if ($sourceText -cmatch 'OPENFILENAMEW|GetOpenFileNameW|SHBrowseForFolderW|SHGetPathFromIDListW') {
         throw "Queue Add files/Add folder must use the modern shell picker without fixed legacy buffers."
     }
