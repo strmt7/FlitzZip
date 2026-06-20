@@ -13,6 +13,9 @@ References checked on 2026-06-16:
 - NIST SSDF SP 800-218 v1.1 and v1.2 draft: <https://csrc.nist.gov/pubs/sp/800/218/final> and <https://csrc.nist.gov/pubs/sp/800/218/r1/ipd>
 - CISA Secure by Design guidance: <https://www.cisa.gov/securebydesign> and <https://www.cisa.gov/resources-tools/resources/secure-by-design>
 - GitHub Actions secure-use reference: <https://docs.github.com/en/actions/reference/security/secure-use>
+- Microsoft Security Development Lifecycle practices: <https://www.microsoft.com/en-us/securityengineering/sdl/practices>
+- C++ Core Guidelines: <https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines>
+- SEI CERT C++ Coding Standard: <https://cmu-sei.github.io/secure-coding-standards/sei-cert-cpp-coding-standard/>
 - Microsoft high-DPI Win32 guidance: <https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows>
 - Microsoft Defender command-line guidance: <https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus>
 - CMake CPack WiX generator scope guidance: <https://cmake.org/cmake/help/latest/cpack_gen/wix.html>
@@ -70,8 +73,9 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   detection, read `docs/native-suzip-format.md`. `.suzip` is a native versioned
   archive format with SUZIP footer/index magic and AMD HIP block semantics, not
   a cosmetic ZIP extension. Version 2 required-HIP archives may use GPU
-  static-prefix blocks; do not replace them with CPU-deflate fallback or present
-  GPU CRC/classification work as evidence of general GPU entropy compression.
+  static-prefix blocks, and version 3 may use adaptive GPU-prefix blocks; do not
+  replace them with CPU-deflate fallback or present GPU CRC/classification work
+  as evidence of general GPU entropy compression.
 - Before adding product behavior learned from a mature archive tool, read
   `docs/product-behavior-audit.md`. Capture logic only; do not record external
   product names or copy another product's UI/help text into this repository.
@@ -125,9 +129,10 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 
 ## Engineering Quality Baseline
 
-These rules were checked against official guidance on 2026-06-16: NIST SSDF,
+These rules were checked against official guidance on 2026-06-20: NIST SSDF,
 CISA Secure by Design, OWASP Secure Coding Practices, Microsoft SDL, GitHub
-Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
+Actions secure-use guidance, OpenSSF Scorecard, SLSA v1.2, the C++ Core
+Guidelines, and SEI CERT C++.
 
 - Keep changes small, reviewable, and behavior-preserving unless the task
   explicitly asks for a behavior change.
@@ -135,6 +140,19 @@ Actions secure-use guidance, OpenSSF Scorecard, and SLSA v1.2.
   keep trust boundaries visible in code comments and tests.
 - Use least privilege everywhere: workflow permissions, filesystem writes,
   process creation, GPU/device access, and installer actions.
+- Use modern C++20 deliberately: RAII ownership, value semantics, explicit
+  lifetimes, `std::span`/views for bounded buffers, `std::filesystem` for paths,
+  typed sizes and counts, and no hidden ownership through raw pointers unless
+  interop requires it and the contract comment says so.
+- Keep the whole codebase resource-bounded by design. Every archive path, GPU
+  path, GUI worker, benchmark, and installer action must have clear CPU, RAM,
+  VRAM, disk-write, handle, and timeout limits that match the product contract.
+- Make performance claims evidence-based. Any speed or ratio claim must name
+  the workload shape, input bytes, output bytes, compression level, block size,
+  CPU/GPU mode, and whether the run was RAM-only.
+- Treat refactoring and modernization as behavior-preserving engineering work,
+  not cosmetic churn. Split large functions, remove real duplication, clarify
+  ownership, and improve testability only with matching verification evidence.
 - Prefer pinned, provenance-recorded dependencies. Do not track extracted
   runtime binaries such as `.dll` or `.exe`; extract them from pinned upstream
   packages during build and verify checksums before use.

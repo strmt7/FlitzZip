@@ -47,6 +47,8 @@
 
 namespace {
 
+constexpr std::string_view kBlockSizeUsage = "256|512|1024|2048|4096|8192|16384";
+
 // Purpose: Print command-line help for supported SuperZip operations.
 // Inputs: None.
 // Outputs: Writes usage text to stdout.
@@ -60,12 +62,15 @@ void usage() {
         << "  superzip_cli formats\n"
         << "  superzip_cli identify <archive>\n"
         << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible "
-           "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level "
-           "<1-9>]\n"
+           "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
+        << kBlockSizeUsage << ">] [--compression-level <1-9>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile Mixed|Compressible|Incompressible] [--workers "
-           "<n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
+           "<n>] [--block-size-kib <"
+        << kBlockSizeUsage << ">] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] "
-           "[--inflight <n>] [--block-size-kib <256|1024|4096|16384>] [--compression-level <1-9>] "
+           "[--inflight <n>] [--block-size-kib <"
+        << kBlockSizeUsage
+        << ">] [--compression-level <1-9>] "
            "[--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format "
            "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|cpio.gz|"

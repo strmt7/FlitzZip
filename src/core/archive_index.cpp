@@ -220,6 +220,8 @@ ArchiveIndex read_archive_index(std::istream& input) {
                 kind = BlockKind::Pattern;
             } else if (kind_raw == static_cast<int>(BlockKind::GpuPrefix)) {
                 kind = BlockKind::GpuPrefix;
+            } else if (kind_raw == static_cast<int>(BlockKind::GpuAdaptivePrefix)) {
+                kind = BlockKind::GpuAdaptivePrefix;
             } else if (kind_raw != static_cast<int>(BlockKind::Raw)) {
                 throw ArchiveError("archive block has unknown encoding kind");
             }

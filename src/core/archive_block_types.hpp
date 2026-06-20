@@ -10,6 +10,7 @@ enum class BlockKind : std::uint8_t {
     Deflate = 2,
     Pattern = 3,
     GpuPrefix = 4,
+    GpuAdaptivePrefix = 5,
 };
 
 struct BlockDescriptor {

@@ -18,6 +18,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -92,7 +93,7 @@ struct ArchiveValidationSummary {
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
 bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
-           kind == BlockKind::GpuPrefix;
+           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix;
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -565,6 +566,91 @@ std::uint64_t gpu_prefix_table_bytes(std::uint32_t decoded_len) {
     return checked_add_u64(segment_count, 1U, "GPU prefix segment count overflows") * sizeof(std::uint32_t);
 }
 
+// Purpose: Return the serialized byte count of an adaptive GPU-prefix codebook and per-segment offset table.
+// Inputs: `decoded_len` is the block's uncompressed byte length.
+// Outputs: Returns the required metadata bytes; throws before overflow.
+std::uint64_t gpu_adaptive_prefix_header_bytes(std::uint32_t decoded_len) {
+    return checked_add_u64(kGpuAdaptivePrefixCodebookBytes, gpu_prefix_table_bytes(decoded_len),
+                           "GPU adaptive prefix header size overflows");
+}
+
+// Purpose: Validate the shared archive block kind and decoded-length invariants.
+// Inputs: `entry` supplies the user-facing archive path and `block` is one parsed descriptor.
+// Outputs: Returns normally for a supported non-empty bounded block; throws `ArchiveError` otherwise.
+void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescriptor& block) {
+    if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
+        block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
+        block.kind != BlockKind::GpuAdaptivePrefix) {
+        throw ArchiveError("archive block has unknown encoding kind");
+    }
+    if (block.uncompressed_len == 0) {
+        throw ArchiveError("archive block has zero decoded length: " + entry.path);
+    }
+    if (block.uncompressed_len > kMaxArchiveBlockBytes) {
+        throw ArchiveError("archive block exceeds SuperZip block size limit: " + entry.path);
+    }
+}
+
+// Purpose: Reject sparse or overlapping payload block offsets before payload decoding.
+// Inputs: `entry`, `block`, and `expected_offset` describe the parsed payload stream cursor.
+// Outputs: Returns normally when the block begins at the cursor; throws `ArchiveError` otherwise.
+void require_dense_payload_offset(const ArchiveEntry& entry, const BlockDescriptor& block,
+                                  std::uint64_t expected_offset, std::string_view label) {
+    if (block.encoded_offset != expected_offset) {
+        throw ArchiveError(std::string(label) + " block payload is sparse or overlapping: " + entry.path);
+    }
+}
+
+// Purpose: Validate one block's payload-specific metadata and advance the dense payload cursor.
+// Inputs: `entry`, `block`, and `payload_cursor` describe one parsed block and the current payload byte position.
+// Outputs: Returns the next payload cursor; throws `ArchiveError` when metadata is inconsistent or oversized.
+std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const BlockDescriptor& block,
+                                              std::uint64_t payload_cursor) {
+    switch (block.kind) {
+    case BlockKind::Fill:
+        if (block.encoded_len != 0) {
+            throw ArchiveError("fill block contains payload bytes");
+        }
+        return payload_cursor;
+    case BlockKind::Raw:
+        if (block.encoded_len != block.uncompressed_len) {
+            throw ArchiveError("raw block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "raw");
+        return checked_add_u64(payload_cursor, block.encoded_len, "raw block payload size overflows");
+    case BlockKind::Deflate:
+        if (block.encoded_len == 0 || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("deflate block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "deflate");
+        return checked_add_u64(payload_cursor, block.encoded_len, "deflate block payload size overflows");
+    case BlockKind::Pattern:
+        if (block.encoded_len < 2 || block.encoded_len > kMaxGpuPatternBytes ||
+            block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU pattern block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU pattern");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU pattern block payload size overflows");
+    case BlockKind::GpuPrefix: {
+        const auto table_bytes = gpu_prefix_table_bytes(block.uncompressed_len);
+        if (block.encoded_len <= table_bytes || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU prefix block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU prefix");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU prefix block payload size overflows");
+    }
+    case BlockKind::GpuAdaptivePrefix: {
+        const auto header_bytes = gpu_adaptive_prefix_header_bytes(block.uncompressed_len);
+        if (block.encoded_len <= header_bytes || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU adaptive prefix block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU adaptive prefix");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU adaptive prefix block payload size overflows");
+    }
+    }
+    throw ArchiveError("archive block has unknown encoding kind");
+}
+
 // Purpose: Validate archive entry metadata before decoding or extraction.
 // Inputs: `entry` is parsed archive metadata.
 // Outputs: Returns normally when metadata is safe and consistent; throws `ArchiveError` or `SecurityError` otherwise.
@@ -579,61 +665,8 @@ void validate_entry_metadata(const ArchiveEntry& entry) {
     std::uint64_t raw_payload_cursor = 0;
     for (std::size_t i = 0; i < entry.blocks.size(); ++i) {
         const auto& block = entry.blocks[i];
-        if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
-            block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix) {
-            throw ArchiveError("archive block has unknown encoding kind");
-        }
-        if (block.uncompressed_len == 0) {
-            throw ArchiveError("archive block has zero decoded length: " + entry.path);
-        }
-        if (block.uncompressed_len > kMaxArchiveBlockBytes) {
-            throw ArchiveError("archive block exceeds SuperZip block size limit: " + entry.path);
-        }
-        if (block.kind == BlockKind::Fill && block.encoded_len != 0) {
-            throw ArchiveError("fill block contains payload bytes");
-        }
-        if (block.kind == BlockKind::Raw) {
-            if (block.encoded_len != block.uncompressed_len) {
-                throw ArchiveError("raw block metadata is invalid");
-            }
-            if (block.encoded_offset != raw_payload_cursor) {
-                throw ArchiveError("raw block payload is sparse or overlapping: " + entry.path);
-            }
-            raw_payload_cursor =
-                checked_add_u64(raw_payload_cursor, block.encoded_len, "raw block payload size overflows");
-        }
-        if (block.kind == BlockKind::Deflate) {
-            if (block.encoded_len == 0 || block.encoded_len >= block.uncompressed_len) {
-                throw ArchiveError("deflate block metadata is invalid");
-            }
-            if (block.encoded_offset != raw_payload_cursor) {
-                throw ArchiveError("deflate block payload is sparse or overlapping: " + entry.path);
-            }
-            raw_payload_cursor =
-                checked_add_u64(raw_payload_cursor, block.encoded_len, "deflate block payload size overflows");
-        }
-        if (block.kind == BlockKind::Pattern) {
-            if (block.encoded_len < 2 || block.encoded_len > kMaxGpuPatternBytes ||
-                block.encoded_len >= block.uncompressed_len) {
-                throw ArchiveError("GPU pattern block metadata is invalid");
-            }
-            if (block.encoded_offset != raw_payload_cursor) {
-                throw ArchiveError("GPU pattern block payload is sparse or overlapping: " + entry.path);
-            }
-            raw_payload_cursor =
-                checked_add_u64(raw_payload_cursor, block.encoded_len, "GPU pattern block payload size overflows");
-        }
-        if (block.kind == BlockKind::GpuPrefix) {
-            const auto table_bytes = gpu_prefix_table_bytes(block.uncompressed_len);
-            if (block.encoded_len <= table_bytes || block.encoded_len >= block.uncompressed_len) {
-                throw ArchiveError("GPU prefix block metadata is invalid");
-            }
-            if (block.encoded_offset != raw_payload_cursor) {
-                throw ArchiveError("GPU prefix block payload is sparse or overlapping: " + entry.path);
-            }
-            raw_payload_cursor =
-                checked_add_u64(raw_payload_cursor, block.encoded_len, "GPU prefix block payload size overflows");
-        }
+        validate_block_header_metadata(entry, block);
+        raw_payload_cursor = validate_block_payload_metadata(entry, block, raw_payload_cursor);
     }
     if (sum_block_sizes(entry.blocks) != entry.uncompressed_size) {
         throw ArchiveError("entry block sizes do not match uncompressed size: " + entry.path);

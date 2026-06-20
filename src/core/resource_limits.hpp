@@ -29,8 +29,13 @@ constexpr std::uint64_t kDeviceMemoryReserveFloorBytes = 64ULL * 1024ULL * 1024U
 // GPU pattern blocks store only short repeating motifs found by the HIP classifier.
 constexpr std::uint32_t kMaxGpuPatternBytes = 256U;
 
-// GPU prefix blocks encode fixed-size segments with a static HIP prefix codec.
+// GPU prefix blocks encode fixed-size segments with static or adaptive HIP prefix codecs.
 constexpr std::uint32_t kGpuPrefixSegmentBytes = 4U * 1024U;
+constexpr std::uint32_t kGpuAdaptivePrefixSmallSymbols = 4U;
+constexpr std::uint32_t kGpuAdaptivePrefixMediumSymbols = 16U;
+constexpr std::uint32_t kGpuAdaptivePrefixLargeSymbols = 64U;
+constexpr std::uint32_t kGpuAdaptivePrefixCodebookBytes =
+    kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols + kGpuAdaptivePrefixLargeSymbols;
 
 // SUZIP deflate levels mirror zlib/miniz levels while avoiding store-only mode.
 constexpr int kMinCompressionLevel = 1;

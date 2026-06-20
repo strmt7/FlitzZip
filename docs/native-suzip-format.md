@@ -18,7 +18,8 @@ explicit:
   payload window, CRC-32, and block descriptors.
 - Version 1 block descriptors distinguish raw, deflate, fill, and GPU-pattern
   materialized blocks. Version 2 adds GPU static-prefix blocks for low-entropy
-  byte streams.
+  byte streams. Version 3 adds adaptive GPU-prefix blocks with bounded
+  per-block codebooks for stronger required-HIP compression levels.
 - Required-GPU operations fail when the archive requires CPU-only block
   handling.
 - Extraction and verification validate metadata, payload windows, decoded sizes,
@@ -59,10 +60,11 @@ flowchart TD
 - Do not infer GPU support from the extension alone; use archive metadata and
   operation options.
 - Do not accept CPU-only fallback in required-GPU mode.
-- Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, and GPU
-  static-prefix blocks. It must not emit CPU-deflate blocks.
-- GPU static-prefix blocks are native SUZIP blocks. They are not ZIP, Deflate,
-  Zstandard, or a compatibility-format wrapper.
+- Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, GPU
+  static-prefix, and GPU adaptive-prefix blocks. It must not emit CPU-deflate
+  blocks.
+- GPU static-prefix and adaptive-prefix blocks are native SUZIP blocks. They are
+  not ZIP, Deflate, Zstandard, or a compatibility-format wrapper.
 - Keep native-format benchmark claims separate from compatibility-format claims.
 - Any future format-version change must add tests for backward detection,
   footer/index validation, corrupt metadata, oversized indexes, and downgrade

@@ -397,33 +397,62 @@ if(SUPERZIP_ENABLE_HIP)
   file(SHA256 "${SUPERZIP_HIP_RUNTIME_DLL}" SUPERZIP_HIP_RUNTIME_DLL_SHA256)
   file(SIZE "${SUPERZIP_HIP_RUNTIME_DLL}" SUPERZIP_HIP_RUNTIME_DLL_SIZE)
 
-  set(SUPERZIP_HIP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_codec.obj")
-  add_custom_command(
-    OUTPUT "${SUPERZIP_HIP_OBJECT}"
-    COMMAND
-      powershell -NoProfile -ExecutionPolicy Bypass -File
-      "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1" -Source
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec.hip.cpp" -Output
-      "${SUPERZIP_HIP_OBJECT}" -RepoRoot "${CMAKE_CURRENT_SOURCE_DIR}" -Arch
-      "${SUPERZIP_HIP_ARCH}" -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec.hip.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
-    COMMENT "Compiling AMD HIP codec object"
-    VERBATIM)
+  set(SUPERZIP_HIP_CODEC_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_codec.obj")
+  set(SUPERZIP_HIP_STATIC_PREFIX_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_static_prefix.obj")
+  set(SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_adaptive_prefix.obj")
+  set(SUPERZIP_HIP_COMMON_DEPS
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1")
+
+  # Purpose: Compile one HIP translation unit with the pinned Windows HIP path.
+  # Inputs: source is repo-relative, output is the generated object path, and
+  # comment is the build status text.
+  # Outputs: Adds a custom command that produces the object file.
+  function(superzip_compile_hip_object source output comment)
+    add_custom_command(
+      OUTPUT "${output}"
+      COMMAND
+        powershell -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1" -Source
+        "${CMAKE_CURRENT_SOURCE_DIR}/${source}" -Output "${output}" -RepoRoot
+        "${CMAKE_CURRENT_SOURCE_DIR}" -Arch "${SUPERZIP_HIP_ARCH}"
+        -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
+              ${SUPERZIP_HIP_COMMON_DEPS}
+      COMMENT "${comment}"
+      VERBATIM)
+  endfunction()
+
+  superzip_compile_hip_object(src/gpu/hip_codec.hip.cpp
+                              "${SUPERZIP_HIP_CODEC_OBJECT}"
+                              "Compiling AMD HIP codec object")
+  superzip_compile_hip_object(
+    src/gpu/hip_codec_static_prefix.hip.cpp
+    "${SUPERZIP_HIP_STATIC_PREFIX_OBJECT}"
+    "Compiling AMD HIP static-prefix codec object")
+  superzip_compile_hip_object(
+    src/gpu/hip_codec_adaptive_prefix.hip.cpp
+    "${SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT}"
+    "Compiling AMD HIP adaptive-prefix codec object")
+  set(SUPERZIP_HIP_OBJECTS
+      "${SUPERZIP_HIP_CODEC_OBJECT}" "${SUPERZIP_HIP_STATIC_PREFIX_OBJECT}"
+      "${SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT}")
   add_custom_target(
     superzip_hip_object
-    DEPENDS "${SUPERZIP_HIP_OBJECT}"
+    DEPENDS ${SUPERZIP_HIP_OBJECTS}
     COMMENT "Preparing AMD HIP codec object")
-  add_library(superzip_gpu_hip STATIC "${SUPERZIP_HIP_OBJECT}")
+  add_library(superzip_gpu_hip STATIC ${SUPERZIP_HIP_OBJECTS})
   add_dependencies(superzip_gpu_hip superzip_hip_object)
-  set_source_files_properties("${SUPERZIP_HIP_OBJECT}"
+  set_source_files_properties(${SUPERZIP_HIP_OBJECTS}
                               PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
   set_target_properties(superzip_gpu_hip PROPERTIES LINKER_LANGUAGE CXX)
   target_include_directories(superzip_gpu_hip
@@ -560,6 +589,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_sevenzip_compat.cpp
+    tests/cpp/test_suzip_gpu_prefix.cpp
     tests/cpp/test_tar_bzip2_compat.cpp
     tests/cpp/test_tar_gzip_compat.cpp
     tests/cpp/test_tar_compat.cpp

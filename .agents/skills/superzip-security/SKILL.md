@@ -61,6 +61,11 @@ Add or update tests for:
 Do not store credentials, PATs, org IDs, scan targets, or Defender results in
 tracked files.
 
+For broad hardening or modernization requests, map the request to concrete
+secure-by-design controls: fail-closed parsing, bounded allocation, least
+privilege, provenance, explicit opt-ins, and scanner-visible remediation. Do not
+substitute process text, exclusions, or skipped checks for root-cause fixes.
+
 Workflow and release hardening rules:
 
 - Do not add GitHub Actions `environment:` blocks, `deployment:` keys, or any

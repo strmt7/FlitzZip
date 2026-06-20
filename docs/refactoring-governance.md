@@ -16,10 +16,21 @@ Checked on 2026-06-16:
 - GitHub Actions secure use: <https://docs.github.com/actions/security-guides/security-hardening-for-github-actions>
 - OpenSSF Scorecard checks: <https://github.com/ossf/scorecard>
 - SLSA specification v1.2: <https://slsa.dev/spec/v1.2/>
+- Microsoft Security Development Lifecycle practices: <https://www.microsoft.com/en-us/securityengineering/sdl/practices>
+- C++ Core Guidelines: <https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines>
+- SEI CERT C++ Coding Standard: <https://cmu-sei.github.io/secure-coding-standards/sei-cert-cpp-coding-standard/>
 
 The common rule is that refactoring changes structure while preserving behavior.
 For SuperZip, that means tests, benchmark baselines, and security gates are part
 of the refactor itself, not a cleanup step after the fact.
+
+## Modernization Baseline
+
+Modernization work must improve the codebase through enforceable properties:
+clear ownership, bounded resources, simpler dependency direction, smaller
+functions, explicit contracts, stronger tests, and more accurate telemetry.
+Do not perform vague repo-wide rewrites. A modernization commit must state the
+behavior preserved, the invariant improved, and the verification that proved it.
 
 ## Trigger Policy
 
@@ -78,6 +89,12 @@ flowchart TD
   allocation, memory buffers, or GPU codec code.
 - Do not replace clear code with an abstraction unless it removes real
   duplication, narrows ownership, or improves testability.
+- Do not chase novelty for its own sake. Prefer established C++20 idioms and
+  repo-local architecture over experimental language/library features unless
+  they remove a concrete risk and are supported by the Windows MSVC/HIP toolchain.
+- Keep hot-path refactors allocation-aware and concurrency-aware. New queues,
+  buffers, threads, async work, GPU transfers, or caches need explicit limits and
+  before/after performance evidence.
 - Do not normalize third-party code under `third_party/upstream`; production
   dependency patches belong under the patched copy only.
 

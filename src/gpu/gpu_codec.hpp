@@ -116,7 +116,7 @@ void record_gpu_device_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t b
 // Outputs: Atomically adds the block count when telemetry is present.
 void record_gpu_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count);
 
-// Purpose: Record GPU-compressed static-prefix blocks emitted by the AMD HIP encoder.
+// Purpose: Record GPU-compressed static/adaptive prefix blocks emitted by the AMD HIP encoder.
 // Inputs: `telemetry` is optional operation-owned telemetry and `count` is the number of compact prefix blocks.
 // Outputs: Atomically adds the block count when telemetry is present.
 void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count);

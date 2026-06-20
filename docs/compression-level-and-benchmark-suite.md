@@ -22,15 +22,22 @@ mode, so the product exposes the non-store levels.
 | Fastest | `--compression-level 1` | Lowest effort for quick local transfers. |
 | Fast | `--compression-level 3` | Speed-biased compression. |
 | Balanced | `--compression-level 5` | Default release baseline for benchmarks and normal use. |
-| Strong | `--compression-level 7` | Ratio-biased compression. |
-| Maximum | `--compression-level 9` | Highest miniz effort. |
+| Strong | `--compression-level 7` | Ratio-biased compression; required-HIP `.suzip` may evaluate adaptive GPU-prefix codebooks. |
+| Maximum | `--compression-level 9` | Highest miniz effort; required-HIP `.suzip` uses the full adaptive GPU-prefix codebook selection effort. |
 
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
 GUI, and `tools\bench.ps1`. Benchmarks may sweep all five levels, but release
-throughput claims must identify the selected level and compression ratio. The
-required-HIP v2 native codec can emit GPU fill, GPU pattern, and GPU
-static-prefix blocks; the static-prefix path is selected by measured block
-savings rather than by pretending to be Deflate or Zstandard.
+throughput claims must identify the selected level, input bytes, output bytes,
+and compression ratio. The required-HIP native codec can emit GPU fill, GPU
+pattern, static GPU-prefix, and adaptive GPU-prefix blocks; prefix paths are
+selected by measured block savings rather than by pretending to be Deflate or
+Zstandard.
+
+Balanced level 5 intentionally keeps the fast static GPU-prefix path for normal
+throughput. Levels 7 and 9 may spend extra HIP work evaluating per-block
+adaptive codebooks, and the encoder publishes the adaptive block only when the
+measured encoded byte count beats the existing GPU-native candidate. Required
+GPU mode still must not emit CPU Deflate blocks.
 
 ## Benchmark Score
 
@@ -52,6 +59,9 @@ round(((compress MiB/s * 0.50) + (verify MiB/s * 0.25) + (extract MiB/s * 0.25))
 Higher is better for the same workload size, profile, compression level, and
 hardware state. The score is not comparable across different profiles or
 compression levels unless the compression ratio is also analyzed.
+Every benchmark-suite record must also print the initial byte count and final
+encoded byte count. Optimization notes must use those byte counts plus the
+ratio; ratio-only summaries are incomplete evidence.
 
 ## Autotuning Flow
 
@@ -87,6 +97,7 @@ Every benchmark-suite or release benchmark record must include:
 
 - Workload size and profile.
 - Compression level and compression ratio.
+- Initial input bytes and final output bytes for each measured lane.
 - CPU and required-GPU scores or throughput on the same candidate.
 - `memory_only=true` and `disk_write_bytes=0`.
 - Required-GPU proof: nonzero HIP kernel launches, HIP event time,

@@ -214,6 +214,27 @@ std::byte decode_prefix_byte_cpu(std::span<const std::byte> stream, std::size_t&
     return static_cast<std::byte>(84U + value);
 }
 
+// Purpose: Decode one byte from SuperZip's adaptive GPU prefix code.
+// Inputs: `codebook`, `stream`, `bit_pos`, and `limit_bits` describe one encoded segment.
+// Outputs: Returns one decoded byte; throws on malformed group payloads.
+std::byte decode_adaptive_prefix_byte_cpu(std::span<const std::byte> codebook, std::span<const std::byte> stream,
+                                          std::size_t& bit_pos, std::size_t limit_bits) {
+    if (codebook.size() != kGpuAdaptivePrefixCodebookBytes) {
+        throw ArchiveError("GPU adaptive prefix codebook is invalid");
+    }
+    if (read_prefix_bit(stream, bit_pos, limit_bits) == 0U) {
+        return codebook[read_prefix_bits(stream, bit_pos, limit_bits, 2)];
+    }
+    if (read_prefix_bit(stream, bit_pos, limit_bits) == 0U) {
+        return codebook[kGpuAdaptivePrefixSmallSymbols + read_prefix_bits(stream, bit_pos, limit_bits, 4)];
+    }
+    if (read_prefix_bit(stream, bit_pos, limit_bits) == 0U) {
+        return codebook[kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols +
+                        read_prefix_bits(stream, bit_pos, limit_bits, 6)];
+    }
+    return static_cast<std::byte>(read_prefix_bits(stream, bit_pos, limit_bits, 8));
+}
+
 // Purpose: Decode one static-prefix block in bounded CPU memory.
 // Inputs: `payload` is the block payload and `output` is the exact decoded destination.
 // Outputs: Writes decoded bytes into `output`; throws on malformed table or bitstream metadata.
@@ -250,6 +271,45 @@ void materialize_prefix_cpu(std::span<const std::byte> payload, std::span<std::b
     }
 }
 
+// Purpose: Decode one adaptive-prefix block in bounded CPU memory.
+// Inputs: `payload` is the block payload and `output` is the exact decoded destination.
+// Outputs: Writes decoded bytes into `output`; throws on malformed codebook, table, or bitstream metadata.
+void materialize_adaptive_prefix_cpu(std::span<const std::byte> payload, std::span<std::byte> output) {
+    const auto segment_count = (output.size() + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    const auto table_entries = segment_count + 1U;
+    const auto table_bytes = table_entries * sizeof(std::uint32_t);
+    const auto header_bytes = kGpuAdaptivePrefixCodebookBytes + table_bytes;
+    if (segment_count == 0 || payload.size() <= header_bytes || payload.size() >= output.size()) {
+        throw ArchiveError("GPU adaptive prefix block metadata is invalid");
+    }
+    const auto codebook = payload.first(kGpuAdaptivePrefixCodebookBytes);
+    const auto table = payload.subspan(kGpuAdaptivePrefixCodebookBytes, table_bytes);
+    const auto bitstream = payload.subspan(header_bytes);
+    std::uint32_t previous = read_prefix_u32(table, 0);
+    if (previous != 0U) {
+        throw ArchiveError("GPU adaptive prefix block table must start at zero");
+    }
+    std::size_t decoded_offset = 0;
+    for (std::size_t segment = 0; segment < segment_count; ++segment) {
+        const auto next = read_prefix_u32(table, (segment + 1U) * sizeof(std::uint32_t));
+        if (next < previous || next > bitstream.size()) {
+            throw ArchiveError("GPU adaptive prefix block table is not monotonic");
+        }
+        const auto segment_output_len = std::min<std::size_t>(kGpuPrefixSegmentBytes, output.size() - decoded_offset);
+        const auto encoded = bitstream.subspan(previous, next - previous);
+        std::size_t bit_pos = 0;
+        const auto limit_bits = encoded.size() * 8U;
+        for (std::size_t i = 0; i < segment_output_len; ++i) {
+            output[decoded_offset + i] = decode_adaptive_prefix_byte_cpu(codebook, encoded, bit_pos, limit_bits);
+        }
+        decoded_offset += segment_output_len;
+        previous = next;
+    }
+    if (previous != bitstream.size()) {
+        throw ArchiveError("GPU adaptive prefix block payload has trailing bytes");
+    }
+}
+
 // Purpose: Compute output offsets and validate block spans before parallel decode.
 // Inputs: `blocks`, `payload`, and `output` are caller-provided decode buffers.
 // Outputs: Returns one output offset per block; throws on invalid bounds.
@@ -282,6 +342,14 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
                 const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
                 if (encoded_len <= table_bytes || encoded_len >= len) {
                     throw ArchiveError("GPU prefix block metadata is invalid");
+                }
+            }
+            if (block.kind == BlockKind::GpuAdaptivePrefix) {
+                const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+                const auto header_bytes =
+                    kGpuAdaptivePrefixCodebookBytes + ((segment_count + 1U) * sizeof(std::uint32_t));
+                if (encoded_len <= header_bytes || encoded_len >= len) {
+                    throw ArchiveError("GPU adaptive prefix block metadata is invalid");
                 }
             }
         } else if (block.kind == BlockKind::Fill) {
@@ -325,6 +393,10 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_prefix_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                        static_cast<std::size_t>(block.encoded_len)),
                                        output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::GpuAdaptivePrefix) {
+                materialize_adaptive_prefix_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                                static_cast<std::size_t>(block.encoded_len)),
+                                                output.subspan(out_pos, len));
             } else {
                 throw ArchiveError("unknown block kind");
             }
@@ -339,7 +411,7 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 // Outputs: Returns true for raw, deflate, GPU-pattern, and GPU-prefix block payloads.
 bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
-           kind == BlockKind::GpuPrefix;
+           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix;
 }
 
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {

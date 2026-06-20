@@ -676,6 +676,8 @@ function Invoke-BenchmarkLane {
             ExtractSeconds = [double]$extract["seconds"]
             Workers = [int]$compress["workers"]
             InflightChunks = [int]$compress["inflight_chunks"]
+            InputBytes = [double]$compress["input_bytes"]
+            OutputBytes = [double]$compress["output_bytes"]
             CompressMiBs = [double]$compress["throughput_mib_s"]
             VerifyMiBs = [double]$verify["throughput_mib_s"]
             ExtractMiBs = [double]$extract["throughput_mib_s"]
@@ -754,6 +756,8 @@ function Invoke-MemoryBenchmarkLane {
         CodecWorkers = [int]$stats["codec_workers"]
         MemoryOnly = $stats["memory_only"]
         DiskWriteBytes = [double]$stats["disk_write_bytes"]
+        InputBytes = [double]$stats["input_bytes"]
+        OutputBytes = [double]$stats["output_bytes"]
         CompressMiBs = [double]$stats["compress_mib_s"]
         VerifyMiBs = [double]$stats["verify_mib_s"]
         ExtractMiBs = [double]$stats["extract_mib_s"]
@@ -825,6 +829,8 @@ if ($Mode -eq "Memory") {
             CodecWorkers = ($group | Measure-Object CodecWorkers -Maximum).Maximum
             MemoryOnly = (($group | ForEach-Object { $_.MemoryOnly } | Sort-Object -Unique) -join ",")
             DiskWriteBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.DiskWriteBytes })
+            InputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.InputBytes })
+            OutputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.OutputBytes })
             CompressMiBs = ($group | Measure-Object CompressMiBs -Average).Average
             VerifyMiBs = ($group | Measure-Object VerifyMiBs -Average).Average
             ExtractMiBs = ($group | Measure-Object ExtractMiBs -Average).Average
@@ -865,9 +871,17 @@ if ($Mode -eq "Memory") {
     Write-BenchmarkMessage "Performance:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, Iterations, TotalSeconds, Workers, InflightChunks, CodecWorkers, MemoryOnly, DiskWriteBytes, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs |
+        Select-Object Lane, BlockSizeKiB, Iterations, TotalSeconds, Workers, InflightChunks, CodecWorkers, MemoryOnly, DiskWriteBytes, InputBytes, OutputBytes, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs |
         Format-Table -AutoSize |
         Out-String -Width 320 |
+        Write-BenchmarkMessage
+
+    Write-BenchmarkMessage "Size and ratio:"
+    $summary |
+        Sort-Object Lane, BlockSizeKiB |
+        Select-Object Lane, BlockSizeKiB, InputBytes, OutputBytes, CompressionRatio |
+        Format-Table -AutoSize |
+        Out-String -Width 160 |
         Write-BenchmarkMessage
 
     Write-BenchmarkMessage "Resource telemetry:"
@@ -944,6 +958,8 @@ try {
             Iterations = $_.Count
             Workers = ($group | Measure-Object Workers -Maximum).Maximum
             InflightChunks = ($group | Measure-Object InflightChunks -Maximum).Maximum
+            InputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.InputBytes })
+            OutputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.OutputBytes })
             CompressMiBs = ($group | Measure-Object CompressMiBs -Average).Average
             VerifyMiBs = ($group | Measure-Object VerifyMiBs -Average).Average
             ExtractMiBs = ($group | Measure-Object ExtractMiBs -Average).Average
@@ -985,9 +1001,17 @@ try {
     Write-BenchmarkMessage "Performance:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, Iterations, Workers, InflightChunks, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs, TotalSeconds |
+        Select-Object Lane, BlockSizeKiB, Iterations, Workers, InflightChunks, InputBytes, OutputBytes, CompressionRatio, CompressMiBs, VerifyMiBs, ExtractMiBs, TotalSeconds |
         Format-Table -AutoSize |
-        Out-String -Width 220 |
+        Out-String -Width 320 |
+        Write-BenchmarkMessage
+
+    Write-BenchmarkMessage "Size and ratio:"
+    $summary |
+        Sort-Object Lane, BlockSizeKiB |
+        Select-Object Lane, BlockSizeKiB, InputBytes, OutputBytes, CompressionRatio |
+        Format-Table -AutoSize |
+        Out-String -Width 160 |
         Write-BenchmarkMessage
 
     Write-BenchmarkMessage "Resource telemetry:"

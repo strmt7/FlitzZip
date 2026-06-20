@@ -93,6 +93,7 @@ Record these fields for every block size:
 
 | Field | Reason |
 | --- | --- |
+| `InputBytes`, `OutputBytes` | Shows the initial workload size and final archive size directly; ratio-only reporting is not enough for optimization decisions. |
 | `CompressMiBs`, `VerifyMiBs`, `ExtractMiBs` | End-to-end archive throughput. |
 | `CompressionRatio` | Confirms CPU/GPU speed comparisons use equivalent compression strength. |
 | `Workers`, `InflightChunks`, `CodecWorkers` | Confirms production worker allocation. |
@@ -134,4 +135,6 @@ A block-size or performance change is not complete until:
 - `tools\bench.ps1` runs in memory mode for all seven block sizes on a HIP host,
   or the result is explicitly recorded as not run with the reason.
 - Benchmark records include compression ratio for both CPU and GPU lanes.
+- Benchmark records include initial input bytes and final output bytes for every
+  lane, in addition to compression ratio.
 - No benchmark or test writes a multi-GB generated workload to SSD.

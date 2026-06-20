@@ -156,10 +156,14 @@ $previousSmokeFolder = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE
 $previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
 $previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
 $previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
+$smokeAutoCloseMs = 300000
+if ($smokeAutoCloseMs -lt 240000) {
+    throw "GUI smoke auto-close timeout must leave enough time for the full tab/control pass."
+}
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $smokeRoot, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", $queuePickerSelection, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", (Resolve-Path -LiteralPath $smokeFolder).Path, "Process")
-[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "90000", "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", [string]$smokeAutoCloseMs, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "1", "Process")
 

@@ -482,6 +482,13 @@ void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
               << " compression_level=" << candidate.compression_level
               << " block_size_kib=" << (candidate.block_size / 1024U) << " cpu_score=" << candidate.cpu_score
               << " gpu_score=" << candidate.gpu_score << " speedup_vs_cpu=" << candidate.speedup
+              << " cpu_input_bytes=" << candidate.cpu.stats.input_bytes
+              << " cpu_output_bytes=" << candidate.cpu.stats.output_bytes
+              << " gpu_input_bytes=" << candidate.gpu.stats.input_bytes
+              << " gpu_output_bytes=" << candidate.gpu.stats.output_bytes << " cpu_compression_ratio="
+              << compression_ratio(candidate.cpu.stats.input_bytes, candidate.cpu.stats.output_bytes)
+              << " gpu_compression_ratio="
+              << compression_ratio(candidate.gpu.stats.input_bytes, candidate.gpu.stats.output_bytes)
               << " compression_ratio=" << candidate.compression_ratio << " cpu_compress_mib_s="
               << mib_per_second(candidate.cpu.stats.input_bytes, candidate.cpu.compress_seconds)
               << " gpu_compress_mib_s="
@@ -659,7 +666,8 @@ void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
     std::cout << "suite_recommendation"
               << " compression_level=" << recommendation.compression_level
               << " block_size_kib=" << (recommendation.block_size / 1024U) << " gpu_score=" << recommendation.gpu_score
-              << " speedup_vs_cpu=" << recommendation.speedup
+              << " speedup_vs_cpu=" << recommendation.speedup << " input_bytes=" << recommendation.gpu.stats.input_bytes
+              << " output_bytes=" << recommendation.gpu.stats.output_bytes
               << " compression_ratio=" << recommendation.compression_ratio
               << " gpu_pattern_blocks=" << recommendation.gpu.stats.gpu_runtime.pattern_blocks
               << " gpu_prefix_blocks=" << recommendation.gpu.stats.gpu_runtime.prefix_blocks << " memory_only=true"

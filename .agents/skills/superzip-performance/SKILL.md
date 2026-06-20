@@ -26,7 +26,11 @@ Required rules:
 - Sweep all production block sizes when validating performance:
   `-BlockSizeKiB 256,512,1024,2048,4096,8192,16384`.
 - Compare CPU and GPU at the same compression level and report compression
-  ratio. Level 5 is the standard balanced release baseline.
+  ratio, input bytes, and output bytes. Level 5 is the standard balanced
+  release baseline.
+- Native `.suzip` required-GPU ratio work must stay on GPU-native block kinds.
+  Version 3 may emit adaptive GPU-prefix blocks at stronger levels, but agents
+  must not describe this as CPU Deflate/Zstd or as a fallback path.
 - Do not run or reintroduce multi-GB filesystem benchmarks during development.
   Use `tools/storage_smoke.ps1` or the 64 MiB-capped filesystem smoke only for
   archive write/read correctness.
@@ -58,5 +62,7 @@ build/Release/superzip_cli.exe benchmark-suite --profile Mixed --compression-lev
 ```
 
 Record CPU/GPU throughput, worker counts, HIP chunk counts, HIP kernel launches,
-HIP event time, transfer bytes, allocation bytes, compression ratio, and
-benchmark score for every block size.
+HIP event time, transfer bytes, allocation bytes, input bytes, output bytes,
+compression ratio, and benchmark score for every block size. Do not make
+"much faster" or "order-of-magnitude" claims unless the recorded speedup proves
+that exact statement on the same workload, level, and ratio basis.

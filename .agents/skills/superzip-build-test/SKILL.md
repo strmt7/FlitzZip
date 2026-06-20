@@ -54,6 +54,10 @@ Rules:
 
 - Do not run broad checks merely because they exist. Run the plan-selected
   checks, then escalate automatically when evidence points to a wider problem.
+- Enterprise-quality changes are not complete until the selected verifier proves
+  the changed behavior, resource bounds, function-contract gate, and security
+  invariants. Performance-sensitive claims must include input bytes, output
+  bytes, compression ratio, CPU/GPU mode, and RAM-only/disk-write evidence.
 - Do not launch the GUI unless the user has been warned first.
 - Use CLI smoke tests for archive validation.
 - Keep `HIP_PATH`, Visual Studio, and architecture configurable.
@@ -68,10 +72,14 @@ Rules:
   `tools/storage_smoke.ps1` or the 64 MiB-capped filesystem smoke only for the
   archive write/read path.
 - CPU/GPU performance benchmarks must compare the same compression level and
-  report compression ratio. Use level 5 as the balanced release baseline unless
-  the task is explicitly a level sweep.
+  report input bytes, output bytes, and compression ratio. Use level 5 as the
+  balanced release baseline unless the task is explicitly a level sweep.
 - Block-size changes must validate every product option:
   `-BlockSizeKiB 256,512,1024,2048,4096,8192,16384`.
+- `.suzip` required-GPU compression-level changes must preserve GPU-native
+  semantics: static/adaptive GPU-prefix blocks are allowed, CPU Deflate/Zstd
+  fallback is not. Tests must prove stronger levels can change ratio on a
+  generated file-agnostic workload and still verify/extract with `--require-gpu`.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.
 - Run `tools/compatibility_interop_smoke.ps1 -Configuration Release` after
   changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared

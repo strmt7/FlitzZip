@@ -1,6 +1,6 @@
 # GPU-Accelerated UI And Codec Research
 
-Checked on 2026-06-19.
+Checked on 2026-06-20.
 
 This document records source-backed engineering lessons from GPU-accelerated UI
 systems, GPU decompression/compression libraries, and AMD HIP performance
@@ -20,6 +20,8 @@ existing Windows-native, AMD HIP-only product boundary.
   <https://rocm.docs.amd.com/projects/rocPRIM/en/latest/index.html>
 - AMD rocPRIM device reduce documentation:
   <https://rocm.docs.amd.com/projects/rocPRIM/en/latest/device_ops/reduce.html>
+- AMD rocPRIM histogram documentation:
+  <https://rocm.docs.amd.com/projects/rocPRIM/en/docs-5.7.0/device_ops/histogram.html>
 - ROCm hipCOMP-core:
   <https://github.com/ROCm/hipCOMP-core>
 - Zarr v2 storage specification, reviewed to understand chunked array
@@ -116,10 +118,11 @@ benchmark proves a win.
 
 The current `.suzip` HIP path performs real AMD HIP work and is measured with
 nonzero kernel launches, HIP event time, transfer bytes, and required-GPU
-failure behavior. Version 2 can also emit native GPU static-prefix blocks for
-low-entropy byte streams, which gives required-HIP jobs real compact
-GPU-decodable payloads without CPU Deflate fallback. It is still not a fully
-GPU-resident general-purpose compression pipeline. The remaining gaps are:
+failure behavior. Version 3 can also emit native GPU static-prefix and adaptive
+GPU-prefix blocks for low-entropy byte streams, which gives required-HIP jobs
+real compact GPU-decodable payloads without CPU Deflate fallback. It is still
+not a fully GPU-resident general-purpose compression pipeline. The remaining
+gaps are:
 
 - Input and output are still host-resident archive buffers around each HIP
   stage.
@@ -128,9 +131,9 @@ GPU-resident general-purpose compression pipeline. The remaining gaps are:
 - Several helpers still allocate and free device memory per operation.
 - There is no multi-stream copy/compute overlap in the production codec path.
 - The native `.suzip` compression model is currently block classification,
-  compact fill/pattern representation, static low-entropy prefix coding, raw
-  payloads, GPU materialization, and GPU CRC. It is not a GPU DEFLATE,
-  Zstandard, ANS, LZ dictionary, or GDeflate implementation.
+  compact fill/pattern representation, static and adaptive low-entropy prefix
+  coding, raw payloads, GPU materialization, and GPU CRC. It is not a GPU
+  DEFLATE, Zstandard, ANS, LZ dictionary, or GDeflate implementation.
 
 This distinction matters. Dramatic GPU utilization gains require a larger
 codec-pipeline redesign, not only GUI polish or benchmark settings.
@@ -183,6 +186,31 @@ host-copy overhead without changing the `.suzip` v2 archive format:
    total VRAM; it uses currently free VRAM with an explicit reserve so the OS,
    display stack, and other processes are not starved.
 
+## Implemented 2026-06-20 Adaptive GPU Prefix Blocks
+
+The accepted code changes in this iteration make higher required-HIP
+compression levels meaningful without emitting CPU Deflate blocks:
+
+1. `.suzip` version 3 adds a native adaptive GPU-prefix block kind. Each block
+   stores a bounded 84-byte codebook, per-4 KiB segment offsets, and a GPU-packed
+   bitstream.
+2. Levels 1, 3, and 5 keep the fast static GPU-prefix path. Levels 7 and 9
+   evaluate an adaptive codebook candidate and publish it only when its measured
+   encoded byte count is smaller than the existing GPU-native candidate.
+3. Adaptive packing and adaptive decoding run through AMD HIP kernels. CPU
+   decode exists only for non-required compatibility reads and verification.
+4. Required-HIP verification and extraction reject CPU Deflate blocks as before;
+   stronger levels do not use hidden CPU fallback.
+5. Telemetry counts emitted prefix blocks only. Kernel, transfer, and allocation
+   counters still include the adaptive evaluation work because that work really
+   executed on the GPU.
+
+hipCOMP-core was reviewed again before this change. Its public README identifies
+the project as an early-access technology preview, states that production
+workloads are not recommended, and notes that newer nvCOMP algorithms such as
+DEFLATE, GDEFLATE, ANS, and zSTD are not part of that repository yet. Therefore
+it remains a research dependency candidate rather than a production shortcut.
+
 ## Zarr-Style Ratio Reproduction
 
 A maintainer-provided 542.5 MiB Zarr-style directory with 1,411 regular files
@@ -193,7 +221,8 @@ plain text or fill patterns.
 | Path | Output bytes | Ratio | Native block evidence |
 | --- | ---: | ---: | --- |
 | Old required-HIP `.suzip` | 569,234,175 | 1.00069 | 1,412 raw blocks, no compact native blocks |
-| Fixed required-HIP `.suzip` v2 | 403,457,469 | 0.709263 | 1,400 GPU-prefix blocks, 12 raw blocks, 0 CPU Deflate blocks |
+| Fixed required-HIP `.suzip` v2/v3 level 5 | 403,457,451 | 0.709263 | Static GPU-prefix blocks, 0 CPU Deflate blocks |
+| Adaptive required-HIP `.suzip` v3 level 9 | 400,381,293 | 0.703855 | Adaptive GPU-prefix blocks where smaller, 0 CPU Deflate blocks |
 
 The fixed archive passed required-HIP verification and required-HIP extraction.
 The extracted tree then passed a SHA-256 comparison for every restored file:
@@ -211,19 +240,38 @@ tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -Compressio
 
 | Block size | CPU total seconds | GPU total seconds | GPU speedup | CPU ratio | GPU ratio | GPU kernels | GPU kernel ms | GPU pattern blocks | GPU prefix blocks |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 256 KiB | 16.27922 | 7.79498 | 2.09x | 0.439201 | 0.425743 | 360 | 2871.48 | 10,240 | 10,240 |
-| 512 KiB | 15.74765 | 7.70850 | 2.04x | 0.439115 | 0.425698 | 360 | 2798.57 | 5,120 | 5,120 |
-| 1 MiB | 15.52437 | 7.64186 | 2.03x | 0.439084 | 0.425676 | 360 | 2826.36 | 2,560 | 2,560 |
-| 2 MiB | 15.41983 | 7.55137 | 2.04x | 0.439069 | 0.425665 | 360 | 2855.01 | 1,280 | 1,280 |
-| 4 MiB | 15.47290 | 7.52524 | 2.06x | 0.439061 | 0.425659 | 360 | 2774.82 | 640 | 640 |
-| 8 MiB | 15.46273 | 7.37710 | 2.10x | 0.439058 | 0.425656 | 360 | 2801.05 | 320 | 320 |
-| 16 MiB | 15.28456 | 7.25942 | 2.11x | 0.439056 | 0.425655 | 360 | 2953.69 | 160 | 160 |
+| 256 KiB | 18.82518 | 8.72078 | 2.16x | 0.439201 | 0.425743 | 360 | 3234.67 | 10,240 | 10,240 |
+| 512 KiB | 15.89611 | 8.33921 | 1.91x | 0.439115 | 0.425698 | 360 | 2948.98 | 5,120 | 5,120 |
+| 1 MiB | 15.26502 | 8.10087 | 1.88x | 0.439084 | 0.425676 | 360 | 2851.74 | 2,560 | 2,560 |
+| 2 MiB | 15.86586 | 8.10106 | 1.96x | 0.439069 | 0.425665 | 360 | 3082.99 | 1,280 | 1,280 |
+| 4 MiB | 15.14438 | 7.83491 | 1.93x | 0.439061 | 0.425659 | 360 | 2898.87 | 640 | 640 |
+| 8 MiB | 14.79936 | 7.42327 | 1.99x | 0.439058 | 0.425656 | 360 | 3127.86 | 320 | 320 |
+| 16 MiB | 14.70505 | 7.72789 | 1.90x | 0.439056 | 0.425655 | 360 | 3706.63 | 160 | 160 |
 
-The built-in tuner selected 16 MiB for the revised Mixed profile:
+The built-in tuner selected 4 MiB for the same level-5 Mixed profile:
 
 | Compression level | Block size | GPU score | Speedup vs CPU | Ratio | GPU pattern blocks | GPU prefix blocks | Memory only | Disk writes |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| 5 | 16 MiB | 44242 | 2.16853x | 0.425655 | 160 | 160 | true | 0 |
+| 5 | 4 MiB | 43078 | 2.01936x | 0.425659 | 640 | 640 | true | 0 |
+
+The same runs recorded exact input/output bytes:
+
+| Lane | Block size | Input bytes | Output bytes | Ratio |
+| --- | ---: | ---: | ---: | ---: |
+| CPU | 256 KiB | 10,737,418,240 | 4,715,887,361 | 0.439201 |
+| CPU | 512 KiB | 10,737,418,240 | 4,714,965,564 | 0.439115 |
+| CPU | 1 MiB | 10,737,418,240 | 4,714,631,176 | 0.439084 |
+| CPU | 2 MiB | 10,737,418,240 | 4,714,468,439 | 0.439069 |
+| CPU | 4 MiB | 10,737,418,240 | 4,714,384,769 | 0.439061 |
+| CPU | 8 MiB | 10,737,418,240 | 4,714,346,936 | 0.439058 |
+| CPU | 16 MiB | 10,737,418,240 | 4,714,330,593 | 0.439056 |
+| GPU | 256 KiB | 10,737,418,240 | 4,571,380,884 | 0.425743 |
+| GPU | 512 KiB | 10,737,418,240 | 4,570,899,604 | 0.425698 |
+| GPU | 1 MiB | 10,737,418,240 | 4,570,658,964 | 0.425676 |
+| GPU | 2 MiB | 10,737,418,240 | 4,570,538,644 | 0.425665 |
+| GPU | 4 MiB | 10,737,418,240 | 4,570,478,484 | 0.425659 |
+| GPU | 8 MiB | 10,737,418,240 | 4,570,448,404 | 0.425656 |
+| GPU | 16 MiB | 10,737,418,240 | 4,570,433,364 | 0.425655 |
 
 Additional 10 GiB RAM-only sweeps on the same build:
 

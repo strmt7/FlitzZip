@@ -36,6 +36,11 @@ Rules:
 
 - Refactoring must preserve behavior unless a maintainer explicitly requests a
   functional change in the same task.
+- Broad "modernize" or "enterprise quality" requests must be converted into
+  verifiable invariants: smaller functions, clearer ownership, bounded
+  CPU/RAM/VRAM/disk/handle use, explicit contracts, dependency simplification,
+  stronger tests, or measured performance evidence. Do not perform vague
+  formatting churn or novelty-driven rewrites.
 - Keep refactors aligned with secure-by-design defaults: fail closed, preserve
   explicit opt-ins, and keep trust boundaries documented.
 - Do not refactor vendored upstream code under `third_party/upstream`.
