@@ -30,6 +30,7 @@ function Assert-GuiSourceContract {
         @{ Pattern = ('\b7 ' + 'days\b'); Message = "GUI log retention options must use '1 week', not '7 days'." },
         @{ Pattern = ('\b30 ' + 'days\b'); Message = "GUI log retention options must use '1 month', not '30 days'." },
         @{ Pattern = ('AMD GPU ' + 'Diagnostics'); Message = "The former GPU page title must remain 'System'." },
+        @{ Pattern = ('L"Archive ' + 'format"'); Message = "Compress and Extract pages must label archive selectors as 'Format'." },
         @{ Pattern = ('Format-' + 'managed'); Message = "Unsupported compression options must render as disabled '-' fields." },
         @{ Pattern = ('Native Windows AMD HIP ' + 'archive utility'); Message = "The About page must use the canonical product tagline." },
         @{ Pattern = ('L"Det' + 'ails"'); Message = "The status bar must show the clock instead of the retired Details label." }
@@ -89,6 +90,26 @@ function Assert-GuiSourceContract {
 }
 
 Assert-GuiSourceContract
+
+# Purpose: Select a Compress format row through the same keyboard path users can use.
+# Inputs: `Handle`/`Dpi` identify the SuperZip window and `Index` is the zero-based Compress format row.
+# Outputs: Opens the dropdown, moves to the requested row, selects it, and waits for repaint.
+function Select-CompressFormatIndex {
+    param(
+        [IntPtr]$Handle,
+        [int]$Dpi,
+        [int]$Index
+    )
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 224
+    Start-Sleep -Milliseconds 120
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+    for ($i = 0; $i -lt $Index; ++$i) {
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
+        Start-Sleep -Milliseconds 15
+    }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Start-Sleep -Milliseconds 180
+}
 
 $smokeSource = Get-Content -Raw -LiteralPath $PSCommandPath
 if (-not $smokeSource.Contains('Queue-AfterBulkDragDrop')) {
@@ -280,6 +301,7 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
     Start-Sleep -Milliseconds 120
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 622 -BasePath $basePath -Extension $extension
+    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 1
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
@@ -301,10 +323,7 @@ try {
     Start-Sleep -Milliseconds 140
     $expectedZstd = Join-Path $smokeRoot "SuperZip-output.zst"
     Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 491
-    Start-Sleep -Milliseconds 160
+    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 6
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdZstd = $false
     foreach ($attempt in 1..50) {
@@ -321,10 +340,7 @@ try {
 
     $expectedTarZstd = Join-Path $smokeRoot "SuperZip-output.tar.zst"
     Remove-Item -LiteralPath $expectedTarZstd -Force -ErrorAction SilentlyContinue
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 407
-    Start-Sleep -Milliseconds 160
+    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 8
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdTarZstd = $false
     foreach ($attempt in 1..50) {
@@ -341,10 +357,7 @@ try {
 
     $expectedTarGz = Join-Path $smokeRoot "SuperZip-output.tar.gz"
     Remove-Item -LiteralPath $expectedTarGz -Force -ErrorAction SilentlyContinue
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 351
-    Start-Sleep -Milliseconds 160
+    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 2
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdTarGz = $false
     foreach ($attempt in 1..50) {
@@ -360,10 +373,7 @@ try {
 
     $expectedCpioGz = Join-Path $smokeRoot "SuperZip-output.cpgz"
     Remove-Item -LiteralPath $expectedCpioGz -Force -ErrorAction SilentlyContinue
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 224
-    Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 500 -DesignY 575
-    Start-Sleep -Milliseconds 160
+    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 16
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $createdCpioGz = $false
     foreach ($attempt in 1..50) {

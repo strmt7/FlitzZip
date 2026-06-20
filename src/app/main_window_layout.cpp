@@ -35,7 +35,7 @@ MainWindow::QueueLayout MainWindow::queue_layout(const RECT& rect) const {
     const int remove_left =
         layout.area.left + ((layout.add_files.left - scale(28) - layout.area.left) - remove_width) / 2;
     layout.remove_selected = RECT{remove_left, header_top, remove_left + remove_width, header_bottom};
-    layout.table = RECT{layout.area.left, layout.area.top + scale(56), layout.area.right, layout.area.bottom};
+    layout.table = RECT{layout.area.left, layout.area.top + scale(54), layout.area.right, layout.area.bottom};
     return layout;
 }
 

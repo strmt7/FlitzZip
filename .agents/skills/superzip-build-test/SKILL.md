@@ -135,10 +135,13 @@ Rules:
   explicitly requests a navigation redesign. Queue header/body separation,
   select-all tick alignment, column resize cursors, and graph axis label
   overlays are visual regression boundaries.
-- GUI archive-format labels must come from `archive_format_info(...).display_name`;
-  do not re-create format label arrays in the app layer. Visible format labels
-  use official format names only and must not add compatibility/single-file/
-  encoded-file/stream/file qualifiers.
+- GUI archive-format labels must come from the core archive-format registry;
+  create selectors use explicit rows from `archive_format_extension_registry()`.
+  Every visible create-format row must keep the official format family plus
+  exactly one extension label, such as `TAR.GZ (.tgz)`, not a grouped alias
+  list. Do not remove extension labels, do not re-create format label arrays in
+  the app layer, and do not add compatibility/single-file/encoded-file/stream/
+  file qualifiers.
 - Settings changes are draft-only until `Apply`; leaving Settings without
   `Apply` must restore the last applied snapshot. `Apply` must atomically write
   the validated per-user settings JSON under Local AppData, and GUI smoke must

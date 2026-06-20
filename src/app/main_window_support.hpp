@@ -75,13 +75,12 @@ constexpr COLORREF kDanger = RGB(236, 73, 73);
 constexpr UINT_PTR kPerformanceTimer = 8;
 constexpr UINT kGpuMemorySampleMs = 1000;
 
-constexpr std::array<ArchiveFormat, 13> kCompressionCreateFormats{
-    ArchiveFormat::SuperZip, ArchiveFormat::Zip,          ArchiveFormat::Tar,  ArchiveFormat::TarGzip,
-    ArchiveFormat::TarBzip2, ArchiveFormat::TarZstd,      ArchiveFormat::Gzip, ArchiveFormat::Bzip2,
-    ArchiveFormat::Zstd,     ArchiveFormat::UnixCompress, ArchiveFormat::Cpio, ArchiveFormat::CpioGzip,
-    ArchiveFormat::Ar,
+constexpr std::array<std::string_view, 19> kCompressionCreateFormatExtensions{
+    ".zip",     ".suzip", ".tar.gz", ".tgz", ".tar",  ".gz",      ".zst",  ".zstd", ".tar.zst", ".tzst",
+    ".tar.bz2", ".tbz2",  ".tbz",    ".bz2", ".cpio", ".cpio.gz", ".cpgz", ".ar",   ".Z",
 };
-constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormats.size()) - 1;
+constexpr int kDefaultCompressionFormatIndex = 1;
+constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormatExtensions.size()) - 1;
 constexpr std::array<int, 4> kPerformanceUpdateSecondsOptions{1, 3, 5, 10};
 constexpr std::array<std::uint32_t, 7> kCompressionBlockSizeOptions{
     256U * 1024U,       512U * 1024U,       superzip::kDefaultArchiveBlockBytes, 2U * 1024U * 1024U,
@@ -143,7 +142,7 @@ std::string operation_for_job_label(std::string_view label);
 std::filesystem::path destination_directory_or_default(const UiState& state);
 ArchiveFormat compression_format_value(int index);
 std::wstring compression_format_text(int index);
-std::wstring compression_format_extension(ArchiveFormat format);
+std::wstring compression_format_extension(int index);
 bool compression_format_uses_suzip_tuning(ArchiveFormat format);
 bool compression_format_uses_level(ArchiveFormat format);
 std::wstring compression_output_filename_for(const UiState& state);

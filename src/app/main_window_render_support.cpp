@@ -281,7 +281,7 @@ std::wstring detected_archive_format_text(const std::vector<std::filesystem::pat
     if (format == ArchiveFormat::Unknown) {
         return L"-";
     }
-    return widen(archive_format_info(format).display_name);
+    return widen(archive_format_extension_info_for_path(format, paths.front()).display_name);
 }
 
 // Purpose: Fill a rectangle with one solid color.

@@ -31,12 +31,11 @@ constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::SevenZip, "7z", "7z (.7z)", ".7z", false, true, false, true},
     {ArchiveFormat::Rar, "rar", "RAR (.rar)", ".rar", false, false, false, false},
     {ArchiveFormat::Tar, "tar", "TAR (.tar)", ".tar", true, true, false, true},
-    {ArchiveFormat::TarGzip, "tar.gz", "TAR.GZ (.tar.gz, .tgz)", ".tar.gz,.tgz", true, true, false, true},
-    {ArchiveFormat::TarBzip2, "tar.bz2", "TAR.BZ2 (.tar.bz2, .tbz, .tbz2)", ".tar.bz2,.tbz,.tbz2", true, true, false,
-     true},
-    {ArchiveFormat::TarXz, "tar.xz", "TAR.XZ (.tar.xz, .txz)", ".tar.xz,.txz", false, true, false, true},
-    {ArchiveFormat::TarLzip, "tar.lz", "TAR.LZ (.tar.lz, .tlz)", ".tar.lz,.tlz", false, true, false, true},
-    {ArchiveFormat::TarZstd, "tar.zst", "TAR.ZST (.tar.zst, .tzst)", ".tar.zst,.tzst", true, true, false, true},
+    {ArchiveFormat::TarGzip, "tar.gz", "TAR.GZ (.tar.gz)", ".tar.gz,.tgz", true, true, false, true},
+    {ArchiveFormat::TarBzip2, "tar.bz2", "TAR.BZ2 (.tar.bz2)", ".tar.bz2,.tbz,.tbz2", true, true, false, true},
+    {ArchiveFormat::TarXz, "tar.xz", "TAR.XZ (.tar.xz)", ".tar.xz,.txz", false, true, false, true},
+    {ArchiveFormat::TarLzip, "tar.lz", "TAR.LZ (.tar.lz)", ".tar.lz,.tlz", false, true, false, true},
+    {ArchiveFormat::TarZstd, "tar.zst", "TAR.ZST (.tar.zst)", ".tar.zst,.tzst", true, true, false, true},
     {ArchiveFormat::Gzip, "gz", "Gzip (.gz)", ".gz", true, true, false, true},
     {ArchiveFormat::UnixCompress, "z", "Unix Compress (.Z)", ".Z", true, true, false, true},
     {ArchiveFormat::Base64, "b64", "Base64 (.b64)", ".b64", false, true, false, true},
@@ -44,25 +43,77 @@ constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::Xz, "xz", "XZ (.xz)", ".xz", false, true, false, true},
     {ArchiveFormat::Lzma, "lzma", "LZMA (.lzma)", ".lzma", false, true, false, true},
     {ArchiveFormat::Lzip, "lz", "lzip (.lz)", ".lz", false, true, false, true},
-    {ArchiveFormat::Zstd, "zst", "Zstandard (.zst, .zstd)", ".zst,.zstd", true, true, false, true},
+    {ArchiveFormat::Zstd, "zst", "Zstandard (.zst)", ".zst,.zstd", true, true, false, true},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
     {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
-    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO.GZ (.cpio.gz, .cpgz)", ".cpio.gz,.cpgz", true, true, false, true},
+    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO.GZ (.cpio.gz)", ".cpio.gz,.cpgz", true, true, false, true},
     {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
-    {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc, .ark)", ".arc,.ark", false, true, false, true},
+    {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc)", ".arc,.ark", false, true, false, true},
     {ArchiveFormat::Hqx, "hqx", "BinHex 4.0 (.hqx)", ".hqx", false, true, false, true},
-    {ArchiveFormat::MacBinary, "macbinary", "MacBinary (.macbin, header-detected .bin)", ".macbin", false, true, false,
-     true},
+    {ArchiveFormat::MacBinary, "macbinary", "MacBinary (.macbin)", ".macbin", false, true, false, true},
     {ArchiveFormat::Xxe, "xxe", "XXEncode (.xxe)", ".xxe", false, true, false, true},
-    {ArchiveFormat::Uue, "uue", "UUencode (.uue, .uu)", ".uue,.uu", false, true, false, true},
-    {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha, .lzh)", ".lha,.lzh", false, true, false, true},
+    {ArchiveFormat::Uue, "uue", "UUencode (.uue)", ".uue,.uu", false, true, false, true},
+    {ArchiveFormat::Lha, "lha", "LHA/LZH (.lha)", ".lha,.lzh", false, true, false, true},
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
     {ArchiveFormat::SplitWim, "swm", "Split WIM (.swm)", ".swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, true, false, true},
     {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
     {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
+}};
+
+constexpr ArchiveFormatExtensionInfo kUnknownExtensionInfo{};
+
+constexpr std::array<ArchiveFormatExtensionInfo, 48> kFormatExtensionRegistry{{
+    {ArchiveFormat::SuperZip, ".suzip", "SuperZip (.suzip)", true, true},
+    {ArchiveFormat::Zip, ".zip", "ZIP (.zip)", true, true},
+    {ArchiveFormat::Zipx, ".zipx", "ZIPX (.zipx)", false, true},
+    {ArchiveFormat::SevenZip, ".7z", "7z (.7z)", false, true},
+    {ArchiveFormat::Rar, ".rar", "RAR (.rar)", false, false},
+    {ArchiveFormat::TarGzip, ".tar.gz", "TAR.GZ (.tar.gz)", true, true},
+    {ArchiveFormat::TarGzip, ".tgz", "TAR.GZ (.tgz)", true, true},
+    {ArchiveFormat::TarBzip2, ".tar.bz2", "TAR.BZ2 (.tar.bz2)", true, true},
+    {ArchiveFormat::TarBzip2, ".tbz2", "TAR.BZ2 (.tbz2)", true, true},
+    {ArchiveFormat::TarBzip2, ".tbz", "TAR.BZ2 (.tbz)", true, true},
+    {ArchiveFormat::TarXz, ".tar.xz", "TAR.XZ (.tar.xz)", false, true},
+    {ArchiveFormat::TarXz, ".txz", "TAR.XZ (.txz)", false, true},
+    {ArchiveFormat::TarLzip, ".tar.lz", "TAR.LZ (.tar.lz)", false, true},
+    {ArchiveFormat::TarLzip, ".tlz", "TAR.LZ (.tlz)", false, true},
+    {ArchiveFormat::TarZstd, ".tar.zst", "TAR.ZST (.tar.zst)", true, true},
+    {ArchiveFormat::TarZstd, ".tzst", "TAR.ZST (.tzst)", true, true},
+    {ArchiveFormat::CpioGzip, ".cpio.gz", "CPIO.GZ (.cpio.gz)", true, true},
+    {ArchiveFormat::CpioGzip, ".cpgz", "CPIO.GZ (.cpgz)", true, true},
+    {ArchiveFormat::Tar, ".tar", "TAR (.tar)", true, true},
+    {ArchiveFormat::Gzip, ".gz", "Gzip (.gz)", true, true},
+    {ArchiveFormat::UnixCompress, ".Z", "Unix Compress (.Z)", true, true},
+    {ArchiveFormat::Base64, ".b64", "Base64 (.b64)", false, true},
+    {ArchiveFormat::Bzip2, ".bz2", "Bzip2 (.bz2)", true, true},
+    {ArchiveFormat::Xz, ".xz", "XZ (.xz)", false, true},
+    {ArchiveFormat::Lzma, ".lzma", "LZMA (.lzma)", false, true},
+    {ArchiveFormat::Lzip, ".lz", "lzip (.lz)", false, true},
+    {ArchiveFormat::Zstd, ".zst", "Zstandard (.zst)", true, true},
+    {ArchiveFormat::Zstd, ".zstd", "Zstandard (.zstd)", true, true},
+    {ArchiveFormat::Cab, ".cab", "CAB (.cab)", false, true},
+    {ArchiveFormat::Iso, ".iso", "ISO image (.iso)", false, true},
+    {ArchiveFormat::Cpio, ".cpio", "CPIO (.cpio)", true, true},
+    {ArchiveFormat::Ar, ".ar", "Unix AR (.ar)", true, true},
+    {ArchiveFormat::Arj, ".arj", "ARJ (.arj)", false, true},
+    {ArchiveFormat::Arc, ".arc", "SEA ARC/ARK (.arc)", false, true},
+    {ArchiveFormat::Arc, ".ark", "SEA ARC/ARK (.ark)", false, true},
+    {ArchiveFormat::Hqx, ".hqx", "BinHex 4.0 (.hqx)", false, true},
+    {ArchiveFormat::MacBinary, ".macbin", "MacBinary (.macbin)", false, true},
+    {ArchiveFormat::MacBinary, ".bin", "MacBinary (.bin)", false, true},
+    {ArchiveFormat::Xxe, ".xxe", "XXEncode (.xxe)", false, true},
+    {ArchiveFormat::Uue, ".uue", "UUencode (.uue)", false, true},
+    {ArchiveFormat::Uue, ".uu", "UUencode (.uu)", false, true},
+    {ArchiveFormat::Lha, ".lha", "LHA/LZH (.lha)", false, true},
+    {ArchiveFormat::Lha, ".lzh", "LHA/LZH (.lzh)", false, true},
+    {ArchiveFormat::Wim, ".wim", "Windows Imaging (.wim)", false, true},
+    {ArchiveFormat::SplitWim, ".swm", "Split WIM (.swm)", false, false},
+    {ArchiveFormat::Xar, ".xar", "XAR (.xar)", false, true},
+    {ArchiveFormat::Deb, ".deb", "Debian package (.deb)", false, true},
+    {ArchiveFormat::Rpm, ".rpm", "RPM package (.rpm)", false, true},
 }};
 
 constexpr std::array<ExtensionFormatMapping, 47> kExtensionFormats{{
@@ -515,10 +566,54 @@ std::span<const ArchiveFormatInfo> archive_format_registry() {
     return kFormatRegistry;
 }
 
+// Purpose: Return one display row per supported extension.
+// Inputs: None.
+// Outputs: Returns immutable extension metadata shared by GUI selectors and tests.
+std::span<const ArchiveFormatExtensionInfo> archive_format_extension_registry() {
+    return kFormatExtensionRegistry;
+}
+
 const ArchiveFormatInfo& archive_format_info(ArchiveFormat format) {
     const auto it = std::ranges::find_if(kFormatRegistry,
                                          [format](const ArchiveFormatInfo& info) { return info.format == format; });
     return it == kFormatRegistry.end() ? kFormatRegistry.front() : *it;
+}
+
+// Purpose: Look up extension-specific display metadata by exact extension.
+// Inputs: `extension` is a case-insensitive extension including its leading dot.
+// Outputs: Returns a registered row, or an unknown row when the extension is unsupported.
+const ArchiveFormatExtensionInfo& archive_format_extension_info_for_extension(std::string_view extension) {
+    const auto lowered = ascii_lower(std::string(extension));
+    const auto it = std::ranges::find_if(kFormatExtensionRegistry, [&](const ArchiveFormatExtensionInfo& info) {
+        return ascii_lower(info.extension) == lowered;
+    });
+    return it == kFormatExtensionRegistry.end() ? kUnknownExtensionInfo : *it;
+}
+
+// Purpose: Return the canonical extension row for one archive format.
+// Inputs: `format` is a concrete archive format.
+// Outputs: Returns the first extension row for that format, or an unknown row when no extension row exists.
+const ArchiveFormatExtensionInfo& canonical_extension_info_for_format(ArchiveFormat format) {
+    const auto it = std::ranges::find_if(
+        kFormatExtensionRegistry, [format](const ArchiveFormatExtensionInfo& info) { return info.format == format; });
+    return it == kFormatExtensionRegistry.end() ? kUnknownExtensionInfo : *it;
+}
+
+// Purpose: Look up the extension-specific display metadata for a detected archive path.
+// Inputs: `format` is the detected format and `archive_path` supplies the actual filename extension.
+// Outputs: Returns the matching extension row, or the canonical row when the path was detected by magic only.
+const ArchiveFormatExtensionInfo& archive_format_extension_info_for_path(ArchiveFormat format,
+                                                                         const std::filesystem::path& archive_path) {
+    if (format == ArchiveFormat::Unknown || format == ArchiveFormat::Auto) {
+        return kUnknownExtensionInfo;
+    }
+    const auto name = ascii_lower(archive_path.filename().string());
+    for (const auto& info : kFormatExtensionRegistry) {
+        if (info.format == format && ends_with_lower(name, ascii_lower(info.extension))) {
+            return info;
+        }
+    }
+    return canonical_extension_info_for_format(format);
 }
 
 // Purpose: Parse a CLI/user format token without inspecting a file.

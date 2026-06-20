@@ -558,11 +558,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   selection, destination selection, dropdowns, toggles, tab changes, and primary
   actions are regression boundaries and must keep working unless a maintainer
   explicitly removes that capability.
-- User-facing archive-format labels must come from
-  `archive_format_info(...).display_name`. Do not duplicate GUI archive-format
-  label arrays, and do not add visible format labels with invented qualifiers
-  such as compatibility, single-file, encoded-file, stream, or file when the
-  selected input may be a folder.
+- User-facing archive-format labels must come from the core archive-format
+  registry. Create selectors must use `archive_format_extension_registry()` via
+  explicit one-extension rows so every visible entry keeps the official format
+  family plus exactly one extension label, for example `TAR.GZ (.tgz)` rather
+  than a grouped alias list. Do not duplicate GUI archive-format label arrays,
+  do not remove extension labels, and do not add invented qualifiers such as
+  compatibility, single-file, encoded-file, stream, or file when the selected
+  input may be a folder.
 - The compression level dropdown shows names only: `Fastest`, `Fast`,
   `Balanced`, `Strong`, and `Maximum`. Do not append numeric parentheticals to
   GUI labels, and do not reintroduce plural compression-setting wording in GUI
@@ -634,10 +637,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   replacement is exceptional and is allowed only when the current maintainer or
   user request explicitly asks for that specific replacement. A replacement run
   must use an explicit `release_version`, `replace_existing=true`, and
-  `replacement_acknowledgement` set exactly to `replace <version>`, for example
-  `replace 0.1.0`. Normal release runs use a new SemVer version with
-  `replace_existing=false`, and release notes must list the actual fixes,
-  created assets, validation work, and known limitations.
+  `replacement_acknowledgement` set exactly to `replace <same-version>`. Normal
+  release runs use a new SemVer version with `replace_existing=false`, and
+  release notes must list the actual fixes, created assets, validation work,
+  and known limitations. Do not hardcode proposed release versions in agent
+  instructions or repository policy text.
 
 ## Agent Workflow
 

@@ -40,6 +40,69 @@
 #include <shlobj.h>
 
 namespace superzip::app {
+namespace {
+
+constexpr std::array<std::string_view, 13> kSettingsV1CompressionFormatExtensions{
+    ".suzip", ".zip", ".tar", ".tar.gz", ".tar.bz2", ".tar.zst", ".gz", ".bz2", ".zst", ".Z", ".cpio", ".cpgz", ".ar",
+};
+
+// Purpose: Normalize a mutable compression-format index into the current extension selector.
+// Inputs: `index` is a user, settings, or keyboard-provided row index.
+// Outputs: Returns a valid row index inside `kCompressionCreateFormatExtensions`.
+int normalize_compression_format_index(int index) {
+    const int count = static_cast<int>(kCompressionCreateFormatExtensions.size());
+    return (index % count + count) % count;
+}
+
+// Purpose: Resolve the extension metadata for a current compression selector row.
+// Inputs: `index` is a mutable UI/settings row.
+// Outputs: Returns the matching create-capable extension metadata, or the default `.suzip` row if corrupted.
+const ArchiveFormatExtensionInfo& compression_format_entry(int index) {
+    const auto normalized = static_cast<std::size_t>(normalize_compression_format_index(index));
+    const auto& entry = archive_format_extension_info_for_extension(kCompressionCreateFormatExtensions[normalized]);
+    if (entry.format == ArchiveFormat::Unknown || !entry.can_create) {
+        return archive_format_extension_info_for_extension(
+            kCompressionCreateFormatExtensions[kDefaultCompressionFormatIndex]);
+    }
+    return entry;
+}
+
+// Purpose: Find the current selector row for one exact extension.
+// Inputs: `extension` is a supported create extension including its leading dot.
+// Outputs: Returns the matching current row or the default `.suzip` row.
+int compression_format_index_for_extension(std::string_view extension) {
+    const auto requested = std::string_view(archive_format_extension_info_for_extension(extension).extension);
+    for (int index = 0; index <= kCompressionFormatMaxIndex; ++index) {
+        const auto& entry = archive_format_extension_info_for_extension(kCompressionCreateFormatExtensions[index]);
+        if (std::string_view(entry.extension) == requested) {
+            return index;
+        }
+    }
+    return kDefaultCompressionFormatIndex;
+}
+
+// Purpose: Migrate a v1 persisted compression-format row to the current extension-specific selector.
+// Inputs: `old_index` is the v1 row where aliases were grouped by archive format.
+// Outputs: Returns the current row that preserves the old default extension choice.
+int migrate_settings_v1_compression_format_index(int old_index) {
+    if (old_index < 0 || old_index >= static_cast<int>(kSettingsV1CompressionFormatExtensions.size())) {
+        return kDefaultCompressionFormatIndex;
+    }
+    return compression_format_index_for_extension(
+        kSettingsV1CompressionFormatExtensions[static_cast<std::size_t>(old_index)]);
+}
+
+// Purpose: Detect whether settings were written before extension-specific format rows existed.
+// Inputs: `json` is the settings document being parsed.
+// Outputs: Returns true for schema v1 or schema-less early settings.
+bool settings_uses_v1_format_rows(std::string_view json) {
+    if (json.find("\"superzip.settings.v1\"") != std::string_view::npos) {
+        return true;
+    }
+    return json.find("\"schema\"") == std::string_view::npos;
+}
+
+}  // namespace
 
 // Purpose: Create a concise history message for an optional Defender scan.
 // Inputs: `prefix` names the scanned item and `scan` is the Defender result.
@@ -88,53 +151,21 @@ std::filesystem::path destination_directory_or_default(const UiState& state) {
 // Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns one implemented create-capable archive format.
 ArchiveFormat compression_format_value(int index) {
-    const auto normalized = static_cast<std::size_t>((index % static_cast<int>(kCompressionCreateFormats.size()) +
-                                                      static_cast<int>(kCompressionCreateFormats.size())) %
-                                                     static_cast<int>(kCompressionCreateFormats.size()));
-    return kCompressionCreateFormats[normalized];
+    return compression_format_entry(index).format;
 }
 
 // Purpose: Return the user-facing compression-format label.
 // Inputs: `index` is the mutable compression-format selection in UI state.
-// Outputs: Returns a stable label matching the implemented GUI create backends.
+// Outputs: Returns a core-owned label with one exact extension for this row.
 std::wstring compression_format_text(int index) {
-    return widen(archive_format_info(compression_format_value(index)).display_name);
+    return widen(compression_format_entry(index).display_name);
 }
 
 // Purpose: Return the default output extension for a selected compression format.
-// Inputs: `format` is an implemented create-capable archive format.
+// Inputs: `index` is the mutable compression-format selection in UI state.
 // Outputs: Returns the extension used for the default GUI archive name.
-std::wstring compression_format_extension(ArchiveFormat format) {
-    switch (format) {
-    case ArchiveFormat::SuperZip:
-        return L".suzip";
-    case ArchiveFormat::Zip:
-        return L".zip";
-    case ArchiveFormat::Tar:
-        return L".tar";
-    case ArchiveFormat::TarGzip:
-        return L".tar.gz";
-    case ArchiveFormat::TarBzip2:
-        return L".tar.bz2";
-    case ArchiveFormat::TarZstd:
-        return L".tar.zst";
-    case ArchiveFormat::Gzip:
-        return L".gz";
-    case ArchiveFormat::Bzip2:
-        return L".bz2";
-    case ArchiveFormat::Zstd:
-        return L".zst";
-    case ArchiveFormat::UnixCompress:
-        return L".Z";
-    case ArchiveFormat::Cpio:
-        return L".cpio";
-    case ArchiveFormat::CpioGzip:
-        return L".cpgz";
-    case ArchiveFormat::Ar:
-        return L".ar";
-    default:
-        return L".suzip";
-    }
+std::wstring compression_format_extension(int index) {
+    return widen(compression_format_entry(index).extension);
 }
 
 // Purpose: Return whether a compression format uses native SUZIP tuning controls.
@@ -168,7 +199,7 @@ bool compression_format_uses_level(ArchiveFormat format) {
 // Inputs: `state` is the copied UI state.
 // Outputs: Returns the default archive filename for the selected compression format.
 std::wstring compression_output_filename_for(const UiState& state) {
-    return L"SuperZip-output" + compression_format_extension(compression_format_value(state.compression_format_index));
+    return L"SuperZip-output" + compression_format_extension(state.compression_format_index);
 }
 
 // Purpose: Resolve the visible compression output path.
@@ -627,8 +658,15 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 // Outputs: Returns settings with missing or malformed values replaced by defaults.
 AppSettings parse_settings_json(std::string_view json) {
     AppSettings settings;
-    settings.compression_format_index = json_int_setting(
-        json, "compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
+    const bool migrate_format_rows = settings_uses_v1_format_rows(json);
+    if (migrate_format_rows) {
+        const int v1_index = json_int_setting(json, "compressionFormatIndex", 0, 0,
+                                              static_cast<int>(kSettingsV1CompressionFormatExtensions.size()) - 1);
+        settings.compression_format_index = migrate_settings_v1_compression_format_index(v1_index);
+    } else {
+        settings.compression_format_index = json_int_setting(
+            json, "compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
+    }
     settings.compression_level_index =
         json_int_setting(json, "compressionLevelIndex", settings.compression_level_index, 0, 4);
     settings.compression_block_size_index = json_int_setting(
@@ -667,7 +705,7 @@ std::string settings_to_json(const AppSettings& settings) {
     auto bool_text = [](bool value) { return value ? "true" : "false"; };
     std::ostringstream out;
     out << "{\n"
-        << "  \"schema\": \"superzip.settings.v1\",\n"
+        << "  \"schema\": \"superzip.settings.v2\",\n"
         << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
         << "  \"compressionLevelIndex\": " << settings.compression_level_index << ",\n"
         << "  \"compressionBlockSizeIndex\": " << settings.compression_block_size_index << ",\n"
@@ -787,7 +825,7 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
     switch (id) {
     case DropdownId::CompressFormat: {
         std::vector<std::wstring> formats;
-        formats.reserve(kCompressionCreateFormats.size());
+        formats.reserve(kCompressionCreateFormatExtensions.size());
         for (int index = 0; index <= kCompressionFormatMaxIndex; ++index) {
             formats.push_back(compression_format_text(index));
         }

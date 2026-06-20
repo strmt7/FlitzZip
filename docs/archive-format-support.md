@@ -1,6 +1,7 @@
 # Archive Format Support And Research
 
-Research checked on 2026-06-17.
+Research checked on 2026-06-17. Format-ordering research was refreshed on
+2026-06-20.
 
 SuperZip is first a native AMD HIP `.suzip` application. Compatibility formats
 must not change that boundary. A compatibility format is accepted only when it
@@ -59,6 +60,11 @@ Primary and project-owned sources reviewed:
 - BetterZip: <https://betterzip.app/library/betterzip/docs/archive-types/>
 - Xarchiver: <https://xarchiver.sourceforge.net/>
 - Microsoft Windows archive support: <https://support.microsoft.com/en-us/windows/zip-and-unzip-files-8d28fa72-f2f9-712f-67df-f80cf89fd4e5>
+- GNU tar format and compression suffix behavior: <https://www.gnu.org/software/tar/manual/>
+- libarchive supported formats overview: <https://www.libarchive.org/>
+- libarchive source-supported formats matrix: <https://github.com/libarchive/libarchive/>
+- IANA media type registration procedures and registry: <https://www.iana.org/assignments/media-types/media-types.xhtml>
+- RFC 8878 Zstandard media type registration: <https://www.rfc-editor.org/rfc/rfc8878>
 - Express Zip: <https://www.nchsoftware.com/zip/index.html>
 - Ashampoo ZIP Free: <https://www.ashampoo.com/en-us/zip-free/detail>
 
@@ -88,6 +94,59 @@ ZOO/ACE/SQX/BH/EGG/ALZ/B1/PAQ/ZPAQ families, split-volume discovery, and
 MIME multipart handling. Each remains a backend-by-backend implementation item;
 SuperZip must not expose those names as supported until there is an in-process
 parser, a security contract, and tests.
+
+## Format Ordering Method
+
+There is no defensible public source that gives a precise universal popularity
+ranking for archive extensions across Windows desktop users, Linux/Unix package
+users, enterprise file exchange, and scientific datasets. SuperZip therefore
+uses a stable weighted proxy instead of pretending to know an exact count:
+
+1. Native operating-system exposure and default user familiarity.
+2. Standards maturity or registration evidence, including IANA/RFC status where
+   applicable.
+3. Breadth of maintained in-process open-source tooling support.
+4. Recurrence in mature archive applications and platform package workflows.
+5. SuperZip product-native relevance, used only as a tiebreaker after `.zip`
+   because `.suzip` is the AMD HIP differentiator.
+6. Alias clarity inside a family: canonical extension first, then common short
+   aliases, with exactly one visible extension per row.
+
+The Compress selector is extension-specific and ordered by that proxy:
+
+| Rank | Visible entry | Backend family |
+| ---: | --- | --- |
+| 1 | `ZIP (.zip)` | ZIP |
+| 2 | `SuperZip (.suzip)` | Native AMD HIP SUZIP |
+| 3 | `TAR.GZ (.tar.gz)` | TAR over Gzip |
+| 4 | `TAR.GZ (.tgz)` | TAR over Gzip |
+| 5 | `TAR (.tar)` | TAR |
+| 6 | `Gzip (.gz)` | Gzip |
+| 7 | `Zstandard (.zst)` | Zstandard |
+| 8 | `Zstandard (.zstd)` | Zstandard |
+| 9 | `TAR.ZST (.tar.zst)` | TAR over Zstandard |
+| 10 | `TAR.ZST (.tzst)` | TAR over Zstandard |
+| 11 | `TAR.BZ2 (.tar.bz2)` | TAR over Bzip2 |
+| 12 | `TAR.BZ2 (.tbz2)` | TAR over Bzip2 |
+| 13 | `TAR.BZ2 (.tbz)` | TAR over Bzip2 |
+| 14 | `Bzip2 (.bz2)` | Bzip2 |
+| 15 | `CPIO (.cpio)` | CPIO |
+| 16 | `CPIO.GZ (.cpio.gz)` | CPIO over Gzip |
+| 17 | `CPIO.GZ (.cpgz)` | CPIO over Gzip |
+| 18 | `Unix AR (.ar)` | AR |
+| 19 | `Unix Compress (.Z)` | Unix Compress |
+
+The startup default remains `SuperZip (.suzip)` because SuperZip is primarily a
+native GPU archive application. Existing settings written before the
+extension-specific selector are migrated by exact old default extension, so a
+saved `.cpgz` row remains `.cpgz` after migration instead of becoming
+`.cpio.gz`.
+
+Extract auto-detection uses the same extension-specific display rows whenever a
+filename extension is present. Magic-only detection falls back to the canonical
+row for the detected backend family. Public GUI labels must never show grouped
+extension lists such as `.tar.gz, .tgz`; grouped alias lists are allowed only in
+engineering documentation that describes backend support.
 
 ## Top-Tool Format Research Matrix
 

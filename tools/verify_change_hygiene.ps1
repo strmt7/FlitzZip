@@ -162,6 +162,43 @@ function Assert-ReleaseReplacementSafeguard {
     }
 }
 
+# Purpose: Verify release notes do not duplicate the GitHub release title as a Markdown H1.
+# Inputs: Reads the composite release action that generates `out\release-notes.md`.
+# Outputs: Throws when the generated notes would repeat the release title inside the body.
+function Assert-ReleaseNotesDoNotDuplicateTitle {
+    $releaseAction = Join-Path $repo ".github\actions\windows-release\action.yml"
+    if (-not (Test-Path -LiteralPath $releaseAction)) {
+        throw "Windows release action must exist for release-note title validation."
+    }
+    $actionText = Get-Content -LiteralPath $releaseAction -Raw
+    if ($actionText -match '#\s*SuperZip\s+\$env:RELEASE_TAG') {
+        throw "Release notes must not include a duplicate '# SuperZip `$env:RELEASE_TAG' heading; GitHub already renders the release title."
+    }
+}
+
+# Purpose: Verify release documentation uses placeholders instead of stale concrete version examples.
+# Inputs: Reads repository release instructions and agent policy text.
+# Outputs: Throws when manual-release examples hardcode a SemVer value.
+function Assert-ReleaseDocUseVersionPlaceholder {
+    $releaseDocs = Join-Path $repo "docs\release.md"
+    $agentPolicy = Join-Path $repo "AGENTS.md"
+    if (-not (Test-Path -LiteralPath $releaseDocs) -or -not (Test-Path -LiteralPath $agentPolicy)) {
+        throw "Release documentation and AGENTS.md must exist for release-version placeholder validation."
+    }
+
+    $releaseText = Get-Content -LiteralPath $releaseDocs -Raw
+    $agentText = Get-Content -LiteralPath $agentPolicy -Raw
+    if ($releaseText -match 'release_version=\d+\.\d+\.\d+') {
+        throw "docs/release.md must use <new-semver> or <existing-semver> placeholders, not hardcoded release_version examples."
+    }
+    if ($releaseText -match 'replacement_acknowledgement="replace \d+\.\d+\.\d+"') {
+        throw "docs/release.md must use a placeholder replacement acknowledgement, not a hardcoded version."
+    }
+    if ($agentText -match 'replace \d+\.\d+\.\d+') {
+        throw "AGENTS.md must not hardcode release-replacement version examples."
+    }
+}
+
 # Purpose: Validate workflow-specific policy for changed YAML files.
 # Inputs: `Path` is repository-relative and points under `.github`.
 # Outputs: Throws when workflow changes could create deployments or hide failures/findings.
@@ -195,6 +232,7 @@ function Test-ChangedWorkflowPolicy {
     Assert-NoFragilePowerShellGalleryBootstrap -Path $Path -Lines $lines
     if ($Path -in @(".github/workflows/release.yml", ".github/actions/windows-release/action.yml")) {
         Assert-ReleaseReplacementSafeguard
+        Assert-ReleaseNotesDoNotDuplicateTitle
     }
     if ($Path -eq ".github/workflows/security-code-scanning.yml") {
         $text = $lines -join "`n"
@@ -270,5 +308,7 @@ foreach ($path in $paths) {
     Test-ChangedFileTextPolicy -Path $path
     Test-ChangedWorkflowPolicy -Path $path
 }
+
+Assert-ReleaseDocUseVersionPlaceholder
 
 Write-Output "Changed-file hygiene passed. Paths checked: $($paths.Count)."

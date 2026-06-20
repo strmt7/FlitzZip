@@ -62,7 +62,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
     switch (id) {
     case DropdownId::CompressFormat:
         state.compression_format_index = std::clamp(option_index, 0, kCompressionFormatMaxIndex);
-        state.status = "Archive format changed";
+        state.status = "Format changed";
         break;
     case DropdownId::CompressLevel:
         state.compression_level_index = std::clamp(option_index, 0, 4);

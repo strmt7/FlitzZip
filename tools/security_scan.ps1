@@ -77,6 +77,43 @@ function Assert-ReleaseReplacementSafeguard {
     }
 }
 
+# Purpose: Verify release notes do not duplicate the GitHub release title as a Markdown H1.
+# Inputs: Reads the composite release action that generates `out\release-notes.md`.
+# Outputs: Throws when the generated notes would repeat the release title inside the body.
+function Assert-ReleaseNotesDoNotDuplicateTitle {
+    $releaseAction = Join-Path $repo ".github\actions\windows-release\action.yml"
+    if (-not (Test-Path -LiteralPath $releaseAction)) {
+        throw "Windows release action must exist for release-note title validation."
+    }
+    $actionText = Get-Content -LiteralPath $releaseAction -Raw
+    if ($actionText -match '#\s*SuperZip\s+\$env:RELEASE_TAG') {
+        throw "Release notes must not include a duplicate '# SuperZip `$env:RELEASE_TAG' heading; GitHub already renders the release title."
+    }
+}
+
+# Purpose: Verify release instructions stay version-agnostic except for product metadata.
+# Inputs: Reads repository release instructions and agent policy text.
+# Outputs: Throws when manual-release examples hardcode a SemVer value.
+function Assert-ReleaseDocUseVersionPlaceholder {
+    $releaseDocs = Join-Path $repo "docs\release.md"
+    $agentPolicy = Join-Path $repo "AGENTS.md"
+    if (-not (Test-Path -LiteralPath $releaseDocs) -or -not (Test-Path -LiteralPath $agentPolicy)) {
+        throw "Release documentation and AGENTS.md must exist for release-version placeholder validation."
+    }
+
+    $releaseText = Get-Content -LiteralPath $releaseDocs -Raw
+    $agentText = Get-Content -LiteralPath $agentPolicy -Raw
+    if ($releaseText -match 'release_version=\d+\.\d+\.\d+') {
+        throw "docs/release.md must use <new-semver> or <existing-semver> placeholders, not hardcoded release_version examples."
+    }
+    if ($releaseText -match 'replacement_acknowledgement="replace \d+\.\d+\.\d+"') {
+        throw "docs/release.md must use a placeholder replacement acknowledgement, not a hardcoded version."
+    }
+    if ($agentText -match 'replace \d+\.\d+\.\d+') {
+        throw "AGENTS.md must not hardcode release-replacement version examples."
+    }
+}
+
 $files = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
     -not (Test-ExcludedScanPath -Path $_.FullName)
 }
@@ -170,6 +207,8 @@ function Test-WorkflowSecurityPolicy {
     }
 
     Assert-ReleaseReplacementSafeguard
+    Assert-ReleaseNotesDoNotDuplicateTitle
+    Assert-ReleaseDocUseVersionPlaceholder
 }
 
 # Purpose: Return the count of leading spaces before the first non-space character.
@@ -222,6 +261,7 @@ function Assert-NoGithubContextInRunBlock {
 }
 
 Test-WorkflowSecurityPolicy
+Assert-ReleaseDocUseVersionPlaceholder
 
 # Purpose: Verify README badges avoid known flaky GitHub API-backed shields.
 # Inputs: Reads `README.md`.

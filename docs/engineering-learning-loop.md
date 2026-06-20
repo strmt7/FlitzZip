@@ -44,9 +44,20 @@ the Security tab, released artifacts, or the product UI again.
   direct close-the-app message instead of surfacing a linker file-lock error.
 - Release replacement is exceptional. The release workflow requires
   `replace_existing=true` plus `replacement_acknowledgement` set exactly to
-  `replace <version>`, and both `tools\verify_change_hygiene.ps1` and
+  `replace <same-version>`, and both `tools\verify_change_hygiene.ps1` and
   `tools\security_scan.ps1` reject release workflow/action edits that remove
   that safeguard.
+- Release instructions must use placeholder SemVer values in examples instead
+  of concrete proposed release versions. The changed-file hygiene and full
+  security scans reject hardcoded `release_version=` and replacement examples
+  in release/agent instructions.
+- Release notes must not repeat the GitHub release title as a Markdown H1.
+  `tools\verify_change_hygiene.ps1` and `tools\security_scan.ps1` reject the
+  generated-notes pattern that caused the release title to render twice.
+- Archive-format GUI labels must keep exactly one visible extension per create
+  selector row and must be backed by the core extension registry. Focused C++
+  tests reject grouped visible alias labels while still allowing engineering
+  docs to describe grouped backend support.
 - Installer process waits are bounded. `tools\security_scan.ps1` rejects
   release workflow edits that restore unbounded `Start-Process -Wait` calls for
   HIP SDK setup or MSI install/uninstall smoke tests, and the MSI smoke timeout

@@ -60,15 +60,39 @@ struct ArchiveFormatInfo {
     bool bundled_native = false;
 };
 
+struct ArchiveFormatExtensionInfo {
+    ArchiveFormat format = ArchiveFormat::Unknown;
+    const char* extension = "";
+    const char* display_name = "Unknown archive";
+    bool can_create = false;
+    bool can_extract = false;
+};
+
 // Purpose: Return the static registry of real archive/container formats known to SuperZip.
 // Inputs: None.
 // Outputs: Returns immutable metadata for CLI, GUI, and documentation-oriented format listing.
 std::span<const ArchiveFormatInfo> archive_format_registry();
 
+// Purpose: Return one display row per supported extension.
+// Inputs: None.
+// Outputs: Returns immutable extension-specific metadata for GUI and tests.
+std::span<const ArchiveFormatExtensionInfo> archive_format_extension_registry();
+
 // Purpose: Look up display and support metadata for one archive format.
 // Inputs: `format` is a recognized archive format enum.
 // Outputs: Returns registry metadata; unknown inputs map to the unknown entry.
 const ArchiveFormatInfo& archive_format_info(ArchiveFormat format);
+
+// Purpose: Look up extension-specific display metadata by exact extension.
+// Inputs: `extension` is a case-insensitive supported extension such as `.zip` or `.tar.gz`.
+// Outputs: Returns the matching row, or an unknown row when the extension is not registered.
+const ArchiveFormatExtensionInfo& archive_format_extension_info_for_extension(std::string_view extension);
+
+// Purpose: Look up the extension-specific display metadata for a detected archive path.
+// Inputs: `format` is the detected format and `archive_path` supplies the actual filename extension.
+// Outputs: Returns the matching display row, or the canonical row for `format` when detection used magic only.
+const ArchiveFormatExtensionInfo& archive_format_extension_info_for_path(ArchiveFormat format,
+                                                                         const std::filesystem::path& archive_path);
 
 // Purpose: Parse a CLI/user format token without inspecting a file.
 // Inputs: `token` is a case-insensitive value such as `suzip`, `zip`, `tar`, or `auto`.

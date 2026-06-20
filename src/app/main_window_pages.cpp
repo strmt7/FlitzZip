@@ -193,7 +193,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.archive_name, L"Archive name", compression_output_filename_for(state), false);
     draw_field(dc, layout.destination, L"Destination", destination_directory_or_default(state).wstring(), false, true,
                true);
-    draw_field(dc, layout.format, L"Archive format", compression_format_text(state.compression_format_index), true);
+    draw_field(dc, layout.format, L"Format", compression_format_text(state.compression_format_index), true);
     draw_field(dc, layout.compression_level, L"Compression level",
                level_tuning ? compression_level_text(state.compression_level_index) : L"-", level_tuning, level_tuning);
     draw_field(dc, layout.method, L"Compression method",
@@ -250,7 +250,7 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     draw_field(dc, layout.destination, L"Destination", extraction_output_path_for(state).wstring(), false, true, true);
     const std::wstring detected_format =
         state.queued_paths.empty() ? std::wstring(L"-") : detected_archive_format_text(state.queued_paths);
-    draw_field(dc, layout.path_mode, L"Archive format", detected_format, false, detected_format != L"-");
+    draw_field(dc, layout.path_mode, L"Format", detected_format, false, detected_format != L"-");
     draw_field(dc, layout.overwrite_policy, L"Overwrite policy",
                state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting", true);
 

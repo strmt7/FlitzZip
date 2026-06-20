@@ -251,15 +251,39 @@ TEST_CASE(archive_format_display_names_are_precise_user_facing_format_names) {
         REQUIRE_TRUE(display_name.find("stream") == std::string::npos);
         REQUIRE_TRUE(display_name.find(" file") == std::string::npos);
         REQUIRE_TRUE(display_name.find(" files") == std::string::npos);
+        REQUIRE_TRUE(display_name.find(", .") == std::string::npos);
     }
     REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::SuperZip).display_name),
                std::string("SuperZip (.suzip)"));
     REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::TarGzip).display_name),
-               std::string("TAR.GZ (.tar.gz, .tgz)"));
+               std::string("TAR.GZ (.tar.gz)"));
     REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::Base64).display_name),
                std::string("Base64 (.b64)"));
     REQUIRE_EQ(std::string(superzip::archive_format_info(superzip::ArchiveFormat::Uue).display_name),
-               std::string("UUencode (.uue, .uu)"));
+               std::string("UUencode (.uue)"));
+}
+
+TEST_CASE(archive_format_extension_display_names_are_exact_per_extension) {
+    for (const auto& info : superzip::archive_format_extension_registry()) {
+        REQUIRE_TRUE(std::string_view(info.extension).starts_with("."));
+        REQUIRE_TRUE(std::string_view(info.display_name).find(", .") == std::string_view::npos);
+    }
+    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".tgz").display_name),
+               std::string("TAR.GZ (.tgz)"));
+    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".zstd").display_name),
+               std::string("Zstandard (.zstd)"));
+    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".ark").display_name),
+               std::string("SEA ARC/ARK (.ark)"));
+    REQUIRE_EQ(std::string(superzip::archive_format_extension_info_for_extension(".uu").display_name),
+               std::string("UUencode (.uu)"));
+    REQUIRE_EQ(
+        std::string(superzip::archive_format_extension_info_for_path(superzip::ArchiveFormat::MacBinary, "payload.bin")
+                        .display_name),
+        std::string("MacBinary (.bin)"));
+    REQUIRE_EQ(
+        std::string(superzip::archive_format_extension_info_for_path(superzip::ArchiveFormat::Zstd, "payload.data")
+                        .display_name),
+        std::string("Zstandard (.zst)"));
 }
 
 TEST_CASE(archive_format_transfer_encodings_are_extract_only) {
