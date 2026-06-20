@@ -165,6 +165,24 @@ This directly addresses two defects: large archive blocks launched too little
 GPU work, and required-HIP archives had no compact representation for
 low-entropy non-pattern data.
 
+## Implemented 2026-06-20 HIP Batching And Device Verification
+
+The accepted code changes in this iteration reduce launch, allocation, and
+host-copy overhead without changing the `.suzip` v2 archive format:
+
+1. Prefix-code compression now batches the whole uploaded chunk: one HIP length
+   pass over every 4 KiB prefix segment, one HIP pack pass for the selected
+   prefix blocks, and one combined device-to-host bitstream copy.
+2. Prefix-capable verification now materializes decoded bytes in VRAM and runs
+   the CRC over the device buffer, copying back only compact CRC segment
+   metadata instead of the whole decoded chunk.
+3. Decode/extract skips the raw/fill/pattern materializer launch for prefix-only
+   chunks, avoiding kernels that would have no bytes to write.
+4. The resource policy remains bounded by the existing 128 MiB archive chunk
+   limit and the HIP VRAM budget check. The implementation does not fill 80% of
+   total VRAM; it uses currently free VRAM with an explicit reserve so the OS,
+   display stack, and other processes are not starved.
+
 ## Zarr-Style Ratio Reproduction
 
 A maintainer-provided 542.5 MiB Zarr-style directory with 1,411 regular files
@@ -193,19 +211,30 @@ tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -Compressio
 
 | Block size | CPU total seconds | GPU total seconds | GPU speedup | CPU ratio | GPU ratio | GPU kernels | GPU kernel ms | GPU pattern blocks | GPU prefix blocks |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 256 KiB | 17.63206 | 14.22199 | 1.24x | 0.439201 | 0.425743 | 31,040 | 3668.58 | 10,240 | 10,240 |
-| 512 KiB | 15.08117 | 10.72676 | 1.41x | 0.439115 | 0.425698 | 15,680 | 3196.23 | 5,120 | 5,120 |
-| 1 MiB | 14.97491 | 9.50097 | 1.58x | 0.439084 | 0.425676 | 8,000 | 3059.16 | 2,560 | 2,560 |
-| 2 MiB | 14.89909 | 8.85762 | 1.68x | 0.439069 | 0.425665 | 4,160 | 3008.47 | 1,280 | 1,280 |
-| 4 MiB | 14.94820 | 8.41256 | 1.78x | 0.439061 | 0.425659 | 2,240 | 2975.87 | 640 | 640 |
-| 8 MiB | 14.95788 | 8.45319 | 1.77x | 0.439058 | 0.425656 | 1,280 | 3035.12 | 320 | 320 |
-| 16 MiB | 14.72284 | 8.29575 | 1.77x | 0.439056 | 0.425655 | 800 | 2882.01 | 160 | 160 |
+| 256 KiB | 16.27922 | 7.79498 | 2.09x | 0.439201 | 0.425743 | 360 | 2871.48 | 10,240 | 10,240 |
+| 512 KiB | 15.74765 | 7.70850 | 2.04x | 0.439115 | 0.425698 | 360 | 2798.57 | 5,120 | 5,120 |
+| 1 MiB | 15.52437 | 7.64186 | 2.03x | 0.439084 | 0.425676 | 360 | 2826.36 | 2,560 | 2,560 |
+| 2 MiB | 15.41983 | 7.55137 | 2.04x | 0.439069 | 0.425665 | 360 | 2855.01 | 1,280 | 1,280 |
+| 4 MiB | 15.47290 | 7.52524 | 2.06x | 0.439061 | 0.425659 | 360 | 2774.82 | 640 | 640 |
+| 8 MiB | 15.46273 | 7.37710 | 2.10x | 0.439058 | 0.425656 | 360 | 2801.05 | 320 | 320 |
+| 16 MiB | 15.28456 | 7.25942 | 2.11x | 0.439056 | 0.425655 | 360 | 2953.69 | 160 | 160 |
 
 The built-in tuner selected 16 MiB for the revised Mixed profile:
 
 | Compression level | Block size | GPU score | Speedup vs CPU | Ratio | GPU pattern blocks | GPU prefix blocks | Memory only | Disk writes |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| 5 | 16 MiB | 39114 | 1.82845x | 0.425655 | 160 | 160 | true | 0 |
+| 5 | 16 MiB | 44242 | 2.16853x | 0.425655 | 160 | 160 | true | 0 |
+
+Additional 10 GiB RAM-only sweeps on the same build:
+
+- `Compressible`: the full sweep passed with `memory_only=true` and
+  `disk_write_bytes=0`; a focused rerun of the high-throughput candidates
+  showed GPU speedups of 1.72x at 4 MiB, 1.67x at 8 MiB, and 1.65x at 16 MiB.
+  The first full sweep included one noisy 8 MiB outlier, so future release
+  evidence should continue to use at least one repeated candidate run.
+- `Incompressible`: every swept block size stayed at ratio 1.0 and the
+  required-HIP lane was faster than forced CPU, with speedups from 1.81x to
+  2.78x.
 
 ## Accepted Performance Direction
 

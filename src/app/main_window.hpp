@@ -930,6 +930,7 @@ class MainWindow {
     std::thread worker_;
     std::atomic_bool worker_running_ = false;
     std::atomic_bool repaint_queued_ = false;
+    bool window_was_minimized_ = false;
     ULONG_PTR gdiplus_token_ = 0;
     Page transition_from_page_ = Page::Queue;
     Page transition_to_page_ = Page::Queue;

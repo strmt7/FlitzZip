@@ -159,6 +159,18 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_PAINT:
         paint();
         return 0;
+    case WM_SIZE:
+        if (wparam == SIZE_MINIMIZED) {
+            window_was_minimized_ = true;
+            repaint_queued_ = false;
+            return 0;
+        }
+        if (window_was_minimized_) {
+            window_was_minimized_ = false;
+            repaint_queued_ = false;
+            RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        }
+        return 0;
     case WM_PRINT:
     case WM_PRINTCLIENT: {
         RECT rect{};
@@ -167,11 +179,6 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     case WM_ERASEBKGND: {
-        RECT rect{};
-        GetClientRect(hwnd_, &rect);
-        if (wparam != 0U) {
-            fill_rect(reinterpret_cast<HDC>(wparam), rect, kBg);
-        }
         return 1;
     }
     case WM_MOUSEMOVE:
