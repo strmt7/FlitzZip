@@ -504,12 +504,13 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
 - MSI update identity must stay deterministic: keep one stable SuperZip
-  `UpgradeCode`, derive `ProductCode` from the MSI numeric version and install
-  scope, and bump the SemVer patch/minor/major value for every release that
-  should update an existing install. Do not rely on same-version commit hashes
-  for installer ordering unless a future approved bootstrapper implements an
-  explicit orderable build identity. Run `tools\test_msi_identity.ps1` after
-  changing CPack, WiX, release packaging, installer scope, or version metadata.
+  `UpgradeCode`, derive `ProductCode` from a SHA-256 seed that includes the MSI
+  numeric version and install scope, and bump the SemVer patch/minor/major value
+  for every release that should update an existing install. Do not rely on
+  same-version commit hashes for installer ordering unless a future approved
+  bootstrapper implements an explicit orderable build identity. Run
+  `tools\test_msi_identity.ps1` after changing CPack, WiX, release packaging,
+  installer scope, or version metadata.
 - SuperZip-owned installer launch, release, and smoke-test paths must use
   bounded waits. MSI install, repair, and uninstall phases default to a 300-second
   timeout, and HIP SDK installer setup in hosted release validation must time

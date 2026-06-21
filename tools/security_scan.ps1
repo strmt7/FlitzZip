@@ -332,8 +332,11 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'SUPERZIP_WIX_PRODUCT_CODE_SEED[\s\S]*SUPERZIP_PACKAGE_NUMERIC_VERSION[\s\S]*SUPERZIP_MSI_INSTALL_SCOPE') {
         throw "CMakeLists.txt must seed the MSI ProductCode from package numeric version and install scope."
     }
-    if ($cmakeLists -notmatch 'string\(\s*UUID\s+SUPERZIP_WIX_PRODUCT_GUID[\s\S]*NAME\s+"\$\{SUPERZIP_WIX_PRODUCT_CODE_SEED\}"[\s\S]*TYPE\s+SHA1') {
-        throw "CMakeLists.txt must derive the MSI ProductCode deterministically from package numeric version and install scope."
+    if ($cmakeLists -notmatch 'string\(SHA256\s+SUPERZIP_WIX_PRODUCT_CODE_HASH[\s\S]*SUPERZIP_WIX_PRODUCT_CODE_SEED') {
+        throw "CMakeLists.txt must derive the MSI ProductCode from a SHA-256 identity seed."
+    }
+    if ($cmakeLists -notmatch 'string\(SUBSTRING\s+"\$\{SUPERZIP_WIX_PRODUCT_CODE_HASH\}"[\s\S]*string\(TOUPPER\s+"\$\{SUPERZIP_WIX_PRODUCT_GUID\}"') {
+        throw "CMakeLists.txt must format the SHA-256-derived MSI ProductCode as an uppercase GUID."
     }
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_GUID\s+"\$\{SUPERZIP_WIX_PRODUCT_GUID\}"\)') {
         throw "CMakeLists.txt must pass the deterministic MSI ProductCode to CPack WiX."

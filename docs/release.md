@@ -33,7 +33,8 @@ SuperZip uses Windows Installer identity rules directly:
 
 - `UpgradeCode` is stable for all SuperZip MSI releases so Windows Installer can
   detect installed SuperZip products.
-- `ProductCode` is deterministic for the MSI numeric version and install scope.
+- `ProductCode` is deterministically derived from a SHA-256 identity seed
+  containing the stable `UpgradeCode`, MSI numeric version, and install scope.
   Re-running the same release enters the standard Windows Installer maintenance
   path, where repair and uninstall are available.
 - Any build that should behave as an update must change the SemVer numeric
