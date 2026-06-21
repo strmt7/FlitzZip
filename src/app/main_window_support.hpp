@@ -117,14 +117,9 @@ std::filesystem::path smoke_close_marker_path();
 // Outputs: Returns true only when the configured marker file exists.
 bool smoke_close_requested();
 
-// Purpose: Return the default working directory without throwing into paint code.
-// Inputs: None.
-// Outputs: Returns the process current directory, or . if Windows reports an error.
-std::filesystem::path safe_current_path();
-
 // Purpose: Resolve the current user's Downloads known folder for archive output defaults.
 // Inputs: None; asks Windows for the interactive user's Downloads folder.
-// Outputs: Returns Downloads when available, %USERPROFILE%\Downloads as a secondary fallback, or the current path.
+// Outputs: Returns a Downloads-like known folder path; never falls back to the process current directory.
 std::filesystem::path current_user_downloads_directory();
 
 // Purpose: Convert a shell HDROP payload into filesystem paths.

@@ -73,6 +73,9 @@ function Assert-GuiSystemQueueContract {
     if (-not $SourceText.Contains('current_user_downloads_directory')) {
         throw "GUI destination defaults must resolve the current user's Downloads folder instead of process cwd."
     }
+    if ($SourceText -match 'std::filesystem::current_path|GetCurrentDirectoryW?|safe_current_path') {
+        throw "GUI destination defaults must never fall back to the process current directory."
+    }
     foreach ($requiredIoSource in @(
         'DropdownId::SystemIoDrive',
         'fixed_io_drive_options',

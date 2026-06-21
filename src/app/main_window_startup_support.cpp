@@ -11,6 +11,26 @@
 #include <shlobj.h>
 
 namespace superzip::app {
+namespace {
+
+// Purpose: Resolve a Windows known folder without fixed path buffers.
+// Inputs: `folder_id` names the known folder and `flags` are passed to SHGetKnownFolderPath.
+// Outputs: Returns the resolved path, or an empty path when Windows cannot provide one.
+std::filesystem::path known_folder_or_empty(REFKNOWNFOLDERID folder_id, DWORD flags) {
+    PWSTR value = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(folder_id, flags, nullptr, &value);
+    if (FAILED(result) || value == nullptr || value[0] == L'\0') {
+        if (value != nullptr) {
+            CoTaskMemFree(value);
+        }
+        return {};
+    }
+    std::filesystem::path path(value);
+    CoTaskMemFree(value);
+    return path;
+}
+
+}  // namespace
 
 // Purpose: Convert UTF-8 text to UTF-16 for Win32 rendering.
 // Inputs: `value` is UTF-8 text.
@@ -67,40 +87,37 @@ bool smoke_close_requested() {
     return std::filesystem::exists(marker, ec);
 }
 
-// Purpose: Return the default working directory without throwing into paint code.
-// Inputs: None.
-// Outputs: Returns the process current directory, or `.` if Windows reports an error.
-std::filesystem::path safe_current_path() {
-    std::error_code ec;
-    auto path = std::filesystem::current_path(ec);
-    if (ec) {
-        return L".";
-    }
-    return path;
-}
-
 // Purpose: Resolve the current user's Downloads known folder for archive output defaults.
 // Inputs: None; asks Windows for the interactive user's Downloads folder.
-// Outputs: Returns Downloads when available, `%USERPROFILE%\Downloads` as a secondary fallback, or the current path.
+// Outputs: Returns a Downloads-like known folder path; never falls back to the process current directory.
 std::filesystem::path current_user_downloads_directory() {
-    PWSTR downloads = nullptr;
-    const HRESULT result = SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &downloads);
-    if (SUCCEEDED(result) && downloads != nullptr && downloads[0] != L'\0') {
-        std::filesystem::path path(downloads);
-        CoTaskMemFree(downloads);
-        return path;
-    }
-    if (downloads != nullptr) {
-        CoTaskMemFree(downloads);
+    auto downloads = known_folder_or_empty(FOLDERID_Downloads, KF_FLAG_DEFAULT);
+    if (!downloads.empty()) {
+        return downloads;
     }
 
-    wchar_t profile[MAX_PATH]{};
-    constexpr DWORD profile_capacity = static_cast<DWORD>(sizeof(profile) / sizeof(profile[0]));
-    const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", profile, profile_capacity);
-    if (length > 0 && length < profile_capacity) {
-        return std::filesystem::path(profile) / L"Downloads";
+    auto profile = known_folder_or_empty(FOLDERID_Profile, KF_FLAG_DEFAULT);
+    if (!profile.empty()) {
+        return profile / L"Downloads";
     }
-    return safe_current_path();
+
+    auto public_downloads = known_folder_or_empty(FOLDERID_PublicDownloads, KF_FLAG_DEFAULT);
+    if (!public_downloads.empty()) {
+        return public_downloads;
+    }
+
+    auto local_app_data = known_folder_or_empty(FOLDERID_LocalAppData, KF_FLAG_CREATE);
+    if (!local_app_data.empty()) {
+        return local_app_data / L"SuperZip" / L"Downloads";
+    }
+
+    std::error_code ec;
+    auto temp = std::filesystem::temp_directory_path(ec);
+    if (!ec && !temp.empty()) {
+        return temp / L"SuperZip" / L"Downloads";
+    }
+
+    return std::filesystem::path(L"C:\\Users\\Public\\Downloads");
 }
 
 // Purpose: Convert a shell HDROP payload into filesystem paths.
