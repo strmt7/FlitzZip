@@ -387,6 +387,7 @@ LRESULT MainWindow::handle_primary_mouse_down(LPARAM lparam) {
 LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
     mouse_position_ = POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
     primary_mouse_down_ = false;
+    const bool deferred_command_released = release_deferred_mouse_command(mouse_position_);
     if (mouse_capture_active_) {
         ReleaseCapture();
         mouse_capture_active_ = false;
@@ -397,11 +398,67 @@ LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
     end_history_scroll_drag();
     end_history_details_scroll_drag();
     end_license_notices_scroll_drag();
-    if (mouse_inside_client_) {
+    if (!deferred_command_released && mouse_inside_client_) {
         start_button_release_animation(mouse_position_);
     }
     request_repaint();
     return 0;
+}
+
+// Purpose: Record a command button action that must execute only after a valid mouse release.
+// Inputs: `command` identifies the action and `rect` is the command button pressed on mouse down.
+// Outputs: Stores the pending command and its release hit-test rectangle.
+void MainWindow::arm_deferred_mouse_command(DeferredMouseCommand command, const RECT& rect) {
+    pending_mouse_command_ = command;
+    pending_mouse_command_rect_ = rect;
+}
+
+// Purpose: Consume a pending command when mouse-up occurs inside its original command rectangle.
+// Inputs: `point` is the mouse-up client coordinate.
+// Outputs: Starts the normal button release pulse and schedules the command, or discards it on cancel.
+bool MainWindow::release_deferred_mouse_command(POINT point) {
+    if (pending_mouse_command_ == DeferredMouseCommand::None) {
+        return false;
+    }
+    const DeferredMouseCommand command = pending_mouse_command_;
+    const RECT rect = pending_mouse_command_rect_;
+    pending_mouse_command_ = DeferredMouseCommand::None;
+    pending_mouse_command_rect_ = RECT{};
+    if (!contains_point(rect, point.x, point.y)) {
+        request_repaint();
+        return true;
+    }
+    start_button_release_animation(point);
+    schedule_deferred_mouse_command(command);
+    return true;
+}
+
+// Purpose: Execute a command after its button release pulse has had a visible frame.
+// Inputs: `command` is the deferred action to execute.
+// Outputs: Arms a short timer that dispatches the command on the UI thread.
+void MainWindow::schedule_deferred_mouse_command(DeferredMouseCommand command) {
+    delayed_mouse_command_ = command;
+    SetTimer(hwnd_, kDeferredCommandTimer, 85, nullptr);
+}
+
+// Purpose: Dispatch any command delayed behind command-button release feedback.
+// Inputs: None.
+// Outputs: Executes the pending command and clears deferred state.
+void MainWindow::run_deferred_mouse_command() {
+    KillTimer(hwnd_, kDeferredCommandTimer);
+    const DeferredMouseCommand command = delayed_mouse_command_;
+    delayed_mouse_command_ = DeferredMouseCommand::None;
+    switch (command) {
+    case DeferredMouseCommand::ShowLicenseNotices:
+        show_license_notices_dialog();
+        break;
+    case DeferredMouseCommand::CloseLicenseNotices:
+        close_license_notices_dialog();
+        break;
+    case DeferredMouseCommand::None:
+        request_repaint();
+        break;
+    }
 }
 
 // Purpose: Normalize mouse state after Windows changes capture ownership.
@@ -410,6 +467,8 @@ LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
 LRESULT MainWindow::handle_capture_changed() {
     primary_mouse_down_ = false;
     mouse_capture_active_ = false;
+    pending_mouse_command_ = DeferredMouseCommand::None;
+    pending_mouse_command_rect_ = RECT{};
     end_queue_column_resize();
     end_history_column_resize();
     end_queue_scroll_drag();
@@ -433,7 +492,8 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
     }
     if (state.license_notices_dialog_visible) {
         const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
-        license_notices_wheel_pixel_remainder_ += -static_cast<double>(delta) / 120.0 * static_cast<double>(scale(72));
+        license_notices_wheel_pixel_remainder_ +=
+            -static_cast<double>(delta) / static_cast<double>(WHEEL_DELTA) * static_cast<double>(scale(52));
         const int pixels = static_cast<int>(std::trunc(license_notices_wheel_pixel_remainder_));
         license_notices_wheel_pixel_remainder_ -= static_cast<double>(pixels);
         if (pixels != 0) {
@@ -460,7 +520,7 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
         if (contains_point(layout.details, point.x, point.y)) {
             const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
             history_details_wheel_pixel_remainder_ +=
-                -static_cast<double>(delta) / 120.0 * static_cast<double>(scale(72));
+                -static_cast<double>(delta) / static_cast<double>(WHEEL_DELTA) * static_cast<double>(scale(52));
             const int pixels = static_cast<int>(std::trunc(history_details_wheel_pixel_remainder_));
             history_details_wheel_pixel_remainder_ -= static_cast<double>(pixels);
             if (pixels != 0) {

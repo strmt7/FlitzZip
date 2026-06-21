@@ -530,7 +530,7 @@ void MainWindow::append_history_entry(std::string operation, std::string archive
         .success = success,
     });
     state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
-    history_details_scroll_pixels_ = 0;
+    reset_history_details_scroll_state();
 }
 
 }  // namespace superzip::app

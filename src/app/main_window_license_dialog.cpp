@@ -118,6 +118,10 @@ void MainWindow::select_license_notices_tab(int tab_index) {
     }
     license_notices_tab_index_ = next;
     license_notices_scroll_pixels_ = 0;
+    license_notices_scroll_target_pixels_ = 0;
+    license_notices_scroll_animation_start_pixels_ = 0;
+    license_notices_scroll_animation_start_ = {};
+    license_notices_wheel_pixel_remainder_ = 0.0;
     request_repaint();
 }
 
@@ -147,23 +151,62 @@ bool MainWindow::scroll_license_notices_dialog(int delta_pixels) {
     if (!visible) {
         return false;
     }
+    const int base = license_notices_scroll_animation_start_ == std::chrono::steady_clock::time_point{}
+                         ? license_notices_scroll_pixels_
+                         : license_notices_scroll_target_pixels_;
+    return set_license_notices_scroll_target(base + delta_pixels);
+}
+
+// Purpose: Compute the maximum license-notice pixel scroll offset for the current modal geometry.
+// Inputs: None; measures generated license text in the current viewport.
+// Outputs: Returns zero when the active license tab fits without scrolling.
+int MainWindow::license_notices_max_scroll_pixels() {
     RECT client{};
     GetClientRect(hwnd_, &client);
     const RECT workspace{content_rect().left, content_rect().top, client.right, content_rect().bottom};
     const RECT viewport = license_notices_viewport_rect(license_notices_dialog_rect(workspace));
     HDC dc = GetDC(hwnd_);
     if (dc == nullptr) {
-        return true;
+        return 0;
     }
     const int content_height = license_notices_text_height(dc, viewport);
     ReleaseDC(hwnd_, dc);
     const int viewport_height = static_cast<int>(viewport.bottom - viewport.top);
-    const int max_scroll = std::max(0, content_height - viewport_height);
-    const int next = std::clamp(license_notices_scroll_pixels_ + delta_pixels, 0, max_scroll);
-    if (next != license_notices_scroll_pixels_) {
-        license_notices_scroll_pixels_ = next;
+    return std::max(0, content_height - viewport_height);
+}
+
+// Purpose: Set the license-notice scroll offset immediately without animation.
+// Inputs: `offset_pixels` is the desired absolute pixel offset.
+// Outputs: Clamps visible and target offsets to bounds, clears license scroll animation, and repaints on change.
+bool MainWindow::set_license_notices_scroll_offset_immediate(int offset_pixels) {
+    const int next = std::clamp(offset_pixels, 0, license_notices_max_scroll_pixels());
+    const bool changed = next != license_notices_scroll_pixels_ || next != license_notices_scroll_target_pixels_ ||
+                         license_notices_scroll_animation_start_ != std::chrono::steady_clock::time_point{};
+    license_notices_scroll_pixels_ = next;
+    license_notices_scroll_target_pixels_ = next;
+    license_notices_scroll_animation_start_pixels_ = next;
+    license_notices_scroll_animation_start_ = {};
+    if (changed) {
         request_repaint();
     }
+    return true;
+}
+
+// Purpose: Animate the license-notice scroll position to a bounded absolute target.
+// Inputs: `target_pixels` is the desired absolute pixel offset.
+// Outputs: Starts or updates the license smooth-scroll animation and returns whether a visible change is pending.
+bool MainWindow::set_license_notices_scroll_target(int target_pixels) {
+    const int next = std::clamp(target_pixels, 0, license_notices_max_scroll_pixels());
+    if (next != license_notices_scroll_pixels_) {
+        license_notices_scroll_animation_start_pixels_ = license_notices_scroll_pixels_;
+        license_notices_scroll_target_pixels_ = next;
+        license_notices_scroll_animation_start_ = std::chrono::steady_clock::now();
+        SetTimer(hwnd_, kAnimationTimer, 8, nullptr);
+        request_repaint();
+        return true;
+    }
+    license_notices_scroll_target_pixels_ = next;
+    license_notices_scroll_animation_start_ = {};
     return true;
 }
 
@@ -200,6 +243,8 @@ void MainWindow::begin_license_notices_scroll_drag(int y, const RECT& viewport, 
     if (thumb.right <= thumb.left) {
         return;
     }
+    license_notices_scroll_animation_start_ = {};
+    license_notices_scroll_target_pixels_ = license_notices_scroll_pixels_;
     license_notices_scroll_dragging_ = true;
     license_notices_scroll_drag_start_y_ = y;
     license_notices_scroll_drag_start_offset_ = license_notices_scroll_pixels_;
@@ -222,6 +267,9 @@ void MainWindow::update_license_notices_scroll_drag(int y) {
     const int max_scroll = std::max(0, license_notices_scroll_drag_content_height_ - viewport_height);
     if (max_scroll <= 0) {
         license_notices_scroll_pixels_ = 0;
+        license_notices_scroll_target_pixels_ = 0;
+        license_notices_scroll_animation_start_pixels_ = 0;
+        license_notices_scroll_animation_start_ = {};
         return;
     }
     const RECT track = license_notices_scrollbar_track_rect(viewport);
@@ -231,6 +279,7 @@ void MainWindow::update_license_notices_scroll_drag(int y) {
                                                    static_cast<double>(max_scroll) / static_cast<double>(travel)));
     const int previous = license_notices_scroll_pixels_;
     license_notices_scroll_pixels_ = std::clamp(license_notices_scroll_drag_start_offset_ + delta, 0, max_scroll);
+    license_notices_scroll_target_pixels_ = license_notices_scroll_pixels_;
     if (license_notices_scroll_pixels_ != previous) {
         request_repaint();
     }
@@ -252,6 +301,10 @@ void MainWindow::close_license_notices_dialog() {
         state_.license_notices_dialog_visible = false;
     }
     license_notices_scroll_pixels_ = 0;
+    license_notices_scroll_target_pixels_ = 0;
+    license_notices_scroll_animation_start_pixels_ = 0;
+    license_notices_scroll_animation_start_ = {};
+    license_notices_wheel_pixel_remainder_ = 0.0;
     request_repaint();
 }
 
@@ -268,6 +321,10 @@ void MainWindow::show_license_notices_dialog() {
         state_.status = "License notices";
     }
     license_notices_scroll_pixels_ = 0;
+    license_notices_scroll_target_pixels_ = 0;
+    license_notices_scroll_animation_start_pixels_ = 0;
+    license_notices_scroll_animation_start_ = {};
+    license_notices_wheel_pixel_remainder_ = 0.0;
     request_repaint();
 }
 
@@ -280,10 +337,10 @@ void MainWindow::draw_license_notices_dialog(HDC dc, const RECT& rect, const UiS
     }
     const RECT workspace{content_rect().left, content_rect().top, rect.right, content_rect().bottom};
     fill_rect(dc, workspace, RGB(7, 11, 13));
+    fill_rect(dc, RECT{rect.left, workspace.top, rect.right, workspace.top + scale(2)}, kAccent);
     const RECT modal = license_notices_dialog_rect(workspace);
     fill_round_rect(dc, modal, kPanel, scale(6));
     stroke_rect(dc, modal, RGB(72, 93, 101));
-    fill_rect(dc, RECT{modal.left, modal.top, modal.right, modal.top + scale(3)}, kAccent);
 
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{modal.left + scale(24), modal.top + scale(18), modal.right - scale(24), modal.top + scale(54)},
@@ -304,6 +361,7 @@ void MainWindow::draw_license_notices_dialog(HDC dc, const RECT& rect, const UiS
     const int viewport_height = static_cast<int>(viewport.bottom - viewport.top);
     const int max_scroll = std::max(0, content_height - viewport_height);
     license_notices_scroll_pixels_ = std::clamp(license_notices_scroll_pixels_, 0, max_scroll);
+    license_notices_scroll_target_pixels_ = std::clamp(license_notices_scroll_target_pixels_, 0, max_scroll);
 
     fill_round_rect(dc,
                     RECT{viewport.left - scale(10), viewport.top - scale(8), viewport.right + scale(10),
@@ -349,8 +407,9 @@ bool MainWindow::handle_license_notices_dialog_click(int x, int y) {
     GetClientRect(hwnd_, &client);
     const RECT workspace{content_rect().left, content_rect().top, client.right, content_rect().bottom};
     const RECT modal = license_notices_dialog_rect(workspace);
-    if (contains_point(license_notices_close_button_rect(modal), x, y)) {
-        close_license_notices_dialog();
+    const RECT close_button = license_notices_close_button_rect(modal);
+    if (contains_point(close_button, x, y)) {
+        arm_deferred_mouse_command(DeferredMouseCommand::CloseLicenseNotices, close_button);
         return true;
     }
     const auto tabs = license_notices_tab_rects(modal);
@@ -408,12 +467,10 @@ bool MainWindow::handle_license_notices_dialog_key(WPARAM key) {
         return scroll_license_notices_dialog(scale(260));
     }
     if (key == VK_HOME) {
-        license_notices_scroll_pixels_ = 0;
-        request_repaint();
-        return true;
+        return set_license_notices_scroll_target(0);
     }
     if (key == VK_END) {
-        return scroll_license_notices_dialog(INT_MAX / 4);
+        return set_license_notices_scroll_target(license_notices_max_scroll_pixels());
     }
     return true;
 }
@@ -423,8 +480,9 @@ bool MainWindow::handle_license_notices_dialog_key(WPARAM key) {
 // Outputs: Returns true when the Licenses command consumed the click.
 bool MainWindow::handle_about_click(const RECT& content, int x, int y) {
     const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-    if (contains_point(about_licenses_button_rect(area), x, y)) {
-        show_license_notices_dialog();
+    const RECT licenses_button = about_licenses_button_rect(area);
+    if (contains_point(licenses_button, x, y)) {
+        arm_deferred_mouse_command(DeferredMouseCommand::ShowLicenseNotices, licenses_button);
         return true;
     }
     return false;

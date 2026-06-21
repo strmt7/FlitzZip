@@ -164,10 +164,10 @@ void MainWindow::draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const U
     }
     const RECT workspace{content_rect().left, content_rect().top, rect.right, content_rect().bottom};
     fill_rect(dc, workspace, RGB(7, 11, 13));
+    fill_rect(dc, RECT{rect.left, workspace.top, rect.right, workspace.top + scale(2)}, kAccent);
     const RECT modal = extract_overwrite_prompt_rect(workspace);
     fill_round_rect(dc, modal, kPanel, scale(6));
     stroke_rect(dc, modal, RGB(72, 93, 101));
-    fill_rect(dc, RECT{modal.left, modal.top, modal.right, modal.top + scale(3)}, kAccent);
 
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{modal.left + scale(24), modal.top + scale(18), modal.right - scale(24), modal.top + scale(54)},

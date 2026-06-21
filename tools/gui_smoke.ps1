@@ -213,6 +213,36 @@ function Assert-GuiFormatTelemetryLicenseContract {
         -not $SourceText.Contains('select_license_notices_tab')) {
         throw "About Licenses must keep SuperZip and Other tabs for readable non-copyable notices."
     }
+    foreach ($requiredSmoothScrollSource in @(
+        'DeferredMouseCommand::ShowLicenseNotices',
+        'DeferredMouseCommand::CloseLicenseNotices',
+        'release_deferred_mouse_command',
+        'kDeferredCommandTimer',
+        'set_license_notices_scroll_target',
+        'license_notices_scroll_animation_start_',
+        'set_history_details_scroll_target',
+        'history_details_scroll_animation_start_',
+        'tick_smooth_scroll_animation',
+        'kSmoothScrollTransitionMs')) {
+        if (-not $SourceText.Contains($requiredSmoothScrollSource)) {
+            throw "Licenses and History details must use deferred button release plus bounded smooth scrolling; missing $requiredSmoothScrollSource."
+        }
+    }
+    if ($SourceText -cmatch 'queue_scroll_target|history_scroll_target') {
+        throw "Only Licenses and History details may use smooth pixel-scroll targets; Queue and History tables must stay row-based."
+    }
+    $modalAccentLine = 'RECT{rect.left, workspace.top, rect.right, workspace.top + scale(2)}'
+    if ([regex]::Matches($SourceText, [regex]::Escape($modalAccentLine)).Count -lt 2) {
+        throw "SuperZip-owned secondary windows must use the same full-width top red line as the main interface."
+    }
+    if (-not $SourceText.Contains('page_title_rect(area)')) {
+        throw "Top-level page titles must share the button-aligned page_title_rect geometry."
+    }
+    if (-not $SourceText.Contains('i == 1 ? L"GPU"') -or
+        -not $SourceText.Contains('i == 2 ? L"RAM"') -or
+        -not $SourceText.Contains('const RECT io_card = cards[3]')) {
+        throw "System graphs must render in CPU, GPU, RAM, I/O order with the I/O drive selector on the I/O card."
+    }
     if (-not $SourceText.Contains('sample_total_dedicated_vram_used_bytes') -or
         -not $SourceText.Contains('reconcile_vram_usage') -or
         -not (Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/cpp/test_resource_usage.cpp')).Contains('vram_reconciliation_keeps_process_usage_under_total_usage')) {
@@ -256,6 +286,11 @@ function Select-CompressFormatIndex {
 $smokeSource = Get-Content -Raw -LiteralPath $PSCommandPath
 if (-not $smokeSource.Contains('Queue-AfterBulkDragDrop')) {
     throw "GUI smoke must exercise a many-file Queue drag/drop payload."
+}
+foreach ($requiredSmokeExercise in @('About-Licenses-SmoothWheel', 'History-Details-SmoothWheel', 'Invoke-ClientWheel')) {
+    if (-not $smokeSource.Contains($requiredSmokeExercise)) {
+        throw "GUI smoke must exercise smooth mouse-wheel scrolling for Licenses and History details; missing $requiredSmokeExercise."
+    }
 }
 
 Import-Module (Join-Path $PSScriptRoot "SuperZip.GuiSmoke.Ui.psm1") -Force
@@ -663,6 +698,12 @@ try {
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyFailurePath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasColor -Path $historyFailurePath -Dpi $windowDpi -Left 700 -Top 210 -Right 1138 -Bottom 470 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 236 -ExpectedGreen 73 -ExpectedBlue 73 -Tolerance 42 -MinPixels 4
+    Invoke-ClientWheel -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 670 -Delta -120
+    Start-Sleep -Milliseconds 80
+    $historyDetailsWheelPath = "${basePath}-History-Details-SmoothWheel$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $historyDetailsWheelPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $historyDetailsWheelPath -Dpi $windowDpi -Left 116 -Top 628 -Right 1138 -Bottom 716 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
     Invoke-ClientDrag -Handle $windowHandle -Dpi $windowDpi -StartX 430 -StartY 205 -EndX 468 -EndY 205
     Start-Sleep -Milliseconds 180
     $historyResizePath = "${basePath}-History-AfterColumnResize$extension"
@@ -675,7 +716,7 @@ try {
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 5
     Start-Sleep -Milliseconds 250
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed" -OpenX 1160 -OpenY 446 -SelectX 1160 -SelectY 554 -MenuLeft 1070 -MenuTop 470 -MenuRight 1220 -MenuBottom 606 -BasePath $basePath -Extension $extension
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-IODrive" -OpenX 845 -OpenY 446 -SelectX 845 -SelectY 506 -MenuLeft 812 -MenuTop 470 -MenuRight 892 -MenuBottom 526 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-IODrive" -OpenX 1100 -OpenY 446 -SelectX 1100 -SelectY 506 -MenuLeft 1058 -MenuTop 470 -MenuRight 1140 -MenuBottom 526 -BasePath $basePath -Extension $extension
     $systemMonitorPath = "${basePath}-System-PerformanceMonitor$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
@@ -728,18 +769,25 @@ try {
         Start-Sleep -Milliseconds 300
         $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path "${basePath}-$($pageNames[$index])$extension"
     }
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1070 -DesignY 550
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1070 -DesignY 594
     Start-Sleep -Milliseconds 180
     $licenseDialogPath = "${basePath}-About-Licenses$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseDialogPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Assert-DesignRectHasColor -Path $licenseDialogPath -Dpi $windowDpi -Left 286 -Top 170 -Right 400 -Bottom 212 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 450 -DesignY 198
     Start-Sleep -Milliseconds 120
     $licenseOtherDialogPath = "${basePath}-About-Licenses-Other$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseOtherDialogPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $licenseOtherDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Invoke-ClientWheel -Handle $windowHandle -Dpi $windowDpi -DesignX 610 -DesignY 420 -Delta -120
+    Start-Sleep -Milliseconds 80
+    $licenseSmoothWheelPath = "${basePath}-About-Licenses-SmoothWheel$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseSmoothWheelPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $licenseSmoothWheelPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
     Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x22
     Start-Sleep -Milliseconds 100
     Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x1B

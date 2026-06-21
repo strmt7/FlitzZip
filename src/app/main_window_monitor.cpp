@@ -537,6 +537,46 @@ double MainWindow::button_release_progress(const RECT& rect) const {
     return std::clamp(static_cast<double>(elapsed) / static_cast<double>(kButtonReleaseTransitionMs), 0.0, 1.0);
 }
 
+// Purpose: Advance Licenses and History-details smooth-scroll animations.
+// Inputs: None; reads active smooth-scroll start and target fields.
+// Outputs: Updates visible pixel offsets and returns true while any smooth scroll remains active.
+bool MainWindow::tick_smooth_scroll_animation() {
+    const auto now = std::chrono::steady_clock::now();
+    bool needs_repaint = false;
+    const auto advance = [&](int& visible_pixels, int& target_pixels, int& start_pixels,
+                             std::chrono::steady_clock::time_point& start_time) {
+        if (start_time == std::chrono::steady_clock::time_point{}) {
+            return false;
+        }
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+        const double progress =
+            std::clamp(static_cast<double>(elapsed) / static_cast<double>(kSmoothScrollTransitionMs), 0.0, 1.0);
+        const int next = progress >= 1.0
+                             ? target_pixels
+                             : static_cast<int>(std::lround(
+                                   static_cast<double>(start_pixels) +
+                                   ((static_cast<double>(target_pixels - start_pixels)) * ease_out(progress))));
+        if (next != visible_pixels) {
+            visible_pixels = next;
+            needs_repaint = true;
+        }
+        if (progress >= 1.0) {
+            visible_pixels = target_pixels;
+            start_pixels = target_pixels;
+            start_time = {};
+            return needs_repaint;
+        }
+        return true;
+    };
+    const bool license_active =
+        advance(license_notices_scroll_pixels_, license_notices_scroll_target_pixels_,
+                license_notices_scroll_animation_start_pixels_, license_notices_scroll_animation_start_);
+    const bool details_active =
+        advance(history_details_scroll_pixels_, history_details_scroll_target_pixels_,
+                history_details_scroll_animation_start_pixels_, history_details_scroll_animation_start_);
+    return license_active || details_active || needs_repaint;
+}
+
 // Purpose: Advance active UI animations.
 // Inputs: None.
 // Outputs: Queues another repaint while animation is active or stops the timer.
@@ -551,6 +591,7 @@ void MainWindow::tick_animation() {
         button_release_start_ != std::chrono::steady_clock::time_point{} &&
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - button_release_start_)
                 .count() < kButtonReleaseTransitionMs;
+    const bool smooth_scroll_active = tick_smooth_scroll_animation();
     if (!page_active) {
         page_transition_start_ = {};
     }
@@ -562,7 +603,7 @@ void MainWindow::tick_animation() {
         button_release_start_ = {};
         button_release_point_ = POINT{-1, -1};
     }
-    if (page_active || toggle_active || button_release_active) {
+    if (page_active || toggle_active || button_release_active || smooth_scroll_active) {
         request_repaint();
         return;
     }

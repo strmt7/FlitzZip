@@ -171,7 +171,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     }
     if (id == DropdownId::HistoryOperation || id == DropdownId::HistoryStatus) {
         history_scroll_first_row_ = 0;
-        history_details_scroll_pixels_ = 0;
+        reset_history_details_scroll_state();
     }
     if (io_drive_changed) {
         reset_disk_performance_monitor();

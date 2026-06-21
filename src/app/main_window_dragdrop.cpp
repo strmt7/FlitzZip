@@ -376,6 +376,7 @@ LRESULT MainWindow::handle_destroy() {
     KillTimer(hwnd_, kProgressHoldTimer);
     KillTimer(hwnd_, kClockTimer);
     KillTimer(hwnd_, kTextTooltipTimer);
+    KillTimer(hwnd_, kDeferredCommandTimer);
     KillTimer(hwnd_, kSmokeAutoCloseTimer);
     KillTimer(hwnd_, kSmokeClosePollTimer);
     if (drop_target_ != nullptr) {

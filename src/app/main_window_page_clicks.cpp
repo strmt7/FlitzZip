@@ -322,7 +322,7 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
             std::lock_guard lock(mutex_);
             state_.selected_history_index = static_cast<int>(visible[static_cast<std::size_t>(filtered_index)]);
             state_.status = "History row selected";
-            history_details_scroll_pixels_ = 0;
+            reset_history_details_scroll_state();
             request_repaint();
             return true;
         }

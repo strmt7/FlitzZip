@@ -225,6 +225,30 @@ function Invoke-ClientClick {
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
 }
 
+# Purpose: Send one mouse-wheel message at a client-coordinate point in the SuperZip window.
+# Inputs: `Handle` is the HWND, `Dpi` maps design pixels, coordinates are 96-DPI client pixels, and `Delta` is a
+# Win32 WHEEL_DELTA-style signed wheel value.
+# Outputs: Posts `WM_MOUSEWHEEL` with screen-coordinate LPARAM so app hit testing follows native routing.
+function Invoke-ClientWheel {
+    param(
+        [IntPtr]$Handle,
+        [int]$Dpi,
+        [int]$DesignX,
+        [int]$DesignY,
+        [int]$Delta = -120
+    )
+    $scale = [double]$Dpi / 96.0
+    [SuperZipNativeUi+POINT]$point = New-Object SuperZipNativeUi+POINT
+    $point.X = [int][Math]::Round($DesignX * $scale)
+    $point.Y = [int][Math]::Round($DesignY * $scale)
+    if (-not [SuperZipNativeUi]::ClientToScreen($Handle, [ref]$point)) {
+        throw "Could not map SuperZip wheel target to screen coordinates."
+    }
+    $wparam = [IntPtr]([int64]((($Delta -band 0xffff) -shl 16)))
+    $lparam = ConvertTo-MouseLParam -X $point.X -Y $point.Y
+    [void][SuperZipNativeUi]::PostMessage($Handle, 0x020A, $wparam, $lparam)
+}
+
 # Purpose: Send one keyboard activation to the SuperZip window.
 # Inputs: `Handle` is the HWND and `VirtualKey` is a Win32 VK_* code.
 # Outputs: Posts key-down and key-up messages for keyboard-accessibility smoke checks.
@@ -710,4 +734,4 @@ function Invoke-DropdownExercise {
 }
 
 
-Export-ModuleMember -Function Assert-DesignRectHasColor, Assert-DesignRectHasDetail, Assert-FixedWindowStyle, Assert-QueueEmptyMessageCentered, Assert-SuperZipVisibleForCapture, Assert-VisualStructure, ConvertTo-MouseLParam, Get-ClientCaptureOffset, Get-SampledUniqueColorCount, Get-ValidatedScreenWindowCapture, Invoke-ClientClick, Invoke-ClientDrag, Invoke-ClientKey, Invoke-DropdownExercise, Invoke-FileDrop, Invoke-SidebarClick, Request-SuperZipRedraw, Save-SuperZipScreenshot, Show-SuperZipForeground, Test-ColorNear
+Export-ModuleMember -Function Assert-DesignRectHasColor, Assert-DesignRectHasDetail, Assert-FixedWindowStyle, Assert-QueueEmptyMessageCentered, Assert-SuperZipVisibleForCapture, Assert-VisualStructure, ConvertTo-MouseLParam, Get-ClientCaptureOffset, Get-SampledUniqueColorCount, Get-ValidatedScreenWindowCapture, Invoke-ClientClick, Invoke-ClientDrag, Invoke-ClientKey, Invoke-ClientWheel, Invoke-DropdownExercise, Invoke-FileDrop, Invoke-SidebarClick, Request-SuperZipRedraw, Save-SuperZipScreenshot, Show-SuperZipForeground, Test-ColorNear

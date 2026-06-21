@@ -253,11 +253,15 @@ bool MainWindow::activate_focus_target(const FocusTarget& target, WPARAM key) {
         if (target.index >= 0 && target.index < static_cast<int>(state_.history.size())) {
             state_.selected_history_index = target.index;
             state_.status = "History row selected";
-            history_details_scroll_pixels_ = 0;
+            reset_history_details_scroll_state();
             request_repaint();
             return true;
         }
         return false;
+    }
+    if (target.kind == FocusTargetKind::AboutLicenses) {
+        show_license_notices_dialog();
+        return true;
     }
     const int x = (target.rect.left + target.rect.right) / 2;
     const int y = (target.rect.top + target.rect.bottom) / 2;
@@ -355,7 +359,7 @@ bool MainWindow::handle_history_row_navigation_key(WPARAM key, const UiState& st
     {
         std::lock_guard lock(mutex_);
         state_.selected_history_index = next_history_index;
-        history_details_scroll_pixels_ = 0;
+        reset_history_details_scroll_state();
     }
     const int visible_rows = std::max(1, history_visible_row_count(table));
     const int max_scroll = history_max_scroll_offset(table, visible.size());

@@ -69,6 +69,12 @@ class MainWindow {
         std::uintmax_t bytes = 0;
     };
 
+    enum class DeferredMouseCommand {
+        None,
+        ShowLicenseNotices,
+        CloseLicenseNotices,
+    };
+
     // Purpose: Route Win32 messages from the static window procedure to the C++ instance.
     // Inputs: Standard Win32 `hwnd`, `message`, `wparam`, and `lparam` arguments.
     // Outputs: Returns the message result expected by Win32.
@@ -149,6 +155,26 @@ class MainWindow {
     // Inputs: `lparam` contains client-coordinate release position from `WM_LBUTTONUP`.
     // Outputs: Releases capture, updates mouse state, queues animation, and returns the handled Win32 result.
     LRESULT handle_primary_mouse_up(LPARAM lparam);
+
+    // Purpose: Record a command button action that must execute only after a valid mouse release.
+    // Inputs: `command` identifies the action and `rect` is the command button pressed on mouse down.
+    // Outputs: Stores the pending command and its release hit-test rectangle.
+    void arm_deferred_mouse_command(DeferredMouseCommand command, const RECT& rect);
+
+    // Purpose: Consume a pending command when mouse-up occurs inside its original command rectangle.
+    // Inputs: `point` is the mouse-up client coordinate.
+    // Outputs: Starts the normal button release pulse and schedules the command, or discards it on cancel.
+    bool release_deferred_mouse_command(POINT point);
+
+    // Purpose: Execute a command after its button release pulse has had a visible frame.
+    // Inputs: `command` is the deferred action to execute.
+    // Outputs: Arms a short timer that dispatches the command on the UI thread.
+    void schedule_deferred_mouse_command(DeferredMouseCommand command);
+
+    // Purpose: Dispatch any command delayed behind command-button release feedback.
+    // Inputs: None.
+    // Outputs: Executes the pending command and clears deferred state.
+    void run_deferred_mouse_command();
 
     // Purpose: Scroll the Queue table with native mouse-wheel semantics.
     // Inputs: `wparam` contains wheel delta and `lparam` contains screen coordinates.
@@ -314,8 +340,23 @@ class MainWindow {
 
     // Purpose: Apply a bounded scroll delta to the license-notice modal.
     // Inputs: `delta_pixels` is positive for down and negative for up.
-    // Outputs: Updates scroll offset and queues a repaint when the dialog is visible.
+    // Outputs: Moves the animated target offset and queues smooth repaint frames when visible.
     bool scroll_license_notices_dialog(int delta_pixels);
+
+    // Purpose: Compute the maximum license-notice pixel scroll offset for the current modal geometry.
+    // Inputs: None; measures generated license text in the current viewport.
+    // Outputs: Returns zero when the active license tab fits without scrolling.
+    [[nodiscard]] int license_notices_max_scroll_pixels();
+
+    // Purpose: Set the license-notice scroll offset immediately without animation.
+    // Inputs: `offset_pixels` is the desired absolute pixel offset.
+    // Outputs: Clamps visible and target offsets to bounds, clears license scroll animation, and repaints on change.
+    bool set_license_notices_scroll_offset_immediate(int offset_pixels);
+
+    // Purpose: Animate the license-notice scroll position to a bounded absolute target.
+    // Inputs: `target_pixels` is the desired absolute pixel offset.
+    // Outputs: Starts or updates the license smooth-scroll animation and returns whether a visible change is pending.
+    bool set_license_notices_scroll_target(int target_pixels);
 
     // Purpose: Return the product-styled license-notice scrollbar track.
     // Inputs: `viewport` is the clipped license text viewport.
@@ -381,6 +422,11 @@ class MainWindow {
     // Inputs: `area` is the DPI-scaled page content area.
     // Outputs: Returns a 110x36 design-pixel command rectangle aligned with Settings Apply.
     [[nodiscard]] RECT primary_action_rect(const RECT& area) const;
+
+    // Purpose: Return the standard page-title text rectangle aligned to page action buttons.
+    // Inputs: `area` is the DPI-scaled page content area.
+    // Outputs: Returns the shared title rectangle for every top-level page header.
+    [[nodiscard]] RECT page_title_rect(const RECT& area) const;
 
     // Purpose: Return the History Clear History button rectangle with Restore Defaults-equivalent visual margins.
     // Inputs: `area` is the DPI-scaled page content area.
@@ -476,8 +522,28 @@ class MainWindow {
 
     // Purpose: Apply a bounded pixel scroll delta to the History details panel.
     // Inputs: `delta_pixels` is positive for down and negative for up.
-    // Outputs: Updates scroll offset and queues repaint when selected details overflow.
+    // Outputs: Moves the animated target offset and queues smooth repaint frames when selected details overflow.
     bool scroll_history_details(int delta_pixels);
+
+    // Purpose: Clear History details pixel-scroll state after selection, filtering, or history reset changes.
+    // Inputs: None.
+    // Outputs: Resets visible/target offsets, wheel remainder, drag state, and smooth-scroll animation state.
+    void reset_history_details_scroll_state();
+
+    // Purpose: Compute the maximum History details pixel scroll offset for the selected row.
+    // Inputs: `state` is a stable UI snapshot used for details measurement.
+    // Outputs: Returns zero when no selected details text overflows.
+    [[nodiscard]] int history_details_max_scroll_pixels(const UiState& state);
+
+    // Purpose: Set the History details scroll offset immediately without animation.
+    // Inputs: `offset_pixels` is the desired absolute pixel offset.
+    // Outputs: Clamps visible and target offsets, clears details scroll animation, and repaints on change.
+    bool set_history_details_scroll_offset_immediate(int offset_pixels);
+
+    // Purpose: Animate the History details scroll position to a bounded absolute target.
+    // Inputs: `target_pixels` is the desired absolute pixel offset.
+    // Outputs: Starts or updates the details smooth-scroll animation and returns whether a visible change is pending.
+    bool set_history_details_scroll_target(int target_pixels);
 
     // Purpose: Return the History details scrollbar track.
     // Inputs: `details` is the details panel rectangle.
@@ -511,7 +577,7 @@ class MainWindow {
 
     // Purpose: Draw the live performance monitor section on the System page.
     // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `sample` is the latest live counter snapshot.
-    // Outputs: Renders CPU, RAM, selected-drive total I/O, and total GPU cards with bounded graphs.
+    // Outputs: Renders CPU, total GPU, RAM, and selected-drive total I/O cards with bounded graphs.
     void draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state);
 
     // Purpose: Draw one metric card inside the live performance monitor.
@@ -606,7 +672,7 @@ class MainWindow {
 
     // Purpose: Return the System refresh-interval field rectangle.
     // Inputs: `monitor` is the performance monitor panel rectangle.
-    // Outputs: Returns a narrow rectangle aligned to the GPU card's right edge and monitor header row.
+    // Outputs: Returns a narrow rectangle aligned to the rightmost card edge and monitor header row.
     [[nodiscard]] RECT performance_update_speed_rect(const RECT& monitor) const;
 
     // Purpose: Return the fixed-drive selector rectangle inside the I/O monitor card.
@@ -1269,6 +1335,11 @@ class MainWindow {
     // Outputs: Queues another repaint while animation is active or stops the timer.
     void tick_animation();
 
+    // Purpose: Advance Licenses and History-details smooth-scroll animations.
+    // Inputs: None; reads active smooth-scroll start and target fields.
+    // Outputs: Updates visible pixel offsets and returns true while any smooth scroll remains active.
+    bool tick_smooth_scroll_animation();
+
     // Purpose: Recreate native fonts at the current monitor DPI.
     // Inputs: None; reads `dpi_`.
     // Outputs: Replaces owned GDI font handles.
@@ -1333,21 +1404,28 @@ class MainWindow {
     int history_wheel_delta_remainder_ = 0;
     bool history_scroll_dragging_ = false;
     int history_details_scroll_pixels_ = 0;
+    int history_details_scroll_target_pixels_ = 0;
+    int history_details_scroll_animation_start_pixels_ = 0;
     int history_details_scroll_drag_start_y_ = 0;
     int history_details_scroll_drag_start_offset_ = 0;
     int history_details_scroll_drag_content_height_ = 0;
     double history_details_wheel_pixel_remainder_ = 0.0;
+    std::chrono::steady_clock::time_point history_details_scroll_animation_start_{};
     bool history_details_scroll_dragging_ = false;
     int license_notices_scroll_drag_start_y_ = 0;
     int license_notices_scroll_drag_start_offset_ = 0;
     int license_notices_scroll_drag_content_height_ = 0;
     double license_notices_wheel_pixel_remainder_ = 0.0;
+    int license_notices_scroll_target_pixels_ = 0;
+    int license_notices_scroll_animation_start_pixels_ = 0;
+    std::chrono::steady_clock::time_point license_notices_scroll_animation_start_{};
     bool license_notices_scroll_dragging_ = false;
     std::array<PerformanceMonitorSample, 96> performance_history_{};
     std::size_t performance_history_count_ = 0;
     std::size_t performance_history_next_ = 0;
     POINT mouse_position_{-1, -1};
     POINT button_release_point_{-1, -1};
+    RECT pending_mouse_command_rect_{};
     bool mouse_inside_client_ = false;
     bool primary_mouse_down_ = false;
     bool mouse_tracking_ = false;
@@ -1364,6 +1442,8 @@ class MainWindow {
     int modal_focus_index_ = 1;
     int license_notices_tab_index_ = 0;
     int license_notices_scroll_pixels_ = 0;
+    DeferredMouseCommand pending_mouse_command_ = DeferredMouseCommand::None;
+    DeferredMouseCommand delayed_mouse_command_ = DeferredMouseCommand::None;
     ExtractJobRequest pending_extract_job_{};
     bool pending_extract_job_active_ = false;
     std::atomic_bool operation_cancel_requested_ = false;

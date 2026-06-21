@@ -146,6 +146,10 @@ LRESULT MainWindow::handle_timer(WPARAM wparam) {
         request_repaint();
         return 0;
     }
+    if (wparam == kDeferredCommandTimer) {
+        run_deferred_mouse_command();
+        return 0;
+    }
     if (wparam == kSmokeAutoCloseTimer) {
         DestroyWindow(hwnd_);
         return 0;

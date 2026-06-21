@@ -38,8 +38,9 @@ std::wstring history_detail_text(const HistoryEntry& entry) {
 void MainWindow::draw_queue_toolbar(HDC dc, const QueueLayout& layout, const UiState& state) {
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, layout.add_files.left - scale(18), area.top + scale(kPageTitleTextHeight)},
-              L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    RECT title = page_title_rect(area);
+    title.right = layout.add_files.left - scale(18);
+    draw_text(dc, title, L"Queue", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
     if (has_selected_queue_items(state)) {
         draw_button(dc, layout.remove_selected, L"Remove selected", false);
@@ -208,8 +209,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     const auto layout = compress_layout(rect);
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Compress", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"Compress", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const bool active_compress = state.active_operation == OperationKind::Compress;
     const bool can_start = can_start_compress(state);
     if (active_compress) {
@@ -269,8 +269,7 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     const auto layout = extract_layout(rect);
     const RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Extract", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"Extract", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const bool active_extract = state.active_operation == OperationKind::Extract;
     const bool can_start = can_start_extract(state);
     if (active_extract) {
@@ -313,8 +312,7 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
 void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Security", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const RECT verify_button = primary_action_rect(area);
     const RECT stop_button = secondary_action_rect_left_of(verify_button);
     const bool active_verify = state.active_operation == OperationKind::Verify;
@@ -513,7 +511,7 @@ void MainWindow::draw_history_details(HDC dc, const RECT& details, const UiState
         state.selected_history_index >= 0 && state.selected_history_index < static_cast<int>(state.history.size()) &&
         history_entry_matches_filters(state, state.history[static_cast<std::size_t>(state.selected_history_index)]);
     if (!selected_valid) {
-        history_details_scroll_pixels_ = 0;
+        reset_history_details_scroll_state();
         draw_text(dc,
                   RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom},
                   L"Selected operation details will appear here", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
@@ -527,6 +525,7 @@ void MainWindow::draw_history_details(HDC dc, const RECT& details, const UiState
     const int viewport_height = std::max(1, static_cast<int>(viewport.bottom - viewport.top));
     const int max_scroll = std::max(0, content_height - viewport_height);
     history_details_scroll_pixels_ = std::clamp(history_details_scroll_pixels_, 0, max_scroll);
+    history_details_scroll_target_pixels_ = std::clamp(history_details_scroll_target_pixels_, 0, max_scroll);
     const int saved = SaveDC(dc);
     IntersectClipRect(dc, viewport.left, viewport.top, viewport.right, viewport.bottom);
     draw_text(dc,
@@ -540,6 +539,18 @@ void MainWindow::draw_history_details(HDC dc, const RECT& details, const UiState
         fill_round_rect(dc, track, RGB(18, 28, 32), scale(5));
         fill_round_rect(dc, thumb, interactive_fill(RGB(64, 83, 90), thumb), scale(5));
     }
+}
+
+// Purpose: Clear History details pixel-scroll state after selection, filtering, or history reset changes.
+// Inputs: None.
+// Outputs: Resets visible/target offsets, wheel remainder, drag state, and smooth-scroll animation state.
+void MainWindow::reset_history_details_scroll_state() {
+    history_details_scroll_pixels_ = 0;
+    history_details_scroll_target_pixels_ = 0;
+    history_details_scroll_animation_start_pixels_ = 0;
+    history_details_scroll_animation_start_ = {};
+    history_details_scroll_dragging_ = false;
+    history_details_wheel_pixel_remainder_ = 0.0;
 }
 
 // Purpose: Measure the selected History detail body height.
@@ -563,9 +574,72 @@ int MainWindow::history_details_text_height(HDC dc, const RECT& details, const U
     return std::max(scale(1), static_cast<int>(measure.bottom - measure.top));
 }
 
+// Purpose: Compute the maximum History details pixel scroll offset for the selected row.
+// Inputs: `state` is a stable UI snapshot used for details measurement.
+// Outputs: Returns zero when no selected details text overflows.
+int MainWindow::history_details_max_scroll_pixels(const UiState& state) {
+    if (state.page != Page::History) {
+        return 0;
+    }
+    const auto layout = history_layout(content_rect());
+    HDC dc = GetDC(hwnd_);
+    if (dc == nullptr) {
+        return 0;
+    }
+    const int content_height = history_details_text_height(dc, layout.details, state);
+    ReleaseDC(hwnd_, dc);
+    const int viewport_height = std::max(1, static_cast<int>(layout.details.bottom - layout.details.top) - scale(18));
+    return std::max(0, content_height - viewport_height);
+}
+
+// Purpose: Set the History details scroll offset immediately without animation.
+// Inputs: `offset_pixels` is the desired absolute pixel offset.
+// Outputs: Clamps visible and target offsets, clears details scroll animation, and repaints on change.
+bool MainWindow::set_history_details_scroll_offset_immediate(int offset_pixels) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    const int next = std::clamp(offset_pixels, 0, history_details_max_scroll_pixels(state));
+    const bool changed = next != history_details_scroll_pixels_ || next != history_details_scroll_target_pixels_ ||
+                         history_details_scroll_animation_start_ != std::chrono::steady_clock::time_point{};
+    history_details_scroll_pixels_ = next;
+    history_details_scroll_target_pixels_ = next;
+    history_details_scroll_animation_start_pixels_ = next;
+    history_details_scroll_animation_start_ = {};
+    if (changed) {
+        request_repaint();
+    }
+    return true;
+}
+
+// Purpose: Animate the History details scroll position to a bounded absolute target.
+// Inputs: `target_pixels` is the desired absolute pixel offset.
+// Outputs: Starts or updates the details smooth-scroll animation and returns whether a visible change is pending.
+bool MainWindow::set_history_details_scroll_target(int target_pixels) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    const int next = std::clamp(target_pixels, 0, history_details_max_scroll_pixels(state));
+    if (next != history_details_scroll_pixels_) {
+        history_details_scroll_animation_start_pixels_ = history_details_scroll_pixels_;
+        history_details_scroll_target_pixels_ = next;
+        history_details_scroll_animation_start_ = std::chrono::steady_clock::now();
+        SetTimer(hwnd_, kAnimationTimer, 8, nullptr);
+        request_repaint();
+        return true;
+    }
+    history_details_scroll_target_pixels_ = next;
+    history_details_scroll_animation_start_ = {};
+    return true;
+}
+
 // Purpose: Apply a bounded pixel scroll to the History details panel.
 // Inputs: `delta_pixels` is positive for down and negative for up.
-// Outputs: Updates scroll offset and queues repaint when the selected details overflow.
+// Outputs: Moves the animated target offset and queues smooth repaint frames when selected details overflow.
 bool MainWindow::scroll_history_details(int delta_pixels) {
     UiState state;
     {
@@ -575,21 +649,10 @@ bool MainWindow::scroll_history_details(int delta_pixels) {
     if (state.page != Page::History) {
         return false;
     }
-    const auto layout = history_layout(content_rect());
-    HDC dc = GetDC(hwnd_);
-    if (dc == nullptr) {
-        return true;
-    }
-    const int content_height = history_details_text_height(dc, layout.details, state);
-    ReleaseDC(hwnd_, dc);
-    const int viewport_height = std::max(1, static_cast<int>(layout.details.bottom - layout.details.top) - scale(18));
-    const int max_scroll = std::max(0, content_height - viewport_height);
-    const int next = std::clamp(history_details_scroll_pixels_ + delta_pixels, 0, max_scroll);
-    if (next != history_details_scroll_pixels_) {
-        history_details_scroll_pixels_ = next;
-        request_repaint();
-    }
-    return true;
+    const int base = history_details_scroll_animation_start_ == std::chrono::steady_clock::time_point{}
+                         ? history_details_scroll_pixels_
+                         : history_details_scroll_target_pixels_;
+    return set_history_details_scroll_target(base + delta_pixels);
 }
 
 // Purpose: Return the product-styled History details scrollbar track.
@@ -626,6 +689,8 @@ void MainWindow::begin_history_details_scroll_drag(int y, const RECT& details, i
     if (thumb.right <= thumb.left) {
         return;
     }
+    history_details_scroll_animation_start_ = {};
+    history_details_scroll_target_pixels_ = history_details_scroll_pixels_;
     history_details_scroll_dragging_ = true;
     history_details_scroll_drag_start_y_ = y;
     history_details_scroll_drag_start_offset_ = history_details_scroll_pixels_;
@@ -643,7 +708,7 @@ void MainWindow::update_history_details_scroll_drag(int y) {
     const int viewport_height = std::max(1, static_cast<int>(layout.details.bottom - layout.details.top) - scale(18));
     const int max_scroll = std::max(0, history_details_scroll_drag_content_height_ - viewport_height);
     if (max_scroll <= 0) {
-        history_details_scroll_pixels_ = 0;
+        reset_history_details_scroll_state();
         return;
     }
     const RECT track = history_details_scrollbar_track_rect(layout.details);
@@ -654,6 +719,7 @@ void MainWindow::update_history_details_scroll_drag(int y) {
                                                    static_cast<double>(max_scroll) / static_cast<double>(travel)));
     const int previous = history_details_scroll_pixels_;
     history_details_scroll_pixels_ = std::clamp(history_details_scroll_drag_start_offset_ + delta, 0, max_scroll);
+    history_details_scroll_target_pixels_ = history_details_scroll_pixels_;
     if (history_details_scroll_pixels_ != previous) {
         request_repaint();
     }
@@ -673,8 +739,7 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     const auto layout = history_layout(rect);
     RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"History", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"History", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_history_filters(dc, area, state);
     draw_history_table(dc, layout.table, state);
     draw_history_details(dc, layout.details, state);
@@ -686,8 +751,7 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
 void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"System", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"System", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     const bool ready = gpu_ready(state);
     RECT top{area.left, area.top + scale(54), area.right, area.top + scale(142)};
@@ -803,7 +867,7 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
 
 // Purpose: Return the four live-monitor card rectangles shared by rendering and hit testing.
 // Inputs: `monitor` is the complete Performance Monitor panel.
-// Outputs: Returns CPU, RAM, I/O, and GPU card rectangles in display order.
+// Outputs: Returns CPU, GPU, RAM, and I/O card rectangles in display order.
 std::array<RECT, 4> MainWindow::performance_monitor_card_rects(const RECT& monitor) const {
     const int graph_top = monitor.top + scale(58);
     const int graph_bottom = monitor.bottom - scale(18);
@@ -817,14 +881,14 @@ std::array<RECT, 4> MainWindow::performance_monitor_card_rects(const RECT& monit
     return cards;
 }
 
-// Purpose: Return the System refresh-interval field rectangle aligned to the GPU card.
+// Purpose: Return the System refresh-interval field rectangle aligned to the rightmost monitor card.
 // Inputs: `monitor` is the complete Performance Monitor panel.
-// Outputs: Returns a narrow same-row field rectangle whose right edge matches the GPU card.
+// Outputs: Returns a narrow same-row field rectangle whose right edge matches the rightmost card.
 RECT MainWindow::performance_update_speed_rect(const RECT& monitor) const {
     const auto cards = performance_monitor_card_rects(monitor);
-    const RECT gpu_card = cards.back();
+    const RECT rightmost_card = cards.back();
     const int box_w = scale(kPerformanceUpdateFieldWidth);
-    return RECT{gpu_card.right - box_w, monitor.top + scale(10), gpu_card.right, monitor.top + scale(40)};
+    return RECT{rightmost_card.right - box_w, monitor.top + scale(10), rightmost_card.right, monitor.top + scale(40)};
 }
 
 // Purpose: Return the fixed-drive selector rectangle inside the I/O monitor card.
@@ -832,7 +896,7 @@ RECT MainWindow::performance_update_speed_rect(const RECT& monitor) const {
 // Outputs: Returns a compact same-row dropdown aligned to the I/O card header.
 RECT MainWindow::performance_io_drive_rect(const RECT& monitor) const {
     const auto cards = performance_monitor_card_rects(monitor);
-    const RECT io_card = cards[2];
+    const RECT io_card = cards[3];
     const int box_w = scale(64);
     return RECT{io_card.right - scale(12) - box_w, io_card.top - scale(12), io_card.right - scale(12),
                 io_card.top + scale(30)};
@@ -840,7 +904,7 @@ RECT MainWindow::performance_io_drive_rect(const RECT& monitor) const {
 
 // Purpose: Draw the live performance monitor section on the System page.
 // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `state` contains the latest counters.
-// Outputs: Renders CPU, RAM, selected-drive total I/O, and total GPU utilization history cards.
+// Outputs: Renders CPU, total GPU, RAM, and selected-drive total I/O utilization history cards.
 void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state) {
     const auto& sample = state.performance;
     fill_round_rect(dc, monitor, kPanel, scale(4));
@@ -887,12 +951,12 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         if (!sample.live) {
             draw_performance_monitor_card(dc, card,
                                           i == 0   ? L"CPU"
-                                          : i == 1 ? L"RAM"
-                                          : i == 2 ? L"I/O"
-                                                   : L"GPU",
+                                          : i == 1 ? L"GPU"
+                                          : i == 2 ? L"RAM"
+                                                   : L"I/O",
                                           L"Collecting", L"Waiting for first sample", std::span<const double>{},
                                           kSubtle, percent_top, zero_percent);
-            if (i == 2) {
+            if (i == 3) {
                 draw_field(dc, performance_io_drive_rect(monitor), L"", io_drive_option_text(state.io_drive_index),
                            drives_available, drives_available);
             }
@@ -902,21 +966,6 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
             draw_performance_monitor_card(dc, card, L"CPU", percentage_text(sample.cpu_percent), detail, cpu_span,
                                           kInfo, percent_top, zero_percent);
         } else if (i == 1) {
-            const auto value = percentage_text(sample.system_memory_percent);
-            const auto detail = std::wstring(L"RAM used (total): ") +
-                                widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes))) + L" / " +
-                                widen(human_bytes(static_cast<double>(sample.system_memory_total_bytes))) +
-                                L"\nRAM used (dedicated): " +
-                                widen(human_bytes(static_cast<double>(sample.private_bytes)));
-            draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent);
-        } else if (i == 2) {
-            const auto detail = std::wstring(L"Read: ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite: " +
-                                rate_text(sample.io_write_bytes_per_second);
-            const auto value = sample.live ? percentage_text(sample.io_busy_percent) : L"Unavailable";
-            draw_performance_monitor_card(dc, card, L"I/O", value, detail, io_span, kWarn, percent_top, zero_percent);
-            draw_field(dc, performance_io_drive_rect(monitor), L"", io_drive_option_text(state.io_drive_index),
-                       drives_available, drives_available);
-        } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
             const auto value =
@@ -929,6 +978,21 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                          : L"HIP VRAM unavailable\nGPU memory counter unavailable";
             draw_performance_monitor_card(dc, card, L"GPU", value, detail, gpu_span, kAccent, percent_top,
                                           zero_percent);
+        } else if (i == 2) {
+            const auto value = percentage_text(sample.system_memory_percent);
+            const auto detail = std::wstring(L"RAM used (total): ") +
+                                widen(human_bytes(static_cast<double>(sample.system_memory_used_bytes))) + L" / " +
+                                widen(human_bytes(static_cast<double>(sample.system_memory_total_bytes))) +
+                                L"\nRAM used (dedicated): " +
+                                widen(human_bytes(static_cast<double>(sample.private_bytes)));
+            draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent);
+        } else {
+            const auto detail = std::wstring(L"Read: ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite: " +
+                                rate_text(sample.io_write_bytes_per_second);
+            const auto value = sample.live ? percentage_text(sample.io_busy_percent) : L"Unavailable";
+            draw_performance_monitor_card(dc, card, L"I/O", value, detail, io_span, kWarn, percent_top, zero_percent);
+            draw_field(dc, performance_io_drive_rect(monitor), L"", io_drive_option_text(state.io_drive_index),
+                       drives_available, drives_available);
         }
     }
 }
@@ -940,8 +1004,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     const auto layout = settings_layout(rect);
     RECT area = layout.area;
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Settings", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"Settings", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_button(dc, layout.restore_defaults, L"Restore Defaults", false);
     draw_button(dc, layout.apply, L"Apply", true);
 
@@ -988,8 +1051,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
 void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"About", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(dc, page_title_rect(area), L"About", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const RECT licenses_button = about_licenses_button_rect(area);
     RECT card{area.left, area.top + scale(54), area.right, area.bottom - scale(60)};
     fill_round_rect(dc, card, kPanel, scale(4));

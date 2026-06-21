@@ -359,7 +359,7 @@ void MainWindow::clear_history() {
         state_.selected_history_index = -1;
         history_scroll_first_row_ = 0;
         history_wheel_delta_remainder_ = 0;
-        history_details_scroll_pixels_ = 0;
+        reset_history_details_scroll_state();
     }
     request_repaint();
 }

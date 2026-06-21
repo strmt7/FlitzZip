@@ -46,6 +46,13 @@ RECT MainWindow::primary_action_rect(const RECT& area) const {
     return RECT{area.right - scale(110), area.bottom - scale(54), area.right, area.bottom - scale(18)};
 }
 
+// Purpose: Return the standard page-title text rectangle aligned to page action buttons.
+// Inputs: `area` is the DPI-scaled page content area.
+// Outputs: Returns the shared title rectangle for every top-level page header.
+RECT MainWindow::page_title_rect(const RECT& area) const {
+    return RECT{area.left, area.top, area.right, area.top + scale(kPageHeaderHeight)};
+}
+
 // Purpose: Return the secondary action button aligned immediately left of a primary action.
 // Inputs: `primary` is a DPI-scaled primary action rectangle.
 // Outputs: Returns a same-sized button with the standard command gap.
