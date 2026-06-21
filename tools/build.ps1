@@ -7,6 +7,7 @@ param(
     [string]$HipArch = "gfx1201",
     [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",
+    [string]$MsiProductIdentity = "",
     [ValidateSet("perUser", "perMachine")] [string]$MsiInstallScope = "perMachine"
 )
 
@@ -76,12 +77,44 @@ function Assert-BuildOutputNotRunning {
     }
 }
 
+# Purpose: Create a bounded MSI ProductCode identity for local build outputs.
+# Inputs: None; reads the current git commit when available and appends a UTC timestamp.
+# Outputs: Returns a single-line token safe for CMake and Windows Installer identity derivation.
+function Get-MsiProductIdentity {
+    $commit = "nogit"
+    $gitOutput = & git -C $repo rev-parse --short=12 HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $gitOutput) {
+        $commit = [string]$gitOutput
+    }
+    return "local-$commit-$((Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmss"))"
+}
+
+# Purpose: Validate a caller-provided MSI product identity before passing it to CMake.
+# Inputs: Identity is a package/build token used in ProductCode derivation.
+# Outputs: Returns the trimmed identity or throws when it is empty or unsafe.
+function Assert-MsiProductIdentity {
+    param([Parameter(Mandatory = $true)][string]$Identity)
+
+    $trimmed = $Identity.Trim()
+    if (-not $trimmed) {
+        throw "MSI product identity must not be empty."
+    }
+    if ($trimmed -notmatch '^[A-Za-z0-9_.:-]+$') {
+        throw "MSI product identity may contain only letters, digits, underscore, dot, colon, or hyphen."
+    }
+    return $trimmed
+}
+
 $cmake = Find-CMake
 if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
 }
 $hipArg = if ($CpuOnlyValidation.IsPresent) { "OFF" } else { "ON" }
 $PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
+if (-not $MsiProductIdentity.Trim()) {
+    $MsiProductIdentity = Get-MsiProductIdentity
+}
+$MsiProductIdentity = Assert-MsiProductIdentity -Identity $MsiProductIdentity
 $configureArgs = @(
     "-S", $repo,
     "-B", $build,
@@ -92,6 +125,7 @@ $configureArgs = @(
     "-DSUPERZIP_VCVARS_VERSION=$VcvarsVersion",
     "-DSUPERZIP_PACKAGE_VERSION=$PackageVersion",
     "-DSUPERZIP_MSI_INSTALL_SCOPE=$MsiInstallScope",
+    "-DSUPERZIP_MSI_PRODUCT_IDENTITY=$MsiProductIdentity",
     "-DSUPERZIP_BUILD_GUI=ON",
     "-DSUPERZIP_BUILD_TESTS=ON"
 )

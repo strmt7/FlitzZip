@@ -114,12 +114,6 @@ runs:
         if ($env:CREATE_MSI -notin @("true", "false")) {
             throw "create_msi must be true or false."
         }
-        if ($replaceExisting -and $env:CREATE_MSI -eq "true") {
-            throw (
-                "replace_existing=true is refused for MSI releases. " +
-                "MSI release replacement can leave Windows Installer with an already-installed same-version product; " +
-                "publish a new SemVer numeric version, normally by increasing the patch digit.")
-        }
         if ($env:ENABLE_HIP -notin @("true", "false")) {
             throw "enable_hip must be true or false."
         }
@@ -164,13 +158,7 @@ runs:
             throw "Release or tag $releaseTag already exists. Re-run with replace_existing=true to replace it."
         }
         if ($replaceExisting) {
-            if ($existingRelease) {
-                gh release delete $releaseTag --yes --cleanup-tag
-            }
-            $tagQuery = git ls-remote --tags origin "refs/tags/$releaseTag"
-            if ($tagQuery) {
-                gh api -X DELETE "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$releaseTag"
-            }
+            "REPLACE_RELEASE_TAG=$releaseTag" | Add-Content -LiteralPath $env:GITHUB_ENV
         }
 
     - name: Install AMD HIP SDK
@@ -271,6 +259,7 @@ runs:
             Configuration = "Release"
             PackageVersion = $env:PACKAGE_VERSION
             MsiInstallScope = "perMachine"
+            MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"
         }
         if ($env:ENABLE_HIP -eq "true") {
             $buildArgs.EnableHip = $true
@@ -684,6 +673,21 @@ runs:
                 "out\$env:PACKAGE_BASE.msi",
                 "out\$env:PACKAGE_BASE.msi.sha256"
             )
+        }
+        if ($env:REPLACE_EXISTING -eq "true") {
+            if ($env:REPLACE_RELEASE_TAG -ne $env:RELEASE_TAG) {
+                throw "Replacement tag tracking mismatch."
+            }
+            gh release view $env:RELEASE_TAG *> $null
+            if ($LASTEXITCODE -eq 0) {
+                gh release delete $env:RELEASE_TAG --yes --cleanup-tag
+            } else {
+                $global:LASTEXITCODE = 0
+                $tagQuery = git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG"
+                if ($tagQuery) {
+                    gh api -X DELETE "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$env:RELEASE_TAG"
+                }
+            }
         }
         $createArgs = @(
             "release", "create", $env:RELEASE_TAG

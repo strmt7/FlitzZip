@@ -155,14 +155,16 @@ function Assert-ReleaseReplacementSafeguard {
             "replacement_acknowledgement:",
             "REPLACEMENT_ACKNOWLEDGEMENT",
             "replace_existing=true requires replacement_acknowledgement exactly",
-            "replace_existing=true is refused for MSI releases",
+            "REPLACE_RELEASE_TAG=`$releaseTag",
+            "Replacement tag tracking mismatch",
+            'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"',
             "Replacement is exceptional")) {
         if ($actionText -notmatch [regex]::Escape($requiredSnippet)) {
             throw "Windows release action is missing the replacement acknowledgement safeguard: $requiredSnippet"
         }
     }
-    if ($workflowText -notmatch [regex]::Escape("MSI releases must use a new SemVer numeric version")) {
-        throw "Release workflow input text must warn that MSI releases are not same-version replaceable."
+    if ($workflowText -notmatch [regex]::Escape("MSI replacements get a fresh ProductCode from the release run identity")) {
+        throw "Release workflow input text must document same-version MSI replacement identity."
     }
 }
 

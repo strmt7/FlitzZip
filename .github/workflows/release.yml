@@ -9,7 +9,7 @@ on:
         default: ""
         type: string
       replace_existing:
-        description: Exceptional non-MSI replacement only; MSI releases must use a new SemVer numeric version
+        description: Exceptional replacement only; MSI replacements get a fresh ProductCode from the release run identity
         required: false
         default: false
         type: boolean

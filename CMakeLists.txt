@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   SuperZip
-  VERSION 0.5.1
+  VERSION 0.5.0
   LANGUAGES C CXX)
 
 if(MSVC)
@@ -60,11 +60,29 @@ if(NOT SUPERZIP_MSI_INSTALL_SCOPE STREQUAL "perUser"
   message(
     FATAL_ERROR "SUPERZIP_MSI_INSTALL_SCOPE must be perUser or perMachine.")
 endif()
+string(
+  CONCAT SUPERZIP_MSI_PRODUCT_IDENTITY_HELP
+         "Unique MSI package/build identity included in ProductCode "
+         "derivation; release workflows set this to the GitHub run identity "
+         "so same-version release replacements perform a major upgrade.")
+set(SUPERZIP_MSI_PRODUCT_IDENTITY
+    ""
+    CACHE STRING "${SUPERZIP_MSI_PRODUCT_IDENTITY_HELP}")
+if(NOT SUPERZIP_MSI_PRODUCT_IDENTITY)
+  string(TIMESTAMP SUPERZIP_MSI_PRODUCT_IDENTITY "local-%Y%m%d%H%M%S" UTC)
+endif()
+if(NOT SUPERZIP_MSI_PRODUCT_IDENTITY MATCHES "^[A-Za-z0-9_.:-]+$")
+  message(
+    FATAL_ERROR
+      "SUPERZIP_MSI_PRODUCT_IDENTITY must contain only letters, digits, "
+      "underscore, dot, colon, or hyphen.")
+endif()
 set(SUPERZIP_WIX_UPGRADE_GUID "8E0D80F6-859D-4FE9-B082-F0D8048A8B57")
 string(
   CONCAT SUPERZIP_WIX_PRODUCT_CODE_SEED "SuperZip MSI ProductCode "
          "${SUPERZIP_PACKAGE_NUMERIC_VERSION} "
-         "${SUPERZIP_MSI_INSTALL_SCOPE}")
+         "${SUPERZIP_MSI_INSTALL_SCOPE} "
+         "${SUPERZIP_MSI_PRODUCT_IDENTITY}")
 string(SHA256 SUPERZIP_WIX_PRODUCT_CODE_HASH
        "${SUPERZIP_WIX_UPGRADE_GUID}|${SUPERZIP_WIX_PRODUCT_CODE_SEED}")
 string(SUBSTRING "${SUPERZIP_WIX_PRODUCT_CODE_HASH}" 0 8

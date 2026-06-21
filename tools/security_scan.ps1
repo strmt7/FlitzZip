@@ -70,14 +70,16 @@ function Assert-ReleaseReplacementSafeguard {
             "replacement_acknowledgement:",
             "REPLACEMENT_ACKNOWLEDGEMENT",
             "replace_existing=true requires replacement_acknowledgement exactly",
-            "replace_existing=true is refused for MSI releases",
+            "REPLACE_RELEASE_TAG=`$releaseTag",
+            "Replacement tag tracking mismatch",
+            'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"',
             "Replacement is exceptional")) {
         if ($actionText -notmatch [regex]::Escape($requiredSnippet)) {
             throw "Windows release action is missing the replacement acknowledgement safeguard: $requiredSnippet"
         }
     }
-    if ($workflowText -notmatch [regex]::Escape("MSI releases must use a new SemVer numeric version")) {
-        throw "Release workflow input text must warn that MSI releases are not same-version replaceable."
+    if ($workflowText -notmatch [regex]::Escape("MSI replacements get a fresh ProductCode from the release run identity")) {
+        throw "Release workflow input text must document same-version MSI replacement identity."
     }
 }
 
@@ -385,11 +387,12 @@ Test-GuiOwnedSurfacePolicy
 
 & (Join-Path $repo "tools\refactor_audit.ps1") -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
 
-# Purpose: Verify release MSI defaults remain aligned with the product installer contract.
-# Inputs: Reads CMake, build script, and release workflow text from the repository.
-# Outputs: Throws when the release MSI can drift away from the Program Files per-machine path.
-function Test-InstallerScopePolicy {
-    $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
+# Purpose: Verify CMake release MSI identity and UI defaults.
+# Inputs: CMakeLists is the repository CMake source text.
+# Outputs: Throws when CMake MSI metadata can drift from the product contract.
+function Test-InstallerCMakePolicy {
+    param([Parameter(Mandatory = $true)][string]$CMakeLists)
+
     if ($cmakeLists -notmatch 'set\(SUPERZIP_MSI_INSTALL_SCOPE\s+"perMachine"') {
         throw "CMakeLists.txt must default SUPERZIP_MSI_INSTALL_SCOPE to perMachine for product MSI releases."
     }
@@ -402,8 +405,8 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'set\(SUPERZIP_WIX_UPGRADE_GUID\s+"8E0D80F6-859D-4FE9-B082-F0D8048A8B57"\)') {
         throw "CMakeLists.txt must keep SuperZip's stable MSI UpgradeCode in one explicit variable."
     }
-    if ($cmakeLists -notmatch 'SUPERZIP_WIX_PRODUCT_CODE_SEED[\s\S]*SUPERZIP_PACKAGE_NUMERIC_VERSION[\s\S]*SUPERZIP_MSI_INSTALL_SCOPE') {
-        throw "CMakeLists.txt must seed the MSI ProductCode from package numeric version and install scope."
+    if ($cmakeLists -notmatch 'SUPERZIP_WIX_PRODUCT_CODE_SEED[\s\S]*SUPERZIP_PACKAGE_NUMERIC_VERSION[\s\S]*SUPERZIP_MSI_INSTALL_SCOPE[\s\S]*SUPERZIP_MSI_PRODUCT_IDENTITY') {
+        throw "CMakeLists.txt must seed the MSI ProductCode from package numeric version, install scope, and package identity."
     }
     if ($cmakeLists -notmatch 'string\(SHA256\s+SUPERZIP_WIX_PRODUCT_CODE_HASH[\s\S]*SUPERZIP_WIX_PRODUCT_CODE_SEED') {
         throw "CMakeLists.txt must derive the MSI ProductCode from a SHA-256 identity seed."
@@ -426,8 +429,17 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'superzip_desktop_shortcut\.wxs' -or $cmakeLists -notmatch 'superzip_wix_patch\.xml') {
         throw "CMakeLists.txt must include the optional shortcut WiX source and patch files."
     }
+}
 
-    $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_desktop_shortcut.wxs") -Raw
+# Purpose: Verify optional MSI shortcut WiX fragments remain user-selectable.
+# Inputs: DesktopShortcut and DesktopPatch are the WiX source and patch text.
+# Outputs: Throws when shortcut options stop being explicit MSI features.
+function Test-InstallerShortcutPolicy {
+    param(
+        [Parameter(Mandatory = $true)][string]$DesktopShortcut,
+        [Parameter(Mandatory = $true)][string]$DesktopPatch
+    )
+
     if ($desktopShortcut -notmatch 'CM_SHORTCUT_DESKTOP_OPTIONAL' -or $desktopShortcut -notmatch 'DesktopFolder') {
         throw "Optional desktop shortcut WiX source must define the MSI-owned DesktopFolder shortcut component."
     }
@@ -437,20 +449,32 @@ function Test-InstallerScopePolicy {
     if ($desktopShortcut -notmatch 'Software\\Efstratios Mitridis\\SuperZip') {
         throw "Optional shortcut registry markers must use the Efstratios Mitridis publisher key."
     }
-    $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
     if ($desktopPatch -notmatch 'Create Desktop shortcut' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"') {
         throw "WiX patch must expose the Create Desktop shortcut feature and reference its component."
     }
     if ($desktopPatch -notmatch 'Create Start Menu entry' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_START_MENU_OPTIONAL"') {
         throw "WiX patch must expose the Create Start Menu entry feature and reference its component."
     }
+}
 
-    $buildScript = Get-Content -LiteralPath (Join-Path $repo "tools\build.ps1") -Raw
+# Purpose: Verify build/package scripts preserve MSI identity validation.
+# Inputs: Script text from build, package, MSI identity, and verifier routing.
+# Outputs: Throws when local or release packaging can miss MSI identity checks.
+function Test-InstallerPackagingScriptPolicy {
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildScript,
+        [Parameter(Mandatory = $true)][string]$PackageScript,
+        [Parameter(Mandatory = $true)][string]$MsiIdentityTool,
+        [Parameter(Mandatory = $true)][string]$VerificationSelector
+    )
+
     if ($buildScript -notmatch '\[string\]\$MsiInstallScope\s*=\s*"perMachine"') {
         throw "tools/build.ps1 must default -MsiInstallScope to perMachine. Use explicit perUser only for local non-admin tests."
     }
+    if ($buildScript -notmatch '\[string\]\$MsiProductIdentity\s*=' -or $buildScript -notmatch 'SUPERZIP_MSI_PRODUCT_IDENTITY=\$MsiProductIdentity') {
+        throw "tools/build.ps1 must pass an explicit MSI product identity into CMake ProductCode derivation."
+    }
 
-    $packageScript = Get-Content -LiteralPath (Join-Path $repo "tools\package.ps1") -Raw
     if ($packageScript -notmatch 'Read-MsiProperty\s+-MsiPath\s+\$msi\s+-Name\s+"ProductCode"' -or $packageScript -notmatch 'CPACK_WIX_PRODUCT_GUID') {
         throw "tools/package.ps1 must verify the generated MSI ProductCode against CPack's deterministic ProductCode."
     }
@@ -458,16 +482,20 @@ function Test-InstallerScopePolicy {
         throw "tools/package.ps1 must verify the generated MSI UpgradeCode before publishing."
     }
 
-    $msiIdentityTool = Get-Content -LiteralPath (Join-Path $repo "tools\test_msi_identity.ps1") -Raw
-    if ($msiIdentityTool -notmatch 'same version and install scope' -or $msiIdentityTool -notmatch 'Patch-version update did not change the MSI ProductCode') {
-        throw "tools/test_msi_identity.ps1 must verify same-build stability and patch-version ProductCode changes."
+    if ($msiIdentityTool -notmatch 'Same-version replacement identity did not change the MSI ProductCode' -or $msiIdentityTool -notmatch 'Patch-version update did not change the MSI ProductCode') {
+        throw "tools/test_msi_identity.ps1 must verify same-build stability, same-version replacement identity changes, and patch-version ProductCode changes."
     }
-    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\superzip_verification.psm1") -Raw
     if ($verificationSelector -notmatch 'msi-identity-smoke' -or $verificationSelector -notmatch 'tools/test_msi_identity\.ps1') {
         throw "Packaging verification must route through tools/test_msi_identity.ps1."
     }
+}
 
-    $releaseAction = Get-Content -LiteralPath (Join-Path $repo ".github\actions\windows-release\action.yml") -Raw
+# Purpose: Verify release workflow MSI validation uses per-machine bounded paths.
+# Inputs: ReleaseAction is the composite release action YAML text.
+# Outputs: Throws when hosted release validation can publish unchecked MSI output.
+function Test-InstallerReleaseActionPolicy {
+    param([Parameter(Mandatory = $true)][string]$ReleaseAction)
+
     if ($releaseAction -notmatch 'MsiInstallScope\s*=\s*"perMachine"') {
         throw "Release workflow must pass MsiInstallScope=perMachine for published MSI artifacts."
     }
@@ -492,6 +520,31 @@ function Test-InstallerScopePolicy {
     if ($releaseAction -notmatch 'MSI repair' -or $releaseAction -notmatch 'superzip-msi-repair-dependency-check\.txt') {
         throw "Release MSI smoke tests must repair the just-installed MSI and run dependency-check after repair."
     }
+}
+
+# Purpose: Verify release MSI defaults remain aligned with the installer contract.
+# Inputs: Reads installer-related CMake, WiX, script, and workflow text.
+# Outputs: Throws when the release MSI can drift from the per-machine contract.
+function Test-InstallerScopePolicy {
+    $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
+    Test-InstallerCMakePolicy -CMakeLists $cmakeLists
+
+    $desktopShortcut = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_desktop_shortcut.wxs") -Raw
+    $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
+    Test-InstallerShortcutPolicy -DesktopShortcut $desktopShortcut -DesktopPatch $desktopPatch
+
+    $buildScript = Get-Content -LiteralPath (Join-Path $repo "tools\build.ps1") -Raw
+    $packageScript = Get-Content -LiteralPath (Join-Path $repo "tools\package.ps1") -Raw
+    $msiIdentityTool = Get-Content -LiteralPath (Join-Path $repo "tools\test_msi_identity.ps1") -Raw
+    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\superzip_verification.psm1") -Raw
+    Test-InstallerPackagingScriptPolicy `
+        -BuildScript $buildScript `
+        -PackageScript $packageScript `
+        -MsiIdentityTool $msiIdentityTool `
+        -VerificationSelector $verificationSelector
+
+    $releaseAction = Get-Content -LiteralPath (Join-Path $repo ".github\actions\windows-release\action.yml") -Raw
+    Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction
 }
 
 Test-InstallerScopePolicy

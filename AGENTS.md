@@ -534,19 +534,20 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
-- Do not replace an existing installable MSI release. Same-version MSI
-  replacement can leave Windows Installer presenting an already-installed
-  product conflict; installable corrections must publish a new SemVer numeric
-  version, normally by increasing the patch digit. The release workflow refuses
-  `replace_existing=true` when `create_msi=true`.
-- MSI update identity must stay deterministic: keep one stable SuperZip
-  `UpgradeCode`, derive `ProductCode` from a SHA-256 seed that includes the MSI
-  numeric version and install scope, and bump the SemVer patch/minor/major value
-  for every release that should update an existing install. Do not rely on
-  same-version commit hashes for installer ordering unless a future approved
-  bootstrapper implements an explicit orderable build identity. Run
+- Release replacement is exceptional and requires explicit maintainer/user
+  instruction, `replace_existing=true`, and the exact
+  `replacement_acknowledgement` for the target version. MSI replacement is
+  allowed only through the release workflow, which builds and validates first,
+  then deletes the old release/tag immediately before publishing the replacement.
+- MSI update identity must support same-version release replacement: keep one
+  stable SuperZip `UpgradeCode`, derive `ProductCode` from a SHA-256 seed that
+  includes the MSI numeric version, install scope, and package/build identity,
+  and keep WiX `MajorUpgrade` with same-version upgrades enabled. Release builds
+  must use the GitHub run identity for the product identity so a republished MSI
+  can major-upgrade an installed same-version package instead of showing
+  Windows Installer's already-installed conflict. Run
   `tools\test_msi_identity.ps1` after changing CPack, WiX, release packaging,
-  installer scope, or version metadata.
+  installer scope, product identity, or version metadata.
 - SuperZip-owned installer launch, release, and smoke-test paths must use
   bounded waits. MSI install, repair, and uninstall phases default to a 300-second
   timeout, and HIP SDK installer setup in hosted release validation must time
@@ -688,14 +689,15 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   and run install/repair/uninstall smoke tests before publishing.
 - Do not replace an existing GitHub release or tag by default. Release
   replacement is exceptional and is allowed only when the current maintainer or
-  user request explicitly asks for that specific non-MSI replacement. A
-  replacement run must use an explicit `release_version`,
-  `replace_existing=true`, `replacement_acknowledgement` set exactly to
-  `replace <same-version>`, and `create_msi=false`. Normal release runs use a
-  new SemVer version with `replace_existing=false`, and release notes must list
-  the actual fixes, created assets, validation work, and known limitations. Do
-  not hardcode proposed release versions in agent instructions or repository
-  policy text.
+  user request explicitly asks for that specific version replacement. A
+  replacement run must use an explicit `release_version`, `replace_existing=true`,
+  and `replacement_acknowledgement` set exactly to `replace <same-version>`.
+  MSI replacement must keep `create_msi=true` and must use the release-run MSI
+  product identity so Windows Installer performs a same-version major upgrade.
+  Normal release runs use a new SemVer version with `replace_existing=false`,
+  and release notes must list the actual fixes, created assets, validation work,
+  and known limitations. Do not hardcode proposed release versions in agent
+  instructions or repository policy text.
 
 ## Agent Workflow
 

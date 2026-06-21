@@ -80,7 +80,8 @@ function Remove-MsiIdentityTempDirectory {
 }
 
 # Purpose: Configure a lightweight CPack tree and read its MSI identity fields.
-# Inputs: CMakePath is cmake.exe; Name identifies the temp directory; PackageVersion and Scope select MSI identity.
+# Inputs: CMakePath is cmake.exe; Name identifies the temp directory; PackageVersion, ProductIdentity, and Scope select
+# MSI identity.
 # Outputs: Returns ProductCode, UpgradeCode, ProductVersion, and build path metadata.
 function Get-MsiIdentitySnapshot {
     param(
@@ -90,6 +91,8 @@ function Get-MsiIdentitySnapshot {
         [string]$Name,
         [Parameter(Mandatory = $true)]
         [string]$PackageVersion,
+        [Parameter(Mandatory = $true)]
+        [string]$ProductIdentity,
         [ValidateSet("perUser", "perMachine")]
         [string]$Scope = "perMachine"
     )
@@ -105,6 +108,7 @@ function Get-MsiIdentitySnapshot {
         "-DSUPERZIP_BUILD_GUI=OFF",
         "-DSUPERZIP_BUILD_TESTS=OFF",
         "-DSUPERZIP_PACKAGE_VERSION=$PackageVersion",
+        "-DSUPERZIP_MSI_PRODUCT_IDENTITY=$ProductIdentity",
         "-DSUPERZIP_MSI_INSTALL_SCOPE=$Scope"
     )
     Invoke-CMakeChecked -CMakePath $CMakePath -Arguments $configureArgs -Label "CMake configure for $Name"
@@ -112,6 +116,7 @@ function Get-MsiIdentitySnapshot {
     return [pscustomobject][ordered]@{
         name = $Name
         packageVersion = $PackageVersion
+        productIdentity = $ProductIdentity
         scope = $Scope
         productVersion = Read-SuperZipCPackValue -BuildRoot $buildRoot -Name "CPACK_PACKAGE_VERSION"
         productCode = Read-SuperZipCPackValue -BuildRoot $buildRoot -Name "CPACK_WIX_PRODUCT_GUID"
@@ -126,27 +131,32 @@ $nextPatchVersion = Get-NextPatchPackageVersion -PackageVersion $baseVersion
 $snapshots = @()
 
 try {
-    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-a" -PackageVersion $baseVersion -Scope "perMachine"
-    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-b" -PackageVersion $baseVersion -Scope "perMachine"
-    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "next-patch" -PackageVersion $nextPatchVersion -Scope "perMachine"
-    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-per-user" -PackageVersion $baseVersion -Scope "perUser"
+    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-a" -PackageVersion $baseVersion -ProductIdentity "run-a" -Scope "perMachine"
+    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-b" -PackageVersion $baseVersion -ProductIdentity "run-a" -Scope "perMachine"
+    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-version-replacement" -PackageVersion $baseVersion -ProductIdentity "run-b" -Scope "perMachine"
+    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "next-patch" -PackageVersion $nextPatchVersion -ProductIdentity "run-a" -Scope "perMachine"
+    $snapshots += Get-MsiIdentitySnapshot -CMakePath $cmake -Name "same-per-user" -PackageVersion $baseVersion -ProductIdentity "run-a" -Scope "perUser"
 
     if ($snapshots[0].productCode -ne $snapshots[1].productCode) {
-        throw "Same version and install scope produced different MSI ProductCode values."
+        throw "Same version, install scope, and product identity produced different MSI ProductCode values."
     }
     if ($snapshots[0].productCode -eq $snapshots[2].productCode) {
-        throw "Patch-version update did not change the MSI ProductCode."
+        throw "Same-version replacement identity did not change the MSI ProductCode."
     }
     if ($snapshots[0].productCode -eq $snapshots[3].productCode) {
+        throw "Patch-version update did not change the MSI ProductCode."
+    }
+    if ($snapshots[0].productCode -eq $snapshots[4].productCode) {
         throw "Per-machine and per-user MSI scopes produced the same ProductCode."
     }
     foreach ($snapshot in $snapshots) {
         if ($snapshot.upgradeCode -ne $snapshots[0].upgradeCode) {
             throw "MSI UpgradeCode changed for snapshot $($snapshot.name)."
         }
-        Write-Output ("msi_identity name={0} version={1} scope={2} product_version={3} product_code={4} upgrade_code={5}" -f
+        Write-Output ("msi_identity name={0} version={1} identity={2} scope={3} product_version={4} product_code={5} upgrade_code={6}" -f
             $snapshot.name,
             $snapshot.packageVersion,
+            $snapshot.productIdentity,
             $snapshot.scope,
             $snapshot.productVersion,
             $snapshot.productCode,

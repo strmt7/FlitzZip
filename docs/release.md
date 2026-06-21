@@ -34,22 +34,21 @@ SuperZip uses Windows Installer identity rules directly:
 - `UpgradeCode` is stable for all SuperZip MSI releases so Windows Installer can
   detect installed SuperZip products.
 - `ProductCode` is deterministically derived from a SHA-256 identity seed
-  containing the stable `UpgradeCode`, MSI numeric version, and install scope.
-  Re-running the same release enters the standard Windows Installer maintenance
-  path, where repair and uninstall are available.
-- Any build that should behave as an update must change the SemVer numeric
-  version, normally by increasing the patch digit. MSI version comparisons use
-  the first three numeric fields; SuperZip does not try to order commit hashes
-  inside a same-version MSI.
-- The release workflow refuses `replace_existing=true` when `create_msi=true`.
-  Correcting an installable release means publishing a new SemVer numeric
-  version so Windows Installer receives a distinct product identity. Same-version
-  replacement is limited to explicit non-MSI release metadata or portable-asset
-  correction.
-- `tools\test_msi_identity.ps1` verifies that same-version/same-scope MSIs keep
-  the same `ProductCode`, patch updates receive a different `ProductCode`, all
-  scopes keep the same `UpgradeCode`, and per-user test MSIs do not collide with
-  product per-machine MSIs.
+  containing the stable `UpgradeCode`, MSI numeric version, install scope, and
+  package/build identity. Release builds use the GitHub run identity so a
+  republished same-version MSI receives a distinct `ProductCode`.
+- WiX `MajorUpgrade` has same-version upgrades enabled. When a replacement MSI
+  has the same numeric version but a new ProductCode under the stable
+  UpgradeCode, Windows Installer removes the installed package and installs the
+  replacement instead of showing an already-installed conflict.
+- New normal releases should still use a new SemVer numeric version. Same-version
+  MSI replacement is exceptional and must be explicitly requested by the
+  maintainer/user.
+- `tools\test_msi_identity.ps1` verifies that same version/same scope/same
+  product identity is stable, same-version replacement identity changes the
+  `ProductCode`, patch updates receive a different `ProductCode`, all scopes
+  keep the same `UpgradeCode`, and per-user test MSIs do not collide with product
+  per-machine MSIs.
 - Release smoke installs the MSI, repairs the same MSI, runs dependency-check
   after repair, and then uninstalls it. This proves that install, repair, and
   uninstall all operate through the shipped package.
@@ -88,12 +87,12 @@ download paths to the repository.
 
 - `release_version`: SemVer product version without a `v` prefix. Leave it
   empty to use the version declared in `CMakeLists.txt`.
-- `replace_existing`: deletes the existing release/tag before publishing when
-  set to `true`. This is exceptional and must be used only when the current
-  maintainer/user request explicitly asks to replace that specific non-MSI
-  release. The workflow refuses replacement when `create_msi=true`; installable
-  corrections require a new SemVer numeric version. Normal release runs use a
-  new SemVer version with `replace_existing=false`.
+- `replace_existing`: replaces the existing release/tag when set to `true`.
+  This is exceptional and must be used only when the current maintainer/user
+  request explicitly asks to replace that specific version. The workflow builds,
+  tests, packages, and smoke-tests first, then deletes the existing release/tag
+  immediately before publishing the replacement. Normal release runs use a new
+  SemVer version with `replace_existing=false`.
 - `replacement_acknowledgement`: required only when `replace_existing=true`.
   Enter exactly `replace <same-version>`, matching the explicit
   `release_version` value in the same run. The release
@@ -199,7 +198,7 @@ gh workflow run release.yml -R strmt7/SuperZip `
 ```
 
 Replacement example, only after the current maintainer/user request explicitly
-asks to replace that specific non-MSI version:
+asks to replace that specific version:
 
 ```powershell
 gh workflow run release.yml -R strmt7/SuperZip `
@@ -207,5 +206,5 @@ gh workflow run release.yml -R strmt7/SuperZip `
   -f replace_existing=true `
   -f replacement_acknowledgement="replace <existing-semver>" `
   -f release_track=beta `
-  -f create_msi=false
+  -f create_msi=true
 ```
