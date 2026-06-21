@@ -239,7 +239,6 @@ bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
 // Outputs: Returns true when a history filter or command consumed the click.
 bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
     const auto layout = history_layout(content);
-    RECT area = layout.area;
     const RECT operation = layout.operation_filter;
     const RECT status = layout.status_filter;
     const RECT clear = layout.clear;
