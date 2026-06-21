@@ -77,10 +77,10 @@ constexpr UINT_PTR kPerformanceTimer = 8;
 constexpr UINT kGpuMemorySampleMs = 1000;
 
 constexpr std::array<std::string_view, 19> kCompressionCreateFormatExtensions{
-    ".zip",     ".suzip", ".tar.gz", ".tgz", ".tar",  ".gz",      ".zst",  ".zstd", ".tar.zst", ".tzst",
-    ".tar.bz2", ".tbz2",  ".tbz",    ".bz2", ".cpio", ".cpio.gz", ".cpgz", ".ar",   ".Z",
+    ".suzip",   ".zip",  ".tar.gz", ".tgz", ".tar",  ".gz",      ".zst",  ".zstd", ".tar.zst", ".tzst",
+    ".tar.bz2", ".tbz2", ".tbz",    ".bz2", ".cpio", ".cpio.gz", ".cpgz", ".ar",   ".Z",
 };
-constexpr int kDefaultCompressionFormatIndex = 1;
+constexpr int kDefaultCompressionFormatIndex = 0;
 constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormatExtensions.size()) - 1;
 constexpr std::array<int, 4> kPerformanceUpdateSecondsOptions{1, 3, 5, 10};
 constexpr std::array<std::uint32_t, 7> kCompressionBlockSizeOptions{

@@ -57,7 +57,7 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
     const DWORD style = window_style();
     RECT initial_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(initial_dpi), 96),
                         MulDiv(kDesignClientHeight, static_cast<int>(initial_dpi), 96)};
-    AdjustWindowRectExForDpi(&initial_window, style, FALSE, WS_EX_ACCEPTFILES, initial_dpi);
+    AdjustWindowRectExForDpi(&initial_window, style, FALSE, 0, initial_dpi);
     const int initial_width = initial_window.right - initial_window.left;
     const int initial_height = initial_window.bottom - initial_window.top;
 
@@ -80,8 +80,8 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
         return 1;
     }
 
-    hwnd_ = CreateWindowExW(WS_EX_ACCEPTFILES, wc.lpszClassName, L"SuperZip", style, CW_USEDEFAULT, CW_USEDEFAULT,
-                            initial_width, initial_height, nullptr, nullptr, instance, this);
+    hwnd_ = CreateWindowExW(0, wc.lpszClassName, L"SuperZip", style, CW_USEDEFAULT, CW_USEDEFAULT, initial_width,
+                            initial_height, nullptr, nullptr, instance, this);
     if (hwnd_ == nullptr) {
         UnregisterClassW(wc.lpszClassName, instance);
         if (class_background != nullptr) {
@@ -150,7 +150,7 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         const auto* suggested = reinterpret_cast<RECT*>(lparam);
         RECT fixed_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(dpi_), 96),
                           MulDiv(kDesignClientHeight, static_cast<int>(dpi_), 96)};
-        AdjustWindowRectExForDpi(&fixed_window, window_style(), FALSE, WS_EX_ACCEPTFILES, dpi_);
+        AdjustWindowRectExForDpi(&fixed_window, window_style(), FALSE, 0, dpi_);
         SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, fixed_window.right - fixed_window.left,
                      fixed_window.bottom - fixed_window.top, SWP_NOZORDER | SWP_NOACTIVATE);
         request_repaint();

@@ -6,6 +6,8 @@ SuperZip vendors the minimal ANSI-C 7z decoder subset from LZMA SDK 26.01.
 - Archive: `lzma2601.7z`
 - SHA-256: `b860f17f9df3c0524dd2ef2c639ab5e43ad0006b77b8f7bb6d191bf528536885`
 - License: public domain, as stated in `DOC/lzma-sdk.txt` in the upstream archive.
+  `LICENSE` is an exact text copy of that upstream file for build-time license
+  notice generation on hosts that cannot extract `.7z` archives.
 
 Only the C decoder files needed by the `7zDec` path are copied into
 `third_party/lzma_sdk/C/`. SuperZip does not ship or call the SDK's prebuilt

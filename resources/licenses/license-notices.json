@@ -1,0 +1,49 @@
+{
+  "notices": [
+    {
+      "title": "SuperZip",
+      "group": "SuperZip",
+      "source": "LICENSE"
+    },
+    {
+      "title": "miniz 3.1.1",
+      "group": "Other",
+      "source": "third_party/miniz/LICENSE"
+    },
+    {
+      "title": "bzip2 1.0.8",
+      "group": "Other",
+      "source": "third_party/bzip2/LICENSE"
+    },
+    {
+      "title": "XZ Embedded",
+      "group": "Other",
+      "source": "third_party/xz_embedded/COPYING"
+    },
+    {
+      "title": "LZMA SDK 26.01",
+      "group": "Other",
+      "source": "third_party/lzma_sdk/LICENSE"
+    },
+    {
+      "title": "Zstandard 1.5.7",
+      "group": "Other",
+      "source": "third_party/zstd/LICENSE"
+    },
+    {
+      "title": "Lhasa 0.5.0",
+      "group": "Other",
+      "source": "third_party/lhasa/COPYING.md"
+    },
+    {
+      "title": "wimlib 1.14.5",
+      "group": "Other",
+      "source": "third_party/wimlib/COPYING.LGPL.txt"
+    },
+    {
+      "title": "libdivsufsort-lite",
+      "group": "Other",
+      "source": "third_party/wimlib/COPYING.libdivsufsort-lite.txt"
+    }
+  ]
+}

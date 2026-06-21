@@ -308,7 +308,28 @@ function Test-ExternalComparisonNamePolicy {
 
 Test-ExternalComparisonNamePolicy
 
+# Purpose: Verify SuperZip-owned UI cannot expose copyable text surfaces or window-wide drop affordances.
+# Inputs: Reads native GUI source files.
+# Outputs: Throws when app-owned UI uses clipboard APIs, editable text controls, or full-window drop registration.
+function Test-GuiOwnedSurfacePolicy {
+    $appSources = Get-ChildItem -LiteralPath (Join-Path $repo "src\app") -File -Recurse -Include *.cpp,*.hpp,*.h,*.rc
+    $sourceText = ($appSources | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+    if ($sourceText.Contains('DragAcceptFiles(hwnd_, TRUE)') -or $sourceText.Contains('WS_EX_ACCEPTFILES')) {
+        throw "SuperZip-owned drag/drop must be accepted only by the Queue OLE drop target, not the full HWND."
+    }
+    if (-not $sourceText.Contains('is_copy_accelerator')) {
+        throw "SuperZip-owned UI must consume text-copy accelerators before page-specific key handling."
+    }
+    if ($sourceText -match 'OpenClipboard|SetClipboardData|GetClipboardData|CreateWindowExW[^\r\n]*(EDIT|RICHEDIT)|CreateWindowW[^\r\n]*(EDIT|RICHEDIT)') {
+        throw "SuperZip-owned UI must not expose selectable text controls or clipboard APIs."
+    }
+}
+
+Test-GuiOwnedSurfacePolicy
+
 & (Join-Path $repo "tools\verify_brand_assets.ps1")
+
+& (Join-Path $repo "tools\verify_license_notices.ps1")
 
 & (Join-Path $repo "tools\refactor_audit.ps1") -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
 
@@ -323,8 +344,8 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_WIX_ROOT_FOLDER_ID\s+"ProgramFiles<64>Folder"\)') {
         throw "CMakeLists.txt must set CPACK_WIX_ROOT_FOLDER_ID to ProgramFiles<64>Folder for release MSIs."
     }
-    if ($cmakeLists -notmatch 'set\(CPACK_PACKAGE_VENDOR\s+"SuperZip Technologies"\)') {
-        throw "CMakeLists.txt must set the release MSI publisher to SuperZip Technologies."
+    if ($cmakeLists -notmatch 'set\(CPACK_PACKAGE_VENDOR\s+"Efstratios Mitridis"\)') {
+        throw "CMakeLists.txt must set the release MSI publisher to Efstratios Mitridis."
     }
     if ($cmakeLists -notmatch 'set\(SUPERZIP_WIX_UPGRADE_GUID\s+"8E0D80F6-859D-4FE9-B082-F0D8048A8B57"\)') {
         throw "CMakeLists.txt must keep SuperZip's stable MSI UpgradeCode in one explicit variable."
@@ -361,8 +382,8 @@ function Test-InstallerScopePolicy {
     if ($desktopShortcut -notmatch 'CM_SHORTCUT_START_MENU_OPTIONAL' -or $desktopShortcut -notmatch 'ProgramMenuFolder' -or $desktopShortcut -notmatch 'CM_REMOVE_SUPERZIP_PROGRAM_MENU_FOLDER') {
         throw "Optional Start Menu WiX source must define the MSI-owned ProgramMenuFolder shortcut component and uninstall cleanup."
     }
-    if ($desktopShortcut -notmatch 'Software\\SuperZip Technologies\\SuperZip') {
-        throw "Optional shortcut registry markers must use the SuperZip Technologies publisher key."
+    if ($desktopShortcut -notmatch 'Software\\Efstratios Mitridis\\SuperZip') {
+        throw "Optional shortcut registry markers must use the Efstratios Mitridis publisher key."
     }
     $desktopPatch = Get-Content -LiteralPath (Join-Path $repo "cmake\superzip_wix_patch.xml") -Raw
     if ($desktopPatch -notmatch 'Create Desktop shortcut' -or $desktopPatch -notmatch 'ComponentRef Id="CM_SHORTCUT_DESKTOP_OPTIONAL"') {

@@ -104,6 +104,7 @@ enum class FocusTargetKind {
     SettingsLogRetention,
     SettingsRestoreDefaults,
     SettingsApply,
+    AboutLicenses,
 };
 
 struct FocusTarget {
@@ -144,7 +145,7 @@ struct LogEntry {
 };
 
 struct AppSettings {
-    int compression_format_index = 1;
+    int compression_format_index = 0;
     int compression_level_index = 2;
     int compression_block_size_index = 2;
     int memory_policy_index = 0;
@@ -182,7 +183,7 @@ struct UiState {
     PerformanceMonitorSample performance;
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
-    int compression_format_index = 1;
+    int compression_format_index = 0;
     int compression_level_index = 2;
     int compression_block_size_index = 2;
     int memory_policy_index = 0;
@@ -206,6 +207,7 @@ struct UiState {
     bool defender_scan_opt_in = false;
     bool verify_after_write_opt_in = false;
     bool extract_overwrite_prompt_visible = false;
+    bool license_notices_dialog_visible = false;
     std::wstring extract_overwrite_prompt_destination;
     DropdownId active_dropdown = DropdownId::None;
 };

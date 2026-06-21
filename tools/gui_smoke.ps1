@@ -15,12 +15,20 @@ if ([string]::IsNullOrWhiteSpace($ScreenshotPath)) {
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ScreenshotPath) | Out-Null
 
-# Purpose: Fail fast when GUI source reintroduces previously rejected user-facing labels.
+# Purpose: Load GUI source text for source-contract assertions.
 # Inputs: None; reads the repository app source tree.
-# Outputs: Throws with a precise remediation message when a banned GUI string appears.
-function Assert-GuiSourceContract {
+# Outputs: Returns a single joined text buffer for policy checks.
+function Get-GuiSourceText {
     $appSources = Get-ChildItem -LiteralPath (Join-Path $repo "src\app") -File -Recurse -Include *.cpp, *.hpp, *.h, *.rc
-    $sourceText = ($appSources | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
+    return ($appSources | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
+}
+
+# Purpose: Fail fast when GUI source reintroduces previously rejected user-facing labels.
+# Inputs: `SourceText` is the joined GUI source text.
+# Outputs: Throws with a precise remediation message when a banned GUI string appears.
+function Assert-GuiBlockedText {
+    param([Parameter(Mandatory = $true)][string]$SourceText)
+
     $blockedPatterns = @(
         @{ Pattern = ('\bleve' + 'ls\b'); Message = "GUI source must not use plural compression-setting wording; compression labels are named options." },
         @{ Pattern = ('Verbose ' + 'diagnostics'); Message = "GUI log level label must be 'Debug'." },
@@ -36,52 +44,65 @@ function Assert-GuiSourceContract {
         @{ Pattern = ('L"Det' + 'ails"'); Message = "The status bar must show the clock instead of the retired Details label." }
     )
     foreach ($rule in $blockedPatterns) {
-        if ($sourceText -cmatch $rule.Pattern) {
+        if ($SourceText -cmatch $rule.Pattern) {
             throw $rule.Message
         }
     }
     foreach ($requiredLabel in @('L"1 week"', 'L"2 weeks"', 'L"1 month"')) {
-        if (-not $sourceText.Contains($requiredLabel)) {
+        if (-not $SourceText.Contains($requiredLabel)) {
             throw "GUI log retention option missing required label $requiredLabel."
         }
     }
-    if ($sourceText -cmatch 'found_process_sample') {
+    if ($SourceText -cmatch 'L"Session"') {
+        throw "History rows must use the real completion time, not the literal Session label."
+    }
+}
+
+# Purpose: Verify System, Queue, and History behavior contracts from GUI source.
+# Inputs: `SourceText` is the joined GUI source text.
+# Outputs: Throws when a visual or behavior regression boundary is missing.
+function Assert-GuiSystemQueueContract {
+    param([Parameter(Mandatory = $true)][string]$SourceText)
+
+    if ($SourceText -cmatch 'found_process_sample') {
         throw "System GPU utilization graph must not prefer process-only PDH samples."
     }
-    if ($sourceText -cmatch 'vram_span') {
+    if ($SourceText -cmatch 'vram_span') {
         throw "System GPU graph must plot total GPU utilization, not VRAM history."
     }
-    if (-not $sourceText.Contains('current_user_downloads_directory')) {
+    if (-not $SourceText.Contains('current_user_downloads_directory')) {
         throw "GUI destination defaults must resolve the current user's Downloads folder instead of process cwd."
     }
-    if (-not $sourceText.Contains('queue_scrollbar_thumb_rect') -or -not $sourceText.Contains('WM_MOUSEWHEEL')) {
+    if (-not $SourceText.Contains('queue_scrollbar_thumb_rect') -or -not $SourceText.Contains('WM_MOUSEWHEEL')) {
         throw "Queue overflow must keep a fixed header and expose a working scrollbar/wheel path."
     }
-    if (-not $sourceText.Contains('std::array<PerformanceMonitorSample, 96> performance_history_')) {
+    if (-not $SourceText.Contains('std::array<PerformanceMonitorSample, 96> performance_history_')) {
         throw "System graph history cadence must not be changed without an explicit graph-cadence task."
     }
-    if (-not $sourceText.Contains('Remove selected')) {
+    if (-not $SourceText.Contains('Remove selected')) {
         throw "Queue must expose a Remove selected action when checked rows exist."
     }
-    if (-not $sourceText.Contains('draw_extract_overwrite_prompt')) {
-        throw "Extract Ask-before-overwriting policy must use a SuperZip-owned in-app modal."
-    }
-    if ($sourceText -cmatch 'MessageBoxW') {
-        throw "Product confirmations must not use native MessageBoxW; use SuperZip-owned modal surfaces."
-    }
-    if (-not $sourceText.Contains('history_column_resize_separator_')) {
+    if (-not $SourceText.Contains('history_column_resize_separator_')) {
         throw "History table must keep Queue-equivalent column resizing support."
     }
-    if ($sourceText.Contains('draw_interactive_hover_surface(dc, rect, interactive);')) {
+    if ($SourceText.Contains('draw_interactive_hover_surface(dc, rect, interactive);')) {
         throw "Empty checkbox hover must not paint a row-sized placeholder surface."
     }
-    if (-not $sourceText.Contains('const bool has_label = text != nullptr && text[0] != L''\0'';') -or
-        -not $sourceText.Contains('const RECT paint_rect = has_label ? rect : hover_rect;')) {
+    if (-not $SourceText.Contains('const bool has_label = text != nullptr && text[0] != L''\0'';') -or
+        -not $SourceText.Contains('const RECT paint_rect = has_label ? rect : hover_rect;')) {
         throw "Checkbox hover rendering must use a tight hover surface when there is no label text."
     }
-    if (-not $sourceText.Contains('const int checkbox_target_size = scale(24);')) {
+    if (-not $SourceText.Contains('const int checkbox_target_size = scale(24);')) {
         throw "Queue checkbox hit/focus targets must stay tightly centered around the visible tick."
     }
+}
+
+# Purpose: Verify security, picker, and extraction contracts from GUI source.
+# Inputs: `SourceText` is the joined GUI source text.
+# Outputs: Throws when GUI controls are detached from real secure operations.
+function Assert-GuiSecurityPickerContract {
+    param([Parameter(Mandatory = $true)][string]$SourceText)
+
     foreach ($requiredSecurityCall in @(
         'hash_path(output, IntegrityMode::Sha256)',
         'hash_path(archive, IntegrityMode::Sha256)',
@@ -90,18 +111,18 @@ function Assert-GuiSourceContract {
         'scan_with_windows_defender(archive, DefenderScanMode::FullPath)',
         'scan_with_windows_defender(path, DefenderScanMode::FullPath)'
     )) {
-        if (-not $sourceText.Contains($requiredSecurityCall)) {
+        if (-not $SourceText.Contains($requiredSecurityCall)) {
             throw "GUI security options must call the real integrity and Defender paths; missing $requiredSecurityCall."
         }
     }
-    if ($sourceText -cmatch 'OPENFILENAMEW|GetOpenFileNameW|SHBrowseForFolderW|SHGetPathFromIDListW') {
+    if ($SourceText -cmatch 'OPENFILENAMEW|GetOpenFileNameW|SHBrowseForFolderW|SHGetPathFromIDListW') {
         throw "Queue Add files/Add folder must use the modern shell picker without fixed legacy buffers."
     }
-    if (-not $sourceText.Contains('IFileOpenDialog') -or -not $sourceText.Contains('append_queued_paths')) {
+    if (-not $SourceText.Contains('IFileOpenDialog') -or -not $SourceText.Contains('append_queued_paths')) {
         throw "Queue Add files, Add folder, and drag/drop must share modern shell selection and queue append paths."
     }
-    if (-not $sourceText.Contains('detect_archive_format_by_extension(path)') -or
-        -not $sourceText.Contains('return L"Archive";')) {
+    if (-not $SourceText.Contains('detect_archive_format_by_extension(path)') -or
+        -not $SourceText.Contains('return L"Archive";')) {
         throw "Queue Type must classify supported archive files as Archive through extension-only detection."
     }
     foreach ($requiredExtractSource in @(
@@ -111,28 +132,74 @@ function Assert-GuiSourceContract {
         'extraction_outputs_for_archives',
         'request.archives'
     )) {
-        if (-not $sourceText.Contains($requiredExtractSource)) {
+        if (-not $SourceText.Contains($requiredExtractSource)) {
             throw "Extract page must support selected one-or-many archive extraction; missing $requiredExtractSource."
         }
     }
-    if (-not $sourceText.Contains('constexpr std::size_t kFullGraphSampleCapacity = 96U') -or
-        -not $sourceText.Contains('first_x')) {
+    if (-not $SourceText.Contains('draw_extract_overwrite_prompt')) {
+        throw "Extract Ask-before-overwriting policy must use a SuperZip-owned in-app modal."
+    }
+    if ($SourceText -cmatch 'MessageBoxW') {
+        throw "Product confirmations must not use native MessageBoxW; use SuperZip-owned modal surfaces."
+    }
+}
+
+# Purpose: Verify telemetry, format ordering, drag/drop, and license-window contracts.
+# Inputs: `SourceText` is the joined GUI source text.
+# Outputs: Throws when GUI policy contracts drift.
+function Assert-GuiFormatTelemetryLicenseContract {
+    param([Parameter(Mandatory = $true)][string]$SourceText)
+
+    if (-not $SourceText.Contains('constexpr std::size_t kFullGraphSampleCapacity = 96U') -or
+        -not $SourceText.Contains('first_x')) {
         throw "Performance graphs must not stretch startup samples across the full plot."
     }
-    if (-not $sourceText.Contains('constexpr UINT kTextTooltipDelayMs = 500')) {
+    if (-not $SourceText.Contains('constexpr UINT kTextTooltipDelayMs = 500')) {
         throw "Truncated text tooltip delay must remain 0.5 seconds."
     }
-    if (-not $sourceText.Contains('performance_update_seconds = 3')) {
+    if (-not $SourceText.Contains('performance_update_seconds = 3')) {
         throw "System Performance Monitor default refresh interval must remain 3 seconds."
     }
-    if (-not $sourceText.Contains('sample_total_dedicated_vram_used_bytes') -or
-        -not $sourceText.Contains('reconcile_vram_usage') -or
+    if (-not $SourceText.Contains('".suzip",   ".zip"') -or
+        -not $SourceText.Contains('constexpr int kDefaultCompressionFormatIndex = 0')) {
+        throw "Compress Format must list .suzip first and use it as the default row."
+    }
+    if ($SourceText.Contains('DragAcceptFiles(hwnd_, TRUE)')) {
+        throw "GUI drag/drop must not advertise the full window as a shell drop surface; use the Queue OLE drop target."
+    }
+    if ($SourceText.Contains('WS_EX_ACCEPTFILES')) {
+        throw "GUI drag/drop must not set WS_EX_ACCEPTFILES on the whole window; OLE hit testing controls the allowed drop surface."
+    }
+    if (-not $SourceText.Contains('is_copy_accelerator')) {
+        throw "SuperZip-owned UI must consume text-copy accelerators instead of exposing copyable text."
+    }
+    if ($SourceText -match 'OpenClipboard|SetClipboardData|GetClipboardData|CreateWindowExW[^\r\n]*(EDIT|RICHEDIT)|CreateWindowW[^\r\n]*(EDIT|RICHEDIT)') {
+        throw "SuperZip-owned UI must not expose selectable text controls or clipboard APIs."
+    }
+    if (-not $SourceText.Contains('license_notices_dialog_visible') -or
+        -not $SourceText.Contains('superzip_license_notices.hpp')) {
+        throw "About Licenses must be backed by the generated license-notices header and modal state."
+    }
+    if (-not $SourceText.Contains('license_notices_tab_rects') -or
+        -not $SourceText.Contains('select_license_notices_tab')) {
+        throw "About Licenses must keep SuperZip and Other tabs for readable non-copyable notices."
+    }
+    if (-not $SourceText.Contains('sample_total_dedicated_vram_used_bytes') -or
+        -not $SourceText.Contains('reconcile_vram_usage') -or
         -not (Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/cpp/test_resource_usage.cpp')).Contains('vram_reconciliation_keeps_process_usage_under_total_usage')) {
         throw "VRAM total/dedicated display must use centralized, tested Windows dedicated-memory reconciliation."
     }
-    if ($sourceText -cmatch 'L"Session"') {
-        throw "History rows must use the real completion time, not the literal Session label."
-    }
+}
+
+# Purpose: Run every GUI source-contract assertion as a fast pre-smoke gate.
+# Inputs: None; reads the repository app source tree.
+# Outputs: Throws with a precise remediation message when a GUI contract is violated.
+function Assert-GuiSourceContract {
+    $sourceText = Get-GuiSourceText
+    Assert-GuiBlockedText -SourceText $sourceText
+    Assert-GuiSystemQueueContract -SourceText $sourceText
+    Assert-GuiSecurityPickerContract -SourceText $sourceText
+    Assert-GuiFormatTelemetryLicenseContract -SourceText $sourceText
 }
 
 Assert-GuiSourceContract
@@ -358,7 +425,7 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 820 -DesignY 154
     Start-Sleep -Milliseconds 120
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 622 -BasePath $basePath -Extension $extension
-    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 1
+    Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 0
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
@@ -631,6 +698,22 @@ try {
         Start-Sleep -Milliseconds 300
         $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path "${basePath}-$($pageNames[$index])$extension"
     }
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1070 -DesignY 550
+    Start-Sleep -Milliseconds 180
+    $licenseDialogPath = "${basePath}-About-Licenses$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseDialogPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $licenseDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 450 -DesignY 198
+    Start-Sleep -Milliseconds 120
+    $licenseOtherDialogPath = "${basePath}-About-Licenses-Other$extension"
+    $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $licenseOtherDialogPath
+    $offset = Get-ClientCaptureOffset -Handle $windowHandle
+    Assert-DesignRectHasDetail -Path $licenseOtherDialogPath -Dpi $windowDpi -Left 260 -Top 120 -Right 940 -Bottom 650 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x22
+    Start-Sleep -Milliseconds 100
+    Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x1B
+    Start-Sleep -Milliseconds 120
     $captures | ConvertTo-Json
 } finally {
     $launchedProcessId = if ($process) { $process.Id } else { 0 }

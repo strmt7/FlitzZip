@@ -1,6 +1,6 @@
 /*
 
-Copyright (c) 2026, SuperZip Technologies
+Copyright (c) 2026, Efstratios Mitridis
 
 Permission to use, copy, modify, and/or distribute this software
 for any purpose with or without fee is hereby granted, provided

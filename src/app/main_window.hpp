@@ -155,7 +155,7 @@ class MainWindow {
 
     // Purpose: Return whether a client point is inside the active Queue table drop target.
     // Inputs: `point` is a client-coordinate point.
-    // Outputs: Returns true only on the Queue page and inside the Queue table.
+    // Outputs: Returns true only on the Queue page, with no SuperZip modal active, and inside the Queue table.
     [[nodiscard]] bool queue_drop_target_contains(POINT point);
 
     // Purpose: Allow shell file-drop messages through UIPI for elevated windows.
@@ -250,6 +250,61 @@ class MainWindow {
     // Outputs: Returns two right-aligned button rectangles.
     [[nodiscard]] std::array<RECT, 2> extract_overwrite_prompt_buttons(const RECT& modal) const;
 
+    // Purpose: Draw the SuperZip-owned generated license-notice modal.
+    // Inputs: `dc` is the target, `rect` is the full client area, and `state` contains modal visibility.
+    // Outputs: Renders no pixels unless the license-notice dialog is active.
+    void draw_license_notices_dialog(HDC dc, const RECT& rect, const UiState& state);
+
+    // Purpose: Return the centered license-notice modal panel.
+    // Inputs: `rect` is the full client area.
+    // Outputs: Returns a DPI-scaled panel rectangle using the main-window visual system.
+    [[nodiscard]] RECT license_notices_dialog_rect(const RECT& rect) const;
+
+    // Purpose: Return the scrollable text viewport inside the license-notice modal.
+    // Inputs: `modal` is the license-notice panel rectangle.
+    // Outputs: Returns the clipped text area used for drawing and scroll math.
+    [[nodiscard]] RECT license_notices_viewport_rect(const RECT& modal) const;
+
+    // Purpose: Return the Close button rectangle for the license-notice modal.
+    // Inputs: `modal` is the license-notice panel rectangle.
+    // Outputs: Returns a right-aligned command rectangle.
+    [[nodiscard]] RECT license_notices_close_button_rect(const RECT& modal) const;
+
+    // Purpose: Return SuperZip/Other tab rectangles for the license-notice modal.
+    // Inputs: `modal` is the license-notice panel rectangle.
+    // Outputs: Returns tab rectangles in SuperZip, Other order.
+    [[nodiscard]] std::array<RECT, 2> license_notices_tab_rects(const RECT& modal) const;
+
+    // Purpose: Build the generated license-notice text for the active modal tab.
+    // Inputs: None; reads the generated notice table and current tab index.
+    // Outputs: Returns cached UTF-16 notice body generated from source-controlled licenses.
+    [[nodiscard]] const std::wstring& license_notices_text();
+
+    // Purpose: Change the active license-notice tab.
+    // Inputs: `tab_index` is zero for SuperZip and one for Other.
+    // Outputs: Updates tab and scroll state, then queues repaint when the tab changes.
+    void select_license_notices_tab(int tab_index);
+
+    // Purpose: Measure the rendered license-notice body height.
+    // Inputs: `dc` is the current target and `viewport` is the text viewport.
+    // Outputs: Returns the DPI-scaled text height needed for scroll bounds.
+    [[nodiscard]] int license_notices_text_height(HDC dc, const RECT& viewport) const;
+
+    // Purpose: Apply a bounded scroll delta to the license-notice modal.
+    // Inputs: `delta_pixels` is positive for down and negative for up.
+    // Outputs: Updates scroll offset and queues a repaint when the dialog is visible.
+    bool scroll_license_notices_dialog(int delta_pixels);
+
+    // Purpose: Close the license-notice modal.
+    // Inputs: None.
+    // Outputs: Clears modal state, resets scroll state, and queues repaint.
+    void close_license_notices_dialog();
+
+    // Purpose: Open the generated license-notice modal from the About page.
+    // Inputs: None.
+    // Outputs: Shows the modal, resets scroll state, and queues repaint.
+    void show_license_notices_dialog();
+
     // Purpose: Draw the persistent product shell strip.
     // Inputs: `dc` is the target and `rect` is the full client rectangle.
     // Outputs: Renders the brand chrome; page-specific actions stay inside their pages.
@@ -284,6 +339,11 @@ class MainWindow {
     // Inputs: `area` is the DPI-scaled page content area.
     // Outputs: Returns a right-aligned command rectangle sized from the active button font.
     [[nodiscard]] RECT history_clear_button_rect(const RECT& area) const;
+
+    // Purpose: Return the About page Licenses button rectangle.
+    // Inputs: `area` is the DPI-scaled page content area.
+    // Outputs: Returns a compact command rectangle inside the About card.
+    [[nodiscard]] RECT about_licenses_button_rect(const RECT& area) const;
 
     // Purpose: Compute Compress page rectangles shared by rendering and hit testing.
     // Inputs: `rect` is the content area in physical pixels.
@@ -439,6 +499,16 @@ class MainWindow {
     // Inputs: `key` is the pressed virtual key.
     // Outputs: Consumes modal navigation, Continue, Cancel, and Escape actions.
     bool handle_extract_overwrite_prompt_key(WPARAM key);
+
+    // Purpose: Handle mouse activation while the license-notice modal is active.
+    // Inputs: `x` and `y` are client coordinates.
+    // Outputs: Consumes every click and closes only when the Close button is hit.
+    bool handle_license_notices_dialog_click(int x, int y);
+
+    // Purpose: Handle keyboard activation and scrolling while the license-notice modal is active.
+    // Inputs: `key` is the pressed virtual key.
+    // Outputs: Consumes close and scroll keys without leaking focus to the underlying page.
+    bool handle_license_notices_dialog_key(WPARAM key);
 
     // Purpose: Return keyboard-focusable controls for the current page.
     // Inputs: `content` is the current content rectangle and `state` is a copied UI snapshot.
@@ -682,6 +752,11 @@ class MainWindow {
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
     // Outputs: Returns true when a Settings control consumed the click.
     bool handle_settings_click(const RECT& content, int x, int y);
+
+    // Purpose: Handle About page hit-testing and commands.
+    // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
+    // Outputs: Returns true when the Licenses command consumed the click.
+    bool handle_about_click(const RECT& content, int x, int y);
 
     // Purpose: Handle a click while a dropdown menu is expanded.
     // Inputs: `x` and `y` are physical-pixel mouse coordinates relative to the client area.
@@ -975,9 +1050,12 @@ class MainWindow {
     bool text_tooltip_cell_active_ = false;
     bool text_tooltip_visible_ = false;
     std::wstring text_tooltip_text_;
+    std::array<std::wstring, 2> cached_license_notices_text_;
     int keyboard_focus_index_ = 0;
     int dropdown_keyboard_index_ = -1;
     int modal_focus_index_ = 1;
+    int license_notices_tab_index_ = 0;
+    int license_notices_scroll_pixels_ = 0;
     ExtractJobRequest pending_extract_job_{};
     bool pending_extract_job_active_ = false;
     bool ole_initialized_ = false;

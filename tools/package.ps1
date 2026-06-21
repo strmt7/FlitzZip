@@ -191,8 +191,8 @@ if ($CreateMsi) {
     $expectedProductCode = Format-MsiGuid -GuidText (Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
     $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")
     $manufacturer = Read-MsiProperty -MsiPath $msi -Name "Manufacturer"
-    if ($manufacturer -ne "SuperZip Technologies") {
-        throw "MSI Manufacturer was '$manufacturer'; expected 'SuperZip Technologies'."
+    if ($manufacturer -ne "Efstratios Mitridis") {
+        throw "MSI Manufacturer was '$manufacturer'; expected 'Efstratios Mitridis'."
     }
     $productVersion = Read-MsiProperty -MsiPath $msi -Name "ProductVersion"
     if ($productVersion -ne $expectedProductVersion) {

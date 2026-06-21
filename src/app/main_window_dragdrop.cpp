@@ -204,14 +204,14 @@ LRESULT MainWindow::handle_drop_files(WPARAM wparam) {
 
 // Purpose: Return whether a client point is inside the active Queue table drop target.
 // Inputs: `point` is a client-coordinate point.
-// Outputs: Returns true only on the Queue page and inside the Queue table.
+// Outputs: Returns true only on the Queue page, with no modal surface active, and inside the Queue table.
 bool MainWindow::queue_drop_target_contains(POINT point) {
     UiState state;
     {
         std::lock_guard lock(mutex_);
         state = state_;
     }
-    if (state.page != Page::Queue) {
+    if (state.page != Page::Queue || state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
         return false;
     }
     return contains_point(queue_layout(content_rect()).table, point.x, point.y);
@@ -227,7 +227,9 @@ bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, 
     bool may_append = false;
     {
         std::lock_guard lock(mutex_);
-        if (state_.page != Page::Queue || !contains_point(queue_layout(content_rect()).table, point.x, point.y)) {
+        if (state_.page != Page::Queue || state_.extract_overwrite_prompt_visible ||
+            state_.license_notices_dialog_visible ||
+            !contains_point(queue_layout(content_rect()).table, point.x, point.y)) {
             state_.status = "Drop files or folders inside the Queue box";
             severity = LogSeverity::Warning;
             message = "Shell drop rejected outside the Queue table";
@@ -294,7 +296,6 @@ bool MainWindow::enable_elevated_drag_drop_messages() const {
 // Outputs: Arms timers and returns the handled Win32 result.
 LRESULT MainWindow::handle_create() {
     initialize_settings();
-    DragAcceptFiles(hwnd_, TRUE);
     const HRESULT ole_status = OleInitialize(nullptr);
     ole_initialized_ = SUCCEEDED(ole_status);
     if (ole_initialized_) {

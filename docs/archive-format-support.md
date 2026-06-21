@@ -107,8 +107,9 @@ uses a stable weighted proxy instead of pretending to know an exact count:
    applicable.
 3. Breadth of maintained in-process open-source tooling support.
 4. Recurrence in mature archive applications and platform package workflows.
-5. SuperZip product-native relevance, used only as a tiebreaker after `.zip`
-   because `.suzip` is the AMD HIP differentiator.
+5. SuperZip product-native relevance: `.suzip` is pinned first because it is the
+   AMD HIP product path; the proxy order applies to every remaining standard
+   format row.
 6. Alias clarity inside a family: canonical extension first, then common short
    aliases, with exactly one visible extension per row.
 
@@ -116,8 +117,8 @@ The Compress selector is extension-specific and ordered by that proxy:
 
 | Rank | Visible entry | Backend family |
 | ---: | --- | --- |
-| 1 | `ZIP (.zip)` | ZIP |
-| 2 | `SuperZip (.suzip)` | Native AMD HIP SUZIP |
+| 1 | `SuperZip (.suzip)` | Native AMD HIP SUZIP |
+| 2 | `ZIP (.zip)` | ZIP |
 | 3 | `TAR.GZ (.tar.gz)` | TAR over Gzip |
 | 4 | `TAR.GZ (.tgz)` | TAR over Gzip |
 | 5 | `TAR (.tar)` | TAR |

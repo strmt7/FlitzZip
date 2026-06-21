@@ -18,6 +18,14 @@
 
 namespace superzip::app {
 
+// Purpose: Identify clipboard-copy accelerators that SuperZip-owned UI must consume.
+// Inputs: `key` is the current virtual key and the current keyboard state supplies modifiers.
+// Outputs: Returns true for Ctrl+C and Ctrl+Insert copy shortcuts.
+bool is_copy_accelerator(WPARAM key) {
+    const bool control_down = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    return control_down && (key == L'C' || key == VK_INSERT);
+}
+
 // Purpose: Build keyboard focus targets for the active page.
 // Inputs: `content` is the page content rectangle and `state` is the copied UI state.
 // Outputs: Returns ordered focus targets for Tab, arrows, Enter, and Space handling.
@@ -65,6 +73,8 @@ std::vector<FocusTarget> MainWindow::focus_targets_for(const RECT& content, cons
         add_settings_focus_targets(targets, content);
         break;
     case Page::About:
+        append_focus_target(targets, FocusTargetKind::AboutLicenses,
+                            about_licenses_button_rect(inset_rect(content, scale(kPageInsetX), scale(kPageInsetY))));
         break;
     }
     return targets;
@@ -298,12 +308,20 @@ bool MainWindow::handle_navigation_key(WPARAM key) {
 // Inputs: `wparam` is a virtual key and `lparam` is the raw key message payload.
 // Outputs: Moves focus, activates controls, updates dropdowns, or returns default processing.
 LRESULT MainWindow::handle_key_down(WPARAM wparam, LPARAM) {
-    bool modal_visible = false;
+    if (is_copy_accelerator(wparam)) {
+        return 0;
+    }
+    bool overwrite_modal_visible = false;
+    bool license_modal_visible = false;
     {
         std::lock_guard lock(mutex_);
-        modal_visible = state_.extract_overwrite_prompt_visible;
+        overwrite_modal_visible = state_.extract_overwrite_prompt_visible;
+        license_modal_visible = state_.license_notices_dialog_visible;
     }
-    if (modal_visible) {
+    if (license_modal_visible) {
+        return handle_license_notices_dialog_key(wparam) ? 0 : 0;
+    }
+    if (overwrite_modal_visible) {
         return handle_extract_overwrite_prompt_key(wparam) ? 0 : 0;
     }
     if (wparam == VK_ESCAPE) {

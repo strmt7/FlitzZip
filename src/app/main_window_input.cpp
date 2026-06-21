@@ -46,7 +46,7 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
             std::lock_guard lock(mutex_);
             state = state_;
         }
-        if (state.extract_overwrite_prompt_visible) {
+        if (state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
             SetCursor(LoadCursor(nullptr, IDC_ARROW));
             update_text_tooltip_tracking();
             request_repaint();
@@ -143,7 +143,7 @@ bool MainWindow::text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text)
         std::lock_guard lock(mutex_);
         state = state_;
     }
-    if (state.extract_overwrite_prompt_visible) {
+    if (state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
         return false;
     }
     return queue_text_tooltip_candidate_at_mouse(state, cell, text) ||
@@ -288,12 +288,18 @@ LRESULT MainWindow::handle_primary_mouse_down(LPARAM lparam) {
     mouse_capture_active_ = true;
     request_repaint();
 
-    bool modal_visible = false;
+    bool overwrite_modal_visible = false;
+    bool license_modal_visible = false;
     {
         std::lock_guard lock(mutex_);
-        modal_visible = state_.extract_overwrite_prompt_visible;
+        overwrite_modal_visible = state_.extract_overwrite_prompt_visible;
+        license_modal_visible = state_.license_notices_dialog_visible;
     }
-    if (modal_visible) {
+    if (license_modal_visible) {
+        (void)handle_license_notices_dialog_click(x, y);
+        return 0;
+    }
+    if (overwrite_modal_visible) {
         (void)handle_extract_overwrite_prompt_click(x, y);
         return 0;
     }
@@ -359,6 +365,13 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
     {
         std::lock_guard lock(mutex_);
         state = state_;
+    }
+    if (state.license_notices_dialog_visible) {
+        const int wheel_steps = GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA;
+        if (wheel_steps != 0) {
+            (void)scroll_license_notices_dialog(-wheel_steps * scale(96));
+        }
+        return 0;
     }
     if (state.page != Page::Queue || state.queued_paths.empty()) {
         return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);

@@ -66,6 +66,7 @@ void MainWindow::layout_and_draw(HDC dc, const RECT& rect) {
     draw_keyboard_focus(dc, content, state);
     draw_text_tooltip(dc);
     draw_status_bar(dc, status, state);
+    draw_license_notices_dialog(dc, rect, state);
     draw_extract_overwrite_prompt(dc, rect, state);
 }
 
@@ -202,7 +203,7 @@ void MainWindow::draw_extract_overwrite_prompt(HDC dc, const RECT& rect, const U
 // Inputs: `dc` is the target, `content` is the content area, and `state` is the copied UI state.
 // Outputs: Renders a minimal non-hover focus indicator without mutating state.
 void MainWindow::draw_keyboard_focus(HDC dc, const RECT& content, const UiState& state) {
-    if (state.extract_overwrite_prompt_visible) {
+    if (state.extract_overwrite_prompt_visible || state.license_notices_dialog_visible) {
         return;
     }
     const auto targets = focus_targets_for(content, state);

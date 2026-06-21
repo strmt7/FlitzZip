@@ -730,6 +730,7 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"About", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const RECT licenses_button = about_licenses_button_rect(area);
     RECT card{area.left, area.top + scale(54), area.right, area.bottom - scale(60)};
     fill_round_rect(dc, card, kPanel, scale(4));
     stroke_rect(dc, card, kBorder);
@@ -753,9 +754,12 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
         L"archive/compression handling. Legacy transfer decoders remain extract-only. AMD HIP is the only GPU "
         L"acceleration boundary; security-sensitive extraction validates paths and metadata before writing output.",
         kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc, RECT{card.left + scale(42), card.bottom - scale(80), card.right - scale(42), card.bottom - scale(38)},
-              L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted,
-              DT_LEFT | DT_TOP | DT_WORDBREAK);
+    draw_button(dc, licenses_button, L"Licenses", false);
+    draw_text(
+        dc,
+        RECT{card.left + scale(42), card.bottom - scale(80), licenses_button.left - scale(18), card.bottom - scale(38)},
+        L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted,
+        DT_LEFT | DT_TOP | DT_WORDBREAK);
 }
 
 // Purpose: Draw a simple DPI-scaled command or navigation button.

@@ -3,7 +3,7 @@
     <StandardDirectory Id="DesktopFolder">
       <Component Id="CM_SHORTCUT_DESKTOP_OPTIONAL" Guid="*">
         <Shortcut Id="CM_DSP_OPTIONAL_bin.SuperZip.exe" Name="SuperZip" Target="[#CM_FP_bin.SuperZip.exe]" WorkingDirectory="CM_DP_bin"/>
-        <RegistryValue Root="HKCU" Key="Software\SuperZip Technologies\SuperZip" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes"/>
+        <RegistryValue Root="HKCU" Key="Software\Efstratios Mitridis\SuperZip" Name="desktop_shortcut" Type="integer" Value="1" KeyPath="yes"/>
       </Component>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
@@ -11,7 +11,7 @@
         <Component Id="CM_SHORTCUT_START_MENU_OPTIONAL" Guid="*">
           <Shortcut Id="CM_SM_OPTIONAL_bin.SuperZip.exe" Name="SuperZip" Target="[#CM_FP_bin.SuperZip.exe]" WorkingDirectory="CM_DP_bin"/>
           <RemoveFolder Id="CM_REMOVE_SUPERZIP_PROGRAM_MENU_FOLDER" On="uninstall"/>
-          <RegistryValue Root="HKCU" Key="Software\SuperZip Technologies\SuperZip" Name="start_menu_entry" Type="integer" Value="1" KeyPath="yes"/>
+          <RegistryValue Root="HKCU" Key="Software\Efstratios Mitridis\SuperZip" Name="start_menu_entry" Type="integer" Value="1" KeyPath="yes"/>
         </Component>
       </Directory>
     </StandardDirectory>

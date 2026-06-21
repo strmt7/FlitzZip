@@ -44,7 +44,7 @@ bool MainWindow::handle_content_click(int x, int y) {
     case Page::Settings:
         return handle_settings_click(content, x, y);
     case Page::About:
-        return false;
+        return handle_about_click(content, x, y);
     }
     return false;
 }

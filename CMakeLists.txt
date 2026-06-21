@@ -514,6 +514,13 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
   set(SUPERZIP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(SUPERZIP_BRAND_LOGO_HEADER
       "${SUPERZIP_GENERATED_DIR}/superzip_brand_logo.hpp")
+  set(SUPERZIP_LICENSE_NOTICES_MANIFEST
+      "${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses/license-notices.json")
+  set(SUPERZIP_LICENSE_NOTICES_HEADER
+      "${SUPERZIP_GENERATED_DIR}/superzip_license_notices.hpp")
+  string(CONCAT SUPERZIP_LIBDIVSUFSORT_LICENSE
+                "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wimlib/"
+                "COPYING.libdivsufsort-lite.txt")
   add_custom_command(
     OUTPUT "${SUPERZIP_BRAND_LOGO_HEADER}"
     COMMAND
@@ -530,6 +537,32 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
     superzip_brand_logo_header
     DEPENDS "${SUPERZIP_BRAND_LOGO_HEADER}"
     COMMENT "Preparing canonical SuperZip logo header")
+  add_custom_command(
+    OUTPUT "${SUPERZIP_LICENSE_NOTICES_HEADER}"
+    COMMAND
+      powershell -NoProfile -ExecutionPolicy Bypass -File
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_license_notices_header.ps1"
+      -ManifestPath "${SUPERZIP_LICENSE_NOTICES_MANIFEST}" -RepoRoot
+      "${CMAKE_CURRENT_SOURCE_DIR}" -OutputPath
+      "${SUPERZIP_LICENSE_NOTICES_HEADER}"
+    DEPENDS
+      "${SUPERZIP_LICENSE_NOTICES_MANIFEST}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bzip2/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xz_embedded/COPYING"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma_sdk/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lhasa/COPYING.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wimlib/COPYING.LGPL.txt"
+      "${SUPERZIP_LIBDIVSUFSORT_LICENSE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_license_notices_header.ps1"
+    COMMENT "Generating SuperZip license notices header"
+    VERBATIM)
+  add_custom_target(
+    superzip_license_notices_header
+    DEPENDS "${SUPERZIP_LICENSE_NOTICES_HEADER}"
+    COMMENT "Preparing SuperZip license notices header")
 
   add_executable(
     SuperZip
@@ -545,6 +578,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       src/app/main_window_focus.cpp
       src/app/main_window_input.cpp
       src/app/main_window_layout.cpp
+      src/app/main_window_license_dialog.cpp
       src/app/main_window_monitor.cpp
       src/app/main_window_page_clicks.cpp
       src/app/main_window_pages.cpp
@@ -554,7 +588,8 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       src/app/main_window_shell_render.cpp
       src/app/main_window_startup_support.cpp
       src/app/SuperZip.rc)
-  add_dependencies(SuperZip superzip_brand_logo_header)
+  add_dependencies(SuperZip superzip_brand_logo_header
+                   superzip_license_notices_header)
   target_include_directories(SuperZip PRIVATE "${SUPERZIP_GENERATED_DIR}")
   target_link_libraries(
     SuperZip
@@ -781,7 +816,7 @@ if(SUPERZIP_ENABLE_HIP)
 endif()
 
 set(CPACK_PACKAGE_NAME "SuperZip")
-set(CPACK_PACKAGE_VENDOR "SuperZip Technologies")
+set(CPACK_PACKAGE_VENDOR "Efstratios Mitridis")
 set(CPACK_PACKAGE_VERSION "${SUPERZIP_PACKAGE_NUMERIC_VERSION}")
 set(CPACK_PACKAGE_VERSION_MAJOR "${SUPERZIP_PACKAGE_VERSION_MAJOR}")
 set(CPACK_PACKAGE_VERSION_MINOR "${SUPERZIP_PACKAGE_VERSION_MINOR}")

@@ -39,6 +39,16 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   brokered surfaces such as common file/folder pickers, UAC elevation prompts,
   Defender prompts, crash dialogs, and installer privilege prompts are the only
   normal exceptions, and any new exception must be documented at the call site.
+- SuperZip-owned pages and secondary windows must not expose selectable or
+  copyable text. Render product text with the existing GDI paint path, consume
+  copy accelerators such as Ctrl+C and Ctrl+Insert, and do not add EDIT,
+  RichEdit, clipboard APIs, or copy commands except inside OS-owned brokered
+  dialogs.
+- The About-page Licenses surface must be generated from
+  `resources/licenses/license-notices.json` and the recorded upstream or
+  product license source files. Do not hand-write, summarize, or paraphrase
+  license bodies in GUI code or documentation; update the manifest and rerun
+  `tools\verify_license_notices.ps1`.
 - Maintainer authorization is recorded for AI agents to accept EULAs required
   by pinned SuperZip build, benchmark, packaging, and verification tooling, such
   as the WiX v7 OSMF EULA, when that acceptance is necessary to run repository
@@ -102,11 +112,19 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Queue overflow must keep the header fixed, keep row checkbox hit testing
   aligned with the visible row, keep drag/drop accepted only inside the Queue
   table, and expose a scrollbar only when rows overflow the body.
+- Do not register the whole main window with `DragAcceptFiles(hwnd_, TRUE)`.
+  The OLE Queue drop target must be the visual truth for copy/prohibited cursor
+  feedback, and `WM_DROPFILES` handling is only for explicitly delivered shell
+  messages after the Queue-table hit test passes.
 - Queue Add files, Add folder, and destination selection must use the modern
   Windows shell picker (`IFileOpenDialog`) without fixed `OPENFILENAMEW`
   selection buffers, `SHBrowseForFolderW`, `SHGetPathFromIDListW`, or `MAX_PATH`
   assumptions. GUI smoke must exercise both picker-driven queue insertion and a
   many-file HDROP drag/drop payload before Queue input changes are accepted.
+- The Compress Format dropdown must always list `SuperZip (.suzip)` first and
+  use it as the default. Official standard-format rows keep exactly one visible
+  extension label, and the remaining rows follow the documented popularity
+  proxy in `docs/archive-format-support.md`.
 - The canonical logo artwork is the `superzip-logo-mark` group in
   `resources/brand/superzip-logo.svg`. AI agents may move or resize that mark
   for layout, and may edit surrounding wordmark/tagline copy, but must not alter
@@ -203,6 +221,8 @@ Guidelines, and SEI CERT C++.
 - `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `third_party/xz_embedded/`: production XZ Embedded decoder copy used for extract-only `.xz` and `.tar.xz` compatibility.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
+- `third_party/lzma_sdk/`: production LZMA SDK 26.01 decoder subset plus an exact `DOC/lzma-sdk.txt` license copy for host-agnostic notice generation.
+- `third_party/upstream/lzma-sdk/26.01/`: unmodified upstream LZMA SDK 26.01 release archive and checksum for provenance.
 - `third_party/zstd/`: production Zstandard runtime metadata and license files. Do not track extracted runtime DLLs here.
 - `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive, official Win64 runtime package, and checksums for provenance.
 - `third_party/lhasa/`: production Lhasa 0.5.0 copy with SuperZip-local hardening patches documented in `README.SUPERZIP.md`.
