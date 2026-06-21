@@ -503,8 +503,15 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
+- MSI update identity must stay deterministic: keep one stable SuperZip
+  `UpgradeCode`, derive `ProductCode` from the MSI numeric version and install
+  scope, and bump the SemVer patch/minor/major value for every release that
+  should update an existing install. Do not rely on same-version commit hashes
+  for installer ordering unless a future approved bootstrapper implements an
+  explicit orderable build identity. Run `tools\test_msi_identity.ps1` after
+  changing CPack, WiX, release packaging, installer scope, or version metadata.
 - SuperZip-owned installer launch, release, and smoke-test paths must use
-  bounded waits. MSI install and uninstall phases default to a 300-second
+  bounded waits. MSI install, repair, and uninstall phases default to a 300-second
   timeout, and HIP SDK installer setup in hosted release validation must time
   out explicitly instead of waiting indefinitely. The Windows UAC consent prompt
   is OS-owned and cannot be timed from inside the MSI; do not claim otherwise.
@@ -641,7 +648,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   iteration, but sample it with `-IncludeLongRunning` and wait for it with
   `-FinalCommit` when the current commit is the final handoff or release.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
-  and run install/uninstall smoke tests before publishing.
+  and run install/repair/uninstall smoke tests before publishing.
 - Do not replace an existing GitHub release or tag by default. Release
   replacement is exceptional and is allowed only when the current maintainer or
   user request explicitly asks for that specific replacement. A replacement run

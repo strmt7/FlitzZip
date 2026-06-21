@@ -60,7 +60,7 @@ the Security tab, released artifacts, or the product UI again.
   docs to describe grouped backend support.
 - Installer process waits are bounded. `tools\security_scan.ps1` rejects
   release workflow edits that restore unbounded `Start-Process -Wait` calls for
-  HIP SDK setup or MSI install/uninstall smoke tests, and the MSI smoke timeout
+  HIP SDK setup or MSI install/repair/uninstall smoke tests, and the MSI smoke timeout
   must remain 300 seconds by default.
 
 ## Adding A New Lesson

@@ -19,13 +19,34 @@ The Windows elevation prompt is controlled by the operating system before the
 per-machine MSI can make changes. The MSI cannot shorten that OS-owned prompt
 from inside the package. SuperZip-owned installer launchers, release validation,
 and smoke tests must therefore use bounded waits around the installer process:
-MSI install and uninstall phases fail after 300 seconds, and hosted HIP SDK
+MSI install, repair, and uninstall phases fail after 300 seconds, and hosted HIP SDK
 installer setup has its own explicit timeout.
 
 The MSI exposes `Create Desktop shortcut` as an optional installer feature. Do
 not use CPack's unconditional `CPACK_CREATE_DESKTOP_LINKS`; the desktop shortcut
 must be an MSI-owned component selected through the installer UI so uninstall can
 remove it cleanly.
+
+## MSI Maintenance And Updates
+
+SuperZip uses Windows Installer identity rules directly:
+
+- `UpgradeCode` is stable for all SuperZip MSI releases so Windows Installer can
+  detect installed SuperZip products.
+- `ProductCode` is deterministic for the MSI numeric version and install scope.
+  Re-running the same release enters the standard Windows Installer maintenance
+  path, where repair and uninstall are available.
+- Any build that should behave as an update must change the SemVer numeric
+  version, normally by increasing the patch digit. MSI version comparisons use
+  the first three numeric fields; SuperZip does not try to order commit hashes
+  inside a same-version MSI.
+- `tools\test_msi_identity.ps1` verifies that same-version/same-scope MSIs keep
+  the same `ProductCode`, patch updates receive a different `ProductCode`, all
+  scopes keep the same `UpgradeCode`, and per-user test MSIs do not collide with
+  product per-machine MSIs.
+- Release smoke installs the MSI, repairs the same MSI, runs dependency-check
+  after repair, and then uninstalls it. This proves that install, repair, and
+  uninstall all operate through the shipped package.
 
 For local coding and non-admin installer tests only, agents may build an
 explicit per-user MSI with `tools\build.ps1 -MsiInstallScope perUser`, then run
@@ -85,8 +106,8 @@ The workflow performs:
 - Portable package staging, dependency check, SUZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/CPIO.GZ/AR/DEB
   smoke tests, and
   checksum generation.
-- MSI creation and silent install/uninstall smoke tests under the Program Files
-  release install path when requested. Each MSI install/uninstall phase has a
+- MSI creation and silent install/repair/uninstall smoke tests under the
+  Program Files release install path when requested. Each MSI phase has a
   300-second stale-wait timeout so an unanswered installer or elevation prompt
   cannot block validation indefinitely.
 - GitHub release creation with attached SHA-256 files.

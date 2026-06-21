@@ -75,7 +75,7 @@ repository-relative paths and produces:
 | Archive parser, path safety, extraction publication | C++ checks plus external compatibility interop smoke, registry-wide format matrix smoke, security scan, and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
 | GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci` |
 | Workflows, security scanners, release actions | hygiene, language lint, security scan | `lint`, `security`, scanner-specific workflows, `scorecard` |
-| Packaging or installer files | Release build, C++ tests, security scan, package smoke | `lint`, `windows-ci`, `security` |
+| Packaging or installer files | Release build, C++ tests, security scan, MSI identity smoke, package smoke | `lint`, `windows-ci`, `security` |
 | MCP Python or verifier routing | full profile plus Python bytecode compile and selector self-test | full-profile workflow set |
 | Performance-sensitive code | normal correctness checks; RAM-only benchmark is manual before claims | workflow set from touched source |
 

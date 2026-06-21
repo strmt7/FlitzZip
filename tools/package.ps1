@@ -66,7 +66,7 @@ function Confirm-WixEula {
 # Purpose: Install the pinned WiX UI extension required by CPack's WiX generator.
 # Inputs: WixPath is the resolved repo-local or PATH-provided wix.exe path.
 # Outputs: Makes `WixToolset.UI.wixext` available to WiX or throws on install failure.
-function Ensure-WixUiExtension {
+function Install-WixUiExtension {
     param([string]$WixPath)
     & $WixPath extension add --global $wixUiExtension
     if ($LASTEXITCODE -ne 0) {
@@ -98,6 +98,19 @@ function Read-MsiProperty {
             $view.GetType().InvokeMember("Close", "InvokeMethod", $null, $view, $null) | Out-Null
         }
     }
+}
+
+# Purpose: Normalize MSI and CPack GUID strings before comparing installer identity.
+# Inputs: GuidText is a GUID with or without braces.
+# Outputs: Returns the canonical uppercase braced GUID or throws when the text is not a GUID.
+function Format-MsiGuid {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GuidText
+    )
+
+    $parsed = [System.Guid]::Parse($GuidText.Trim().Trim("{", "}"))
+    return ("{0:B}" -f $parsed).ToUpperInvariant()
 }
 
 if (-not (Test-Path $build)) {
@@ -154,11 +167,11 @@ if (Test-Path $package) {
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $package) | Out-Null
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $package -CompressionLevel Optimal
-Write-Host "Created $package"
+Write-Output "Created $package"
 
 $zipHash = Get-FileHash -Algorithm SHA256 -LiteralPath $package
 Set-Content -LiteralPath "$package.sha256" -Value "$($zipHash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $package)"
-Write-Host "Created $package.sha256"
+Write-Output "Created $package.sha256"
 
 if ($CreateMsi) {
     $cpack = Join-Path (Split-Path -Parent $cmake) "cpack.exe"
@@ -167,19 +180,34 @@ if ($CreateMsi) {
     }
     $wix = Find-Wix
     Confirm-WixEula -WixPath $wix
-    Ensure-WixUiExtension -WixPath $wix
+    Install-WixUiExtension -WixPath $wix
     $env:PATH = "$(Split-Path -Parent $wix);$env:PATH"
     & $cpack -G WIX -C $Configuration --config (Join-Path $build "CPackConfig.cmake") -B (Join-Path $repo "out")
     $msi = Join-Path $repo "out\$packageBase.msi"
     if (-not (Test-Path $msi)) {
         throw "Expected MSI was not produced: $msi"
     }
+    $expectedProductVersion = Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_PACKAGE_VERSION"
+    $expectedProductCode = Format-MsiGuid -GuidText (Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_WIX_PRODUCT_GUID")
+    $expectedUpgradeCode = Format-MsiGuid -GuidText (Read-SuperZipCPackValue -BuildRoot $build -Name "CPACK_WIX_UPGRADE_GUID")
     $manufacturer = Read-MsiProperty -MsiPath $msi -Name "Manufacturer"
     if ($manufacturer -ne "SuperZip Technologies") {
         throw "MSI Manufacturer was '$manufacturer'; expected 'SuperZip Technologies'."
     }
+    $productVersion = Read-MsiProperty -MsiPath $msi -Name "ProductVersion"
+    if ($productVersion -ne $expectedProductVersion) {
+        throw "MSI ProductVersion was '$productVersion'; expected '$expectedProductVersion'."
+    }
+    $productCode = Format-MsiGuid -GuidText (Read-MsiProperty -MsiPath $msi -Name "ProductCode")
+    if ($productCode -ne $expectedProductCode) {
+        throw "MSI ProductCode was '$productCode'; expected deterministic product code '$expectedProductCode'."
+    }
+    $upgradeCode = Format-MsiGuid -GuidText (Read-MsiProperty -MsiPath $msi -Name "UpgradeCode")
+    if ($upgradeCode -ne $expectedUpgradeCode) {
+        throw "MSI UpgradeCode was '$upgradeCode'; expected stable upgrade code '$expectedUpgradeCode'."
+    }
     $msiHash = Get-FileHash -Algorithm SHA256 -LiteralPath $msi
     Set-Content -LiteralPath "$msi.sha256" -Value "$($msiHash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $msi)"
-    Write-Host "Created $msi"
-    Write-Host "Created $msi.sha256"
+    Write-Output "Created $msi"
+    Write-Output "Created $msi.sha256"
 }

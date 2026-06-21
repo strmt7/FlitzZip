@@ -326,6 +326,18 @@ function Test-InstallerScopePolicy {
     if ($cmakeLists -notmatch 'set\(CPACK_PACKAGE_VENDOR\s+"SuperZip Technologies"\)') {
         throw "CMakeLists.txt must set the release MSI publisher to SuperZip Technologies."
     }
+    if ($cmakeLists -notmatch 'set\(SUPERZIP_WIX_UPGRADE_GUID\s+"8E0D80F6-859D-4FE9-B082-F0D8048A8B57"\)') {
+        throw "CMakeLists.txt must keep SuperZip's stable MSI UpgradeCode in one explicit variable."
+    }
+    if ($cmakeLists -notmatch 'SUPERZIP_WIX_PRODUCT_CODE_SEED[\s\S]*SUPERZIP_PACKAGE_NUMERIC_VERSION[\s\S]*SUPERZIP_MSI_INSTALL_SCOPE') {
+        throw "CMakeLists.txt must seed the MSI ProductCode from package numeric version and install scope."
+    }
+    if ($cmakeLists -notmatch 'string\(\s*UUID\s+SUPERZIP_WIX_PRODUCT_GUID[\s\S]*NAME\s+"\$\{SUPERZIP_WIX_PRODUCT_CODE_SEED\}"[\s\S]*TYPE\s+SHA1') {
+        throw "CMakeLists.txt must derive the MSI ProductCode deterministically from package numeric version and install scope."
+    }
+    if ($cmakeLists -notmatch 'set\(CPACK_WIX_PRODUCT_GUID\s+"\$\{SUPERZIP_WIX_PRODUCT_GUID\}"\)') {
+        throw "CMakeLists.txt must pass the deterministic MSI ProductCode to CPack WiX."
+    }
     if ($cmakeLists -match 'CPACK_CREATE_DESKTOP_LINKS') {
         throw "Desktop shortcuts must be an optional MSI feature, not unconditional CPACK_CREATE_DESKTOP_LINKS."
     }
@@ -362,6 +374,23 @@ function Test-InstallerScopePolicy {
         throw "tools/build.ps1 must default -MsiInstallScope to perMachine. Use explicit perUser only for local non-admin tests."
     }
 
+    $packageScript = Get-Content -LiteralPath (Join-Path $repo "tools\package.ps1") -Raw
+    if ($packageScript -notmatch 'Read-MsiProperty\s+-MsiPath\s+\$msi\s+-Name\s+"ProductCode"' -or $packageScript -notmatch 'CPACK_WIX_PRODUCT_GUID') {
+        throw "tools/package.ps1 must verify the generated MSI ProductCode against CPack's deterministic ProductCode."
+    }
+    if ($packageScript -notmatch 'Read-MsiProperty\s+-MsiPath\s+\$msi\s+-Name\s+"UpgradeCode"' -or $packageScript -notmatch 'CPACK_WIX_UPGRADE_GUID') {
+        throw "tools/package.ps1 must verify the generated MSI UpgradeCode before publishing."
+    }
+
+    $msiIdentityTool = Get-Content -LiteralPath (Join-Path $repo "tools\test_msi_identity.ps1") -Raw
+    if ($msiIdentityTool -notmatch 'same version and install scope' -or $msiIdentityTool -notmatch 'Patch-version update did not change the MSI ProductCode') {
+        throw "tools/test_msi_identity.ps1 must verify same-build stability and patch-version ProductCode changes."
+    }
+    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\superzip_verification.psm1") -Raw
+    if ($verificationSelector -notmatch 'msi-identity-smoke' -or $verificationSelector -notmatch 'tools/test_msi_identity\.ps1') {
+        throw "Packaging verification must route through tools/test_msi_identity.ps1."
+    }
+
     $releaseAction = Get-Content -LiteralPath (Join-Path $repo ".github\actions\windows-release\action.yml") -Raw
     if ($releaseAction -notmatch 'MsiInstallScope\s*=\s*"perMachine"') {
         throw "Release workflow must pass MsiInstallScope=perMachine for published MSI artifacts."
@@ -379,10 +408,13 @@ function Test-InstallerScopePolicy {
         throw "Release workflow must fail stale HIP SDK installer waits with an explicit bounded-timeout message."
     }
     if ($releaseAction -notmatch '\[int\]\$TimeoutSeconds\s*=\s*300') {
-        throw "Release MSI install/uninstall smoke tests must default to a 300-second stale-wait timeout."
+        throw "Release MSI install/repair/uninstall smoke tests must default to a 300-second stale-wait timeout."
     }
     if ($releaseAction -notmatch 'installer or elevation prompt was left unanswered') {
         throw "Release installer timeout messages must explain that unanswered elevation prompts are a possible cause."
+    }
+    if ($releaseAction -notmatch 'MSI repair' -or $releaseAction -notmatch 'superzip-msi-repair-dependency-check\.txt') {
+        throw "Release MSI smoke tests must repair the just-installed MSI and run dependency-check after repair."
     }
 }
 

@@ -573,6 +573,7 @@ runs:
 
         $msi = Join-Path $PWD "out\$env:PACKAGE_BASE.msi"
         $installLog = Join-Path $env:RUNNER_TEMP "superzip-msi-install.log"
+        $repairLog = Join-Path $env:RUNNER_TEMP "superzip-msi-repair.log"
         $uninstallLog = Join-Path $env:RUNNER_TEMP "superzip-msi-uninstall.log"
         $expectedCli = Join-Path $env:ProgramFiles "SuperZip\bin\superzip_cli.exe"
         $installed = $false
@@ -601,6 +602,30 @@ runs:
                 }
             } elseif ($dependencyExit -ne 0) {
                 throw "Installed dependency check failed with exit code $dependencyExit."
+            }
+            Invoke-CheckedMsiExec `
+              -Phase "MSI repair" `
+              -Arguments @("/fa", $msi, "/qn", "/norestart", "/L*v", $repairLog) `
+              -LogPath $repairLog `
+              -TimeoutSeconds 300
+            if (-not (Test-Path -LiteralPath $expectedCli)) {
+                throw "Installed CLI was not found after MSI repair at the release MSI Program Files path: $expectedCli"
+            }
+            $repairDependency = & $expectedCli dependency-check
+            $repairDependencyExit = $LASTEXITCODE
+            $repairDependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-repair-dependency-check.txt")
+            if ($env:ENABLE_HIP -eq "true") {
+                if ($repairDependency -notcontains "hip_compiled=true") {
+                    throw "Repaired release artifact is not HIP-enabled."
+                }
+                if ($repairDependency -notcontains "hip_runtime_loadable=true") {
+                    throw "Repaired release artifact cannot load the AMD HIP runtime."
+                }
+                if ($repairDependencyExit -notin @(0, 12)) {
+                    throw "Repaired dependency check failed with exit code $repairDependencyExit."
+                }
+            } elseif ($repairDependencyExit -ne 0) {
+                throw "Repaired dependency check failed with exit code $repairDependencyExit."
             }
             $global:LASTEXITCODE = 0
         } finally {
@@ -635,7 +660,7 @@ runs:
         $hipLine
         - Portable ZIP and compatibility-format smoke tests completed after staging install.
         - MSI built for per-machine installation under C:\Program Files\SuperZip.
-        - Silent install/uninstall smoke test completed with 5-minute timeouts per MSI phase.
+        - Silent install/repair/uninstall smoke test completed with 5-minute timeouts per MSI phase.
         - Repository security scan completed before publishing.
         - SHA-256 checksum files are attached beside each package.
         "@ | Set-Content -LiteralPath $notes
