@@ -73,6 +73,23 @@ function Assert-GuiSystemQueueContract {
     if (-not $SourceText.Contains('current_user_downloads_directory')) {
         throw "GUI destination defaults must resolve the current user's Downloads folder instead of process cwd."
     }
+    foreach ($requiredIoSource in @(
+        'DropdownId::SystemIoDrive',
+        'fixed_io_drive_options',
+        'GetDriveTypeW(root.c_str()) == DRIVE_FIXED',
+        'sample_selected_drive_io',
+        'LogicalDisk(',
+        '% Disk Time',
+        'Disk Read Bytes/sec',
+        'Disk Write Bytes/sec',
+        'io_busy_percent')) {
+        if (-not $SourceText.Contains($requiredIoSource)) {
+            throw "System I/O monitor must use selected fixed-drive total LogicalDisk counters; missing $requiredIoSource."
+        }
+    }
+    if ($SourceText -cmatch 'GetProcessIoCounters|sample_process_io_rates') {
+        throw "System I/O monitor must not regress to SuperZip process-only I/O counters."
+    }
     if (-not $SourceText.Contains('queue_scrollbar_thumb_rect') -or -not $SourceText.Contains('WM_MOUSEWHEEL')) {
         throw "Queue overflow must keep a fixed header and expose a working scrollbar/wheel path."
     }
@@ -646,6 +663,7 @@ try {
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 5
     Start-Sleep -Milliseconds 250
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed" -OpenX 1160 -OpenY 446 -SelectX 1160 -SelectY 554 -MenuLeft 1070 -MenuTop 470 -MenuRight 1220 -MenuBottom 606 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-IODrive" -OpenX 845 -OpenY 446 -SelectX 845 -SelectY 506 -MenuLeft 812 -MenuTop 470 -MenuRight 892 -MenuBottom 526 -BasePath $basePath -Extension $extension
     $systemMonitorPath = "${basePath}-System-PerformanceMonitor$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle

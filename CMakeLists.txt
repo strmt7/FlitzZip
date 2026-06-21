@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   SuperZip
-  VERSION 0.1.0
+  VERSION 0.5.1
   LANGUAGES C CXX)
 
 if(MSVC)
@@ -563,6 +563,8 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
     superzip_license_notices_header
     DEPENDS "${SUPERZIP_LICENSE_NOTICES_HEADER}"
     COMMENT "Preparing SuperZip license notices header")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/SuperZip.manifest" @ONLY)
 
   add_executable(
     SuperZip
@@ -610,7 +612,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
   if(MSVC)
     target_link_options(
       SuperZip PRIVATE "/MANIFEST:EMBED"
-      "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app/SuperZip.manifest")
+      "/MANIFESTINPUT:${CMAKE_CURRENT_BINARY_DIR}/SuperZip.manifest")
   endif()
   install(TARGETS SuperZip RUNTIME DESTINATION bin)
 endif()

@@ -19,6 +19,34 @@
 #endif
 
 namespace superzip::app {
+namespace {
+
+// Purpose: Build one English PDH LogicalDisk counter path.
+// Inputs: `instance` is a fixed-drive instance such as `C:` and `counter` is the PDH counter name.
+// Outputs: Returns a fully qualified counter path.
+std::wstring logical_disk_counter_path(std::wstring_view instance, std::wstring_view counter) {
+    std::wstring path = L"\\LogicalDisk(";
+    path.append(instance);
+    path += L")\\";
+    path.append(counter);
+    return path;
+}
+
+// Purpose: Read a formatted double value from a PDH counter.
+// Inputs: `counter` is an initialized PDH counter and `value` receives the formatted sample.
+// Outputs: Returns true only when PDH reports valid counter data.
+bool read_pdh_double(PDH_HCOUNTER counter, double& value) {
+    PDH_FMT_COUNTERVALUE formatted{};
+    DWORD value_type = 0;
+    const PDH_STATUS status = PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, &value_type, &formatted);
+    if (status != ERROR_SUCCESS || formatted.CStatus != PDH_CSTATUS_VALID_DATA) {
+        return false;
+    }
+    value = formatted.doubleValue;
+    return true;
+}
+
+}  // namespace
 
 // Purpose: Refresh AMD HIP availability and device identity for the UI.
 // Inputs: None; queries the configured GPU backend.
@@ -64,6 +92,7 @@ void MainWindow::shutdown_performance_monitor() {
         gpu_query_ = nullptr;
         gpu_counter_ = nullptr;
     }
+    reset_disk_performance_monitor();
 }
 
 // Purpose: Re-arm the live performance sampling timer at the selected interval.
@@ -284,27 +313,65 @@ std::uint64_t MainWindow::sample_total_dedicated_vram_used_bytes() const {
     return total;
 }
 
-// Purpose: Sample process read/write transfer rates since the previous monitor tick.
-// Inputs: `elapsed_seconds` is the interval from the previous sample.
-// Outputs: Returns non-negative byte-per-second rates and updates previous I/O counters.
-MainWindow::ProcessIoRates MainWindow::sample_process_io_rates(double elapsed_seconds) {
+// Purpose: Release selected-drive I/O performance counters after a drive-selection change.
+// Inputs: None.
+// Outputs: Closes disk PDH handles so the next sample binds to the selected fixed drive.
+void MainWindow::reset_disk_performance_monitor() {
+    if (disk_query_ != nullptr) {
+        PdhCloseQuery(disk_query_);
+    }
+    disk_query_ = nullptr;
+    disk_busy_counter_ = nullptr;
+    disk_read_counter_ = nullptr;
+    disk_write_counter_ = nullptr;
+    disk_counter_instance_.clear();
+}
+
+// Purpose: Sample total selected fixed-drive activity through Windows performance counters.
+// Inputs: `selected_drive_index` identifies the user-selected fixed-drive row.
+// Outputs: Returns drive busy percent plus total read/write byte rates, or unavailable values on counter failure.
+MainWindow::ProcessIoRates MainWindow::sample_selected_drive_io(int selected_drive_index) {
     ProcessIoRates rates;
-    IO_COUNTERS io_counters{};
-    if (!GetProcessIoCounters(GetCurrentProcess(), &io_counters)) {
+    const auto drives = fixed_io_drive_options();
+    if (drives.empty()) {
         return rates;
     }
-    if (elapsed_seconds > 0.0) {
-        if (io_counters.ReadTransferCount >= last_io_read_bytes_) {
-            rates.read_bytes_per_second =
-                static_cast<double>(io_counters.ReadTransferCount - last_io_read_bytes_) / elapsed_seconds;
+    const std::wstring instance = drives[static_cast<std::size_t>(normalize_io_drive_index(selected_drive_index))];
+    if (disk_query_ == nullptr || disk_counter_instance_ != instance) {
+        reset_disk_performance_monitor();
+        disk_counter_instance_ = instance;
+        if (PdhOpenQueryW(nullptr, 0, &disk_query_) != ERROR_SUCCESS || disk_query_ == nullptr) {
+            reset_disk_performance_monitor();
+            return rates;
         }
-        if (io_counters.WriteTransferCount >= last_io_write_bytes_) {
-            rates.write_bytes_per_second =
-                static_cast<double>(io_counters.WriteTransferCount - last_io_write_bytes_) / elapsed_seconds;
+        const auto busy_path = logical_disk_counter_path(instance, L"% Disk Time");
+        const auto read_path = logical_disk_counter_path(instance, L"Disk Read Bytes/sec");
+        const auto write_path = logical_disk_counter_path(instance, L"Disk Write Bytes/sec");
+        if (PdhAddEnglishCounterW(disk_query_, busy_path.c_str(), 0, &disk_busy_counter_) != ERROR_SUCCESS ||
+            PdhAddEnglishCounterW(disk_query_, read_path.c_str(), 0, &disk_read_counter_) != ERROR_SUCCESS ||
+            PdhAddEnglishCounterW(disk_query_, write_path.c_str(), 0, &disk_write_counter_) != ERROR_SUCCESS) {
+            reset_disk_performance_monitor();
+            return rates;
         }
+        (void)PdhCollectQueryData(disk_query_);
     }
-    last_io_read_bytes_ = io_counters.ReadTransferCount;
-    last_io_write_bytes_ = io_counters.WriteTransferCount;
+
+    if (PdhCollectQueryData(disk_query_) != ERROR_SUCCESS) {
+        reset_disk_performance_monitor();
+        return rates;
+    }
+    double busy = 0.0;
+    double read = 0.0;
+    double write = 0.0;
+    const bool busy_ok = disk_busy_counter_ != nullptr && read_pdh_double(disk_busy_counter_, busy);
+    const bool read_ok = disk_read_counter_ != nullptr && read_pdh_double(disk_read_counter_, read);
+    const bool write_ok = disk_write_counter_ != nullptr && read_pdh_double(disk_write_counter_, write);
+    if (busy_ok || read_ok || write_ok) {
+        rates.available = true;
+        rates.busy_percent = busy_ok ? std::clamp(busy, 0.0, 100.0) : 0.0;
+        rates.read_bytes_per_second = read_ok ? std::max(0.0, read) : 0.0;
+        rates.write_bytes_per_second = write_ok ? std::max(0.0, write) : 0.0;
+    }
     return rates;
 }
 
@@ -355,7 +422,12 @@ void MainWindow::update_performance_sample() {
 
     const double cpu_percent = sample_system_cpu_percent(elapsed_seconds);
     const double process_cpu_percent = sample_process_cpu_percent(elapsed_seconds);
-    const auto io_rates = sample_process_io_rates(elapsed_seconds);
+    int io_drive_index = 0;
+    {
+        std::lock_guard lock(mutex_);
+        io_drive_index = state_.io_drive_index;
+    }
+    const auto io_rates = sample_selected_drive_io(io_drive_index);
     const auto private_bytes = sample_private_memory_bytes();
     const auto system_memory = sample_system_memory_usage();
     refresh_gpu_memory_cache(now);
@@ -372,6 +444,7 @@ void MainWindow::update_performance_sample() {
     sample.process_cpu_percent = process_cpu_percent;
     sample.gpu_utilization_percent = sample.gpu_utilization_available ? gpu_percent : 0.0;
     sample.system_memory_percent = system_memory.percent;
+    sample.io_busy_percent = io_rates.available ? io_rates.busy_percent : 0.0;
     sample.io_read_bytes_per_second = std::max(0.0, io_rates.read_bytes_per_second);
     sample.io_write_bytes_per_second = std::max(0.0, io_rates.write_bytes_per_second);
     sample.private_bytes = private_bytes;

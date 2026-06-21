@@ -49,6 +49,7 @@ enum class DropdownId {
     HistoryOperation,
     HistoryStatus,
     GpuUpdateSpeed,
+    SystemIoDrive,
     SettingsMemoryPolicy,
     SettingsLogLevel,
     SettingsLogRetention,
@@ -91,7 +92,9 @@ enum class FocusTargetKind {
     HistoryOperation,
     HistoryStatus,
     HistoryClear,
+    HistoryRow,
     SystemUpdateSpeed,
+    SystemIoDrive,
     SettingsOpenDestination,
     SettingsConfirmDelete,
     SettingsShowSummary,
@@ -102,6 +105,7 @@ enum class FocusTargetKind {
     SettingsMemoryPolicy,
     SettingsLogLevel,
     SettingsLogRetention,
+    SettingsOpenLogFile,
     SettingsRestoreDefaults,
     SettingsApply,
     AboutLicenses,
@@ -120,6 +124,7 @@ struct PerformanceMonitorSample {
     double process_cpu_percent = 0.0;
     double gpu_utilization_percent = 0.0;
     double system_memory_percent = 0.0;
+    double io_busy_percent = 0.0;
     double io_read_bytes_per_second = 0.0;
     double io_write_bytes_per_second = 0.0;
     std::uint64_t private_bytes = 0;
@@ -132,7 +137,8 @@ struct PerformanceMonitorSample {
 
 struct HistoryEntry {
     std::string operation;
-    std::string subject;
+    std::string archive_name;
+    std::string archive_path;
     std::string detail;
     bool success = true;
     std::chrono::system_clock::time_point timestamp = std::chrono::system_clock::now();
@@ -189,8 +195,10 @@ struct UiState {
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
+    int selected_history_index = -1;
     int history_operation_filter_index = 0;
     int history_status_filter_index = 0;
+    int io_drive_index = 0;
     int performance_update_seconds = 3;
     bool open_destination_after_operation = false;
     bool confirm_before_deleting = true;

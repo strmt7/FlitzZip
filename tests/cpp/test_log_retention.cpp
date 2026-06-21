@@ -1,4 +1,5 @@
 #include "app/log_retention.hpp"
+#include "app/log_policy.hpp"
 #include "test_util.hpp"
 
 #include <chrono>
@@ -40,6 +41,28 @@ TEST_CASE(log_retention_labels_are_exact_gui_choices) {
     REQUIRE_EQ(log_retention_days(2), 30);
     REQUIRE_EQ(log_retention_days(-1), 7);
     REQUIRE_EQ(log_retention_days(99), 7);
+}
+
+TEST_CASE(log_level_filter_matrix_matches_settings_labels) {
+    using superzip::app::log_level_allows;
+    using superzip::app::log_severity_text;
+    using superzip::app::LogSeverity;
+
+    REQUIRE_TRUE(log_level_allows(0, LogSeverity::Information));
+    REQUIRE_TRUE(log_level_allows(0, LogSeverity::Warning));
+    REQUIRE_TRUE(!log_level_allows(0, LogSeverity::Debug));
+
+    REQUIRE_TRUE(!log_level_allows(1, LogSeverity::Information));
+    REQUIRE_TRUE(log_level_allows(1, LogSeverity::Warning));
+    REQUIRE_TRUE(!log_level_allows(1, LogSeverity::Debug));
+
+    REQUIRE_TRUE(log_level_allows(2, LogSeverity::Information));
+    REQUIRE_TRUE(log_level_allows(2, LogSeverity::Warning));
+    REQUIRE_TRUE(log_level_allows(2, LogSeverity::Debug));
+
+    REQUIRE_EQ(log_severity_text(LogSeverity::Information), std::string_view("Information"));
+    REQUIRE_EQ(log_severity_text(LogSeverity::Warning), std::string_view("Warning"));
+    REQUIRE_EQ(log_severity_text(LogSeverity::Debug), std::string_view("Debug"));
 }
 
 TEST_CASE(log_retention_prunes_expired_entries_and_caps_count) {

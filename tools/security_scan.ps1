@@ -70,10 +70,14 @@ function Assert-ReleaseReplacementSafeguard {
             "replacement_acknowledgement:",
             "REPLACEMENT_ACKNOWLEDGEMENT",
             "replace_existing=true requires replacement_acknowledgement exactly",
+            "replace_existing=true is refused for MSI releases",
             "Replacement is exceptional")) {
         if ($actionText -notmatch [regex]::Escape($requiredSnippet)) {
             throw "Windows release action is missing the replacement acknowledgement safeguard: $requiredSnippet"
         }
+    }
+    if ($workflowText -notmatch [regex]::Escape("MSI releases must use a new SemVer numeric version")) {
+        throw "Release workflow input text must warn that MSI releases are not same-version replaceable."
     }
 }
 
@@ -114,9 +118,56 @@ function Assert-ReleaseDocUseVersionPlaceholder {
     }
 }
 
-$files = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
-    -not (Test-ExcludedScanPath -Path $_.FullName)
+# Purpose: Verify development transfer diagnostics stay RAM-only and GPU-proof oriented.
+# Inputs: Reads the development transfer diagnostic tool and documentation.
+# Outputs: Throws when the diagnostic stops enforcing zero disk writes or required HIP telemetry.
+function Assert-DevelopmentTransferDiagnostic {
+    $tool = Join-Path $repo "tools\transfer_diagnostics.ps1"
+    $doc = Join-Path $repo "docs\development-transfer-diagnostics.md"
+    if (-not (Test-Path -LiteralPath $tool) -or -not (Test-Path -LiteralPath $doc)) {
+        throw "Development transfer diagnostics tool and documentation must both exist."
+    }
+    $toolText = Get-Content -LiteralPath $tool -Raw
+    foreach ($requiredSnippet in @(
+            "memory-benchmark",
+            "--force-cpu",
+            "--require-gpu",
+            "memory_only",
+            "disk_write_bytes",
+            "gpu_h2d_bytes",
+            "gpu_d2h_bytes",
+            "gpu_device_allocation_bytes",
+            "gpu_kernel_launches")) {
+        if ($toolText -notmatch [regex]::Escape($requiredSnippet)) {
+            throw "Development transfer diagnostics must keep RAM-only CPU/GPU transfer proof: $requiredSnippet"
+        }
+    }
+    $docText = Get-Content -LiteralPath $doc -Raw
+    if ($docText -notmatch 'development-only' -or $docText -notmatch 'disk_write_bytes=0') {
+        throw "Development transfer diagnostics documentation must state the development-only and zero-disk-write contract."
+    }
 }
+
+# Purpose: Enumerate source-controlled scan candidates without descending excluded generated roots.
+# Inputs: None; reads the repository root and applies `Test-ExcludedScanPath` before recursion.
+# Outputs: Returns file objects that should be scanned for secret-like content.
+function Get-SecurityScanFile {
+    $rootItems = Get-ChildItem -LiteralPath $repo -Force -ErrorAction Stop
+    foreach ($item in $rootItems) {
+        if (Test-ExcludedScanPath -Path $item.FullName) {
+            continue
+        }
+        if ($item.PSIsContainer) {
+            Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force -ErrorAction Stop | Where-Object {
+                -not (Test-ExcludedScanPath -Path $_.FullName)
+            }
+        } else {
+            $item
+        }
+    }
+}
+
+$files = Get-SecurityScanFile
 
 foreach ($file in $files) {
     $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
@@ -262,6 +313,7 @@ function Assert-NoGithubContextInRunBlock {
 
 Test-WorkflowSecurityPolicy
 Assert-ReleaseDocUseVersionPlaceholder
+Assert-DevelopmentTransferDiagnostic
 
 # Purpose: Verify README badges avoid known flaky GitHub API-backed shields.
 # Inputs: Reads `README.md`.

@@ -237,9 +237,18 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
         clear_history();
         return true;
     }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    const auto visible = filtered_history_indices(state);
+    clamp_history_scroll_offset(table, visible.size());
+    const RECT columns_table = history_columns_table(table, visible.size());
+    const int max_scroll = history_max_scroll_offset(table, visible.size());
     if (y >= table.top && y < header_bottom) {
         const RECT header_row{table.left, table.top, table.right, header_bottom};
-        const auto columns = history_column_layout(table, header_row);
+        const auto columns = history_column_layout(columns_table, header_row);
         for (int separator = 0; separator < static_cast<int>(columns.resize_grips.size()); ++separator) {
             if (contains_point(columns.resize_grips[static_cast<std::size_t>(separator)], x, y)) {
                 begin_history_column_resize(separator, x);
@@ -247,6 +256,34 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
             }
         }
         return true;
+    }
+    if (max_scroll > 0) {
+        const RECT track = history_scrollbar_track_rect(table);
+        const RECT thumb = history_scrollbar_thumb_rect(table, visible.size());
+        if (contains_point(thumb, x, y)) {
+            begin_history_scroll_drag(y, table, visible.size());
+            return true;
+        }
+        if (contains_point(track, x, y)) {
+            const int visible_rows = std::max(1, history_visible_row_count(table));
+            (void)scroll_history_rows(y < thumb.top ? -visible_rows : visible_rows);
+            return true;
+        }
+    }
+    const int row_height = scale(kQueueRowHeight);
+    if (y >= header_bottom && y < table.bottom && row_height > 0) {
+        if (x >= columns_table.right) {
+            return true;
+        }
+        const int visible_index = (y - header_bottom) / row_height;
+        const int filtered_index = history_scroll_first_row_ + visible_index;
+        if (filtered_index >= 0 && filtered_index < static_cast<int>(visible.size())) {
+            std::lock_guard lock(mutex_);
+            state_.selected_history_index = static_cast<int>(visible[static_cast<std::size_t>(filtered_index)]);
+            state_.status = "History row selected";
+            request_repaint();
+            return true;
+        }
     }
     return false;
 }
@@ -304,12 +341,12 @@ void MainWindow::start_security_verify() {
                 }
                 if (integrity) {
                     const auto hash = hash_path(path, IntegrityMode::Sha256);
-                    append_history_entry("Security", path.filename().string(), integrity_history_status("Path", hash),
-                                         true);
+                    append_history_entry("Security", path.filename().string(), path.string(),
+                                         integrity_history_status("Path", hash), true);
                 }
                 if (defender) {
                     const auto scan = scan_with_windows_defender(path, DefenderScanMode::FullPath);
-                    append_history_entry("Security", path.filename().string(),
+                    append_history_entry("Security", path.filename().string(), path.string(),
                                          defender_history_status("Defender", scan), !scan.attempted || scan.clean);
                     if (scan.attempted && !scan.clean) {
                         throw SecurityError("Microsoft Defender did not report the path as clean: " + path.string());
@@ -319,7 +356,9 @@ void MainWindow::start_security_verify() {
                 progress.finish_entry();
                 publish();
             }
-            append_history_entry("Security", "Security review",
+            const std::string summary_path =
+                sources.size() == 1U ? sources.front().string() : "Multiple selected locations";
+            append_history_entry("Security", "Security review", summary_path,
                                  "Verified " + std::to_string(sources.size()) + " selected queue item(s)", true);
         },
         "Verifying");
@@ -327,14 +366,19 @@ void MainWindow::start_security_verify() {
 
 // Purpose: Handle System page hit-testing and commands.
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
-// Outputs: Returns true when the update-speed dropdown consumed the click.
+// Outputs: Returns true when the refresh-interval or I/O-drive dropdown consumed the click.
 bool MainWindow::handle_gpu_click(const RECT& content, int x, int y) {
     const RECT update_speed = dropdown_anchor_rect(DropdownId::GpuUpdateSpeed, content);
+    const RECT io_drive = dropdown_anchor_rect(DropdownId::SystemIoDrive, content);
     if (handle_active_dropdown_click(x, y)) {
         return true;
     }
     if (contains_point(update_speed, x, y)) {
         open_dropdown(DropdownId::GpuUpdateSpeed);
+        return true;
+    }
+    if (contains_point(io_drive, x, y) && !fixed_io_drive_options().empty()) {
+        open_dropdown(DropdownId::SystemIoDrive);
         return true;
     }
     return false;
@@ -403,6 +447,10 @@ bool MainWindow::handle_settings_click(const RECT& content, int x, int y) {
     }
     if (contains_point(layout.log_retention, x, y)) {
         open_dropdown(DropdownId::SettingsLogRetention);
+        return true;
+    }
+    if (contains_point(layout.open_log_file, x, y)) {
+        open_log_file_location();
         return true;
     }
     return false;

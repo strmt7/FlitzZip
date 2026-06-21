@@ -23,6 +23,7 @@ namespace superzip::app {
 // Outputs: Applies validated settings, creates defaults when needed, and logs nonfatal parse/write failures.
 void MainWindow::initialize_settings() {
     try {
+        ensure_app_storage();
         applied_settings_ = read_settings_file(settings_file_path());
         {
             std::lock_guard lock(mutex_);
@@ -58,7 +59,7 @@ void MainWindow::apply_settings() {
         state_.status = "Settings applied";
     }
     reset_performance_timer(applied_settings_.performance_update_seconds);
-    append_history_entry("Settings", "Settings", "Applied for current session", true);
+    append_history_entry("Settings", "Settings", settings_file_path().string(), "Applied for current session", true);
     append_log_entry(LogSeverity::Information, "Settings applied for current session");
 }
 

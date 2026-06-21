@@ -30,9 +30,10 @@ struct QueueColumnLayout {
 struct HistoryColumnLayout {
     RECT time{};
     RECT operation{};
-    RECT archive{};
+    RECT archive_name{};
+    RECT archive_path{};
     RECT status{};
-    std::array<RECT, 3> resize_grips{};
+    std::array<RECT, 4> resize_grips{};
 };
 
 struct ExtractJobRequest {
@@ -45,6 +46,8 @@ struct ExtractJobRequest {
 };
 
 struct ProcessIoRates {
+    bool available = false;
+    double busy_percent = 0.0;
     double read_bytes_per_second = 0.0;
     double write_bytes_per_second = 0.0;
 };
@@ -97,6 +100,7 @@ struct SettingsLayout {
     RECT memory_policy{};
     RECT log_level{};
     RECT log_retention{};
+    RECT open_log_file{};
     RECT open_destination_after_operation{};
     RECT confirm_before_deleting{};
     RECT show_operation_summary{};

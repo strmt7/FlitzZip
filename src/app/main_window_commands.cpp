@@ -341,6 +341,9 @@ void MainWindow::clear_history() {
     {
         std::lock_guard lock(mutex_);
         state_.history.clear();
+        state_.selected_history_index = -1;
+        history_scroll_first_row_ = 0;
+        history_wheel_delta_remainder_ = 0;
     }
     request_repaint();
 }
@@ -374,6 +377,41 @@ void MainWindow::choose_destination() {
             state_.status = std::string("Destination selection failed: ") + error.what();
         }
         append_log_entry(LogSeverity::Warning, "Destination picker failed");
+    }
+    request_repaint();
+}
+
+// Purpose: Open Windows Explorer with the current user's SuperZip log file selected.
+// Inputs: None; resolves and creates the per-user log file path.
+// Outputs: Launches Explorer or records a warning status when the shell action fails.
+void MainWindow::open_log_file_location() {
+    try {
+        ensure_app_storage();
+        const auto path = log_file_path();
+        wchar_t suppress_shell_open[8]{};
+        constexpr DWORD suppress_capacity =
+            static_cast<DWORD>(sizeof(suppress_shell_open) / sizeof(suppress_shell_open[0]));
+        const DWORD suppress_length =
+            GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", suppress_shell_open, suppress_capacity);
+        if (!(suppress_length == 1 && suppress_shell_open[0] == L'1')) {
+            const std::wstring arguments = L"/select,\"" + path.wstring() + L"\"";
+            const auto result = reinterpret_cast<INT_PTR>(
+                ShellExecuteW(hwnd_, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL));
+            if (result <= 32) {
+                throw ArchiveError("Explorer could not open the SuperZip log file location");
+            }
+        }
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = "Log file location opened";
+        }
+        append_log_entry(LogSeverity::Debug, "Log file location opened");
+    } catch (const std::exception& error) {
+        {
+            std::lock_guard lock(mutex_);
+            state_.status = std::string("Open log file failed: ") + error.what();
+        }
+        append_log_entry(LogSeverity::Warning, "Open log file failed");
     }
     request_repaint();
 }
@@ -437,16 +475,16 @@ void MainWindow::start_compress() {
             std::ostringstream line;
             line << "Compressed " << archive_format_info(archive_format).key << " to " << output.string() << " in "
                  << stats.seconds << "s";
-            append_history_entry("Compress", output.filename().string(), line.str(), true);
+            append_history_entry("Compress", output.filename().string(), output.string(), line.str(), true);
             if (integrity) {
                 const auto hash = hash_path(output, IntegrityMode::Sha256);
-                append_history_entry("Security", output.filename().string(), integrity_history_status("Archive", hash),
-                                     true);
+                append_history_entry("Security", output.filename().string(), output.string(),
+                                     integrity_history_status("Archive", hash), true);
             }
             if (defender) {
                 const auto scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-                append_history_entry("Security", output.filename().string(), defender_history_status("Defender", scan),
-                                     !scan.attempted || scan.clean);
+                append_history_entry("Security", output.filename().string(), output.string(),
+                                     defender_history_status("Defender", scan), !scan.attempted || scan.clean);
             }
         },
         "Compressing");

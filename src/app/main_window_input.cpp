@@ -30,6 +30,10 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
         update_history_column_resize(mouse_position_.x);
     } else if (primary_mouse_down_ && queue_scroll_dragging_) {
         update_queue_scroll_drag(mouse_position_.y);
+    } else if (primary_mouse_down_ && history_scroll_dragging_) {
+        update_history_scroll_drag(mouse_position_.y);
+    } else if (primary_mouse_down_ && license_notices_scroll_dragging_) {
+        update_license_notices_scroll_drag(mouse_position_.y);
     }
     if (!mouse_tracking_) {
         TRACKMOUSEEVENT event{};
@@ -70,8 +74,10 @@ LRESULT MainWindow::handle_mouse_move(LPARAM lparam) {
             const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
             const int header_bottom = table.top + scale(kQueueHeaderHeight);
             if (mouse_position_.y >= table.top && mouse_position_.y < header_bottom) {
+                const auto visible = filtered_history_indices(state);
+                const RECT columns_table = history_columns_table(table, visible.size());
                 const RECT header_row{table.left, table.top, table.right, header_bottom};
-                const auto columns = history_column_layout(table, header_row);
+                const auto columns = history_column_layout(columns_table, header_row);
                 over_resize_grip = std::ranges::any_of(columns.resize_grips, [this](const RECT& grip) {
                     return contains_point(grip, mouse_position_.x, mouse_position_.y);
                 });
@@ -147,6 +153,7 @@ bool MainWindow::text_tooltip_candidate_at_mouse(RECT& cell, std::wstring& text)
         return false;
     }
     return queue_text_tooltip_candidate_at_mouse(state, cell, text) ||
+           history_text_tooltip_candidate_at_mouse(state, cell, text) ||
            field_text_tooltip_candidate_at_mouse(state, cell, text);
 }
 
@@ -188,6 +195,55 @@ bool MainWindow::queue_text_tooltip_candidate_at_mouse(const UiState& state, REC
     }
     if (contains_point(path_cell, mouse_position_.x, mouse_position_.y)) {
         auto value = path.wstring();
+        if (text_overflows_cell(value, path_cell, tiny_font_)) {
+            cell = path_cell;
+            text = std::move(value);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Purpose: Return the ellipsized History text under the current mouse, if any.
+// Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
+// Outputs: Returns true only for truncated Archive name or Archive path cells.
+bool MainWindow::history_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text) {
+    if (state.page != Page::History || state.history.empty()) {
+        return false;
+    }
+    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
+    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const int header_bottom = table.top + scale(kQueueHeaderHeight);
+    const int row_height = scale(kQueueRowHeight);
+    const auto visible = filtered_history_indices(state);
+    const RECT columns_table = history_columns_table(table, visible.size());
+    if (row_height <= 0 || mouse_position_.y < header_bottom || mouse_position_.y >= table.bottom ||
+        mouse_position_.x >= columns_table.right) {
+        return false;
+    }
+    const int first_visible_row =
+        std::clamp(history_scroll_first_row_, 0, history_max_scroll_offset(table, visible.size()));
+    const int visible_index = (mouse_position_.y - header_bottom) / row_height;
+    const int filtered_index = first_visible_row + visible_index;
+    if (filtered_index < 0 || filtered_index >= static_cast<int>(visible.size())) {
+        return false;
+    }
+    const RECT row{columns_table.left, header_bottom + (visible_index * row_height), columns_table.right,
+                   header_bottom + ((visible_index + 1) * row_height)};
+    const auto columns = history_column_layout(columns_table, row);
+    const auto& entry = state.history[visible[static_cast<std::size_t>(filtered_index)]];
+    const RECT name_cell = inset_rect(columns.archive_name, scale(8), 0);
+    const RECT path_cell = inset_rect(columns.archive_path, scale(8), 0);
+    if (contains_point(name_cell, mouse_position_.x, mouse_position_.y)) {
+        auto value = widen(entry.archive_name);
+        if (text_overflows_cell(value, name_cell, tiny_font_)) {
+            cell = name_cell;
+            text = std::move(value);
+            return true;
+        }
+    }
+    if (contains_point(path_cell, mouse_position_.x, mouse_position_.y)) {
+        auto value = widen(entry.archive_path);
         if (text_overflows_cell(value, path_cell, tiny_font_)) {
             cell = path_cell;
             text = std::move(value);
@@ -335,6 +391,8 @@ LRESULT MainWindow::handle_primary_mouse_up(LPARAM lparam) {
     end_queue_column_resize();
     end_history_column_resize();
     end_queue_scroll_drag();
+    end_history_scroll_drag();
+    end_license_notices_scroll_drag();
     if (mouse_inside_client_) {
         start_button_release_animation(mouse_position_);
     }
@@ -351,6 +409,8 @@ LRESULT MainWindow::handle_capture_changed() {
     end_queue_column_resize();
     end_history_column_resize();
     end_queue_scroll_drag();
+    end_history_scroll_drag();
+    end_license_notices_scroll_drag();
     request_repaint();
     return 0;
 }
@@ -367,28 +427,41 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
         state = state_;
     }
     if (state.license_notices_dialog_visible) {
-        const int wheel_steps = GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA;
+        const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+        (void)scroll_license_notices_dialog(
+            static_cast<int>(std::lround(-static_cast<double>(delta) / 120.0 * static_cast<double>(scale(72)))));
+        return 0;
+    }
+    if (state.page == Page::Queue && !state.queued_paths.empty()) {
+        const auto layout = queue_layout(content_rect());
+        if (!contains_point(layout.table, point.x, point.y) ||
+            queue_max_scroll_offset(layout.table, state.queued_paths.size()) == 0) {
+            return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
+        }
+        queue_wheel_delta_remainder_ += GET_WHEEL_DELTA_WPARAM(wparam);
+        const int wheel_steps = queue_wheel_delta_remainder_ / WHEEL_DELTA;
+        queue_wheel_delta_remainder_ %= WHEEL_DELTA;
         if (wheel_steps != 0) {
-            (void)scroll_license_notices_dialog(-wheel_steps * scale(96));
+            (void)scroll_queue_rows(-wheel_steps * 3);
         }
         return 0;
     }
-    if (state.page != Page::Queue || state.queued_paths.empty()) {
-        return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
+    if (state.page == Page::History && !state.history.empty()) {
+        const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
+        const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+        const auto visible = filtered_history_indices(state);
+        if (!contains_point(table, point.x, point.y) || history_max_scroll_offset(table, visible.size()) == 0) {
+            return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
+        }
+        history_wheel_delta_remainder_ += GET_WHEEL_DELTA_WPARAM(wparam);
+        const int wheel_steps = history_wheel_delta_remainder_ / WHEEL_DELTA;
+        history_wheel_delta_remainder_ %= WHEEL_DELTA;
+        if (wheel_steps != 0) {
+            (void)scroll_history_rows(-wheel_steps * 3);
+        }
+        return 0;
     }
-    const auto layout = queue_layout(content_rect());
-    if (!contains_point(layout.table, point.x, point.y) ||
-        queue_max_scroll_offset(layout.table, state.queued_paths.size()) == 0) {
-        return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
-    }
-
-    queue_wheel_delta_remainder_ += GET_WHEEL_DELTA_WPARAM(wparam);
-    const int wheel_steps = queue_wheel_delta_remainder_ / WHEEL_DELTA;
-    queue_wheel_delta_remainder_ %= WHEEL_DELTA;
-    if (wheel_steps != 0) {
-        (void)scroll_queue_rows(-wheel_steps * 3);
-    }
-    return 0;
+    return DefWindowProcW(hwnd_, WM_MOUSEWHEEL, wparam, lparam);
 }
 
 }  // namespace superzip::app

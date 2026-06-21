@@ -47,6 +47,10 @@ the Security tab, released artifacts, or the product UI again.
   `replace <same-version>`, and both `tools\verify_change_hygiene.ps1` and
   `tools\security_scan.ps1` reject release workflow/action edits that remove
   that safeguard.
+- MSI release replacement is refused even with a valid replacement
+  acknowledgement. Windows Installer update identity is version-based; correcting
+  an installable release requires a new SemVer numeric version so installed
+  systems receive a clean upgrade or maintenance path.
 - Release instructions must use placeholder SemVer values in examples instead
   of concrete proposed release versions. The changed-file hygiene and full
   security scans reject hardcoded `release_version=` and replacement examples

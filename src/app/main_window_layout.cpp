@@ -114,8 +114,8 @@ MainWindow::HistoryColumnLayout MainWindow::history_column_layout(const RECT& ta
     const int right_padding = scale(16);
     const int available =
         std::max(scale(360), static_cast<int>(table.right - table.left) - left_padding - right_padding);
-    const std::array<int, 4> minimums{scale(110), scale(90), scale(180), scale(90)};
-    std::array<int, 4> widths{};
+    const std::array<int, 5> minimums{scale(82), scale(78), scale(140), scale(160), scale(74)};
+    std::array<int, 5> widths{};
     int requested = 0;
     for (std::size_t i = 0; i < widths.size(); ++i) {
         widths[i] = std::max(minimums[i], scale(history_column_widths_[i]));
@@ -136,14 +136,17 @@ MainWindow::HistoryColumnLayout MainWindow::history_column_layout(const RECT& ta
     left = columns.time.right;
     columns.operation = RECT{left, row.top, left + widths[1], row.bottom};
     left = columns.operation.right;
-    columns.archive = RECT{left, row.top, left + widths[2], row.bottom};
-    left = columns.archive.right;
+    columns.archive_name = RECT{left, row.top, left + widths[2], row.bottom};
+    left = columns.archive_name.right;
+    columns.archive_path = RECT{left, row.top, left + widths[3], row.bottom};
+    left = columns.archive_path.right;
     columns.status = RECT{left, row.top, table.right - right_padding, row.bottom};
     const int grip = scale(kQueueResizeGripHalfWidth);
     columns.resize_grips = {
         RECT{columns.time.right - grip, row.top, columns.time.right + grip, row.bottom},
         RECT{columns.operation.right - grip, row.top, columns.operation.right + grip, row.bottom},
-        RECT{columns.archive.right - grip, row.top, columns.archive.right + grip, row.bottom},
+        RECT{columns.archive_name.right - grip, row.top, columns.archive_name.right + grip, row.bottom},
+        RECT{columns.archive_path.right - grip, row.top, columns.archive_path.right + grip, row.bottom},
     };
     return columns;
 }
@@ -159,6 +162,17 @@ RECT MainWindow::queue_columns_table(const RECT& table, std::size_t row_count) c
     return columns;
 }
 
+// Purpose: Reserve History table body space for an overflow scrollbar when needed.
+// Inputs: `table` is the full table rectangle and `row_count` is the number of filtered history entries.
+// Outputs: Returns the column layout table with the scrollbar gutter removed only when rows overflow.
+RECT MainWindow::history_columns_table(const RECT& table, std::size_t row_count) const {
+    RECT columns = table;
+    if (history_max_scroll_offset(table, row_count) > 0) {
+        columns.right -= scale(kQueueScrollbarWidth + 8);
+    }
+    return columns;
+}
+
 // Purpose: Count the number of complete Queue rows visible below the fixed header.
 // Inputs: `table` is the full Queue table rectangle.
 // Outputs: Returns a non-negative visible row count.
@@ -166,6 +180,13 @@ int MainWindow::queue_visible_row_count(const RECT& table) const {
     const int body_height = std::max(0, static_cast<int>(table.bottom - (table.top + scale(kQueueHeaderHeight))));
     const int row_height = std::max(1, scale(kQueueRowHeight));
     return std::max(0, body_height / row_height);
+}
+
+// Purpose: Count the number of complete History rows visible below the fixed header.
+// Inputs: `table` is the full History table rectangle.
+// Outputs: Returns a non-negative visible row count.
+int MainWindow::history_visible_row_count(const RECT& table) const {
+    return queue_visible_row_count(table);
 }
 
 // Purpose: Compute the largest valid first visible Queue row.
@@ -177,11 +198,27 @@ int MainWindow::queue_max_scroll_offset(const RECT& table, std::size_t row_count
     return std::max(0, rows - visible_rows);
 }
 
+// Purpose: Compute the largest valid first visible History row.
+// Inputs: `table` is the full History table rectangle and `row_count` is the filtered row count.
+// Outputs: Returns zero when no scrolling is needed, otherwise the maximum scroll offset.
+int MainWindow::history_max_scroll_offset(const RECT& table, std::size_t row_count) const {
+    const int visible_rows = history_visible_row_count(table);
+    const int rows = static_cast<int>(std::min<std::size_t>(row_count, static_cast<std::size_t>(INT_MAX)));
+    return std::max(0, rows - visible_rows);
+}
+
 // Purpose: Clamp Queue scroll state after queue or viewport changes.
 // Inputs: `table` is the visible table and `row_count` is the current queue size.
 // Outputs: Keeps `queue_scroll_first_row_` inside the valid range.
 void MainWindow::clamp_queue_scroll_offset(const RECT& table, std::size_t row_count) {
     queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_, 0, queue_max_scroll_offset(table, row_count));
+}
+
+// Purpose: Clamp History scroll state after filters, history, or viewport changes.
+// Inputs: `table` is the visible table and `row_count` is the filtered history size.
+// Outputs: Keeps `history_scroll_first_row_` inside the valid range.
+void MainWindow::clamp_history_scroll_offset(const RECT& table, std::size_t row_count) {
+    history_scroll_first_row_ = std::clamp(history_scroll_first_row_, 0, history_max_scroll_offset(table, row_count));
 }
 
 // Purpose: Return the Queue scrollbar track inside the table body.
@@ -191,6 +228,13 @@ RECT MainWindow::queue_scrollbar_track_rect(const RECT& table) const {
     const int width = scale(kQueueScrollbarWidth);
     return RECT{table.right - width - scale(6), table.top + scale(kQueueHeaderHeight) + scale(8),
                 table.right - scale(6), table.bottom - scale(8)};
+}
+
+// Purpose: Return the History scrollbar track inside the table body.
+// Inputs: `table` is the full History table rectangle.
+// Outputs: Returns a narrow body-only track rectangle matching Queue.
+RECT MainWindow::history_scrollbar_track_rect(const RECT& table) const {
+    return queue_scrollbar_track_rect(table);
 }
 
 // Purpose: Return the Queue scrollbar thumb for the current scroll position.
@@ -210,6 +254,26 @@ RECT MainWindow::queue_scrollbar_thumb_rect(const RECT& table, std::size_t row_c
         std::clamp((track_height * visible_rows) / std::max(visible_rows, rows), min_thumb, track_height);
     const int travel = std::max(0, track_height - thumb_height);
     const int top = track.top + (travel * std::clamp(queue_scroll_first_row_, 0, max_offset)) / max_offset;
+    return RECT{track.left, top, track.right, top + thumb_height};
+}
+
+// Purpose: Return the History scrollbar thumb for the current scroll position.
+// Inputs: `table` is the full table and `row_count` is the filtered history entry count.
+// Outputs: Returns an empty rectangle when no scrollbar is required.
+RECT MainWindow::history_scrollbar_thumb_rect(const RECT& table, std::size_t row_count) const {
+    const int max_offset = history_max_scroll_offset(table, row_count);
+    if (max_offset <= 0 || row_count == 0U) {
+        return RECT{};
+    }
+    const RECT track = history_scrollbar_track_rect(table);
+    const int track_height = std::max(1, static_cast<int>(track.bottom - track.top));
+    const int visible_rows = std::max(1, history_visible_row_count(table));
+    const int rows = static_cast<int>(std::min<std::size_t>(row_count, static_cast<std::size_t>(INT_MAX)));
+    const int min_thumb = scale(32);
+    const int thumb_height =
+        std::clamp((track_height * visible_rows) / std::max(visible_rows, rows), min_thumb, track_height);
+    const int travel = std::max(0, track_height - thumb_height);
+    const int top = track.top + (travel * std::clamp(history_scroll_first_row_, 0, max_offset)) / max_offset;
     return RECT{track.left, top, track.right, top + thumb_height};
 }
 
@@ -236,6 +300,31 @@ bool MainWindow::scroll_queue_rows(int delta_rows) {
     return true;
 }
 
+// Purpose: Move the History table by a row delta.
+// Inputs: `delta_rows` is positive for down and negative for up.
+// Outputs: Mutates the first visible row and queues repaint when the visible range changes.
+bool MainWindow::scroll_history_rows(int delta_rows) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.page != Page::History || state.history.empty()) {
+        return false;
+    }
+    const auto visible = filtered_history_indices(state);
+    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
+    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const int previous = history_scroll_first_row_;
+    history_scroll_first_row_ =
+        std::clamp(history_scroll_first_row_ + delta_rows, 0, history_max_scroll_offset(table, visible.size()));
+    if (history_scroll_first_row_ == previous) {
+        return false;
+    }
+    request_repaint();
+    return true;
+}
+
 // Purpose: Start dragging the Queue scrollbar thumb.
 // Inputs: `y` is the current client mouse y-coordinate and `table`/`row_count` describe the visible table.
 // Outputs: Captures the drag baseline when scrolling is possible.
@@ -246,6 +335,19 @@ void MainWindow::begin_queue_scroll_drag(int y, const RECT& table, std::size_t r
     queue_scroll_dragging_ = true;
     queue_scroll_drag_start_y_ = y;
     queue_scroll_drag_start_offset_ = queue_scroll_first_row_;
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+}
+
+// Purpose: Start dragging the History scrollbar thumb.
+// Inputs: `y` is the current client mouse y-coordinate and `table`/`row_count` describe the visible table.
+// Outputs: Captures the drag baseline when scrolling is possible.
+void MainWindow::begin_history_scroll_drag(int y, const RECT& table, std::size_t row_count) {
+    if (history_max_scroll_offset(table, row_count) <= 0) {
+        return;
+    }
+    history_scroll_dragging_ = true;
+    history_scroll_drag_start_y_ = y;
+    history_scroll_drag_start_offset_ = history_scroll_first_row_;
     SetCursor(LoadCursor(nullptr, IDC_ARROW));
 }
 
@@ -279,11 +381,50 @@ void MainWindow::update_queue_scroll_drag(int y) {
     }
 }
 
+// Purpose: Update History scroll position from a scrollbar-thumb drag.
+// Inputs: `y` is the current client mouse y-coordinate.
+// Outputs: Mutates the first visible row and queues repaint when the thumb moves to another row.
+void MainWindow::update_history_scroll_drag(int y) {
+    if (!history_scroll_dragging_) {
+        return;
+    }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    const auto visible = filtered_history_indices(state);
+    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
+    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const int max_offset = history_max_scroll_offset(table, visible.size());
+    if (max_offset <= 0) {
+        history_scroll_first_row_ = 0;
+        return;
+    }
+    const RECT track = history_scrollbar_track_rect(table);
+    const RECT thumb = history_scrollbar_thumb_rect(table, visible.size());
+    const int travel = std::max(1, static_cast<int>((track.bottom - track.top) - (thumb.bottom - thumb.top)));
+    const int delta_rows = std::lround(static_cast<double>(y - history_scroll_drag_start_y_) *
+                                       static_cast<double>(max_offset) / static_cast<double>(travel));
+    const int previous = history_scroll_first_row_;
+    history_scroll_first_row_ = std::clamp(history_scroll_drag_start_offset_ + delta_rows, 0, max_offset);
+    if (history_scroll_first_row_ != previous) {
+        request_repaint();
+    }
+}
+
 // Purpose: End any active Queue scrollbar drag.
 // Inputs: None.
 // Outputs: Clears scrollbar drag state.
 void MainWindow::end_queue_scroll_drag() {
     queue_scroll_dragging_ = false;
+}
+
+// Purpose: End any active History scrollbar drag.
+// Inputs: None.
+// Outputs: Clears scrollbar drag state.
+void MainWindow::end_history_scroll_drag() {
+    history_scroll_dragging_ = false;
 }
 
 // Purpose: Compute Compress page rectangles shared by rendering and hit testing.
@@ -380,6 +521,8 @@ MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
                             layout.logging.top + scale(94)};
     layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right,
                                 layout.logging.top + scale(152)};
+    layout.open_log_file = RECT{logging_half_right + scale(34), layout.logging.top + scale(78),
+                                layout.logging.right - scale(18), layout.logging.top + scale(120)};
     layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48),
                                                    layout.general.right - scale(16), layout.general.top + scale(78)};
     layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82),

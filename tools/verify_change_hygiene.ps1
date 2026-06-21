@@ -155,10 +155,14 @@ function Assert-ReleaseReplacementSafeguard {
             "replacement_acknowledgement:",
             "REPLACEMENT_ACKNOWLEDGEMENT",
             "replace_existing=true requires replacement_acknowledgement exactly",
+            "replace_existing=true is refused for MSI releases",
             "Replacement is exceptional")) {
         if ($actionText -notmatch [regex]::Escape($requiredSnippet)) {
             throw "Windows release action is missing the replacement acknowledgement safeguard: $requiredSnippet"
         }
+    }
+    if ($workflowText -notmatch [regex]::Escape("MSI releases must use a new SemVer numeric version")) {
+        throw "Release workflow input text must warn that MSI releases are not same-version replaceable."
     }
 }
 

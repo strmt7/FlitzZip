@@ -72,19 +72,23 @@ References checked on 2026-06-18:
 The System page uses Task Manager-style history cards: a current value, short
 explanatory detail, a subtle grid, scale/time labels, and a bounded
 ring-buffer graph with a filled trend plus a crisp line. The visible cards are
-CPU usage, total used system RAM, process read/write I/O, and used GPU VRAM.
-Current values must remain visible alongside graphs; a graph without the live
-number is a regression.
+total system CPU usage, total used system RAM, selected fixed-drive total I/O
+activity, and total system GPU engine utilization. Current values must remain
+visible alongside graphs; a graph without the live number is a regression. The
+I/O card includes a compact fixed-drive selector and excludes optical,
+removable, network, unknown, and other non-fixed volumes.
 
-Sampling is deliberately bounded. The update-speed dropdown offers exactly
-1-10 seconds, maps directly to the Win32 timer interval, and re-arms the timer
-when changed. CPU and process I/O rates are interval-based and need at least two
-samples before they show meaningful nonzero rates. GPU engine utilization uses
-Windows PDH when available; VRAM uses throttled HIP device queries so the
-monitor does not create device chatter or interfere with compression.
+Sampling is deliberately bounded. The refresh-interval dropdown offers exactly
+1, 3, 5, and 10 seconds, maps directly to the Win32 timer interval, and re-arms
+the timer when changed. CPU values use total-system and process-dedicated
+counters. I/O uses Windows PDH `LogicalDisk` counters for the selected fixed
+drive: the graph and headline value show `% Disk Time`, while the detail rows
+show total read and write byte rates. GPU engine utilization uses Windows PDH
+when available; VRAM uses throttled HIP device queries so the monitor does not
+create device chatter or interfere with compression.
 
 Rendering must stay native, crisp, and low-overhead: no blurred backgrounds, no
 bitmap graph assets, no unbounded animations, no full-window transparency, and
 no polling faster than the selected interval. `tools\gui_smoke.ps1` must keep
-opening the update-speed dropdown, capture the expanded menu, and assert that
+opening the refresh-interval dropdown, capture the expanded menu, and assert that
 the performance monitor region contains the expected graph color families.

@@ -49,6 +49,7 @@ void MainWindow::close_active_dropdown() {
 
 struct DropdownSelectionFeedback {
     int performance_seconds = 0;
+    bool io_drive_changed = false;
     bool add_log = false;
     LogSeverity log_severity = LogSeverity::Information;
     std::string log_message;
@@ -93,6 +94,11 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
             std::clamp(option_index, 0, static_cast<int>(kPerformanceUpdateSecondsOptions.size()) - 1))];
         feedback.performance_seconds = state.performance_update_seconds;
         state.status = "Refresh interval changed";
+        break;
+    case DropdownId::SystemIoDrive:
+        state.io_drive_index = normalize_io_drive_index(option_index);
+        feedback.io_drive_changed = true;
+        state.status = "I/O drive changed";
         break;
     default:
         break;
@@ -146,6 +152,7 @@ void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option
 // Outputs: Mutates UI state, closes the dropdown, updates status text, and requests repaint.
 void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     int performance_seconds = 0;
+    bool io_drive_changed = false;
     bool add_log = false;
     LogSeverity log_severity = LogSeverity::Information;
     std::string log_message;
@@ -157,9 +164,16 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
         state_.active_dropdown = DropdownId::None;
         dropdown_keyboard_index_ = -1;
         performance_seconds = feedback.performance_seconds;
+        io_drive_changed = feedback.io_drive_changed;
         add_log = feedback.add_log;
         log_severity = feedback.log_severity;
         log_message = std::move(feedback.log_message);
+    }
+    if (id == DropdownId::HistoryOperation || id == DropdownId::HistoryStatus) {
+        history_scroll_first_row_ = 0;
+    }
+    if (io_drive_changed) {
+        reset_disk_performance_monitor();
     }
     if (performance_seconds > 0) {
         reset_performance_timer(performance_seconds);

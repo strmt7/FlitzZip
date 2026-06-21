@@ -1,5 +1,7 @@
 #include "app/main_window_impl.hpp"
 
+#include "app/log_policy.hpp"
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -195,12 +197,12 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                 const auto& output = outputs[index];
                 if (request.integrity) {
                     const auto hash = hash_path(archive, IntegrityMode::Sha256);
-                    append_history_entry("Security", archive.filename().string(),
+                    append_history_entry("Security", archive.filename().string(), archive.string(),
                                          integrity_history_status("Archive", hash), true);
                 }
                 if (request.defender) {
                     const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
-                    append_history_entry("Security", archive.filename().string(),
+                    append_history_entry("Security", archive.filename().string(), archive.string(),
                                          defender_history_status("Defender archive", pre_scan),
                                          !pre_scan.attempted || pre_scan.clean);
                     if (pre_scan.attempted && !pre_scan.clean) {
@@ -217,15 +219,15 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                 std::ostringstream line;
                 line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
                      << stats.seconds << "s";
-                append_history_entry("Extract", archive.filename().string(), line.str(), true);
+                append_history_entry("Extract", archive.filename().string(), output.string(), line.str(), true);
                 if (request.integrity) {
                     const auto hash = hash_path(output, IntegrityMode::Sha256);
-                    append_history_entry("Security", output.filename().string(),
+                    append_history_entry("Security", output.filename().string(), output.string(),
                                          integrity_history_status("Output", hash), true);
                 }
                 if (request.defender) {
                     const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-                    append_history_entry("Security", output.filename().string(),
+                    append_history_entry("Security", output.filename().string(), output.string(),
                                          defender_history_status("Defender output", post_scan),
                                          !post_scan.attempted || post_scan.clean);
                 }
@@ -295,10 +297,13 @@ void MainWindow::run_job(std::function<void()> job, std::string label) {
             retain_progress_after_stop_locked(false);
             state_.history.push_back(HistoryEntry{
                 .operation = failure_operation,
-                .subject = state_.status,
+                .archive_name = failure_operation + " failure",
+                .archive_path =
+                    state_.progress.current_entry.empty() ? std::string("-") : state_.progress.current_entry,
                 .detail = error.what(),
                 .success = false,
             });
+            state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
         }
         worker_running_ = false;
         request_repaint();
@@ -364,16 +369,28 @@ void MainWindow::clear_expired_progress() {
     }
 }
 
-// Purpose: Append one bounded in-memory log entry.
+// Purpose: Append one bounded log entry when enabled by the active log level.
 // Inputs: `severity` is the visible category and `message` is safe session text.
-// Outputs: Adds a timestamped row, prunes expired/over-capacity rows, and queues repaint.
+// Outputs: Adds a timestamped row, persists it to the per-user log file, prunes rows, and queues repaint.
 void MainWindow::append_log_entry(LogSeverity severity, std::string message) {
+    std::chrono::system_clock::time_point timestamp{};
+    int log_level = 0;
     {
         std::lock_guard lock(mutex_);
-        const auto now = std::chrono::system_clock::now();
-        prune_log_entries(state_.logs, now, state_.log_retention_index, kMaxLogEntries);
-        state_.logs.push_back(LogEntry{.severity = severity, .message = std::move(message), .timestamp = now});
-        prune_log_entries(state_.logs, now, state_.log_retention_index, kMaxLogEntries);
+        log_level = state_.log_level_index;
+        if (!log_level_allows(log_level, severity)) {
+            return;
+        }
+        timestamp = std::chrono::system_clock::now();
+        prune_log_entries(state_.logs, timestamp, state_.log_retention_index, kMaxLogEntries);
+        state_.logs.push_back(LogEntry{.severity = severity, .message = message, .timestamp = timestamp});
+        prune_log_entries(state_.logs, timestamp, state_.log_retention_index, kMaxLogEntries);
+    }
+    try {
+        append_log_file_entry(log_file_path(), severity, message, timestamp);
+    } catch (...) {
+        std::lock_guard lock(mutex_);
+        state_.status = "Log file write failed";
     }
     request_repaint();
 }
@@ -391,20 +408,23 @@ void MainWindow::append_history(const std::string& line) {
     } else if (line.starts_with("Error")) {
         operation = "Failure";
     }
-    append_history_entry(operation, line, line, success);
+    append_history_entry(operation, line, "-", line, success);
 }
 
 // Purpose: Add a structured operation result to session history.
-// Inputs: `operation`, `subject`, `detail`, and `success` describe the visible history row.
-// Outputs: Appends one row to in-memory UI history.
-void MainWindow::append_history_entry(std::string operation, std::string subject, std::string detail, bool success) {
+// Inputs: `operation`, `archive_name`, `archive_path`, `detail`, and `success` describe the visible history row.
+// Outputs: Appends one row to in-memory UI history and selects it for details.
+void MainWindow::append_history_entry(std::string operation, std::string archive_name, std::string archive_path,
+                                      std::string detail, bool success) {
     std::lock_guard lock(mutex_);
     state_.history.push_back(HistoryEntry{
         .operation = std::move(operation),
-        .subject = std::move(subject),
+        .archive_name = std::move(archive_name),
+        .archive_path = std::move(archive_path),
         .detail = std::move(detail),
         .success = success,
     });
+    state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
 }
 
 }  // namespace superzip::app

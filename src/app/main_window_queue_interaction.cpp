@@ -306,7 +306,7 @@ void MainWindow::end_queue_column_resize() {
 // Inputs: `separator` is the 0-2 data-column boundary and `x` is the initial mouse coordinate.
 // Outputs: Stores resize baseline state.
 void MainWindow::begin_history_column_resize(int separator, int x) {
-    history_column_resize_separator_ = std::clamp(separator, 0, 2);
+    history_column_resize_separator_ = std::clamp(separator, 0, 3);
     history_column_resize_start_x_ = x;
     history_column_resize_start_ = history_column_widths_;
     SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
@@ -319,7 +319,7 @@ void MainWindow::update_history_column_resize(int x) {
     if (history_column_resize_separator_ < 0) {
         return;
     }
-    constexpr std::array<int, 4> minimums{110, 90, 180, 90};
+    constexpr std::array<int, 5> minimums{82, 78, 140, 160, 74};
     const int left_index = history_column_resize_separator_;
     const int right_index = left_index + 1;
     const int delta =
@@ -330,6 +330,34 @@ void MainWindow::update_history_column_resize(int x) {
     history_column_widths_[left_index] = left;
     history_column_widths_[right_index] = pair_total - left;
     request_repaint();
+}
+
+// Purpose: Test whether a History row passes the active operation and status filters.
+// Inputs: `state` supplies the filter values and `entry` is one history row.
+// Outputs: Returns true when the row should be visible.
+bool MainWindow::history_entry_matches_filters(const UiState& state, const HistoryEntry& entry) const {
+    const bool operation_match = state.history_operation_filter_index == 0 ||
+                                 (state.history_operation_filter_index == 1 && entry.operation == "Compress") ||
+                                 (state.history_operation_filter_index == 2 && entry.operation == "Extract") ||
+                                 (state.history_operation_filter_index == 3 && entry.operation == "Security");
+    const bool status_match = state.history_status_filter_index == 0 ||
+                              (state.history_status_filter_index == 1 && entry.success) ||
+                              (state.history_status_filter_index == 2 && !entry.success);
+    return operation_match && status_match;
+}
+
+// Purpose: Build the visible History row index list for the active filters.
+// Inputs: `state` is a stable UI snapshot.
+// Outputs: Returns indexes into `state.history` in display order.
+std::vector<std::size_t> MainWindow::filtered_history_indices(const UiState& state) const {
+    std::vector<std::size_t> indices;
+    indices.reserve(state.history.size());
+    for (std::size_t index = 0; index < state.history.size(); ++index) {
+        if (history_entry_matches_filters(state, state.history[index])) {
+            indices.push_back(index);
+        }
+    }
+    return indices;
 }
 
 // Purpose: End an active History data-column resize.

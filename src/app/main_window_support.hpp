@@ -162,6 +162,9 @@ int normalize_performance_update_seconds(int seconds);
 int performance_update_index_for_seconds(int seconds);
 std::wstring performance_update_speed_text(int seconds);
 std::wstring performance_update_option_text(int index);
+std::vector<std::wstring> fixed_io_drive_options();
+int normalize_io_drive_index(int index);
+std::wstring io_drive_option_text(int index);
 int compression_level_value(int index);
 OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
                                     const std::filesystem::path& output, ArchiveFormat archive_format,
@@ -177,9 +180,14 @@ AppSettings settings_from_state(const UiState& state);
 bool settings_equal(const AppSettings& left, const AppSettings& right);
 AppSettings parse_settings_json(std::string_view json);
 std::string settings_to_json(const AppSettings& settings);
+std::filesystem::path app_storage_directory();
 std::filesystem::path settings_file_path();
+std::filesystem::path log_file_path();
+void ensure_app_storage();
 AppSettings read_settings_file(const std::filesystem::path& path);
 void write_settings_file(const std::filesystem::path& path, const AppSettings& settings);
+void append_log_file_entry(const std::filesystem::path& path, LogSeverity severity, const std::string& message,
+                           std::chrono::system_clock::time_point timestamp);
 std::wstring history_operation_filter_text(int index);
 std::wstring history_status_filter_text(int index);
 std::vector<std::wstring> dropdown_options(DropdownId id);

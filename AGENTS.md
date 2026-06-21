@@ -71,6 +71,11 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   archive acceleration evidence; archive acceleration claims require required-HIP
   codec telemetry and RAM-only CPU/GPU comparisons at the same compression level
   and ratio.
+- For development-only CPU/GPU/RAM transfer bottleneck checks, use
+  `tools\transfer_diagnostics.ps1` after a Release build. The tool must stay on
+  the RAM-only `memory-benchmark` path, must report zero disk writes, and must
+  fail when the required AMD HIP lane has zero H2D, D2H, allocation, or kernel
+  telemetry.
 - Before changing archive-format recognition or compatibility support, read
   `docs/archive-format-support.md`. Do not add ZIP-container aliases as
   user-facing archive formats unless a maintainer explicitly requests package
@@ -106,6 +111,12 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - The System page GPU graph and headline value represent total system GPU engine
   utilization. VRAM total and process-dedicated VRAM remain detail rows only.
   Do not replace the GPU graph with VRAM percentage or process-only GPU usage.
+- The System page I/O graph and headline value represent total utilization for
+  the selected fixed local drive. The drive selector must enumerate only
+  `DRIVE_FIXED` letters, the graph must use `LogicalDisk(<drive>)\% Disk Time`,
+  and the detail rows must keep total read/write byte rates for that same drive.
+  Do not replace this with SuperZip process-only I/O counters or storage-space
+  capacity percentages.
 - Do not alter System graph history length, sampling cadence, or x-step
   behavior unless the maintainer explicitly requests graph-cadence work. Axis
   label clipping fixes must not change graph progression.
@@ -523,6 +534,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
   coding or installer smoke tests, and never publish that per-user MSI as a
   product release.
+- Do not replace an existing installable MSI release. Same-version MSI
+  replacement can leave Windows Installer presenting an already-installed
+  product conflict; installable corrections must publish a new SemVer numeric
+  version, normally by increasing the patch digit. The release workflow refuses
+  `replace_existing=true` when `create_msi=true`.
 - MSI update identity must stay deterministic: keep one stable SuperZip
   `UpgradeCode`, derive `ProductCode` from a SHA-256 seed that includes the MSI
   numeric version and install scope, and bump the SemVer patch/minor/major value
@@ -672,13 +688,14 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   and run install/repair/uninstall smoke tests before publishing.
 - Do not replace an existing GitHub release or tag by default. Release
   replacement is exceptional and is allowed only when the current maintainer or
-  user request explicitly asks for that specific replacement. A replacement run
-  must use an explicit `release_version`, `replace_existing=true`, and
-  `replacement_acknowledgement` set exactly to `replace <same-version>`. Normal
-  release runs use a new SemVer version with `replace_existing=false`, and
-  release notes must list the actual fixes, created assets, validation work,
-  and known limitations. Do not hardcode proposed release versions in agent
-  instructions or repository policy text.
+  user request explicitly asks for that specific non-MSI replacement. A
+  replacement run must use an explicit `release_version`,
+  `replace_existing=true`, `replacement_acknowledgement` set exactly to
+  `replace <same-version>`, and `create_msi=false`. Normal release runs use a
+  new SemVer version with `replace_existing=false`, and release notes must list
+  the actual fixes, created assets, validation work, and known limitations. Do
+  not hardcode proposed release versions in agent instructions or repository
+  policy text.
 
 ## Agent Workflow
 

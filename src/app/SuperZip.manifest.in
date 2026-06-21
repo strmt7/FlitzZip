@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity
-    version="0.1.0.0"
+    version="@SUPERZIP_PACKAGE_VERSION_MAJOR@.@SUPERZIP_PACKAGE_VERSION_MINOR@.@SUPERZIP_PACKAGE_VERSION_PATCH@.0"
     processorArchitecture="*"
     name="SuperZip"
     type="win32" />

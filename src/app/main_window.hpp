@@ -92,6 +92,11 @@ class MainWindow {
     // Outputs: Returns true only for truncated Queue Name or Path cells.
     bool queue_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
 
+    // Purpose: Return the ellipsized History text under the current mouse, if any.
+    // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
+    // Outputs: Returns true only for truncated Archive name or Archive path cells.
+    bool history_text_tooltip_candidate_at_mouse(const UiState& state, RECT& cell, std::wstring& text);
+
     // Purpose: Return the ellipsized Compress/Extract field text under the current mouse, if any.
     // Inputs: `state` is a stable UI snapshot and `cell`/`text` receive tooltip data.
     // Outputs: Returns true only for truncated Archive/Destination fields explicitly allowed by the UI contract.
@@ -295,6 +300,31 @@ class MainWindow {
     // Outputs: Updates scroll offset and queues a repaint when the dialog is visible.
     bool scroll_license_notices_dialog(int delta_pixels);
 
+    // Purpose: Return the product-styled license-notice scrollbar track.
+    // Inputs: `viewport` is the clipped license text viewport.
+    // Outputs: Returns the slim vertical track inside the modal text frame.
+    [[nodiscard]] RECT license_notices_scrollbar_track_rect(const RECT& viewport) const;
+
+    // Purpose: Return the license-notice scrollbar thumb for the current scroll offset.
+    // Inputs: `viewport` is the clipped license text viewport and `content_height` is the measured notice height.
+    // Outputs: Returns an empty rectangle when no scrolling is needed.
+    [[nodiscard]] RECT license_notices_scrollbar_thumb_rect(const RECT& viewport, int content_height) const;
+
+    // Purpose: Begin dragging the license-notice scrollbar thumb.
+    // Inputs: `y` is the mouse position; `viewport` and `content_height` define the active scroll geometry.
+    // Outputs: Captures the scroll baseline when the notice body overflows.
+    void begin_license_notices_scroll_drag(int y, const RECT& viewport, int content_height);
+
+    // Purpose: Update license-notice scrolling from an active thumb drag.
+    // Inputs: `y` is the current client mouse y-coordinate.
+    // Outputs: Moves the bounded scroll offset and queues repaint when changed.
+    void update_license_notices_scroll_drag(int y);
+
+    // Purpose: End any active license-notice scrollbar drag.
+    // Inputs: None.
+    // Outputs: Clears the modal scrollbar drag state.
+    void end_license_notices_scroll_drag();
+
     // Purpose: Close the license-notice modal.
     // Inputs: None.
     // Outputs: Clears modal state, resets scroll state, and queues repaint.
@@ -393,7 +423,7 @@ class MainWindow {
 
     // Purpose: Draw the live performance monitor section on the System page.
     // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `sample` is the latest live counter snapshot.
-    // Outputs: Renders CPU, memory, process I/O, and GPU/VRAM cards with bounded bars.
+    // Outputs: Renders CPU, RAM, selected-drive total I/O, and total GPU cards with bounded graphs.
     void draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state);
 
     // Purpose: Draw one metric card inside the live performance monitor.
@@ -460,10 +490,15 @@ class MainWindow {
     // Outputs: Returns the four equal-width graph card rectangles.
     [[nodiscard]] std::array<RECT, 4> performance_monitor_card_rects(const RECT& monitor) const;
 
-    // Purpose: Return the System update-speed field rectangle.
+    // Purpose: Return the System refresh-interval field rectangle.
     // Inputs: `monitor` is the performance monitor panel rectangle.
     // Outputs: Returns a narrow rectangle aligned to the GPU card's right edge and monitor header row.
     [[nodiscard]] RECT performance_update_speed_rect(const RECT& monitor) const;
+
+    // Purpose: Return the fixed-drive selector rectangle inside the I/O monitor card.
+    // Inputs: `monitor` is the performance monitor panel rectangle.
+    // Outputs: Returns a compact dropdown rectangle aligned inside the I/O card header.
+    [[nodiscard]] RECT performance_io_drive_rect(const RECT& monitor) const;
 
     // Purpose: Resolve the owning field rectangle for a dropdown.
     // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
@@ -555,6 +590,26 @@ class MainWindow {
     // Outputs: Updates selection or focus and returns true when consumed.
     bool handle_navigation_key(WPARAM key);
 
+    // Purpose: Move keyboard selection inside an expanded dropdown.
+    // Inputs: `key` is an arrow/Home/End key, `active` identifies the dropdown, and `state` is a stable UI snapshot.
+    // Outputs: Updates dropdown keyboard index and repaints when the dropdown consumes the key.
+    bool handle_dropdown_navigation_key(WPARAM key, DropdownId active, const UiState& state);
+
+    // Purpose: Move keyboard focus through visible Queue rows.
+    // Inputs: `key` is Up or Down and `state` is a stable UI snapshot.
+    // Outputs: Updates selected Queue row, scroll offset, keyboard focus, and repaint state when consumed.
+    bool handle_queue_row_navigation_key(WPARAM key, const UiState& state);
+
+    // Purpose: Move keyboard focus through visible History rows.
+    // Inputs: `key` is Up or Down and `state` is a stable UI snapshot.
+    // Outputs: Updates selected History row, scroll offset, keyboard focus, and repaint state when consumed.
+    bool handle_history_row_navigation_key(WPARAM key, const UiState& state);
+
+    // Purpose: Move keyboard focus to the first or last focusable control.
+    // Inputs: `key` is Home or End and `state` is a stable UI snapshot.
+    // Outputs: Updates keyboard focus and repaints when at least one target exists.
+    bool handle_home_end_navigation_key(WPARAM key, const UiState& state);
+
     // Purpose: Toggle a boolean UI-state member with the standard animated toggle feedback.
     // Inputs: `member` selects the state field and `id` identifies the visual toggle to animate.
     // Outputs: Mutates the state, starts the toggle animation, queues repaint, and returns true.
@@ -572,7 +627,7 @@ class MainWindow {
 
     // Purpose: Compute History table column rectangles from the current resizable widths.
     // Inputs: `table` is the visible History table rectangle and `row` is the row or header span.
-    // Outputs: Returns resizable Time, Operation, Archive, and Status column rectangles.
+    // Outputs: Returns resizable Time, Operation, Archive name, Archive path, and Status column rectangles.
     [[nodiscard]] HistoryColumnLayout history_column_layout(const RECT& table, const RECT& row) const;
 
     // Purpose: Draw Queue page title and queue-management commands.
@@ -603,55 +658,121 @@ class MainWindow {
     // Outputs: Renders the body-only scrollbar track and thumb when overflow exists.
     void draw_queue_scrollbar(HDC dc, const RECT& table, std::size_t row_count, int max_scroll);
 
+    // Purpose: Draw the History overflow scrollbar with the Queue scrollbar visual system.
+    // Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the filtered row count, and
+    // `max_scroll` is the largest valid first visible row.
+    // Outputs: Renders the body-only scrollbar track and thumb when overflow exists.
+    void draw_history_scrollbar(HDC dc, const RECT& table, std::size_t row_count, int max_scroll);
+
     // Purpose: Reserve Queue table body space for an overflow scrollbar when needed.
     // Inputs: `table` is the full table rectangle and `row_count` is the number of queued entries.
     // Outputs: Returns the column layout table with the scrollbar gutter removed only when rows overflow.
     [[nodiscard]] RECT queue_columns_table(const RECT& table, std::size_t row_count) const;
+
+    // Purpose: Reserve History table body space for an overflow scrollbar when needed.
+    // Inputs: `table` is the full table rectangle and `row_count` is the number of filtered history entries.
+    // Outputs: Returns the column layout table with the scrollbar gutter removed only when rows overflow.
+    [[nodiscard]] RECT history_columns_table(const RECT& table, std::size_t row_count) const;
 
     // Purpose: Count the number of complete Queue rows visible below the fixed header.
     // Inputs: `table` is the full Queue table rectangle.
     // Outputs: Returns a non-negative visible row count.
     [[nodiscard]] int queue_visible_row_count(const RECT& table) const;
 
+    // Purpose: Count the number of complete History rows visible below the fixed header.
+    // Inputs: `table` is the full History table rectangle.
+    // Outputs: Returns a non-negative visible row count.
+    [[nodiscard]] int history_visible_row_count(const RECT& table) const;
+
     // Purpose: Compute the largest valid first visible Queue row.
     // Inputs: `table` is the full Queue table rectangle and `row_count` is the number of queued entries.
     // Outputs: Returns zero when no scrolling is needed, otherwise the maximum scroll offset.
     [[nodiscard]] int queue_max_scroll_offset(const RECT& table, std::size_t row_count) const;
+
+    // Purpose: Compute the largest valid first visible History row.
+    // Inputs: `table` is the full History table rectangle and `row_count` is the filtered row count.
+    // Outputs: Returns zero when no scrolling is needed, otherwise the maximum scroll offset.
+    [[nodiscard]] int history_max_scroll_offset(const RECT& table, std::size_t row_count) const;
 
     // Purpose: Clamp Queue scroll state after queue or viewport changes.
     // Inputs: `table` is the visible table and `row_count` is the current queue size.
     // Outputs: Keeps `queue_scroll_first_row_` inside the valid range.
     void clamp_queue_scroll_offset(const RECT& table, std::size_t row_count);
 
+    // Purpose: Clamp History scroll state after filters, history, or viewport changes.
+    // Inputs: `table` is the visible table and `row_count` is the filtered history size.
+    // Outputs: Keeps `history_scroll_first_row_` inside the valid range.
+    void clamp_history_scroll_offset(const RECT& table, std::size_t row_count);
+
     // Purpose: Return the Queue scrollbar track inside the table body.
     // Inputs: `table` is the full Queue table rectangle.
     // Outputs: Returns a narrow body-only track rectangle.
     [[nodiscard]] RECT queue_scrollbar_track_rect(const RECT& table) const;
+
+    // Purpose: Return the History scrollbar track inside the table body.
+    // Inputs: `table` is the full History table rectangle.
+    // Outputs: Returns a narrow body-only track rectangle matching Queue.
+    [[nodiscard]] RECT history_scrollbar_track_rect(const RECT& table) const;
 
     // Purpose: Return the Queue scrollbar thumb for the current scroll position.
     // Inputs: `table` is the full table and `row_count` is the number of queued entries.
     // Outputs: Returns an empty rectangle when no scrollbar is required.
     [[nodiscard]] RECT queue_scrollbar_thumb_rect(const RECT& table, std::size_t row_count) const;
 
+    // Purpose: Return the History scrollbar thumb for the current scroll position.
+    // Inputs: `table` is the full table and `row_count` is the filtered history entry count.
+    // Outputs: Returns an empty rectangle when no scrollbar is required.
+    [[nodiscard]] RECT history_scrollbar_thumb_rect(const RECT& table, std::size_t row_count) const;
+
     // Purpose: Move the Queue table by a row delta.
     // Inputs: `delta_rows` is positive for down and negative for up.
     // Outputs: Mutates the first visible row and queues repaint when the visible range changes.
     bool scroll_queue_rows(int delta_rows);
+
+    // Purpose: Move the History table by a row delta.
+    // Inputs: `delta_rows` is positive for down and negative for up.
+    // Outputs: Mutates the first visible row and queues repaint when the visible range changes.
+    bool scroll_history_rows(int delta_rows);
 
     // Purpose: Start dragging the Queue scrollbar thumb.
     // Inputs: `y` is the current client mouse y-coordinate and `table`/`row_count` describe the visible table.
     // Outputs: Captures the drag baseline when scrolling is possible.
     void begin_queue_scroll_drag(int y, const RECT& table, std::size_t row_count);
 
+    // Purpose: Start dragging the History scrollbar thumb.
+    // Inputs: `y` is the current client mouse y-coordinate and `table`/`row_count` describe the visible table.
+    // Outputs: Captures the drag baseline when scrolling is possible.
+    void begin_history_scroll_drag(int y, const RECT& table, std::size_t row_count);
+
     // Purpose: Update Queue scroll position from a scrollbar-thumb drag.
     // Inputs: `y` is the current client mouse y-coordinate.
     // Outputs: Mutates the first visible row and queues repaint when the thumb moves to another row.
     void update_queue_scroll_drag(int y);
 
+    // Purpose: Update History scroll position from a scrollbar-thumb drag.
+    // Inputs: `y` is the current client mouse y-coordinate.
+    // Outputs: Mutates the first visible row and queues repaint when the thumb moves to another row.
+    void update_history_scroll_drag(int y);
+
     // Purpose: End any active Queue scrollbar drag.
     // Inputs: None.
     // Outputs: Clears scrollbar drag state.
     void end_queue_scroll_drag();
+
+    // Purpose: End any active History scrollbar drag.
+    // Inputs: None.
+    // Outputs: Clears scrollbar drag state.
+    void end_history_scroll_drag();
+
+    // Purpose: Test whether a History row passes the active operation and status filters.
+    // Inputs: `state` supplies the filter values and `entry` is one history row.
+    // Outputs: Returns true when the row should be visible.
+    [[nodiscard]] bool history_entry_matches_filters(const UiState& state, const HistoryEntry& entry) const;
+
+    // Purpose: Build the visible History row index list for the active filters.
+    // Inputs: `state` is a stable UI snapshot.
+    // Outputs: Returns indexes into `state.history` in display order.
+    [[nodiscard]] std::vector<std::size_t> filtered_history_indices(const UiState& state) const;
 
     // Purpose: Keep queue selection flags aligned with queued paths while mutex is held.
     // Inputs: None; reads and mutates `state_`.
@@ -813,6 +934,11 @@ class MainWindow {
     // Outputs: Updates the destination directory and queues a repaint when selected.
     void choose_destination();
 
+    // Purpose: Open Windows Explorer with the current user's SuperZip log file selected.
+    // Inputs: None; resolves and creates the per-user log file path.
+    // Outputs: Launches Explorer or records a warning status when the shell action fails.
+    void open_log_file_location();
+
     // Purpose: Advance the visible compression level selection.
     // Inputs: None; reads and mutates UI compression-level state.
     // Outputs: Queues a repaint with the next compression level.
@@ -884,9 +1010,10 @@ class MainWindow {
     void append_history(const std::string& line);
 
     // Purpose: Add a structured operation result line to the in-memory session history.
-    // Inputs: `operation`, `subject`, `detail`, and `success` describe one completed operation.
-    // Outputs: Mutates history state.
-    void append_history_entry(std::string operation, std::string subject, std::string detail, bool success);
+    // Inputs: `operation`, `archive_name`, `archive_path`, `detail`, and `success` describe one completed operation.
+    // Outputs: Mutates history state and selects the appended row for the detail panel.
+    void append_history_entry(std::string operation, std::string archive_name, std::string archive_path,
+                              std::string detail, bool success);
 
     // Purpose: Refresh visible AMD GPU status text.
     // Inputs: None.
@@ -918,10 +1045,15 @@ class MainWindow {
     // Outputs: Returns total-system-capacity CPU percentage and updates previous process FILETIME state.
     [[nodiscard]] double sample_process_cpu_percent(double elapsed_seconds);
 
-    // Purpose: Sample process read/write transfer rates since the previous monitor tick.
-    // Inputs: `elapsed_seconds` is the interval from the previous sample.
-    // Outputs: Returns non-negative byte-per-second rates and updates previous I/O counters.
-    [[nodiscard]] ProcessIoRates sample_process_io_rates(double elapsed_seconds);
+    // Purpose: Sample total selected fixed-drive activity through Windows performance counters.
+    // Inputs: `selected_drive_index` identifies the user-selected fixed-drive row.
+    // Outputs: Returns drive busy percent plus total read/write byte rates, or unavailable values on counter failure.
+    [[nodiscard]] ProcessIoRates sample_selected_drive_io(int selected_drive_index);
+
+    // Purpose: Release selected-drive I/O performance counters after a drive-selection change.
+    // Inputs: None.
+    // Outputs: Closes disk PDH handles so the next sample binds to the selected drive.
+    void reset_disk_performance_monitor();
 
     // Purpose: Refresh cached HIP VRAM and visible GPU identity at a bounded cadence.
     // Inputs: `now` is the current steady-clock timestamp.
@@ -1026,8 +1158,8 @@ class MainWindow {
     std::array<int, 4> queue_column_resize_start_{276, 100, 96, 468};
     int queue_column_resize_separator_ = -1;
     int queue_column_resize_start_x_ = 0;
-    std::array<int, 4> history_column_widths_{150, 140, 620, 150};
-    std::array<int, 4> history_column_resize_start_{150, 140, 620, 150};
+    std::array<int, 5> history_column_widths_{112, 100, 300, 410, 102};
+    std::array<int, 5> history_column_resize_start_{112, 100, 300, 410, 102};
     int history_column_resize_separator_ = -1;
     int history_column_resize_start_x_ = 0;
     int queue_scroll_first_row_ = 0;
@@ -1035,6 +1167,15 @@ class MainWindow {
     int queue_scroll_drag_start_offset_ = 0;
     int queue_wheel_delta_remainder_ = 0;
     bool queue_scroll_dragging_ = false;
+    int history_scroll_first_row_ = 0;
+    int history_scroll_drag_start_y_ = 0;
+    int history_scroll_drag_start_offset_ = 0;
+    int history_wheel_delta_remainder_ = 0;
+    bool history_scroll_dragging_ = false;
+    int license_notices_scroll_drag_start_y_ = 0;
+    int license_notices_scroll_drag_start_offset_ = 0;
+    int license_notices_scroll_drag_content_height_ = 0;
+    bool license_notices_scroll_dragging_ = false;
     std::array<PerformanceMonitorSample, 96> performance_history_{};
     std::size_t performance_history_count_ = 0;
     std::size_t performance_history_next_ = 0;
@@ -1065,13 +1206,16 @@ class MainWindow {
     FILETIME last_system_idle_time_{};
     FILETIME last_system_kernel_time_{};
     FILETIME last_system_user_time_{};
-    ULONGLONG last_io_read_bytes_ = 0;
-    ULONGLONG last_io_write_bytes_ = 0;
     std::uint64_t cached_vram_total_bytes_ = 0;
     std::uint64_t cached_vram_free_bytes_ = 0;
     std::wstring last_clock_text_;
     PDH_HQUERY gpu_query_ = nullptr;
     PDH_HCOUNTER gpu_counter_ = nullptr;
+    PDH_HQUERY disk_query_ = nullptr;
+    PDH_HCOUNTER disk_busy_counter_ = nullptr;
+    PDH_HCOUNTER disk_read_counter_ = nullptr;
+    PDH_HCOUNTER disk_write_counter_ = nullptr;
+    std::wstring disk_counter_instance_;
     AppSettings applied_settings_{};
 };
 

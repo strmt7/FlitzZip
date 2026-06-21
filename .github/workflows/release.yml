@@ -9,7 +9,7 @@ on:
         default: ""
         type: string
       replace_existing:
-        description: Delete an existing release/tag with the same version before publishing
+        description: Exceptional non-MSI replacement only; MSI releases must use a new SemVer numeric version
         required: false
         default: false
         type: boolean

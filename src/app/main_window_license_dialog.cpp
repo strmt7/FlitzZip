@@ -55,7 +55,7 @@ RECT MainWindow::license_notices_dialog_rect(const RECT& rect) const {
 // Inputs: `modal` is the license-notice panel rectangle.
 // Outputs: Returns the clipped text area used for drawing and scroll math.
 RECT MainWindow::license_notices_viewport_rect(const RECT& modal) const {
-    return RECT{modal.left + scale(24), modal.top + scale(112), modal.right - scale(38), modal.bottom - scale(78)};
+    return RECT{modal.left + scale(34), modal.top + scale(112), modal.right - scale(38), modal.bottom - scale(78)};
 }
 
 // Purpose: Return the Close button rectangle for the license-notice modal.
@@ -167,6 +167,82 @@ bool MainWindow::scroll_license_notices_dialog(int delta_pixels) {
     return true;
 }
 
+// Purpose: Return the product-styled license-notice scrollbar track.
+// Inputs: `viewport` is the clipped license text viewport.
+// Outputs: Returns the slim vertical track inside the modal text frame.
+RECT MainWindow::license_notices_scrollbar_track_rect(const RECT& viewport) const {
+    return RECT{viewport.right - scale(5), viewport.top, viewport.right, viewport.bottom};
+}
+
+// Purpose: Return the license-notice scrollbar thumb for the current scroll offset.
+// Inputs: `viewport` is the clipped license text viewport and `content_height` is the measured notice height.
+// Outputs: Returns an empty rectangle when no scrolling is needed.
+RECT MainWindow::license_notices_scrollbar_thumb_rect(const RECT& viewport, int content_height) const {
+    const int viewport_height = std::max(1, static_cast<int>(viewport.bottom - viewport.top));
+    const int max_scroll = std::max(0, content_height - viewport_height);
+    if (max_scroll <= 0) {
+        return RECT{};
+    }
+    const RECT track = license_notices_scrollbar_track_rect(viewport);
+    const int track_height = std::max(1, static_cast<int>(track.bottom - track.top));
+    const int thumb_height = std::clamp((viewport_height * track_height) / std::max(viewport_height, content_height),
+                                        scale(28), track_height);
+    const int travel = std::max(0, track_height - thumb_height);
+    const int top = track.top + (std::clamp(license_notices_scroll_pixels_, 0, max_scroll) * travel / max_scroll);
+    return RECT{track.left, top, track.right, top + thumb_height};
+}
+
+// Purpose: Begin dragging the license-notice scrollbar thumb.
+// Inputs: `y` is the mouse position; `viewport` and `content_height` define the active scroll geometry.
+// Outputs: Captures the scroll baseline when the notice body overflows.
+void MainWindow::begin_license_notices_scroll_drag(int y, const RECT& viewport, int content_height) {
+    const RECT thumb = license_notices_scrollbar_thumb_rect(viewport, content_height);
+    if (thumb.right <= thumb.left) {
+        return;
+    }
+    license_notices_scroll_dragging_ = true;
+    license_notices_scroll_drag_start_y_ = y;
+    license_notices_scroll_drag_start_offset_ = license_notices_scroll_pixels_;
+    license_notices_scroll_drag_content_height_ = content_height;
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+}
+
+// Purpose: Update license-notice scrolling from an active thumb drag.
+// Inputs: `y` is the current client mouse y-coordinate.
+// Outputs: Moves the bounded scroll offset and queues repaint when changed.
+void MainWindow::update_license_notices_scroll_drag(int y) {
+    if (!license_notices_scroll_dragging_) {
+        return;
+    }
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    const RECT workspace{content_rect().left, content_rect().top, client.right, content_rect().bottom};
+    const RECT viewport = license_notices_viewport_rect(license_notices_dialog_rect(workspace));
+    const int viewport_height = std::max(1, static_cast<int>(viewport.bottom - viewport.top));
+    const int max_scroll = std::max(0, license_notices_scroll_drag_content_height_ - viewport_height);
+    if (max_scroll <= 0) {
+        license_notices_scroll_pixels_ = 0;
+        return;
+    }
+    const RECT track = license_notices_scrollbar_track_rect(viewport);
+    const RECT thumb = license_notices_scrollbar_thumb_rect(viewport, license_notices_scroll_drag_content_height_);
+    const int travel = std::max(1, static_cast<int>((track.bottom - track.top) - (thumb.bottom - thumb.top)));
+    const int delta = static_cast<int>(std::lround(static_cast<double>(y - license_notices_scroll_drag_start_y_) *
+                                                   static_cast<double>(max_scroll) / static_cast<double>(travel)));
+    const int previous = license_notices_scroll_pixels_;
+    license_notices_scroll_pixels_ = std::clamp(license_notices_scroll_drag_start_offset_ + delta, 0, max_scroll);
+    if (license_notices_scroll_pixels_ != previous) {
+        request_repaint();
+    }
+}
+
+// Purpose: End any active license-notice scrollbar drag.
+// Inputs: None.
+// Outputs: Clears the modal scrollbar drag state.
+void MainWindow::end_license_notices_scroll_drag() {
+    license_notices_scroll_dragging_ = false;
+}
+
 // Purpose: Close the license-notice modal.
 // Inputs: None.
 // Outputs: Clears modal state, resets scroll state, and queues repaint.
@@ -247,14 +323,10 @@ void MainWindow::draw_license_notices_dialog(HDC dc, const RECT& rect, const UiS
     RestoreDC(dc, saved);
 
     if (max_scroll > 0) {
-        const RECT track{viewport.right - scale(5), viewport.top, viewport.right, viewport.bottom};
+        const RECT track = license_notices_scrollbar_track_rect(viewport);
         fill_round_rect(dc, track, RGB(18, 28, 32), scale(4));
-        const int track_height = static_cast<int>(track.bottom - track.top);
-        const int thumb_height = std::clamp(viewport_height * track_height / content_height, scale(28), track_height);
-        const int thumb_top =
-            track.top + (license_notices_scroll_pixels_ * std::max(0, track_height - thumb_height) / max_scroll);
-        fill_round_rect(dc, RECT{track.left, thumb_top, track.right, thumb_top + thumb_height}, RGB(64, 83, 90),
-                        scale(4));
+        const RECT thumb = license_notices_scrollbar_thumb_rect(viewport, content_height);
+        fill_round_rect(dc, thumb, interactive_fill(RGB(64, 83, 90), thumb), scale(4));
     }
 
     const RECT close = license_notices_close_button_rect(modal);
@@ -289,6 +361,22 @@ bool MainWindow::handle_license_notices_dialog_click(int x, int y) {
         }
     }
     const RECT viewport = license_notices_viewport_rect(modal);
+    HDC dc = GetDC(hwnd_);
+    const int content_height = dc == nullptr ? 0 : license_notices_text_height(dc, viewport);
+    if (dc != nullptr) {
+        ReleaseDC(hwnd_, dc);
+    }
+    const RECT track = license_notices_scrollbar_track_rect(viewport);
+    const RECT thumb = license_notices_scrollbar_thumb_rect(viewport, content_height);
+    if (contains_point(thumb, x, y)) {
+        begin_license_notices_scroll_drag(y, viewport, content_height);
+        return true;
+    }
+    if (contains_point(track, x, y) && thumb.right > thumb.left) {
+        (void)scroll_license_notices_dialog(y < thumb.top ? -static_cast<int>(viewport.bottom - viewport.top)
+                                                          : static_cast<int>(viewport.bottom - viewport.top));
+        return true;
+    }
     if (contains_point(viewport, x, y)) {
         return true;
     }

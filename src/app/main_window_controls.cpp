@@ -226,6 +226,11 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
         const RECT monitor{area.left, area.top + scale(342), area.right, area.bottom};
         return performance_update_speed_rect(monitor);
     }
+    case DropdownId::SystemIoDrive: {
+        const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
+        const RECT monitor{area.left, area.top + scale(342), area.right, area.bottom};
+        return performance_io_drive_rect(monitor);
+    }
     case DropdownId::SettingsMemoryPolicy:
         return settings_layout(content).memory_policy;
     case DropdownId::SettingsLogLevel:

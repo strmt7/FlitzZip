@@ -317,7 +317,7 @@ std::vector<std::filesystem::path> selected_extract_archive_paths(const UiState&
 // Outputs: Returns muted placeholder text, the single path, or the fixed multiple-selection text.
 std::wstring selected_extract_archive_text(const std::vector<std::filesystem::path>& archives) {
     if (archives.empty()) {
-        return L"Select an archive from the queue";
+        return L"Select one or more archives from the queue";
     }
     if (archives.size() == 1U) {
         return archives.front().wstring();
@@ -483,7 +483,13 @@ void draw_graph_axis_label(HDC dc, const RECT& rect, const std::wstring& text, C
     if (text.empty() || rect.right <= rect.left || rect.bottom <= rect.top) {
         return;
     }
-    draw_text(dc, rect, text, color, format | DT_SINGLELINE | DT_NOPREFIX);
+    const UINT flags = format | DT_SINGLELINE | DT_NOPREFIX;
+    for (POINT offset : std::array<POINT, 4>{{POINT{-1, 0}, POINT{1, 0}, POINT{0, -1}, POINT{0, 1}}}) {
+        RECT shadow = rect;
+        OffsetRect(&shadow, offset.x, offset.y);
+        draw_text(dc, shadow, text, RGB(17, 27, 31), flags);
+    }
+    draw_text(dc, rect, text, color, flags);
 }
 
 // Purpose: Draw compact scale labels inside a live graph.

@@ -114,6 +114,12 @@ runs:
         if ($env:CREATE_MSI -notin @("true", "false")) {
             throw "create_msi must be true or false."
         }
+        if ($replaceExisting -and $env:CREATE_MSI -eq "true") {
+            throw (
+                "replace_existing=true is refused for MSI releases. " +
+                "MSI release replacement can leave Windows Installer with an already-installed same-version product; " +
+                "publish a new SemVer numeric version, normally by increasing the patch digit.")
+        }
         if ($env:ENABLE_HIP -notin @("true", "false")) {
             throw "enable_hip must be true or false."
         }

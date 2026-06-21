@@ -1,5 +1,6 @@
 #include "app/main_window_support.hpp"
 
+#include "app/log_policy.hpp"
 #include "app/log_retention.hpp"
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
@@ -33,7 +34,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 
 #include <knownfolders.h>
@@ -364,6 +367,48 @@ std::wstring performance_update_option_text(int index) {
     return performance_update_speed_text(kPerformanceUpdateSecondsOptions[normalized]);
 }
 
+// Purpose: Enumerate fixed local drive roots eligible for total I/O monitoring.
+// Inputs: None; queries Windows drive bits and drive types for the current host.
+// Outputs: Returns fixed drive labels such as `C:` and excludes optical, removable, remote, and unknown drives.
+std::vector<std::wstring> fixed_io_drive_options() {
+    std::vector<std::wstring> drives;
+    const DWORD mask = GetLogicalDrives();
+    for (wchar_t letter = L'A'; letter <= L'Z'; ++letter) {
+        const DWORD bit = 1UL << static_cast<DWORD>(letter - L'A');
+        if ((mask & bit) == 0U) {
+            continue;
+        }
+        const std::wstring root{letter, L':', L'\\'};
+        if (GetDriveTypeW(root.c_str()) == DRIVE_FIXED) {
+            drives.push_back(std::wstring{letter, L':'});
+        }
+    }
+    return drives;
+}
+
+// Purpose: Normalize the selected fixed-drive row for the current host.
+// Inputs: `index` is a mutable UI row index and the host drive list is discovered at call time.
+// Outputs: Returns a valid row index or zero when no fixed drives are available.
+int normalize_io_drive_index(int index) {
+    const auto drives = fixed_io_drive_options();
+    if (drives.empty()) {
+        return 0;
+    }
+    const int count = static_cast<int>(drives.size());
+    return (index % count + count) % count;
+}
+
+// Purpose: Return the user-facing fixed-drive selector label.
+// Inputs: `index` is a mutable selected drive row.
+// Outputs: Returns a drive label such as `C:` or `-` when no fixed drive is available.
+std::wstring io_drive_option_text(int index) {
+    const auto drives = fixed_io_drive_options();
+    if (drives.empty()) {
+        return L"-";
+    }
+    return drives[static_cast<std::size_t>(normalize_io_drive_index(index))];
+}
+
 // Purpose: Map the visible compression-level selection to a miniz setting.
 // Inputs: `index` is the mutable compression-level selection in UI state.
 // Outputs: Returns one of the supported non-store compression settings: 1, 3, 5, 7, or 9.
@@ -458,9 +503,9 @@ template <std::size_t Count> std::wstring option_text(int index, const std::arra
 // Outputs: Returns a session preference label.
 std::wstring memory_policy_text(int index) {
     constexpr std::array<std::wstring_view, 3> labels{
-        L"Bounded chunk windows",
-        L"Throughput priority",
-        L"Conservative RAM cap",
+        L"Balanced",
+        L"Maximum speed",
+        L"Reduced memory use",
     };
     return option_text(index, labels);
 }
@@ -743,16 +788,16 @@ std::string settings_to_json(const AppSettings& settings) {
     return out.str();
 }
 
-// Purpose: Resolve the per-user SuperZip settings file path.
-// Inputs: None; uses Windows Known Folders, or a fixed temp file when GUI smoke redirect is explicitly enabled.
-// Outputs: Returns a trusted settings path or throws on lookup failure.
-std::filesystem::path settings_file_path() {
+// Purpose: Resolve SuperZip's per-user application storage directory.
+// Inputs: None; uses Windows Known Folders, or a fixed temp directory when GUI smoke redirect is explicitly enabled.
+// Outputs: Returns a trusted user-scoped directory or throws on lookup failure.
+std::filesystem::path app_storage_directory() {
     wchar_t smoke_redirect[8]{};
     constexpr DWORD smoke_redirect_capacity = static_cast<DWORD>(sizeof(smoke_redirect) / sizeof(smoke_redirect[0]));
     const DWORD smoke_redirect_length =
         GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
     if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
-        return std::filesystem::temp_directory_path() / L"SuperZip" / L"gui-smoke-settings.json";
+        return std::filesystem::temp_directory_path() / L"SuperZip";
     }
     PWSTR local_app_data = nullptr;
     const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data);
@@ -761,7 +806,72 @@ std::filesystem::path settings_file_path() {
     }
     std::filesystem::path path(local_app_data);
     CoTaskMemFree(local_app_data);
-    return path / L"SuperZip" / L"settings.json";
+    return path / L"SuperZip";
+}
+
+// Purpose: Resolve the per-user SuperZip settings file path.
+// Inputs: None; uses SuperZip's current user-scoped storage directory.
+// Outputs: Returns a trusted settings path or throws on lookup failure.
+std::filesystem::path settings_file_path() {
+    const auto storage = app_storage_directory();
+    wchar_t smoke_redirect[8]{};
+    constexpr DWORD smoke_redirect_capacity = static_cast<DWORD>(sizeof(smoke_redirect) / sizeof(smoke_redirect[0]));
+    const DWORD smoke_redirect_length =
+        GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", smoke_redirect, smoke_redirect_capacity);
+    if (smoke_redirect_length == 1 && smoke_redirect[0] == L'1') {
+        return storage / L"gui-smoke-settings.json";
+    }
+    return storage / L"settings.json";
+}
+
+// Purpose: Resolve the per-user SuperZip log file path.
+// Inputs: None; uses SuperZip's current user-scoped storage directory.
+// Outputs: Returns the persistent log file path or throws on lookup failure.
+std::filesystem::path log_file_path() {
+    return app_storage_directory() / L"superzip.log";
+}
+
+// Purpose: Create SuperZip's per-user storage directory and empty log file when missing.
+// Inputs: None; resolves paths for the current Windows user.
+// Outputs: Creates the storage folder and log file or throws on filesystem failure.
+void ensure_app_storage() {
+    const auto storage = app_storage_directory();
+    std::filesystem::create_directories(storage);
+    const auto log_path = log_file_path();
+    if (!std::filesystem::exists(log_path)) {
+        std::ofstream created(log_path, std::ios::binary | std::ios::app);
+        if (!created) {
+            throw ArchiveError("could not create SuperZip log file");
+        }
+    }
+}
+
+// Purpose: Format a timestamp for one persistent log row.
+// Inputs: `timestamp` is the event time.
+// Outputs: Returns a local timestamp string without host or account identifiers.
+std::string log_timestamp_text(std::chrono::system_clock::time_point timestamp) {
+    const auto time = std::chrono::system_clock::to_time_t(timestamp);
+    std::tm local{};
+    localtime_s(&local, &time);
+    std::ostringstream text;
+    text << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+    return text.str();
+}
+
+// Purpose: Append one event to the persistent per-user log file.
+// Inputs: `path` is the log file path, `severity` is the event category, `message` is safe text, and `timestamp` is
+// the event time. Outputs: Appends a single line or throws on filesystem failure.
+void append_log_file_entry(const std::filesystem::path& path, LogSeverity severity, const std::string& message,
+                           std::chrono::system_clock::time_point timestamp) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary | std::ios::app);
+    if (!output) {
+        throw ArchiveError("could not open SuperZip log file");
+    }
+    output << log_timestamp_text(timestamp) << " [" << log_severity_text(severity) << "] " << message << '\n';
+    if (!output) {
+        throw ArchiveError("could not write SuperZip log file");
+    }
 }
 
 // Purpose: Read the per-user settings file when it exists.
@@ -874,6 +984,13 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
             performance_update_option_text(2),
             performance_update_option_text(3),
         };
+    case DropdownId::SystemIoDrive: {
+        auto drives = fixed_io_drive_options();
+        if (drives.empty()) {
+            drives.push_back(L"-");
+        }
+        return drives;
+    }
     case DropdownId::SettingsMemoryPolicy:
         return {memory_policy_text(0), memory_policy_text(1), memory_policy_text(2)};
     case DropdownId::SettingsLogLevel:
@@ -907,6 +1024,8 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
         return state.history_status_filter_index;
     case DropdownId::GpuUpdateSpeed:
         return performance_update_index_for_seconds(state.performance_update_seconds);
+    case DropdownId::SystemIoDrive:
+        return normalize_io_drive_index(state.io_drive_index);
     case DropdownId::SettingsMemoryPolicy:
         return state.memory_policy_index;
     case DropdownId::SettingsLogLevel:

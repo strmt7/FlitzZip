@@ -146,6 +146,21 @@ void MainWindow::draw_queue_scrollbar(HDC dc, const RECT& table, std::size_t row
     fill_round_rect(dc, thumb, thumb_fill, scale(5));
 }
 
+// Purpose: Draw the History overflow scrollbar with the Queue scrollbar visual system.
+// Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the filtered row count, and
+// `max_scroll` is the largest valid first visible row.
+// Outputs: Renders the body-only scrollbar track and thumb when overflow exists.
+void MainWindow::draw_history_scrollbar(HDC dc, const RECT& table, std::size_t row_count, int max_scroll) {
+    if (max_scroll <= 0) {
+        return;
+    }
+    const RECT track = history_scrollbar_track_rect(table);
+    const RECT thumb = history_scrollbar_thumb_rect(table, row_count);
+    fill_round_rect(dc, track, RGB(18, 28, 32), scale(5));
+    const COLORREF thumb_fill = interactive_fill(RGB(64, 83, 90), thumb);
+    fill_round_rect(dc, thumb, thumb_fill, scale(5));
+}
+
 // Purpose: Draw the queue page with the file/folder selection table only.
 // Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
 // Outputs: Renders queue selection controls; operation configuration remains on later pages.
@@ -339,8 +354,9 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(
         dc, RECT{detail.left + scale(18), detail.top + scale(184), detail.right - scale(18), detail.top + scale(234)},
         L"Archive",
-        state.queued_paths.empty() ? L"Select an archive from the queue" : state.queued_paths.front().wstring(), false,
-        true, false, state.queued_paths.empty() ? kMuted : CLR_INVALID);
+        state.queued_paths.empty() ? L"Select one or more archives from the queue"
+                                   : state.queued_paths.front().wstring(),
+        false, true, false, state.queued_paths.empty() ? kMuted : CLR_INVALID);
     draw_field(
         dc, RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(248), detail.top + scale(302)},
         L"Files", std::to_wstring(state.queued_paths.size()), false);
@@ -371,12 +387,19 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     const RECT header_row{table.left, table.top, table.right, header_bottom};
     const RECT header_band{table.left + scale(1), table.top + scale(1), table.right - scale(1), header_bottom};
     fill_rect(dc, header_band, blend_color(kPanel, kPanel2, 0.52));
-    const auto header_columns = history_column_layout(table, header_row);
+    const auto visible_indices = filtered_history_indices(state);
+    clamp_history_scroll_offset(table, visible_indices.size());
+    const int max_scroll = history_max_scroll_offset(table, visible_indices.size());
+    const int first_visible_row = std::clamp(history_scroll_first_row_, 0, max_scroll);
+    const RECT columns_table = history_columns_table(table, visible_indices.size());
+    const auto header_columns = history_column_layout(columns_table, header_row);
     draw_text(dc, inset_rect(header_columns.time, scale(8), 0), L"Time", kMuted,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_text(dc, inset_rect(header_columns.operation, scale(8), 0), L"Operation", kMuted,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    draw_text(dc, inset_rect(header_columns.archive, scale(8), 0), L"Archive", kMuted,
+    draw_text(dc, inset_rect(header_columns.archive_name, scale(8), 0), L"Archive name", kMuted,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, inset_rect(header_columns.archive_path, scale(8), 0), L"Archive path", kMuted,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_text(dc, inset_rect(header_columns.status, scale(8), 0), L"Status", kMuted,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -392,45 +415,65 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
         draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
                   L"No completed operations in this session yet.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else {
-        bool rendered_any = false;
-        for (const auto& entry : state.history) {
-            const bool operation_match = state.history_operation_filter_index == 0 ||
-                                         (state.history_operation_filter_index == 1 && entry.operation == "Compress") ||
-                                         (state.history_operation_filter_index == 2 && entry.operation == "Extract") ||
-                                         (state.history_operation_filter_index == 3 && entry.operation == "Security");
-            const bool status_match = state.history_status_filter_index == 0 ||
-                                      (state.history_status_filter_index == 1 && entry.success) ||
-                                      (state.history_status_filter_index == 2 && !entry.success);
-            if (!operation_match || !status_match) {
-                continue;
+        if (visible_indices.empty()) {
+            draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
+                      L"No operations match the current filters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        }
+        const int saved = SaveDC(dc);
+        IntersectClipRect(dc, columns_table.left + scale(1), header_bottom, columns_table.right - scale(1),
+                          table.bottom - scale(1));
+        const int visible_rows = history_visible_row_count(table);
+        for (int visible_row = 0; visible_row < visible_rows; ++visible_row) {
+            const int filtered_row = first_visible_row + visible_row;
+            if (filtered_row < 0 || filtered_row >= static_cast<int>(visible_indices.size())) {
+                break;
             }
+            const auto history_index = visible_indices[static_cast<std::size_t>(filtered_row)];
+            const auto& entry = state.history[history_index];
             const int bottom = y + scale(34);
-            const RECT row{table.left, y, table.right, bottom};
-            const auto columns = history_column_layout(table, row);
+            const RECT row{columns_table.left, y, columns_table.right, bottom};
+            const auto columns = history_column_layout(columns_table, row);
+            const bool selected = static_cast<int>(history_index) == state.selected_history_index;
+            const COLORREF base_row_fill = selected ? kPanel3 : ((filtered_row % 2 == 0) ? kPanel2 : kPanel);
+            fill_rect(dc, RECT{columns_table.left + scale(1), y + scale(1), columns_table.right - scale(1), bottom},
+                      interactive_fill(base_row_fill, row, true));
             draw_text(dc, inset_rect(columns.time, scale(8), 0), local_time_text(entry.timestamp), kMuted,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             draw_text(dc, inset_rect(columns.operation, scale(8), 0), widen(entry.operation), kText,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, inset_rect(columns.archive, scale(8), 0), widen(entry.subject), kMuted,
+            draw_text(dc, inset_rect(columns.archive_name, scale(8), 0), widen(entry.archive_name), kMuted,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, inset_rect(columns.archive_path, scale(8), 0), widen(entry.archive_path), kMuted,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             draw_text(dc, inset_rect(columns.status, scale(8), 0), entry.success ? L"Success" : L"Failure",
                       entry.success ? kOk : kDanger, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             y = bottom;
-            rendered_any = true;
-            if (y > table.bottom - scale(34)) {
-                break;
-            }
         }
-        if (!rendered_any) {
-            draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
-                      L"No operations match the current filters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-        }
+        RestoreDC(dc, saved);
+        draw_history_scrollbar(dc, table, visible_indices.size(), max_scroll);
     }
     RECT details{area.left, area.bottom - scale(76), area.right, area.bottom};
     fill_round_rect(dc, details, kPanel, scale(4));
     stroke_rect(dc, details, kBorder);
-    draw_text(dc, RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom},
-              L"Selected operation details appear here after a job runs.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    const bool selected_valid =
+        state.selected_history_index >= 0 && state.selected_history_index < static_cast<int>(state.history.size()) &&
+        history_entry_matches_filters(state, state.history[static_cast<std::size_t>(state.selected_history_index)]);
+    if (!selected_valid) {
+        draw_text(dc,
+                  RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom},
+                  L"Selected operation details will appear here", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    } else {
+        const auto& entry = state.history[static_cast<std::size_t>(state.selected_history_index)];
+        std::wstring detail_text = std::wstring(L"Time: ") + local_time_text(entry.timestamp) + L"    Operation: " +
+                                   widen(entry.operation) + L"    Status: " +
+                                   (entry.success ? L"Success" : L"Failure") + L"\nArchive name: " +
+                                   widen(entry.archive_name) + L"\nArchive path: " + widen(entry.archive_path) +
+                                   L"\nDetails: " + widen(entry.detail);
+        draw_text(dc,
+                  RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18),
+                       details.bottom - scale(8)},
+                  detail_text, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+    }
 }
 
 // Purpose: Draw the System page with current runtime and resource-status details.
@@ -570,7 +613,7 @@ std::array<RECT, 4> MainWindow::performance_monitor_card_rects(const RECT& monit
     return cards;
 }
 
-// Purpose: Return the System update-speed field rectangle aligned to the GPU card.
+// Purpose: Return the System refresh-interval field rectangle aligned to the GPU card.
 // Inputs: `monitor` is the complete Performance Monitor panel.
 // Outputs: Returns a narrow same-row field rectangle whose right edge matches the GPU card.
 RECT MainWindow::performance_update_speed_rect(const RECT& monitor) const {
@@ -580,9 +623,20 @@ RECT MainWindow::performance_update_speed_rect(const RECT& monitor) const {
     return RECT{gpu_card.right - box_w, monitor.top + scale(10), gpu_card.right, monitor.top + scale(40)};
 }
 
+// Purpose: Return the fixed-drive selector rectangle inside the I/O monitor card.
+// Inputs: `monitor` is the Performance Monitor panel rectangle.
+// Outputs: Returns a compact same-row dropdown aligned to the I/O card header.
+RECT MainWindow::performance_io_drive_rect(const RECT& monitor) const {
+    const auto cards = performance_monitor_card_rects(monitor);
+    const RECT io_card = cards[2];
+    const int box_w = scale(64);
+    return RECT{io_card.right - scale(12) - box_w, io_card.top - scale(12), io_card.right - scale(12),
+                io_card.top + scale(30)};
+}
+
 // Purpose: Draw the live performance monitor section on the System page.
 // Inputs: `dc` is the target, `monitor` is the panel rectangle, and `state` contains the latest counters.
-// Outputs: Renders CPU, total RAM, process read/write I/O, and total GPU utilization history cards.
+// Outputs: Renders CPU, RAM, selected-drive total I/O, and total GPU utilization history cards.
 void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state) {
     const auto& sample = state.performance;
     fill_round_rect(dc, monitor, kPanel, scale(4));
@@ -602,8 +656,7 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
 
     std::array<double, 96> cpu{};
     std::array<double, 96> memory{};
-    std::array<double, 96> read{};
-    std::array<double, 96> write{};
+    std::array<double, 96> io_busy{};
     std::array<double, 96> gpu{};
     const auto sample_at = [this](std::size_t index) -> const PerformanceMonitorSample& {
         const auto start = performance_history_next_ + performance_history_.size() - performance_history_count_;
@@ -613,21 +666,18 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
         const auto& item = sample_at(i);
         cpu[i] = item.cpu_percent / 100.0;
         memory[i] = item.system_memory_percent / 100.0;
-        read[i] = std::min(1.0, item.io_read_bytes_per_second / (1024.0 * 1024.0 * 1024.0));
-        write[i] = std::min(1.0, item.io_write_bytes_per_second / (1024.0 * 1024.0 * 1024.0));
+        io_busy[i] = item.io_busy_percent / 100.0;
         gpu[i] = item.gpu_utilization_available ? item.gpu_utilization_percent / 100.0 : 0.0;
     }
 
     const auto cards = performance_monitor_card_rects(monitor);
     const std::span<const double> cpu_span(cpu.data(), performance_history_count_);
     const std::span<const double> memory_span(memory.data(), performance_history_count_);
-    const std::span<const double> read_span(read.data(), performance_history_count_);
-    const std::span<const double> write_span(write.data(), performance_history_count_);
+    const std::span<const double> io_span(io_busy.data(), performance_history_count_);
     const std::span<const double> gpu_span(gpu.data(), performance_history_count_);
     const std::wstring percent_top = L"100%";
     const std::wstring zero_percent = L"0%";
-    const std::wstring io_top = L"1 GiB/s";
-    const std::wstring zero_gib_rate = L"0 GiB/s";
+    const auto drives_available = !fixed_io_drive_options().empty();
     for (int i = 0; i < 4; ++i) {
         RECT card = cards[static_cast<std::size_t>(i)];
         if (!sample.live) {
@@ -638,6 +688,10 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                                    : L"GPU",
                                           L"Collecting", L"Waiting for first sample", std::span<const double>{},
                                           kSubtle, percent_top, zero_percent);
+            if (i == 2) {
+                draw_field(dc, performance_io_drive_rect(monitor), L"", io_drive_option_text(state.io_drive_index),
+                           drives_available, drives_available);
+            }
         } else if (i == 0) {
             const auto detail = std::wstring(L"CPU used (total): ") + percentage_text(sample.cpu_percent) +
                                 L"\nCPU used (dedicated): " + percentage_text(sample.process_cpu_percent);
@@ -652,11 +706,12 @@ void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiS
                                 widen(human_bytes(static_cast<double>(sample.private_bytes)));
             draw_performance_monitor_card(dc, card, L"RAM", value, detail, memory_span, kOk, percent_top, zero_percent);
         } else if (i == 2) {
-            const double total_io = sample.io_read_bytes_per_second + sample.io_write_bytes_per_second;
             const auto detail = std::wstring(L"Read: ") + rate_text(sample.io_read_bytes_per_second) + L"\nWrite: " +
                                 rate_text(sample.io_write_bytes_per_second);
-            draw_dual_performance_monitor_card(dc, card, L"I/O", rate_text(total_io), detail, read_span, write_span,
-                                               kInfo, kWarn, io_top, zero_gib_rate);
+            const auto value = sample.live ? percentage_text(sample.io_busy_percent) : L"Unavailable";
+            draw_performance_monitor_card(dc, card, L"I/O", value, detail, io_span, kWarn, percent_top, zero_percent);
+            draw_field(dc, performance_io_drive_rect(monitor), L"", io_drive_option_text(state.io_drive_index),
+                       drives_available, drives_available);
         } else {
             const bool has_vram = sample.vram_total_bytes > 0U;
             const auto used = sample.vram_total_bytes - sample.vram_free_bytes;
@@ -720,6 +775,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
+    draw_button(dc, layout.open_log_file, L"Open log file", false);
 }
 
 // Purpose: Render the About page brand, version, and compatibility boundary summary.

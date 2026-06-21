@@ -64,10 +64,28 @@ std::vector<FocusTarget> MainWindow::focus_targets_for(const RECT& content, cons
             targets, FocusTargetKind::HistoryStatus,
             RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)});
         append_focus_target(targets, FocusTargetKind::HistoryClear, history_clear_button_rect(area));
+        const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+        const int header_bottom = table.top + scale(kQueueHeaderHeight);
+        const int row_height = scale(kQueueRowHeight);
+        const auto visible = filtered_history_indices(state);
+        const RECT columns_table = history_columns_table(table, visible.size());
+        const int first_visible_row =
+            std::clamp(history_scroll_first_row_, 0, history_max_scroll_offset(table, visible.size()));
+        const int remaining_rows = static_cast<int>(visible.size()) - first_visible_row;
+        const int row_count = std::min(std::max(0, remaining_rows), std::max(0, history_visible_row_count(table)));
+        for (int index = 0; index < row_count; ++index) {
+            const int top = header_bottom + (index * row_height);
+            const auto history_index = visible[static_cast<std::size_t>(first_visible_row + index)];
+            append_focus_target(targets, FocusTargetKind::HistoryRow,
+                                RECT{columns_table.left, top, columns_table.right, top + row_height},
+                                static_cast<int>(history_index));
+        }
     } break;
     case Page::Gpu:
         append_focus_target(targets, FocusTargetKind::SystemUpdateSpeed,
                             dropdown_anchor_rect(DropdownId::GpuUpdateSpeed, content));
+        append_focus_target(targets, FocusTargetKind::SystemIoDrive,
+                            dropdown_anchor_rect(DropdownId::SystemIoDrive, content));
         break;
     case Page::Settings:
         add_settings_focus_targets(targets, content);
@@ -169,6 +187,7 @@ void MainWindow::add_settings_focus_targets(std::vector<FocusTarget>& targets, c
     append_focus_target(targets, FocusTargetKind::SettingsMemoryPolicy, layout.memory_policy);
     append_focus_target(targets, FocusTargetKind::SettingsLogLevel, layout.log_level);
     append_focus_target(targets, FocusTargetKind::SettingsLogRetention, layout.log_retention);
+    append_focus_target(targets, FocusTargetKind::SettingsOpenLogFile, layout.open_log_file);
 }
 
 // Purpose: Normalize the current keyboard focus to a valid target index.
@@ -215,9 +234,145 @@ bool MainWindow::activate_focus_target(const FocusTarget& target, WPARAM key) {
     if (target.kind == FocusTargetKind::QueueRow && key == VK_SPACE) {
         return toggle_queue_item(static_cast<std::size_t>(std::max(0, target.index)));
     }
+    if (target.kind == FocusTargetKind::HistoryRow && (key == VK_SPACE || key == VK_RETURN)) {
+        std::lock_guard lock(mutex_);
+        if (target.index >= 0 && target.index < static_cast<int>(state_.history.size())) {
+            state_.selected_history_index = target.index;
+            state_.status = "History row selected";
+            request_repaint();
+            return true;
+        }
+        return false;
+    }
     const int x = (target.rect.left + target.rect.right) / 2;
     const int y = (target.rect.top + target.rect.bottom) / 2;
     return handle_content_click(x, y);
+}
+
+// Purpose: Move keyboard selection inside an expanded dropdown.
+// Inputs: `key` is an arrow/Home/End key, `active` identifies the dropdown, and `state` is a stable UI snapshot.
+// Outputs: Updates dropdown keyboard index and repaints when the dropdown consumes the key.
+bool MainWindow::handle_dropdown_navigation_key(WPARAM key, DropdownId active, const UiState& state) {
+    const auto options = dropdown_options(active);
+    if (options.empty()) {
+        return true;
+    }
+    int index = dropdown_keyboard_index_ >= 0 ? dropdown_keyboard_index_ : dropdown_selected_index(state, active);
+    if (key == VK_HOME) {
+        index = 0;
+    } else if (key == VK_END) {
+        index = static_cast<int>(options.size()) - 1;
+    } else if (key == VK_UP || key == VK_LEFT) {
+        --index;
+    } else if (key == VK_DOWN || key == VK_RIGHT) {
+        ++index;
+    }
+    dropdown_keyboard_index_ = (index % static_cast<int>(options.size()) + static_cast<int>(options.size())) %
+                               static_cast<int>(options.size());
+    request_repaint();
+    return true;
+}
+
+// Purpose: Move keyboard focus through visible Queue rows.
+// Inputs: `key` is Up or Down and `state` is a stable UI snapshot.
+// Outputs: Updates selected Queue row, scroll offset, keyboard focus, and repaint state when consumed.
+bool MainWindow::handle_queue_row_navigation_key(WPARAM key, const UiState& state) {
+    const auto targets = focus_targets_for(content_rect(), state);
+    if (!normalize_focus_index(targets)) {
+        return false;
+    }
+    const auto& target = targets[static_cast<std::size_t>(keyboard_focus_index_)];
+    if (target.kind != FocusTargetKind::QueueRow) {
+        return false;
+    }
+    const auto layout = queue_layout(content_rect());
+    const int row_count =
+        static_cast<int>(std::min<std::size_t>(state.queued_paths.size(), static_cast<std::size_t>(INT_MAX)));
+    const int visible_rows = std::max(1, queue_visible_row_count(layout.table));
+    const int next_row = std::clamp(target.index + (key == VK_DOWN ? 1 : -1), 0, std::max(0, row_count - 1));
+    {
+        std::lock_guard lock(mutex_);
+        state_.selected_queue_index = next_row;
+    }
+    const int max_scroll = queue_max_scroll_offset(layout.table, state.queued_paths.size());
+    if (next_row < queue_scroll_first_row_) {
+        queue_scroll_first_row_ = next_row;
+    } else if (next_row >= queue_scroll_first_row_ + visible_rows) {
+        queue_scroll_first_row_ = next_row - visible_rows + 1;
+    }
+    queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_, 0, max_scroll);
+    const auto refreshed_targets = focus_targets_for(content_rect(), state);
+    for (int target_index = 0; target_index < static_cast<int>(refreshed_targets.size()); ++target_index) {
+        const auto& refreshed = refreshed_targets[static_cast<std::size_t>(target_index)];
+        if (refreshed.kind == FocusTargetKind::QueueRow && refreshed.index == next_row) {
+            keyboard_focus_index_ = target_index;
+            break;
+        }
+    }
+    request_repaint();
+    return true;
+}
+
+// Purpose: Move keyboard focus through visible History rows.
+// Inputs: `key` is Up or Down and `state` is a stable UI snapshot.
+// Outputs: Updates selected History row, scroll offset, keyboard focus, and repaint state when consumed.
+bool MainWindow::handle_history_row_navigation_key(WPARAM key, const UiState& state) {
+    const auto targets = focus_targets_for(content_rect(), state);
+    if (!normalize_focus_index(targets)) {
+        return false;
+    }
+    const auto& target = targets[static_cast<std::size_t>(keyboard_focus_index_)];
+    if (target.kind != FocusTargetKind::HistoryRow) {
+        return false;
+    }
+    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
+    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const auto visible = filtered_history_indices(state);
+    if (visible.empty()) {
+        return false;
+    }
+    const auto current_iter =
+        std::find(visible.begin(), visible.end(), static_cast<std::size_t>(std::max(0, target.index)));
+    const int current_filtered_index =
+        current_iter == visible.end() ? 0 : static_cast<int>(std::distance(visible.begin(), current_iter));
+    const int next_filtered_index = std::clamp(current_filtered_index + (key == VK_DOWN ? 1 : -1), 0,
+                                               std::max(0, static_cast<int>(visible.size()) - 1));
+    const int next_history_index = static_cast<int>(visible[static_cast<std::size_t>(next_filtered_index)]);
+    {
+        std::lock_guard lock(mutex_);
+        state_.selected_history_index = next_history_index;
+    }
+    const int visible_rows = std::max(1, history_visible_row_count(table));
+    const int max_scroll = history_max_scroll_offset(table, visible.size());
+    if (next_filtered_index < history_scroll_first_row_) {
+        history_scroll_first_row_ = next_filtered_index;
+    } else if (next_filtered_index >= history_scroll_first_row_ + visible_rows) {
+        history_scroll_first_row_ = next_filtered_index - visible_rows + 1;
+    }
+    history_scroll_first_row_ = std::clamp(history_scroll_first_row_, 0, max_scroll);
+    const auto refreshed_targets = focus_targets_for(content_rect(), state);
+    for (int target_index = 0; target_index < static_cast<int>(refreshed_targets.size()); ++target_index) {
+        const auto& refreshed = refreshed_targets[static_cast<std::size_t>(target_index)];
+        if (refreshed.kind == FocusTargetKind::HistoryRow && refreshed.index == next_history_index) {
+            keyboard_focus_index_ = target_index;
+            break;
+        }
+    }
+    request_repaint();
+    return true;
+}
+
+// Purpose: Move keyboard focus to the first or last focusable control.
+// Inputs: `key` is Home or End and `state` is a stable UI snapshot.
+// Outputs: Updates keyboard focus and repaints when at least one target exists.
+bool MainWindow::handle_home_end_navigation_key(WPARAM key, const UiState& state) {
+    const auto targets = focus_targets_for(content_rect(), state);
+    if (!normalize_focus_index(targets)) {
+        return false;
+    }
+    keyboard_focus_index_ = key == VK_HOME ? 0 : static_cast<int>(targets.size()) - 1;
+    request_repaint();
+    return true;
 }
 
 // Purpose: Move within open dropdown options or Queue rows using arrow keys.
@@ -232,68 +387,16 @@ bool MainWindow::handle_navigation_key(WPARAM key) {
         state = state_;
     }
     if (active != DropdownId::None) {
-        const auto options = dropdown_options(active);
-        if (options.empty()) {
-            return true;
-        }
-        int index = dropdown_keyboard_index_ >= 0 ? dropdown_keyboard_index_ : dropdown_selected_index(state, active);
-        if (key == VK_HOME) {
-            index = 0;
-        } else if (key == VK_END) {
-            index = static_cast<int>(options.size()) - 1;
-        } else if (key == VK_UP || key == VK_LEFT) {
-            --index;
-        } else if (key == VK_DOWN || key == VK_RIGHT) {
-            ++index;
-        }
-        dropdown_keyboard_index_ = (index % static_cast<int>(options.size()) + static_cast<int>(options.size())) %
-                                   static_cast<int>(options.size());
-        request_repaint();
-        return true;
+        return handle_dropdown_navigation_key(key, active, state);
     }
     if (state.page == Page::Queue && !state.queued_paths.empty() && (key == VK_UP || key == VK_DOWN)) {
-        const auto targets = focus_targets_for(content_rect(), state);
-        if (!normalize_focus_index(targets)) {
-            return false;
-        }
-        const auto& target = targets[static_cast<std::size_t>(keyboard_focus_index_)];
-        if (target.kind == FocusTargetKind::QueueRow) {
-            const auto layout = queue_layout(content_rect());
-            const int row_count =
-                static_cast<int>(std::min<std::size_t>(state.queued_paths.size(), static_cast<std::size_t>(INT_MAX)));
-            const int visible_rows = std::max(1, queue_visible_row_count(layout.table));
-            const int next_row = std::clamp(target.index + (key == VK_DOWN ? 1 : -1), 0, std::max(0, row_count - 1));
-            {
-                std::lock_guard lock(mutex_);
-                state_.selected_queue_index = next_row;
-            }
-            const int max_scroll = queue_max_scroll_offset(layout.table, state.queued_paths.size());
-            if (next_row < queue_scroll_first_row_) {
-                queue_scroll_first_row_ = next_row;
-            } else if (next_row >= queue_scroll_first_row_ + visible_rows) {
-                queue_scroll_first_row_ = next_row - visible_rows + 1;
-            }
-            queue_scroll_first_row_ = std::clamp(queue_scroll_first_row_, 0, max_scroll);
-            const auto refreshed_targets = focus_targets_for(content_rect(), state);
-            for (int target_index = 0; target_index < static_cast<int>(refreshed_targets.size()); ++target_index) {
-                const auto& refreshed = refreshed_targets[static_cast<std::size_t>(target_index)];
-                if (refreshed.kind == FocusTargetKind::QueueRow && refreshed.index == next_row) {
-                    keyboard_focus_index_ = target_index;
-                    break;
-                }
-            }
-            request_repaint();
-            return true;
-        }
+        return handle_queue_row_navigation_key(key, state);
+    }
+    if (state.page == Page::History && !state.history.empty() && (key == VK_UP || key == VK_DOWN)) {
+        return handle_history_row_navigation_key(key, state);
     }
     if (key == VK_HOME || key == VK_END) {
-        const auto targets = focus_targets_for(content_rect(), state);
-        if (!normalize_focus_index(targets)) {
-            return false;
-        }
-        keyboard_focus_index_ = key == VK_HOME ? 0 : static_cast<int>(targets.size()) - 1;
-        request_repaint();
-        return true;
+        return handle_home_end_navigation_key(key, state);
     }
     if (key == VK_LEFT || key == VK_UP) {
         return move_keyboard_focus(-1);
