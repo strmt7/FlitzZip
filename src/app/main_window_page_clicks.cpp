@@ -111,8 +111,19 @@ bool MainWindow::handle_compress_click(const RECT& content, int x, int y) {
     if (handle_active_dropdown_click(x, y)) {
         return true;
     }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.active_operation == OperationKind::Compress && contains_point(layout.stop, x, y)) {
+        request_stop_operation();
+        return true;
+    }
     if (contains_point(layout.start, x, y)) {
-        start_compress();
+        if (can_start_compress(state)) {
+            start_compress();
+        }
         return true;
     }
     if (contains_point(layout.destination, x, y)) {
@@ -185,8 +196,19 @@ bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
     if (handle_active_dropdown_click(x, y)) {
         return true;
     }
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.active_operation == OperationKind::Extract && contains_point(layout.stop, x, y)) {
+        request_stop_operation();
+        return true;
+    }
     if (contains_point(layout.start, x, y)) {
-        start_extract();
+        if (can_start_extract(state)) {
+            start_extract();
+        }
         return true;
     }
     if (contains_point(layout.destination, x, y)) {
@@ -216,11 +238,12 @@ bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
 // Outputs: Returns true when a history filter or command consumed the click.
 bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
-    RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-    const RECT operation{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
-    const RECT status{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
-    const RECT clear = history_clear_button_rect(area);
-    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const auto layout = history_layout(content);
+    RECT area = layout.area;
+    const RECT operation = layout.operation_filter;
+    const RECT status = layout.status_filter;
+    const RECT clear = layout.clear;
+    const RECT table = layout.table;
     const int header_bottom = table.top + scale(kQueueHeaderHeight);
     if (handle_active_dropdown_click(x, y)) {
         return true;
@@ -243,6 +266,25 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
         state = state_;
     }
     const auto visible = filtered_history_indices(state);
+    if (contains_point(layout.details, x, y)) {
+        HDC dc = GetDC(hwnd_);
+        const int content_height = dc == nullptr ? 0 : history_details_text_height(dc, layout.details, state);
+        if (dc != nullptr) {
+            ReleaseDC(hwnd_, dc);
+        }
+        const RECT track = history_details_scrollbar_track_rect(layout.details);
+        const RECT thumb = history_details_scrollbar_thumb_rect(layout.details, content_height);
+        if (contains_point(thumb, x, y)) {
+            begin_history_details_scroll_drag(y, layout.details, content_height);
+            return true;
+        }
+        if (contains_point(track, x, y)) {
+            (void)scroll_history_details(y < thumb.top ? -static_cast<int>(layout.details.bottom - layout.details.top)
+                                                       : static_cast<int>(layout.details.bottom - layout.details.top));
+            return true;
+        }
+        return true;
+    }
     clamp_history_scroll_offset(table, visible.size());
     const RECT columns_table = history_columns_table(table, visible.size());
     const int max_scroll = history_max_scroll_offset(table, visible.size());
@@ -281,6 +323,7 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
             std::lock_guard lock(mutex_);
             state_.selected_history_index = static_cast<int>(visible[static_cast<std::size_t>(filtered_index)]);
             state_.status = "History row selected";
+            history_details_scroll_pixels_ = 0;
             request_repaint();
             return true;
         }
@@ -294,10 +337,22 @@ bool MainWindow::handle_history_click(const RECT& content, int x, int y) {
 bool MainWindow::handle_security_click(const RECT& content, int x, int y) {
     RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
     const RECT verify_button = primary_action_rect(area);
+    const RECT stop_button = secondary_action_rect_left_of(verify_button);
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.active_operation == OperationKind::Verify && contains_point(stop_button, x, y)) {
+        request_stop_operation();
+        return true;
+    }
     if (!contains_point(verify_button, x, y)) {
         return false;
     }
-    start_security_verify();
+    if (can_start_security_verify(state)) {
+        start_security_verify();
+    }
     return true;
 }
 
@@ -331,7 +386,7 @@ void MainWindow::start_security_verify() {
         [this, sources, integrity, defender] {
             ProgressState progress;
             progress.start(OperationKind::Verify, sources.size(), sources.size());
-            auto publish = [this, &progress] { publish_progress_snapshot(progress.snapshot()); };
+            auto publish = [this, &progress] { publish_progress_snapshot_or_cancel(progress.snapshot()); };
             for (const auto& path : sources) {
                 progress.set_current(path.filename().string());
                 publish();
@@ -361,7 +416,7 @@ void MainWindow::start_security_verify() {
             append_history_entry("Security", "Security review", summary_path,
                                  "Verified " + std::to_string(sources.size()) + " selected queue item(s)", true);
         },
-        "Verifying");
+        "Verifying", OperationKind::Verify);
 }
 
 // Purpose: Handle System page hit-testing and commands.

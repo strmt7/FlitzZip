@@ -206,7 +206,7 @@ bool progress_bar_active(const UiState& state);
 std::wstring progress_percent_text(const ProgressSnapshot& snapshot);
 std::wstring rate_text(double bytes_per_second);
 std::wstring duration_remaining_text(double seconds);
-std::wstring progress_time_remaining_text(const ProgressSnapshot& snapshot);
+std::wstring progress_time_remaining_text(const UiState& state);
 std::wstring local_time_text(std::chrono::system_clock::time_point time_point);
 std::wstring current_user_time_text();
 std::wstring entry_size_text(const std::filesystem::path& path);

@@ -60,23 +60,35 @@ class QueueDropTarget final : public IDropTarget {
     // Inputs: `data`, key state, screen point, and requested effect are supplied by OLE.
     // Outputs: Enables copy only for HDROP data over the Queue table and updates highlight state.
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
-        data_object_has_files_ = data_has_hdrop(data);
-        return update_effect(point, effect);
+        try {
+            data_object_has_files_ = data_has_hdrop(data);
+            return update_effect(point, effect);
+        } catch (...) {
+            return reject_after_exception(effect, "OLE drag enter failed");
+        }
     }
 
     // Purpose: Update Queue table drag/drop highlight while the shell pointer moves.
     // Inputs: Screen point and requested effect are supplied by OLE.
     // Outputs: Enables copy only while still inside the Queue table.
     HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override {
-        return update_effect(point, effect);
+        try {
+            return update_effect(point, effect);
+        } catch (...) {
+            return reject_after_exception(effect, "OLE drag over failed");
+        }
     }
 
     // Purpose: Clear Queue drag/drop highlighting when the shell drag leaves.
     // Inputs: None.
     // Outputs: Clears live highlighting.
     HRESULT STDMETHODCALLTYPE DragLeave() override {
-        owner_.set_queue_drop_highlight(false);
-        data_object_has_files_ = false;
+        try {
+            owner_.set_queue_drop_highlight(false);
+            data_object_has_files_ = false;
+        } catch (...) {
+            data_object_has_files_ = false;
+        }
         return S_OK;
     }
 
@@ -84,19 +96,39 @@ class QueueDropTarget final : public IDropTarget {
     // Inputs: `data`, key state, screen point, and requested effect are supplied by OLE.
     // Outputs: Queues dropped paths or rejects the drop with `DROPEFFECT_NONE`.
     HRESULT STDMETHODCALLTYPE Drop(IDataObject* data, DWORD, POINTL point, DWORD* effect) override {
-        owner_.set_queue_drop_highlight(false);
-        POINT client{point.x, point.y};
-        ScreenToClient(owner_.hwnd_, &client);
-        auto paths = paths_from_data_object(data);
-        const bool accepted = owner_.accept_dropped_paths(std::move(paths), client);
-        if (effect != nullptr) {
-            *effect = accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        try {
+            owner_.set_queue_drop_highlight(false);
+            POINT client{point.x, point.y};
+            ScreenToClient(owner_.hwnd_, &client);
+            auto paths = paths_from_data_object(data);
+            const bool accepted = owner_.accept_dropped_paths(std::move(paths), client);
+            if (effect != nullptr) {
+                *effect = accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+            }
+            data_object_has_files_ = false;
+            return S_OK;
+        } catch (...) {
+            return reject_after_exception(effect, "OLE drop failed");
         }
-        data_object_has_files_ = false;
-        return S_OK;
     }
 
   private:
+    // Purpose: Fail closed when a C++ exception reaches the OLE drop-target boundary.
+    // Inputs: `effect` receives the rejected drop effect and `message` names the failed callback.
+    // Outputs: Clears highlight state, records a best-effort warning, and returns `S_OK` to OLE.
+    HRESULT reject_after_exception(DWORD* effect, const char* message) noexcept {
+        data_object_has_files_ = false;
+        if (effect != nullptr) {
+            *effect = DROPEFFECT_NONE;
+        }
+        try {
+            owner_.set_queue_drop_highlight(false);
+            owner_.append_operation_log(LogSeverity::Warning, "Queue", message);
+        } catch (...) {
+        }
+        return S_OK;
+    }
+
     // Purpose: Check whether an OLE data object offers shell file paths.
     // Inputs: `data` is the OLE data object from drag/drop.
     // Outputs: Returns true when `CF_HDROP` data can be queried.
@@ -355,6 +387,7 @@ LRESULT MainWindow::handle_destroy() {
         OleUninitialize();
         ole_initialized_ = false;
     }
+    stop_folder_size_worker();
     shutdown_performance_monitor();
     PostQuitMessage(0);
     return 0;

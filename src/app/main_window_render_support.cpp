@@ -191,18 +191,17 @@ std::wstring duration_remaining_text(double seconds) {
                          : std::to_wstring(days) + L" d " + std::to_wstring(hours) + L" h";
 }
 
-// Purpose: Estimate remaining operation time from total work and average throughput.
-// Inputs: `snapshot` is a worker progress sample whose throughput is average bytes per second since start.
+// Purpose: Format the smoothed remaining operation time.
+// Inputs: `state` contains the latest progress sample and exponentially smoothed ETA.
 // Outputs: Returns formatted remaining time or `--` when the estimate is unavailable.
-std::wstring progress_time_remaining_text(const ProgressSnapshot& snapshot) {
-    if (progress_ratio(snapshot) >= 1.0) {
+std::wstring progress_time_remaining_text(const UiState& state) {
+    if (progress_ratio(state.progress) >= 1.0) {
         return L"0 sec";
     }
-    if (snapshot.total_bytes <= snapshot.processed_bytes || snapshot.throughput_bytes_per_second <= 0.0) {
+    if (state.smoothed_time_remaining_seconds < 0.0) {
         return L"--";
     }
-    const auto remaining_bytes = snapshot.total_bytes - snapshot.processed_bytes;
-    return duration_remaining_text(static_cast<double>(remaining_bytes) / snapshot.throughput_bytes_per_second);
+    return duration_remaining_text(state.smoothed_time_remaining_seconds);
 }
 
 // Purpose: Format one local wall-clock time for visible UI tables and status text.

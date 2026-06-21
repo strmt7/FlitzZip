@@ -257,7 +257,9 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
     for (const auto page : pages) {
         RECT item{rect.left, y, rect.right, y + item_height};
         const bool active = state.page == page;
-        const bool hovered = mouse_inside_client_ && contains_point(item, mouse_position_.x, mouse_position_.y);
+        const bool locked = operation_running(state) && !active;
+        const bool hovered =
+            !locked && mouse_inside_client_ && contains_point(item, mouse_position_.x, mouse_position_.y);
         const bool pressed = hovered && primary_mouse_down_;
         const RECT surface{item.left + scale(8), item.top + scale(5), item.right - scale(8), item.bottom - scale(5)};
         if (active) {
@@ -281,7 +283,7 @@ void MainWindow::draw_navigation(HDC dc, const RECT& rect, const UiState& state)
         if (pressed) {
             OffsetRect(&icon, scale(1), scale(1));
         }
-        const COLORREF nav_color = active ? kText : hovered ? RGB(198, 211, 215) : kMuted;
+        const COLORREF nav_color = active ? kText : locked ? RGB(73, 88, 93) : hovered ? RGB(198, 211, 215) : kMuted;
         draw_nav_icon(dc, page, icon, nav_color);
         y += item_height;
     }
@@ -317,7 +319,7 @@ void MainWindow::draw_status_bar(HDC dc, const RECT& rect, const UiState& state)
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         draw_text(dc, throughput_rect, L"Throughput: " + rate_text(state.progress.throughput_bytes_per_second), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        draw_text(dc, remaining_rect, L"Time remaining: " + progress_time_remaining_text(state.progress), kMuted,
+        draw_text(dc, remaining_rect, L"Time remaining: " + progress_time_remaining_text(state), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
     draw_line(dc, rect.right - scale(kClockSegmentWidth), rect.top + scale(8), rect.right - scale(kClockSegmentWidth),

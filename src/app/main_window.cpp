@@ -27,6 +27,7 @@ MainWindow::MainWindow() = default;
 // Inputs: None.
 // Outputs: Blocks until active work finishes, then frees owned native resources.
 MainWindow::~MainWindow() {
+    stop_folder_size_worker();
     if (worker_.joinable()) {
         worker_.join();
     }

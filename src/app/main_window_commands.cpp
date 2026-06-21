@@ -248,21 +248,36 @@ std::filesystem::path selected_folder_from_dialog(HWND owner, PCWSTR title) {
 // Outputs: Mutates UI page state, reverts unapplied Settings edits when leaving Settings, and queues repaint.
 void MainWindow::set_page(Page page) {
     bool revert_unapplied_settings = false;
+    bool blocked_by_operation = false;
     {
         std::lock_guard lock(mutex_);
         const Page previous = state_.page;
         if (previous == page) {
             return;
         }
-        state_.page = page;
-        state_.active_dropdown = DropdownId::None;
-        dropdown_keyboard_index_ = -1;
-        keyboard_focus_index_ = 0;
-        text_tooltip_cell_active_ = false;
-        text_tooltip_visible_ = false;
-        text_tooltip_text_.clear();
-        KillTimer(hwnd_, kTextTooltipTimer);
-        revert_unapplied_settings = previous == Page::Settings && page != Page::Settings;
+        if (state_.active_operation != OperationKind::Idle) {
+            state_.status = "Stop the running operation before changing tabs";
+            blocked_by_operation = true;
+        }
+        if (blocked_by_operation) {
+            state_.active_dropdown = DropdownId::None;
+            dropdown_keyboard_index_ = -1;
+            keyboard_focus_index_ = 0;
+            text_tooltip_cell_active_ = false;
+            text_tooltip_visible_ = false;
+            text_tooltip_text_.clear();
+            KillTimer(hwnd_, kTextTooltipTimer);
+        } else {
+            state_.page = page;
+            state_.active_dropdown = DropdownId::None;
+            dropdown_keyboard_index_ = -1;
+            keyboard_focus_index_ = 0;
+            text_tooltip_cell_active_ = false;
+            text_tooltip_visible_ = false;
+            text_tooltip_text_.clear();
+            KillTimer(hwnd_, kTextTooltipTimer);
+            revert_unapplied_settings = previous == Page::Settings && page != Page::Settings;
+        }
     }
     if (revert_unapplied_settings) {
         revert_settings_draft();
@@ -344,6 +359,7 @@ void MainWindow::clear_history() {
         state_.selected_history_index = -1;
         history_scroll_first_row_ = 0;
         history_wheel_delta_remainder_ = 0;
+        history_details_scroll_pixels_ = 0;
     }
     request_repaint();
 }
@@ -469,7 +485,9 @@ void MainWindow::start_compress() {
     run_job(
         [this, sources, output, archive_format, gpu_required, integrity, defender, verify_after_write, block_size,
          compression_level] {
-            auto progress_callback = [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot(snapshot); };
+            auto progress_callback = [this](const ProgressSnapshot& snapshot) {
+                publish_progress_snapshot_or_cancel(snapshot);
+            };
             const auto stats = compress_gui_archive(sources, output, archive_format, gpu_required, verify_after_write,
                                                     block_size, compression_level, progress_callback);
             std::ostringstream line;
@@ -487,7 +505,7 @@ void MainWindow::start_compress() {
                                      defender_history_status("Defender", scan), !scan.attempted || scan.clean);
             }
         },
-        "Compressing");
+        "Compressing", OperationKind::Compress);
 }
 
 // Purpose: Detect whether Ask-before-overwriting needs user confirmation.

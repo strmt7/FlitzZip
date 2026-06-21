@@ -18,6 +18,20 @@
 
 namespace superzip::app {
 
+namespace {
+
+// Purpose: Build the History details text for the selected row.
+// Inputs: `entry` is the selected session history row.
+// Outputs: Returns the multi-line detail body rendered in the lower History panel.
+std::wstring history_detail_text(const HistoryEntry& entry) {
+    return std::wstring(L"Time: ") + local_time_text(entry.timestamp) + L"    Operation: " + widen(entry.operation) +
+           L"    Status: " + (entry.success ? L"Success" : L"Failure") + L"\nArchive name: " +
+           widen(entry.archive_name) + L"\nArchive path: " + widen(entry.archive_path) + L"\nDetails: " +
+           widen(entry.detail);
+}
+
+}  // namespace
+
 // Purpose: Draw the Queue page toolbar controls.
 // Inputs: `dc` is the target, `layout` contains control rectangles, and `state` is copied UI state.
 // Outputs: Renders item count and visible Queue commands without mutating state.
@@ -121,7 +135,7 @@ void MainWindow::draw_queue_table_rows(HDC dc, const RECT& table, const RECT& co
         draw_checkbox(dc, columns.checkbox, L"", enabled);
         draw_text(dc, inset_rect(columns.name, scale(8), 0), path.filename().wstring(), kText,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        draw_text(dc, inset_rect(columns.size, scale(8), 0), entry_size_text(path), kMuted,
+        draw_text(dc, inset_rect(columns.size, scale(8), 0), queue_entry_size_text(path), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, inset_rect(columns.type, scale(8), 0), entry_type_text(path), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -196,7 +210,12 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Compress", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, layout.start, L"Start", true);
+    const bool active_compress = state.active_operation == OperationKind::Compress;
+    const bool can_start = can_start_compress(state);
+    if (active_compress) {
+        draw_button(dc, layout.stop, L"Stop", false);
+    }
+    draw_button_state(dc, layout.start, active_compress ? L"Running..." : L"Start", true, can_start);
     draw_operation_progress_bar(dc,
                                 RECT{layout.start.left, layout.start.bottom + scale(4), layout.start.right,
                                      layout.start.bottom + scale(4) + scale(kOperationProgressHeight)},
@@ -252,7 +271,12 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Extract", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_button(dc, layout.start, L"Start", true);
+    const bool active_extract = state.active_operation == OperationKind::Extract;
+    const bool can_start = can_start_extract(state);
+    if (active_extract) {
+        draw_button(dc, layout.stop, L"Stop", false);
+    }
+    draw_button_state(dc, layout.start, active_extract ? L"Running..." : L"Start", true, can_start);
     draw_operation_progress_bar(dc,
                                 RECT{layout.start.left, layout.start.bottom + scale(4), layout.start.right,
                                      layout.start.bottom + scale(4) + scale(kOperationProgressHeight)},
@@ -292,7 +316,13 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"Security", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const RECT verify_button = primary_action_rect(area);
-    draw_button(dc, verify_button, L"Verify", true);
+    const RECT stop_button = secondary_action_rect_left_of(verify_button);
+    const bool active_verify = state.active_operation == OperationKind::Verify;
+    const bool can_start = can_start_security_verify(state);
+    if (active_verify) {
+        draw_button(dc, stop_button, L"Stop", false);
+    }
+    draw_button_state(dc, verify_button, active_verify ? L"Running..." : L"Verify", true, can_start);
     draw_operation_progress_bar(dc,
                                 RECT{verify_button.left, verify_button.bottom + scale(4), verify_button.right,
                                      verify_button.bottom + scale(4) + scale(kOperationProgressHeight)},
@@ -478,37 +508,176 @@ void MainWindow::draw_history_table(HDC dc, const RECT& table, const UiState& st
 void MainWindow::draw_history_details(HDC dc, const RECT& details, const UiState& state) {
     fill_round_rect(dc, details, kPanel, scale(4));
     stroke_rect(dc, details, kBorder);
+    SelectObject(dc, tiny_font_);
     const bool selected_valid =
         state.selected_history_index >= 0 && state.selected_history_index < static_cast<int>(state.history.size()) &&
         history_entry_matches_filters(state, state.history[static_cast<std::size_t>(state.selected_history_index)]);
     if (!selected_valid) {
+        history_details_scroll_pixels_ = 0;
         draw_text(dc,
                   RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom},
                   L"Selected operation details will appear here", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
         return;
     }
     const auto& entry = state.history[static_cast<std::size_t>(state.selected_history_index)];
-    const std::wstring detail_text =
-        std::wstring(L"Time: ") + local_time_text(entry.timestamp) + L"    Operation: " + widen(entry.operation) +
-        L"    Status: " + (entry.success ? L"Success" : L"Failure") + L"\nArchive name: " + widen(entry.archive_name) +
-        L"\nArchive path: " + widen(entry.archive_path) + L"\nDetails: " + widen(entry.detail);
-    draw_text(
-        dc,
-        RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom - scale(8)},
-        detail_text, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+    const std::wstring detail_text = history_detail_text(entry);
+    const RECT viewport{details.left + scale(18), details.top + scale(10), details.right - scale(28),
+                        details.bottom - scale(8)};
+    const int content_height = history_details_text_height(dc, details, state);
+    const int viewport_height = std::max(1, static_cast<int>(viewport.bottom - viewport.top));
+    const int max_scroll = std::max(0, content_height - viewport_height);
+    history_details_scroll_pixels_ = std::clamp(history_details_scroll_pixels_, 0, max_scroll);
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, viewport.left, viewport.top, viewport.right, viewport.bottom);
+    draw_text(dc,
+              RECT{viewport.left, viewport.top - history_details_scroll_pixels_, viewport.right,
+                   viewport.top - history_details_scroll_pixels_ + content_height + scale(6)},
+              detail_text, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+    RestoreDC(dc, saved);
+    if (max_scroll > 0) {
+        const RECT track = history_details_scrollbar_track_rect(details);
+        const RECT thumb = history_details_scrollbar_thumb_rect(details, content_height);
+        fill_round_rect(dc, track, RGB(18, 28, 32), scale(5));
+        fill_round_rect(dc, thumb, interactive_fill(RGB(64, 83, 90), thumb), scale(5));
+    }
+}
+
+// Purpose: Measure the selected History detail body height.
+// Inputs: `dc` is the target device context, `details` is the panel rectangle, and `state` supplies selection.
+// Outputs: Returns the required text height for smooth scroll bounds.
+int MainWindow::history_details_text_height(HDC dc, const RECT& details, const UiState& state) const {
+    const bool selected_valid =
+        state.selected_history_index >= 0 && state.selected_history_index < static_cast<int>(state.history.size()) &&
+        history_entry_matches_filters(state, state.history[static_cast<std::size_t>(state.selected_history_index)]);
+    if (!selected_valid || dc == nullptr) {
+        return scale(1);
+    }
+    const auto& entry = state.history[static_cast<std::size_t>(state.selected_history_index)];
+    const std::wstring text = history_detail_text(entry);
+    const int width = std::max(1, static_cast<int>(details.right - details.left) - scale(46));
+    RECT measure{0, 0, width, 0};
+    HGDIOBJ previous_font = SelectObject(dc, tiny_font_);
+    DrawTextW(dc, text.data(), static_cast<int>(std::min<std::size_t>(text.size(), INT_MAX)), &measure,
+              DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(dc, previous_font);
+    return std::max(scale(1), static_cast<int>(measure.bottom - measure.top));
+}
+
+// Purpose: Apply a bounded pixel scroll to the History details panel.
+// Inputs: `delta_pixels` is positive for down and negative for up.
+// Outputs: Updates scroll offset and queues repaint when the selected details overflow.
+bool MainWindow::scroll_history_details(int delta_pixels) {
+    UiState state;
+    {
+        std::lock_guard lock(mutex_);
+        state = state_;
+    }
+    if (state.page != Page::History) {
+        return false;
+    }
+    const auto layout = history_layout(content_rect());
+    HDC dc = GetDC(hwnd_);
+    if (dc == nullptr) {
+        return true;
+    }
+    const int content_height = history_details_text_height(dc, layout.details, state);
+    ReleaseDC(hwnd_, dc);
+    const int viewport_height = std::max(1, static_cast<int>(layout.details.bottom - layout.details.top) - scale(18));
+    const int max_scroll = std::max(0, content_height - viewport_height);
+    const int next = std::clamp(history_details_scroll_pixels_ + delta_pixels, 0, max_scroll);
+    if (next != history_details_scroll_pixels_) {
+        history_details_scroll_pixels_ = next;
+        request_repaint();
+    }
+    return true;
+}
+
+// Purpose: Return the product-styled History details scrollbar track.
+// Inputs: `details` is the details panel rectangle.
+// Outputs: Returns the slim vertical track inside the details panel text frame.
+RECT MainWindow::history_details_scrollbar_track_rect(const RECT& details) const {
+    return RECT{details.right - scale(12), details.top + scale(10), details.right - scale(7),
+                details.bottom - scale(8)};
+}
+
+// Purpose: Return the History details scrollbar thumb for the current scroll offset.
+// Inputs: `details` is the panel rectangle and `content_height` is the measured body height.
+// Outputs: Returns an empty rectangle when no scrolling is required.
+RECT MainWindow::history_details_scrollbar_thumb_rect(const RECT& details, int content_height) const {
+    const int viewport_height = std::max(1, static_cast<int>(details.bottom - details.top) - scale(18));
+    const int max_scroll = std::max(0, content_height - viewport_height);
+    if (max_scroll <= 0) {
+        return RECT{};
+    }
+    const RECT track = history_details_scrollbar_track_rect(details);
+    const int track_height = std::max(1, static_cast<int>(track.bottom - track.top));
+    const int thumb_height = std::clamp((viewport_height * track_height) / std::max(viewport_height, content_height),
+                                        scale(28), track_height);
+    const int travel = std::max(0, track_height - thumb_height);
+    const int top = track.top + (std::clamp(history_details_scroll_pixels_, 0, max_scroll) * travel / max_scroll);
+    return RECT{track.left, top, track.right, top + thumb_height};
+}
+
+// Purpose: Begin dragging the History details scrollbar thumb.
+// Inputs: `y` is the mouse position, `details` is the panel rectangle, and `content_height` defines bounds.
+// Outputs: Captures the scroll baseline when the details body overflows.
+void MainWindow::begin_history_details_scroll_drag(int y, const RECT& details, int content_height) {
+    const RECT thumb = history_details_scrollbar_thumb_rect(details, content_height);
+    if (thumb.right <= thumb.left) {
+        return;
+    }
+    history_details_scroll_dragging_ = true;
+    history_details_scroll_drag_start_y_ = y;
+    history_details_scroll_drag_start_offset_ = history_details_scroll_pixels_;
+    history_details_scroll_drag_content_height_ = content_height;
+}
+
+// Purpose: Update History details scrolling from an active thumb drag.
+// Inputs: `y` is the current client mouse y-coordinate.
+// Outputs: Moves the bounded scroll offset and queues repaint when changed.
+void MainWindow::update_history_details_scroll_drag(int y) {
+    if (!history_details_scroll_dragging_) {
+        return;
+    }
+    const auto layout = history_layout(content_rect());
+    const int viewport_height = std::max(1, static_cast<int>(layout.details.bottom - layout.details.top) - scale(18));
+    const int max_scroll = std::max(0, history_details_scroll_drag_content_height_ - viewport_height);
+    if (max_scroll <= 0) {
+        history_details_scroll_pixels_ = 0;
+        return;
+    }
+    const RECT track = history_details_scrollbar_track_rect(layout.details);
+    const RECT thumb =
+        history_details_scrollbar_thumb_rect(layout.details, history_details_scroll_drag_content_height_);
+    const int travel = std::max(1, static_cast<int>((track.bottom - track.top) - (thumb.bottom - thumb.top)));
+    const int delta = static_cast<int>(std::lround(static_cast<double>(y - history_details_scroll_drag_start_y_) *
+                                                   static_cast<double>(max_scroll) / static_cast<double>(travel)));
+    const int previous = history_details_scroll_pixels_;
+    history_details_scroll_pixels_ = std::clamp(history_details_scroll_drag_start_offset_ + delta, 0, max_scroll);
+    if (history_details_scroll_pixels_ != previous) {
+        request_repaint();
+    }
+}
+
+// Purpose: End any active History details scrollbar drag.
+// Inputs: None.
+// Outputs: Clears the details scrollbar drag state.
+void MainWindow::end_history_details_scroll_drag() {
+    history_details_scroll_dragging_ = false;
 }
 
 // Purpose: Draw the operation history page.
 // Inputs: `dc` is the target, `rect` is the content area, and `state` contains session history.
 // Outputs: Renders filters, history rows, and selected-operation details.
 void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    const auto layout = history_layout(rect);
+    RECT area = layout.area;
     SelectObject(dc, title_font_);
     draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"History", kText,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_history_filters(dc, area, state);
-    draw_history_table(dc, RECT{area.left, area.top + scale(112), area.right, area.bottom - scale(96)}, state);
-    draw_history_details(dc, RECT{area.left, area.bottom - scale(76), area.right, area.bottom}, state);
+    draw_history_table(dc, layout.table, state);
+    draw_history_details(dc, layout.details, state);
 }
 
 // Purpose: Draw the System page with current runtime and resource-status details.
@@ -847,10 +1016,9 @@ void MainWindow::draw_about_page(HDC dc, const RECT& rect) {
         kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
     draw_button(dc, licenses_button, L"Licenses", false);
     draw_text(
-        dc,
-        RECT{card.left + scale(42), card.bottom - scale(80), licenses_button.left - scale(18), card.bottom - scale(38)},
+        dc, RECT{card.left + scale(42), licenses_button.top, licenses_button.left - scale(18), licenses_button.bottom},
         L"Built for 64-bit Windows, high-DPI displays, and responsive background archive work.", kMuted,
-        DT_LEFT | DT_TOP | DT_WORDBREAK);
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // Purpose: Draw a simple DPI-scaled command or navigation button.

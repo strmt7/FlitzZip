@@ -2,6 +2,8 @@
 
 #include "app/log_policy.hpp"
 
+#include <cmath>
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -211,7 +213,7 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                     }
                 }
                 auto progress_callback = [this](const ProgressSnapshot& snapshot) {
-                    publish_progress_snapshot(snapshot);
+                    publish_progress_snapshot_or_cancel(snapshot);
                 };
                 const auto archive_format = detect_archive_format(archive);
                 const auto stats = extract_detected_archive(archive_format, archive, output, request.gpu_required,
@@ -233,7 +235,7 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                 }
             }
         },
-        "Extracting");
+        "Extracting", OperationKind::Extract);
 }
 
 // Purpose: Start a background extraction job from the current GUI queue.
@@ -270,58 +272,151 @@ void MainWindow::start_extract() {
 // Purpose: Run one long operation on the background worker thread.
 // Inputs: `job` performs the operation and `label` is the visible busy status.
 // Outputs: Updates status, progress, history failure rows, and repaint state when the worker completes.
-void MainWindow::run_job(std::function<void()> job, std::string label) {
+void MainWindow::run_job(std::function<void()> job, std::string label, OperationKind operation) {
     if (worker_running_.exchange(true)) {
         return;
     }
     if (worker_.joinable()) {
         worker_.join();
     }
+    operation_cancel_requested_.store(false);
     const std::string failure_operation = operation_for_job_label(label);
     {
         std::lock_guard lock(mutex_);
         state_.status = label;
         state_.progress = {};
+        state_.progress.operation = operation;
+        state_.active_operation = operation;
+        state_.operation_cancel_requested = false;
+        state_.smoothed_time_remaining_seconds = -1.0;
         state_.progress_visible_until = {};
     }
+    append_operation_log(LogSeverity::Information, failure_operation, "started");
     KillTimer(hwnd_, kProgressHoldTimer);
     worker_ = std::thread([this, job = std::move(job), failure_operation] {
+        bool completed = false;
+        bool cancelled = false;
+        std::string failure_text;
         try {
             job();
-            std::lock_guard lock(mutex_);
-            state_.status = "Ready";
-            retain_progress_after_stop_locked(true);
+            if (operation_cancel_requested_.load()) {
+                throw ArchiveError("operation cancelled");
+            }
+            completed = true;
         } catch (const std::exception& error) {
-            std::lock_guard lock(mutex_);
-            state_.status = std::string("Error: ") + error.what();
-            retain_progress_after_stop_locked(false);
-            state_.history.push_back(HistoryEntry{
-                .operation = failure_operation,
-                .archive_name = failure_operation + " failure",
-                .archive_path =
-                    state_.progress.current_entry.empty() ? std::string("-") : state_.progress.current_entry,
-                .detail = error.what(),
-                .success = false,
-            });
-            state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
+            cancelled = operation_cancel_requested_.load();
+            failure_text = error.what();
+        } catch (...) {
+            cancelled = operation_cancel_requested_.load();
+            failure_text = "unknown operation failure";
         }
-        worker_running_ = false;
+        {
+            std::lock_guard lock(mutex_);
+            if (completed) {
+                state_.status = "Ready";
+                state_.smoothed_time_remaining_seconds = 0.0;
+                retain_progress_after_stop_locked(true);
+            } else {
+                state_.status = cancelled ? "Operation stopped" : std::string("Error: ") + failure_text;
+                retain_progress_after_stop_locked(false);
+                state_.history.push_back(HistoryEntry{
+                    .operation = failure_operation,
+                    .archive_name = cancelled ? failure_operation + " stopped" : failure_operation + " failure",
+                    .archive_path =
+                        state_.progress.current_entry.empty() ? std::string("-") : state_.progress.current_entry,
+                    .detail = cancelled ? std::string("Operation stopped by the user") : failure_text,
+                    .success = false,
+                });
+                state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
+            }
+            state_.active_operation = OperationKind::Idle;
+            state_.operation_cancel_requested = false;
+        }
+        operation_cancel_requested_.store(false);
+        worker_running_.store(false);
+        append_operation_log(completed ? LogSeverity::Information : LogSeverity::Warning, failure_operation,
+                             completed ? "completed" : (cancelled ? "stopped" : "failed"));
         request_repaint();
     });
     request_repaint();
+}
+
+// Purpose: Request cooperative cancellation of the active background operation.
+// Inputs: None; reads the synchronized active operation and worker flag.
+// Outputs: Marks cancellation state, updates visible status, logs the request, and queues repaint.
+void MainWindow::request_stop_operation() {
+    std::string operation = "Operation";
+    bool requested = false;
+    {
+        std::lock_guard lock(mutex_);
+        if (state_.active_operation == OperationKind::Idle || !worker_running_.load()) {
+            return;
+        }
+        if (state_.active_operation == OperationKind::Compress) {
+            operation = "Compress";
+        } else if (state_.active_operation == OperationKind::Extract) {
+            operation = "Extract";
+        } else if (state_.active_operation == OperationKind::Verify) {
+            operation = "Security";
+        }
+        operation_cancel_requested_.store(true);
+        state_.operation_cancel_requested = true;
+        state_.progress.cancel_requested = true;
+        state_.status = "Stopping...";
+        requested = true;
+    }
+    if (requested) {
+        append_operation_log(LogSeverity::Warning, operation, "stop requested");
+        request_repaint();
+    }
 }
 
 // Purpose: Publish one active operation progress snapshot to the UI.
 // Inputs: `snapshot` is an immutable worker progress sample.
 // Outputs: Replaces visible progress, cancels any completed-progress hold timer, and queues repaint.
 void MainWindow::publish_progress_snapshot(const ProgressSnapshot& snapshot) {
+    ProgressSnapshot visible = snapshot;
+    if (operation_cancel_requested_.load()) {
+        visible.cancel_requested = true;
+    }
+    double raw_remaining_seconds = -1.0;
+    if (progress_ratio(visible) >= 1.0) {
+        raw_remaining_seconds = 0.0;
+    } else if (visible.total_bytes > visible.processed_bytes && visible.throughput_bytes_per_second > 0.0) {
+        raw_remaining_seconds =
+            static_cast<double>(visible.total_bytes - visible.processed_bytes) / visible.throughput_bytes_per_second;
+    }
     {
         std::lock_guard lock(mutex_);
-        state_.progress = snapshot;
+        if (state_.active_operation == OperationKind::Idle) {
+            state_.active_operation = visible.operation;
+        }
+        if (raw_remaining_seconds < 0.0 || !std::isfinite(raw_remaining_seconds)) {
+            state_.smoothed_time_remaining_seconds = -1.0;
+        } else if (state_.smoothed_time_remaining_seconds < 0.0 || visible.operation != state_.progress.operation ||
+                   raw_remaining_seconds == 0.0) {
+            state_.smoothed_time_remaining_seconds = raw_remaining_seconds;
+        } else {
+            constexpr double kEtaSmoothingWeight = 0.22;
+            state_.smoothed_time_remaining_seconds =
+                (state_.smoothed_time_remaining_seconds * (1.0 - kEtaSmoothingWeight)) +
+                (raw_remaining_seconds * kEtaSmoothingWeight);
+        }
+        state_.progress = visible;
         state_.progress_visible_until = {};
     }
     KillTimer(hwnd_, kProgressHoldTimer);
     request_repaint();
+}
+
+// Purpose: Publish a progress snapshot and fail cooperatively after a stop request.
+// Inputs: `snapshot` is a worker progress sample.
+// Outputs: Updates UI progress and throws `ArchiveError` when the user has requested cancellation.
+void MainWindow::publish_progress_snapshot_or_cancel(const ProgressSnapshot& snapshot) {
+    publish_progress_snapshot(snapshot);
+    if (operation_cancel_requested_.load()) {
+        throw ArchiveError("operation cancelled");
+    }
 }
 
 // Purpose: Keep the last progress sample visible after an operation stops.
@@ -330,6 +425,7 @@ void MainWindow::publish_progress_snapshot(const ProgressSnapshot& snapshot) {
 void MainWindow::retain_progress_after_stop_locked(bool mark_complete) {
     if (state_.progress.operation == OperationKind::Idle) {
         state_.progress_visible_until = {};
+        state_.smoothed_time_remaining_seconds = -1.0;
         return;
     }
     if (mark_complete) {
@@ -339,6 +435,7 @@ void MainWindow::retain_progress_after_stop_locked(bool mark_complete) {
         if (state_.progress.total_entries > 0U) {
             state_.progress.completed_entries = state_.progress.total_entries;
         }
+        state_.smoothed_time_remaining_seconds = 0.0;
     }
     state_.progress_visible_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(kProgressHoldMs);
     if (hwnd_ != nullptr) {
@@ -360,6 +457,7 @@ void MainWindow::clear_expired_progress() {
         } else {
             state_.progress = {};
             state_.progress_visible_until = {};
+            state_.smoothed_time_remaining_seconds = -1.0;
             should_kill_timer = true;
         }
     }
@@ -395,6 +493,13 @@ void MainWindow::append_log_entry(LogSeverity severity, std::string message) {
     request_repaint();
 }
 
+// Purpose: Append a consistently formatted operation-scoped log entry.
+// Inputs: `severity`, `operation`, and `message` are safe UI/log strings.
+// Outputs: Routes the formatted text through the configured log-level and retention policy.
+void MainWindow::append_operation_log(LogSeverity severity, std::string_view operation, std::string_view message) {
+    append_log_entry(severity, std::string(operation) + ": " + std::string(message));
+}
+
 // Purpose: Convert a legacy history text line into a structured session row.
 // Inputs: `line` is the existing caller text.
 // Outputs: Appends a classified history entry.
@@ -425,6 +530,7 @@ void MainWindow::append_history_entry(std::string operation, std::string archive
         .success = success,
     });
     state_.selected_history_index = static_cast<int>(state_.history.size()) - 1;
+    history_details_scroll_pixels_ = 0;
 }
 
 }  // namespace superzip::app

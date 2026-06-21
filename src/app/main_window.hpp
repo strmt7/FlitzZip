@@ -7,13 +7,18 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include <windows.h>
 #include <pdh.h>
@@ -48,9 +53,21 @@ class MainWindow {
     using HistoryColumnLayout = superzip::app::HistoryColumnLayout;
     using ExtractJobRequest = superzip::app::ExtractJobRequest;
     using ProcessIoRates = superzip::app::ProcessIoRates;
+    using HistoryLayout = superzip::app::HistoryLayout;
     using CompressLayout = superzip::app::CompressLayout;
     using ExtractLayout = superzip::app::ExtractLayout;
     using SettingsLayout = superzip::app::SettingsLayout;
+
+    struct FolderSizeCacheEntry {
+        enum class State {
+            Pending,
+            Ready,
+            Failed,
+        };
+
+        State state = State::Pending;
+        std::uintmax_t bytes = 0;
+    };
 
     // Purpose: Route Win32 messages from the static window procedure to the C++ instance.
     // Inputs: Standard Win32 `hwnd`, `message`, `wparam`, and `lparam` arguments.
@@ -370,6 +387,11 @@ class MainWindow {
     // Outputs: Returns a right-aligned command rectangle sized from the active button font.
     [[nodiscard]] RECT history_clear_button_rect(const RECT& area) const;
 
+    // Purpose: Return the secondary action button aligned immediately left of a primary action.
+    // Inputs: `primary` is a DPI-scaled primary action rectangle.
+    // Outputs: Returns a same-sized button with the standard command gap.
+    [[nodiscard]] RECT secondary_action_rect_left_of(const RECT& primary) const;
+
     // Purpose: Return the About page Licenses button rectangle.
     // Inputs: `area` is the DPI-scaled page content area.
     // Outputs: Returns a compact command rectangle inside the About card.
@@ -389,6 +411,11 @@ class MainWindow {
     // Inputs: `rect` is the content area in physical pixels.
     // Outputs: Returns DPI-scaled Settings page control rectangles.
     [[nodiscard]] SettingsLayout settings_layout(const RECT& rect) const;
+
+    // Purpose: Compute History page rectangles shared by rendering, scrolling, and hit testing.
+    // Inputs: `rect` is the content area in physical pixels.
+    // Outputs: Returns DPI-scaled History page filters, table, and details panel rectangles.
+    [[nodiscard]] HistoryLayout history_layout(const RECT& rect) const;
 
     // Purpose: Draw the queue page with the file/folder selection table only.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` is copied UI state.
@@ -442,6 +469,41 @@ class MainWindow {
     // Outputs: Renders placeholder or selected operation detail text.
     void draw_history_details(HDC dc, const RECT& details, const UiState& state);
 
+    // Purpose: Measure History details text height for pixel scrolling.
+    // Inputs: `dc` is the current target, `details` is the details panel, and `state` supplies selected row text.
+    // Outputs: Returns the rendered text height, or one pixel when no selected row is visible.
+    [[nodiscard]] int history_details_text_height(HDC dc, const RECT& details, const UiState& state) const;
+
+    // Purpose: Apply a bounded pixel scroll delta to the History details panel.
+    // Inputs: `delta_pixels` is positive for down and negative for up.
+    // Outputs: Updates scroll offset and queues repaint when selected details overflow.
+    bool scroll_history_details(int delta_pixels);
+
+    // Purpose: Return the History details scrollbar track.
+    // Inputs: `details` is the details panel rectangle.
+    // Outputs: Returns a slim product-styled track inside the panel.
+    [[nodiscard]] RECT history_details_scrollbar_track_rect(const RECT& details) const;
+
+    // Purpose: Return the History details scrollbar thumb.
+    // Inputs: `details` is the details panel rectangle and `content_height` is the measured detail text height.
+    // Outputs: Returns an empty rectangle when no details scrolling is required.
+    [[nodiscard]] RECT history_details_scrollbar_thumb_rect(const RECT& details, int content_height) const;
+
+    // Purpose: Begin dragging the History details scrollbar thumb.
+    // Inputs: `y`, `details`, and `content_height` define the active drag geometry.
+    // Outputs: Captures a pixel-scroll baseline when the details text overflows.
+    void begin_history_details_scroll_drag(int y, const RECT& details, int content_height);
+
+    // Purpose: Update History details pixel scroll from an active thumb drag.
+    // Inputs: `y` is the current client mouse y-coordinate.
+    // Outputs: Moves the bounded details scroll offset and queues repaint when changed.
+    void update_history_details_scroll_drag(int y);
+
+    // Purpose: End any active History details scrollbar drag.
+    // Inputs: None.
+    // Outputs: Clears the details scrollbar drag state.
+    void end_history_details_scroll_drag();
+
     // Purpose: Draw the System page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains backend status.
     // Outputs: Renders HIP status, device metadata, acceleration mode, and monitoring panels.
@@ -474,6 +536,27 @@ class MainWindow {
     // Outputs: Renders only while the requested operation is active.
     void draw_operation_progress_bar(HDC dc, const RECT& rect, const UiState& state, OperationKind operation);
 
+    // Purpose: Return whether a copied UI snapshot is actively running a background operation.
+    // Inputs: `state` is a stable UI snapshot.
+    // Outputs: Returns true only while operation progress is active and not in completed-progress hold.
+    [[nodiscard]] bool operation_running(const UiState& state) const;
+
+    // Purpose: Return whether Compress can start from a copied UI snapshot.
+    // Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
+    // Outputs: Returns true when at least one queue item is enabled and no operation is running.
+    [[nodiscard]] bool can_start_compress(const UiState& state) const;
+
+    // Purpose: Return whether Extract can start from a copied UI snapshot.
+    // Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
+    // Outputs: Returns true when at least one selected queue item can be treated as an archive and no operation is
+    // running.
+    [[nodiscard]] bool can_start_extract(const UiState& state) const;
+
+    // Purpose: Return whether Security verification can start from a copied UI snapshot.
+    // Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
+    // Outputs: Returns true when at least one queue item is enabled and no operation is running.
+    [[nodiscard]] bool can_start_security_verify(const UiState& state) const;
+
     // Purpose: Draw the Settings page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains toggled defaults.
     // Outputs: Renders general, security, performance, and logging settings.
@@ -488,6 +571,11 @@ class MainWindow {
     // Inputs: `dc` is the target, `rect` is the button rectangle, `text` is display text, and `active` selects accent
     // styling. Outputs: Renders the button into `dc`; text is ellipsized rather than overflowing.
     void draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active);
+
+    // Purpose: Draw a standard command button with optional disabled styling.
+    // Inputs: `dc`, `rect`, `text`, and `active` match `draw_button`; `enabled` gates hover, press, and text contrast.
+    // Outputs: Renders one button using the shared command visual system.
+    void draw_button_state(HDC dc, const RECT& rect, const wchar_t* text, bool active, bool enabled);
 
     // Purpose: Draw a DPI-scaled opt-in settings toggle row.
     // Inputs: `dc` is the target, `rect` is the row rectangle, `text` is display text, and `enabled` selects checked
@@ -589,7 +677,7 @@ class MainWindow {
     // Purpose: Append all Extract page keyboard-focus targets.
     // Inputs: `targets` receives controls and `content` is the content rectangle.
     // Outputs: Adds command, destination, overwrite, and integrity/security toggles.
-    void add_extract_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const;
+    void add_extract_focus_targets(std::vector<FocusTarget>& targets, const RECT& content, const UiState& state) const;
 
     // Purpose: Append all Settings page keyboard-focus targets.
     // Inputs: `targets` receives controls and `content` is the content rectangle.
@@ -677,6 +765,31 @@ class MainWindow {
     // Outputs: Renders clipped row backgrounds, row checkboxes, and text columns.
     void draw_queue_table_rows(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state,
                                int first_visible_row);
+
+    // Purpose: Return a resource-bounded display size for one Queue entry.
+    // Inputs: `path` is a queued file or folder path that may be inaccessible.
+    // Outputs: Returns file size immediately, `...` for pending folder size, or the cached folder size.
+    [[nodiscard]] std::wstring queue_entry_size_text(const std::filesystem::path& path);
+
+    // Purpose: Enqueue one folder-size scan when the Queue first renders a folder.
+    // Inputs: `path` is a queued directory path.
+    // Outputs: Starts the low-priority folder-size worker if needed and records pending cache state.
+    void enqueue_folder_size_if_needed(const std::filesystem::path& path);
+
+    // Purpose: Start the single folder-size background worker.
+    // Inputs: None.
+    // Outputs: Creates the worker thread if it is not already running.
+    void start_folder_size_worker();
+
+    // Purpose: Stop the folder-size background worker.
+    // Inputs: None.
+    // Outputs: Requests cooperative stop and joins the thread.
+    void stop_folder_size_worker();
+
+    // Purpose: Calculate one folder's byte size from filesystem metadata only.
+    // Inputs: `path` is a directory path; `folder_size_stop_` can cancel traversal.
+    // Outputs: Returns total bytes, or empty when traversal is cancelled or inaccessible.
+    [[nodiscard]] std::optional<std::uintmax_t> calculate_folder_size(const std::filesystem::path& path) const;
 
     // Purpose: Draw the Queue overflow scrollbar when rows exceed visible capacity.
     // Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the queue size, and
@@ -890,6 +1003,11 @@ class MainWindow {
     // Outputs: Launches a Verify worker or reports missing queue input.
     void start_security_verify();
 
+    // Purpose: Request cancellation of the active background operation.
+    // Inputs: None; reads synchronized UI progress state.
+    // Outputs: Marks cancellation requested and queues repaint; workers observe it through progress callbacks.
+    void request_stop_operation();
+
     // Purpose: Handle GPU page hit-testing and commands.
     // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
     // Outputs: Returns true when the GPU refresh command consumed the click.
@@ -1008,12 +1126,17 @@ class MainWindow {
     // Purpose: Run an archive operation on a single background worker.
     // Inputs: `job` is the work closure and `label` is the status text shown while it runs.
     // Outputs: Updates status/history/progress and queues repaints; catches worker exceptions into UI state.
-    void run_job(std::function<void()> job, std::string label);
+    void run_job(std::function<void()> job, std::string label, OperationKind operation);
 
     // Purpose: Publish one active operation progress snapshot to the UI.
     // Inputs: `snapshot` is an immutable worker progress sample.
     // Outputs: Replaces visible progress, cancels any completed-progress hold timer, and queues repaint.
     void publish_progress_snapshot(const ProgressSnapshot& snapshot);
+
+    // Purpose: Publish a progress snapshot and fail if the user requested cancellation.
+    // Inputs: `snapshot` is a worker progress sample.
+    // Outputs: Updates UI progress or throws `ArchiveError` when cancellation was requested.
+    void publish_progress_snapshot_or_cancel(const ProgressSnapshot& snapshot);
 
     // Purpose: Keep the last progress sample visible after an operation stops.
     // Inputs: `mark_complete` fills known totals for successful work; caller must hold `mutex_`.
@@ -1029,6 +1152,11 @@ class MainWindow {
     // Inputs: `severity` is the visible category and `message` is safe session text.
     // Outputs: Adds a bounded in-memory row and queues repaint.
     void append_log_entry(LogSeverity severity, std::string message);
+
+    // Purpose: Append an operation-scoped log entry with consistent wording.
+    // Inputs: `severity`, `operation`, and `message` describe the event without secrets.
+    // Outputs: Persists the formatted log entry through the normal log-level and retention path.
+    void append_operation_log(LogSeverity severity, std::string_view operation, std::string_view message);
 
     // Purpose: Add an operation result line to the in-memory session history.
     // Inputs: `line` is a display string and should not include secrets.
@@ -1193,14 +1321,27 @@ class MainWindow {
     int queue_scroll_drag_start_offset_ = 0;
     int queue_wheel_delta_remainder_ = 0;
     bool queue_scroll_dragging_ = false;
+    std::mutex folder_size_mutex_;
+    std::condition_variable folder_size_cv_;
+    std::unordered_map<std::wstring, FolderSizeCacheEntry> folder_size_cache_;
+    std::deque<std::filesystem::path> folder_size_queue_;
+    std::thread folder_size_worker_;
+    std::atomic_bool folder_size_stop_ = false;
     int history_scroll_first_row_ = 0;
     int history_scroll_drag_start_y_ = 0;
     int history_scroll_drag_start_offset_ = 0;
     int history_wheel_delta_remainder_ = 0;
     bool history_scroll_dragging_ = false;
+    int history_details_scroll_pixels_ = 0;
+    int history_details_scroll_drag_start_y_ = 0;
+    int history_details_scroll_drag_start_offset_ = 0;
+    int history_details_scroll_drag_content_height_ = 0;
+    double history_details_wheel_pixel_remainder_ = 0.0;
+    bool history_details_scroll_dragging_ = false;
     int license_notices_scroll_drag_start_y_ = 0;
     int license_notices_scroll_drag_start_offset_ = 0;
     int license_notices_scroll_drag_content_height_ = 0;
+    double license_notices_wheel_pixel_remainder_ = 0.0;
     bool license_notices_scroll_dragging_ = false;
     std::array<PerformanceMonitorSample, 96> performance_history_{};
     std::size_t performance_history_count_ = 0;
@@ -1225,6 +1366,7 @@ class MainWindow {
     int license_notices_scroll_pixels_ = 0;
     ExtractJobRequest pending_extract_job_{};
     bool pending_extract_job_active_ = false;
+    std::atomic_bool operation_cancel_requested_ = false;
     bool ole_initialized_ = false;
     QueueDropTarget* drop_target_ = nullptr;
     FILETIME last_process_kernel_time_{};

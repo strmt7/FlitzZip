@@ -932,11 +932,8 @@ void write_settings_file(const std::filesystem::path& path, const AppSettings& s
 // Inputs: `index` is the mutable history filter selection.
 // Outputs: Returns a session filter label.
 std::wstring history_operation_filter_text(int index) {
-    constexpr std::array<std::wstring_view, 4> labels{
-        L"All operations",
-        L"Compress",
-        L"Extract",
-        L"Security",
+    constexpr std::array<std::wstring_view, 5> labels{
+        L"All operations", L"Compress", L"Extract", L"Security", L"Settings",
     };
     return option_text(index, labels);
 }
@@ -986,7 +983,7 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
         return {L"Ask before overwriting", L"Overwrite without asking"};
     case DropdownId::HistoryOperation:
         return {history_operation_filter_text(0), history_operation_filter_text(1), history_operation_filter_text(2),
-                history_operation_filter_text(3)};
+                history_operation_filter_text(3), history_operation_filter_text(4)};
     case DropdownId::HistoryStatus:
         return {history_status_filter_text(0), history_status_filter_text(1), history_status_filter_text(2)};
     case DropdownId::GpuUpdateSpeed:

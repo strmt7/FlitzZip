@@ -46,6 +46,15 @@ RECT MainWindow::primary_action_rect(const RECT& area) const {
     return RECT{area.right - scale(110), area.bottom - scale(54), area.right, area.bottom - scale(18)};
 }
 
+// Purpose: Return the secondary action button aligned immediately left of a primary action.
+// Inputs: `primary` is a DPI-scaled primary action rectangle.
+// Outputs: Returns a same-sized button with the standard command gap.
+RECT MainWindow::secondary_action_rect_left_of(const RECT& primary) const {
+    const int gap = scale(12);
+    const int width = primary.right - primary.left;
+    return RECT{primary.left - gap - width, primary.top, primary.left - gap, primary.bottom};
+}
+
 // Purpose: Return the History Clear History button rectangle with Restore Defaults-equivalent visual margins.
 // Inputs: `area` is the DPI-scaled page content area.
 // Outputs: Returns a right-aligned command rectangle sized from the active button font.
@@ -56,6 +65,23 @@ RECT MainWindow::history_clear_button_rect(const RECT& area) const {
     const int margin = std::max(scale(12), (restore_width - restore_text) / 2);
     const int width = std::clamp(clear_text + (margin * 2), scale(92), restore_width);
     return RECT{area.right - width, area.top, area.right, area.top + scale(34)};
+}
+
+// Purpose: Compute History page rectangles shared by rendering, scrolling, and hit testing.
+// Inputs: `rect` is the content area in physical pixels.
+// Outputs: Returns DPI-scaled History page filters, table, and details panel rectangles.
+MainWindow::HistoryLayout MainWindow::history_layout(const RECT& rect) const {
+    HistoryLayout layout{};
+    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    layout.operation_filter =
+        RECT{layout.area.left, layout.area.top + scale(48), layout.area.left + scale(220), layout.area.top + scale(92)};
+    layout.status_filter = RECT{layout.area.left + scale(238), layout.area.top + scale(48),
+                                layout.area.left + scale(458), layout.area.top + scale(92)};
+    layout.clear = history_clear_button_rect(layout.area);
+    layout.table =
+        RECT{layout.area.left, layout.area.top + scale(112), layout.area.right, layout.area.bottom - scale(118)};
+    layout.details = RECT{layout.area.left, layout.table.bottom + scale(20), layout.area.right, layout.area.bottom};
+    return layout;
 }
 
 // Purpose: Compute fixed checkbox and resizable data-column geometry for the Queue table.
@@ -434,6 +460,7 @@ MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
     CompressLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.start = primary_action_rect(layout.area);
+    layout.stop = secondary_action_rect_left_of(layout.start);
     const int left = layout.area.left;
     const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
     const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
@@ -467,6 +494,7 @@ MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
     ExtractLayout layout{};
     layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
     layout.start = primary_action_rect(layout.area);
+    layout.stop = secondary_action_rect_left_of(layout.start);
     const int left = layout.area.left;
     const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
     const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
@@ -521,8 +549,9 @@ MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
                             layout.logging.top + scale(94)};
     layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right,
                                 layout.logging.top + scale(152)};
-    layout.open_log_file = RECT{logging_half_right + scale(34), layout.logging.top + scale(78),
-                                layout.logging.right - scale(18), layout.logging.top + scale(120)};
+    const int log_button_width = layout.restore_defaults.right - layout.restore_defaults.left;
+    layout.open_log_file = RECT{layout.logging.right - scale(18) - log_button_width, layout.logging.top + scale(82),
+                                layout.logging.right - scale(18), layout.logging.top + scale(118)};
     layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48),
                                                    layout.general.right - scale(16), layout.general.top + scale(78)};
     layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82),

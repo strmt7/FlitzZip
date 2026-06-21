@@ -22,16 +22,23 @@ namespace superzip::app {
 // Inputs: `dc` is the target, `rect` is the button bounds, `text` is the caption, and `active` selects accent styling.
 // Outputs: Renders the button without mutating state.
 void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool active) {
-    const bool hovered = mouse_inside_client_ && contains_point(rect, mouse_position_.x, mouse_position_.y);
+    draw_button_state(dc, rect, text, active, true);
+}
+
+// Purpose: Draw a standard command button with optional disabled styling.
+// Inputs: `dc`, `rect`, `text`, and `active` match `draw_button`; `enabled` gates hover, press, and text contrast.
+// Outputs: Renders one button using the shared command visual system.
+void MainWindow::draw_button_state(HDC dc, const RECT& rect, const wchar_t* text, bool active, bool enabled) {
+    const bool hovered = enabled && mouse_inside_client_ && contains_point(rect, mouse_position_.x, mouse_position_.y);
     const bool pressed = hovered && primary_mouse_down_;
     const double release_progress = button_release_progress(rect);
-    const COLORREF base_fill = active ? kAccent : kPanel2;
+    const COLORREF base_fill = enabled ? (active ? kAccent : kPanel2) : RGB(24, 31, 34);
     const COLORREF pressed_fill = active ? RGB(144, 22, 31) : RGB(38, 54, 60);
-    const COLORREF fill = pressed ? pressed_fill : interactive_fill(base_fill, rect, true, active);
-    const COLORREF border = active ? (pressed ? RGB(111, 18, 26) : kAccent2) : kBorder;
+    const COLORREF fill = pressed ? pressed_fill : interactive_fill(base_fill, rect, enabled, active);
+    const COLORREF border = enabled ? (active ? (pressed ? RGB(111, 18, 26) : kAccent2) : kBorder) : RGB(42, 52, 56);
     fill_round_rect(dc, rect, fill, scale(4));
     stroke_rect(dc, rect, border);
-    if (release_progress < 1.0) {
+    if (enabled && release_progress < 1.0) {
         const double eased = ease_out(release_progress);
         const int inset = static_cast<int>(std::round(static_cast<double>(scale(7)) * eased));
         const COLORREF pulse = blend_color(active ? RGB(255, 123, 131) : RGB(126, 151, 159), fill, eased);
@@ -42,7 +49,7 @@ void MainWindow::draw_button(HDC dc, const RECT& rect, const wchar_t* text, bool
     if (pressed) {
         OffsetRect(&label, scale(1), scale(1));
     }
-    draw_text(dc, label, text, kText, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_text(dc, label, text, enabled ? kText : kSubtle, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // Purpose: Draw a slim progress indicator for the matching active operation.
@@ -59,6 +66,34 @@ void MainWindow::draw_operation_progress_bar(HDC dc, const RECT& rect, const UiS
     if (fill.right > fill.left) {
         fill_round_rect(dc, fill, operation == OperationKind::Verify ? kInfo : kAccent, scale(4));
     }
+}
+
+// Purpose: Return whether a copied UI snapshot is actively running a background operation.
+// Inputs: `state` is a stable UI snapshot.
+// Outputs: Returns true only while a worker operation is active, independent of progress publication timing.
+bool MainWindow::operation_running(const UiState& state) const {
+    return state.active_operation != OperationKind::Idle;
+}
+
+// Purpose: Return whether Compress can start from a copied UI snapshot.
+// Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
+// Outputs: Returns true when at least one queue item is enabled and no operation is running.
+bool MainWindow::can_start_compress(const UiState& state) const {
+    return !operation_running(state) && has_selected_queue_items(state);
+}
+
+// Purpose: Return whether Extract can start from a copied UI snapshot.
+// Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
+// Outputs: Returns true when at least one selected queue item can be treated as an archive and no operation is running.
+bool MainWindow::can_start_extract(const UiState& state) const {
+    return !operation_running(state) && !selected_extract_archive_paths(state).empty();
+}
+
+// Purpose: Return whether Security verification can start from a copied UI snapshot.
+// Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
+// Outputs: Returns true when at least one queue item is enabled and no operation is running.
+bool MainWindow::can_start_security_verify(const UiState& state) const {
+    return !operation_running(state) && has_selected_queue_items(state);
 }
 
 // Purpose: Draw a DPI-scaled opt-in settings toggle row.
@@ -214,12 +249,10 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
     case DropdownId::ExtractOverwrite:
         return extract_layout(content).overwrite_policy;
     case DropdownId::HistoryOperation: {
-        const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        return RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)};
+        return history_layout(content).operation_filter;
     }
     case DropdownId::HistoryStatus: {
-        const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        return RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)};
+        return history_layout(content).status_filter;
     }
     case DropdownId::GpuUpdateSpeed: {
         const RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));

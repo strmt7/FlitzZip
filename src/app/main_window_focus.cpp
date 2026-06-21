@@ -37,6 +37,9 @@ std::vector<FocusTarget> MainWindow::focus_targets_for(const RECT& content, cons
     const int item_height = scale(63);
     const int nav_top = scale(kTopBar) + scale(10);
     for (int index = 0; index < 8; ++index) {
+        if (operation_running(state) && static_cast<Page>(index) != state.page) {
+            continue;
+        }
         append_focus_target(targets, FocusTargetKind::Navigation,
                             RECT{client.left, nav_top + (index * item_height), client.left + scale(kRailWidth),
                                  nav_top + ((index + 1) * item_height)},
@@ -50,21 +53,23 @@ std::vector<FocusTarget> MainWindow::focus_targets_for(const RECT& content, cons
         add_compress_focus_targets(targets, content, state);
         break;
     case Page::Extract:
-        add_extract_focus_targets(targets, content);
+        add_extract_focus_targets(targets, content, state);
         break;
     case Page::Security: {
         RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        append_focus_target(targets, FocusTargetKind::SecurityVerify, primary_action_rect(area));
+        if (state.active_operation == OperationKind::Verify) {
+            append_focus_target(targets, FocusTargetKind::SecurityStop,
+                                secondary_action_rect_left_of(primary_action_rect(area)));
+        } else if (can_start_security_verify(state)) {
+            append_focus_target(targets, FocusTargetKind::SecurityVerify, primary_action_rect(area));
+        }
     } break;
     case Page::History: {
-        RECT area = inset_rect(content, scale(kPageInsetX), scale(kPageInsetY));
-        append_focus_target(targets, FocusTargetKind::HistoryOperation,
-                            RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)});
-        append_focus_target(
-            targets, FocusTargetKind::HistoryStatus,
-            RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)});
-        append_focus_target(targets, FocusTargetKind::HistoryClear, history_clear_button_rect(area));
-        const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+        const auto layout = history_layout(content);
+        append_focus_target(targets, FocusTargetKind::HistoryOperation, layout.operation_filter);
+        append_focus_target(targets, FocusTargetKind::HistoryStatus, layout.status_filter);
+        append_focus_target(targets, FocusTargetKind::HistoryClear, layout.clear);
+        const RECT table = layout.table;
         const int header_bottom = table.top + scale(kQueueHeaderHeight);
         const int row_height = scale(kQueueRowHeight);
         const auto visible = filtered_history_indices(state);
@@ -138,7 +143,11 @@ void MainWindow::add_compress_focus_targets(std::vector<FocusTarget>& targets, c
                                             const UiState& state) const {
     const auto layout = compress_layout(content);
     const auto format = compression_format_value(state.compression_format_index);
-    append_focus_target(targets, FocusTargetKind::CompressStart, layout.start);
+    if (state.active_operation == OperationKind::Compress) {
+        append_focus_target(targets, FocusTargetKind::CompressStop, layout.stop);
+    } else if (can_start_compress(state)) {
+        append_focus_target(targets, FocusTargetKind::CompressStart, layout.start);
+    }
     append_focus_target(targets, FocusTargetKind::CompressDestination, layout.destination);
     append_focus_target(targets, FocusTargetKind::CompressFormat, layout.format);
     if (compression_format_uses_level(format)) {
@@ -159,9 +168,14 @@ void MainWindow::add_compress_focus_targets(std::vector<FocusTarget>& targets, c
 // Purpose: Append all Extract page keyboard-focus targets.
 // Inputs: `targets` receives controls and `content` is the content rectangle.
 // Outputs: Adds command, destination, overwrite, and integrity/security toggles.
-void MainWindow::add_extract_focus_targets(std::vector<FocusTarget>& targets, const RECT& content) const {
+void MainWindow::add_extract_focus_targets(std::vector<FocusTarget>& targets, const RECT& content,
+                                           const UiState& state) const {
     const auto layout = extract_layout(content);
-    append_focus_target(targets, FocusTargetKind::ExtractStart, layout.start);
+    if (state.active_operation == OperationKind::Extract) {
+        append_focus_target(targets, FocusTargetKind::ExtractStop, layout.stop);
+    } else if (can_start_extract(state)) {
+        append_focus_target(targets, FocusTargetKind::ExtractStart, layout.start);
+    }
     append_focus_target(targets, FocusTargetKind::ExtractDestination, layout.destination);
     append_focus_target(targets, FocusTargetKind::ExtractOverwrite, layout.overwrite_policy);
     append_focus_target(targets, FocusTargetKind::ExtractVerifyMetadata, layout.verify_metadata);
@@ -239,6 +253,7 @@ bool MainWindow::activate_focus_target(const FocusTarget& target, WPARAM key) {
         if (target.index >= 0 && target.index < static_cast<int>(state_.history.size())) {
             state_.selected_history_index = target.index;
             state_.status = "History row selected";
+            history_details_scroll_pixels_ = 0;
             request_repaint();
             return true;
         }
@@ -325,8 +340,7 @@ bool MainWindow::handle_history_row_navigation_key(WPARAM key, const UiState& st
     if (target.kind != FocusTargetKind::HistoryRow) {
         return false;
     }
-    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
-    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const RECT table = history_layout(content_rect()).table;
     const auto visible = filtered_history_indices(state);
     if (visible.empty()) {
         return false;
@@ -341,6 +355,7 @@ bool MainWindow::handle_history_row_navigation_key(WPARAM key, const UiState& st
     {
         std::lock_guard lock(mutex_);
         state_.selected_history_index = next_history_index;
+        history_details_scroll_pixels_ = 0;
     }
     const int visible_rows = std::max(1, history_visible_row_count(table));
     const int max_scroll = history_max_scroll_offset(table, visible.size());

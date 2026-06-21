@@ -82,7 +82,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.status = "Overwrite policy changed";
         break;
     case DropdownId::HistoryOperation:
-        state.history_operation_filter_index = std::clamp(option_index, 0, 3);
+        state.history_operation_filter_index = std::clamp(option_index, 0, 4);
         state.status = "History operation filter changed";
         break;
     case DropdownId::HistoryStatus:
@@ -171,6 +171,7 @@ void MainWindow::select_dropdown_option(DropdownId id, int option_index) {
     }
     if (id == DropdownId::HistoryOperation || id == DropdownId::HistoryStatus) {
         history_scroll_first_row_ = 0;
+        history_details_scroll_pixels_ = 0;
     }
     if (io_drive_changed) {
         reset_disk_performance_monitor();

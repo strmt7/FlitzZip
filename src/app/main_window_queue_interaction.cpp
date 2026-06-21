@@ -339,7 +339,8 @@ bool MainWindow::history_entry_matches_filters(const UiState& state, const Histo
     const bool operation_match = state.history_operation_filter_index == 0 ||
                                  (state.history_operation_filter_index == 1 && entry.operation == "Compress") ||
                                  (state.history_operation_filter_index == 2 && entry.operation == "Extract") ||
-                                 (state.history_operation_filter_index == 3 && entry.operation == "Security");
+                                 (state.history_operation_filter_index == 3 && entry.operation == "Security") ||
+                                 (state.history_operation_filter_index == 4 && entry.operation == "Settings");
     const bool status_match = state.history_status_filter_index == 0 ||
                               (state.history_status_filter_index == 1 && entry.success) ||
                               (state.history_status_filter_index == 2 && !entry.success);

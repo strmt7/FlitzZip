@@ -596,6 +596,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       src/app/main_window_dropdowns.cpp
       src/app/main_window_extract_jobs.cpp
       src/app/main_window_focus.cpp
+      src/app/main_window_folder_size.cpp
       src/app/main_window_input.cpp
       src/app/main_window_layout.cpp
       src/app/main_window_license_dialog.cpp

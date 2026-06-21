@@ -70,6 +70,7 @@ enum class FocusTargetKind {
     QueueHeaderCheckbox,
     QueueRow,
     CompressStart,
+    CompressStop,
     CompressDestination,
     CompressFormat,
     CompressLevel,
@@ -82,6 +83,7 @@ enum class FocusTargetKind {
     CompressIntegrityHash,
     CompressDefenderScan,
     ExtractStart,
+    ExtractStop,
     ExtractDestination,
     ExtractOverwrite,
     ExtractVerifyMetadata,
@@ -89,6 +91,7 @@ enum class FocusTargetKind {
     ExtractIntegrityHash,
     ExtractDefenderScan,
     SecurityVerify,
+    SecurityStop,
     HistoryOperation,
     HistoryStatus,
     HistoryClear,
@@ -185,7 +188,9 @@ struct UiState {
     std::string gpu_device_name;
     std::string gpu_arch;
     ProgressSnapshot progress;
+    OperationKind active_operation = OperationKind::Idle;
     std::chrono::steady_clock::time_point progress_visible_until{};
+    double smoothed_time_remaining_seconds = -1.0;
     PerformanceMonitorSample performance;
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
@@ -216,6 +221,7 @@ struct UiState {
     bool verify_after_write_opt_in = false;
     bool extract_overwrite_prompt_visible = false;
     bool license_notices_dialog_visible = false;
+    bool operation_cancel_requested = false;
     std::wstring extract_overwrite_prompt_destination;
     DropdownId active_dropdown = DropdownId::None;
 };

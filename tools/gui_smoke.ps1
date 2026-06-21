@@ -112,6 +112,18 @@ function Assert-GuiSystemQueueContract {
     if (-not $SourceText.Contains('const int checkbox_target_size = scale(24);')) {
         throw "Queue checkbox hit/focus targets must stay tightly centered around the visible tick."
     }
+    foreach ($requiredFolderSizeSource in @(
+        'queue_entry_size_text',
+        'return L"..."',
+        'THREAD_PRIORITY_LOWEST',
+        'THREAD_MODE_BACKGROUND_BEGIN',
+        'recursive_directory_iterator',
+        'directory_options::skip_permission_denied'
+    )) {
+        if (-not $SourceText.Contains($requiredFolderSizeSource)) {
+            throw "Queue folder sizes must be resolved by a bounded low-priority background metadata scan; missing $requiredFolderSizeSource."
+        }
+    }
 }
 
 # Purpose: Verify security, picker, and extraction contracts from GUI source.

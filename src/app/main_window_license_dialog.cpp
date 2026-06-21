@@ -34,8 +34,8 @@ RECT MainWindow::about_licenses_button_rect(const RECT& area) const {
     const RECT card{area.left, area.top + scale(54), area.right, area.bottom - scale(60)};
     const int button_width = scale(112);
     const int button_height = scale(36);
-    return RECT{card.right - scale(42) - button_width, card.bottom - scale(76) - button_height, card.right - scale(42),
-                card.bottom - scale(76)};
+    return RECT{card.right - scale(42) - button_width, card.bottom - scale(58), card.right - scale(42),
+                card.bottom - scale(58) + button_height};
 }
 
 // Purpose: Return the centered license-notice modal panel.

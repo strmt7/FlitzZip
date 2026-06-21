@@ -68,7 +68,17 @@ struct CompressLayout {
     RECT security{};
     RECT sha{};
     RECT defender{};
+    RECT stop{};
     RECT start{};
+};
+
+struct HistoryLayout {
+    RECT area{};
+    RECT operation_filter{};
+    RECT status_filter{};
+    RECT clear{};
+    RECT table{};
+    RECT details{};
 };
 
 struct ExtractLayout {
@@ -82,6 +92,7 @@ struct ExtractLayout {
     RECT open_destination_after_extract{};
     RECT sha{};
     RECT defender{};
+    RECT stop{};
     RECT start{};
 };
 
