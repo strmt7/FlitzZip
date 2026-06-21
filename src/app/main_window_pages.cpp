@@ -365,33 +365,25 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
         L"Total size", L"Calculated during job", false);
 }
 
-// Purpose: Draw the operation history page.
-// Inputs: `dc` is the target, `rect` is the content area, and `state` contains session history.
-// Outputs: Renders filters, history rows, and selected-operation details.
-void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    SelectObject(dc, title_font_);
-    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"History", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+// Purpose: Draw History page filter controls and clear action.
+// Inputs: `dc` is the target, `area` is the page work area, and `state` contains current filter rows.
+// Outputs: Renders the clear button plus operation/status filter fields.
+void MainWindow::draw_history_filters(HDC dc, const RECT& area, const UiState& state) {
     draw_button(dc, history_clear_button_rect(area), L"Clear History", false);
     draw_field(dc, RECT{area.left, area.top + scale(48), area.left + scale(220), area.top + scale(92)}, L"Operation",
                history_operation_filter_text(state.history_operation_filter_index), true);
     draw_field(dc, RECT{area.left + scale(238), area.top + scale(48), area.left + scale(458), area.top + scale(92)},
                L"Status", history_status_filter_text(state.history_status_filter_index), true);
+}
 
-    RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
-    fill_round_rect(dc, table, kPanel, scale(4));
-    stroke_rect(dc, table, kBorder);
-    SelectObject(dc, tiny_font_);
+// Purpose: Draw the History table header row.
+// Inputs: `dc` is the target, `table` and `columns_table` describe the table geometry.
+// Outputs: Renders column titles, resize grips, and the header/body separator.
+void MainWindow::draw_history_table_header(HDC dc, const RECT& table, const RECT& columns_table) {
     const int header_bottom = table.top + scale(kQueueHeaderHeight);
     const RECT header_row{table.left, table.top, table.right, header_bottom};
     const RECT header_band{table.left + scale(1), table.top + scale(1), table.right - scale(1), header_bottom};
     fill_rect(dc, header_band, blend_color(kPanel, kPanel2, 0.52));
-    const auto visible_indices = filtered_history_indices(state);
-    clamp_history_scroll_offset(table, visible_indices.size());
-    const int max_scroll = history_max_scroll_offset(table, visible_indices.size());
-    const int first_visible_row = std::clamp(history_scroll_first_row_, 0, max_scroll);
-    const RECT columns_table = history_columns_table(table, visible_indices.size());
     const auto header_columns = history_column_layout(columns_table, header_row);
     draw_text(dc, inset_rect(header_columns.time, scale(8), 0), L"Time", kMuted,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -410,49 +402,80 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
     draw_line(dc, table.left + scale(1), header_bottom - scale(1), table.right - scale(1), header_bottom - scale(1),
               RGB(73, 95, 102));
     draw_line(dc, table.left + scale(1), header_bottom, table.right - scale(1), header_bottom, RGB(9, 15, 18));
+}
+
+// Purpose: Draw visible History rows inside the clipped table body.
+// Inputs: `dc` is the target, `table` and `columns_table` describe body geometry, `state` contains rows, and
+// `visible_indices` maps visible rows to history entries. Outputs: Renders visible rows and preserves clipping.
+void MainWindow::draw_history_rows(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state,
+                                   const std::vector<std::size_t>& visible_indices, int first_visible_row) {
+    const int header_bottom = table.top + scale(kQueueHeaderHeight);
     int y = header_bottom;
-    if (state.history.empty()) {
-        draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
-                  L"No completed operations in this session yet.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    } else {
-        if (visible_indices.empty()) {
-            draw_text(dc, RECT{table.left + scale(18), y + scale(10), table.right - scale(18), y + scale(52)},
-                      L"No operations match the current filters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, columns_table.left + scale(1), header_bottom, columns_table.right - scale(1),
+                      table.bottom - scale(1));
+    const int visible_rows = history_visible_row_count(table);
+    for (int visible_row = 0; visible_row < visible_rows; ++visible_row) {
+        const int filtered_row = first_visible_row + visible_row;
+        if (filtered_row < 0 || filtered_row >= static_cast<int>(visible_indices.size())) {
+            break;
         }
-        const int saved = SaveDC(dc);
-        IntersectClipRect(dc, columns_table.left + scale(1), header_bottom, columns_table.right - scale(1),
-                          table.bottom - scale(1));
-        const int visible_rows = history_visible_row_count(table);
-        for (int visible_row = 0; visible_row < visible_rows; ++visible_row) {
-            const int filtered_row = first_visible_row + visible_row;
-            if (filtered_row < 0 || filtered_row >= static_cast<int>(visible_indices.size())) {
-                break;
-            }
-            const auto history_index = visible_indices[static_cast<std::size_t>(filtered_row)];
-            const auto& entry = state.history[history_index];
-            const int bottom = y + scale(34);
-            const RECT row{columns_table.left, y, columns_table.right, bottom};
-            const auto columns = history_column_layout(columns_table, row);
-            const bool selected = static_cast<int>(history_index) == state.selected_history_index;
-            const COLORREF base_row_fill = selected ? kPanel3 : ((filtered_row % 2 == 0) ? kPanel2 : kPanel);
-            fill_rect(dc, RECT{columns_table.left + scale(1), y + scale(1), columns_table.right - scale(1), bottom},
-                      interactive_fill(base_row_fill, row, true));
-            draw_text(dc, inset_rect(columns.time, scale(8), 0), local_time_text(entry.timestamp), kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, inset_rect(columns.operation, scale(8), 0), widen(entry.operation), kText,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, inset_rect(columns.archive_name, scale(8), 0), widen(entry.archive_name), kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, inset_rect(columns.archive_path, scale(8), 0), widen(entry.archive_path), kMuted,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, inset_rect(columns.status, scale(8), 0), entry.success ? L"Success" : L"Failure",
-                      entry.success ? kOk : kDanger, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            y = bottom;
-        }
-        RestoreDC(dc, saved);
-        draw_history_scrollbar(dc, table, visible_indices.size(), max_scroll);
+        const auto history_index = visible_indices[static_cast<std::size_t>(filtered_row)];
+        const auto& entry = state.history[history_index];
+        const int bottom = y + scale(34);
+        const RECT row{columns_table.left, y, columns_table.right, bottom};
+        const auto columns = history_column_layout(columns_table, row);
+        const bool selected = static_cast<int>(history_index) == state.selected_history_index;
+        const COLORREF base_row_fill = selected ? kPanel3 : ((filtered_row % 2 == 0) ? kPanel2 : kPanel);
+        fill_rect(dc, RECT{columns_table.left + scale(1), y + scale(1), columns_table.right - scale(1), bottom},
+                  interactive_fill(base_row_fill, row, true));
+        draw_text(dc, inset_rect(columns.time, scale(8), 0), local_time_text(entry.timestamp), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, inset_rect(columns.operation, scale(8), 0), widen(entry.operation), kText,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, inset_rect(columns.archive_name, scale(8), 0), widen(entry.archive_name), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, inset_rect(columns.archive_path, scale(8), 0), widen(entry.archive_path), kMuted,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        draw_text(dc, inset_rect(columns.status, scale(8), 0), entry.success ? L"Success" : L"Failure",
+                  entry.success ? kOk : kDanger, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        y = bottom;
     }
-    RECT details{area.left, area.bottom - scale(76), area.right, area.bottom};
+    RestoreDC(dc, saved);
+}
+
+// Purpose: Draw the History table header, rows, empty states, and scrollbar.
+// Inputs: `dc` is the target, `table` is the table rectangle, and `state` supplies visible history data.
+// Outputs: Renders the bounded fixed-header history table.
+void MainWindow::draw_history_table(HDC dc, const RECT& table, const UiState& state) {
+    fill_round_rect(dc, table, kPanel, scale(4));
+    stroke_rect(dc, table, kBorder);
+    SelectObject(dc, tiny_font_);
+    const auto visible_indices = filtered_history_indices(state);
+    clamp_history_scroll_offset(table, visible_indices.size());
+    const int max_scroll = history_max_scroll_offset(table, visible_indices.size());
+    const int first_visible_row = std::clamp(history_scroll_first_row_, 0, max_scroll);
+    const RECT columns_table = history_columns_table(table, visible_indices.size());
+    draw_history_table_header(dc, table, columns_table);
+    const int body_top = table.top + scale(kQueueHeaderHeight);
+    const RECT empty_text{table.left + scale(18), body_top + scale(10), table.right - scale(18), body_top + scale(52)};
+    if (state.history.empty()) {
+        draw_text(dc, empty_text, L"No completed operations in this session yet.", kMuted,
+                  DT_LEFT | DT_TOP | DT_WORDBREAK);
+        return;
+    }
+    if (visible_indices.empty()) {
+        draw_text(dc, empty_text, L"No operations match the current filters.", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        return;
+    }
+    draw_history_rows(dc, table, columns_table, state, visible_indices, first_visible_row);
+    draw_history_scrollbar(dc, table, visible_indices.size(), max_scroll);
+}
+
+// Purpose: Draw the selected History row details panel.
+// Inputs: `dc` is the target, `details` is the panel rectangle, and `state` contains selection and history data.
+// Outputs: Renders placeholder or selected operation detail text.
+void MainWindow::draw_history_details(HDC dc, const RECT& details, const UiState& state) {
     fill_round_rect(dc, details, kPanel, scale(4));
     stroke_rect(dc, details, kBorder);
     const bool selected_valid =
@@ -462,18 +485,30 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
         draw_text(dc,
                   RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom},
                   L"Selected operation details will appear here", kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    } else {
-        const auto& entry = state.history[static_cast<std::size_t>(state.selected_history_index)];
-        std::wstring detail_text = std::wstring(L"Time: ") + local_time_text(entry.timestamp) + L"    Operation: " +
-                                   widen(entry.operation) + L"    Status: " +
-                                   (entry.success ? L"Success" : L"Failure") + L"\nArchive name: " +
-                                   widen(entry.archive_name) + L"\nArchive path: " + widen(entry.archive_path) +
-                                   L"\nDetails: " + widen(entry.detail);
-        draw_text(dc,
-                  RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18),
-                       details.bottom - scale(8)},
-                  detail_text, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+        return;
     }
+    const auto& entry = state.history[static_cast<std::size_t>(state.selected_history_index)];
+    const std::wstring detail_text =
+        std::wstring(L"Time: ") + local_time_text(entry.timestamp) + L"    Operation: " + widen(entry.operation) +
+        L"    Status: " + (entry.success ? L"Success" : L"Failure") + L"\nArchive name: " + widen(entry.archive_name) +
+        L"\nArchive path: " + widen(entry.archive_path) + L"\nDetails: " + widen(entry.detail);
+    draw_text(
+        dc,
+        RECT{details.left + scale(18), details.top + scale(10), details.right - scale(18), details.bottom - scale(8)},
+        detail_text, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+}
+
+// Purpose: Draw the operation history page.
+// Inputs: `dc` is the target, `rect` is the content area, and `state` contains session history.
+// Outputs: Renders filters, history rows, and selected-operation details.
+void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& state) {
+    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    SelectObject(dc, title_font_);
+    draw_text(dc, RECT{area.left, area.top, area.right, area.top + scale(kPageTitleTextHeight)}, L"History", kText,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_history_filters(dc, area, state);
+    draw_history_table(dc, RECT{area.left, area.top + scale(112), area.right, area.bottom - scale(96)}, state);
+    draw_history_details(dc, RECT{area.left, area.bottom - scale(76), area.right, area.bottom}, state);
 }
 
 // Purpose: Draw the System page with current runtime and resource-status details.

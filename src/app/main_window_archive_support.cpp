@@ -34,7 +34,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -850,11 +849,24 @@ void ensure_app_storage() {
 // Inputs: `timestamp` is the event time.
 // Outputs: Returns a local timestamp string without host or account identifiers.
 std::string log_timestamp_text(std::chrono::system_clock::time_point timestamp) {
-    const auto time = std::chrono::system_clock::to_time_t(timestamp);
-    std::tm local{};
-    localtime_s(&local, &time);
+    constexpr ULONGLONG kUnixEpochFiletimeTicks = 116444736000000000ULL;
+    const auto ticks_since_unix_epoch =
+        std::chrono::duration_cast<std::chrono::duration<long long, std::ratio<1, 10000000>>>(
+            timestamp.time_since_epoch())
+            .count();
+    ULARGE_INTEGER utc_ticks{};
+    utc_ticks.QuadPart = static_cast<ULONGLONG>(ticks_since_unix_epoch) + kUnixEpochFiletimeTicks;
+    FILETIME utc_file_time{utc_ticks.LowPart, utc_ticks.HighPart};
+    FILETIME local_file_time{};
+    SYSTEMTIME local_time{};
+    if (FileTimeToLocalFileTime(&utc_file_time, &local_file_time) == FALSE ||
+        FileTimeToSystemTime(&local_file_time, &local_time) == FALSE) {
+        return "0000-00-00 00:00:00";
+    }
     std::ostringstream text;
-    text << std::put_time(&local, "%Y-%m-%d %H:%M:%S");
+    text << std::setfill('0') << std::setw(4) << local_time.wYear << '-' << std::setw(2) << local_time.wMonth << '-'
+         << std::setw(2) << local_time.wDay << ' ' << std::setw(2) << local_time.wHour << ':' << std::setw(2)
+         << local_time.wMinute << ':' << std::setw(2) << local_time.wSecond;
     return text.str();
 }
 

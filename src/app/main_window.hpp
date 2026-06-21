@@ -416,6 +416,32 @@ class MainWindow {
     // Outputs: Renders filters, history rows, and selected-operation details.
     void draw_history_page(HDC dc, const RECT& rect, const UiState& state);
 
+    // Purpose: Draw History page filter controls and clear action.
+    // Inputs: `dc` is the target, `area` is the page work area, and `state` contains current filter rows.
+    // Outputs: Renders the clear button plus operation/status filter fields.
+    void draw_history_filters(HDC dc, const RECT& area, const UiState& state);
+
+    // Purpose: Draw the History table header, rows, empty states, and scrollbar.
+    // Inputs: `dc` is the target, `table` is the table rectangle, and `state` supplies visible history data.
+    // Outputs: Renders the bounded fixed-header history table.
+    void draw_history_table(HDC dc, const RECT& table, const UiState& state);
+
+    // Purpose: Draw the History table header row.
+    // Inputs: `dc` is the target, `table` and `columns_table` describe the table geometry.
+    // Outputs: Renders column titles, resize grips, and the header/body separator.
+    void draw_history_table_header(HDC dc, const RECT& table, const RECT& columns_table);
+
+    // Purpose: Draw visible History rows inside the clipped table body.
+    // Inputs: `dc` is the target, `table` and `columns_table` describe body geometry, `state` contains rows, and
+    // `visible_indices` maps visible rows to history entries. Outputs: Renders visible rows and preserves clipping.
+    void draw_history_rows(HDC dc, const RECT& table, const RECT& columns_table, const UiState& state,
+                           const std::vector<std::size_t>& visible_indices, int first_visible_row);
+
+    // Purpose: Draw the selected History row details panel.
+    // Inputs: `dc` is the target, `details` is the panel rectangle, and `state` contains selection and history data.
+    // Outputs: Renders placeholder or selected operation detail text.
+    void draw_history_details(HDC dc, const RECT& details, const UiState& state);
+
     // Purpose: Draw the System page.
     // Inputs: `dc` is the target, `rect` is the content area, and `state` contains backend status.
     // Outputs: Renders HIP status, device metadata, acceleration mode, and monitoring panels.
