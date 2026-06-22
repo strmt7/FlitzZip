@@ -381,6 +381,54 @@ function Test-GuiOwnedSurfacePolicy {
 
 Test-GuiOwnedSurfacePolicy
 
+# Purpose: Verify CAB extraction cannot let the FDI callback open arbitrary local paths.
+# Inputs: Reads the Windows CAB adapter source.
+# Outputs: Throws when the FDI open callback falls back to `_open(pszFile)`.
+function Test-CabFdiOpenPolicy {
+    $cabAdapter = Join-Path $repo "src\cab\cab_adapter.cpp"
+    $sourceText = Get-Content -LiteralPath $cabAdapter -Raw
+    if ($sourceText -match 'return\s+static_cast<INT_PTR>\(_open\(pszFile') {
+        throw "CAB FDI open callback must fail closed for non-virtual cabinet paths instead of opening attacker-named local paths."
+    }
+    if ($sourceText -notmatch 'CAB decompressor requested an unexpected external cabinet path') {
+        throw "CAB FDI open callback must record an explicit error for unexpected external cabinet paths."
+    }
+}
+
+Test-CabFdiOpenPolicy
+
+# Purpose: Verify product runtime loading does not trust mutable HIP_PATH environment state.
+# Inputs: Reads the Windows HIP device loader source.
+# Outputs: Throws when runtime code falls back to HIP_PATH for DLL loading.
+function Test-HipRuntimeLoadPolicy {
+    $hipLoader = Join-Path $repo "src\gpu\hip_device.cpp"
+    $sourceText = Get-Content -LiteralPath $hipLoader -Raw
+    if ($sourceText -match 'GetEnvironmentVariableW\s*\(\s*L"HIP_PATH"') {
+        throw "Product runtime HIP loading must not trust HIP_PATH. HIP_PATH is build-tooling input only."
+    }
+    if ($sourceText -notmatch 'LOAD_LIBRARY_SEARCH_DEFAULT_DIRS' -or $sourceText -notmatch 'LOAD_LIBRARY_SEARCH_SYSTEM32') {
+        throw "Product runtime HIP loading must stay constrained to trusted Windows loader directories."
+    }
+}
+
+Test-HipRuntimeLoadPolicy
+
+# Purpose: Verify GUI shell launches do not depend on executable search order.
+# Inputs: Reads the main-window command source.
+# Outputs: Throws when Explorer is launched by bare executable name.
+function Test-GuiShellLaunchPolicy {
+    $commandSource = Join-Path $repo "src\app\main_window_commands.cpp"
+    $sourceText = Get-Content -LiteralPath $commandSource -Raw
+    if ($sourceText -match 'ShellExecuteW\([^;]*L"explorer\.exe"') {
+        throw "GUI shell actions must resolve explorer.exe to an absolute trusted Windows path before ShellExecuteW."
+    }
+    if ($sourceText -notmatch 'GetWindowsDirectoryW') {
+        throw "GUI shell actions must resolve Explorer through the Windows directory API."
+    }
+}
+
+Test-GuiShellLaunchPolicy
+
 & (Join-Path $repo "tools\verify_brand_assets.ps1")
 
 & (Join-Path $repo "tools\verify_license_notices.ps1")

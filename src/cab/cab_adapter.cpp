@@ -68,7 +68,7 @@ struct CabFdiContext {
 thread_local std::shared_ptr<CabFdiContext> g_cab_fdi_context;
 
 class ScopedCabFdiContextBinding {
-public:
+  public:
     // Purpose: Bind one CAB FDI context to the current thread for callback path remapping.
     // Inputs: `context` is the heap-owned CAB pass context used by callbacks.
     // Outputs: Restores the previous thread-local context when destroyed.
@@ -87,7 +87,7 @@ public:
         g_cab_fdi_context = std::move(previous_);
     }
 
-private:
+  private:
     std::shared_ptr<CabFdiContext> previous_;
 };
 
@@ -106,8 +106,7 @@ void set_cab_callback_error(CabFdiContext& context, std::string message, bool se
 // Outputs: Returns a compact message with FDI operation/type/native error fields.
 std::string cab_fdi_error_message(const ERF& perf) {
     return "CAB decompression failed (fdi_error=" + std::to_string(perf.erfOper) +
-        ", fdi_type=" + std::to_string(perf.erfType) +
-        ", native_error=" + std::to_string(perf.fError) + ")";
+           ", fdi_type=" + std::to_string(perf.erfType) + ", native_error=" + std::to_string(perf.fError) + ")";
 }
 
 // Purpose: Publish progress from inside a CAB callback.
@@ -146,12 +145,16 @@ FNFREE(cab_fdi_free) {
 
 // Purpose: Open the virtual CAB path requested by FDI.
 // Inputs: `pszFile` is the FDI path token, `oflag`/`pmode` are CRT open flags.
-// Outputs: Returns a CRT file descriptor as `INT_PTR`, or -1 on failure.
+// Outputs: Returns a CRT file descriptor as `INT_PTR`, or -1 without opening attacker-named paths.
 FNOPEN(cab_fdi_open) {
     if (g_cab_fdi_context != nullptr && std::strcmp(pszFile, kCabFdiVirtualCabinetName) == 0) {
-        return static_cast<INT_PTR>(_wopen(g_cab_fdi_context->archive_path.wstring().c_str(), oflag | _O_BINARY, pmode));
+        return static_cast<INT_PTR>(
+            _wopen(g_cab_fdi_context->archive_path.wstring().c_str(), oflag | _O_BINARY, pmode));
     }
-    return static_cast<INT_PTR>(_open(pszFile, oflag | _O_BINARY, pmode));
+    if (g_cab_fdi_context != nullptr) {
+        set_cab_callback_error(*g_cab_fdi_context, "CAB decompressor requested an unexpected external cabinet path");
+    }
+    return -1;
 }
 
 // Purpose: Read bytes for the Windows FDI engine.
@@ -192,8 +195,8 @@ INT_PTR open_cab_discard_sink() {
 }
 
 // Purpose: Start extracting one validated CAB file to a private temporary file.
-// Inputs: `context` owns validation/extraction state, `path` is normalized, and `size` is the FDI-reported uncompressed size.
-// Outputs: Returns a writable FDI file descriptor or -1 after recording callback error.
+// Inputs: `context` owns validation/extraction state, `path` is normalized, and `size` is the FDI-reported uncompressed
+// size. Outputs: Returns a writable FDI file descriptor or -1 after recording callback error.
 INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path, std::uint64_t size) {
     try {
         if (context.progress_enabled) {
@@ -203,23 +206,19 @@ INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path,
         const auto target = safe_join_archive_path(context.destination, path);
         std::filesystem::create_directories(target.parent_path());
         auto temporary = reserve_file_publish_target(target);
-        const auto fd = _wopen(
-            temporary.file.wstring().c_str(),
-            _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
-            _S_IREAD | _S_IWRITE);
+        const auto fd =
+            _wopen(temporary.file.wstring().c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
         if (fd < 0) {
             cleanup_file_publish_target(temporary);
             set_cab_callback_error(context, "failed to create temporary CAB extraction target: " + target.string());
             return -1;
         }
-        context.outputs.emplace(
-            static_cast<INT_PTR>(fd),
-            CabOutputTarget{
-                .temporary = std::move(temporary),
-                .final_path = target,
-                .archive_path = path,
-                .size = size,
-            });
+        context.outputs.emplace(static_cast<INT_PTR>(fd), CabOutputTarget{
+                                                              .temporary = std::move(temporary),
+                                                              .final_path = target,
+                                                              .archive_path = path,
+                                                              .size = size,
+                                                          });
         return static_cast<INT_PTR>(fd);
     } catch (const SecurityError& error) {
         set_cab_callback_error(context, error.what(), true);
@@ -324,21 +323,13 @@ FNFDINOTIFY(cab_fdi_notify) {
 }
 
 class ScopedFdiContext {
-public:
+  public:
     // Purpose: Create a Windows FDI context with SuperZip callback functions.
     // Inputs: None.
     // Outputs: Owns an HFDI handle or throws if FDI initialization fails.
     ScopedFdiContext() {
-        handle_ = FDICreate(
-            cab_fdi_alloc,
-            cab_fdi_free,
-            cab_fdi_open,
-            cab_fdi_read,
-            cab_fdi_write,
-            cab_fdi_close,
-            cab_fdi_seek,
-            cpuUNKNOWN,
-            &error_);
+        handle_ = FDICreate(cab_fdi_alloc, cab_fdi_free, cab_fdi_open, cab_fdi_read, cab_fdi_write, cab_fdi_close,
+                            cab_fdi_seek, cpuUNKNOWN, &error_);
         if (handle_ == nullptr) {
             throw ArchiveError(cab_fdi_error_message(error_));
         }
@@ -376,7 +367,7 @@ public:
         }
     }
 
-private:
+  private:
     // Purpose: Remove any extraction temporary files left after an FDI failure.
     // Inputs: `context` owns the temporary output map.
     // Outputs: Best-effort cleanup and map reset.
@@ -405,15 +396,12 @@ std::unordered_map<std::string, CabValidatedEntry> build_cab_entry_map(const Cab
 }
 
 // Purpose: Run one CAB FDI pass with the provided scanner metadata.
-// Inputs: `archive_path` is the CAB, `destination` is used by extraction, `metadata` is prevalidated, `pass` selects validation or extraction, and progress fields are optional.
-// Outputs: Returns normally on success or throws on decompression, path, I/O, or publication failures.
-void run_cab_fdi_pass(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    const CabMetadata& metadata,
-    CabFdiPass pass,
-    bool overwrite,
-    ProgressCallback progress_callback) {
+// Inputs: `archive_path` is the CAB, `destination` is used by extraction, `metadata` is prevalidated, `pass` selects
+// validation or extraction, and progress fields are optional. Outputs: Returns normally on success or throws on
+// decompression, path, I/O, or publication failures.
+void run_cab_fdi_pass(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                      const CabMetadata& metadata, CabFdiPass pass, bool overwrite,
+                      ProgressCallback progress_callback) {
     auto context = std::make_shared<CabFdiContext>();
     context->archive_path = archive_path;
     context->destination = destination;
@@ -434,11 +422,13 @@ void run_cab_fdi_pass(
 
 }  // namespace
 
-OperationStats extract_cab(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a validated CAB archive through the Windows FDI engine.
+// Inputs: `archive_path` is the user-selected CAB, `destination` receives safe entries, `overwrite` controls existing
+// output replacement, and `progress_callback` receives extraction progress.
+// Outputs: Returns extraction statistics or throws on unsupported platform, malformed CAB data, unsafe paths, or I/O
+// failures.
+OperationStats extract_cab(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
 #ifndef _WIN32
     (void)archive_path;
     (void)destination;

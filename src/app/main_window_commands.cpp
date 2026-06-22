@@ -170,6 +170,19 @@ std::filesystem::path smoke_folder_selection_path() {
     return std::filesystem::path(smoke_path);
 }
 
+// Purpose: Resolve Windows Explorer without depending on executable search order.
+// Inputs: None.
+// Outputs: Returns the trusted Windows Explorer path or throws when Windows cannot provide it.
+std::filesystem::path explorer_executable_path() {
+    wchar_t windows_directory[32768]{};
+    constexpr UINT directory_capacity = static_cast<UINT>(sizeof(windows_directory) / sizeof(windows_directory[0]));
+    const UINT length = GetWindowsDirectoryW(windows_directory, directory_capacity);
+    if (length == 0 || length >= directory_capacity) {
+        throw ArchiveError("Windows directory lookup failed");
+    }
+    return std::filesystem::path(windows_directory) / L"explorer.exe";
+}
+
 // Purpose: Return the filesystem path represented by one shell item.
 // Inputs: `item` is a filesystem shell item returned by `IFileOpenDialog`.
 // Outputs: Returns the absolute filesystem path or throws when the shell cannot provide one.
@@ -410,9 +423,10 @@ void MainWindow::open_log_file_location() {
         const DWORD suppress_length =
             GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", suppress_shell_open, suppress_capacity);
         if (!(suppress_length == 1 && suppress_shell_open[0] == L'1')) {
+            const auto explorer = explorer_executable_path();
             const std::wstring arguments = L"/select,\"" + path.wstring() + L"\"";
             const auto result = reinterpret_cast<INT_PTR>(
-                ShellExecuteW(hwnd_, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL));
+                ShellExecuteW(hwnd_, L"open", explorer.c_str(), arguments.c_str(), nullptr, SW_SHOWNORMAL));
             if (result <= 32) {
                 throw ArchiveError("Explorer could not open the SuperZip log file location");
             }

@@ -32,6 +32,12 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
+- AI agents must operate as a single agent for this repository. Do not spawn,
+  fork, delegate to, or otherwise fan out subagents, worker agents, or parallel
+  model-review threads for SuperZip work unless the maintainer explicitly
+  reverses this rule for a specific task. When a tool or skill recommends
+  subagents, run the same review serially in the current agent and document any
+  plugin mode that could not be used because of this maintainer policy.
 - SuperZip-owned secondary windows, confirmations, prompts, and modal surfaces
   must use the same visual system, typography, colors, spacing, focus behavior,
   and interaction quality as the main window. Do not use raw `MessageBoxW` or
@@ -154,6 +160,14 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   Long-running fuzzing is observed but not normally waited for; check it
   opportunistically during iteration and include it only with final/release
   workflow waits.
+- Trigger additional serial security scans when changes are extensive or touch
+  dangerous functions, trust boundaries, parser state machines, archive entry
+  publication, path canonicalization, overwrite policy, process creation,
+  dynamic library loading, Defender or integrity checks, installer/update
+  behavior, release packaging, workflow permissions, dependency provenance, or
+  agent/MCP tooling. Prefer the narrowest scan that proves the touched boundary,
+  but escalate to the full profile when the edit is broad or the impact cannot
+  be bounded.
 - Do not copy code, UI, or designs from reference repositories. Only use public projects for high-level comparison.
 
 ## Engineering Quality Baseline

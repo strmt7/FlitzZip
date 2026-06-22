@@ -45,24 +45,12 @@ bool load_hip_runtime() {
         if (existing) {
             return true;
         }
-        HMODULE module = LoadLibraryExW(runtime.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
+        HMODULE module =
+            LoadLibraryExW(runtime.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (module) {
             return true;
         }
-        wchar_t hip_path[MAX_PATH]{};
-        constexpr DWORD hip_path_capacity = static_cast<DWORD>(sizeof(hip_path) / sizeof(hip_path[0]));
-        const DWORD length = GetEnvironmentVariableW(L"HIP_PATH", hip_path, hip_path_capacity);
-        if (length == 0 || length >= hip_path_capacity) {
-            return false;
-        }
-        std::wstring explicit_runtime = hip_path;
-        if (!explicit_runtime.empty() && explicit_runtime.back() != L'\\' && explicit_runtime.back() != L'/') {
-            explicit_runtime.push_back(L'\\');
-        }
-        explicit_runtime += L"bin\\";
-        explicit_runtime += runtime;
-        module = LoadLibraryExW(explicit_runtime.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-        return module != nullptr;
+        return false;
     }();
     return loaded;
 }
@@ -79,7 +67,8 @@ GpuInfo query_hip_gpu_info() {
     info.hip_compiled = true;
     info.runtime_name = SUPERZIP_HIP_RUNTIME_DLL_NAME;
     if (!load_hip_runtime()) {
-        info.status = "AMD HIP runtime is not loadable. Install or update the AMD GPU driver that provides " + info.runtime_name + ".";
+        info.status = "AMD HIP runtime is not loadable. Install or update the AMD GPU driver that provides " +
+                      info.runtime_name + ".";
         return info;
     }
     info.hip_runtime_loadable = true;

@@ -22,6 +22,36 @@ tools/verification_plan.ps1 -IncludeUntracked
 tools/verify_changes.ps1 -IncludeUntracked
 ```
 
+Single-agent enforcement:
+
+- Run SuperZip security work serially in the current agent. Do not spawn,
+  fork, delegate to, or fan out subagents or worker agents for discovery,
+  validation, attack-path analysis, workflow review, release-artifact review,
+  or remediation unless the maintainer explicitly reverses this policy for a
+  specific task.
+- If an external security plugin requires delegated workers for a named mode,
+  do not claim that mode ran. Run the closest serial phase sequence instead,
+  save the evidence, and record the delegated mode as unavailable by maintainer
+  policy.
+- Parallel shell commands are allowed only when they do not create model-agent
+  workers and do not reduce audit quality; prefer serial execution when the
+  maintainer asks for efficient subscription usage.
+
+Smart security-scan triggers:
+
+- Trigger `tools/security_scan.ps1` in addition to the selected verification
+  plan when a change is extensive or touches dangerous functions, archive
+  parser state machines, destination path validation, verified publication,
+  overwrite decisions, process creation, dynamic library loading, Defender
+  scanning, SHA-256 integrity, installer/update logic, release packaging,
+  workflow permissions, dependency provenance, or agent/MCP tooling.
+- Use the narrowest targeted scan that proves the changed boundary. Escalate to
+  `tools/verify_changes.ps1 -IncludeUntracked -Full` when the boundary is broad,
+  the changed paths are unknown, a targeted scan fails, or a security regression
+  is plausible but not localized.
+- Do not run heavyweight scans merely because unrelated text changed. The
+  trigger is risk and boundary driven.
+
 Use the full profile automatically when the plan escalates, a targeted check
 fails, the changed path set is broad or unknown, or a wider security regression
 is suspected:
