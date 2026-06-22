@@ -22,17 +22,22 @@ tools/verification_plan.ps1 -IncludeUntracked
 tools/verify_changes.ps1 -IncludeUntracked
 ```
 
-Single-agent enforcement:
+Single-agent and Codex Security worker policy:
 
 - Run SuperZip security work serially in the current agent. Do not spawn,
   fork, delegate to, or fan out subagents or worker agents for discovery,
   validation, attack-path analysis, workflow review, release-artifact review,
   or remediation unless the maintainer explicitly reverses this policy for a
   specific task.
-- If an external security plugin requires delegated workers for a named mode,
-  do not claim that mode ran. Run the closest serial phase sequence instead,
-  save the evidence, and record the delegated mode as unavailable by maintainer
-  policy.
+- Codex Security scanner subagents are on-demand only. Use them only when the
+  maintainer explicitly invokes a Codex Security scan phase that genuinely
+  requires delegated workers or explicitly authorizes them for that scan. Prefer
+  the one-worker or serial Codex Security path whenever the installed plugin can
+  run it honestly, and record why each worker was necessary.
+- If any other external security plugin requires delegated workers for a named
+  mode, do not claim that mode ran. Run the closest serial phase sequence
+  instead, save the evidence, and record the delegated mode as unavailable by
+  maintainer policy.
 - Parallel shell commands are allowed only when they do not create model-agent
   workers and do not reduce audit quality; prefer serial execution when the
   maintainer asks for efficient subscription usage.
@@ -82,6 +87,12 @@ Add or update tests for:
 
 - `..`, absolute paths, drive paths, UNC paths.
 - Reserved Windows names.
+- Existing destination junctions, symlinks, mount points, and other reparse
+  parents that could redirect extraction publication outside the selected root.
+- Source-tree junctions, symlinks, mount points, and other reparse entries that
+  could make archive creation include files outside selected inputs.
+- Decoded or extracted output totals that exceed SuperZip's resource policy,
+  especially compatibility extractors with independent byte-accounting loops.
 - Existing-file overwrite refusal.
 - Corrupt payload and CRC mismatch.
 - Oversized or malformed archive metadata.
@@ -100,6 +111,10 @@ Workflow and release hardening rules:
 
 - Do not add GitHub Actions `environment:` blocks, `deployment:` keys, or any
   workflow mechanism that creates deployment records.
+- Greenbone/OpenVAS workflow-dispatch target text is only a request to the
+  external OIDC broker. The workflow must use the broker-returned
+  `greenbone_target` as the effective scan target and must not let repository
+  inputs bypass broker authorization.
 - Do not hide scanner findings with broad exclusions, placeholder tests, or
   event-specific jobs that normally show as skipped. A narrow generated-output
   skip is acceptable only when the skipped path is documented and not product

@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -43,16 +44,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
     return static_cast<std::uint64_t>(size);
 }
 
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
-}
-
 // Purpose: Encode one six-bit XXEncode value.
 // Inputs: `value` is a six-bit payload value or decoded line length.
 // Outputs: Returns the printable XXEncode character.
@@ -88,9 +79,7 @@ void write_xxe_line(std::ofstream& output, const std::string& line) {
 bool read_xxe_line(std::ifstream& input, std::string& line) {
     line.clear();
     std::istream::int_type next = std::char_traits<char>::eof();
-    while (!std::char_traits<char>::eq_int_type(
-        (next = input.get()),
-        std::char_traits<char>::eof())) {
+    while (!std::char_traits<char>::eq_int_type((next = input.get()), std::char_traits<char>::eof())) {
         const auto byte = static_cast<unsigned char>(std::char_traits<char>::to_char_type(next));
         if (byte == static_cast<unsigned char>('\n')) {
             if (!line.empty() && line.back() == '\r') {
@@ -119,9 +108,7 @@ bool read_xxe_line(std::ifstream& input, std::string& line) {
 // Inputs: `line` is a bounded text line.
 // Outputs: Returns true when all characters are ASCII whitespace.
 bool is_blank_or_whitespace(const std::string& line) {
-    return std::ranges::all_of(line, [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    });
+    return std::ranges::all_of(line, [](unsigned char ch) { return std::isspace(ch) != 0; });
 }
 
 // Purpose: Parse a strict XXEncode begin line and validate the embedded filename.
@@ -250,20 +237,18 @@ bool decode_xxe_payload_line(const std::string& line, std::vector<unsigned char>
 }  // namespace
 
 // Purpose: Create a single-file XXEncoded stream with bounded text output.
-// Inputs: `source_file` is an existing regular file, `output_archive` is the destination `.xxe`, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns operation statistics; throws `ArchiveError`/`SecurityError` on invalid source, unsafe header name, or writer failure.
-OperationStats compress_xxe_file(
-    const std::filesystem::path& source_file,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Inputs: `source_file` is an existing regular file, `output_archive` is the destination `.xxe`, and
+// `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics; throws
+// `ArchiveError`/`SecurityError` on invalid source, unsafe header name, or writer failure.
+OperationStats compress_xxe_file(const std::filesystem::path& source_file, const std::filesystem::path& output_archive,
+                                 const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
         throw ArchiveError("XXE compression requires one regular file: " + source_file.string());
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
-        std::filesystem::equivalent(source_file, output_archive, equivalent_error) &&
-        !equivalent_error) {
+        std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
         throw SecurityError("refusing to overwrite the XXE source file: " + output_archive.string());
     }
 
@@ -331,12 +316,11 @@ OperationStats compress_xxe_file(
 }
 
 // Purpose: Create a single-file XXEncoded stream from exactly one source path.
-// Inputs: `sources` must contain one existing regular file, `output_archive` is the destination `.xxe`, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns operation statistics; throws when the source set is empty, has multiple paths, or is not a regular file.
-OperationStats compress_xxe(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Inputs: `sources` must contain one existing regular file, `output_archive` is the destination `.xxe`, and
+// `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics; throws when the
+// source set is empty, has multiple paths, or is not a regular file.
+OperationStats compress_xxe(const std::vector<std::filesystem::path>& sources,
+                            const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     if (sources.size() != 1U) {
         throw ArchiveError("XXE compatibility requires exactly one regular-file source");
     }
@@ -344,13 +328,11 @@ OperationStats compress_xxe(
 }
 
 // Purpose: Extract one XXEncoded member with path-safe publication.
-// Inputs: `archive_path` is the `.xxe` stream, `destination` is the extraction root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns operation statistics; throws on malformed XXEncode data, unsafe header path, refused overwrite, or verified-file publication failures.
-OperationStats extract_xxe_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is the `.xxe` stream, `destination` is the extraction root, `overwrite` controls replacement,
+// and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics; throws on
+// malformed XXEncode data, unsafe header path, refused overwrite, or verified-file publication failures.
+OperationStats extract_xxe_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -390,11 +372,13 @@ OperationStats extract_xxe_file(
                     saw_zero_line = true;
                     continue;
                 }
-                output.write(reinterpret_cast<const char*>(decoded.data()), static_cast<std::streamsize>(decoded.size()));
+                output.write(reinterpret_cast<const char*>(decoded.data()),
+                             static_cast<std::streamsize>(decoded.size()));
                 if (!output) {
                     throw ArchiveError("failed to write XXE extraction target: " + target.string());
                 }
-                checked_add_bytes(output_size, decoded.size(), "XXE output");
+                output_size = checked_add_extracted_output_bytes(
+                    output_size, static_cast<std::uint64_t>(decoded.size()), "XXE output");
                 progress.add_bytes(line.size() + 1U);
                 publish_progress(progress, progress_callback);
                 continue;

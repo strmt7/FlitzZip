@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 #include "xz/xz_stream.hpp"
 
@@ -35,25 +36,13 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
     return static_cast<std::uint64_t>(size);
 }
 
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
-}
-
 // Purpose: Derive a safe single output entry name from the archive filename.
 // Inputs: `archive_path` is the host path to the `.xz` stream.
 // Outputs: Returns a relative archive entry name that can pass path-safety checks.
 std::string xz_output_entry_name(const std::filesystem::path& archive_path) {
     auto filename = archive_path.filename().string();
     auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.size() > 3U && lower.ends_with(".xz")) {
         filename.resize(filename.size() - 3U);
     } else {
@@ -67,11 +56,13 @@ std::string xz_output_entry_name(const std::filesystem::path& archive_path) {
 
 }  // namespace
 
-OperationStats extract_xz_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Decode one XZ compatibility stream into a verified output file.
+// Inputs: `archive_path` is the encoded stream, `destination` is the extraction root, `overwrite` controls final-file
+// replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Publishes the decoded file below `destination` and returns stats, or throws on malformed data or unsafe
+// path.
+OperationStats extract_xz_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                               bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     const auto entry_name = xz_output_entry_name(archive_path);
@@ -102,7 +93,8 @@ OperationStats extract_xz_file(
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
             const auto bytes_read = static_cast<std::size_t>(input.gcount());
             if (bytes_read > 0U) {
-                checked_add_bytes(output_size, static_cast<std::uint64_t>(bytes_read), "XZ output");
+                output_size = checked_add_extracted_output_bytes(output_size, static_cast<std::uint64_t>(bytes_read),
+                                                                 "XZ output");
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
                     throw ArchiveError("failed to write XZ extraction target: " + target.string());

@@ -65,6 +65,19 @@ function Test-ChangedFileTextPolicy {
             throw "Forbidden external comparison name found in changed file: $Path"
         }
     }
+
+    $normalizedPath = $Path -replace "\\", "/"
+    if ($normalizedPath -eq ".github/workflows/greenbone-openvas-live.yml") {
+        if ($text -notmatch [regex]::Escape('"target_input": os.environ.get("GREENBONE_TARGET_INPUT", "")')) {
+            throw "Greenbone workflow must pass manual target text only as a broker authorization request: $Path"
+        }
+        if ($text -notmatch [regex]::Escape('"target": get("greenbone_target")')) {
+            throw "Greenbone workflow must use the broker-returned greenbone_target as the effective scan target: $Path"
+        }
+        if ($text -match '"target"\s*:\s*os\.environ\.get\("GREENBONE_TARGET_INPUT"') {
+            throw "Greenbone workflow must not let workflow_dispatch target input bypass broker authorization: $Path"
+        }
+    }
 }
 
 # Purpose: Return the count of leading spaces before the first non-space character.

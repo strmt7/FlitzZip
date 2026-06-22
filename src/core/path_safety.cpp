@@ -20,13 +20,11 @@ bool is_windows_reserved_name(std::string name) {
     if (dot != std::string::npos) {
         name.resize(dot);
     }
-    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
-    });
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
     static constexpr std::array reserved = {
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON",  "PRN",  "AUX",  "NUL",  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     };
     return std::find(reserved.begin(), reserved.end(), name) != reserved.end();
 }
@@ -42,9 +40,7 @@ bool has_drive_prefix(const std::string& path) {
 // Inputs: `component` is an untrusted path component after separator splitting.
 // Outputs: Returns true when any byte is below ASCII space, including embedded NUL.
 bool contains_windows_control_character(const std::string& component) {
-    return std::ranges::any_of(component, [](unsigned char ch) {
-        return ch < 0x20U;
-    });
+    return std::ranges::any_of(component, [](unsigned char ch) { return ch < 0x20U; });
 }
 
 // Purpose: Verify that a normalized child path remains under a normalized root.
@@ -61,6 +57,20 @@ bool starts_with_path(const std::filesystem::path& child, const std::filesystem:
     return true;
 }
 
+// Purpose: Ensure the existing filesystem parent chain for an output path still resolves below the destination root.
+// Inputs: `target` is the joined archive output path and `root` is the canonical extraction root.
+// Outputs: Throws `SecurityError` when an existing parent component escapes through a reparse point or mount point.
+void validate_existing_parent_containment(const std::filesystem::path& target, const std::filesystem::path& root) {
+    std::error_code ec;
+    const auto parent = std::filesystem::weakly_canonical(target.parent_path(), ec);
+    if (ec) {
+        throw SecurityError("archive entry parent path cannot be canonicalized: " + ec.message());
+    }
+    if (!starts_with_path(parent, root)) {
+        throw SecurityError("archive entry parent resolves outside destination root: " + target.string());
+    }
+}
+
 struct NormalizedArchivePath {
     std::string key;
     std::string original_path;
@@ -69,13 +79,13 @@ struct NormalizedArchivePath {
 
 // Purpose: Normalize an archive entry path into the key used for archive-wide collision checks.
 // Inputs: `path` is untrusted archive metadata.
-// Outputs: Returns a normalized relative key; on Windows the key is ASCII-folded for case-insensitive collision detection.
+// Outputs: Returns a normalized relative key; on Windows the key is ASCII-folded for case-insensitive collision
+// detection.
 std::string normalize_archive_collision_key(const std::string& path) {
     auto key = normalize_archive_path_key(path);
 #ifdef _WIN32
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 #endif
     return key;
 }
@@ -84,16 +94,17 @@ std::string normalize_archive_collision_key(const std::string& path) {
 // Inputs: `child` and `parent` are slash-separated normalized archive path keys.
 // Outputs: Returns true only for strict descendants such as `dir/file` under `dir`.
 bool is_archive_path_descendant(const std::string& child, const std::string& parent) {
-    return child.size() > parent.size() &&
-        child.compare(0, parent.size(), parent) == 0 &&
-        child[parent.size()] == '/';
+    return child.size() > parent.size() && child.compare(0, parent.size(), parent) == 0 && child[parent.size()] == '/';
 }
 
 }  // namespace
 
-std::filesystem::path safe_join_archive_path(
-    const std::filesystem::path& destination_root,
-    const std::string& archive_path) {
+// Purpose: Resolve one untrusted archive path below a destination root without following escaping parent reparses.
+// Inputs: `destination_root` is the extraction root and `archive_path` is untrusted archive metadata.
+// Outputs: Returns the validated target path or throws `SecurityError`/`ArchiveError` when containment cannot be
+// proven.
+std::filesystem::path safe_join_archive_path(const std::filesystem::path& destination_root,
+                                             const std::string& archive_path) {
     const auto normalized_archive_path = normalize_archive_path_key(archive_path);
     std::error_code ec;
     const auto root = std::filesystem::weakly_canonical(destination_root, ec);
@@ -104,16 +115,19 @@ std::filesystem::path safe_join_archive_path(
     if (!starts_with_path(target, root)) {
         throw SecurityError("archive entry resolves outside destination root: " + archive_path);
     }
+    validate_existing_parent_containment(target, root);
     return target;
 }
 
+// Purpose: Normalize an untrusted archive entry path into SuperZip's slash-separated safe key.
+// Inputs: `archive_path` is attacker-controlled archive metadata.
+// Outputs: Returns a safe relative key, or throws `SecurityError` for traversal, absolute, reserved, or invalid forms.
 std::string normalize_archive_path_key(const std::string& archive_path) {
     if (archive_path.empty()) {
         throw SecurityError("archive entry path is empty");
     }
-    if (archive_path.starts_with('/') || archive_path.starts_with('\\') ||
-        archive_path.starts_with("//") || archive_path.starts_with("\\\\") ||
-        has_drive_prefix(archive_path)) {
+    if (archive_path.starts_with('/') || archive_path.starts_with('\\') || archive_path.starts_with("//") ||
+        archive_path.starts_with("\\\\") || has_drive_prefix(archive_path)) {
         throw SecurityError("archive entry uses an absolute or drive-rooted path: " + archive_path);
     }
 
@@ -161,6 +175,9 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
     return normalized;
 }
 
+// Purpose: Validate archive-wide normalized path uniqueness and file/directory conflicts.
+// Inputs: `entries` contains every archive path and whether it represents a directory.
+// Outputs: Returns normally for a safe set or throws `SecurityError` for duplicate/conflicting entries.
 void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entries) {
     std::vector<NormalizedArchivePath> paths;
     paths.reserve(entries.size());
@@ -171,9 +188,8 @@ void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entri
             .directory = entry.directory,
         });
     }
-    std::sort(paths.begin(), paths.end(), [](const NormalizedArchivePath& lhs, const NormalizedArchivePath& rhs) {
-        return lhs.key < rhs.key;
-    });
+    std::sort(paths.begin(), paths.end(),
+              [](const NormalizedArchivePath& lhs, const NormalizedArchivePath& rhs) { return lhs.key < rhs.key; });
     for (std::size_t i = 0; i < paths.size(); ++i) {
         if (i > 0 && paths[i - 1].key == paths[i].key) {
             throw SecurityError("archive contains duplicate entry path: " + paths[i].original_path);

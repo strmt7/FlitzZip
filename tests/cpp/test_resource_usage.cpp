@@ -1,3 +1,4 @@
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_usage.hpp"
 
 #include "test_util.hpp"
@@ -27,6 +28,19 @@ TEST_CASE(vram_reconciliation_handles_unknown_capacity) {
     const auto usage = reconcile_vram_usage(0U, 0U, 64ULL * kMiB, 96ULL * kMiB);
     REQUIRE_EQ(usage.total_used_bytes, 96ULL * kMiB);
     REQUIRE_EQ(usage.process_dedicated_bytes, 96ULL * kMiB);
+}
+
+// Purpose: Verify decoded-output accounting rejects totals above SuperZip's extraction policy limit.
+// Inputs: A byte count at the policy limit plus one additional decoded byte.
+// Outputs: Throws if the extracted-output cap is not enforced.
+TEST_CASE(extracted_output_accounting_rejects_policy_limit_excess) {
+    bool rejected = false;
+    try {
+        (void)superzip::checked_add_extracted_output_bytes(superzip::kMaxExtractedOutputBytes, 1U, "test output");
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }
 
 }  // namespace

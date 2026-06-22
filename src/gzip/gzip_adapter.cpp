@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -451,7 +452,7 @@ OperationStats extract_gzip_file(const std::filesystem::path& archive_path, cons
                 const auto produced = output_buffer.size() - stream.avail_out;
                 if (produced > 0U) {
                     crc = static_cast<std::uint32_t>(mz_crc32(crc, output_buffer.data(), produced));
-                    checked_add_bytes(output_size, produced, "Gzip output");
+                    output_size = checked_add_extracted_output_bytes(output_size, produced, "Gzip output");
                     write_exact(output, output_buffer.data(), produced);
                 }
             } while ((stream.avail_out == 0U || stream.avail_in > 0U) && status != MZ_STREAM_END);

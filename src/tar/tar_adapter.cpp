@@ -4,6 +4,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_stream.hpp"
@@ -533,7 +534,7 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
             const bool directory = typeflag == '5';
             if (!directory) {
                 result.total_file_bytes =
-                    checked_add_tar_bytes(result.total_file_bytes, size, "TAR uncompressed size overflows");
+                    checked_add_extracted_output_bytes(result.total_file_bytes, size, "TAR uncompressed payload");
             }
             result.entries.push_back(TarEntryMetadata{
                 .path = entry_path,

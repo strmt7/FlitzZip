@@ -3,6 +3,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_stream.hpp"
@@ -465,8 +466,8 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
             .check = header.check,
         });
         if (!directory) {
-            result.total_file_bytes = checked_add_cpio_bytes(result.total_file_bytes, header.filesize,
-                                                             "CPIO uncompressed payload byte count overflow");
+            result.total_file_bytes = checked_add_extracted_output_bytes(result.total_file_bytes, header.filesize,
+                                                                         "CPIO uncompressed payload");
         }
     }
 

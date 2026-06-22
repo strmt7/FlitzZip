@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -39,16 +40,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
         throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
     }
     return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
 }
 
 // Purpose: Encode one six-bit UUencode value.
@@ -90,9 +81,7 @@ void write_uue_line(std::ofstream& output, const std::string& line) {
 bool read_uue_line(std::ifstream& input, std::string& line) {
     line.clear();
     std::istream::int_type next = std::char_traits<char>::eof();
-    while (!std::char_traits<char>::eq_int_type(
-        (next = input.get()),
-        std::char_traits<char>::eof())) {
+    while (!std::char_traits<char>::eq_int_type((next = input.get()), std::char_traits<char>::eof())) {
         const auto byte = static_cast<unsigned char>(std::char_traits<char>::to_char_type(next));
         if (byte == static_cast<unsigned char>('\n')) {
             if (!line.empty() && line.back() == '\r') {
@@ -121,9 +110,7 @@ bool read_uue_line(std::ifstream& input, std::string& line) {
 // Inputs: `line` is a bounded text line.
 // Outputs: Returns true when all characters are ASCII whitespace.
 bool is_blank_or_whitespace(const std::string& line) {
-    return std::ranges::all_of(line, [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    });
+    return std::ranges::all_of(line, [](unsigned char ch) { return std::isspace(ch) != 0; });
 }
 
 // Purpose: Parse a strict UUE begin line and validate the embedded filename.
@@ -237,18 +224,19 @@ bool decode_uue_payload_line(const std::string& line, std::vector<unsigned char>
 
 }  // namespace
 
-OperationStats compress_uue_file(
-    const std::filesystem::path& source_file,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Encode one regular file as a UUencode compatibility stream.
+// Inputs: `source_file` is the regular-file input, `output_archive` is the destination, and `progress_callback`
+// receives synchronous progress snapshots.
+// Outputs: Writes the encoded stream and returns stats, or throws on unsafe source/output overlap or I/O failure.
+OperationStats compress_uue_file(const std::filesystem::path& source_file, const std::filesystem::path& output_archive,
+                                 const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
         throw ArchiveError("UUE compression requires one regular file: " + source_file.string());
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
-        std::filesystem::equivalent(source_file, output_archive, equivalent_error) &&
-        !equivalent_error) {
+        std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
         throw SecurityError("refusing to overwrite the UUE source file: " + output_archive.string());
     }
 
@@ -315,21 +303,25 @@ OperationStats compress_uue_file(
     return stats;
 }
 
-OperationStats compress_uue(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Validate UUencode create shape and dispatch single-file encoding.
+// Inputs: `sources` must contain exactly one regular file, `output_archive` is the destination, and
+// `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns encode stats or throws when the source set is incompatible.
+OperationStats compress_uue(const std::vector<std::filesystem::path>& sources,
+                            const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     if (sources.size() != 1U) {
         throw ArchiveError("UUE compatibility requires exactly one regular-file source");
     }
     return compress_uue_file(sources.front(), output_archive, progress_callback);
 }
 
-OperationStats extract_uue_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Decode one UUencode compatibility stream into a verified output file.
+// Inputs: `archive_path` is the encoded stream, `destination` is the extraction root, `overwrite` controls final-file
+// replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Publishes the decoded file below `destination` and returns stats, or throws on malformed data or unsafe
+// path.
+OperationStats extract_uue_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -369,11 +361,13 @@ OperationStats extract_uue_file(
                     saw_zero_line = true;
                     continue;
                 }
-                output.write(reinterpret_cast<const char*>(decoded.data()), static_cast<std::streamsize>(decoded.size()));
+                output.write(reinterpret_cast<const char*>(decoded.data()),
+                             static_cast<std::streamsize>(decoded.size()));
                 if (!output) {
                     throw ArchiveError("failed to write UUE extraction target: " + target.string());
                 }
-                checked_add_bytes(output_size, decoded.size(), "UUE output");
+                output_size = checked_add_extracted_output_bytes(
+                    output_size, static_cast<std::uint64_t>(decoded.size()), "UUE output");
                 progress.add_bytes(line.size() + 1U);
                 publish_progress(progress, progress_callback);
                 continue;

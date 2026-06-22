@@ -97,7 +97,7 @@ not claim the target is clean.
 
 GitHub Actions should run the local security script first. Optional external
 upload and vulnerability management lanes are documented in
-`.github/workflows/greenbone-openvas-vulnetix.yml`.
+`.github/workflows/greenbone-openvas-live.yml`.
 
 ## Vulnetix / OpenVAS Future Lane
 
@@ -105,7 +105,7 @@ The Greenbone/OpenVAS and Vulnetix live workflow resolves scanner credentials
 through an external OIDC broker, then uses a pinned `Vulnetix/cli` action after
 a real authorized OpenVAS scan has produced artifacts. The current pin is:
 
-- `uses: Vulnetix/cli@7b1ca5050e6d55a0fa29752b5e779018a5f2aa5f`
+- `uses: Vulnetix/cli@bcfaca703d9c893a97d0a8e584ebd5b0070b109a`
 - `org-id: ${{ steps.config.outputs.vulnetix_org_id }}`
 - optional `task: upload`
 - optional `artifact-path: ./reports/`
@@ -114,7 +114,10 @@ The SuperZip workflow fails closed until `GREENBONE_SECRET_PROVIDER_URL` points
 to a broker that validates GitHub OIDC claims and returns the authorized
 Greenbone and Vulnetix settings. Do not add hard-coded organization IDs,
 tokens, URLs, scan targets, or credentials to the repository.
+Manual workflow-dispatch target text is sent to that broker only as a target
+request; the checked-in workflow must use the broker-returned
+`greenbone_target` as the effective OpenVAS target.
 
-Note: the action is pinned to the `v3.21.0` commit verified against the
-annotated upstream tag on June 15, 2026. Re-check the upstream action before
-rotating that pin.
+Note: the action is pinned to the `v3.32.0` commit resolved from the annotated
+upstream tag on June 22, 2026. The upstream tag object was unsigned, so keep the
+full commit SHA pin and re-check the upstream action before rotating it again.

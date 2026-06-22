@@ -3,6 +3,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -99,15 +100,13 @@ void skip_file_bytes(std::istream& input, std::uint64_t size, const char* label)
 }
 
 // Purpose: Verify that a declared AR member range is fully contained in the archive file.
-// Inputs: `member_start` is the current payload offset, `member_size` is the declared bytes, `archive_size` is the file length, and `label` names diagnostics.
-// Outputs: Throws before a later seek/read can move past EOF.
-void validate_member_extent(
-    std::uint64_t member_start,
-    std::uint64_t member_size,
-    std::uint64_t archive_size,
-    const char* label) {
+// Inputs: `member_start` is the current payload offset, `member_size` is the declared bytes, `archive_size` is the file
+// length, and `label` names diagnostics. Outputs: Throws before a later seek/read can move past EOF.
+void validate_member_extent(std::uint64_t member_start, std::uint64_t member_size, std::uint64_t archive_size,
+                            const char* label) {
     const auto payload_end = checked_add_ar_bytes(member_start, member_size, "AR member extent overflow");
-    const auto padded_end = checked_add_ar_bytes(payload_end, ar_padding(member_size), "AR padded member extent overflow");
+    const auto padded_end =
+        checked_add_ar_bytes(payload_end, ar_padding(member_size), "AR padded member extent overflow");
     if (padded_end > archive_size) {
         throw ArchiveError(std::string(label) + " extends past the end of the AR archive");
     }
@@ -152,7 +151,8 @@ std::uint64_t parse_decimal_field(std::string_view field, const char* name) {
 // Purpose: Write one fixed-width AR header field.
 // Inputs: `header` is the mutable header, `offset`/`width` select the field, and `value` is ASCII metadata.
 // Outputs: Copies the value and leaves remaining bytes as spaces; throws when the value does not fit.
-void put_field(std::array<char, kArHeaderBytes>& header, std::size_t offset, std::size_t width, std::string_view value) {
+void put_field(std::array<char, kArHeaderBytes>& header, std::size_t offset, std::size_t width,
+               std::string_view value) {
     if (value.size() > width) {
         throw ArchiveError("AR header field does not fit");
     }
@@ -181,10 +181,8 @@ std::array<char, kArHeaderBytes> make_bsd_ar_header(std::string_view path, std::
     if (path.size() > kMaxArNameBytes) {
         throw ArchiveError("AR entry name is too long");
     }
-    const auto stored_size = checked_add_ar_bytes(
-        payload_size,
-        static_cast<std::uint64_t>(path.size()),
-        "AR member size overflow");
+    const auto stored_size =
+        checked_add_ar_bytes(payload_size, static_cast<std::uint64_t>(path.size()), "AR member size overflow");
     if (stored_size > kMaxArDecimalField) {
         throw ArchiveError("AR member is too large for the portable decimal header");
     }
@@ -226,10 +224,7 @@ void copy_file_to_ar(const std::filesystem::path& source, std::ostream& output, 
 // Inputs: `raw_name` is the header name after trimming spaces.
 // Outputs: Returns true for symbol tables and GNU/BSD metadata members.
 bool is_metadata_member(std::string_view raw_name) {
-    return raw_name == "/" ||
-        raw_name == "/SYM64/" ||
-        raw_name == "__.SYMDEF" ||
-        raw_name == "__.SYMDEF SORTED";
+    return raw_name == "/" || raw_name == "/SYM64/" || raw_name == "__.SYMDEF" || raw_name == "__.SYMDEF SORTED";
 }
 
 // Purpose: Parse an unsigned decimal suffix after a prefix.
@@ -277,12 +272,11 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
 }
 
 // Purpose: Parse one AR member name and adjust payload metadata for BSD long names.
-// Inputs: `input` is positioned after the fixed header, `raw` is the parsed header, and `string_table` contains optional GNU long names.
-// Outputs: Returns an archive path and payload size/offset, or empty when the member is metadata.
-std::optional<ArEntryMetadata> parse_member_name_and_payload(
-    std::ifstream& input,
-    const ArRawHeader& raw,
-    const std::string& string_table) {
+// Inputs: `input` is positioned after the fixed header, `raw` is the parsed header, and `string_table` contains
+// optional GNU long names. Outputs: Returns an archive path and payload size/offset, or empty when the member is
+// metadata.
+std::optional<ArEntryMetadata> parse_member_name_and_payload(std::ifstream& input, const ArRawHeader& raw,
+                                                             const std::string& string_table) {
     const auto payload_start_pos = input.tellg();
     if (payload_start_pos == std::istream::pos_type(-1)) {
         throw ArchiveError("failed to read AR payload offset");
@@ -341,7 +335,8 @@ std::string read_string_table(std::ifstream& input, std::uint64_t size) {
 
 // Purpose: Scan a full AR archive and validate metadata before extraction.
 // Inputs: `archive_path` is the AR file to parse.
-// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported layout.
+// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
+// layout.
 ArScanResult scan_ar(const std::filesystem::path& archive_path) {
     const auto archive_size = std::filesystem::file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -366,27 +361,20 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path) {
         if (member_start_pos == std::istream::pos_type(-1)) {
             throw ArchiveError("failed to read AR member offset");
         }
-        validate_member_extent(
-            static_cast<std::uint64_t>(member_start_pos),
-            raw.size,
-            archive_size,
-            "AR member");
+        validate_member_extent(static_cast<std::uint64_t>(member_start_pos), raw.size, archive_size, "AR member");
         if (raw.name == "//") {
             string_table = read_string_table(input, raw.size);
         } else {
             const auto entry = parse_member_name_and_payload(input, raw, string_table);
-            const auto consumed = entry.has_value() && raw.name.starts_with("#1/")
-                ? static_cast<std::uint64_t>(entry->path.size())
-                : 0U;
+            const auto consumed =
+                entry.has_value() && raw.name.starts_with("#1/") ? static_cast<std::uint64_t>(entry->path.size()) : 0U;
             if (entry.has_value()) {
                 validation_entries.push_back(ArchivePathValidationEntry{
                     .path = entry->path,
                     .directory = false,
                 });
-                result.total_file_bytes = checked_add_ar_bytes(
-                    result.total_file_bytes,
-                    entry->size,
-                    "AR extracted payload byte count overflow");
+                result.total_file_bytes =
+                    checked_add_extracted_output_bytes(result.total_file_bytes, entry->size, "AR extracted payload");
                 result.entries.push_back(*entry);
             }
             if (consumed > raw.size) {
@@ -402,13 +390,10 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Copy a validated AR file payload into a temporary output file.
-// Inputs: `input` is the archive stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file or throws without partially publishing target bytes.
-void extract_ar_file_payload(
-    std::ifstream& input,
-    const ArEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is the archive stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite`
+// controls replacement. Outputs: Publishes the verified file or throws without partially publishing target bytes.
+void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry, const std::filesystem::path& target,
+                             bool overwrite) {
     if (entry.payload_offset > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         throw ArchiveError("AR payload offset is too large to seek safely");
     }
@@ -450,10 +435,12 @@ void extract_ar_file_payload(
 
 }  // namespace
 
-OperationStats compress_ar(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Create a Unix AR archive from regular-file inputs.
+// Inputs: `sources` are caller-selected filesystem inputs, `output_archive` is the destination, and
+// `progress_callback` receives synchronous progress snapshots.
+// Outputs: Writes the archive and returns operation statistics, or throws on unsafe sources or I/O failure.
+OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
+                           const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto manifest = build_manifest(sources);
     std::ofstream output(output_archive, std::ios::binary);
@@ -494,11 +481,13 @@ OperationStats compress_ar(
     return stats;
 }
 
-OperationStats extract_ar(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract supported regular-file members from a Unix AR archive.
+// Inputs: `archive_path` is untrusted archive input, `destination` is the output root, `overwrite` controls final-file
+// replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Publishes validated files below `destination` and returns stats, or throws on unsafe metadata or I/O
+// failure.
+OperationStats extract_ar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                          bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto scanned = scan_ar(archive_path);
     std::filesystem::create_directories(destination);

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Optional one-off authorized Greenbone/OpenVAS target
+        description: Optional one-off Greenbone/OpenVAS target request for broker authorization
         required: false
         default: ""
         type: string
@@ -141,7 +141,7 @@ jobs:
               "host": get("greenbone_host"),
               "username": get("greenbone_username"),
               "password": get("greenbone_password"),
-              "target": os.environ.get("GREENBONE_TARGET_INPUT") or get("greenbone_target"),
+              "target": get("greenbone_target"),
               "port": get("greenbone_port", "9390"),
               "max_minutes": get("greenbone_max_minutes", "180"),
               "delete_task": get("greenbone_delete_task", "true"),
@@ -239,11 +239,11 @@ jobs:
           print("Greenbone/OpenVAS reported zero critical, high, medium, or low vulnerabilities.")
           PY
       - name: Vulnetix health check
-        uses: Vulnetix/cli@7b1ca5050e6d55a0fa29752b5e779018a5f2aa5f # v3.21.0
+        uses: Vulnetix/cli@bcfaca703d9c893a97d0a8e584ebd5b0070b109a # v3.32.0
         with:
           org-id: ${{ steps.config.outputs.vulnetix_org_id }}
       - name: Upload OpenVAS artifacts to Vulnetix
-        uses: Vulnetix/cli@7b1ca5050e6d55a0fa29752b5e779018a5f2aa5f # v3.21.0
+        uses: Vulnetix/cli@bcfaca703d9c893a97d0a8e584ebd5b0070b109a # v3.32.0
         with:
           org-id: ${{ steps.config.outputs.vulnetix_org_id }}
           task: upload

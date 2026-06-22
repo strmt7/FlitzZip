@@ -59,6 +59,10 @@ the Security tab, released artifacts, or the product UI again.
 - Release notes must not repeat the GitHub release title as a Markdown H1.
   `tools\verify_change_hygiene.ps1` and `tools\security_scan.ps1` reject the
   generated-notes pattern that caused the release title to render twice.
+- Greenbone/OpenVAS manual target input is a broker authorization request, not
+  the effective scan target. `tools\verify_change_hygiene.ps1` and
+  `tools\security_scan.ps1` reject workflow edits that let workflow-dispatch
+  target text bypass the OIDC broker's returned `greenbone_target`.
 - Archive-format GUI labels must keep exactly one visible extension per create
   selector row and must be backed by the core extension registry. Focused C++
   tests reject grouped visible alias labels while still allowing engineering

@@ -3,6 +3,7 @@
 #include "bzip2/bzip2_stream.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -32,16 +33,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
         throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
     }
     return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
 }
 
 // Purpose: Derive a safe single output entry name from the archive filename.
@@ -187,7 +178,8 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
             const auto bytes_read = static_cast<std::size_t>(input.gcount());
             if (bytes_read > 0U) {
-                checked_add_bytes(output_size, static_cast<std::uint64_t>(bytes_read), "Bzip2 output");
+                output_size = checked_add_extracted_output_bytes(output_size, static_cast<std::uint64_t>(bytes_read),
+                                                                 "Bzip2 output");
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
                     throw ArchiveError("failed to write Bzip2 extraction target: " + target.string());

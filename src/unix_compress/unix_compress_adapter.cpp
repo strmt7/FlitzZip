@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -46,16 +47,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
         throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
     }
     return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
 }
 
 // Purpose: Write all bytes in a buffer to a binary stream.
@@ -350,7 +341,8 @@ std::vector<unsigned char> expand_code(std::uint32_t code, std::uint32_t next_co
 // Inputs: `output` is the temporary file, `bytes` is the decoded sequence, and `output_size` is updated.
 // Outputs: Writes all bytes or throws on output failure/overflow.
 void write_output_sequence(std::ofstream& output, std::span<const unsigned char> bytes, std::uint64_t& output_size) {
-    checked_add_bytes(output_size, static_cast<std::uint64_t>(bytes.size()), "Unix Compress output");
+    output_size = checked_add_extracted_output_bytes(output_size, static_cast<std::uint64_t>(bytes.size()),
+                                                     "Unix Compress output");
     write_exact(output, bytes);
 }
 

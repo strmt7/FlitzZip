@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -50,16 +51,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
     return static_cast<std::uint64_t>(size);
 }
 
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
-}
-
 // Purpose: Write one complete line to a Base64 output stream.
 // Inputs: `output` is the destination stream and `line` excludes the trailing newline.
 // Outputs: Appends `line` plus LF or throws on stream failure.
@@ -77,9 +68,7 @@ void write_base64_line(std::ofstream& output, const std::string& line) {
 bool read_base64_line(std::ifstream& input, std::string& line) {
     line.clear();
     std::istream::int_type next = std::char_traits<char>::eof();
-    while (!std::char_traits<char>::eq_int_type(
-        (next = input.get()),
-        std::char_traits<char>::eof())) {
+    while (!std::char_traits<char>::eq_int_type((next = input.get()), std::char_traits<char>::eof())) {
         const auto byte = static_cast<unsigned char>(std::char_traits<char>::to_char_type(next));
         if (byte == static_cast<unsigned char>('\n')) {
             if (!line.empty() && line.back() == '\r') {
@@ -108,9 +97,7 @@ bool read_base64_line(std::ifstream& input, std::string& line) {
 // Inputs: `line` is a bounded text line.
 // Outputs: Returns true when all characters are ASCII whitespace.
 bool is_blank_or_whitespace(const std::string& line) {
-    return std::ranges::all_of(line, [](unsigned char ch) {
-        return std::isspace(ch) != 0;
-    });
+    return std::ranges::all_of(line, [](unsigned char ch) { return std::isspace(ch) != 0; });
 }
 
 // Purpose: Encode up to three bytes into one Base64 quantum.
@@ -186,8 +173,8 @@ bool decode_base64_quantum(const std::array<char, 4>& quad, std::vector<unsigned
 }
 
 // Purpose: Feed one Base64 payload character into the streaming decoder.
-// Inputs: `state` tracks the current quantum, `ch` is an encoded or padding character, and `decoded` receives completed bytes.
-// Outputs: Mutates decoder state and decoded output; throws on non-canonical data after padding.
+// Inputs: `state` tracks the current quantum, `ch` is an encoded or padding character, and `decoded` receives completed
+// bytes. Outputs: Mutates decoder state and decoded output; throws on non-canonical data after padding.
 void feed_base64_char(Base64DecodeState& state, char ch, std::vector<unsigned char>& decoded) {
     if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
         return;
@@ -274,26 +261,30 @@ Base64Header read_base64_header_or_reset(std::ifstream& input, const std::filesy
         if (!read_base64_line(input, line)) {
             input.clear();
             input.seekg(0, std::ios::beg);
-            return Base64Header{.entry_name = raw_base64_output_name(archive_path), .lines_consumed = 0, .wrapped = false};
+            return Base64Header{
+                .entry_name = raw_base64_output_name(archive_path), .lines_consumed = 0, .wrapped = false};
         }
         if (line.starts_with("begin-base64 ")) {
-            return Base64Header{.entry_name = parse_begin_base64_line(line), .lines_consumed = line_index, .wrapped = true};
+            return Base64Header{
+                .entry_name = parse_begin_base64_line(line), .lines_consumed = line_index, .wrapped = true};
         }
         if (line.starts_with("begin-base64-encoded ")) {
-            return Base64Header{.entry_name = parse_begin_base64_line(line), .lines_consumed = line_index, .wrapped = true};
+            return Base64Header{
+                .entry_name = parse_begin_base64_line(line), .lines_consumed = line_index, .wrapped = true};
         }
         if (line_index == 1U && position == std::ifstream::pos_type(0) && !line.empty()) {
             input.clear();
             input.seekg(0, std::ios::beg);
-            return Base64Header{.entry_name = raw_base64_output_name(archive_path), .lines_consumed = 0, .wrapped = false};
+            return Base64Header{
+                .entry_name = raw_base64_output_name(archive_path), .lines_consumed = 0, .wrapped = false};
         }
     }
     throw ArchiveError("Base64 preamble exceeds SuperZip metadata limit");
 }
 
 // Purpose: Decode a Base64 stream body to an already-open temporary file.
-// Inputs: `input` is positioned at payload start, `header` defines raw/wrapper mode, and `output` is the destination temp stream.
-// Outputs: Returns decoded byte count; throws on malformed payload, missing trailer, or output failure.
+// Inputs: `input` is positioned at payload start, `header` defines raw/wrapper mode, and `output` is the destination
+// temp stream. Outputs: Returns decoded byte count; throws on malformed payload, missing trailer, or output failure.
 std::uint64_t decode_base64_body(std::ifstream& input, const Base64Header& header, std::ofstream& output) {
     std::string line;
     std::vector<unsigned char> decoded;
@@ -314,7 +305,8 @@ std::uint64_t decode_base64_body(std::ifstream& input, const Base64Header& heade
             if (!output) {
                 throw ArchiveError("failed to write Base64 extraction target");
             }
-            checked_add_bytes(output_size, decoded.size(), "Base64 output");
+            output_size = checked_add_extracted_output_bytes(output_size, static_cast<std::uint64_t>(decoded.size()),
+                                                             "Base64 output");
         }
     }
     finish_base64_decode(state);
@@ -333,18 +325,20 @@ std::uint64_t decode_base64_body(std::ifstream& input, const Base64Header& heade
 
 }  // namespace
 
-OperationStats compress_base64_file(
-    const std::filesystem::path& source_file,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Encode one regular file as a wrapped Base64 compatibility stream.
+// Inputs: `source_file` is the regular-file input, `output_archive` is the destination, and `progress_callback`
+// receives synchronous progress snapshots.
+// Outputs: Writes the encoded stream and returns stats, or throws on unsafe source/output overlap or I/O failure.
+OperationStats compress_base64_file(const std::filesystem::path& source_file,
+                                    const std::filesystem::path& output_archive,
+                                    const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
         throw ArchiveError("Base64 compression requires one regular file: " + source_file.string());
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
-        std::filesystem::equivalent(source_file, output_archive, equivalent_error) &&
-        !equivalent_error) {
+        std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
         throw SecurityError("refusing to overwrite the Base64 source file: " + output_archive.string());
     }
 
@@ -410,21 +404,25 @@ OperationStats compress_base64_file(
     return stats;
 }
 
-OperationStats compress_base64(
-    const std::vector<std::filesystem::path>& sources,
-    const std::filesystem::path& output_archive,
-    const ProgressCallback& progress_callback) {
+// Purpose: Validate Base64 create shape and dispatch single-file encoding.
+// Inputs: `sources` must contain exactly one regular file, `output_archive` is the destination, and
+// `progress_callback` receives synchronous progress snapshots.
+// Outputs: Returns encode stats or throws when the source set is incompatible.
+OperationStats compress_base64(const std::vector<std::filesystem::path>& sources,
+                               const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     if (sources.size() != 1U) {
         throw ArchiveError("Base64 compatibility requires exactly one regular-file source");
     }
     return compress_base64_file(sources.front(), output_archive, progress_callback);
 }
 
-OperationStats extract_base64_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Decode one Base64 compatibility stream into a verified output file.
+// Inputs: `archive_path` is the encoded stream, `destination` is the extraction root, `overwrite` controls final-file
+// replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Publishes the decoded file below `destination` and returns stats, or throws on malformed data or unsafe
+// path.
+OperationStats extract_base64_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                   bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);

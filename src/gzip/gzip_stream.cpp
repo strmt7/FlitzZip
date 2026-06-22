@@ -1,5 +1,6 @@
 #include "gzip/gzip_stream.hpp"
 
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -456,7 +457,7 @@ class GzipInputStream::Buffer final : public std::streambuf {
             const auto produced = output_buffer_.size() - stream_.avail_out;
             if (produced > 0U) {
                 crc32_ = static_cast<std::uint32_t>(mz_crc32(crc32_, output_buffer_.data(), produced));
-                checked_add_stream_bytes(output_bytes_, produced, "Gzip output");
+                output_bytes_ = checked_add_extracted_output_bytes(output_bytes_, produced, "Gzip output");
                 setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
                      reinterpret_cast<char*>(output_buffer_.data() + produced));
                 return;

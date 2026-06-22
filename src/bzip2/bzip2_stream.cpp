@@ -1,5 +1,6 @@
 #include "bzip2/bzip2_stream.hpp"
 
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -336,7 +337,7 @@ class Bzip2InputStream::Buffer final : public std::streambuf {
                 finish_stream();
             }
             if (produced > 0U) {
-                checked_add_stream_bytes(output_bytes_, produced, "Bzip2 output");
+                output_bytes_ = checked_add_extracted_output_bytes(output_bytes_, produced, "Bzip2 output");
                 setg(output_buffer_.data(), output_buffer_.data(), output_buffer_.data() + produced);
                 return;
             }

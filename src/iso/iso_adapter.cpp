@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -104,19 +105,15 @@ void seek_iso_offset(std::ifstream& input, std::uint64_t offset, const char* lab
 }
 
 // Purpose: Parse an ISO 9660 both-endian 32-bit field and require both copies to agree.
-// Inputs: `bytes` points to the little-endian field followed by its big-endian duplicate, and `name` labels diagnostics.
-// Outputs: Returns the decoded value or throws when the duplicate disagrees.
+// Inputs: `bytes` points to the little-endian field followed by its big-endian duplicate, and `name` labels
+// diagnostics. Outputs: Returns the decoded value or throws when the duplicate disagrees.
 std::uint32_t parse_iso_both_endian_u32(const unsigned char* bytes, const char* name) {
-    const std::uint32_t little =
-        static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24U);
-    const std::uint32_t big =
-        (static_cast<std::uint32_t>(bytes[4]) << 24U) |
-        (static_cast<std::uint32_t>(bytes[5]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[6]) << 8U) |
-        static_cast<std::uint32_t>(bytes[7]);
+    const std::uint32_t little = static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+                                 (static_cast<std::uint32_t>(bytes[2]) << 16U) |
+                                 (static_cast<std::uint32_t>(bytes[3]) << 24U);
+    const std::uint32_t big = (static_cast<std::uint32_t>(bytes[4]) << 24U) |
+                              (static_cast<std::uint32_t>(bytes[5]) << 16U) |
+                              (static_cast<std::uint32_t>(bytes[6]) << 8U) | static_cast<std::uint32_t>(bytes[7]);
     if (little != big) {
         throw ArchiveError(std::string("ISO both-endian field mismatch: ") + name);
     }
@@ -132,7 +129,8 @@ bool is_ascii_digit(char ch) {
 
 // Purpose: Normalize one ISO 9660 file identifier into a host-safe archive component candidate.
 // Inputs: `identifier` is the raw directory-record identifier bytes.
-// Outputs: Returns a component name with `;version` and a synthetic trailing dot removed, or a special-marker result for current/parent records.
+// Outputs: Returns a component name with `;version` and a synthetic trailing dot removed, or a special-marker result
+// for current/parent records.
 std::pair<std::string, bool> normalize_iso_identifier(std::span<const unsigned char> identifier) {
     if (identifier.size() == 1U && identifier[0] == 0U) {
         return {".", true};
@@ -208,13 +206,10 @@ std::uint64_t validate_iso_extent(std::uint32_t extent_sector, std::uint32_t dat
 }
 
 // Purpose: Read a bounded ISO extent into memory for directory parsing.
-// Inputs: `input` is the ISO stream, `extent_sector`/`data_length` describe the directory extent, and `archive_size` bounds reads.
-// Outputs: Returns the directory bytes or throws on truncation/resource-limit violations.
-std::vector<unsigned char> read_iso_directory_extent(
-    std::ifstream& input,
-    std::uint32_t extent_sector,
-    std::uint32_t data_length,
-    std::uint64_t archive_size) {
+// Inputs: `input` is the ISO stream, `extent_sector`/`data_length` describe the directory extent, and `archive_size`
+// bounds reads. Outputs: Returns the directory bytes or throws on truncation/resource-limit violations.
+std::vector<unsigned char> read_iso_directory_extent(std::ifstream& input, std::uint32_t extent_sector,
+                                                     std::uint32_t data_length, std::uint64_t archive_size) {
     if (data_length > kMaxArchiveIndexBytes) {
         throw ArchiveError("ISO directory extent exceeds SuperZip metadata limits");
     }
@@ -251,10 +246,8 @@ std::string join_iso_archive_path(const std::string& parent, const std::string& 
 IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t archive_size) {
     std::array<unsigned char, kIsoSectorBytes> descriptor{};
     for (std::uint64_t ordinal = 0; ordinal < kIsoMaxVolumeDescriptors; ++ordinal) {
-        const auto sector = checked_add_iso_bytes(
-            kIsoPrimaryVolumeDescriptorSector,
-            ordinal,
-            "ISO volume descriptor sector overflow");
+        const auto sector =
+            checked_add_iso_bytes(kIsoPrimaryVolumeDescriptorSector, ordinal, "ISO volume descriptor sector overflow");
         const auto offset = checked_mul_iso_bytes(sector, kIsoSectorBytes, "ISO volume descriptor offset overflow");
         if (checked_add_iso_bytes(offset, kIsoSectorBytes, "ISO volume descriptor end overflow") > archive_size) {
             break;
@@ -262,7 +255,8 @@ IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t arch
         seek_iso_offset(input, offset, "ISO volume descriptor");
         read_exact(input, reinterpret_cast<char*>(descriptor.data()), descriptor.size(), "ISO volume descriptor");
         if (std::string_view(reinterpret_cast<const char*>(descriptor.data() + 1U), kIsoStandardIdentifier.size()) !=
-            kIsoStandardIdentifier || descriptor[6] != 1U) {
+                kIsoStandardIdentifier ||
+            descriptor[6] != 1U) {
             continue;
         }
         if (descriptor[0] == kIsoVolumeDescriptorPrimary) {
@@ -271,9 +265,7 @@ IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t arch
                 throw ArchiveError("ISO root directory record length is invalid");
             }
             auto root = parse_iso_directory_record(
-                std::span<const unsigned char>(
-                    descriptor.data() + kIsoDirectoryRecordRootOffset,
-                    record_length),
+                std::span<const unsigned char>(descriptor.data() + kIsoDirectoryRecordRootOffset, record_length),
                 "ISO root directory");
             if (!root.directory) {
                 throw ArchiveError("ISO root directory record is not a directory");
@@ -289,7 +281,8 @@ IsoDirectoryRecord read_iso_root_record(std::ifstream& input, std::uint64_t arch
 
 // Purpose: Scan a full ISO image and validate metadata before extraction.
 // Inputs: `archive_path` is the ISO file to parse.
-// Outputs: Returns trusted extraction metadata; throws on malformed records, unsafe paths, duplicates, or unsupported layout.
+// Outputs: Returns trusted extraction metadata; throws on malformed records, unsafe paths, duplicates, or unsupported
+// layout.
 IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
     const auto archive_size = std::filesystem::file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -315,7 +308,8 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             throw ArchiveError("ISO image contains too many directories");
         }
         const auto directory = pending[directory_index];
-        const auto bytes = read_iso_directory_extent(input, directory.extent_sector, directory.data_length, archive_size);
+        const auto bytes =
+            read_iso_directory_extent(input, directory.extent_sector, directory.data_length, archive_size);
         std::size_t offset = 0;
         while (offset < bytes.size()) {
             const auto record_length = static_cast<std::size_t>(bytes[offset]);
@@ -358,10 +352,8 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
                     .data_length = record.data_length,
                 });
             } else {
-                result.total_file_bytes = checked_add_iso_bytes(
-                    result.total_file_bytes,
-                    record.data_length,
-                    "ISO extracted payload byte count overflow");
+                result.total_file_bytes = checked_add_extracted_output_bytes(
+                    result.total_file_bytes, record.data_length, "ISO extracted payload");
             }
         }
     }
@@ -371,13 +363,10 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Copy a validated ISO file payload into a temporary output file.
-// Inputs: `input` is the ISO stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file or throws without partially publishing target bytes.
-void extract_iso_file_payload(
-    std::ifstream& input,
-    const IsoEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is the ISO stream, `entry` is trusted scan metadata, `target` is the final path, and `overwrite`
+// controls replacement. Outputs: Publishes the verified file or throws without partially publishing target bytes.
+void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entry, const std::filesystem::path& target,
+                              bool overwrite) {
     seek_iso_offset(input, entry.payload_offset, "ISO file payload");
 
     std::filesystem::create_directories(target.parent_path());
@@ -412,11 +401,13 @@ void extract_iso_file_payload(
 
 }  // namespace
 
-OperationStats extract_iso(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract supported regular-file records from a basic ISO 9660 image.
+// Inputs: `archive_path` is untrusted image input, `destination` is the output root, `overwrite` controls final-file
+// replacement, and `progress_callback` receives synchronous progress snapshots.
+// Outputs: Publishes validated files below `destination` and returns stats, or throws on unsafe metadata or I/O
+// failure.
+OperationStats extract_iso(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto scanned = scan_iso(archive_path);
     std::filesystem::create_directories(destination);

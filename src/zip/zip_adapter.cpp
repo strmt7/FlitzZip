@@ -3,6 +3,8 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
+#include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
 #include <chrono>
@@ -13,14 +15,11 @@
 namespace superzip {
 namespace {
 
-// Purpose: Add ZIP metadata byte counters while detecting overflow.
+// Purpose: Add ZIP metadata byte counters while enforcing SuperZip's extracted-output cap.
 // Inputs: `lhs` and `rhs` are uncompressed byte counters from ZIP central directory metadata.
-// Outputs: Returns the sum or throws `ArchiveError` before wraparound.
+// Outputs: Returns the sum or throws `ArchiveError` before wraparound or resource-limit excess.
 std::uint64_t checked_add_zip_bytes(std::uint64_t lhs, std::uint64_t rhs) {
-    if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) {
-        throw ArchiveError("ZIP uncompressed size overflows");
-    }
-    return lhs + rhs;
+    return checked_add_extracted_output_bytes(lhs, rhs, "ZIP uncompressed payload");
 }
 
 }  // namespace

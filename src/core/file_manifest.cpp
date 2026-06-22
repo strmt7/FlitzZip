@@ -7,6 +7,16 @@
 #include <algorithm>
 #include <limits>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace superzip {
 namespace {
 
@@ -29,13 +39,24 @@ void add_total_file_bytes(Manifest& manifest, std::uint64_t size) {
     manifest.total_file_bytes += size;
 }
 
+#ifdef _WIN32
+// Purpose: Detect Windows reparse points before source-tree traversal can cross out of the selected root.
+// Inputs: `path` is an existing source path supplied to the archive manifest builder.
+// Outputs: Returns true for symlinks, junctions, mount points, and other reparse entries; throws on inspection failure.
+bool is_reparse_point(const std::filesystem::path& path) {
+    const DWORD attributes = GetFileAttributesW(path.wstring().c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        throw ArchiveError("cannot inspect source path attributes: " + path.string());
+    }
+    return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U;
+}
+#endif
+
 // Purpose: Recursively add one filesystem path to an archive manifest.
-// Inputs: `manifest` is mutated, `root_parent` is the base used for relative names, and `path` is the current filesystem node.
-// Outputs: Adds directory/file entries and byte totals; throws on symlinks, unsupported file types, unsafe names, or filesystem errors.
-void add_path(
-    Manifest& manifest,
-    const std::filesystem::path& root_parent,
-    const std::filesystem::path& path) {
+// Inputs: `manifest` is mutated, `root_parent` is the base used for relative names, and `path` is the current
+// filesystem node. Outputs: Adds directory/file entries and byte totals; throws on symlinks, unsupported file types,
+// unsafe names, or filesystem errors.
+void add_path(Manifest& manifest, const std::filesystem::path& root_parent, const std::filesystem::path& path) {
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(path, ec);
     if (ec) {
@@ -44,6 +65,11 @@ void add_path(
     if (std::filesystem::is_symlink(status)) {
         throw SecurityError("refusing to archive symbolic link: " + path.string());
     }
+#ifdef _WIN32
+    if (is_reparse_point(path)) {
+        throw SecurityError("refusing to archive reparse point: " + path.string());
+    }
+#endif
 
     const auto relative = std::filesystem::relative(path, root_parent, ec);
     if (ec) {

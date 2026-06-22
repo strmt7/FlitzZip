@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -52,16 +53,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
     return static_cast<std::uint64_t>(size);
 }
 
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
-}
-
 // Purpose: Update the BinHex CRC-16 register with one byte using the documented bit order.
 // Inputs: `crc` is the mutable register and `byte` is the next data byte.
 // Outputs: Mutates `crc` without allocation or I/O.
@@ -104,9 +95,8 @@ std::uint32_t read_be_u32(std::span<const unsigned char> bytes, std::size_t offs
         throw ArchiveError("BinHex header is truncated");
     }
     return (static_cast<std::uint32_t>(bytes[offset]) << 24U) |
-        (static_cast<std::uint32_t>(bytes[offset + 1U]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[offset + 2U]) << 8U) |
-        static_cast<std::uint32_t>(bytes[offset + 3U]);
+           (static_cast<std::uint32_t>(bytes[offset + 1U]) << 16U) |
+           (static_cast<std::uint32_t>(bytes[offset + 2U]) << 8U) | static_cast<std::uint32_t>(bytes[offset + 3U]);
 }
 
 // Purpose: Decode one HQX alphabet character into its six-bit value.
@@ -121,21 +111,18 @@ std::uint8_t decode_hqx_six(char ch) {
 }
 
 class HqxExtractParser {
-public:
+  public:
     // Purpose: Build a parser that publishes exactly one validated data fork.
-    // Inputs: `destination` is the extraction root, `overwrite` controls target replacement, and `progress` is updated after header validation.
-    // Outputs: Initializes parser state; filesystem output is not opened until the trusted header is complete.
-    HqxExtractParser(
-        const std::filesystem::path& destination,
-        bool overwrite,
-        ProgressState& progress)
-        : destination_(destination),
-          overwrite_(overwrite),
-          progress_(progress) {}
+    // Inputs: `destination` is the extraction root, `overwrite` controls target replacement, and `progress` is updated
+    // after header validation. Outputs: Initializes parser state; filesystem output is not opened until the trusted
+    // header is complete.
+    HqxExtractParser(const std::filesystem::path& destination, bool overwrite, ProgressState& progress)
+        : destination_(destination), overwrite_(overwrite), progress_(progress) {}
 
     // Purpose: Consume one decoded and RLE-expanded BinHex byte.
     // Inputs: `byte` is one logical byte from the header, data fork, resource fork, or CRC fields.
-    // Outputs: Mutates parse state, writes only verified-length data fork bytes to a private temp file, or throws on invalid structure.
+    // Outputs: Mutates parse state, writes only verified-length data fork bytes to a private temp file, or throws on
+    // invalid structure.
     void feed(std::uint8_t byte) {
         switch (state_) {
         case HqxParseState::Header:
@@ -212,7 +199,7 @@ public:
         return output_size_;
     }
 
-private:
+  private:
     // Purpose: Consume one header byte and detect the final header metadata boundary.
     // Inputs: `byte` is a decoded header byte from untrusted input.
     // Outputs: Appends to the bounded header buffer and advances to header CRC state when complete.
@@ -291,7 +278,7 @@ private:
         }
         update_hqx_crc(data_crc_, byte);
         ++data_consumed_;
-        checked_add_bytes(output_size_, 1U, "BinHex output");
+        output_size_ = checked_add_extracted_output_bytes(output_size_, 1U, "BinHex output");
         if (data_consumed_ == data_length_) {
             state_ = HqxParseState::DataCrcHigh;
         }
@@ -355,7 +342,7 @@ private:
 };
 
 class HqxRleDecoder {
-public:
+  public:
     // Purpose: Build an RLE decoder that forwards expanded bytes to a BinHex parser.
     // Inputs: `parser` receives decoded logical bytes after RLE expansion.
     // Outputs: Initializes decoder state without taking ownership of `parser`.
@@ -385,7 +372,7 @@ public:
         }
     }
 
-private:
+  private:
     // Purpose: Consume the count byte that follows an RLE marker.
     // Inputs: `count` is zero for a literal marker or a total repeat count for the previous byte.
     // Outputs: Emits the literal marker or repeated bytes, or throws when no previous byte exists.
@@ -419,7 +406,7 @@ private:
 };
 
 class HqxSixBitDecoder {
-public:
+  public:
     // Purpose: Build a six-bit HQX decoder that forwards bytes into the RLE layer.
     // Inputs: `rle` receives decoded pre-RLE bytes.
     // Outputs: Initializes group state without taking ownership of `rle`.
@@ -452,7 +439,7 @@ public:
         rle_.finish();
     }
 
-private:
+  private:
     // Purpose: Emit three decoded bytes from a full four-character HQX group.
     // Inputs: Uses `sextets_`, which must contain four values.
     // Outputs: Forwards three bytes to the RLE decoder.
@@ -476,7 +463,8 @@ bool is_hqx_whitespace(unsigned char byte) {
 
 // Purpose: Scan to the required BinHex 4.0 comment and payload-start colon.
 // Inputs: `input` is positioned at stream start.
-// Outputs: Leaves `input` positioned immediately after the payload-start colon, or throws on missing/malformed preamble.
+// Outputs: Leaves `input` positioned immediately after the payload-start colon, or throws on missing/malformed
+// preamble.
 void seek_hqx_payload_start(std::ifstream& input) {
     std::size_t matched = 0;
     for (std::size_t scanned = 0; scanned < kMaxHqxPreambleBytes; ++scanned) {
@@ -553,13 +541,11 @@ void decode_hqx_payload(std::ifstream& input, HqxExtractParser& parser) {
 }  // namespace
 
 // Purpose: Extract the data fork from one BinHex 4.0 `.hqx` stream with path-safe publication.
-// Inputs: `archive_path` is the `.hqx` stream, `destination` is the extraction root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns operation statistics; throws on malformed HQX text, CRC mismatch, unsafe header path, refused overwrite, or verified-file publication failure.
-OperationStats extract_hqx_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is the `.hqx` stream, `destination` is the extraction root, `overwrite` controls replacement,
+// and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics; throws on
+// malformed HQX text, CRC mismatch, unsafe header path, refused overwrite, or verified-file publication failure.
+OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);

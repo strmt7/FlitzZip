@@ -83,6 +83,26 @@ function Assert-ReleaseReplacementSafeguard {
     }
 }
 
+# Purpose: Verify Greenbone/OpenVAS workflow-dispatch input cannot bypass broker target authorization.
+# Inputs: Reads the live Greenbone workflow from the repository.
+# Outputs: Throws when the effective scan target can come directly from workflow input.
+function Assert-GreenboneTargetBrokerAuthorization {
+    $workflow = Join-Path $repo ".github\workflows\greenbone-openvas-live.yml"
+    if (-not (Test-Path -LiteralPath $workflow)) {
+        return
+    }
+    $text = Get-Content -LiteralPath $workflow -Raw
+    if ($text -notmatch [regex]::Escape('"target_input": os.environ.get("GREENBONE_TARGET_INPUT", "")')) {
+        throw "Greenbone workflow must pass manual target text only as a broker authorization request."
+    }
+    if ($text -notmatch [regex]::Escape('"target": get("greenbone_target")')) {
+        throw "Greenbone workflow must use the broker-returned greenbone_target as the effective scan target."
+    }
+    if ($text -match '"target"\s*:\s*os\.environ\.get\("GREENBONE_TARGET_INPUT"') {
+        throw "Greenbone workflow must not let workflow_dispatch target input bypass broker authorization."
+    }
+}
+
 # Purpose: Verify release notes do not duplicate the GitHub release title as a Markdown H1.
 # Inputs: Reads the composite release action that generates `out\release-notes.md`.
 # Outputs: Throws when the generated notes would repeat the release title inside the body.
@@ -260,6 +280,7 @@ function Test-WorkflowSecurityPolicy {
     }
 
     Assert-ReleaseReplacementSafeguard
+    Assert-GreenboneTargetBrokerAuthorization
     Assert-ReleaseNotesDoNotDuplicateTitle
     Assert-ReleaseDocUseVersionPlaceholder
 }

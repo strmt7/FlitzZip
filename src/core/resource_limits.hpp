@@ -24,6 +24,7 @@ constexpr std::uint64_t kMaxArchiveIndexBytes = 256ULL * 1024ULL * 1024ULL;
 // Host and device memory policy keeps SuperZip below resource-exhaustion thresholds.
 constexpr std::uint32_t kHostMemoryTargetUsagePercent = 80U;
 constexpr std::uint64_t kMaxPipelineMemoryBytes = 64ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t kMaxExtractedOutputBytes = kMaxPipelineMemoryBytes;
 constexpr std::uint64_t kDeviceMemoryReserveFloorBytes = 64ULL * 1024ULL * 1024ULL;
 
 // GPU pattern blocks store only short repeating motifs found by the HIP classifier.

@@ -32,10 +32,17 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Do not persist GitHub tokens in remotes or config. Use short-lived authentication only for a single push.
 - Do not use WSL for this project unless a maintainer explicitly asks. The supported development path is Windows-native PowerShell, CMake, MSVC, and optional AMD ROCm/HIP.
 - Do not launch the GUI during automated verification unless the task explicitly requires visual testing. Prefer CLI tests and static inspection.
-- AI agents must operate as a single agent for this repository. Do not spawn,
-  fork, delegate to, or otherwise fan out subagents, worker agents, or parallel
-  model-review threads for SuperZip work unless the maintainer explicitly
-  reverses this rule for a specific task. When a tool or skill recommends
+- AI agents must operate as a single agent for this repository by default. Do
+  not spawn, fork, delegate to, or otherwise fan out subagents, worker agents,
+  or parallel model-review threads for SuperZip work unless the maintainer
+  explicitly reverses this rule for a specific task. The only standing
+  exception is the Codex Security vulnerability scanner: use its subagents only
+  on demand, only when the maintainer explicitly invokes a Codex Security scan
+  phase that genuinely requires delegated workers or explicitly authorizes them
+  for that scan, and use the minimum worker count needed to satisfy that
+  scanner workflow. Because multi-worker security scans consume tokens quickly,
+  prefer the one-worker or serial Codex Security path whenever the installed
+  plugin can run it honestly. When any other tool or skill recommends
   subagents, run the same review serially in the current agent and document any
   plugin mode that could not be used because of this maintainer policy.
 - SuperZip-owned secondary windows, confirmations, prompts, and modal surfaces

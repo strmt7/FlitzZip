@@ -1,6 +1,6 @@
 #include "xz/xz_stream.hpp"
 
-#include "core/resource_limits.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -88,7 +88,7 @@ void checked_add_stream_bytes(std::uint64_t& total, std::uint64_t bytes, const c
 }  // namespace
 
 class XzInputStream::Buffer final : public std::streambuf {
-public:
+  public:
     explicit Buffer(const std::filesystem::path& archive_path)
         : input_(archive_path, std::ios::binary), archive_size_(xz_file_size(archive_path)) {
         if (!input_) {
@@ -105,10 +105,8 @@ public:
         buffer_.out = output_buffer_.data();
         buffer_.out_pos = 0;
         buffer_.out_size = output_buffer_.size();
-        setg(
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()));
+        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+             reinterpret_cast<char*>(output_buffer_.data()));
     }
 
     ~Buffer() override {
@@ -123,10 +121,8 @@ public:
     // Outputs: Throws when the XZ stream is incomplete, corrupt, or exceeds limits.
     void finish() {
         while (!finished_) {
-            setg(
-                reinterpret_cast<char*>(output_buffer_.data()),
-                reinterpret_cast<char*>(output_buffer_.data()),
-                reinterpret_cast<char*>(output_buffer_.data()));
+            setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+                 reinterpret_cast<char*>(output_buffer_.data()));
             fill_output();
         }
     }
@@ -145,15 +141,13 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type underflow() override {
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
         }
-        setg(
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()));
+        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+             reinterpret_cast<char*>(output_buffer_.data()));
         fill_output();
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
@@ -161,7 +155,7 @@ protected:
         return traits_type::eof();
     }
 
-private:
+  private:
     // Purpose: Load another bounded compressed input chunk when the decoder has consumed the current one.
     // Inputs: None.
     // Outputs: Updates the XZ input buffer; marks source completion after a real EOF read.
@@ -199,11 +193,9 @@ private:
             const auto consumed = buffer_.in_pos - before_in;
             const auto produced = buffer_.out_pos;
             if (produced > 0U) {
-                checked_add_stream_bytes(output_bytes_, produced, "XZ output");
-                setg(
-                    reinterpret_cast<char*>(output_buffer_.data()),
-                    reinterpret_cast<char*>(output_buffer_.data()),
-                    reinterpret_cast<char*>(output_buffer_.data() + produced));
+                output_bytes_ = checked_add_extracted_output_bytes(output_bytes_, produced, "XZ output");
+                setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+                     reinterpret_cast<char*>(output_buffer_.data() + produced));
                 if (status == XZ_STREAM_END) {
                     finished_ = true;
                 }

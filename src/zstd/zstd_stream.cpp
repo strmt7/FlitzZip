@@ -1,5 +1,6 @@
 #include "zstd/zstd_stream.hpp"
 
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 #include "zstd/zstd_runtime.hpp"
 
@@ -306,7 +307,7 @@ class ZstdInputStream::Buffer final : public std::streambuf {
                 frame_complete_ = false;
             }
             if (output.pos > 0U) {
-                checked_add_stream_bytes(output_bytes_, output.pos, "Zstandard output");
+                output_bytes_ = checked_add_extracted_output_bytes(output_bytes_, output.pos, "Zstandard output");
                 setg(output_buffer_.data(), output_buffer_.data(), output_buffer_.data() + output.pos);
                 return;
             }
