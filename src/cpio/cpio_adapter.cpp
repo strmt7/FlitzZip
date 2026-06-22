@@ -65,16 +65,6 @@ struct CpioScanResult {
     std::uint64_t total_file_bytes = 0;
 };
 
-// Purpose: Add two CPIO byte counters while detecting unsigned wraparound.
-// Inputs: `lhs` and `rhs` are byte counters and `message` labels the failing operation.
-// Outputs: Returns the sum or throws `ArchiveError` before wraparound.
-std::uint64_t checked_add_cpio_bytes(std::uint64_t lhs, std::uint64_t rhs, const char* message) {
-    if (rhs > std::numeric_limits<std::uint64_t>::max() - lhs) {
-        throw ArchiveError(message);
-    }
-    return lhs + rhs;
-}
-
 // Purpose: Return the number of bytes needed to align a CPIO section.
 // Inputs: `size` is the current unaligned byte count.
 // Outputs: Returns a value in `[0, 3]`.

@@ -1,8 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <stdexcept>
@@ -99,8 +99,12 @@ inline bool try_create_test_directory_junction(const std::filesystem::path& junc
     reparse->substitute_name_length = substitute_bytes;
     reparse->print_name_offset = print_offset;
     reparse->print_name_length = print_bytes;
-    std::memcpy(reparse->path_buffer, substitute_name.data(), substitute_bytes);
-    std::memcpy(reinterpret_cast<unsigned char*>(reparse->path_buffer) + print_offset, print_name.data(), print_bytes);
+    std::copy(substitute_name.begin(), substitute_name.end(), reparse->path_buffer);
+    reparse->path_buffer[substitute_name.size()] = L'\0';
+    auto* print_target =
+        reinterpret_cast<wchar_t*>(reinterpret_cast<unsigned char*>(reparse->path_buffer) + print_offset);
+    std::copy(print_name.begin(), print_name.end(), print_target);
+    print_target[print_name.size()] = L'\0';
 
     const auto junction_text = junction.wstring();
     HANDLE handle = CreateFileW(junction_text.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
