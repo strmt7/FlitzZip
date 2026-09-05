@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/dropdown_layout.hpp"
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
 #include "app/queue_metadata.hpp"
@@ -677,6 +678,18 @@ class MainWindow {
     // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
     // Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
     [[nodiscard]] RECT dropdown_menu_rect(DropdownId id, const RECT& content) const;
+
+    // Purpose: Share popup rows and scrolling geometry; inputs: dropdown and viewport; outputs: bounded layout.
+    [[nodiscard]] DropdownLayout dropdown_layout(DropdownId id, const RECT& content) const;
+
+    // Purpose: Reveal keyboard selection; inputs: active dropdown; outputs: updates bounded scroll offset.
+    void reveal_dropdown_selection(DropdownId id);
+
+    // Purpose: Scroll the active popup; inputs: dropdown and row delta; outputs: updates offset and repaint.
+    void scroll_dropdown_rows(DropdownId id, int rows);
+
+    // Purpose: Paint popup scroll arrows; inputs: DC and shared layout; outputs: native clickable arrow bands.
+    void draw_dropdown_scroll_arrows(HDC dc, const DropdownLayout& layout);
 
     // Purpose: Draw the permanent content accent rule.
     // Inputs: `dc` is the target and `rect` is the content area.
@@ -1446,6 +1459,8 @@ class MainWindow {
     std::array<std::wstring, 2> cached_license_notices_text_;
     int keyboard_focus_index_ = 0;
     int dropdown_keyboard_index_ = -1;
+    int dropdown_scroll_first_row_ = 0;
+    int dropdown_wheel_delta_remainder_ = 0;
     int modal_focus_index_ = 1;
     int license_notices_tab_index_ = 0;
     int license_notices_scroll_pixels_ = 0;

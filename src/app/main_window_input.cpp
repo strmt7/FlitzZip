@@ -501,6 +501,18 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
         }
         return 0;
     }
+    if (state.active_dropdown != DropdownId::None) {
+        const auto layout = dropdown_layout(state.active_dropdown, content_rect());
+        if (contains_point(layout.menu, point.x, point.y)) {
+            dropdown_wheel_delta_remainder_ += GET_WHEEL_DELTA_WPARAM(wparam);
+            const int steps = dropdown_wheel_delta_remainder_ / WHEEL_DELTA;
+            dropdown_wheel_delta_remainder_ %= WHEEL_DELTA;
+            if (steps != 0) {
+                scroll_dropdown_rows(state.active_dropdown, -steps * 3);
+            }
+        }
+        return 0;
+    }
     if (state.page == Page::Queue && !state.queued_paths.empty()) {
         const auto layout = queue_layout(content_rect());
         if (!contains_point(layout.table, point.x, point.y) ||

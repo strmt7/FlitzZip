@@ -95,7 +95,11 @@ window does not fit a 1080p work area. DPI awareness alone does not establish
 small-screen compatibility. A responsive all-page layout and corresponding
 mouse/keyboard tests are still required before removing this limitation; the
 application must not claim arbitrary display-size support based on the existing
-single-size GUI smoke.
+startup sizing. Compact form geometry is now tested from 960 by 600 DIPs at
+100%-300% DPI, and GUI smoke captures all eight compact pages at the actual
+host DPI without modifying monitor settings. Startup work-area fitting,
+cross-monitor transitions, and compact secondary-dialog coverage remain
+separate requirements before releasing adaptive window sizing.
 
 ## User Data
 

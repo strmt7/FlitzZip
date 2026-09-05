@@ -1,7 +1,8 @@
 param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Configuration = "Release",
-    [string]$ScreenshotPath = ""
+    [string]$ScreenshotPath = "",
+    [switch]$CompactOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -456,6 +457,117 @@ function Assert-HistoryScrollEndpoint {
     Write-Information "History overflow endpoints passed: wheel, track click, and thumb drag." -InformationAction Continue
 }
 
+# Purpose: Verify compact popup scrolling through real selection and persistence.
+# Inputs: Handle/Dpi identify a 960x600-DIP smoke window; SettingsPath is isolated storage; BasePath names screenshots.
+# Outputs: Returns menu captures and fails when wheel, scroll arrows, or keyboard cannot select the last format.
+function Assert-CompactFormatMenu {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    foreach ($method in @('Wheel', 'Arrow', 'Keyboard')) {
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 218 -Synchronous
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 218 -Synchronous
+        if ($method -eq 'Wheel') {
+            Invoke-ClientWheel -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 300 -Delta -1200
+        } elseif ($method -eq 'Arrow') {
+            foreach ($click in 1..3) {
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 540 -Synchronous
+            }
+        } else {
+            Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+        }
+        Start-Sleep -Milliseconds 200
+        Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-Format-$method$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        if ($method -eq 'Keyboard') {
+            Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        } else {
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 515 -Synchronous
+        }
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+        $length = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
+        Assert-SettingsValue -Path $SettingsPath -Name 'compressionFormatIndex' -Expected 18
+    }
+}
+
+# Purpose: Exercise form reflow without changing host resolution or monitor DPI.
+# Inputs: Handle/Dpi identify the owned smoke window; SettingsPath is isolated storage; BasePath names captures.
+# Outputs: Returns compact screenshots, verifies persisted controls, and restores the original client size in finally.
+function Assert-CompactFormLayout {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    $window = New-Object SuperZipNativeUi+RECT
+    $client = New-Object SuperZipNativeUi+RECT
+    if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
+        -not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client)) { throw 'Cannot inspect smoke viewport.' }
+    $oldWidth = $window.Right - $window.Left
+    $oldHeight = $window.Bottom - $window.Top
+    $width = [int][Math]::Round(960 * $Dpi / 96.0)
+    $height = [int][Math]::Round(600 * $Dpi / 96.0)
+    $baselineJson = Get-Content -Raw -LiteralPath $SettingsPath
+    $baseline = $baselineJson | ConvertFrom-Json
+    try {
+        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
+            ($width + $oldWidth - $client.Right), ($height + $oldHeight - $client.Bottom), 0x0006)) {
+            throw 'Cannot resize the owned smoke window.'
+        }
+        if (-not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+            $client.Right -ne $width -or $client.Bottom -ne $height) { throw 'Compact client dimensions mismatch.' }
+        $names = @('Queue', 'Compress', 'Extract', 'Security', 'History', 'System', 'Settings', 'About')
+        foreach ($index in 0..7) {
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex $index -Synchronous
+            Start-Sleep -Milliseconds 150
+            Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-$($names[$index])$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        }
+        Assert-CompactFormatMenu -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -BasePath $BasePath -Extension $Extension
+        $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 440 -Synchronous
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+        $length = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
+        Assert-SettingsValue -Path $SettingsPath -Name 'confirmBeforeDeleting' -Expected (-not $original.confirmBeforeDeleting)
+        Assert-SettingsValue -Path $SettingsPath -Name 'logRetentionIndex' -Expected 0
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 440 -Synchronous
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        for ($row = 0; $row -lt $baseline.logRetentionIndex; ++$row) {
+            Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
+        }
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        $length = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 300 -DesignY 218 -Synchronous
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        for ($row = 0; $row -lt $baseline.compressionFormatIndex; ++$row) {
+            Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
+        }
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+        $length = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
+        if ((Get-Content -Raw -LiteralPath $SettingsPath) -cne $baselineJson) {
+            throw 'Compact smoke did not restore the original applied settings.'
+        }
+        Write-Information 'Compact forms and popup selections passed at the actual host DPI.' -InformationAction Continue
+    } finally {
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x1B
+        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $oldWidth, $oldHeight, 0x0006)) {
+            throw 'Cannot restore the owned smoke window dimensions.'
+        }
+    }
+}
+
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
 $smokeDestination = Join-Path $smokeRoot "SuperZip-destination"
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
@@ -549,6 +661,12 @@ try {
     $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
     $extension = [System.IO.Path]::GetExtension($ScreenshotPath)
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $ScreenshotPath
+
+    if ($CompactOnly) {
+        $captures += Assert-CompactFormLayout -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
+        $captures | Format-Table -AutoSize
+        return
+    }
 
     # Queue header actions: exercise Add files, Add folder, and Clear without modal dialogs.
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91
@@ -926,6 +1044,7 @@ try {
     Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile
 
     $captures += Assert-HistoryScrollEndpoint -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
+    $captures += Assert-CompactFormLayout -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
 
     for ($index = 0; $index -lt $pageNames.Count; ++$index) {
         Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex $index

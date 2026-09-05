@@ -74,6 +74,10 @@ public static class SuperZipNativeUi {
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
+        uint flags, uint timeout, out UIntPtr result);
+
     [DllImport("user32.dll")]
     public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
 
@@ -192,35 +196,43 @@ function ConvertTo-MouseLParam {
 
 # Purpose: Click one sidebar navigation item in the SuperZip window.
 # Inputs: `Handle` is the SuperZip HWND, `Dpi` is the window DPI, and `PageIndex` is zero-based.
-# Outputs: Posts left-button mouse messages and lets the app route the page change.
+# Outputs: Routes a page click; Synchronous waits for processing with a bounded per-message timeout.
 function Invoke-SidebarClick {
     param(
         [IntPtr]$Handle,
         [int]$Dpi,
-        [int]$PageIndex
+        [int]$PageIndex,
+        [switch]$Synchronous
     )
-    $scale = [double]$Dpi / 96.0
-    $x = [int][Math]::Round(43 * $scale)
-    $y = [int][Math]::Round((93 + ($PageIndex * 63)) * $scale)
-    $lparam = ConvertTo-MouseLParam -X $x -Y $y
-    [void][SuperZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $lparam)
-    [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 43 -DesignY (93 + $PageIndex * 63) -Synchronous:$Synchronous
 }
 
 # Purpose: Click one client-coordinate point in the SuperZip window.
 # Inputs: `Handle` is the SuperZip HWND, `Dpi` is the window DPI, and design coordinates are 96-DPI client pixels.
-# Outputs: Posts left-button mouse messages.
+# Outputs: Posts mouse messages by default; Synchronous preserves mouse/key order with a five-second message bound.
 function Invoke-ClientClick {
     param(
         [IntPtr]$Handle,
         [int]$Dpi,
         [int]$DesignX,
-        [int]$DesignY
+        [int]$DesignY,
+        [switch]$Synchronous
     )
     $scale = [double]$Dpi / 96.0
     $x = [int][Math]::Round($DesignX * $scale)
     $y = [int][Math]::Round($DesignY * $scale)
     $lparam = ConvertTo-MouseLParam -X $x -Y $y
+    if ($Synchronous) {
+        foreach ($message in @(@(0x0201, 1), @(0x0202, 0))) {
+            $result = [UIntPtr]::Zero
+            $sent = [SuperZipNativeUi]::SendMessageTimeout($Handle, $message[0], [IntPtr]$message[1],
+                $lparam, 0x0002, 5000, [ref]$result)
+            if ($sent -eq [IntPtr]::Zero) {
+                throw "GUI mouse input failed or timed out; Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
+            }
+        }
+        return
+    }
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0201, [IntPtr]1, $lparam)
     [void][SuperZipNativeUi]::PostMessage($Handle, 0x0202, [IntPtr]::Zero, $lparam)
 }
@@ -356,7 +368,7 @@ function Test-ColorNear {
 }
 
 # Purpose: Assert that the fixed shell still has crisp, aligned structural bands.
-# Inputs: `Bitmap` is a client-area screenshot and `Dpi` is the window DPI.
+# Inputs: Bitmap/Dpi and client bounds describe the capture; ExpectedDesignWidth/Height are explicit DIP expectations.
 # Outputs: Throws when dimensions or primary separator lines drift.
 function Assert-VisualStructure {
     param(
@@ -365,11 +377,13 @@ function Assert-VisualStructure {
         [int]$ClientOffsetX,
         [int]$ClientOffsetY,
         [int]$ClientWidth,
-        [int]$ClientHeight
+        [int]$ClientHeight,
+        [int]$ExpectedDesignWidth = 1200,
+        [int]$ExpectedDesignHeight = 760
     )
     $scale = [double]$Dpi / 96.0
-    $expectedWidth = [int][Math]::Round(1200 * $scale)
-    $expectedHeight = [int][Math]::Round(760 * $scale)
+    $expectedWidth = [int][Math]::Round($ExpectedDesignWidth * $scale)
+    $expectedHeight = [int][Math]::Round($ExpectedDesignHeight * $scale)
     if ([Math]::Abs($ClientWidth - $expectedWidth) -gt 2 -or [Math]::Abs($ClientHeight - $expectedHeight) -gt 2) {
         throw "Client dimensions drifted from the fixed design grid: ${ClientWidth}x${ClientHeight}, expected about ${expectedWidth}x${expectedHeight}."
     }
@@ -379,7 +393,7 @@ function Assert-VisualStructure {
     $clientRight = $ClientOffsetX + $ClientWidth
     $topSeparatorY = [Math]::Max(0, $clientTop + [int][Math]::Round(52 * $scale) - 1)
     $railSeparatorX = [Math]::Max(0, $clientLeft + [int][Math]::Round(86 * $scale) - 1)
-    $statusSeparatorY = [Math]::Min($Bitmap.Height - 1, $clientTop + [int][Math]::Round((760 - 34) * $scale))
+    $statusSeparatorY = [Math]::Min($Bitmap.Height - 1, $clientTop + $ClientHeight - [int][Math]::Round(34 * $scale))
     $border = @{ Red = 54; Green = 72; Blue = 78 }
 
     $topMatches = 0
@@ -627,12 +641,14 @@ function Get-ValidatedScreenWindowCapture {
 }
 
 # Purpose: Capture and validate the current SuperZip window pixels.
-# Inputs: `Handle` is the SuperZip HWND and `Path` is the PNG output path.
+# Inputs: Handle/Path identify the capture; ExpectedDesignWidth/Height default to the unchanged normal client size.
 # Outputs: Writes a screenshot and returns width, height, and sampled-color metadata.
 function Save-SuperZipScreenshot {
     param(
         [IntPtr]$Handle,
-        [string]$Path
+        [string]$Path,
+        [int]$ExpectedDesignWidth = 1200,
+        [int]$ExpectedDesignHeight = 760
     )
     [SuperZipNativeUi+RECT]$rect = New-Object SuperZipNativeUi+RECT
     if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$rect)) {
@@ -689,7 +705,7 @@ function Save-SuperZipScreenshot {
                 throw "Could not read SuperZip client rectangle."
             }
             $offset = Get-ClientCaptureOffset -Handle $Handle
-            Assert-VisualStructure -Bitmap $bitmap -Dpi ([int][SuperZipNativeUi]::GetDpiForWindow($Handle)) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ClientWidth ($client.Right - $client.Left) -ClientHeight ($client.Bottom - $client.Top)
+            Assert-VisualStructure -Bitmap $bitmap -Dpi ([int][SuperZipNativeUi]::GetDpiForWindow($Handle)) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ClientWidth ($client.Right - $client.Left) -ClientHeight ($client.Bottom - $client.Top) -ExpectedDesignWidth $ExpectedDesignWidth -ExpectedDesignHeight $ExpectedDesignHeight
             return [pscustomobject]@{
                 Path = $Path
                 Width = $width

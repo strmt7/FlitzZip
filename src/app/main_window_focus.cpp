@@ -288,6 +288,7 @@ bool MainWindow::handle_dropdown_navigation_key(WPARAM key, DropdownId active, c
     }
     dropdown_keyboard_index_ = (index % static_cast<int>(options.size()) + static_cast<int>(options.size())) %
                                static_cast<int>(options.size());
+    reveal_dropdown_selection(active);
     request_repaint();
     return true;
 }

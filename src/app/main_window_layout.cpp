@@ -1,4 +1,5 @@
 #include "app/main_window_impl.hpp"
+#include "app/form_layout.hpp"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -458,112 +459,25 @@ void MainWindow::end_history_scroll_drag() {
     history_scroll_dragging_ = false;
 }
 
-// Purpose: Compute Compress page rectangles shared by rendering and hit testing.
-// Inputs: `rect` is the content area in physical pixels.
-// Outputs: Returns DPI-scaled Compress page control rectangles.
+// Purpose: Share Compress geometry between rendering, hit testing, dropdowns, and viewport tests.
+// Inputs: rect is the physical content rectangle; the window supplies the active monitor DPI.
+// Outputs: Returns contained control rectangles for supported form viewport sizes.
 MainWindow::CompressLayout MainWindow::compress_layout(const RECT& rect) const {
-    CompressLayout layout{};
-    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.start = primary_action_rect(layout.area);
-    layout.stop = secondary_action_rect_left_of(layout.start);
-    const int left = layout.area.left;
-    const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
-    const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
-    layout.archive_name = RECT{left, layout.area.top + scale(54), left + field_w, layout.area.top + scale(104)};
-    layout.destination = RECT{mid, layout.area.top + scale(54), mid + field_w, layout.area.top + scale(104)};
-    layout.format = RECT{left, layout.area.top + scale(124), left + field_w, layout.area.top + scale(174)};
-    layout.compression_level = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
-    layout.method = RECT{left, layout.area.top + scale(194), left + field_w, layout.area.top + scale(244)};
-    layout.block_size = RECT{mid, layout.area.top + scale(194), mid + field_w, layout.area.top + scale(244)};
-    layout.advanced = RECT{left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(390)};
-    layout.solid_archive = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(48),
-                                layout.advanced.left + scale(310), layout.advanced.top + scale(76)};
-    layout.store_timestamps = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(80),
-                                   layout.advanced.left + scale(310), layout.advanced.top + scale(108)};
-    layout.delete_after_compression = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(48),
-                                           layout.advanced.left + scale(680), layout.advanced.top + scale(76)};
-    layout.verify = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(80),
-                         layout.advanced.left + scale(710), layout.advanced.top + scale(108)};
-    layout.security = RECT{left, layout.area.top + scale(410), layout.area.right, layout.area.top + scale(528)};
-    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(46),
-                      layout.security.left + scale(420), layout.security.top + scale(78)};
-    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(82),
-                           layout.security.left + scale(420), layout.security.top + scale(114)};
-    return layout;
+    return make_compress_layout(rect, dpi_);
 }
 
-// Purpose: Compute Extract page rectangles shared by rendering and hit testing.
-// Inputs: `rect` is the content area in physical pixels.
-// Outputs: Returns DPI-scaled Extract page control rectangles.
+// Purpose: Share Extract geometry between rendering, hit testing, dropdowns, and viewport tests.
+// Inputs: rect is the physical content rectangle; the window supplies the active monitor DPI.
+// Outputs: Returns contained control rectangles for supported form viewport sizes.
 MainWindow::ExtractLayout MainWindow::extract_layout(const RECT& rect) const {
-    ExtractLayout layout{};
-    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.start = primary_action_rect(layout.area);
-    layout.stop = secondary_action_rect_left_of(layout.start);
-    const int left = layout.area.left;
-    const int mid = layout.area.left + (layout.area.right - layout.area.left) / 2 + scale(14);
-    const int field_w = (layout.area.right - layout.area.left) / 2 - scale(26);
-    layout.archive = RECT{left, layout.area.top + scale(54), left + field_w, layout.area.top + scale(104)};
-    layout.destination = RECT{mid, layout.area.top + scale(54), mid + field_w, layout.area.top + scale(104)};
-    layout.path_mode = RECT{left, layout.area.top + scale(124), left + field_w, layout.area.top + scale(174)};
-    layout.overwrite_policy = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
-    layout.checks =
-        RECT{layout.area.left, layout.area.top + scale(200), layout.area.right, layout.area.top + scale(332)};
-    layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48),
-                                  layout.checks.left + scale(420), layout.checks.top + scale(78)};
-    layout.open_destination_after_extract = RECT{layout.checks.left + scale(18), layout.checks.top + scale(80),
-                                                 layout.checks.left + scale(420), layout.checks.top + scale(110)};
-    layout.sha = RECT{layout.checks.left + scale(470), layout.checks.top + scale(48), layout.checks.right - scale(20),
-                      layout.checks.top + scale(80)};
-    layout.defender = RECT{layout.checks.left + scale(470), layout.checks.top + scale(84),
-                           layout.checks.right - scale(20), layout.checks.top + scale(116)};
-    return layout;
+    return make_extract_layout(rect, dpi_);
 }
 
-// Purpose: Compute Settings page rectangles shared by rendering and hit testing.
-// Inputs: `rect` is the content area in physical pixels.
-// Outputs: Returns DPI-scaled Settings page control rectangles.
+// Purpose: Share Settings geometry between rendering, hit testing, dropdowns, and viewport tests.
+// Inputs: rect is the physical content rectangle; the window supplies the active monitor DPI.
+// Outputs: Returns contained control rectangles for supported form viewport sizes.
 MainWindow::SettingsLayout MainWindow::settings_layout(const RECT& rect) const {
-    SettingsLayout layout{};
-    layout.area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
-    layout.restore_defaults = RECT{layout.area.right - scale(260), layout.area.bottom - scale(54),
-                                   layout.area.right - scale(126), layout.area.bottom - scale(18)};
-    layout.apply = primary_action_rect(layout.area);
-    const int panel_top = layout.area.top + scale(54);
-    const int panel_bottom = panel_top + scale(168);
-    layout.general = RECT{layout.area.left, panel_top, layout.area.left + scale(470), panel_bottom};
-    layout.security = RECT{layout.general.left, layout.general.bottom + scale(16), layout.general.right,
-                           layout.general.bottom + scale(176)};
-    layout.performance = RECT{layout.general.right + scale(18), layout.general.top, layout.area.right, panel_bottom};
-    layout.logging = RECT{layout.performance.left, layout.performance.bottom + scale(16), layout.area.right,
-                          layout.performance.bottom + scale(176)};
-    layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(48),
-                      layout.security.right - scale(16), layout.security.top + scale(80)};
-    layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(84),
-                           layout.security.right - scale(16), layout.security.top + scale(116)};
-    layout.gpu = RECT{layout.security.left + scale(18), layout.security.top + scale(120),
-                      layout.security.right - scale(16), layout.security.top + scale(152)};
-    layout.verify = RECT{layout.performance.left + scale(18), layout.performance.top + scale(48),
-                         layout.performance.right - scale(18), layout.performance.top + scale(80)};
-    const int performance_half_right =
-        layout.performance.left + (layout.performance.right - layout.performance.left) / 2;
-    const int logging_half_right = layout.logging.left + (layout.logging.right - layout.logging.left) / 2;
-    layout.memory_policy = RECT{layout.performance.left + scale(18), layout.performance.top + scale(94),
-                                performance_half_right, layout.performance.top + scale(140)};
-    layout.log_level = RECT{layout.logging.left + scale(18), layout.logging.top + scale(48), logging_half_right,
-                            layout.logging.top + scale(94)};
-    layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right,
-                                layout.logging.top + scale(152)};
-    const int log_button_width = layout.restore_defaults.right - layout.restore_defaults.left;
-    layout.open_log_file = RECT{layout.logging.right - scale(18) - log_button_width, layout.logging.top + scale(82),
-                                layout.logging.right - scale(18), layout.logging.top + scale(118)};
-    layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48),
-                                                   layout.general.right - scale(16), layout.general.top + scale(78)};
-    layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82),
-                                          layout.general.right - scale(16), layout.general.top + scale(112)};
-    layout.show_operation_summary = RECT{layout.general.left + scale(18), layout.general.top + scale(116),
-                                         layout.general.right - scale(16), layout.general.top + scale(146)};
-    return layout;
+    return make_settings_layout(rect, dpi_);
 }
 
 // Purpose: Draw Queue page title and queue-management commands.

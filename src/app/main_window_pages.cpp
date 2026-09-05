@@ -411,12 +411,17 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
         L"Archive",
         selected_archives.empty() ? L"Select one or more archives from the queue" : selected_archives.front().wstring(),
         false, true, false, selected_archives.empty() ? kMuted : CLR_INVALID);
-    draw_field(
-        dc, RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(248), detail.top + scale(302)},
-        L"Archives", std::to_wstring(selected_archives.size()), false);
-    draw_field(
-        dc, RECT{detail.left + scale(270), detail.top + scale(252), detail.right - scale(18), detail.top + scale(302)},
-        L"Total size", L"Calculated during job", false);
+    const int count_width = detail.right - detail.left >= scale(500)
+                                ? scale(230)
+                                : static_cast<int>(detail.right - detail.left - scale(36)) / 3;
+    draw_field(dc,
+               RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(18) + count_width,
+                    detail.top + scale(302)},
+               L"Archives", std::to_wstring(selected_archives.size()), false);
+    draw_field(dc,
+               RECT{detail.left + scale(40) + count_width, detail.top + scale(252), detail.right - scale(18),
+                    detail.top + scale(302)},
+               L"Total size", L"Calculated during job", false);
 }
 
 // Purpose: Draw History page filter controls and clear action.
@@ -806,9 +811,10 @@ void MainWindow::draw_performance_monitor_card(HDC dc, const RECT& graph, const 
     stroke_rect(dc, graph, kBorder);
     RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
     RECT value_rect{graph.left + scale(12), graph.top + scale(30), graph.right - scale(12), graph.top + scale(60)};
-    RECT plot{graph.left + scale(12), graph.top + scale(70), graph.right - scale(12), graph.bottom - scale(58)};
-    RECT detail_rect{graph.left + scale(12), graph.bottom - scale(50), graph.right - scale(12),
-                     graph.bottom - scale(8)};
+    SelectObject(dc, tiny_font_);
+    const auto body = make_performance_card_body(dc, graph, dpi_, detail);
+    const auto& plot = body.plot;
+    const auto& detail_rect = body.detail;
     SelectObject(dc, small_font_);
     draw_text(dc, label_rect, label, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, body_font_);
@@ -834,9 +840,10 @@ void MainWindow::draw_dual_performance_monitor_card(HDC dc, const RECT& graph, c
     stroke_rect(dc, graph, kBorder);
     RECT label_rect{graph.left + scale(12), graph.top + scale(8), graph.right - scale(12), graph.top + scale(30)};
     RECT value_rect{graph.left + scale(12), graph.top + scale(30), graph.right - scale(12), graph.top + scale(60)};
-    RECT plot{graph.left + scale(12), graph.top + scale(70), graph.right - scale(12), graph.bottom - scale(58)};
-    RECT detail_rect{graph.left + scale(12), graph.bottom - scale(50), graph.right - scale(12),
-                     graph.bottom - scale(8)};
+    SelectObject(dc, tiny_font_);
+    const auto body = make_performance_card_body(dc, graph, dpi_, detail);
+    const auto& plot = body.plot;
+    const auto& detail_rect = body.detail;
     SelectObject(dc, small_font_);
     draw_text(dc, label_rect, label, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, body_font_);

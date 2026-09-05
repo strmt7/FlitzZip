@@ -611,6 +611,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       src/app/queue_metadata.cpp
       src/app/main_window_input.cpp
       src/app/main_window_layout.cpp
+      src/app/form_layout.cpp
       src/app/main_window_license_dialog.cpp
       src/app/main_window_monitor.cpp
       src/app/main_window_page_clicks.cpp
@@ -684,6 +685,8 @@ if(SUPERZIP_BUILD_TESTS)
     src/app/queue_metadata.cpp
     tests/cpp/test_gdi_back_buffer.cpp
     tests/cpp/test_system_layout.cpp
+    tests/cpp/test_form_layout.cpp
+    src/app/form_layout.cpp
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_resource_usage.cpp

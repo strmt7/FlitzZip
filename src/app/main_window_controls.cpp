@@ -194,7 +194,8 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
     if (options.empty()) {
         return;
     }
-    const RECT menu = dropdown_menu_rect(state.active_dropdown, content);
+    const auto layout = dropdown_layout(state.active_dropdown, content);
+    const RECT menu = layout.menu;
     if (menu.right <= menu.left || menu.bottom <= menu.top) {
         return;
     }
@@ -203,16 +204,17 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
     fill_round_rect(dc, menu, kPanel2, scale(4));
     stroke_rect(dc, menu, kAccent);
 
-    const int row_height = scale(options.size() > 10U ? 28 : 32);
+    const int row_height = layout.row_height;
     const int selected = dropdown_selected_index(state, state.active_dropdown);
     const int keyboard_selected =
         dropdown_keyboard_index_ >= 0 && dropdown_keyboard_index_ < static_cast<int>(options.size())
             ? dropdown_keyboard_index_
             : selected;
     SelectObject(dc, tiny_font_);
-    for (int index = 0; index < static_cast<int>(options.size()); ++index) {
-        const RECT row{menu.left + scale(1), menu.top + scale(1) + (index * row_height), menu.right - scale(1),
-                       menu.top + scale(1) + ((index + 1) * row_height)};
+    for (int visible = 0; visible < layout.visible_rows; ++visible) {
+        const int index = layout.first_row + visible;
+        const RECT row{menu.left + scale(1), layout.row_top + (visible * row_height), menu.right - scale(1),
+                       layout.row_top + ((visible + 1) * row_height)};
         const bool is_selected = index == selected;
         const bool is_keyboard_selected = index == keyboard_selected;
         const COLORREF base = is_selected ? RGB(126, 24, 31) : ((index % 2 == 0) ? kPanel2 : kPanel);
@@ -230,6 +232,27 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
         }
         draw_text(dc, text_rect, options[static_cast<std::size_t>(index)], is_selected ? kText : kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+    draw_dropdown_scroll_arrows(dc, layout);
+}
+
+// Purpose: Draw popup scroll arrows with matching hit bands.
+// Inputs: dc is the paint target and layout contains optional whole-width arrow bands.
+// Outputs: Renders enabled/disabled native chevrons without changing option row heights.
+void MainWindow::draw_dropdown_scroll_arrows(HDC dc, const DropdownLayout& layout) {
+    if (layout.max_first_row == 0) {
+        return;
+    }
+    for (const bool up : {true, false}) {
+        const RECT band = up ? layout.up : layout.down;
+        const bool enabled = up ? layout.first_row > 0 : layout.first_row < layout.max_first_row;
+        fill_rect(dc, band, interactive_fill(kPanel2, band, enabled));
+        const int x = (band.left + band.right) / 2;
+        const int y = (band.top + band.bottom) / 2;
+        const int tip = y + (up ? -scale(3) : scale(3));
+        const COLORREF color = enabled ? kText : kSubtle;
+        draw_line(dc, x - scale(4), y, x, tip, color);
+        draw_line(dc, x, tip, x + scale(4), y, color);
     }
 }
 
@@ -276,28 +299,16 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
 // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
 // Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
 RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
+    return dropdown_layout(id, content).menu;
+}
+
+// Purpose: Resolve bounded popup rows from shared geometry.
+// Inputs: id identifies the options and anchor; content is the physical page viewport.
+// Outputs: Returns contained rows and optional scroll-arrow bands.
+DropdownLayout MainWindow::dropdown_layout(DropdownId id, const RECT& content) const {
     const auto options = dropdown_options(id);
-    if (options.empty()) {
-        return RECT{};
-    }
-    RECT anchor = dropdown_anchor_rect(id, content);
-    if (anchor.right <= anchor.left || anchor.bottom <= anchor.top) {
-        return RECT{};
-    }
-    const int gap = scale(4);
-    const int row_height = scale(options.size() > 10U ? 28 : 32);
-    const int menu_height = row_height * static_cast<int>(options.size()) + scale(2);
-    int top = anchor.bottom + gap;
-    int bottom = top + menu_height;
-    if (bottom > content.bottom - scale(8)) {
-        bottom = anchor.top - gap;
-        top = bottom - menu_height;
-    }
-    if (top < content.top + scale(8)) {
-        top = content.top + scale(8);
-        bottom = top + menu_height;
-    }
-    return RECT{anchor.left, top, anchor.right, bottom};
+    return make_dropdown_layout(dropdown_anchor_rect(id, content), content, dpi_, static_cast<int>(options.size()),
+                                dropdown_scroll_first_row_);
 }
 
 // Purpose: Draw the permanent top accent rule for the content surface.

@@ -28,6 +28,22 @@ void MainWindow::open_dropdown(DropdownId id) {
         state_.status = "Dropdown opened";
         dropdown_keyboard_index_ = dropdown_selected_index(state_, id);
     }
+    dropdown_scroll_first_row_ = 0;
+    dropdown_wheel_delta_remainder_ = 0;
+    reveal_dropdown_selection(id);
+    request_repaint();
+}
+
+// Purpose: Keep keyboard selection on-screen; inputs: active dropdown ID; outputs: updates the first visible option.
+void MainWindow::reveal_dropdown_selection(DropdownId id) {
+    const auto layout = dropdown_layout(id, content_rect());
+    dropdown_scroll_first_row_ = dropdown_first_row_for_selection(layout, dropdown_keyboard_index_);
+}
+
+// Purpose: Move a popup by whole rows; inputs: active ID and signed row delta; outputs: bounded offset and repaint.
+void MainWindow::scroll_dropdown_rows(DropdownId id, int rows) {
+    const auto layout = dropdown_layout(id, content_rect());
+    dropdown_scroll_first_row_ = std::clamp(layout.first_row + rows, 0, layout.max_first_row);
     request_repaint();
 }
 

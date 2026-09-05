@@ -1,6 +1,8 @@
 #include "app/system_layout.hpp"
 #include "test_util.hpp"
 
+#include <memory>
+
 namespace {
 // Purpose: Assert usable contained geometry; inputs: child/parent rectangles; outputs: fails invalid dimensions.
 void require_contained(const RECT& child, const RECT& parent) {
@@ -38,4 +40,40 @@ TEST_CASE(system_layout_default_geometry_matches_mouse_smoke_coordinates) {
     REQUIRE_EQ(layout.monitor.top, 220);
     REQUIRE_EQ(layout.monitor.right, 1170);
     REQUIRE_EQ(layout.monitor.bottom, 704);
+}
+
+TEST_CASE(system_metric_details_fit_native_font_at_compact_and_default_dpi) {
+    const std::unique_ptr<std::remove_pointer_t<HDC>, decltype(&DeleteDC)> dc(CreateCompatibleDC(nullptr), DeleteDC);
+    REQUIRE_TRUE(dc != nullptr);
+    for (const UINT dpi : {96U, 110U, 120U, 144U, 168U, 192U, 240U, 288U}) {
+        const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+        const std::unique_ptr<std::remove_pointer_t<HFONT>, decltype(&DeleteObject)> font(
+            CreateFontW(-MulDiv(9, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                        L"Segoe UI"),
+            DeleteObject);
+        REQUIRE_TRUE(font != nullptr);
+        const auto original = SelectObject(dc.get(), font.get());
+        for (const int width : {182, 242, 400}) {
+            const RECT card{0, 0, scale(width), scale(248)};
+            for (const auto text :
+                 {L"CPU used (total): 100.0%\nCPU used (dedicated): 100.0%",
+                  L"VRAM used (total): 999.9 GiB / 1023.9 GiB\nVRAM used (dedicated): 999.9 GiB",
+                  L"RAM used (total): 999.9 TiB / 1023.9 TiB\nRAM used (dedicated): 999.9 GiB",
+                  L"HIP VRAM unavailable\nGPU memory counter unavailable", L"Read: 999.9 GiB/s\nWrite: 999.9 GiB/s"}) {
+                const auto body = superzip::app::make_performance_card_body(dc.get(), card, dpi, text);
+                require_contained(body.plot, card);
+                require_contained(body.detail, card);
+                REQUIRE_TRUE(body.plot.bottom + scale(8) <= body.detail.top);
+                REQUIRE_TRUE(body.plot.bottom - body.plot.top >= scale(48));
+                RECT measured{body.detail.left, 0, body.detail.right, 0};
+                DrawTextW(dc.get(), text, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+                REQUIRE_TRUE(measured.bottom <= body.detail.bottom - body.detail.top);
+            }
+        }
+        const auto unchanged = superzip::app::make_performance_card_body(dc.get(), RECT{0, 0, scale(242), scale(408)},
+                                                                         dpi, L"Read: 0 B/s\nWrite: 0 B/s");
+        REQUIRE_EQ(unchanged.detail.top, scale(408) - scale(8) - scale(42));
+        SelectObject(dc.get(), original);
+    }
 }

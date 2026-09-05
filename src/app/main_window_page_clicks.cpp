@@ -589,16 +589,19 @@ bool MainWindow::handle_active_dropdown_click(int x, int y) {
     }
 
     const RECT content = content_rect();
-    const RECT menu = dropdown_menu_rect(active, content);
+    const auto layout = dropdown_layout(active, content);
+    const RECT menu = layout.menu;
     const RECT anchor = dropdown_anchor_rect(active, content);
     if (contains_point(menu, x, y)) {
-        const auto options = dropdown_options(active);
-        const int row_height = scale(options.size() > 10U ? 28 : 32);
-        const int option_index = row_height > 0 ? (y - menu.top - scale(1)) / row_height : -1;
-        if (option_index >= 0 && option_index < static_cast<int>(options.size())) {
-            select_dropdown_option(active, option_index);
+        if (contains_point(layout.up, x, y) || contains_point(layout.down, x, y)) {
+            scroll_dropdown_rows(active, contains_point(layout.up, x, y) ? -1 : 1);
             return true;
         }
+        const int option_index = dropdown_option_at(layout, x, y);
+        if (option_index >= 0) {
+            select_dropdown_option(active, option_index);
+        }
+        return true;
     }
     if (contains_point(anchor, x, y)) {
         close_active_dropdown();

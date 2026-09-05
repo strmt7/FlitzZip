@@ -54,6 +54,27 @@ against the reference direction.
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
 
+## Compact Layout Foundation
+
+Compress, Extract, and Settings share pure layout helpers with their hit tests.
+Compress reflows its lower controls into two columns below 730 client DIPs;
+Extract and Settings balance their columns below 1086 client DIPs. Native font
+and control sizes are retained. Geometry tests cover 448 size/DPI combinations
+per form, including both sides of the reflow boundaries and 100%-300% DPI.
+
+Dropdowns fit complete rows inside the content viewport. Overflow uses bounded
+wheel scrolling and arrow bands; keyboard navigation reveals its selected row.
+Every create-format option remains selectable. Metric cards measure wrapped
+detail text with the selected native font before reserving graph space; sample
+counts, timing, and graph-series positioning logic are unchanged.
+
+GUI smoke captures all eight pages at both the normal 1200-by-760-DIP client
+size and a programmatically resized 960-by-600-DIP test size at the host's
+actual DPI. It verifies popup selection through wheel, arrows, and keyboard,
+saves real settings, and restores the pre-test settings snapshot. This is a
+foundation for responsive sizing, not a change to release startup dimensions
+or permission to claim untested monitor configurations.
+
 ## Queue Metadata
 
 Queue size/type cells and Extract/Verify candidate selection use display-only

@@ -114,6 +114,27 @@ understand the result:
 
 ## Regression Rules
 
+Compact GUI checks must preserve native font sizes and validate actual client
+dimensions. Screenshot helpers accept an explicit expected design size while
+retaining the default 1200-by-760-DIP assertion. `gui_smoke.ps1 -CompactOnly`
+is a focused diagnostic, not a replacement for the default all-page smoke.
+The compact Format test must select and persist the last option using wheel,
+arrow-band, and keyboard input. A rendered menu alone is not success.
+
+Do not mix posted mouse clicks and immediately sent keyboard messages when
+the test requires ordered input. Sent messages can overtake queued clicks.
+Compact tests use timeout-bounded synchronous clicks, then assert newly
+appended command results and persisted settings. Arbitrary sleeps are not the
+ordering guarantee. The API contracts are documented by Microsoft for
+[SendMessageTimeoutW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw)
+and native text measurement through
+[DrawTextW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-drawtextw).
+
+GPU/RAM detail clipping at compact widths came from a fixed 42-DIP text region
+despite additional wrapped lines. Tests now measure the native detail font
+across eight DPI values with large totals and unavailable counters, checking
+that text fits and leaves a positive, separated graph plot.
+
 History scrolling must use `history_layout(...).table`, as rendering, keyboard
 navigation, and click hit testing do. The former wheel/drag paths independently
 reserved 96 DIPs for details instead of the layout's 118 DIPs. At the default
