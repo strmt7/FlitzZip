@@ -51,6 +51,9 @@ jobs:
       - name: Test
         shell: pwsh
         run: tools/test.ps1
+      - name: CLI format compatibility matrix
+        shell: pwsh
+        run: tools/format_matrix_smoke.ps1
       - name: Security scan
         shell: pwsh
         run: tools/security_scan.ps1
