@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <mutex>
@@ -110,11 +111,11 @@ class XzInputStream::Buffer final : public std::streambuf {
     // Inputs: None.
     // Outputs: Throws when the XZ stream is incomplete, corrupt, or exceeds limits.
     void finish() {
-        while (!finished_) {
+        do {
             setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
                  reinterpret_cast<char*>(output_buffer_.data()));
             fill_output();
-        }
+        } while (!finished_);
     }
 
     // Purpose: Report compressed source byte size.
@@ -170,6 +171,22 @@ class XzInputStream::Buffer final : public std::streambuf {
     // Inputs: None.
     // Outputs: Updates `setg` when bytes are produced; throws on malformed XZ payloads.
     void fill_output() {
+        if (failure_) {
+            std::rethrow_exception(failure_);
+        }
+        try {
+            decode_output();
+        } catch (...) {
+            failure_ = std::current_exception();
+            setg(nullptr, nullptr, nullptr);
+            throw;
+        }
+    }
+
+    // Purpose: Advance the XZ decoder only while no previous error has occurred.
+    // Inputs: Buffered untrusted compressed bytes; called exclusively by fill_output.
+    // Outputs: Exposes validated output or throws; the caller permanently records every failure.
+    void decode_output() {
         if (finished_) {
             return;
         }
@@ -180,6 +197,9 @@ class XzInputStream::Buffer final : public std::streambuf {
             buffer_.out_size = output_buffer_.size();
             const auto before_in = buffer_.in_pos;
             const auto status = xz_dec_catrun(decoder_, &buffer_, source_finished_ ? 1 : 0);
+            if (status != XZ_OK && status != XZ_STREAM_END) {
+                throw ArchiveError(std::string("XZ decompression failed: ") + xz_status_name(status));
+            }
             const auto consumed = buffer_.in_pos - before_in;
             const auto produced = buffer_.out_pos;
             if (produced > 0U) {
@@ -195,17 +215,14 @@ class XzInputStream::Buffer final : public std::streambuf {
                 finished_ = true;
                 return;
             }
-            if (status == XZ_OK) {
-                if (consumed == 0U && source_finished_) {
-                    throw ArchiveError("XZ stream ended before decoder completion");
-                }
-                continue;
+            if (consumed == 0U && source_finished_) {
+                throw ArchiveError("XZ stream ended before decoder completion");
             }
-            throw ArchiveError(std::string("XZ decompression failed: ") + xz_status_name(status));
         }
     }
 
     std::ifstream input_;
+    std::exception_ptr failure_;
     std::uint64_t archive_size_ = 0;
     std::uint64_t output_bytes_ = 0;
     struct xz_dec* decoder_ = nullptr;
@@ -216,9 +233,13 @@ class XzInputStream::Buffer final : public std::streambuf {
     std::array<std::uint8_t, kXzStreamBufferBytes> output_buffer_{};
 };
 
+// Purpose: Open an XZ decoder whose read errors always propagate to the caller.
+// Inputs: archive_path names untrusted compressed input.
+// Outputs: Installs the decoder with badbit exceptions; construction or decoding can throw ArchiveError.
 XzInputStream::XzInputStream(const std::filesystem::path& archive_path)
     : std::istream(nullptr), buffer_(std::make_unique<Buffer>(archive_path)) {
     rdbuf(buffer_.get());
+    exceptions(std::ios::badbit);
 }
 
 XzInputStream::~XzInputStream() = default;

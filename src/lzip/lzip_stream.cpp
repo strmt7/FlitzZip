@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <exception>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -62,22 +63,38 @@ std::uint64_t lzip_file_size(const std::filesystem::path& path) {
 // Outputs: Returns human-readable text without throwing.
 std::string lzip_lzma_result_message(SRes result) {
     switch (result) {
-    case SZ_OK: return "LZMA operation completed";
-    case SZ_ERROR_DATA: return "lzip LZMA payload is malformed";
-    case SZ_ERROR_MEM: return "lzip LZMA decoder exceeded memory limits";
-    case SZ_ERROR_CRC: return "lzip LZMA integrity check failed";
-    case SZ_ERROR_UNSUPPORTED: return "lzip LZMA stream uses unsupported properties";
-    case SZ_ERROR_PARAM: return "lzip LZMA decoder received invalid parameters";
-    case SZ_ERROR_INPUT_EOF: return "lzip LZMA stream is truncated";
-    case SZ_ERROR_OUTPUT_EOF: return "lzip LZMA decoder output ended unexpectedly";
-    case SZ_ERROR_READ: return "lzip archive read failed";
-    case SZ_ERROR_WRITE: return "lzip output write failed";
-    case SZ_ERROR_PROGRESS: return "lzip operation was cancelled";
-    case SZ_ERROR_FAIL: return "lzip LZMA decoder failed";
-    case SZ_ERROR_THREAD: return "lzip LZMA decoder thread failure";
-    case SZ_ERROR_ARCHIVE: return "lzip archive structure is malformed";
-    case SZ_ERROR_NO_ARCHIVE: return "file is not a lzip stream";
-    default: return "lzip LZMA decoder failed with SDK result " + std::to_string(result);
+    case SZ_OK:
+        return "LZMA operation completed";
+    case SZ_ERROR_DATA:
+        return "lzip LZMA payload is malformed";
+    case SZ_ERROR_MEM:
+        return "lzip LZMA decoder exceeded memory limits";
+    case SZ_ERROR_CRC:
+        return "lzip LZMA integrity check failed";
+    case SZ_ERROR_UNSUPPORTED:
+        return "lzip LZMA stream uses unsupported properties";
+    case SZ_ERROR_PARAM:
+        return "lzip LZMA decoder received invalid parameters";
+    case SZ_ERROR_INPUT_EOF:
+        return "lzip LZMA stream is truncated";
+    case SZ_ERROR_OUTPUT_EOF:
+        return "lzip LZMA decoder output ended unexpectedly";
+    case SZ_ERROR_READ:
+        return "lzip archive read failed";
+    case SZ_ERROR_WRITE:
+        return "lzip output write failed";
+    case SZ_ERROR_PROGRESS:
+        return "lzip operation was cancelled";
+    case SZ_ERROR_FAIL:
+        return "lzip LZMA decoder failed";
+    case SZ_ERROR_THREAD:
+        return "lzip LZMA decoder thread failure";
+    case SZ_ERROR_ARCHIVE:
+        return "lzip archive structure is malformed";
+    case SZ_ERROR_NO_ARCHIVE:
+        return "file is not a lzip stream";
+    default:
+        return "lzip LZMA decoder failed with SDK result " + std::to_string(result);
     }
 }
 
@@ -150,8 +167,8 @@ std::array<Byte, LZMA_PROPS_SIZE> lzip_lzma_properties(std::uint32_t dictionary_
 void* lzip_alloc(ISzAllocPtr, std::size_t size) {
     const auto bytes = size == 0U ? 1U : size;
     const auto budget = g_lzip_allocation_budget;
-    if (budget && (bytes > kMaxLzipDecoderAllocationBytes ||
-        budget->current_bytes > kMaxLzipDecoderAllocationBytes - bytes)) {
+    if (budget &&
+        (bytes > kMaxLzipDecoderAllocationBytes || budget->current_bytes > kMaxLzipDecoderAllocationBytes - bytes)) {
         return nullptr;
     }
     void* allocation = std::calloc(1U, bytes);
@@ -190,12 +207,11 @@ void lzip_free(ISzAllocPtr, void* address) {
 }
 
 class ScopedLzipAllocationBudget {
-public:
+  public:
     // Purpose: Install a bounded allocation budget for SDK callbacks on the current thread.
     // Inputs: None.
     // Outputs: Restores any previous allocator budget when destroyed.
-    ScopedLzipAllocationBudget()
-        : previous_(std::move(g_lzip_allocation_budget)) {
+    ScopedLzipAllocationBudget() : previous_(std::move(g_lzip_allocation_budget)) {
         g_lzip_allocation_budget = std::make_shared<LzipAllocationBudget>();
     }
 
@@ -209,20 +225,19 @@ public:
         g_lzip_allocation_budget = std::move(previous_);
     }
 
-private:
+  private:
     std::shared_ptr<LzipAllocationBudget> previous_;
 };
 
 class ScopedLzipDecoder {
-public:
+  public:
     // Purpose: Allocate an LZMA decoder for one lzip member.
     // Inputs: `properties` are the synthesized LZMA property bytes from the lzip header.
     // Outputs: Owns initialized SDK decoder state or throws on unsupported properties/allocation limits.
     explicit ScopedLzipDecoder(const std::array<Byte, LZMA_PROPS_SIZE>& properties) {
         LzmaDec_Construct(&decoder_);
-        throw_on_lzip_lzma_error(
-            LzmaDec_Allocate(&decoder_, properties.data(), LZMA_PROPS_SIZE, &allocator_),
-            "lzip LZMA decoder allocation failed");
+        throw_on_lzip_lzma_error(LzmaDec_Allocate(&decoder_, properties.data(), LZMA_PROPS_SIZE, &allocator_),
+                                 "lzip LZMA decoder allocation failed");
         allocated_ = true;
         LzmaDec_Init(&decoder_);
     }
@@ -246,7 +261,7 @@ public:
         return decoder_;
     }
 
-private:
+  private:
     ISzAlloc allocator_{lzip_alloc, lzip_free};
     CLzmaDec decoder_{};
     bool allocated_ = false;
@@ -255,16 +270,17 @@ private:
 }  // namespace
 
 class LzipInputStream::Buffer final : public std::streambuf {
-public:
+  public:
+    // Purpose: Open bounded compressed input without decoding or publishing payload bytes.
+    // Inputs: archive_path is the untrusted lzip source path.
+    // Outputs: Initializes an empty get area or throws ArchiveError if the source cannot be opened.
     explicit Buffer(const std::filesystem::path& archive_path)
         : input_(archive_path, std::ios::binary), archive_size_(lzip_file_size(archive_path)) {
         if (!input_) {
             throw ArchiveError("cannot open lzip stream: " + archive_path.string());
         }
-        setg(
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()));
+        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+             reinterpret_cast<char*>(output_buffer_.data()));
     }
 
     ~Buffer() override = default;
@@ -273,13 +289,11 @@ public:
     // Inputs: None.
     // Outputs: Throws when any lzip member is incomplete or invalid.
     void finish() {
-        while (!finished_) {
-            setg(
-                reinterpret_cast<char*>(output_buffer_.data()),
-                reinterpret_cast<char*>(output_buffer_.data()),
-                reinterpret_cast<char*>(output_buffer_.data()));
+        do {
+            setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+                 reinterpret_cast<char*>(output_buffer_.data()));
             fill_output();
-        }
+        } while (!finished_);
     }
 
     // Purpose: Report compressed source byte size.
@@ -296,15 +310,13 @@ public:
         return output_bytes_;
     }
 
-protected:
+  protected:
     int_type underflow() override {
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
         }
-        setg(
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()),
-            reinterpret_cast<char*>(output_buffer_.data()));
+        setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+             reinterpret_cast<char*>(output_buffer_.data()));
         fill_output();
         if (gptr() < egptr()) {
             return traits_type::to_int_type(*gptr());
@@ -312,7 +324,7 @@ protected:
         return traits_type::eof();
     }
 
-private:
+  private:
     // Purpose: Refill the compressed source buffer after all buffered bytes have been consumed.
     // Inputs: None.
     // Outputs: Returns true when bytes are available; false only at clean source EOF.
@@ -392,7 +404,8 @@ private:
     void validate_current_member_trailer() {
         std::array<unsigned char, kLzipTrailerBytes> trailer{};
         read_member_bytes(trailer, "trailer");
-        const auto expected_crc32 = static_cast<std::uint32_t>(read_lzip_le(std::span<const unsigned char>(trailer.data(), 4U)));
+        const auto expected_crc32 =
+            static_cast<std::uint32_t>(read_lzip_le(std::span<const unsigned char>(trailer.data(), 4U)));
         const auto expected_data_size = read_lzip_le(std::span<const unsigned char>(trailer.data() + 4U, 8U));
         const auto expected_member_size = read_lzip_le(std::span<const unsigned char>(trailer.data() + 12U, 8U));
         if (expected_member_size > kMaxLzipMemberBytes) {
@@ -417,6 +430,22 @@ private:
     // Inputs: None.
     // Outputs: Updates `setg` when bytes are produced; throws on malformed lzip payloads.
     void fill_output() {
+        if (failure_) {
+            std::rethrow_exception(failure_);
+        }
+        try {
+            decode_output();
+        } catch (...) {
+            failure_ = std::current_exception();
+            setg(nullptr, nullptr, nullptr);
+            throw;
+        }
+    }
+
+    // Purpose: Advance the lzip decoder only while no previous error has occurred.
+    // Inputs: Buffered untrusted compressed bytes; called exclusively by fill_output.
+    // Outputs: Exposes validated output or throws; the caller permanently records every failure.
+    void decode_output() {
         if (finished_) {
             return;
         }
@@ -434,24 +463,22 @@ private:
             SizeT destination_length = static_cast<SizeT>(output_buffer_.size());
             SizeT source_length = static_cast<SizeT>(input_size_ - input_position_);
             ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
-            const SRes result = LzmaDec_DecodeToBuf(
-                &decoder_->get(),
-                output_buffer_.data(),
-                &destination_length,
-                input_buffer_.data() + input_position_,
-                &source_length,
-                LZMA_FINISH_ANY,
-                &status);
+            const SRes result =
+                LzmaDec_DecodeToBuf(&decoder_->get(), output_buffer_.data(), &destination_length,
+                                    input_buffer_.data() + input_position_, &source_length, LZMA_FINISH_ANY, &status);
             throw_on_lzip_lzma_error(result, "lzip LZMA decode failed");
             input_position_ += static_cast<std::size_t>(source_length);
-            checked_add_lzip_stream_bytes(current_member_consumed_, static_cast<std::uint64_t>(source_length), "lzip member");
+            checked_add_lzip_stream_bytes(current_member_consumed_, static_cast<std::uint64_t>(source_length),
+                                          "lzip member");
 
             if (destination_length > 0U) {
-                current_crc32_ = crc32(
-                    std::as_bytes(std::span<const Byte>(output_buffer_.data(), static_cast<std::size_t>(destination_length))),
-                    current_crc32_);
-                checked_add_lzip_stream_bytes(current_output_size_, static_cast<std::uint64_t>(destination_length), "lzip member output");
-                checked_add_lzip_stream_bytes(output_bytes_, static_cast<std::uint64_t>(destination_length), "lzip output");
+                current_crc32_ = crc32(std::as_bytes(std::span<const Byte>(
+                                           output_buffer_.data(), static_cast<std::size_t>(destination_length))),
+                                       current_crc32_);
+                checked_add_lzip_stream_bytes(current_output_size_, static_cast<std::uint64_t>(destination_length),
+                                              "lzip member output");
+                checked_add_lzip_stream_bytes(output_bytes_, static_cast<std::uint64_t>(destination_length),
+                                              "lzip output");
             }
             if (status == LZMA_STATUS_FINISHED_WITH_MARK) {
                 validate_current_member_trailer();
@@ -459,16 +486,15 @@ private:
                 throw ArchiveError("lzip LZMA decoder made no forward progress");
             }
             if (destination_length > 0U) {
-                setg(
-                    reinterpret_cast<char*>(output_buffer_.data()),
-                    reinterpret_cast<char*>(output_buffer_.data()),
-                    reinterpret_cast<char*>(output_buffer_.data() + destination_length));
+                setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
+                     reinterpret_cast<char*>(output_buffer_.data() + destination_length));
                 return;
             }
         }
     }
 
     std::ifstream input_;
+    std::exception_ptr failure_;
     std::uint64_t archive_size_ = 0;
     std::uint64_t output_bytes_ = 0;
     ScopedLzipAllocationBudget allocation_budget_;
@@ -487,9 +513,13 @@ private:
     std::array<Byte, kLzipOutputBufferBytes> output_buffer_{};
 };
 
+// Purpose: Open a lzip decoder whose read errors always propagate to the caller.
+// Inputs: archive_path names untrusted compressed input.
+// Outputs: Installs the decoder with badbit exceptions; construction or decoding can throw ArchiveError.
 LzipInputStream::LzipInputStream(const std::filesystem::path& archive_path)
     : std::istream(nullptr), buffer_(std::make_unique<Buffer>(archive_path)) {
     rdbuf(buffer_.get());
+    exceptions(std::ios::badbit);
 }
 
 LzipInputStream::~LzipInputStream() = default;

@@ -1,6 +1,9 @@
 #include "test_util.hpp"
+#include "test_stream_failure.hpp"
 
 #include "bzip2/bzip2_adapter.hpp"
+#include "bzip2/bzip2_stream.hpp"
+#include "tar/tar_adapter.hpp"
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 
@@ -149,4 +152,49 @@ TEST_CASE(bzip2_rejects_bad_magic_without_output) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Reject a resumable Bzip2 failure without publishing empty output or losing an overwrite target.
+// Inputs: A valid stream with an inserted invalid block-header byte, plus the unmodified control.
+// Outputs: Requires correct control extraction, failure in standalone/TAR paths, and sticky stream failure.
+TEST_CASE(bzip2_resumable_error_never_publishes) {
+    const auto root = test_temp_dir("bzip2-resumable-error");
+    const auto source = root / "payload.txt";
+    const auto archive = root / "payload.txt.bz2";
+    write_text_file(source, "verified payload");
+    (void)superzip::compress_bzip2_file(source, archive);
+    (void)superzip::extract_bzip2_file(archive, root / "control", false);
+    REQUIRE_EQ(read_text_file(root / "control/payload.txt"), "verified payload");
+    auto encoded = read_text_file(archive);
+    REQUIRE_TRUE(encoded.size() > 4U);
+    encoded.insert(4U, 1U, '\0');
+    write_text_file(archive, encoded);
+    for (const bool overwrite : {false, true}) {
+        const auto output = root / (overwrite ? "existing" : "new");
+        if (overwrite) {
+            std::filesystem::create_directories(output);
+            write_text_file(output / "payload.txt", "preserve me");
+        }
+        bool rejected = false;
+        try {
+            (void)superzip::extract_bzip2_file(archive, output, overwrite);
+        } catch (const superzip::Error&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        if (overwrite) {
+            REQUIRE_EQ(read_text_file(output / "payload.txt"), "preserve me");
+        } else {
+            REQUIRE_EQ(count_regular_files(output), 0U);
+        }
+    }
+    bool tar_rejected = false;
+    try {
+        (void)superzip::extract_tar_bzip2(archive, root / "tar", false);
+    } catch (const superzip::Error&) {
+        tar_rejected = true;
+    }
+    REQUIRE_TRUE(tar_rejected);
+    REQUIRE_EQ(count_regular_files(root / "tar"), 0U);
+    require_sticky_decoder_failure<superzip::Bzip2InputStream>(archive);
 }
