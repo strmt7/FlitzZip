@@ -305,6 +305,7 @@ void MainWindow::close_license_notices_dialog() {
     license_notices_scroll_animation_start_pixels_ = 0;
     license_notices_scroll_animation_start_ = {};
     license_notices_wheel_pixel_remainder_ = 0.0;
+    append_log_entry(LogSeverity::Information, "License notices closed");
     request_repaint();
 }
 
@@ -325,6 +326,7 @@ void MainWindow::show_license_notices_dialog() {
     license_notices_scroll_animation_start_pixels_ = 0;
     license_notices_scroll_animation_start_ = {};
     license_notices_wheel_pixel_remainder_ = 0.0;
+    append_log_entry(LogSeverity::Information, "License notices opened");
     request_repaint();
 }
 

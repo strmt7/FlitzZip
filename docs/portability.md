@@ -89,17 +89,25 @@ coordinates use integer scaling, and painting is double-buffered. Progress
 repaint requests are coalesced so fast jobs or high-refresh displays do not
 accumulate redundant paint work.
 
-The current client area remains fixed at 1200 by 760 DIPs, plus the native window
-frame. At 150% scaling that is 1800 by 1140 physical client pixels, so the full
-window does not fit a 1080p work area. DPI awareness alone does not establish
-small-screen compatibility. A responsive all-page layout and corresponding
-mouse/keyboard tests are still required before removing this limitation; the
-application must not claim arbitrary display-size support based on the existing
-startup sizing. Compact form geometry is now tested from 960 by 600 DIPs at
-100%-300% DPI, and GUI smoke captures all eight compact pages at the actual
-host DPI without modifying monitor settings. Startup work-area fitting,
-cross-monitor transitions, and compact secondary-dialog coverage remain
-separate requirements before releasing adaptive window sizing.
+The non-resizable window prefers a 1200-by-760-DIP client area, but fits smaller
+monitor work areas down to 960 by 600 DIPs, accounting for the native frame.
+Startup, DPI changes, completed window moves, display changes, and taskbar
+work-area notifications share this sizing policy. A larger work area restores
+the preferred size. Existing positions are preserved where possible, including
+monitors with negative coordinates; fitting never changes display settings.
+
+Work areas smaller than the minimum client size plus frame remain unsupported.
+The application retains native font/control sizes and places the window origin
+inside the work area, logging insufficient space instead of claiming full fit.
+Unavailable OS geometry leaves existing bounds intact and is logged.
+
+Native tests cover six display work-area sizes, eight DPI values from 100%-300%,
+three monitor origins, minimum-size limits, and real hidden-window frame/client
+dimensions. GUI smoke verifies startup and notification-driven fitting, all
+eight pages at normal and compact dimensions, and compact Licenses/overwrite
+dialogs at the host's actual DPI. These checks do not certify every physical
+multi-monitor transition, font substitution, remote desktop, or display driver.
+Unrestricted user resizing is still disabled.
 
 ## User Data
 

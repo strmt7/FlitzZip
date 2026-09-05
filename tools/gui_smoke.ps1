@@ -457,6 +457,119 @@ function Assert-HistoryScrollEndpoint {
     Write-Information "History overflow endpoints passed: wheel, track click, and thumb drag." -InformationAction Continue
 }
 
+# Purpose: Resize only the owned smoke window using its actual native frame dimensions.
+# Inputs: Handle/Dpi identify the test window; Width/Height are required client DIPs.
+# Outputs: Returns prior outer dimensions and throws unless the exact requested client size is reached.
+function Invoke-SmokeClientResize {
+    param([IntPtr]$Handle, [int]$Dpi, [int]$Width, [int]$Height)
+
+    $window = New-Object SuperZipNativeUi+RECT
+    $client = New-Object SuperZipNativeUi+RECT
+    if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
+        -not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client)) { throw 'Cannot inspect smoke viewport.' }
+    $old = @{ Width = $window.Right - $window.Left; Height = $window.Bottom - $window.Top }
+    $physicalWidth = [int][Math]::Round($Width * $Dpi / 96.0)
+    $physicalHeight = [int][Math]::Round($Height * $Dpi / 96.0)
+    if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
+        ($physicalWidth + $old.Width - $client.Right), ($physicalHeight + $old.Height - $client.Bottom), 0x0016)) {
+        throw 'Cannot resize the owned smoke window.'
+    }
+    if (-not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+        $client.Right -ne $physicalWidth -or $client.Bottom -ne $physicalHeight) { throw 'Client dimensions mismatch.' }
+    return $old
+}
+
+# Purpose: Check the application's actual work-area fit, including notification-driven restoration.
+# Inputs: Handle/Dpi identify the owned window; ExerciseEvents also tests work-area, display, and move notifications.
+# Outputs: Fails wrong native size/position without changing host display settings or any other window.
+function Assert-WindowWorkAreaFit {
+    param([IntPtr]$Handle, [int]$Dpi, [switch]$ExerciseEvents)
+
+    $events = if ($ExerciseEvents) { @(@(0x001A, 0x002F), @(0x007E, 0), @(0x0232, 0)) } else { @(@(0, 0)) }
+    foreach ($notification in $events) {
+        if ($ExerciseEvents) {
+            [void](Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600)
+            $result = [UIntPtr]::Zero
+            if ([SuperZipNativeUi]::SendMessageTimeout($Handle, $notification[0], [IntPtr]$notification[1], [IntPtr]::Zero,
+                0x0002, 5000, [ref]$result) -eq [IntPtr]::Zero) { throw 'Window fitting notification timed out.' }
+        }
+        $window = New-Object SuperZipNativeUi+RECT
+        $client = New-Object SuperZipNativeUi+RECT
+        $info = New-Object SuperZipNativeUi+MONITORINFO
+        $info.Size = [Runtime.InteropServices.Marshal]::SizeOf($info)
+        if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
+            -not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
+            -not [SuperZipNativeUi]::GetMonitorInfo([SuperZipNativeUi]::MonitorFromWindow($Handle, 2), [ref]$info)) {
+            throw 'Cannot inspect the actual monitor work area.'
+        }
+        $frameWidth = $window.Right - $window.Left - $client.Right
+        $frameHeight = $window.Bottom - $window.Top - $client.Bottom
+        $availableWidth = $info.Work.Right - $info.Work.Left - $frameWidth
+        $availableHeight = $info.Work.Bottom - $info.Work.Top - $frameHeight
+        $expectedWidth = [Math]::Max([Math]::Round(960 * $Dpi / 96.0), [Math]::Min([Math]::Round(1200 * $Dpi / 96.0), $availableWidth))
+        $expectedHeight = [Math]::Max([Math]::Round(600 * $Dpi / 96.0), [Math]::Min([Math]::Round(760 * $Dpi / 96.0), $availableHeight))
+        if ($client.Right -ne $expectedWidth -or $client.Bottom -ne $expectedHeight) { throw 'Window did not fit its work area.' }
+        if ($availableWidth -ge $expectedWidth -and $availableHeight -ge $expectedHeight -and
+            ($window.Left -lt $info.Work.Left -or $window.Top -lt $info.Work.Top -or
+             $window.Right -gt $info.Work.Right -or $window.Bottom -gt $info.Work.Bottom)) {
+            throw 'Window extends outside the available work area.'
+        }
+    }
+    Write-Information "Work-area fitting passed; notification coverage=$ExerciseEvents." -InformationAction Continue
+}
+
+# Purpose: Exercise the compact Licenses modal using native buttons, tabs, and scrolling.
+# Inputs: Handle/Dpi identify a compact About page; BasePath/Extension name screenshots.
+# Outputs: Returns validated modal captures; closes through the real Close button before later form checks.
+function Assert-CompactLicenseDialog {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension, [string]$SettingsPath)
+
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 434 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'License notices opened'
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    foreach ($tab in 0..1) {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX (220 + 136 * $tab) -DesignY 176 -Synchronous
+        $path = "${BasePath}-Compact-Licenses-$tab$Extension"
+        Save-SuperZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left (165 + 136 * $tab) -Top 159 -Right (293 + 136 * $tab) -Bottom 193 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
+        Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left 175 -Top 209 -Right 867 -Bottom 443 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    Start-Sleep -Milliseconds 200
+    Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-Licenses-End$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 826 -DesignY 481 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'License notices closed'
+    $closedPath = "${BasePath}-Compact-Licenses-Closed$Extension"
+    Save-SuperZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+    Assert-DesignRectHasColor -Path $closedPath -Dpi $Dpi -Left 160 -Top 180 -Right 240 -Bottom 260 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 42 -MinPixels 20
+}
+
+# Purpose: Check overwrite confirmation and cancellation at the minimum client viewport.
+# Inputs: Handle/Dpi identify the window with an open overwrite prompt; BasePath/Extension name screenshots.
+# Outputs: Captures the compact prompt, clicks Cancel, verifies the Extract title returns, and restores the original size.
+function Assert-CompactOverwritePrompt {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$BasePath, [string]$Extension)
+
+    $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
+    try {
+        $path = "${BasePath}-Compact-OverwritePrompt$Extension"
+        Save-SuperZipScreenshot -Handle $Handle -Path $path -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        $offset = Get-ClientCaptureOffset -Handle $Handle
+        Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left 230 -Top 186 -Right 810 -Bottom 425 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 756 -DesignY 398 -Synchronous
+        $closedPath = "${BasePath}-Compact-OverwriteCancelled$Extension"
+        Save-SuperZipScreenshot -Handle $Handle -Path $closedPath -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+        Assert-DesignRectHasDetail -Path $closedPath -Dpi $Dpi -Left 116 -Top 74 -Right 350 -Bottom 110 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    } finally {
+        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
+            throw 'Cannot restore the smoke window after the overwrite prompt test.'
+        }
+    }
+}
+
 # Purpose: Verify compact popup scrolling through real selection and persistence.
 # Inputs: Handle/Dpi identify a 960x600-DIP smoke window; SettingsPath is isolated storage; BasePath names screenshots.
 # Outputs: Returns menu captures and fails when wheel, scroll arrows, or keyboard cannot select the last format.
@@ -500,29 +613,17 @@ function Assert-CompactFormatMenu {
 function Assert-CompactFormLayout {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
 
-    $window = New-Object SuperZipNativeUi+RECT
-    $client = New-Object SuperZipNativeUi+RECT
-    if (-not [SuperZipNativeUi]::GetWindowRect($Handle, [ref]$window) -or
-        -not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client)) { throw 'Cannot inspect smoke viewport.' }
-    $oldWidth = $window.Right - $window.Left
-    $oldHeight = $window.Bottom - $window.Top
-    $width = [int][Math]::Round(960 * $Dpi / 96.0)
-    $height = [int][Math]::Round(600 * $Dpi / 96.0)
     $baselineJson = Get-Content -Raw -LiteralPath $SettingsPath
     $baseline = $baselineJson | ConvertFrom-Json
+    $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
     try {
-        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0,
-            ($width + $oldWidth - $client.Right), ($height + $oldHeight - $client.Bottom), 0x0006)) {
-            throw 'Cannot resize the owned smoke window.'
-        }
-        if (-not [SuperZipNativeUi]::GetClientRect($Handle, [ref]$client) -or
-            $client.Right -ne $width -or $client.Bottom -ne $height) { throw 'Compact client dimensions mismatch.' }
         $names = @('Queue', 'Compress', 'Extract', 'Security', 'History', 'System', 'Settings', 'About')
         foreach ($index in 0..7) {
             Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex $index -Synchronous
             Start-Sleep -Milliseconds 150
             Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-$($names[$index])$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
         }
+        Assert-CompactLicenseDialog -Handle $Handle -Dpi $Dpi -BasePath $BasePath -Extension $Extension -SettingsPath $SettingsPath
         Assert-CompactFormatMenu -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -BasePath $BasePath -Extension $Extension
         $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
@@ -562,7 +663,7 @@ function Assert-CompactFormLayout {
         Write-Information 'Compact forms and popup selections passed at the actual host DPI.' -InformationAction Continue
     } finally {
         Invoke-ClientKey -Handle $Handle -VirtualKey 0x1B
-        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $oldWidth, $oldHeight, 0x0006)) {
+        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
             throw 'Cannot restore the owned smoke window dimensions.'
         }
     }
@@ -656,6 +757,9 @@ try {
         $windowDpi = 96
     }
     Assert-FixedWindowStyle -Handle $windowHandle
+    Assert-WindowWorkAreaFit -Handle $windowHandle -Dpi $windowDpi
+    Assert-WindowWorkAreaFit -Handle $windowHandle -Dpi $windowDpi -ExerciseEvents
+    [void](Invoke-SmokeClientResize -Handle $windowHandle -Dpi $windowDpi -Width 1200 -Height 760)
     $captures = @()
     $pageNames = @("Queue", "Compress", "Extract", "Security", "History", "System", "Settings", "About")
     $basePath = Join-Path (Split-Path -Parent $ScreenshotPath) ([System.IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))
@@ -923,8 +1027,11 @@ try {
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $overwritePromptPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
     Assert-DesignRectHasDetail -Path $overwritePromptPath -Dpi $windowDpi -Left 290 -Top 250 -Right 910 -Bottom 510 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 876 -DesignY 478
-    Invoke-ClientKey -Handle $windowHandle -VirtualKey 0x1B
+    $captures += Assert-CompactOverwritePrompt -Handle $windowHandle -Dpi $windowDpi -BasePath $basePath -Extension $extension
+    if (@(Get-ChildItem -LiteralPath $extractOutput -File).Count -ne 1 -or
+        (Get-Content -Raw -LiteralPath (Join-Path $extractOutput 'existing-output.txt')) -cne 'Existing extraction output') {
+        throw 'Cancelling compact overwrite confirmation modified the destination.'
+    }
     Start-Sleep -Milliseconds 300
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Revert" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
 

@@ -53,6 +53,12 @@ class MainWindow {
     int run(HINSTANCE instance, int show_command);
 
   private:
+    // Purpose: Fit normal window bounds to the current monitor work area without enabling user resizing.
+    // Inputs: suggested optionally supplies the position from WM_DPICHANGED; otherwise uses the current rectangle.
+    // Outputs: Updates bounds without activation; logs unavailable geometry, insufficient space, or positioning
+    // failure.
+    void fit_window_to_work_area(const RECT* suggested = nullptr);
+
     using QueueLayout = superzip::app::QueueLayout;
     using QueueColumnLayout = superzip::app::QueueColumnLayout;
     using HistoryColumnLayout = superzip::app::HistoryColumnLayout;

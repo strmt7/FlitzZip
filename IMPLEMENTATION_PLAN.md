@@ -26,7 +26,23 @@ Security tab or a published release.
    portability beyond the local host, distinguishing compiled targets, hosted
    CPU-only test configurations, and GPU hardware actually tested. Retain only
    performance changes supported by correctness and controlled measurements.
-6. Push a coherent verified commit, reconcile all dependency PRs, wait for all
+6. After implementation and performance changes, review the entire repository
+   with a file-level coverage record. Include first-party source, frontend,
+   backend, tests, scripts, workflows, build/release configuration, skills, and
+   documentation. Account for generated files through their generators and
+   vendored code through source/provenance review; preserve upstream archives.
+   Apply consistent first-party coding/comment conventions and refactor only
+   where reasoning and evidence establish a correctness, efficiency, clarity,
+   or maintenance benefit. A green test alone is not a design review.
+7. Perform the maintainer-requested extensive final bug-hunting pass after all
+   planned code changes. Review complete user journeys and failure/lifecycle
+   paths across frontend, backend, formats, resources, installation, and
+   supported configurations. Track reviewed files and unresolved areas rather
+   than implying unchecked code is complete. Every fix needs regression
+   evidence, renewed affected checks, and exact-commit post-push verification.
+   Dedicated security work remains deferred until the maintainer resumes it;
+   deferred checks cannot count as passed or support a clean-security claim.
+8. Push a coherent verified commit, reconcile all dependency PRs, wait for all
    required workflows including release fuzzing, audit remaining alerts and
    deployments, then publish a new appropriately bumped release. Do not alter
    findings merely to manufacture a target alert count.

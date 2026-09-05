@@ -110,6 +110,7 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
 
     dpi_ = GetDpiForWindow(hwnd_);
     rebuild_fonts();
+    fit_window_to_work_area();
 
     ShowWindow(hwnd_, show_command);
     UpdateWindow(hwnd_);
@@ -125,6 +126,44 @@ int MainWindow::run(HINSTANCE instance, int show_command) {
         DeleteObject(class_background);
     }
     return exit_code;
+}
+
+// Purpose: Apply monitor-aware fixed-style sizing at startup and after work-area or DPI changes.
+// Inputs: suggested optionally supplies Windows' proposed position; hwnd_ and dpi_ identify this window.
+// Outputs: Resizes/repositions only this normal window; leaves existing geometry intact and logs OS failures.
+void MainWindow::fit_window_to_work_area(const RECT* suggested) {
+    if (IsIconic(hwnd_)) {
+        return;
+    }
+    RECT current{};
+    if (!GetWindowRect(hwnd_, &current)) {
+        append_log_entry(LogSeverity::Warning, "Window bounds unavailable; work-area fitting deferred");
+        return;
+    }
+    const RECT desired = suggested ? *suggested : current;
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    RECT frame{};
+    if (!GetMonitorInfoW(MonitorFromRect(&desired, MONITOR_DEFAULTTONEAREST), &monitor) ||
+        !AdjustWindowRectExForDpi(&frame, window_style(), FALSE, 0, dpi_)) {
+        append_log_entry(LogSeverity::Warning, "Monitor or frame geometry unavailable; work-area fitting deferred");
+        return;
+    }
+    const auto layout =
+        make_window_layout(monitor.rcWork, desired, SIZE{frame.right - frame.left, frame.bottom - frame.top}, dpi_);
+    if (!layout) {
+        append_log_entry(LogSeverity::Warning, "Invalid monitor geometry; work-area fitting deferred");
+        return;
+    }
+    if (!layout->minimum_fits) {
+        append_log_entry(LogSeverity::Warning, "Display work area is below the 960x600-DIP minimum plus window frame");
+    }
+    const auto& bounds = layout->bounds;
+    if (!EqualRect(&current, &bounds) &&
+        !SetWindowPos(hwnd_, nullptr, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top,
+                      SWP_NOZORDER | SWP_NOACTIVATE)) {
+        append_log_entry(LogSeverity::Warning, "Window positioning failed; work-area fitting deferred");
+    }
 }
 
 // Purpose: Route Win32 messages from the static window procedure to the C++ instance.
@@ -153,20 +192,22 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_DISPLAYCHANGE:
         back_buffer_.reset();
+        fit_window_to_work_area();
         request_repaint();
         return 0;
+    case WM_SETTINGCHANGE:
+        if (wparam == SPI_SETWORKAREA) {
+            fit_window_to_work_area();
+        }
+        return DefWindowProcW(hwnd_, message, wparam, lparam);
+    case WM_EXITSIZEMOVE:
+        fit_window_to_work_area();
+        return 0;
     case WM_DPICHANGED: {
-        // Keep the fixed design client area while honoring Windows' suggested
-        // monitor position for the new DPI.
         back_buffer_.reset();
         dpi_ = HIWORD(wparam);
         rebuild_fonts();
-        const auto* suggested = reinterpret_cast<RECT*>(lparam);
-        RECT fixed_window{0, 0, MulDiv(kDesignClientWidth, static_cast<int>(dpi_), 96),
-                          MulDiv(kDesignClientHeight, static_cast<int>(dpi_), 96)};
-        AdjustWindowRectExForDpi(&fixed_window, window_style(), FALSE, 0, dpi_);
-        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, fixed_window.right - fixed_window.left,
-                     fixed_window.bottom - fixed_window.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        fit_window_to_work_area(reinterpret_cast<const RECT*>(lparam));
         request_repaint();
         return 0;
     }
@@ -182,8 +223,10 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         if (window_was_minimized_) {
             window_was_minimized_ = false;
             repaint_queued_ = false;
+            fit_window_to_work_area();
             RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
         }
+        request_repaint();
         return 0;
     case WM_PRINT:
     case WM_PRINTCLIENT: {

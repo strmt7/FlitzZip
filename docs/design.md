@@ -71,9 +71,10 @@ counts, timing, and graph-series positioning logic are unchanged.
 GUI smoke captures all eight pages at both the normal 1200-by-760-DIP client
 size and a programmatically resized 960-by-600-DIP test size at the host's
 actual DPI. It verifies popup selection through wheel, arrows, and keyboard,
-saves real settings, and restores the pre-test settings snapshot. This is a
-foundation for responsive sizing, not a change to release startup dimensions
-or permission to claim untested monitor configurations.
+saves real settings, and restores the pre-test settings snapshot. The fixed-style
+window now chooses its size from the monitor work area, within these tested
+minimum/preferred dimensions. This does not enable unrestricted user resizing
+or establish support for untested monitor configurations; see `docs/portability.md`.
 
 ## Queue Metadata
 

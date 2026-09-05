@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/main_window_state.hpp"
+#include "app/window_layout.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
 #include "core/defender_scan.hpp"
@@ -27,8 +28,6 @@ namespace superzip::app {
 constexpr int kTopBar = 52;
 constexpr int kRailWidth = 86;
 constexpr int kStatusBar = 34;
-constexpr int kDesignClientWidth = 1200;
-constexpr int kDesignClientHeight = 760;
 constexpr int kPageInsetX = 30;
 constexpr int kPageInsetY = 22;
 constexpr int kPageHeaderHeight = 34;

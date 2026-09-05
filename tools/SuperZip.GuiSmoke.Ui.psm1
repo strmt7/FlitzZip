@@ -141,6 +141,20 @@ public static class SuperZipNativeUi {
         GlobalUnlock(handle);
         return handle;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO {
+        public uint Size;
+        public RECT Monitor;
+        public RECT Work;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
 }
 "@
 

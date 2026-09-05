@@ -121,6 +121,17 @@ is a focused diagnostic, not a replacement for the default all-page smoke.
 The compact Format test must select and persist the last option using wheel,
 arrow-band, and keyboard input. A rendered menu alone is not success.
 
+Work-area tests query the real monitor and client/frame bounds. They exercise
+startup plus work-area, display-change, and completed-move notifications by
+resizing only the owned test window, never altering host displays. Native
+geometry tests separately cover negative monitor coordinates and multiple DPI
+values. Compact Licenses checks wait for newly appended open/close completion
+events rather than guessing when the deferred button timer has fired; they
+also verify both selected tabs and the restored About page. Compact overwrite
+checks cancel through the actual button and confirm the existing destination
+is unchanged. Geometry, command completion, and rendered pixels are distinct
+evidence and must not be substituted for each other.
+
 Do not mix posted mouse clicks and immediately sent keyboard messages when
 the test requires ordered input. Sent messages can overtake queued clicks.
 Compact tests use timeout-bounded synchronous clicks, then assert newly
