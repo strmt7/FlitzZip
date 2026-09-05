@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/folder_size_cache.hpp"
 #include "app/main_window_layout.hpp"
 #include "app/main_window_state.hpp"
 #include "core/progress.hpp"
@@ -57,17 +58,6 @@ class MainWindow {
     using CompressLayout = superzip::app::CompressLayout;
     using ExtractLayout = superzip::app::ExtractLayout;
     using SettingsLayout = superzip::app::SettingsLayout;
-
-    struct FolderSizeCacheEntry {
-        enum class State {
-            Pending,
-            Ready,
-            Failed,
-        };
-
-        State state = State::Pending;
-        std::uintmax_t bytes = 0;
-    };
 
     enum class DeferredMouseCommand {
         None,
@@ -848,9 +838,9 @@ class MainWindow {
     void stop_folder_size_worker();
 
     // Purpose: Calculate one folder's byte size from filesystem metadata only.
-    // Inputs: `path` is a directory path; `folder_size_stop_` can cancel traversal.
+    // Inputs: `task` owns a directory path and cancellation flag; window shutdown also cancels traversal.
     // Outputs: Returns total bytes, or empty when traversal is cancelled or inaccessible.
-    [[nodiscard]] std::optional<std::uintmax_t> calculate_folder_size(const std::filesystem::path& path) const;
+    [[nodiscard]] std::optional<std::uintmax_t> calculate_folder_size(const FolderSizeTask& task) const;
 
     // Purpose: Draw the Queue overflow scrollbar when rows exceed visible capacity.
     // Inputs: `dc` is the paint target, `table` is the full table rectangle, `row_count` is the queue size, and
@@ -1400,8 +1390,7 @@ class MainWindow {
     bool queue_scroll_dragging_ = false;
     std::mutex folder_size_mutex_;
     std::condition_variable folder_size_cv_;
-    std::unordered_map<std::wstring, FolderSizeCacheEntry> folder_size_cache_;
-    std::deque<std::filesystem::path> folder_size_queue_;
+    FolderSizeCache folder_size_cache_;
     std::thread folder_size_worker_;
     std::atomic_bool folder_size_stop_ = false;
     int history_scroll_first_row_ = 0;

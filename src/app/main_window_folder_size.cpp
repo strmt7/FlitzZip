@@ -13,14 +13,13 @@ std::wstring MainWindow::queue_entry_size_text(const std::filesystem::path& path
         return entry_size_text(path);
     }
 
-    const std::wstring key = path.wstring();
     {
         std::lock_guard lock(folder_size_mutex_);
-        if (const auto found = folder_size_cache_.find(key); found != folder_size_cache_.end()) {
-            if (found->second.state == FolderSizeCacheEntry::State::Ready) {
-                return widen(human_bytes(static_cast<double>(found->second.bytes)));
+        if (const auto found = folder_size_cache_.find(path)) {
+            if (found->state == FolderSizeTask::State::Ready) {
+                return widen(human_bytes(static_cast<double>(found->bytes)));
             }
-            if (found->second.state == FolderSizeCacheEntry::State::Failed) {
+            if (found->state == FolderSizeTask::State::Failed) {
                 return L"--";
             }
             return L"...";
@@ -37,12 +36,9 @@ std::wstring MainWindow::queue_entry_size_text(const std::filesystem::path& path
 void MainWindow::enqueue_folder_size_if_needed(const std::filesystem::path& path) {
     {
         std::lock_guard lock(folder_size_mutex_);
-        const std::wstring key = path.wstring();
-        if (folder_size_cache_.contains(key)) {
+        if (!folder_size_cache_.enqueue(path)) {
             return;
         }
-        folder_size_cache_.emplace(key, FolderSizeCacheEntry{});
-        folder_size_queue_.push_back(path);
     }
     start_folder_size_worker();
     folder_size_cv_.notify_one();
@@ -61,26 +57,22 @@ void MainWindow::start_folder_size_worker() {
         (void)SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
         while (!folder_size_stop_.load()) {
-            std::filesystem::path path;
+            std::shared_ptr<FolderSizeTask> task;
             {
                 std::unique_lock lock(folder_size_mutex_);
-                folder_size_cv_.wait(lock, [this] { return folder_size_stop_.load() || !folder_size_queue_.empty(); });
+                folder_size_cv_.wait(lock,
+                                     [this] { return folder_size_stop_.load() || folder_size_cache_.has_pending(); });
                 if (folder_size_stop_.load()) {
                     break;
                 }
-                path = std::move(folder_size_queue_.front());
-                folder_size_queue_.pop_front();
+                task = folder_size_cache_.take_next();
             }
 
-            const auto size = calculate_folder_size(path);
+            const auto size = calculate_folder_size(*task);
             {
                 std::lock_guard lock(folder_size_mutex_);
-                auto& entry = folder_size_cache_[path.wstring()];
-                if (size.has_value()) {
-                    entry.state = FolderSizeCacheEntry::State::Ready;
-                    entry.bytes = *size;
-                } else if (!folder_size_stop_.load()) {
-                    entry.state = FolderSizeCacheEntry::State::Failed;
+                if (folder_size_stop_.load() || !folder_size_cache_.complete(task, size)) {
+                    continue;
                 }
             }
             request_repaint();
@@ -101,9 +93,13 @@ void MainWindow::stop_folder_size_worker() {
 }
 
 // Purpose: Calculate one folder's byte size from filesystem metadata only.
-// Inputs: `path` is a directory path; `folder_size_stop_` can cancel traversal.
+// Inputs: `task` owns a directory path and cancellation flag; window shutdown also cancels traversal.
 // Outputs: Returns total bytes, or empty when traversal is cancelled or inaccessible.
-std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const std::filesystem::path& path) const {
+std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const FolderSizeTask& task) const {
+    if (folder_size_stop_.load() || task.cancelled.load()) {
+        return std::nullopt;
+    }
+    const auto& path = task.path;
     if (!is_supported_local_drop_path(path)) {
         return std::nullopt;
     }
@@ -124,7 +120,7 @@ std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const std::files
     }
     std::uint32_t entries_since_yield = 0;
     while (iterator != end) {
-        if (folder_size_stop_.load() || std::chrono::steady_clock::now() >= deadline ||
+        if (folder_size_stop_.load() || task.cancelled.load() || std::chrono::steady_clock::now() >= deadline ||
             entry_count >= kMaxFolderSizeEntries || static_cast<std::size_t>(iterator.depth()) >= kMaxFolderSizeDepth) {
             return std::nullopt;
         }

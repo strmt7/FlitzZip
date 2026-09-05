@@ -349,7 +349,7 @@ void MainWindow::add_folder() {
 
 // Purpose: Remove every queued path and reset row selection state.
 // Inputs: None.
-// Outputs: Mutates queue state and queues a repaint.
+// Outputs: Clears queue state, cancels its folder-size tasks, and queues a repaint.
 void MainWindow::clear_queue() {
     {
         std::lock_guard lock(mutex_);
@@ -359,6 +359,8 @@ void MainWindow::clear_queue() {
         state_.selected_queue_index = -1;
         queue_scroll_first_row_ = 0;
         queue_wheel_delta_remainder_ = 0;
+        std::lock_guard folder_lock(folder_size_mutex_);
+        folder_size_cache_.retain({});
     }
     request_repaint();
 }

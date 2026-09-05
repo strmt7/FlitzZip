@@ -255,7 +255,7 @@ bool MainWindow::toggle_queue_item(std::size_t index) {
 
 // Purpose: Remove every checked Queue row.
 // Inputs: None; reads the current queue and checkbox state.
-// Outputs: Deletes selected queue entries, preserves unchecked entries, resets scroll bounds, and queues repaint.
+// Outputs: Deletes checked rows and their size tasks, preserves unchecked rows, resets scrolling, and queues repaint.
 bool MainWindow::remove_selected_queue_items() {
     std::size_t removed = 0;
     {
@@ -280,6 +280,10 @@ bool MainWindow::remove_selected_queue_items() {
         }
         state_.queued_paths = std::move(remaining_paths);
         state_.queued_enabled = std::move(remaining_enabled);
+        {
+            std::lock_guard folder_lock(folder_size_mutex_);
+            folder_size_cache_.retain(state_.queued_paths);
+        }
         reset_security_review_locked();
         state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
         queue_scroll_first_row_ = 0;
