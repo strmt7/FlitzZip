@@ -46,10 +46,42 @@
 #include <string_view>
 #include <system_error>
 #include <vector>
+#include <windows.h>
 
 namespace {
 
 constexpr std::string_view kBlockSizeUsage = "256|512|1024|2048|4096|8192|16384";
+
+// Purpose: Preserve Windows Unicode arguments before parsing command options.
+// Inputs: One UTF-16 argument from the wide-character CRT entry point.
+// Outputs: Returns exact UTF-8 text; rejects invalid UTF-16 rather than using code-page replacement characters.
+std::string encode_cli_argument(std::wstring_view argument) {
+    if (argument.empty()) {
+        return {};
+    }
+    if (argument.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw superzip::ArchiveError("command-line argument exceeds conversion limits");
+    }
+    const auto length = static_cast<int>(argument.size());
+    const auto size =
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument.data(), length, nullptr, 0, nullptr, nullptr);
+    if (size == 0) {
+        throw superzip::ArchiveError("command-line argument contains invalid Unicode");
+    }
+    std::string encoded(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument.data(), length, encoded.data(), size, nullptr,
+                            nullptr) != size) {
+        throw superzip::ArchiveError("command-line Unicode conversion failed");
+    }
+    return encoded;
+}
+
+// Purpose: Convert UTF-8 command arguments to native filesystem paths without the ANSI code page.
+// Inputs: An argument value already encoded by the wide-character CLI entry point.
+// Outputs: Returns the corresponding native path without changing its spelling or resolving it.
+std::filesystem::path cli_path_argument(const std::string& argument) {
+    return std::filesystem::path(std::u8string(argument.begin(), argument.end()));
+}
 
 // Purpose: Print command-line help for supported SuperZip operations.
 // Inputs: None.
@@ -400,7 +432,7 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
         if (args[i] == "--format") {
             command.format = require_arg(args, i, "--format");
         } else if (args[i] == "--output") {
-            command.output = require_arg(args, i, "--output");
+            command.output = cli_path_argument(require_arg(args, i, "--output"));
         } else if (args[i] == "--require-gpu") {
             command.require_gpu = true;
         } else if (args[i] == "--force-cpu") {
@@ -426,7 +458,7 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
         } else {
-            command.sources.emplace_back(args[i]);
+            command.sources.push_back(cli_path_argument(args[i]));
         }
     }
     return command;
@@ -526,7 +558,7 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
         if (args[i] == "--format") {
             command.format = require_arg(args, i, "--format");
         } else if (args[i] == "--output") {
-            command.output = require_arg(args, i, "--output");
+            command.output = cli_path_argument(require_arg(args, i, "--output"));
         } else if (args[i] == "--require-gpu") {
             command.require_gpu = true;
         } else if (args[i] == "--force-cpu") {
@@ -544,7 +576,7 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
         } else {
-            command.archive = args[i];
+            command.archive = cli_path_argument(args[i]);
         }
     }
     return command;
@@ -827,7 +859,7 @@ CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
         } else {
-            command.archive = args[i];
+            command.archive = cli_path_argument(args[i]);
         }
     }
     return command;
@@ -894,7 +926,7 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
             usage();
             return 2;
         }
-        const auto format = resolve_cli_archive_format("auto", args[1], true);
+        const auto format = resolve_cli_archive_format("auto", cli_path_argument(args[1]), true);
         const auto& info = superzip::archive_format_info(format);
         std::cout << "format=" << info.key << " display=\"" << info.display_name << "\""
                   << " can_create=" << (info.can_create ? "true" : "false")
@@ -959,11 +991,14 @@ int run_cli_command(const std::vector<std::string>& args) {
 }  // namespace
 
 // Purpose: Execute the SuperZip command-line interface.
-// Inputs: `argc`/`argv` are process command-line arguments encoded by the platform C runtime.
+// Inputs: `argc`/`argv` are process command-line arguments supplied as UTF-16 by the Windows CRT.
 // Outputs: Returns 0 on success, 1 on operation failure, and 2 on invalid usage.
-int main(int argc, char** argv) {
+int wmain(int argc, wchar_t** argv) {
     try {
-        std::vector<std::string> args(argv + 1, argv + argc);
+        std::vector<std::string> args;
+        for (int index = 1; index < argc; ++index) {
+            args.push_back(encode_cli_argument(argv[index]));
+        }
         if (args.empty()) {
             usage();
             return 2;

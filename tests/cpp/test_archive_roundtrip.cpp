@@ -54,6 +54,41 @@ void write_raw_test_archive(const std::filesystem::path& path, const std::vector
 
 }  // namespace
 
+// Purpose: Restore native UTF-8 filenames without depending on the host's ANSI code page.
+// Inputs: Unicode source, archive, destination and entry paths in CPU and available required-HIP modes.
+// Outputs: Requires verified archive roundtrips, identical filenames/payloads, and honest CPU/HIP telemetry.
+TEST_CASE(suzip_unicode_paths_roundtrip) {
+    const auto root = test_temp_dir("suzip-unicode");
+    const auto source = root / std::filesystem::path(u8"\u65e5\u672c");
+    const auto relative = std::filesystem::path(u8"caf\u00e9/\U0001f4c1.txt");
+    std::filesystem::create_directories((source / relative).parent_path());
+    const std::string payload(8192U, 'U');
+    std::ofstream(source / relative, std::ios::binary) << payload;
+    const bool hip_available = superzip::query_gpu_info().available;
+    for (const bool hip : {false, true}) {
+        if (hip && !hip_available) {
+            continue;
+        }
+        superzip::CompressOptions compression;
+        compression.force_cpu = !hip;
+        compression.gpu_required = hip;
+        compression.verify_after_write = true;
+        const auto archive = root / std::filesystem::path(u8"\u03a9.suzip");
+        const auto compressed = superzip::compress_suzip({source}, archive, compression);
+        REQUIRE_EQ(compressed.gpu_used, hip);
+        superzip::ExtractOptions extraction;
+        extraction.force_cpu = !hip;
+        extraction.gpu_required = hip;
+        const auto destination = root / (hip ? "hip" : "cpu") / std::filesystem::path(u8"\u00e9");
+        const auto extracted = superzip::extract_suzip(archive, destination, extraction);
+        REQUIRE_EQ(extracted.gpu_used, hip);
+        REQUIRE_EQ(extracted.output_bytes, payload.size());
+        std::ifstream restored(destination / source.filename() / relative, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()), payload);
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify every product block-size option is a real compression setting.
 // Inputs: A deterministic 3 MiB file compressed with each offered block size.
 // Outputs: Extracted payload matches the source and archive metadata never exceeds the selected block size.

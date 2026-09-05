@@ -36,6 +36,11 @@ Security tab or a published release.
    Unicode fixtures exposed an existing extraction bug: PAX encoding and
    internal publication paths now receive explicit UTF-8 conversion, with
    legacy code-page behavior retained where no UTF-8 declaration exists.
+   Native SUZIP and ZIP now preserve Unicode filesystem names through their
+   declared encodings; ZIP also decodes unmarked names as CP437. CLI process
+   arguments and format detection no longer narrow Unicode paths through the
+   host ANSI code page. Process-level Unicode checks cover the native, ZIP,
+   and writable TAR containers; CPIO/CPIO.GZ and AR name handling remains open.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

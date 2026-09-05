@@ -93,6 +93,30 @@ std::string lowercase_ascii(std::string_view text) {
 
 }  // namespace
 
+// Purpose: Recognize registered extensions without converting a Unicode basename through the ANSI code page.
+// Inputs: Every extension row in lowercase and uppercase below a CJK/supplementary-plane filename.
+// Outputs: Requires identical extension/display handling for both spellings; generic .bin still needs magic.
+TEST_CASE(archive_format_unicode_filename_extensions) {
+    for (const auto& row : superzip::archive_format_extension_registry()) {
+        std::string extension(row.extension);
+        for (const bool uppercase : {false, true}) {
+            if (uppercase) {
+                std::ranges::transform(extension, extension.begin(), [](unsigned char ch) {
+                    return static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - ('a' - 'A') : ch);
+                });
+            }
+            const auto name =
+                std::u8string(u8"\u65e5\u672c-\U0001f4c1") + std::u8string(extension.begin(), extension.end());
+            const std::filesystem::path path(name);
+            const auto expected =
+                std::string_view(row.extension) == ".bin" ? superzip::ArchiveFormat::Unknown : row.format;
+            REQUIRE_EQ(superzip::detect_archive_format_by_extension(path), expected);
+            REQUIRE_EQ(std::string_view(superzip::archive_format_extension_info_for_path(row.format, path).extension),
+                       std::string_view(row.extension));
+        }
+    }
+}
+
 TEST_CASE(archive_format_detects_real_archive_extensions) {
     const auto root = test_temp_dir("archive-format-extensions");
     REQUIRE_EQ(superzip::detect_archive_format(root / "sample.suzip"), superzip::ArchiveFormat::SuperZip);

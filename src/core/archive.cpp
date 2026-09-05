@@ -968,7 +968,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
         }
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.path);
+        const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
         if (entry.directory) {
             create_verified_directories(target);
             progress.finish_entry();

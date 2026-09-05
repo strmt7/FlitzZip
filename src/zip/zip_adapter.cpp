@@ -9,11 +9,39 @@
 
 #include <chrono>
 #include <limits>
+#include <windows.h>
 
 #include "miniz.h"
 
 namespace superzip {
 namespace {
+
+// Purpose: Encode native filesystem paths for miniz's UTF-8 Windows stdio boundary.
+// Inputs: An absolute or relative filesystem path, without archive-name normalization.
+// Outputs: Returns UTF-8 path bytes or propagates an invalid native character conversion.
+std::string zip_filesystem_path(const std::filesystem::path& path) {
+    const auto text = path.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
+// Purpose: Decode ZIP's declared filename encoding before path validation and publication.
+// Inputs: Validated miniz central-directory metadata with a bounded filename and general-purpose flags.
+// Outputs: Returns UTF-8 metadata using EFS when set or the standard CP437 encoding otherwise.
+std::string zip_entry_name(const mz_zip_archive_file_stat& entry) {
+    constexpr mz_uint16 utf8_flag = 1U << 11U;
+    const std::string name(entry.m_filename);
+    if ((entry.m_bit_flag & utf8_flag) != 0U) {
+        return name;
+    }
+    std::wstring decoded(name.size(), L'\0');
+    const auto count = MultiByteToWideChar(437U, 0, name.data(), static_cast<int>(name.size()), decoded.data(),
+                                           static_cast<int>(decoded.size()));
+    if (count == 0) {
+        throw ArchiveError("cannot decode ZIP CP437 filename");
+    }
+    decoded.resize(static_cast<std::size_t>(count));
+    return zip_filesystem_path(std::filesystem::path(decoded));
+}
 
 // Purpose: Add ZIP metadata byte counters while enforcing SuperZip's extracted-output cap.
 // Inputs: `lhs` and `rhs` are uncompressed byte counters from ZIP central directory metadata.
@@ -40,7 +68,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
 
     FilePublishTransaction publication(output_archive);
     mz_zip_archive zip{};
-    if (!mz_zip_writer_init_file(&zip, publication.staging_path().string().c_str(), 0)) {
+    if (!mz_zip_writer_init_file(&zip, zip_filesystem_path(publication.staging_path()).c_str(), 0)) {
         throw ArchiveError("cannot create ZIP archive: " + output_archive.string());
     }
     bool finalized = false;
@@ -57,8 +85,9 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
                 continue;
             }
             const auto source_lock = lock_manifest_source(entry);
-            if (!mz_zip_writer_add_file(&zip, entry.archive_path.c_str(), entry.source_path.string().c_str(), nullptr,
-                                        0, static_cast<mz_uint>(compression_level))) {
+            if (!mz_zip_writer_add_file(&zip, entry.archive_path.c_str(),
+                                        zip_filesystem_path(entry.source_path).c_str(), nullptr, 0,
+                                        static_cast<mz_uint>(compression_level))) {
                 throw ArchiveError("failed to add ZIP file: " + entry.archive_path);
             }
             progress.add_bytes(entry.size);
@@ -94,7 +123,8 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     mz_zip_archive zip{};
-    if (!mz_zip_reader_init_file(&zip, archive_path.string().c_str(), MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY)) {
+    if (!mz_zip_reader_init_file(&zip, zip_filesystem_path(archive_path).c_str(),
+                                 MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY)) {
         throw ArchiveError("cannot open ZIP archive: " + archive_path.string());
     }
     try {
@@ -103,6 +133,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
             throw ArchiveError("ZIP entry count exceeds SuperZip resource limit");
         }
         std::uint64_t total_bytes = 0;
+        std::uint64_t path_bytes = 0;
         std::vector<ArchivePathValidationEntry> path_entries;
         path_entries.reserve(file_count);
         // Validate every entry path before any filesystem output is created.
@@ -115,8 +146,11 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
             if (!directory) {
                 total_bytes = checked_add_zip_bytes(total_bytes, stat.m_uncomp_size);
             }
+            auto name = zip_entry_name(stat);
+            path_bytes =
+                checked_add_archive_path_metadata_bytes(path_bytes, name.size(), "ZIP decoded filename metadata");
             path_entries.push_back(ArchivePathValidationEntry{
-                .path = stat.m_filename,
+                .path = std::move(name),
                 .directory = directory,
             });
         }
@@ -131,9 +165,10 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
             if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
                 throw ArchiveError("failed to read ZIP entry metadata");
             }
-            progress.set_current(stat.m_filename);
+            const auto& name = path_entries[i].path;
+            progress.set_current(name);
             publish_progress(progress, progress_callback);
-            const auto target = safe_join_archive_path(destination, stat.m_filename);
+            const auto target = safe_join_archive_path(destination, name, ArchivePathEncoding::Utf8);
             if (mz_zip_reader_is_file_a_directory(&zip, i)) {
                 create_verified_directories(target);
                 progress.finish_entry();
@@ -146,7 +181,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
             const auto temporary_target = reserve_file_publish_target(target);
             bool temporary_active = true;
             try {
-                if (!mz_zip_reader_extract_to_file(&zip, i, temporary_target.file.string().c_str(), 0)) {
+                if (!mz_zip_reader_extract_to_file(&zip, i, zip_filesystem_path(temporary_target.file).c_str(), 0)) {
                     throw ArchiveError("failed to extract ZIP entry: " + std::string(stat.m_filename));
                 }
                 commit_verified_file(temporary_target, target, overwrite);

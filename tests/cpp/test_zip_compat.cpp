@@ -247,6 +247,64 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 
 }  // namespace
 
+// Purpose: Exercise miniz's UTF-8 filesystem interface and ZIP EFS metadata at every supported effort.
+// Inputs: Unicode source roots, nested names, archive names, and destinations with empty and nonempty entries.
+// Outputs: Requires exact file restoration, UTF-8 metadata flags, and successful overwrite on repeated extraction.
+TEST_CASE(zip_unicode_paths_roundtrip_all_efforts) {
+    const auto root = test_temp_dir("zip-unicode");
+    const auto source = root / std::filesystem::path(u8"\u65e5\u672c");
+    const auto relative = std::filesystem::path(u8"caf\u00e9/\U0001f4c1.txt");
+    std::filesystem::create_directories((source / relative).parent_path());
+    std::filesystem::create_directories(source / std::filesystem::path(u8"\u03a9"));
+    const std::string payload(4097U, 'Z');
+    std::ofstream(source / relative, std::ios::binary) << payload;
+    std::ofstream(source / std::filesystem::path(u8"\u00e9.txt"), std::ios::binary);
+    for (int effort = 1; effort <= 9; ++effort) {
+        const auto archive = root / std::filesystem::path(u8"\u03a9.zip");
+        const auto compressed = superzip::compress_zip({source}, archive, effort);
+        REQUIRE_EQ(compressed.input_bytes, payload.size());
+        mz_zip_archive reader{};
+        const auto encoded = archive.generic_u8string();
+        REQUIRE_TRUE(mz_zip_reader_init_file(&reader, reinterpret_cast<const char*>(encoded.c_str()), 0));
+        for (mz_uint index = 0; index < mz_zip_reader_get_num_files(&reader); ++index) {
+            mz_zip_archive_file_stat entry{};
+            REQUIRE_TRUE(mz_zip_reader_file_stat(&reader, index, &entry));
+            REQUIRE_TRUE((entry.m_bit_flag & (1U << 11U)) != 0U);
+        }
+        REQUIRE_TRUE(mz_zip_reader_end(&reader));
+        const auto destination = root / std::to_string(effort) / std::filesystem::path(u8"\u00e9");
+        for (const bool overwrite : {false, true}) {
+            const auto extracted = superzip::extract_zip(archive, destination, overwrite);
+            REQUIRE_EQ(extracted.output_bytes, payload.size());
+            std::ifstream restored(destination / source.filename() / relative, std::ios::binary);
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()),
+                       payload);
+            REQUIRE_TRUE(
+                std::filesystem::is_directory(destination / source.filename() / std::filesystem::path(u8"\u03a9")));
+            REQUIRE_EQ(
+                std::filesystem::file_size(destination / source.filename() / std::filesystem::path(u8"\u00e9.txt")),
+                0U);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Decode legacy ZIP names using CP437 rather than a machine-dependent ANSI code page.
+// Inputs: A handcrafted unmarked ZIP entry whose byte 0x82 represents an accented Latin character in CP437.
+// Outputs: Requires the Unicode filename and payload mandated by the ZIP encoding contract.
+TEST_CASE(zip_cp437_filename_roundtrip) {
+    const auto root = test_temp_dir("zip-cp437");
+    const auto archive = root / "legacy.zip";
+    write_stored_zip_with_name(archive, "caf\x82.txt", "CP437 payload");
+    const auto destination = root / "output";
+    (void)superzip::extract_zip(archive, destination, false);
+    std::ifstream restored(destination / std::filesystem::path(u8"caf\u00e9.txt"), std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()),
+               std::string("CP437 payload"));
+    restored.close();
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify standard ZIP compatibility roundtrip for regular files.
 // Inputs: A temporary source file compressed through the miniz adapter.
 // Outputs: Throws if extraction fails or restored contents differ.

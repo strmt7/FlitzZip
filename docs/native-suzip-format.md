@@ -16,6 +16,9 @@ explicit:
   and index size.
 - Each entry records a normalized archive path, directory flag, decoded size,
   payload window, CRC-32, and block descriptors.
+- Archive path bytes are UTF-8. Extraction converts them explicitly to native
+  Windows paths, independent of the host ANSI code page. This preserves the
+  existing index encoding and does not require a format-version change.
 - Version 1 block descriptors distinguish raw, deflate, fill, and GPU-pattern
   materialized blocks. Version 2 adds GPU static-prefix blocks for low-entropy
   byte streams. Version 3 adds adaptive GPU-prefix blocks with bounded

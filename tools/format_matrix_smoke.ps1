@@ -136,6 +136,40 @@ function ConvertFrom-FormatRegistryLine {
     }
 }
 
+# Purpose: Exercise Unicode process arguments and filename roundtrips through the real CLI.
+# Inputs: `Root` is a test-owned workspace below the matrix's checked temporary directory.
+# Outputs: Verifies supported Unicode container paths, including identify and native verify, with tiny fixtures.
+function Test-MatrixUnicodePath {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $unicode = [string][char]0x65E5 + [char]0x672C
+    $tree = Join-Path $Root ($unicode + ' source')
+    $nested = Join-Path $tree ('caf' + [char]0xE9)
+    New-Item -ItemType Directory -Force -Path $nested | Out-Null
+    $name = [char]::ConvertFromUtf32(0x1F4C1) + '.txt'
+    [System.IO.File]::WriteAllText((Join-Path $nested $name), 'Unicode CLI payload')
+    foreach ($format in @('suzip', 'zip', 'tar', 'tar.gz', 'tar.bz2', 'tar.zst')) {
+        $archive = Join-Path $Root ($unicode + '.' + $format)
+        $destination = Join-Path $Root ($unicode + '-out-' + $format)
+        $create = @('compress', '--format', $format, '--output', $archive)
+        $extract = @('extract', '--output', $destination)
+        if ($format -eq 'suzip') {
+            $create += @('--force-cpu', '--verify-after-write')
+            $extract += '--force-cpu'
+        }
+        Invoke-SuperZipMatrixCommand -Arguments ($create + $tree) -Label "Unicode create $format" | Out-Null
+        if ((Get-MatrixIdentifiedFormat -Archive $archive) -ne $format) {
+            throw "Unicode identification mismatch: $format"
+        }
+        Invoke-SuperZipMatrixCommand -Arguments ($extract + $archive) -Label "Unicode extract $format" | Out-Null
+        Test-MatrixDirectoryMatch -ExpectedRoot $tree -ActualRoot (Join-Path $destination (Split-Path -Leaf $tree))
+        if ($format -eq 'suzip') {
+            Invoke-SuperZipMatrixCommand -Arguments @('verify', '--force-cpu', $archive) -Label 'Unicode native verify' | Out-Null
+        }
+        Write-Output "format_matrix unicode_paths=$format status=passed verification=cli_roundtrip"
+    }
+}
+
 # Purpose: Create deterministic file and tree fixtures for archive roundtrip checks.
 # Inputs: `Root` is the temporary workspace root.
 # Outputs: Returns paths for a nested source tree and single-file source directory.
@@ -414,6 +448,7 @@ if (-not $work.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreC
 }
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
+    Test-MatrixUnicodePath -Root (Join-Path $work 'unicode')
     $fixtures = Initialize-FormatMatrixFixture -Root (Join-Path $work "fixtures")
     $archives = Join-Path $work "archives"
     New-Item -ItemType Directory -Force -Path $archives | Out-Null

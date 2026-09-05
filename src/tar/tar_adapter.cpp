@@ -576,12 +576,11 @@ std::string parse_gnu_long_name(std::string payload) {
 }
 
 // Purpose: Scan a TAR stream and validate metadata before any extraction writes occur.
-// Inputs: `input` is positioned at the TAR start, `source_label` names diagnostics, `seekable` controls payload
+// Inputs: `input` is positioned at the TAR start, `seekable` controls payload
 // skipping, and `archive_size` bounds seekable extents. Outputs: Returns validated metadata or throws on malformed,
 // unsafe, or resource-exhaustive records.
-TarScanResult scan_tar_stream(std::istream& input, const std::string& source_label, bool seekable,
+TarScanResult scan_tar_stream(std::istream& input, bool seekable,
                               std::optional<std::uint64_t> archive_size = std::nullopt) {
-    (void)source_label;
     TarScanResult result;
     PendingTarExtensions pending;
     for (;;) {
@@ -689,7 +688,7 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
     if (!input) {
         throw ArchiveError("cannot open TAR archive: " + archive_path.string());
     }
-    return scan_tar_stream(input, archive_path.string(), true, std::filesystem::file_size(archive_path));
+    return scan_tar_stream(input, true, std::filesystem::file_size(archive_path));
 }
 
 // Purpose: Copy one already-positioned TAR payload from a stream to a verified temporary file.
@@ -1054,7 +1053,7 @@ OperationStats extract_tar_gzip(const std::filesystem::path& archive_path, const
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     GzipInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
+    const auto scanned = scan_tar_stream(scan_input, false);
     scan_input.finish();
     create_verified_directories(destination);
 
@@ -1079,7 +1078,7 @@ OperationStats extract_tar_bzip2(const std::filesystem::path& archive_path, cons
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     Bzip2InputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
+    const auto scanned = scan_tar_stream(scan_input, false);
     scan_input.finish();
     create_verified_directories(destination);
 
@@ -1105,7 +1104,7 @@ OperationStats extract_tar_xz(const std::filesystem::path& archive_path, const s
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     XzInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
+    const auto scanned = scan_tar_stream(scan_input, false);
     scan_input.finish();
     create_verified_directories(destination);
 
@@ -1131,7 +1130,7 @@ OperationStats extract_tar_lzip(const std::filesystem::path& archive_path, const
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     LzipInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
+    const auto scanned = scan_tar_stream(scan_input, false);
     scan_input.finish();
     create_verified_directories(destination);
 
@@ -1156,7 +1155,7 @@ OperationStats extract_tar_zstd(const std::filesystem::path& archive_path, const
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     ZstdInputStream scan_input(archive_source.path());
-    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
+    const auto scanned = scan_tar_stream(scan_input, false);
     scan_input.finish();
     create_verified_directories(destination);
 

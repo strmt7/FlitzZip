@@ -119,6 +119,36 @@ every legacy adapter or change their default encoding.
 The encoding boundary follows the
 [PAX character-set contract](https://docs.oracle.com/cd/E88353_01/html/E37839/pax-1.html).
 
+## Native, ZIP, And CLI Unicode Boundaries
+
+SUZIP extraction explicitly decodes its existing UTF-8 index paths. ZIP passes
+UTF-8 filesystem paths into the bundled miniz Windows stdio implementation,
+which already opens wide-character paths. ZIP writers retain the EFS filename
+flag. Readers decode EFS names as UTF-8 and unmarked names as CP437 before
+archive-wide path validation; decoded metadata remains resource-bounded. This
+follows the [ZIP language-encoding contract](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT),
+not the current Windows ANSI code page. Optional Unicode path extra-field
+overrides and arbitrary vendor-specific legacy encodings remain outside this
+increment's verified reader scope.
+
+The CLI now starts with Windows UTF-16 arguments, converts them losslessly to
+UTF-8 for option parsing, and explicitly reconstructs native filesystem paths
+for create/extract/verify/identify operations. Format detection uses UTF-8
+filename keys and locale-independent ASCII extension folding. Its extension
+tests cover every registered display row, including the intentional rule that
+generic `.bin` files need a valid MacBinary signature. An unused TAR diagnostic
+label was removed because its eager code-page conversion could fail otherwise
+valid Unicode archive reads.
+
+Native tests cover Unicode source/archive/destination paths, empty ZIP entries,
+all nine ZIP efforts, overwrite, CP437, and native CPU/available required-HIP
+roundtrips. The CLI format matrix adds Unicode process arguments and entry-name
+checks for SUZIP, ZIP, TAR, TAR.GZ, TAR.BZ2 and TAR.ZST. Independent Python ZIP
+decoding covers all nine writer efforts; independently produced unmarked ZIPs
+exercise all 128 high-byte CP437 values. These are correctness results, not
+compression-speed measurements or proof of Unicode support in every adapter.
+The reproduced CPIO/CPIO.GZ and AR Unicode defects remain open.
+
 ## Remaining Scope
 
 These contracts do not establish optimal ratios or performance for every
