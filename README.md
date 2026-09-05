@@ -258,10 +258,13 @@ ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, Gzip, Bzip2, XZ, LZMA, lzip,
 Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
 CPIO.GZ, AR, DEB, ISO, and RPM compatibility are deliberately separate from
 SUZIP tuning.
-`--require-gpu`, `--force-cpu`, worker controls, block-size controls,
-compression-level controls, and `--verify-after-write` are accepted only on
-native `.suzip` commands because compatibility formats do not use the AMD HIP
-SUZIP codec. `extract` defaults to auto-detection for implemented archive
+`--require-gpu`, `--force-cpu`, worker controls, block-size controls, and
+`--verify-after-write` are accepted only on native `.suzip` commands because
+compatibility formats do not use the AMD HIP SUZIP codec.
+`--compression-level <1-9>` also controls the CPU-backed ZIP, Gzip, Bzip2,
+Zstandard, TAR.GZ, TAR.BZ2, TAR.ZST, and CPIO.GZ writers. Uncompressed TAR,
+CPIO, and AR containers and the fixed-policy Unix Compress writer reject that
+flag rather than ignore it. `extract` defaults to auto-detection for implemented archive
 formats. Recognized but unsupported formats fail explicitly instead of using
 external tools or hidden fallbacks.
 

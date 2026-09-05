@@ -14,6 +14,12 @@ Security tab or a published release.
    responsiveness, and format contracts. Preserve measured improvements;
    distinguish uncompressed containers and extract-only formats from codecs.
    Zstandard Strong/Maximum now use bounded higher-effort backend settings.
+   Apply this review to every CPU-backed format as well as SUZIP: share codec
+   policy across single-file and container wrappers, verify supported levels,
+   byte-exact roundtrips, complete encoded sizes, streaming/resource bounds,
+   and independent readers. Do not mistake format-matrix correctness for
+   measured efficiency or force identical capabilities onto uncompressed
+   containers, fixed-policy codecs, and extract-only formats.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
@@ -47,6 +53,11 @@ Security tab or a published release.
    deterministic selector on held-out workloads. Count inference time, memory,
    model/package size, portability, and decoding dependencies; do not add cloud
    calls or model downloads to ordinary archive operations.
+   The test-target-only [HIP dictionary encoder](docs/gpu-dictionary-codec-development.md)
+   now produces real independent block payloads with nine effort-dependent sizes
+   on a controlled repeated-record fixture. Native archive integration, readers,
+   complete candidate-cost selection, portability, and timing validation remain
+   open; this does not yet replace the production two-tier policy.
 6. After implementation and performance changes, review the entire repository
    with a file-level coverage record. Include first-party source, frontend,
    backend, tests, scripts, workflows, build/release configuration, skills, and

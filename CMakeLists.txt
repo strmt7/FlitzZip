@@ -466,8 +466,8 @@ if(SUPERZIP_ENABLE_HIP)
 
   # Purpose: Compile one HIP translation unit with the pinned Windows HIP path.
   # Inputs: source is repo-relative, output is the generated object path, and
-  # comment is the build status text.
-  # Outputs: Adds a custom command that produces the object file.
+  # comment is the build status text; optional trailing arguments add
+  # dependencies. Outputs: Adds a custom command that produces the object file.
   function(superzip_compile_hip_object source output comment)
     add_custom_command(
       OUTPUT "${output}"
@@ -478,7 +478,7 @@ if(SUPERZIP_ENABLE_HIP)
         "${CMAKE_CURRENT_SOURCE_DIR}" -Arch "${SUPERZIP_HIP_ARCH}"
         -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
       DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
-              ${SUPERZIP_HIP_COMMON_DEPS}
+              ${SUPERZIP_HIP_COMMON_DEPS} ${ARGN}
       COMMENT "${comment}"
       VERBATIM)
   endfunction()
@@ -694,6 +694,8 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_resource_usage.cpp
     tests/cpp/test_sevenzip_compat.cpp
     tests/cpp/test_suzip_gpu_prefix.cpp
+    tests/cpp/test_dictionary_matcher.cpp
+    src/gpu/dictionary_matcher.cpp
     tests/cpp/test_tar_bzip2_compat.cpp
     tests/cpp/test_tar_gzip_compat.cpp
     tests/cpp/test_tar_compat.cpp
@@ -708,6 +710,26 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_zstd_compat.cpp
     tests/cpp/test_zip_compat.cpp)
   target_link_libraries(superzip_tests PRIVATE superzip_core gdi32 user32)
+  # Keep the next dictionary codec's unfinished matcher out of product binaries.
+  if(SUPERZIP_ENABLE_HIP)
+    set(SUPERZIP_HIP_DICTIONARY_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_dictionary_matcher.obj")
+    file(GLOB_RECURSE SUPERZIP_ROCPRIM_HEADERS CONFIGURE_DEPENDS
+         "${SUPERZIP_HIP_PATH}/include/rocprim/*.hpp")
+    superzip_compile_hip_object(
+      src/gpu/hip_dictionary_matcher.hip.cpp
+      "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
+      "Compiling AMD HIP dictionary match finder"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_matcher.hpp"
+      ${SUPERZIP_ROCPRIM_HEADERS})
+    add_custom_target(superzip_dictionary_matcher_object
+                      DEPENDS "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
+                      COMMENT "Preparing AMD HIP dictionary match finder tests")
+    add_dependencies(superzip_tests superzip_dictionary_matcher_object)
+    set_source_files_properties("${SUPERZIP_HIP_DICTIONARY_OBJECT}"
+                                PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+    target_sources(superzip_tests PRIVATE "${SUPERZIP_HIP_DICTIONARY_OBJECT}")
+  endif()
   superzip_copy_zstd_runtime(superzip_tests)
   superzip_copy_wimlib_runtime(superzip_tests)
   target_compile_definitions(
