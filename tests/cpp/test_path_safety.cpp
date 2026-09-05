@@ -124,16 +124,17 @@ TEST_CASE(path_safety_accepts_nested_relative_path) {
 }
 
 // Purpose: Preserve explicit UTF-8 filenames independently of the Windows ANSI code page.
-// Inputs: Nested accented, CJK, supplementary-plane, and decomposed Unicode path components.
+// Inputs: Nested Unicode components below a temporary root with a redundant current-directory component.
 // Outputs: Requires native path equality and an exact UTF-8 archive-name roundtrip.
 TEST_CASE(path_safety_utf8_filename_roundtrip) {
-    const auto root = test_temp_dir("utf8-path-roundtrip");
+    const auto root = test_temp_dir("utf8-path-roundtrip") / ".";
+    const auto canonical_root = std::filesystem::weakly_canonical(root);
     for (const auto* name : {u8"caf\u00e9/file.txt", u8"\u65e5\u672c/\U0001f4c1.txt", u8"e\u0301.txt"}) {
         const std::filesystem::path relative(name);
         const auto archive_name = superzip::normalize_entry_name(relative);
         const auto target = superzip::safe_join_archive_path(root, archive_name, superzip::ArchivePathEncoding::Utf8);
-        REQUIRE_EQ(target, std::filesystem::weakly_canonical(root) / relative);
-        REQUIRE_EQ(superzip::normalize_entry_name(target.lexically_relative(root)), archive_name);
+        REQUIRE_EQ(target, canonical_root / relative);
+        REQUIRE_EQ(superzip::normalize_entry_name(target.lexically_relative(canonical_root)), archive_name);
     }
     std::filesystem::remove_all(root);
 }
