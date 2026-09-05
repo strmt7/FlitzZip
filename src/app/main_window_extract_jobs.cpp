@@ -278,7 +278,7 @@ void MainWindow::start_extract() {
 
 // Purpose: Run one long operation on the background worker thread.
 // Inputs: `job` performs the operation and `label` is the visible busy status.
-// Outputs: Updates status, progress, history failure rows, and repaint state when the worker completes.
+// Outputs: Updates status, progress, history rows, and optional summary selection when the worker completes.
 void MainWindow::run_job(std::function<void()> job, std::string label, OperationKind operation) {
     if (worker_running_.exchange(true)) {
         return;
@@ -288,8 +288,10 @@ void MainWindow::run_job(std::function<void()> job, std::string label, Operation
     }
     operation_cancel_requested_.store(false);
     const std::string failure_operation = operation_for_job_label(label);
+    const bool show_summary = applied_settings_.show_operation_summary;
     {
         std::lock_guard lock(mutex_);
+        operation_summary_.begin(state_.history.size());
         state_.status = label;
         state_.progress = {};
         state_.progress.operation = operation;
@@ -300,7 +302,7 @@ void MainWindow::run_job(std::function<void()> job, std::string label, Operation
     }
     append_operation_log(LogSeverity::Information, failure_operation, "started");
     KillTimer(hwnd_, kProgressHoldTimer);
-    worker_ = std::thread([this, job = std::move(job), failure_operation] {
+    worker_ = std::thread([this, job = std::move(job), failure_operation, show_summary] {
         bool completed = false;
         bool cancelled = false;
         std::string failure_text;
@@ -343,9 +345,46 @@ void MainWindow::run_job(std::function<void()> job, std::string label, Operation
         worker_running_.store(false);
         append_operation_log(completed ? LogSeverity::Information : LogSeverity::Warning, failure_operation,
                              completed ? "completed" : (cancelled ? "stopped" : "failed"));
+        {
+            std::lock_guard lock(mutex_);
+            operation_summary_.complete(state_.history, failure_operation, show_summary);
+        }
         request_repaint();
     });
     request_repaint();
+}
+
+// Purpose: Present a completed job's result through the existing History detail surface.
+// Inputs: None; called only by the UI thread's coalesced repaint message handler.
+// Outputs: Consumes one pending selection, resets filters/focus, reveals the selected row, and queues repaint.
+void MainWindow::show_pending_operation_summary() {
+    std::size_t row_count = 0;
+    int selected = -1;
+    std::string operation;
+    {
+        std::lock_guard lock(mutex_);
+        if (state_.active_operation != OperationKind::Idle) {
+            return;
+        }
+        const auto pending = operation_summary_.take();
+        if (!pending) {
+            return;
+        }
+        selected = *pending;
+        row_count = state_.history.size();
+        if (selected < 0 || static_cast<std::size_t>(selected) >= row_count) {
+            return;
+        }
+        state_.selected_history_index = selected;
+        state_.history_operation_filter_index = 0;
+        state_.history_status_filter_index = 0;
+        operation = state_.history[static_cast<std::size_t>(selected)].operation;
+    }
+    set_page(Page::History);
+    reset_history_details_scroll_state();
+    const auto table = history_layout(content_rect()).table;
+    history_scroll_first_row_ = std::min(selected, history_max_scroll_offset(table, row_count));
+    append_log_entry(LogSeverity::Information, "Operation summary shown: " + operation);
 }
 
 // Purpose: Request cooperative cancellation of the active background operation.

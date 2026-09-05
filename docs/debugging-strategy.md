@@ -114,6 +114,14 @@ understand the result:
 
 ## Regression Rules
 
+Operation-summary smoke verifies enabled success, an unapplied enable over an
+applied disabled preference, and an ordinary locked-output failure. It checks
+the new job's success/failure log, completion events, the active page, preserved
+output bytes, and rendered result captures. Failure presentation must clear
+stale History filters. Native tests cover job-local primary-row selection,
+batch failures, empty results, auxiliary checks, and History clears before or
+after completion without selecting a stale row in the next job.
+
 Compact GUI checks must preserve native font sizes and validate actual client
 dimensions. Screenshot helpers accept an explicit expected design size while
 retaining the default 1200-by-760-DIP assertion. `gui_smoke.ps1 -CompactOnly`

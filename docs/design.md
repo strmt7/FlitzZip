@@ -53,6 +53,12 @@ against the reference direction.
 - Work starts on a background thread and updates progress through coalesced
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
+- The applied `Show operation summary` preference is captured when an archive
+  job starts. After success, failure, or cancellation, it opens History with
+  that job's latest primary result selected and visible, clearing filters that
+  could hide it. Auxiliary hash/scan rows remain available without replacing
+  the primary result. Disabling the preference preserves the current page;
+  recording results in History is independent of automatic presentation.
 
 ## Compact Layout Foundation
 

@@ -687,6 +687,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_system_layout.cpp
     tests/cpp/test_form_layout.cpp
     tests/cpp/test_window_layout.cpp
+    tests/cpp/test_operation_summary.cpp
     src/app/form_layout.cpp
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp

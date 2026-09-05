@@ -2,7 +2,8 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Configuration = "Release",
     [string]$ScreenshotPath = "",
-    [switch]$CompactOnly
+    [switch]$CompactOnly,
+    [switch]$OperationSummaryOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -354,6 +355,86 @@ function Wait-GuiLogEvent {
         Start-Sleep -Milliseconds 50
     }
     throw "GUI command did not report '$Message' within five seconds."
+}
+
+# Purpose: Verify the applied summary preference changes completion navigation, including a locked-output failure.
+# Inputs: Handle/Dpi identify the owned window; InputPath and Destination are isolated smoke data; SettingsPath is redirected.
+# Outputs: Captures enabled/disabled/failure results, checks output and navigation, then leaves the queue empty and summary off.
+function Assert-OperationSummary {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$InputPath, [string]$Destination,
+        [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $output = Join-Path $Destination 'SuperZip-output.zst'
+    Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected $true
+    Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($InputPath)
+    Start-Sleep -Milliseconds 150
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 154 -Synchronous
+    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index 6
+    foreach ($scenario in @('Enabled', 'Disabled', 'Failure')) {
+        if ($scenario -ne 'Enabled') {
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+            $length = (Get-Item -LiteralPath $logPath).Length
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
+            Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
+            Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected ($scenario -eq 'Failure')
+            if ($scenario -eq 'Disabled') {
+                # An unapplied enable must not change the next job's captured preference.
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+            } else {
+                Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4 -Synchronous
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 220 -DesignY 154 -Synchronous
+                Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+                Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 390 -DesignY 154 -Synchronous
+                Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+                Invoke-ClientKey -Handle $Handle -VirtualKey 0x28
+                Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+            }
+            Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+        }
+        if ($scenario -ne 'Failure') { Remove-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue }
+        $length = (Get-Item -LiteralPath $logPath).Length
+        $lineCount = @(Get-Content -LiteralPath $logPath).Count
+        $outputLock = $null
+        try {
+            if ($scenario -eq 'Failure') {
+                $outputLock = [System.IO.File]::Open($output, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+            }
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+            $eventText = if ($scenario -eq 'Disabled') { 'Compress: completed' } else { 'Operation summary shown: Compress' }
+            Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message $eventText
+            $newRows = @(Get-Content -LiteralPath $logPath | Select-Object -Skip $lineCount)
+            $expectedResult = if ($scenario -eq 'Failure') { 'Compress: failed' } else { 'Compress: completed' }
+            if (-not ($newRows | Where-Object { $_.Contains($expectedResult) })) {
+                throw "Summary scenario $scenario did not report its expected worker result: $expectedResult."
+            }
+        } finally {
+            if ($null -ne $outputLock) { $outputLock.Dispose() }
+        }
+        if (-not (Test-Path -LiteralPath $output) -or (Get-Item -LiteralPath $output).Length -le 0) {
+            throw 'Summary smoke compression did not produce an archive.'
+        }
+        if ($scenario -eq 'Enabled') { $firstHash = (Get-FileHash -LiteralPath $output).Hash }
+        if ($scenario -eq 'Failure' -and (Get-FileHash -LiteralPath $output).Hash -ne $firstHash) {
+            throw 'Locked-output failure changed the completed archive.'
+        }
+        $path = "${BasePath}-Summary-$scenario$Extension"
+        Save-SuperZipScreenshot -Handle $Handle -Path $path
+        $offset = Get-ClientCaptureOffset -Handle $Handle
+        $top = if ($scenario -eq 'Disabled') { 130 } else { 319 }
+        Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1 -Top $top -Right 4 -Bottom ($top + 42) -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 8 -MinPixels 100 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
+    }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
+    Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected $false
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1130 -DesignY 91 -Synchronous
 }
 
 # Purpose: Verify failed Apply and Restore Defaults keep the last successfully saved settings active.
@@ -771,6 +852,9 @@ try {
         $captures | Format-Table -AutoSize
         return
     }
+
+    $captures += Assert-OperationSummary -Handle $windowHandle -Dpi $windowDpi -InputPath $smokeInput -Destination $smokeDestination -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
+    if ($OperationSummaryOnly) { $captures | Format-Table -AutoSize; return }
 
     # Queue header actions: exercise Add files, Add folder, and Clear without modal dialogs.
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 918 -DesignY 91

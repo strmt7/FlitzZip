@@ -366,10 +366,14 @@ void MainWindow::clear_queue() {
     request_repaint();
 }
 
+// Purpose: Clear session History without leaving stale in-flight or pending summary indices.
+// Inputs: None; serializes the clear with worker History and summary updates.
+// Outputs: Empties History, resets selection and scrolling, and queues repaint.
 void MainWindow::clear_history() {
     {
         std::lock_guard lock(mutex_);
         state_.history.clear();
+        operation_summary_.begin(0);
         state_.selected_history_index = -1;
         history_scroll_first_row_ = 0;
         history_wheel_delta_remainder_ = 0;

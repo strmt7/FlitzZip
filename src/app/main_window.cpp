@@ -260,6 +260,7 @@ LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return handle_create();
     case WM_APP + 1:
         repaint_queued_ = false;
+        show_pending_operation_summary();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case WM_TIMER:

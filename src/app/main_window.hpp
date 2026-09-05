@@ -3,6 +3,7 @@
 #include "app/dropdown_layout.hpp"
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
+#include "app/operation_summary.hpp"
 #include "app/queue_metadata.hpp"
 #include "app/system_layout.hpp"
 #include "app/main_window_layout.hpp"
@@ -1219,6 +1220,11 @@ class MainWindow {
     // Outputs: Updates status/history/progress and queues repaints; catches worker exceptions into UI state.
     void run_job(std::function<void()> job, std::string label, OperationKind operation);
 
+    // Purpose: Present a completed job's optional History summary on the UI thread.
+    // Inputs: None; consumes the synchronized pending row selected by the worker.
+    // Outputs: Clears filters, selects/reveals the result, resets interaction state, and logs presentation once.
+    void show_pending_operation_summary();
+
     // Purpose: Publish one active operation progress snapshot to the UI.
     // Inputs: `snapshot` is an immutable worker progress sample.
     // Outputs: Replaces visible progress, cancels any completed-progress hold timer, and queues repaint.
@@ -1425,6 +1431,7 @@ class MainWindow {
     std::thread folder_size_worker_;
     std::atomic_bool folder_size_stop_ = false;
     int history_scroll_first_row_ = 0;
+    OperationSummarySelection operation_summary_;
     int history_scroll_drag_start_y_ = 0;
     int history_scroll_drag_start_offset_ = 0;
     int history_wheel_delta_remainder_ = 0;
