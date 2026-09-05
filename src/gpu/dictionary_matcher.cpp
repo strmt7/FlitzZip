@@ -17,6 +17,11 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
 // Inputs: A nonempty bounded batch and validated effort.
 // Outputs: Returns encoded blocks, or throws on HIP/resource failure.
 EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort);
+
+// Purpose: Execute HIP decoding after host-side segment-size admission.
+// Inputs: Nonempty bounded segments and their exact total decoded byte count.
+// Outputs: Returns complete decoded bytes or throws before exposing partial output.
+DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes);
 #endif
 
 // Purpose: Resolve increasing dictionary search budgets without unchecked shift counts.
@@ -85,6 +90,36 @@ EncodedBatch encode_segments(std::span<const std::byte> input, int level) {
 #else
     (void)effort;
     throw GpuError("AMD HIP dictionary encoding is not compiled into this build");
+#endif
+}
+
+// Purpose: Validate dictionary block extents before uploading encoded data or allocating GPU output.
+// Inputs: Borrowed independent blocks whose size fields are not trusted.
+// Outputs: Returns empty output or fully validated HIP decoding; rejects resource violations and unavailable HIP.
+DecodedBatch decode_segments(std::span<const EncodedSegment> segments) {
+    if (segments.size() > kMaxBatchBytes / kSegmentBytes) {
+        throw ArchiveError("dictionary decode batch exceeds the segment limit");
+    }
+    std::size_t decoded_bytes = 0;
+    for (const auto& segment : segments) {
+        if (segment.input_bytes == 0U || segment.input_bytes > kSegmentBytes || segment.payload.empty() ||
+            segment.payload.size() > kEncodedSegmentCapacity) {
+            throw ArchiveError("dictionary decode segment has invalid byte extents");
+        }
+        decoded_bytes += segment.input_bytes;
+    }
+    if (segments.empty()) {
+        return {};
+    }
+#if SUPERZIP_ENABLE_HIP
+    const auto info = query_gpu_info();
+    if (!info.available) {
+        throw GpuError(info.status);
+    }
+    return decode_segments_hip(segments, decoded_bytes);
+#else
+    (void)decoded_bytes;
+    throw GpuError("AMD HIP dictionary decoding is not compiled into this build");
 #endif
 }
 

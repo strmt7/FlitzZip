@@ -14,6 +14,141 @@ constexpr std::uint32_t kThreads = 256U;
 constexpr std::uint32_t kNoPrevious = 0xFFFFFFFFU;
 constexpr std::uint64_t kInvalidKey = 0xFFFFFFFFFFFFFFFFULL;
 
+struct DecodeSpan {
+    std::uint32_t encoded_offset;
+    std::uint32_t encoded_size;
+    std::uint32_t decoded_offset;
+    std::uint32_t decoded_size;
+};
+static_assert(sizeof(DecodeSpan) == 16U);
+
+struct DecodeSequence {
+    std::uint32_t read;
+    std::uint32_t written;
+    std::uint32_t literal_input;
+    std::uint32_t literal_output;
+    std::uint32_t literals;
+    std::uint32_t match_output;
+    std::uint32_t distance;
+    std::uint32_t match_bytes;
+    std::uint32_t last_match;
+    bool had_match;
+    bool final;
+    bool valid;
+};
+
+// Purpose: Decode a nibble-length extension without reading beyond input or exceeding the decoded budget.
+// Inputs: Bounded device input, mutable read position, initial nibble, and the remaining output allowance.
+// Outputs: Updates length/read and returns false on truncation or overflow; length never exceeds limit on success.
+__device__ bool read_dictionary_length(const std::byte* input, std::uint32_t size, std::uint32_t& read,
+                                       std::uint32_t& length, std::uint32_t limit) {
+    if (length > limit) {
+        return false;
+    }
+    if (length != 15U) {
+        return true;
+    }
+    std::uint32_t extension = 255U;
+    while (extension == 255U) {
+        if (read == size) {
+            return false;
+        }
+        extension = static_cast<std::uint32_t>(input[read++]);
+        if (extension > limit - length) {
+            return false;
+        }
+        length += extension;
+    }
+    return true;
+}
+
+// Purpose: Parse one complete dictionary sequence before any lane materializes its bytes.
+// Inputs: Segment-local encoded data, exact decoded extent, and sequential parser state owned by lane zero.
+// Outputs: Prepares bounded literal/match ranges or returns false; final sequences require exact output and LZ4 tails.
+__device__ bool read_dictionary_sequence(const std::byte* input, const DecodeSpan& span, DecodeSequence& sequence) {
+    if (sequence.read == span.encoded_size) {
+        return false;
+    }
+    const auto token = static_cast<std::uint32_t>(input[sequence.read++]);
+    sequence.literals = token >> 4U;
+    if (!read_dictionary_length(input, span.encoded_size, sequence.read, sequence.literals,
+                                span.decoded_size - sequence.written) ||
+        sequence.literals > span.encoded_size - sequence.read) {
+        return false;
+    }
+    sequence.literal_input = sequence.read;
+    sequence.literal_output = sequence.written;
+    sequence.read += sequence.literals;
+    sequence.written += sequence.literals;
+    sequence.final = sequence.read == span.encoded_size;
+    if (sequence.final) {
+        return sequence.written == span.decoded_size &&
+               (!sequence.had_match || (sequence.literals >= 5U && span.decoded_size - sequence.last_match >= 12U));
+    }
+    if (span.encoded_size - sequence.read < 2U || span.decoded_size - sequence.written < 4U) {
+        return false;
+    }
+    sequence.distance = static_cast<std::uint32_t>(input[sequence.read]) |
+                        (static_cast<std::uint32_t>(input[sequence.read + 1U]) << 8U);
+    sequence.read += 2U;
+    sequence.match_bytes = token & 15U;
+    if (sequence.distance == 0U || sequence.distance > sequence.written ||
+        !read_dictionary_length(input, span.encoded_size, sequence.read, sequence.match_bytes,
+                                span.decoded_size - sequence.written - 4U)) {
+        return false;
+    }
+    sequence.match_bytes += 4U;
+    sequence.match_output = sequence.written;
+    sequence.last_match = sequence.written;
+    sequence.had_match = true;
+    sequence.written += sequence.match_bytes;
+    return true;
+}
+
+// Purpose: Materialize independent LZ4-format blocks cooperatively with no inter-segment references.
+// Inputs: Admitted packed device spans, encoded bytes, disjoint decoded windows, and one status per span.
+// Outputs: Writes exact decoded bytes and status 1, or status 0 without publishing any partial host output.
+__global__ void decode_dictionary_segments(const std::byte* encoded, const DecodeSpan* spans, std::byte* decoded,
+                                           std::uint32_t* statuses) {
+    const auto index = static_cast<std::uint32_t>(blockIdx.x);
+    const auto span = spans[index];
+    const auto* input = encoded + span.encoded_offset;
+    auto* output = decoded + span.decoded_offset;
+    __shared__ DecodeSequence sequence;
+    if (threadIdx.x == 0U) {
+        sequence = DecodeSequence{};
+    }
+    __syncthreads();
+    while (true) {
+        if (threadIdx.x == 0U) {
+            sequence.valid = read_dictionary_sequence(input, span, sequence);
+        }
+        __syncthreads();
+        if (!sequence.valid) {
+            if (threadIdx.x == 0U) {
+                statuses[index] = 0U;
+            }
+            return;
+        }
+        for (auto byte = static_cast<std::uint32_t>(threadIdx.x); byte < sequence.literals; byte += blockDim.x) {
+            output[sequence.literal_output + byte] = input[sequence.literal_input + byte];
+        }
+        __syncthreads();
+        if (sequence.final) {
+            if (threadIdx.x == 0U) {
+                statuses[index] = 1U;
+            }
+            return;
+        }
+        // Overlapping LZ4 copies repeat the already materialized distance-byte period, not new peer writes.
+        for (auto byte = static_cast<std::uint32_t>(threadIdx.x); byte < sequence.match_bytes; byte += blockDim.x) {
+            output[sequence.match_output + byte] =
+                output[sequence.match_output - sequence.distance + byte % sequence.distance];
+        }
+        __syncthreads();
+    }
+}
+
 // Purpose: Produce exact-prefix keys ordered by segment, four-byte value, and source position.
 // Inputs: Immutable device input and its bounded byte count; keys has one element per input byte.
 // Outputs: Writes unique sortable keys, or a sentinel where four readable bytes do not remain in the segment.
@@ -363,6 +498,65 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
             output.reset_checked("free dictionary encoded slots");
             return result;
         });
+}
+
+// Purpose: Upload bounded dictionary spans once and return bytes only after every GPU decoder reports success.
+// Inputs: Host-admitted nonempty segments and their summed decoded extent, at most 4 MiB.
+// Outputs: Returns exact bytes and resource/timing evidence; releases all HIP resources on success or failure.
+DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes) {
+    std::vector<DecodeSpan> spans;
+    std::vector<std::byte> encoded;
+    std::size_t encoded_bytes = 0;
+    for (const auto& segment : segments) {
+        encoded_bytes += segment.payload.size();
+    }
+    spans.reserve(segments.size());
+    encoded.reserve(encoded_bytes);
+    std::size_t decoded_offset = 0;
+    for (const auto& segment : segments) {
+        spans.push_back({static_cast<std::uint32_t>(encoded.size()), static_cast<std::uint32_t>(segment.payload.size()),
+                         static_cast<std::uint32_t>(decoded_offset), segment.input_bytes});
+        encoded.insert(encoded.end(), segment.payload.begin(), segment.payload.end());
+        decoded_offset += segment.input_bytes;
+    }
+    const auto span_bytes = spans.size() * sizeof(DecodeSpan);
+    const auto status_bytes = spans.size() * sizeof(std::uint32_t);
+    const auto required_bytes = encoded.size() + decoded_bytes + span_bytes + status_bytes;
+    HipDeviceMemoryReservation reservation(required_bytes, "dictionary decoder");
+    HipDeviceBuffer<std::byte> input(encoded.size(), "allocate dictionary decode input");
+    HipDeviceBuffer<DecodeSpan> device_spans(span_bytes, "allocate dictionary decode spans");
+    HipDeviceBuffer<std::byte> output(decoded_bytes, "allocate dictionary decode output");
+    HipDeviceBuffer<std::uint32_t> statuses(status_bytes, "allocate dictionary decode statuses");
+    check_hip(hipMemcpy(input.get(), encoded.data(), encoded.size(), hipMemcpyHostToDevice),
+              "upload dictionary blocks");
+    check_hip(hipMemcpy(device_spans.get(), spans.data(), span_bytes, hipMemcpyHostToDevice),
+              "upload dictionary spans");
+    auto events = make_hip_event_pair("create dictionary decode events");
+    check_hip(hipEventRecord(events.start, hipStreamPerThread), "start dictionary decode");
+    decode_dictionary_segments<<<static_cast<unsigned int>(spans.size()), kThreads, 0, hipStreamPerThread>>>(
+        input.get(), device_spans.get(), output.get(), statuses.get());
+    check_hip(hipGetLastError(), "launch dictionary decoder");
+    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary decode");
+    DecodedBatch result;
+    result.decode_ms = finish_dictionary_stage(events);
+    std::vector<std::uint32_t> host_statuses(spans.size());
+    check_hip(hipMemcpy(host_statuses.data(), statuses.get(), status_bytes, hipMemcpyDeviceToHost),
+              "download dictionary decode statuses");
+    if (std::any_of(host_statuses.begin(), host_statuses.end(), [](auto status) { return status != 1U; })) {
+        throw ArchiveError("dictionary block failed GPU decoding validation");
+    }
+    result.bytes.resize(decoded_bytes);
+    check_hip(hipMemcpy(result.bytes.data(), output.get(), decoded_bytes, hipMemcpyDeviceToHost),
+              "download dictionary decoded bytes");
+    result.device_workspace_bytes = required_bytes;
+    result.h2d_bytes = encoded.size() + span_bytes;
+    result.d2h_bytes = decoded_bytes + status_bytes;
+    result.gpu_used = true;
+    statuses.reset_checked("free dictionary decode statuses");
+    output.reset_checked("free dictionary decode output");
+    device_spans.reset_checked("free dictionary decode spans");
+    input.reset_checked("free dictionary decode input");
+    return result;
 }
 
 }  // namespace superzip::dictionary

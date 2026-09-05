@@ -65,6 +65,16 @@ struct EncodedBatch {
     bool gpu_used = false;
 };
 
+// Verified concatenated segment bytes, with bounded decoder workspace and transfer evidence.
+struct DecodedBatch {
+    std::vector<std::byte> bytes;
+    std::uint64_t device_workspace_bytes = 0;
+    std::uint64_t h2d_bytes = 0;
+    std::uint64_t d2h_bytes = 0;
+    std::optional<double> decode_ms;
+    bool gpu_used = false;
+};
+
 // Purpose: Map all nine compression efforts to strictly increasing, bounded dictionary-search work.
 // Inputs: A compression level from 1 through 9.
 // Outputs: Returns candidate and byte-comparison budgets; throws ArchiveError outside that range.
@@ -86,5 +96,11 @@ MatchBatch find_matches(std::span<const std::byte> input, int level);
 // Outputs: Returns bounded LZ4-format block payloads and resource counts; throws if HIP is unavailable.
 // Empty input produces no blocks and needs no GPU work. No frame or SUZIP metadata is emitted.
 EncodedBatch encode_segments(std::span<const std::byte> input, int level);
+
+// Purpose: Decode independent dictionary segments on HIP without CPU materialization or fallback.
+// Inputs: At most 64 blocks, each declaring 1..65536 decoded bytes and a bounded nonempty payload.
+// Outputs: Returns exact concatenated bytes only after every block validates; throws on invalid input or missing HIP.
+// Empty input produces an empty GPU-free result. This is not yet a public archive-format reader.
+DecodedBatch decode_segments(std::span<const EncodedSegment> segments);
 
 }  // namespace superzip::dictionary

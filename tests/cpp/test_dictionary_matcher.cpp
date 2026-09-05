@@ -173,7 +173,7 @@ void export_dictionary_interop_fixture(const EncodedSegment& segment, std::span<
 
 // Purpose: Verify actual encoded bytes independently and account for compact transfers, including size metadata.
 // Inputs: Original bytes and the HIP block encoder's result.
-// Outputs: Requires byte-exact restoration and bounded workspace; returns total encoded payload bytes.
+// Outputs: Requires independent CPU and HIP restoration plus bounded workspace; returns encoded payload bytes.
 std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const EncodedBatch& batch) {
     REQUIRE_TRUE(batch.gpu_used);
     REQUIRE_EQ(batch.segments.size(), (input.size() + kSegmentBytes - 1U) / kSegmentBytes);
@@ -192,10 +192,184 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
     }
     REQUIRE_EQ(restored, input.size());
     REQUIRE_EQ(batch.d2h_bytes, payload_bytes + batch.segments.size() * sizeof(std::uint32_t));
+    const auto gpu_decoded = decode_segments(batch.segments);
+    REQUIRE_TRUE(gpu_decoded.gpu_used);
+    REQUIRE_EQ(gpu_decoded.bytes.size(), input.size());
+    REQUIRE_TRUE(std::equal(input.begin(), input.end(), gpu_decoded.bytes.begin()));
+    REQUIRE_TRUE(gpu_decoded.device_workspace_bytes < 9U * 1024U * 1024U);
+    REQUIRE_EQ(gpu_decoded.h2d_bytes, payload_bytes + batch.segments.size() * 16U);
+    REQUIRE_EQ(gpu_decoded.d2h_bytes, input.size() + batch.segments.size() * sizeof(std::uint32_t));
+    REQUIRE_TRUE(!gpu_decoded.decode_ms || (std::isfinite(*gpu_decoded.decode_ms) && *gpu_decoded.decode_ms >= 0.0));
     return payload_bytes;
 }
 
 }  // namespace
+
+// Purpose: Admit only bounded segment extents and preserve required-HIP semantics before decoding.
+// Inputs: Empty, oversized, invalid-length, and missing-backend cases with genuine host allocations.
+// Outputs: Requires explicit admission errors and no GPU work for an empty batch.
+TEST_CASE(dictionary_decoder_admission) {
+    const auto empty = decode_segments({});
+    REQUIRE_TRUE(empty.bytes.empty() && !empty.gpu_used && !empty.decode_ms);
+    const EncodedSegment valid{{std::byte{0x10}, std::byte{'A'}}, 1U};
+    std::vector<std::vector<EncodedSegment>> invalid{
+        std::vector<EncodedSegment>(65U, valid),
+        {EncodedSegment{{}, 1U}},
+        {EncodedSegment{valid.payload, 0U}},
+        {EncodedSegment{valid.payload, kSegmentBytes + 1U}},
+        {EncodedSegment{std::vector<std::byte>(kEncodedSegmentCapacity + 1U), kSegmentBytes}},
+    };
+    for (const auto& segments : invalid) {
+        bool rejected = false;
+        try {
+            (void)decode_segments(segments);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    if (!superzip::query_gpu_info().available) {
+        bool rejected = false;
+        try {
+            (void)decode_segments(std::span{&valid, 1U});
+        } catch (const superzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Decode a golden block produced by python-lz4 4.4.5, not the SuperZip encoder.
+// Inputs: The raw block for (b'abcdefg' * 137) + bytes(range(32)), including a 952-byte distance-seven copy.
+// Outputs: Requires byte-exact HIP output across the overlapping period and final literal extension.
+TEST_CASE(dictionary_decoder_independent_writer_fixture) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const std::array<unsigned char, 48> encoded{0x7f, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x07, 0x00, 0xff, 0xff,
+                                                0xff, 0xa8, 0xf0, 0x11, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                                0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+                                                0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+    EncodedSegment segment;
+    segment.payload.assign(std::as_bytes(std::span{encoded}).begin(), std::as_bytes(std::span{encoded}).end());
+    segment.input_bytes = 991U;
+    std::vector<std::byte> expected;
+    for (std::size_t index = 0; index < 959U; ++index) {
+        expected.push_back(static_cast<std::byte>('a' + index % 7U));
+    }
+    for (unsigned int value = 0; value < 32U; ++value) {
+        expected.push_back(static_cast<std::byte>(value));
+    }
+    const auto decoded = decode_segments(std::span{&segment, 1U});
+    REQUIRE_TRUE(decoded.gpu_used && decoded.bytes == expected);
+}
+
+// Purpose: Accept unused final-token match bits, matching independent LZ4 readers.
+// Inputs: All sixteen low-nibble values on literal-only and match-following final sequences.
+// Outputs: Requires identical decoded bytes without consuming nonexistent offset or match-extension fields.
+TEST_CASE(dictionary_decoder_final_token_unused_bits) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    for (unsigned int nibble = 0; nibble < 16U; ++nibble) {
+        const EncodedSegment literal{{static_cast<std::byte>(0x10U | nibble), std::byte{'A'}}, 1U};
+        EncodedSegment matched{
+            {std::byte{0x13}, std::byte{'A'}, std::byte{1}, std::byte{0}, static_cast<std::byte>(0x50U | nibble)}, 13U};
+        matched.payload.insert(matched.payload.end(), 5U, std::byte{'A'});
+        const std::array batch{literal, matched};
+        REQUIRE_TRUE(decode_segments(batch).bytes == std::vector<std::byte>(14U, std::byte{'A'}));
+    }
+}
+
+// Purpose: Decode legal block extremes independently of the current encoder's smaller match-length budget.
+// Inputs: A python-lz4 full-segment run and a hand-derived maximum-distance block with exact expected bytes.
+// Outputs: Requires 65530-byte overlapping matches and distance 65524 without cross-segment reads or output changes.
+TEST_CASE(dictionary_decoder_long_match_and_maximum_distance) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    EncodedSegment repeated{{std::byte{0x1f}, std::byte{'A'}, std::byte{1}, std::byte{0}}, kSegmentBytes};
+    repeated.payload.insert(repeated.payload.end(), 256U, std::byte{0xff});
+    repeated.payload.push_back(std::byte{0xe7});
+    repeated.payload.push_back(std::byte{0x50});
+    repeated.payload.insert(repeated.payload.end(), 5U, std::byte{'A'});
+    REQUIRE_EQ(repeated.payload.size(), 267U);
+    const auto run = decode_segments(std::span{&repeated, 1U});
+    REQUIRE_TRUE(run.bytes == std::vector<std::byte>(kSegmentBytes, std::byte{'A'}));
+
+    constexpr std::uint32_t distance = kSegmentBytes - 12U;
+    EncodedSegment distant{{std::byte{0xf3}}, kSegmentBytes};
+    distant.payload.insert(distant.payload.end(), 256U, std::byte{0xff});
+    distant.payload.push_back(std::byte{0xe5});
+    std::vector<std::byte> expected;
+    for (std::uint32_t index = 0; index < distance; ++index) {
+        const auto value = static_cast<std::byte>((index * 97U + index / 7U) & 255U);
+        expected.push_back(value);
+        distant.payload.push_back(value);
+    }
+    distant.payload.push_back(std::byte{0xf4});
+    distant.payload.push_back(std::byte{0xff});
+    for (std::uint32_t index = 0; index < 7U; ++index) {
+        expected.push_back(expected[index]);
+    }
+    distant.payload.push_back(std::byte{0x50});
+    for (std::uint32_t index = 0; index < 5U; ++index) {
+        const auto value = static_cast<std::byte>(index + 1U);
+        expected.push_back(value);
+        distant.payload.push_back(value);
+    }
+    const std::array batch{repeated, distant, repeated};
+    const auto decoded = decode_segments(batch);
+    REQUIRE_EQ(decoded.bytes.size(), 3U * kSegmentBytes);
+    REQUIRE_TRUE(std::equal(expected.begin(), expected.end(), decoded.bytes.begin() + kSegmentBytes));
+    REQUIRE_TRUE(std::all_of(decoded.bytes.begin(), decoded.bytes.begin() + kSegmentBytes,
+                             [](auto value) { return value == std::byte{'A'}; }));
+    REQUIRE_TRUE(std::all_of(decoded.bytes.begin() + 2U * kSegmentBytes, decoded.bytes.end(),
+                             [](auto value) { return value == std::byte{'A'}; }));
+}
+
+// Purpose: Reject incomplete sequences and inconsistent extents before exposing any partial decoded batch.
+// Inputs: Invalid tokens, extensions, distances, tail rules, and declared sizes between valid neighboring blocks.
+// Outputs: Requires explicit decode errors and a succeeding valid decode after every rejected batch.
+TEST_CASE(dictionary_decoder_rejects_incomplete_sequences) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const EncodedSegment valid{{std::byte{0x10}, std::byte{'A'}}, 1U};
+    const std::vector<std::pair<std::vector<unsigned char>, std::uint32_t>> cases{
+        {{0x10}, 1U},
+        {{0xf0}, 15U},
+        {{0xf0, 0xff}, 65536U},
+        {{0xf0, 0xff, 0xff}, 16U},
+        {{0x10, 'A'}, 2U},
+        {{0x20, 'A', 'B'}, 1U},
+        {{0x00, 0, 0, 0x50, 'A', 'A', 'A', 'A', 'A'}, 9U},
+        {{0x10, 'A', 2, 0, 0x50, 'A', 'A', 'A', 'A', 'A'}, 10U},
+        {{0x10, 'A', 1}, 13U},
+        {{0x1f, 'A', 1, 0}, 65536U},
+        {{0x1f, 'A', 1, 0, 0xff, 0xff}, 32U},
+        {{0x13, 'A', 1, 0, 0x40, 'A', 'A', 'A', 'A'}, 12U},
+        {{0x10, 'A', 1, 0, 0x50, 'A', 'A', 'A', 'A', 'A'}, 10U},
+        {{0x13, 'A', 1, 0}, 8U},
+        {{0x13, 'A', 1, 0, 0x50, 'A', 'A', 'A', 'A', 'A', 0}, 13U},
+    };
+    for (const auto& [payload, expected_bytes] : cases) {
+        EncodedSegment invalid;
+        const auto bytes = std::as_bytes(std::span{payload});
+        invalid.payload.assign(bytes.begin(), bytes.end());
+        invalid.input_bytes = expected_bytes;
+        const std::array batch{valid, invalid, valid};
+        bool rejected = false;
+        try {
+            (void)decode_segments(batch);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        const std::array good_batch{valid, valid, valid};
+        REQUIRE_TRUE(decode_segments(good_batch).bytes == std::vector<std::byte>(3U, std::byte{'A'}));
+    }
+}
 
 // Purpose: Enforce nine real, increasing effort budgets before any GPU allocation.
 // Inputs: Valid levels, invalid signed extremes, short inputs, and one oversized but genuinely allocated batch.

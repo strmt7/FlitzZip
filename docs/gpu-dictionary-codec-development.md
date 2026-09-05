@@ -2,9 +2,9 @@
 
 ## Scope
 
-The dictionary encoder is a test-target-only HIP implementation. It is not
-linked into the application or CLI, does not emit SUZIP archive blocks, and
-does not change the native format version. Production HIP compression still
+The dictionary encoder and decoder are test-target-only HIP implementations. They are not
+linked into the application or CLI, do not emit SUZIP archive blocks, and
+do not change the native format version. Production HIP compression still
 has the two prefix-code effort tiers described in
 [the compression policy](compression-level-and-benchmark-suite.md).
 
@@ -32,6 +32,34 @@ has the two prefix-code effort tiers described in
   also apply. Capacity failure rejects the batch instead of exposing output.
 - Missing HIP is an explicit error for nonempty encoding. Empty input needs
   no GPU operation. No CPU dictionary compression fallback is present.
+
+## Required-HIP Decoder
+
+The decoder accepts at most 64 independent segments and 4 MiB of decoded
+bytes. Each nonempty segment declares at most 64 KiB of output and 65,809
+encoded bytes. Host-side extent admission precedes GPU allocation; HIP then
+validates sequence lengths, backward distances, complete input consumption,
+exact output lengths, and final-literal restrictions. It downloads output only
+after every segment has succeeded. A failed segment cannot expose a partially
+decoded batch.
+
+One thread block handles each segment. Literal bytes are copied cooperatively;
+overlapping matches read the already materialized distance-byte period instead
+of depending on concurrently written match bytes. All copies remain within
+the segment, with barriers between sequence phases. Packed input, descriptors,
+statuses, and output together use less than 9 MiB of device workspace at the
+maximum batch size, subject to aggregate HIP memory reservation limits.
+There is no CPU decode fallback. Empty batches need no GPU work, and invalid
+device-event timing remains explicitly unavailable.
+
+Existing encoder fixtures now decode on HIP as well as through the independent
+bytewise CPU reference. Additional tests cover an external python-lz4 4.4.5
+fixture, full-segment overlapping matches longer than the encoder's current
+8 KiB search limit, distance 65,524, truncated sequences and extensions,
+inconsistent sizes, unused final-token match bits, and recovery after a
+rejected mixed batch. The unused bits follow independent LZ4 reader behavior;
+they do not introduce a match in the final literal-only sequence. These checks
+are not yet archive-format integration or a decoder speed claim.
 
 ## Size Evidence
 
@@ -84,6 +112,12 @@ no Python or LZ4 runtime dependency was added to the product. Repeat external
 interoperability validation after encoding changes, not just the internal
 roundtrip test.
 
+After the cooperative decoder and final-token compatibility correction, all
+337 native tests passed in the HIP-enabled Release build. The 36-format CLI
+matrix, independent standard-format readers, benchmark-reporting tests,
+changed-function contracts, and portable packaging checks also passed.
+These are correctness gates, not controlled throughput measurements.
+
 Before production integration:
 
 1. Add the versioned native block contract, bounded CPU and HIP readers,
@@ -95,8 +129,9 @@ Before production integration:
 4. Validate hardware/configuration portability and controlled end-to-end speed,
    resource usage, and size across representative held-out workloads. No local
    GPU result proves support for other architectures.
-5. Audit the production telemetry conversion separately: experimental timing
-   validation does not repair the existing unchecked milliseconds-to-integer
-   conversion in `record_gpu_kernel_launch`.
+5. Production telemetry conversion and accumulation now reject invalid numeric
+   durations without failing archive work. A standalone HIP runtime probe also
+   reproduced negative timings outside SuperZip on the development host;
+   reliable device-event timing still needs isolation before timing claims.
 6. Complete archive integration, full release gates, and the deferred security
    work before making production or clean-security claims.
