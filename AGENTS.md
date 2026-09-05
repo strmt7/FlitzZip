@@ -23,7 +23,7 @@ References checked on 2026-06-16:
 
 ## Mission
 
-SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.1, `.zipx` remains extract-only compatibility through the ZIP reader for ZIP-compatible records and must fail explicitly for unsupported ZIPX methods, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.lz`/`.tlz` extraction remains compatibility-only through the TAR stream adapter over the lzip stream decoder and vendored LZMA SDK 26.01, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.lzma` extraction remains single-file compatibility-only through the vendored LZMA SDK 26.01 decoder, `.lz` extraction remains single-file compatibility-only through the lzip wrapper and vendored LZMA SDK 26.01 decoder, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.b64` remains native single-file compatibility-only through the bounded Base64 adapter, `.hqx` remains native extract-only data-fork compatibility through the bounded BinHex 4.0 adapter with header/data/resource CRC validation, `.macbin` and strongly header-detected MacBinary `.bin` streams remain native extract-only data-fork compatibility through the bounded MacBinary adapter, `.xxe` remains native single-file compatibility-only through the bounded XXEncode adapter, `.uue`/`.uu` remain native single-file compatibility-only through the bounded UUencode adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.cpio.gz`/`.cpgz` remain native compatibility-only through the Gzip stream adapter over the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.01 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.5.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with SuperZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, `.arj` extraction remains native read-only compatibility for stored entries through the bounded ARJ adapter, `.arc`/`.ark` extraction remains native read-only compatibility for SEA ARC unpacked entries through the bounded ARC adapter, and all security-sensitive extraction paths must be validated before writing to disk.
+SuperZip is a Windows-native, AMD-only GPU-accelerated archive application written in modern C++20. Preserve the fundamental architecture: HIP is the AMD GPU acceleration boundary, `.suzip` is the native SuperZip archive format, standard `.zip` remains compatibility-only through miniz 3.1.2, `.zipx` remains extract-only compatibility through the ZIP reader for ZIP-compatible records and must fail explicitly for unsupported ZIPX methods, `.tar` remains native compatibility-only through the bounded TAR adapter, `.tar.gz`/`.tgz` remain compatibility-only through the TAR stream adapter over miniz raw deflate, `.tar.bz2`/`.tbz`/`.tbz2` remain compatibility-only through the TAR stream adapter over vendored libbzip2 1.0.8, `.tar.xz`/`.txz` extraction remains compatibility-only through the TAR stream adapter over vendored XZ Embedded, `.tar.lz`/`.tlz` extraction remains compatibility-only through the TAR stream adapter over the lzip stream decoder and vendored LZMA SDK 26.03, `.tar.zst`/`.tzst` remain compatibility-only through the TAR stream adapter over the bundled app-local libzstd 1.5.7 runtime, `.gz` remains single-file compatibility-only through miniz raw deflate, `.bz2` remains single-file compatibility-only through vendored libbzip2 1.0.8, `.xz` extraction remains single-file compatibility-only through vendored XZ Embedded, `.lzma` extraction remains single-file compatibility-only through the vendored LZMA SDK 26.03 decoder, `.lz` extraction remains single-file compatibility-only through the lzip wrapper and vendored LZMA SDK 26.03 decoder, `.zst`/`.zstd` remain single-file compatibility-only through the bundled app-local libzstd 1.5.7 runtime, legacy Unix Compress `.Z` remains native single-file compatibility-only through the bounded LZW adapter, `.b64` remains native single-file compatibility-only through the bounded Base64 adapter, `.hqx` remains native extract-only data-fork compatibility through the bounded BinHex 4.0 adapter with header/data/resource CRC validation, `.macbin` and strongly header-detected MacBinary `.bin` streams remain native extract-only data-fork compatibility through the bounded MacBinary adapter, `.xxe` remains native single-file compatibility-only through the bounded XXEncode adapter, `.uue`/`.uu` remain native single-file compatibility-only through the bounded UUencode adapter, `.cpio` remains native compatibility-only through the bounded CPIO adapter, `.cpio.gz`/`.cpgz` remain native compatibility-only through the Gzip stream adapter over the bounded CPIO adapter, `.ar` remains native compatibility-only through the bounded AR adapter, `.deb` extraction remains native compatibility-only through the bounded AR adapter for outer package members, `.iso` extraction remains native read-only basic ISO 9660 compatibility through the bounded ISO adapter, `.rpm` extraction remains native read-only compatibility through the bounded RPM package adapter over supported CPIO payloads, `.cab` extraction remains native read-only compatibility through the bounded CAB metadata scanner and Windows FDI, `.7z` extraction remains native read-only compatibility through the vendored LZMA SDK 26.03 decoder, `.lha`/`.lzh` extraction remains native read-only compatibility through the vendored Lhasa 0.6.0 decoder, standalone `.wim` extraction remains read-only compatibility through the bundled app-local wimlib 1.14.5 DLL with SuperZip path validation and verified output publication, `.xar` extraction remains native read-only compatibility for the bounded no-TOC-checksum XAR subset through the native XAR adapter over miniz zlib inflate, `.arj` extraction remains native read-only compatibility for stored entries through the bounded ARJ adapter, `.arc`/`.ark` extraction remains native read-only compatibility for SEA ARC unpacked entries through the bounded ARC adapter, and all security-sensitive extraction paths must be validated before writing to disk.
 
 ## Non-Negotiable Boundaries
 
@@ -227,12 +227,12 @@ Guidelines, and SEI CERT C++.
 - `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
 - `src/hqx/`: Extract-only BinHex 4.0 `.hqx` data-fork adapter with strict HQX alphabet parsing, RLE expansion, header/data/resource CRC validation, path-safe header names, and verified file publication.
 - `src/iso/`: Read-only basic ISO 9660 compatibility adapter with two-pass path validation and verified file publication.
-- `src/lha/`: Read-only LHA/LZH adapter using the vendored Lhasa 0.5.0 decoder with two-pass validation and verified file publication.
-- `src/lzip/`: Read-only lzip `.lz` stream adapter and TAR.LZ filter using the vendored LZMA SDK 26.01 decoder with CRC32/data-size/member-size validation and verified file publication.
-- `src/lzma/`: Read-only LZMA-Alone `.lzma` single-file adapter using the vendored LZMA SDK 26.01 decoder with bounded allocation and verified file publication.
+- `src/lha/`: Read-only LHA/LZH adapter using the vendored Lhasa 0.6.0 decoder with two-pass validation and verified file publication.
+- `src/lzip/`: Read-only lzip `.lz` stream adapter and TAR.LZ filter using the vendored LZMA SDK 26.03 decoder with CRC32/data-size/member-size validation and verified file publication.
+- `src/lzma/`: Read-only LZMA-Alone `.lzma` single-file adapter using the vendored LZMA SDK 26.03 decoder with bounded allocation and verified file publication.
 - `src/macbinary/`: Extract-only MacBinary data-fork adapter with path-safe ASCII header names, data/resource extent validation, MacBinary II/III header CRC validation, and verified file publication.
 - `src/rpm/`: Read-only RPM package adapter that validates RPM headers, decodes supported CPIO payload compression, and delegates extracted package paths to the CPIO adapter.
-- `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.01 decoder with two-pass validation and verified file publication.
+- `src/sevenzip/`: Read-only 7z adapter using the vendored LZMA SDK 26.03 decoder with two-pass validation and verified file publication.
 - `src/tar/`: TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, and TAR.ZST compatibility adapter with two-pass path validation and verified file publication.
 - `src/unix_compress/`: Unix Compress `.Z` single-file compatibility adapter with bounded LZW dictionaries and verified file publication.
 - `src/uue/`: UUencode `.uue`/`.uu` single-file compatibility adapter with strict begin-line parsing, bounded lines, path-safe header names, and verified file publication.
@@ -241,24 +241,24 @@ Guidelines, and SEI CERT C++.
 - `src/xxe/`: XXEncode `.xxe` single-file compatibility adapter with strict alphabet parsing, bounded lines, path-safe header names, and verified file publication.
 - `src/xz/`: Extract-only XZ compatibility stream and `.xz` single-file adapter using vendored XZ Embedded.
 - `src/zstd/`: Zstandard compatibility streams, runtime-DLL loader, and `.zst`/`.zstd` single-file adapter using the bundled app-local libzstd 1.5.7 runtime.
-- `src/zip/`: ZIP compatibility using miniz 3.1.1.
+- `src/zip/`: ZIP compatibility using miniz 3.1.2.
 - `src/cli/`: command-line entry point for deterministic automation.
 - `src/app/`: native Win32 GUI. It must remain per-monitor-DPI aware and responsive at high refresh rates.
 - `tests/cpp/`: focused C++ test harness.
 - `fuzz/`: libFuzzer targets, dictionaries, and options for parser hardening.
 - `tools/`: PowerShell build, test, security scan, benchmark, and HIP compile helpers.
-- `third_party/miniz/`: patched production miniz 3.1.1 copy used by the build.
-- `third_party/upstream/miniz/3.1.1/`: unmodified upstream miniz 3.1.1 source archive and checksum for provenance.
+- `third_party/miniz/`: patched production miniz 3.1.2 copy used by the build.
+- `third_party/upstream/miniz/3.1.2/`: unmodified upstream miniz 3.1.2 source archive and checksum for provenance.
 - `third_party/bzip2/`: production libbzip2 1.0.8 copy plus the SuperZip link shim for `bz_internal_error`.
 - `third_party/upstream/bzip2/1.0.8/`: unmodified upstream bzip2 1.0.8 source archive and checksum for provenance.
 - `third_party/xz_embedded/`: production XZ Embedded decoder copy used for extract-only `.xz` and `.tar.xz` compatibility.
 - `third_party/upstream/xz-embedded/ae63ae3a36ed01724674e8f3d750dc47bf125410/`: upstream XZ Embedded source archive and checksum for provenance.
-- `third_party/lzma_sdk/`: production LZMA SDK 26.01 decoder subset plus an exact `DOC/lzma-sdk.txt` license copy for host-agnostic notice generation.
-- `third_party/upstream/lzma-sdk/26.01/`: unmodified upstream LZMA SDK 26.01 release archive and checksum for provenance.
+- `third_party/lzma_sdk/`: production LZMA SDK 26.03 decoder subset plus an exact `DOC/lzma-sdk.txt` license copy for host-agnostic notice generation.
+- `third_party/upstream/lzma-sdk/26.03/`: unmodified upstream LZMA SDK 26.03 release archive and checksum for provenance.
 - `third_party/zstd/`: production Zstandard runtime metadata and license files. Do not track extracted runtime DLLs here.
 - `third_party/upstream/zstd/v1.5.7/`: upstream Zstandard source archive, official Win64 runtime package, and checksums for provenance.
-- `third_party/lhasa/`: production Lhasa 0.5.0 copy with SuperZip-local hardening patches documented in `README.SUPERZIP.md`.
-- `third_party/upstream/lhasa/0.5.0/`: unmodified upstream Lhasa 0.5.0 release archive and checksum for provenance.
+- `third_party/lhasa/`: production Lhasa 0.6.0 copy with SuperZip-local hardening patches documented in `README.SUPERZIP.md`.
+- `third_party/upstream/lhasa/0.6.0/`: unmodified upstream Lhasa 0.6.0 release archive and checksum for provenance.
 - `third_party/wimlib/`: wimlib 1.14.5 header and LGPL/libdivsufsort-lite notices. Do not track extracted runtime DLLs here.
 - `third_party/upstream/wimlib/1.14.5/`: upstream wimlib Windows x64 runtime package and checksums for provenance.
 - `.github/workflows/`: CI and opt-in security integrations.
@@ -277,6 +277,20 @@ Guidelines, and SEI CERT C++.
   for GUI, worker, telemetry, installer, and archive-operation defects.
 
 ## Build And Test Commands
+
+### Shared-Host Resource Use
+
+- Do not stop, reconfigure, or change the priority of unrelated host tasks.
+- Continue builds and correctness checks; load-based deferral applies only to
+  performance timing. Bound this task's concurrency when sharing the host.
+- Benchmarks do not require an idle machine. Sample CPU, GPU engines, available
+  RAM, and storage activity before and during timing. Defer or repeat a timing
+  run only when competing load is a material factor, such as sustained device
+  saturation, paging, storage queues, or unstable repeated measurements.
+- Below-100-percent CPU/GPU readings alone do not prove absence of contention.
+  Report missing counters as unavailable, and do not infer storage throughput
+  or memory-bandwidth headroom from CPU utilization. Keep timing claims separate
+  from correctness and compression-size results.
 
 Use these from the repository root. Start every change by asking the verifier
 what is relevant:
@@ -439,16 +453,16 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   plus Windows FDI for streaming decompression. Reject spanned cabinets, validate
   names and sizes before FDI output is accepted, and publish only through the
   verified temporary-file path.
-- 7z compatibility is extraction-only and uses the vendored LZMA SDK 26.01
+- 7z compatibility is extraction-only and uses the vendored LZMA SDK 26.03
   decoder in process. Keep SDK allocations bounded, reject unsafe paths and
   unsupported special-file attributes before output, validate payload CRC/size
   before publishing, and do not advertise 7z creation until a vetted
   in-process writer path is deliberately added with tests.
-- LHA/LZH compatibility is extraction-only and uses the vendored Lhasa 0.5.0
+- LHA/LZH compatibility is extraction-only and uses the vendored Lhasa 0.6.0
   decoder in process. Do not call Lhasa's archive helper, do not shell out to
   host `lha` tools, reject symbolic links and unsafe paths before output, run a
   full CRC/size validation pass before destination writes, and keep the
-  upstream release archive unmodified under `third_party/upstream/lhasa/0.5.0/`.
+  upstream release archive unmodified under `third_party/upstream/lhasa/0.6.0/`.
 - XAR compatibility is extraction-only and uses the native bounded parser in
   `src/xar/`. Keep it limited to archives with no TOC checksum mode until exact
   checksum verification is implemented; reject signatures, links, hard links,
@@ -503,7 +517,7 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   advertise XZ creation until an encoder path is deliberately added with tests.
 - Lzip compatibility is extract-only for `.lz` and TAR-stream-only for
   `.tar.lz`/`.tlz`. Keep the lzip wrapper decoder in process over the vendored
-  LZMA SDK 26.01 decoder, validate version `1`, dictionary-size codes, EOS
+  LZMA SDK 26.03 decoder, validate version `1`, dictionary-size codes, EOS
   markers, CRC32, data size, and member size for every concatenated member,
   reject trailing non-member data and empty members before another member, and
   publish single-file output only through verified temporary paths.
@@ -721,6 +735,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   instructions or repository policy text.
 
 ## Agent Workflow
+
+Report a blocking tool or service error immediately with the exact returned
+cause, the work it prevents, and the next actionable step. Distinguish a
+disconnected access checker from an account eligibility denial. Do not repeat
+failed checks without new evidence or make unrelated work wait for that service.
 
 1. Read this file, `README.md`, `IMPLEMENTATION_PLAN.md`, and relevant local code before editing.
 2. Make the smallest change that satisfies the request while preserving the architecture.

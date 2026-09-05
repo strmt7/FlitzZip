@@ -62,19 +62,16 @@ struct ArjScanResult {
 // Inputs: `bytes` points to at least two bytes of trusted bounded metadata.
 // Outputs: Returns the decoded unsigned integer.
 std::uint16_t read_le16(const unsigned char* bytes) {
-    return static_cast<std::uint16_t>(
-        static_cast<std::uint16_t>(bytes[0]) |
-        static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[1]) << 8U));
+    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[0]) |
+                                      static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[1]) << 8U));
 }
 
 // Purpose: Decode a little-endian 32-bit ARJ field.
 // Inputs: `bytes` points to at least four bytes of trusted bounded metadata.
 // Outputs: Returns the decoded unsigned integer.
 std::uint32_t read_le32(const unsigned char* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24U);
+    return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
 }
 
 // Purpose: Compute the SuperZip CRC-32 over unsigned ARJ bytes.
@@ -119,8 +116,8 @@ void seek_arj_offset(std::ifstream& input, std::uint64_t offset, const char* lab
 }
 
 // Purpose: Validate that a declared ARJ payload range is inside the archive file.
-// Inputs: `payload_offset` is the absolute payload start, `payload_size` is the declared compressed size, and `archive_size` is the file length.
-// Outputs: Throws when the declared payload range is outside the archive.
+// Inputs: `payload_offset` is the absolute payload start, `payload_size` is the declared compressed size, and
+// `archive_size` is the file length. Outputs: Throws when the declared payload range is outside the archive.
 void validate_payload_extent(std::uint64_t payload_offset, std::uint64_t payload_size, std::uint64_t archive_size) {
     const auto payload_end = checked_add_arj_bytes(payload_offset, payload_size, "ARJ payload extent overflows");
     if (payload_end > archive_size) {
@@ -142,9 +139,7 @@ std::string read_header_string(const std::vector<unsigned char>& header, std::si
     if (offset >= header.size()) {
         throw ArchiveError("ARJ header string is not NUL terminated");
     }
-    std::string value(
-        reinterpret_cast<const char*>(header.data() + begin),
-        offset - begin);
+    std::string value(reinterpret_cast<const char*>(header.data() + begin), offset - begin);
     ++offset;
     return value;
 }
@@ -159,7 +154,8 @@ std::string normalize_arj_entry_path(std::string raw_path) {
 
 // Purpose: Read and validate all ARJ extended headers following one basic header.
 // Inputs: `input` is positioned at the first extended-header size field.
-// Outputs: Leaves the stream after the terminating zero-size extended header; throws on malformed CRC or oversized metadata.
+// Outputs: Leaves the stream after the terminating zero-size extended header; throws on malformed CRC or oversized
+// metadata.
 void skip_arj_extended_headers(std::ifstream& input) {
     std::uint64_t total_extended_bytes = 0;
     while (true) {
@@ -169,7 +165,8 @@ void skip_arj_extended_headers(std::ifstream& input) {
         if (size == 0U) {
             return;
         }
-        total_extended_bytes = checked_add_arj_bytes(total_extended_bytes, size, "ARJ extended header byte count overflows");
+        total_extended_bytes =
+            checked_add_arj_bytes(total_extended_bytes, size, "ARJ extended header byte count overflows");
         if (total_extended_bytes > kMaxArjExtendedHeaderBytes) {
             throw ArchiveError("ARJ extended headers exceed SuperZip resource limits");
         }
@@ -210,8 +207,7 @@ ArjHeader read_arj_header(std::ifstream& input, std::uint64_t archive_size) {
     }
     const auto header_crc_end = checked_add_arj_bytes(
         checked_add_arj_bytes(header_start, 4U, "ARJ header data start overflows"),
-        checked_add_arj_bytes(header_size, 4U, "ARJ header CRC extent overflows"),
-        "ARJ header data extent overflows");
+        checked_add_arj_bytes(header_size, 4U, "ARJ header CRC extent overflows"), "ARJ header data extent overflows");
     if (header_crc_end > archive_size) {
         throw ArchiveError("ARJ header extends past the end of the archive");
     }
@@ -224,9 +220,7 @@ ArjHeader read_arj_header(std::ifstream& input, std::uint64_t archive_size) {
         throw ArchiveError("ARJ basic header CRC mismatch");
     }
     skip_arj_extended_headers(input);
-    if (header.size() < kArjBaseHeaderBytes ||
-        header[0] < kArjBaseHeaderBytes ||
-        header[0] > header.size()) {
+    if (header.size() < kArjBaseHeaderBytes || header[0] < kArjBaseHeaderBytes || header[0] > header.size()) {
         throw ArchiveError("ARJ basic header is malformed");
     }
 
@@ -287,16 +281,13 @@ void validate_stored_payload(std::ifstream& input, const ArjHeader& header, std:
 }
 
 // Purpose: Convert a decoded ARJ local header into trusted extraction metadata.
-// Inputs: `input` is positioned at payload data, `header` is decoded untrusted metadata, `archive_size` bounds payload extents, and `validation_entries` receives path-validation records.
-// Outputs: Returns metadata for a supported file or directory entry; throws on unsupported types, methods, paths, or payload CRC mismatch.
-ArjEntryMetadata scan_arj_entry(
-    std::ifstream& input,
-    const ArjHeader& header,
-    std::uint64_t archive_size,
-    std::vector<ArchivePathValidationEntry>& validation_entries) {
+// Inputs: `input` is positioned at payload data, `header` is decoded untrusted metadata, `archive_size` bounds payload
+// extents, and `validation_entries` receives path-validation records. Outputs: Returns metadata for a supported file or
+// directory entry; throws on unsupported types, methods, paths, or payload CRC mismatch.
+ArjEntryMetadata scan_arj_entry(std::ifstream& input, const ArjHeader& header, std::uint64_t archive_size,
+                                std::vector<ArchivePathValidationEntry>& validation_entries) {
     reject_unsupported_arj_flags(header);
-    if (header.file_type != kArjFileBinary &&
-        header.file_type != kArjFileText &&
+    if (header.file_type != kArjFileBinary && header.file_type != kArjFileText &&
         header.file_type != kArjFileDirectory) {
         throw ArchiveError("unsupported ARJ entry type");
     }
@@ -329,7 +320,8 @@ ArjEntryMetadata scan_arj_entry(
 
 // Purpose: Scan a full ARJ archive and validate metadata plus stored payload CRCs before extraction.
 // Inputs: `archive_path` is the ARJ file to parse.
-// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods, duplicates, or corrupt stored data.
+// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods,
+// duplicates, or corrupt stored data.
 ArjScanResult scan_arj(const std::filesystem::path& archive_path) {
     const auto archive_size = std::filesystem::file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -355,10 +347,8 @@ ArjScanResult scan_arj(const std::filesystem::path& archive_path) {
             break;
         }
         const auto entry = scan_arj_entry(input, header, archive_size, validation_entries);
-        result.total_file_bytes = checked_add_arj_bytes(
-            result.total_file_bytes,
-            entry.directory ? 0U : entry.size,
-            "ARJ extracted byte count overflows");
+        result.total_file_bytes = checked_add_arj_bytes(result.total_file_bytes, entry.directory ? 0U : entry.size,
+                                                        "ARJ extracted byte count overflows");
         if (result.total_file_bytes > kMaxPipelineMemoryBytes) {
             throw ArchiveError("ARJ extracted payload exceeds SuperZip resource limits");
         }
@@ -369,15 +359,12 @@ ArjScanResult scan_arj(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Publish one validated stored ARJ file payload.
-// Inputs: `input` is an archive stream, `entry` is trusted scan metadata, `target` is the destination file, and `overwrite` controls replacement.
-// Outputs: Writes and atomically publishes the file, or throws without leaving a final partial output.
-void extract_arj_file_payload(
-    std::ifstream& input,
-    const ArjEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is an archive stream, `entry` is trusted scan metadata, `target` is the destination file, and
+// `overwrite` controls replacement. Outputs: Writes and atomically publishes the file, or throws without leaving a
+// final partial output.
+void extract_arj_file_payload(std::ifstream& input, const ArjEntryMetadata& entry, const std::filesystem::path& target,
+                              bool overwrite) {
     seek_arj_offset(input, entry.payload_offset, "ARJ payload");
-    std::filesystem::create_directories(target.parent_path());
     auto temporary_target = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
@@ -404,7 +391,7 @@ void extract_arj_file_payload(
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
         cleanup_file_publish_target(temporary_target);
@@ -414,14 +401,14 @@ void extract_arj_file_payload(
 
 }  // namespace
 
-OperationStats extract_arj(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract supported stored ARJ entries with repeated CRC validation and verified publication.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry or throws before retaining any unverified file.
+OperationStats extract_arj(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto scanned = scan_arj(archive_path);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
@@ -435,7 +422,7 @@ OperationStats extract_arj(
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
         } else {
             extract_arj_file_payload(input, entry, target, overwrite);
             progress.add_bytes(entry.size);

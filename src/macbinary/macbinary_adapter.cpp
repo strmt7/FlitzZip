@@ -65,9 +65,8 @@ std::uint64_t round_up_macbinary_block(std::uint64_t value) {
 // Inputs: `header` is the 128-byte header and `offset` is the first of two bytes.
 // Outputs: Returns the decoded integer.
 std::uint16_t read_be_u16(const std::array<unsigned char, 128>& header, std::size_t offset) {
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(header[offset]) << 8U) |
-        static_cast<std::uint16_t>(header[offset + 1U]));
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(header[offset]) << 8U) |
+                                      static_cast<std::uint16_t>(header[offset + 1U]));
 }
 
 // Purpose: Read a big-endian 32-bit integer from the fixed MacBinary header.
@@ -75,9 +74,8 @@ std::uint16_t read_be_u16(const std::array<unsigned char, 128>& header, std::siz
 // Outputs: Returns the decoded integer.
 std::uint32_t read_be_u32(const std::array<unsigned char, 128>& header, std::size_t offset) {
     return (static_cast<std::uint32_t>(header[offset]) << 24U) |
-        (static_cast<std::uint32_t>(header[offset + 1U]) << 16U) |
-        (static_cast<std::uint32_t>(header[offset + 2U]) << 8U) |
-        static_cast<std::uint32_t>(header[offset + 3U]);
+           (static_cast<std::uint32_t>(header[offset + 1U]) << 16U) |
+           (static_cast<std::uint32_t>(header[offset + 2U]) << 8U) | static_cast<std::uint32_t>(header[offset + 3U]);
 }
 
 // Purpose: Update a CRC-16/XMODEM register with one byte.
@@ -109,12 +107,11 @@ std::uint16_t macbinary_header_crc(const std::array<unsigned char, 128>& header)
 // Inputs: `header` is the untrusted 128-byte MacBinary header.
 // Outputs: Returns true when version/signature fields make the stored CRC authoritative.
 bool has_macbinary_crc_marker(const std::array<unsigned char, 128>& header) {
-    const bool versioned = (header[122] == 0x81U || header[122] == 0x82U) &&
-        (header[123] == 0x81U || header[123] == 0x82U);
-    const bool signed_v3 = header[102] == static_cast<unsigned char>('m') &&
-        header[103] == static_cast<unsigned char>('B') &&
-        header[104] == static_cast<unsigned char>('I') &&
-        header[105] == static_cast<unsigned char>('N');
+    const bool versioned =
+        (header[122] == 0x81U || header[122] == 0x82U) && (header[123] == 0x81U || header[123] == 0x82U);
+    const bool signed_v3 =
+        header[102] == static_cast<unsigned char>('m') && header[103] == static_cast<unsigned char>('B') &&
+        header[104] == static_cast<unsigned char>('I') && header[105] == static_cast<unsigned char>('N');
     return versioned || signed_v3;
 }
 
@@ -148,8 +145,7 @@ void validate_macbinary_header_fields(const std::array<unsigned char, 128>& head
     if (header[0] != 0U || header[74] != 0U || header[82] != 0U) {
         throw ArchiveError("MacBinary header required zero fields are invalid");
     }
-    if ((read_be_u32(header, 83U) & 0x80000000U) != 0U ||
-        (read_be_u32(header, 87U) & 0x80000000U) != 0U) {
+    if ((read_be_u32(header, 83U) & 0x80000000U) != 0U || (read_be_u32(header, 87U) & 0x80000000U) != 0U) {
         throw ArchiveError("MacBinary fork length uses an unsupported signed value");
     }
     if (has_macbinary_crc_marker(header)) {
@@ -164,28 +160,22 @@ void validate_macbinary_header_fields(const std::array<unsigned char, 128>& head
 // Purpose: Ensure declared MacBinary fork extents are inside the input stream.
 // Inputs: `header` carries declared lengths and `file_size` is the archive byte count.
 // Outputs: Returns parsed fork offsets and lengths, or throws on truncation/overflow.
-MacBinaryHeader parse_macbinary_header(
-    const std::array<unsigned char, 128>& header,
-    std::uint64_t file_size) {
+MacBinaryHeader parse_macbinary_header(const std::array<unsigned char, 128>& header, std::uint64_t file_size) {
     validate_macbinary_header_fields(header);
 
     const auto secondary_length = static_cast<std::uint64_t>(read_be_u16(header, 120U));
     const auto data_length = static_cast<std::uint64_t>(read_be_u32(header, 83U));
     const auto resource_length = static_cast<std::uint64_t>(read_be_u32(header, 87U));
     const auto comment_length = static_cast<std::uint64_t>(read_be_u16(header, 99U));
-    const auto data_offset = checked_sum(
-        kMacBinaryHeaderBytes,
-        round_up_macbinary_block(secondary_length),
-        "MacBinary data offset");
+    const auto data_offset =
+        checked_sum(kMacBinaryHeaderBytes, round_up_macbinary_block(secondary_length), "MacBinary data offset");
     const auto data_end = checked_sum(data_offset, data_length, "MacBinary data fork");
     if (data_end > file_size) {
         throw ArchiveError("MacBinary data fork extends past end of file");
     }
 
-    const auto resource_offset = checked_sum(
-        data_offset,
-        round_up_macbinary_block(data_length),
-        "MacBinary resource offset");
+    const auto resource_offset =
+        checked_sum(data_offset, round_up_macbinary_block(data_length), "MacBinary resource offset");
     if (resource_length > 0U) {
         const auto resource_end = checked_sum(resource_offset, resource_length, "MacBinary resource fork");
         if (resource_end > file_size) {
@@ -193,10 +183,8 @@ MacBinaryHeader parse_macbinary_header(
         }
     }
     if (comment_length > 0U) {
-        const auto comment_offset = checked_sum(
-            resource_offset,
-            round_up_macbinary_block(resource_length),
-            "MacBinary comment offset");
+        const auto comment_offset =
+            checked_sum(resource_offset, round_up_macbinary_block(resource_length), "MacBinary comment offset");
         const auto comment_end = checked_sum(comment_offset, comment_length, "MacBinary comment");
         if (comment_end > file_size) {
             throw ArchiveError("MacBinary Get Info comment extends past end of file");
@@ -227,14 +215,10 @@ std::array<unsigned char, 128> read_macbinary_header(std::ifstream& input) {
 }
 
 // Purpose: Copy exactly the declared data fork into a verified temporary file.
-// Inputs: `input` is the archive, `header` defines data location/length, `output` is the private temp stream, and `progress` reports copied bytes.
-// Outputs: Returns bytes copied, or throws on truncated input or output failure.
-std::uint64_t copy_data_fork(
-    std::ifstream& input,
-    const MacBinaryHeader& header,
-    std::ofstream& output,
-    ProgressState& progress,
-    const ProgressCallback& progress_callback) {
+// Inputs: `input` is the archive, `header` defines data location/length, `output` is the private temp stream, and
+// `progress` reports copied bytes. Outputs: Returns bytes copied, or throws on truncated input or output failure.
+std::uint64_t copy_data_fork(std::ifstream& input, const MacBinaryHeader& header, std::ofstream& output,
+                             ProgressState& progress, const ProgressCallback& progress_callback) {
     input.clear();
     input.seekg(static_cast<std::streamoff>(header.data_offset), std::ios::beg);
     if (!input) {
@@ -244,8 +228,7 @@ std::uint64_t copy_data_fork(
     std::uint64_t copied = 0;
     while (copied < header.data_length) {
         const auto remaining = header.data_length - copied;
-        const auto chunk = static_cast<std::streamsize>(
-            remaining < buffer.size() ? remaining : buffer.size());
+        const auto chunk = static_cast<std::streamsize>(remaining < buffer.size() ? remaining : buffer.size());
         input.read(buffer.data(), chunk);
         const auto bytes_read = input.gcount();
         if (bytes_read != chunk) {
@@ -265,13 +248,12 @@ std::uint64_t copy_data_fork(
 }  // namespace
 
 // Purpose: Extract the data fork from one MacBinary stream with path-safe publication.
-// Inputs: `archive_path` is the MacBinary stream, `destination` is the extraction root, `overwrite` controls replacement, and `progress_callback` receives synchronous progress snapshots.
-// Outputs: Returns operation statistics; throws on malformed headers, unsafe names, truncated forks, refused overwrite, or verified-file publication failure.
-OperationStats extract_macbinary_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is the MacBinary stream, `destination` is the extraction root, `overwrite` controls
+// replacement, and `progress_callback` receives synchronous progress snapshots. Outputs: Returns operation statistics;
+// throws on malformed headers, unsafe names, truncated forks, refused overwrite, or verified-file publication failure.
+OperationStats extract_macbinary_file(const std::filesystem::path& archive_path,
+                                      const std::filesystem::path& destination, bool overwrite,
+                                      const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -281,12 +263,11 @@ OperationStats extract_macbinary_file(
     const auto raw_header = read_macbinary_header(input);
     const auto header = parse_macbinary_header(raw_header, archive_size);
 
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, header.entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing MacBinary extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     ProgressState progress;
     progress.start(OperationKind::Extract, archive_size, 1);
@@ -309,7 +290,7 @@ OperationStats extract_macbinary_file(
         if (!output) {
             throw ArchiveError("failed to finalize MacBinary extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
     } catch (...) {
         cleanup_file_publish_target(temporary);

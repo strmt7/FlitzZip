@@ -18,6 +18,16 @@
 
 namespace superzip::app {
 
+namespace {
+
+enum class SecurityReviewStage {
+    Archive,
+    Sha256,
+    Defender,
+};
+
+}  // namespace
+
 // Purpose: Handle Queue page hit-testing and commands.
 // Inputs: `content` is the active page rectangle and `x`/`y` are client mouse coordinates.
 // Outputs: Returns true when a Queue control consumed the click.
@@ -355,67 +365,122 @@ bool MainWindow::handle_security_click(const RECT& content, int x, int y) {
     return true;
 }
 
-// Purpose: Start a real background security verification pass for queued inputs.
-// Inputs: None; reads enabled queue rows and security opt-ins.
-// Outputs: Launches a Verify job or reports that no queued item is selected.
+// Purpose: Start an exact-byte security verification pass for selected archives.
+// Inputs: None; reads selected archives and opt-in settings from UI state.
+// Outputs: Launches a Verify worker or reports missing archive input.
 void MainWindow::start_security_verify() {
-    std::vector<std::filesystem::path> sources;
+    UiState snapshot;
     bool integrity = false;
     bool defender = false;
+    bool gpu_required = false;
     {
         std::lock_guard lock(mutex_);
         normalize_queue_selection_locked();
-        for (std::size_t i = 0; i < state_.queued_paths.size(); ++i) {
-            if (state_.queued_enabled[i]) {
-                sources.push_back(state_.queued_paths[i]);
-            }
-        }
+        snapshot = state_;
         integrity = state_.integrity_hash_opt_in;
         defender = state_.defender_scan_opt_in;
+        gpu_required = state_.gpu_required;
     }
+    const auto sources = selected_extract_archive_paths(snapshot);
     if (sources.empty()) {
         {
             std::lock_guard lock(mutex_);
-            state_.status = "Select queue items before security verification";
+            state_.status = "Select one or more archives before security verification";
         }
         request_repaint();
         return;
     }
-    run_job(
-        [this, sources, integrity, defender] {
-            ProgressState progress;
-            progress.start(OperationKind::Verify, sources.size(), sources.size());
-            auto publish = [this, &progress] { publish_progress_snapshot_or_cancel(progress.snapshot()); };
-            for (const auto& path : sources) {
-                progress.set_current(path.filename().string());
-                publish();
-                std::error_code ec;
-                if (!std::filesystem::exists(path, ec)) {
-                    throw SecurityError("queued path does not exist: " + path.string());
-                }
-                if (integrity) {
-                    const auto hash = hash_path(path, IntegrityMode::Sha256);
-                    append_history_entry("Security", path.filename().string(), path.string(),
-                                         integrity_history_status("Path", hash), true);
-                }
-                if (defender) {
-                    const auto scan = scan_with_windows_defender(path, DefenderScanMode::FullPath);
-                    append_history_entry("Security", path.filename().string(), path.string(),
-                                         defender_history_status("Defender", scan), !scan.attempted || scan.clean);
-                    if (scan.attempted && !scan.clean) {
-                        throw SecurityError("Microsoft Defender did not report the path as clean: " + path.string());
-                    }
-                }
-                progress.add_bytes(1);
-                progress.finish_entry();
-                publish();
+    {
+        std::lock_guard lock(mutex_);
+        state_.security_archive_paths = SecurityCheckState::Running;
+        state_.security_payload_integrity = SecurityCheckState::Running;
+        state_.security_sha256 = integrity ? SecurityCheckState::Running : SecurityCheckState::NotRun;
+        state_.security_defender = defender ? SecurityCheckState::Running : SecurityCheckState::NotRun;
+    }
+    request_repaint();
+    run_job([this, sources, integrity, defender,
+             gpu_required] { run_security_review(sources, integrity, defender, gpu_required); },
+            "Verifying", OperationKind::Verify);
+}
+
+// Purpose: Execute archive, optional SHA-256, and optional Defender checks for a worker job.
+// Inputs: `sources` are selected archives and booleans describe requested security and GPU policies.
+// Outputs: Publishes progress/history/result state or throws after recording the failed/incomplete stage.
+void MainWindow::run_security_review(const std::vector<std::filesystem::path>& sources, bool integrity, bool defender,
+                                     bool gpu_required) {
+    ProgressState progress;
+    progress.start(OperationKind::Verify, sources.size(), sources.size());
+    auto publish = [this, &progress] { publish_progress_snapshot_or_cancel(progress.snapshot()); };
+    SecurityReviewStage stage = SecurityReviewStage::Archive;
+    try {
+        for (const auto& source : sources) {
+            stage = SecurityReviewStage::Archive;
+            const auto pinned = pin_source_file(source);
+            progress.set_current(pinned.path().filename().string());
+            publish();
+            if (integrity) {
+                stage = SecurityReviewStage::Sha256;
+                const auto hash = hash_path(pinned.path(), IntegrityMode::Sha256);
+                append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
+                                     integrity_history_status("Archive", hash), true);
             }
-            const std::string summary_path =
-                sources.size() == 1U ? sources.front().string() : "Multiple selected locations";
-            append_history_entry("Security", "Security review", summary_path,
-                                 "Verified " + std::to_string(sources.size()) + " selected queue item(s)", true);
-        },
-        "Verifying", OperationKind::Verify);
+            if (defender) {
+                stage = SecurityReviewStage::Defender;
+                const auto scan = scan_with_windows_defender(pinned.path(), DefenderScanMode::FullPath);
+                append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
+                                     defender_history_status("Defender", scan), defender_scan_passed(scan));
+                require_clean_defender_scan(scan, pinned.path());
+            }
+            stage = SecurityReviewStage::Archive;
+            const auto format = detect_archive_format(pinned.path());
+            const auto stats = validate_detected_archive(
+                format, pinned.path(), gpu_required,
+                [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot_or_cancel(snapshot); });
+            append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
+                                 "Archive paths and payload integrity passed for " + std::to_string(stats.entries) +
+                                     " entr" + (stats.entries == 1U ? "y" : "ies"),
+                                 true);
+            progress.add_bytes(1);
+            progress.finish_entry();
+            publish();
+        }
+        {
+            std::lock_guard lock(mutex_);
+            state_.security_archive_paths = SecurityCheckState::Passed;
+            state_.security_payload_integrity = SecurityCheckState::Passed;
+            state_.security_sha256 = integrity ? SecurityCheckState::Passed : SecurityCheckState::NotRun;
+            state_.security_defender = defender ? SecurityCheckState::Passed : SecurityCheckState::NotRun;
+        }
+        const std::string summary_path = sources.size() == 1U ? sources.front().string() : "Multiple selected archives";
+        append_history_entry("Security", "Security review", summary_path,
+                             "Validated format, member paths, and payload integrity for " +
+                                 std::to_string(sources.size()) + " archive(s)",
+                             true);
+        request_repaint();
+    } catch (...) {
+        const auto failed_state =
+            operation_cancel_requested_.load() ? SecurityCheckState::Incomplete : SecurityCheckState::Failed;
+        std::lock_guard lock(mutex_);
+        if (stage == SecurityReviewStage::Archive) {
+            state_.security_archive_paths = failed_state;
+            state_.security_payload_integrity = failed_state;
+        } else if (stage == SecurityReviewStage::Sha256) {
+            state_.security_sha256 = failed_state;
+        } else {
+            state_.security_defender = failed_state;
+        }
+        auto mark_incomplete = [](SecurityCheckState& state) {
+            if (state == SecurityCheckState::Running) {
+                state = SecurityCheckState::Incomplete;
+            }
+        };
+        mark_incomplete(state_.security_archive_paths);
+        mark_incomplete(state_.security_payload_integrity);
+        mark_incomplete(state_.security_sha256);
+        mark_incomplete(state_.security_defender);
+        request_repaint();
+        throw;
+    }
 }
 
 // Purpose: Handle System page hit-testing and commands.

@@ -41,6 +41,32 @@ GPU mode still must not emit CPU Deflate blocks.
 
 ## Benchmark Score
 
+### Zstandard Effort
+
+The `.zst` and `.tar.zst` writers map product levels 1-9 to backend levels
+`1, 2, 3, 4, 5, 9, 15, 19, 22`. Fastest, Fast, and Balanced retain their prior
+settings. Strong and Maximum now use higher Zstandard effort instead of
+stopping at backend level 9. This is CPU-only compatibility work, not HIP
+acceleration.
+
+At product levels 7-9, the window is 64 MiB, hash table is 64 MiB, and chain
+table is 128 MiB. Other codec buffers are additional; these table settings are
+not a claim of a 256 MiB total-process cap. The window matches the existing
+bounded decompressor. Single-stream operation and checksums remain unchanged.
+The stable parameter meanings were checked against the
+[pinned Zstandard 1.5.7 header](https://github.com/facebook/zstd/blob/v1.5.7/lib/zstd.h).
+
+Tests cover every product level, stream lifetime, and an 8 MiB deterministic
+long-distance-repeat workload. Higher effort does not guarantee the smallest
+file for every input; ratio and speed claims require workload-specific results.
+
+The September 2026 ratio regression uses 8,388,608 input bytes. On that case,
+Balanced writes 8,388,813 bytes and Maximum writes 4,194,769 bytes, with exact
+roundtrip validation. These are bounded filesystem correctness-test results,
+not RAM-only throughput measurements or a universal compression claim.
+
+### Native Suite
+
 The built-in suite is intentionally RAM-only. It uses the same generated
 workload, block codec, worker allocation, and required-GPU policy as
 `memory-benchmark`, then prints one `suite_case` line per candidate and one

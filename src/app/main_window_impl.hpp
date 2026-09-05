@@ -9,6 +9,8 @@
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
 #include "core/defender_scan.hpp"
+#include "core/file_manifest.hpp"
+#include "core/file_publish.hpp"
 #include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"

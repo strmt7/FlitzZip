@@ -1,11 +1,42 @@
 # SuperZip Enterprise Implementation Plan
 
+## Current Modernization Sequence
+
+The September 2026 work proceeds serially, with Codex Security reserved for the
+final audit phase as requested. A local pass is not evidence of a clean remote
+Security tab or a published release.
+
+1. Refresh dependency graphs and pinned provenance. Current local checks cover
+   updated Python locks, LZMA SDK 26.03, miniz 3.1.2, Lhasa 0.6.0, native build,
+   tests, 36-format routing, and independent format interoperability. Hosted
+   scanner runtime checks and Dependabot closure still require a verified push.
+2. Review product ownership, compression effort, CPU/HIP work allocation, GUI
+   responsiveness, and format contracts. Preserve measured improvements;
+   distinguish uncompressed containers and extract-only formats from codecs.
+   Zstandard Strong/Maximum now use bounded higher-effort backend settings.
+3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
+   resource-aware RAM-only performance gates. Defer only timing-sensitive runs
+   when host contention is material; leave unrelated tasks untouched.
+4. Push the verified iteration, audit its exact commit's workflows, code-scanning
+   results, Dependabot alerts, and open pull requests, and fix regressions in
+   follow-up pushes. Run the installed Codex Security workflow with the minimum required worker
+   count, enumerate all candidate instances, fix validated issues, and verify
+   the fixes. Update the repo-local security skill after closure, not before.
+5. Revisit kernel and pipeline efficiency after the post-push audit. Validate
+   portability beyond the local host, distinguishing compiled targets, hosted
+   CPU-only test configurations, and GPU hardware actually tested. Retain only
+   performance changes supported by correctness and controlled measurements.
+6. Push a coherent verified commit, reconcile all dependency PRs, wait for all
+   required workflows including release fuzzing, audit remaining alerts and
+   deployments, then publish a new appropriately bumped release. Do not alter
+   findings merely to manufacture a target alert count.
+
 ## Direction
 
 SuperZip is a native Windows x64 archive application written in modern C++20.
 The GPU boundary is AMD HIP only. The native `.suzip` format is the
 GPU-accelerated product path, while standard `.zip` support is compatibility
-only through miniz 3.1.1. Uncompressed `.tar` support is compatibility only
+only through miniz 3.1.2. Uncompressed `.tar` support is compatibility only
 through SuperZip's native bounded TAR adapter.
 
 Portable ZIP and MSI packages must be functionally identical HIP-enabled
@@ -45,7 +76,7 @@ src/
   core/       Archive model, safety validation, integrity, progress
   gpu/        AMD HIP device discovery and GPU codec boundary
   tar/        TAR compatibility adapter with two-pass validation
-  zip/        ZIP compatibility adapter using miniz 3.1.1
+  zip/        ZIP compatibility adapter using miniz 3.1.2
 tests/       C++ regression tests
 tools/       Build, package, benchmark, and security automation
 third_party/ Patched production dependencies plus upstream provenance copies

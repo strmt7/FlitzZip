@@ -232,4 +232,20 @@ DefenderScanResult scan_with_windows_defender(const std::filesystem::path& path,
 #endif
 }
 
+// Purpose: Apply the fail-closed product policy to one completed Defender result.
+// Inputs: `result` is returned by `scan_with_windows_defender` for an enabled scan.
+// Outputs: Returns true only for an attempted, non-timeout, zero-exit, clean scan.
+bool defender_scan_passed(const DefenderScanResult& result) noexcept {
+    return result.attempted && result.clean && !result.timed_out && result.exit_code == 0;
+}
+
+// Purpose: Reject any enabled Defender scan that did not positively report a clean target.
+// Inputs: `result` is completed scan state and `path` identifies the user-visible target for diagnostics.
+// Outputs: Returns normally only for a positive clean result; otherwise throws `SecurityError`.
+void require_clean_defender_scan(const DefenderScanResult& result, const std::filesystem::path& path) {
+    if (!defender_scan_passed(result)) {
+        throw SecurityError("Microsoft Defender did not positively report the target as clean: " + path.string());
+    }
+}
+
 }  // namespace superzip

@@ -16,11 +16,11 @@ COMMON_FLAGS=(
   -Ithird_party/lhasa/lib/public
   -Ithird_party/lhasa/lib
   -DSUPERZIP_ENABLE_HIP=0
+  -DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1
+  -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1
 )
 
-MINIZ_UPSTREAM_ARCHIVE="third_party/upstream/miniz/3.1.1/miniz-3.1.1-source.zip"
-MINIZ_UPSTREAM_EXTRACT="$OUT/miniz-upstream"
-MINIZ_UPSTREAM_SOURCE="$MINIZ_UPSTREAM_EXTRACT/miniz-3.1.1"
+MINIZ_SOURCE="third_party/miniz"
 MINIZ_SOURCES=(miniz.c miniz_tdef.c miniz_tinfl.c)
 
 LZMA_SDK_SOURCES=(
@@ -66,18 +66,6 @@ LHASA_SOURCES=(
   third_party/lhasa/lib/pm2_decoder.c
 )
 
-prepare_upstream_miniz() {
-  rm -rf "$MINIZ_UPSTREAM_EXTRACT"
-  mkdir -p "$MINIZ_UPSTREAM_EXTRACT"
-  (cd third_party/upstream/miniz/3.1.1 && tr -d '\r' < SHA256SUMS | sha256sum -c -)
-  unzip -q "$MINIZ_UPSTREAM_ARCHIVE" -d "$MINIZ_UPSTREAM_EXTRACT"
-  cat > "$MINIZ_UPSTREAM_SOURCE/miniz_export.h" <<'EOF'
-#pragma once
-#define MINIZ_EXPORT
-EOF
-  test -f "$MINIZ_UPSTREAM_SOURCE/miniz.h"
-}
-
 build_miniz_objects() {
   local source_dir="$1"
   local object_dir="$2"
@@ -87,6 +75,7 @@ build_miniz_objects() {
     local source="$source_dir/$source_name"
     local object="$object_dir/$(basename "$source_name" .c).o"
     "$CC" $CFLAGS -std=c11 -I"$source_dir" \
+      -DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 \
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
   done
@@ -134,6 +123,7 @@ build_lhasa_objects() {
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/iso_fuzzer.cpp \
   src/iso/iso_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -158,6 +148,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/sevenzip_fuzzer.cpp \
   src/sevenzip/sevenzip_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -168,6 +159,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/lzma_fuzzer.cpp \
   src/lzma/lzma_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -180,6 +172,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
   src/lzip/lzip_adapter.cpp \
   src/lzip/lzip_stream.cpp \
   src/core/checksum.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -191,6 +184,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
   fuzz/arj_fuzzer.cpp \
   src/arj/arj_adapter.cpp \
   src/core/checksum.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -200,6 +194,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/arc_fuzzer.cpp \
   src/arc/arc_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -209,6 +204,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/macbinary_fuzzer.cpp \
   src/macbinary/macbinary_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -220,6 +216,7 @@ mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/lha_fuzzer.cpp \
   src/lha/lha_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
@@ -227,10 +224,9 @@ mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
   -o "$OUT/superzip_lha_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-prepare_upstream_miniz
-build_miniz_objects "$MINIZ_UPSTREAM_SOURCE" "$OUT/miniz-objects" > "$OUT/miniz-objects.list"
+build_miniz_objects "$MINIZ_SOURCE" "$OUT/miniz-objects" > "$OUT/miniz-objects.list"
 mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_UPSTREAM_SOURCE" \
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/cpio_fuzzer.cpp \
   src/cpio/cpio_adapter.cpp \
   src/gzip/gzip_stream.cpp \
@@ -242,9 +238,10 @@ mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
   -o "$OUT/superzip_cpio_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
-"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_UPSTREAM_SOURCE" \
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/xar_fuzzer.cpp \
   src/xar/xar_adapter.cpp \
+  src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \

@@ -679,6 +679,58 @@ TEST_CASE(suzip_verify_rejects_corrupt_footer_magic) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Verify SUZIP metadata validation enforces the archive-wide decoded-output policy before decode.
+// Inputs: A compact fill-only index declaring one byte more than the 64 GiB aggregate output limit.
+// Outputs: Throws `ArchiveError` without allocating or decoding the declared payload.
+TEST_CASE(suzip_verify_rejects_aggregate_output_over_resource_limit) {
+    const auto root = test_temp_dir("suzip-aggregate-output-limit");
+    const auto archive = root / "oversized.suzip";
+    {
+        std::ofstream file(archive, std::ios::binary | std::ios::trunc);
+        superzip::ArchiveIndex index;
+        superzip::ArchiveEntry entry;
+        entry.path = "oversized.bin";
+        entry.uncompressed_size = superzip::kMaxExtractedOutputBytes + 1U;
+        entry.payload_offset = 0;
+        entry.payload_size = 0;
+        entry.crc32 = 0;
+        const auto full_blocks = superzip::kMaxExtractedOutputBytes / superzip::kMaxArchiveBlockBytes;
+        entry.blocks.reserve(static_cast<std::size_t>(full_blocks + 1U));
+        for (std::uint64_t i = 0; i < full_blocks; ++i) {
+            entry.blocks.push_back(superzip::BlockDescriptor{
+                .kind = superzip::BlockKind::Fill,
+                .fill_value = 0,
+                .uncompressed_len = superzip::kMaxArchiveBlockBytes,
+                .encoded_offset = 0,
+                .encoded_len = 0,
+            });
+        }
+        entry.blocks.push_back(superzip::BlockDescriptor{
+            .kind = superzip::BlockKind::Fill,
+            .fill_value = 0,
+            .uncompressed_len = 1,
+            .encoded_offset = 0,
+            .encoded_len = 0,
+        });
+        index.entries.push_back(std::move(entry));
+        const auto index_offset = static_cast<std::uint64_t>(file.tellp());
+        superzip::write_archive_index(file, index);
+        const auto index_size = static_cast<std::uint64_t>(file.tellp()) - index_offset;
+        write_test_footer(file, index_offset, index_size);
+    }
+
+    superzip::ExtractOptions verify;
+    verify.gpu_required = false;
+    verify.force_cpu = true;
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::verify_suzip(archive, verify));
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+
 // Purpose: Verify `.suzip` rejects Win32-disallowed control characters in entry paths before extraction.
 // Inputs: A handcrafted archive with one raw entry whose name contains ASCII 0x1F.
 // Outputs: Throws `SecurityError` before decoding or writing any file.

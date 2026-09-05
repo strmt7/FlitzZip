@@ -1,5 +1,5 @@
-
-
+/* LzmaDec.c -- LZMA Decoder
+: Igor Pavlov : Public domain */
 
 #include "Precomp.h"
 
@@ -466,8 +466,10 @@ int Z7_FASTCALL LZMA_DECODE_REAL(CLzmaDec *p, SizeT limit, const Byte *bufLimit)
       if (state >= kNumStates)
       {
         UInt32 distance;
-        prob = probs + PosSlot +
-            ((len < kNumLenToPosStates ? len : kNumLenToPosStates - 1) << kNumPosSlotBits);
+        {
+          const unsigned temp = (len < kNumLenToPosStates ? len : kNumLenToPosStates - 1) << kNumPosSlotBits;
+          prob = probs + PosSlot + temp;
+        }
         TREE_6_DECODE(prob, distance)
         /* Distance slot and alignment bits identify the dictionary source. */
         if (distance >= kStartPosModelIndex)
@@ -869,9 +871,10 @@ static ELzmaDummy LzmaDec_TryDummy(const CLzmaDec *p, const Byte *buf, const Byt
       if (state < 4)
       {
         unsigned posSlot;
-        prob = probs + PosSlot +
-            ((len < kNumLenToPosStates - 1 ? len : kNumLenToPosStates - 1) <<
-            kNumPosSlotBits);
+        {
+          const unsigned temp = (len < kNumLenToPosStates - 1 ? len : kNumLenToPosStates - 1) << kNumPosSlotBits;
+          prob = probs + PosSlot + temp;
+        }
         TREE_DECODE_CHECK(prob, 1 << kNumPosSlotBits, posSlot)
         if (posSlot >= kStartPosModelIndex)
         {
@@ -880,7 +883,8 @@ static ELzmaDummy LzmaDec_TryDummy(const CLzmaDec *p, const Byte *buf, const Byt
 
           if (posSlot < kEndPosModelIndex)
           {
-            prob = probs + SpecPos + ((2 | (posSlot & 1)) << numDirectBits);
+            const unsigned temp = (2 | (posSlot & 1)) << numDirectBits;
+            prob = probs + SpecPos + temp;
           }
           else
           {

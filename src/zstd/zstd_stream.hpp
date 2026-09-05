@@ -11,7 +11,7 @@
 namespace superzip {
 
 // Purpose: Stream Zstandard-compressed bytes to a file with libzstd-managed framing.
-// Inputs: Construct with `output_path` and a 1-9 Zstandard `compression_level`; callers write uncompressed bytes
+// Inputs: Construct with `output_path` and product effort 1-9 (Zstandard 1-22); callers write uncompressed bytes
 // through the `std::ostream` interface. Outputs: Writes a complete `.zst` stream with a content checksum; throws on I/O
 // or compressor failure.
 class ZstdOutputStream final : public std::ostream {

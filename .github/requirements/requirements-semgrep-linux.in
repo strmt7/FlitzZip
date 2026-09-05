@@ -1,0 +1,6 @@
+--index-url https://pypi.org/simple
+--only-binary=:all:
+semgrep==1.176.1
+# Advisory floor; retain Semgrep's declared dependency constraints.
+cryptography>=50.0.0
+mcp>=1.28.1

@@ -21,6 +21,19 @@ if ($LASTEXITCODE -ne 0) {
     throw "ctest failed with exit code $LASTEXITCODE."
 }
 
+$testRunner = Join-Path $build "$Configuration/superzip_tests.exe"
+$previousErrorPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    & $testRunner "__superzip_no_test_must_match_this_filter__" 2>&1 | Out-Null
+    $emptySelectionExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorPreference
+}
+if ($emptySelectionExitCode -ne 2) {
+    throw "The C++ test runner must reject filters that select no tests."
+}
+
 $configuredPackageVersion = Read-SuperZipCMakeCacheValue -BuildRoot $build -Name "SUPERZIP_PACKAGE_VERSION"
 Assert-SuperZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $configuredPackageVersion
 

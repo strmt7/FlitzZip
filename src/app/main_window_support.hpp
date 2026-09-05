@@ -55,7 +55,6 @@ constexpr int kPageTransitionMs = 120;
 constexpr int kToggleTransitionMs = 105;
 constexpr int kButtonReleaseTransitionMs = 130;
 constexpr int kSmoothScrollTransitionMs = 180;
-constexpr UINT kDragQueryMessage = 0x0049;
 constexpr std::size_t kMaxLogEntries = 128;
 constexpr std::wstring_view kProductTagline = L"ULTRAFAST GPU-ACCELERATED ARCHIVAL SOFTWARE";
 
@@ -154,6 +153,11 @@ std::filesystem::path extraction_output_path_for(const UiState& state);
 OperationStats extract_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
                                         const std::filesystem::path& output, bool gpu_required, bool overwrite,
                                         const ProgressCallback& progress_callback);
+// Purpose: Fully validate one detected archive without retaining extracted output.
+// Inputs: `archive_format`, identity-pinned `archive`, GPU policy, and optional progress callback describe the run.
+// Outputs: Returns validation telemetry or throws on format, path, decode, checksum, or resource-limit failure.
+OperationStats validate_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
+                                         bool gpu_required, const ProgressCallback& progress_callback);
 std::wstring compression_level_text(int index);
 int normalize_performance_update_seconds(int seconds);
 int performance_update_index_for_seconds(int seconds);

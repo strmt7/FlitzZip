@@ -22,6 +22,8 @@ constexpr std::size_t kRpmHeaderPrefixBytes = 16U;
 constexpr std::size_t kRpmIndexEntryBytes = 16U;
 constexpr std::uint32_t kRpmMaxHeaderEntries = 65'536U;
 constexpr std::uint32_t kRpmMaxHeaderStoreBytes = 64U * 1024U * 1024U;
+constexpr std::uint32_t kRpmMaxPayloadTagBytes = 128U;
+constexpr std::uint32_t kRpmMaxRetainedPayloadTagBytes = 256U;
 constexpr std::uint32_t kRpmTagPayloadFormat = 1124U;
 constexpr std::uint32_t kRpmTagPayloadCompressor = 1125U;
 constexpr std::uint32_t kRpmTypeString = 6U;
@@ -36,6 +38,7 @@ struct RpmHeaderStringEntry {
 struct RpmHeaderScan {
     std::uint64_t end_offset = 0;
     std::vector<RpmHeaderStringEntry> strings;
+    std::uint32_t retained_string_bytes = 0;
 };
 
 // Purpose: Add two RPM byte counters while detecting unsigned wraparound.
@@ -86,19 +89,15 @@ void seek_rpm_offset(std::ifstream& input, std::uint64_t offset, const char* lab
 // Inputs: `bytes` points to at least four bytes.
 // Outputs: Returns the decoded unsigned integer.
 std::uint32_t read_be32(const unsigned char* bytes) {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24U) |
-        (static_cast<std::uint32_t>(bytes[1]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 8U) |
-        static_cast<std::uint32_t>(bytes[3]);
+    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
 }
 
 // Purpose: Convert ASCII metadata to lowercase for RPM payload token matching.
 // Inputs: `value` is a header string or inferred token.
 // Outputs: Returns a lowercased copy; non-ASCII bytes are preserved except C-locale ASCII folds.
 std::string ascii_lower(std::string value) {
-    std::ranges::transform(value, value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(value, value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
@@ -106,9 +105,8 @@ std::string ascii_lower(std::string value) {
 // Inputs: `header` contains string entries and `tag` is the RPM tag id.
 // Outputs: Returns the first matching value, or empty when absent.
 std::string find_header_string(const RpmHeaderScan& header, std::uint32_t tag) {
-    const auto it = std::ranges::find_if(header.strings, [tag](const RpmHeaderStringEntry& entry) {
-        return entry.tag == tag;
-    });
+    const auto it =
+        std::ranges::find_if(header.strings, [tag](const RpmHeaderStringEntry& entry) { return entry.tag == tag; });
     return it == header.strings.end() ? std::string{} : it->value;
 }
 
@@ -124,9 +122,11 @@ std::uint64_t align_rpm_eight(std::uint64_t offset) {
 }
 
 // Purpose: Read one RPM header section and collect string tags relevant to payload decoding.
-// Inputs: `input` is positioned at the header, `archive_size` bounds section lengths, and `label` names diagnostics.
+// Inputs: `input` is positioned at the header, `archive_size` bounds section lengths, `label` names diagnostics, and
+// `collect_payload_tags` selects the two package-header strings needed for payload decoding.
 // Outputs: Returns the byte offset immediately after the header and collected string entries.
-RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, const char* label) {
+RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, const char* label,
+                              bool collect_payload_tags) {
     const auto start_pos = input.tellg();
     if (start_pos == std::istream::pos_type(-1)) {
         throw ArchiveError(std::string("failed to read RPM ") + label + " header offset");
@@ -152,8 +152,7 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
 
     const auto index_bytes = checked_mul_rpm_bytes(index_count, kRpmIndexEntryBytes, "RPM index byte count overflow");
     const auto header_bytes = checked_add_rpm_bytes(
-        checked_add_rpm_bytes(kRpmHeaderPrefixBytes, index_bytes, "RPM header byte count overflow"),
-        store_size,
+        checked_add_rpm_bytes(kRpmHeaderPrefixBytes, index_bytes, "RPM header byte count overflow"), store_size,
         "RPM header byte count overflow");
     const auto end_offset = checked_add_rpm_bytes(start_offset, header_bytes, "RPM header end overflow");
     if (end_offset > archive_size) {
@@ -179,14 +178,29 @@ RpmHeaderScan read_rpm_header(std::ifstream& input, std::uint64_t archive_size, 
         if (offset > store.size()) {
             throw ArchiveError(std::string("RPM ") + label + " header entry offset is outside the store");
         }
-        if (type != kRpmTypeString || count == 0U) {
+        if (!collect_payload_tags || type != kRpmTypeString ||
+            (tag != kRpmTagPayloadFormat && tag != kRpmTagPayloadCompressor)) {
             continue;
         }
-        const auto begin = store.begin() + static_cast<std::ptrdiff_t>(offset);
-        const auto nul = std::find(begin, store.end(), 0U);
-        if (nul == store.end()) {
-            throw ArchiveError(std::string("RPM ") + label + " string entry is not NUL-terminated");
+        if (count != 1U) {
+            throw ArchiveError(std::string("RPM ") + label + " payload string tag has invalid cardinality");
         }
+        if (std::ranges::any_of(result.strings, [tag](const RpmHeaderStringEntry& item) { return item.tag == tag; })) {
+            throw ArchiveError(std::string("RPM ") + label + " contains a duplicate payload string tag");
+        }
+        const auto begin = store.begin() + static_cast<std::ptrdiff_t>(offset);
+        const auto available = static_cast<std::size_t>(store.end() - begin);
+        const auto bounded_size = std::min<std::size_t>(available, kRpmMaxPayloadTagBytes + 1U);
+        const auto bounded_end = begin + static_cast<std::ptrdiff_t>(bounded_size);
+        const auto nul = std::find(begin, bounded_end, 0U);
+        if (nul == bounded_end) {
+            throw ArchiveError(std::string("RPM ") + label + " payload string tag is unterminated or too long");
+        }
+        const auto string_bytes = static_cast<std::uint32_t>(nul - begin);
+        if (string_bytes > kRpmMaxRetainedPayloadTagBytes - result.retained_string_bytes) {
+            throw ArchiveError(std::string("RPM ") + label + " payload strings exceed metadata limits");
+        }
+        result.retained_string_bytes += string_bytes;
         result.strings.push_back(RpmHeaderStringEntry{
             .tag = tag,
             .value = std::string(begin, nul),
@@ -211,7 +225,8 @@ void read_rpm_lead(std::ifstream& input) {
 
 // Purpose: Infer payload compression from RPM header metadata.
 // Inputs: `compressor` is a lowercase payload compressor tag value.
-// Outputs: Returns a recognized compression value, empty when absent/unknown, or throws for explicitly unsupported algorithms.
+// Outputs: Returns a recognized compression value, empty when absent/unknown, or throws for explicitly unsupported
+// algorithms.
 std::optional<RpmPayloadCompression> compression_from_header(const std::string& compressor) {
     if (compressor.empty()) {
         return std::nullopt;
@@ -247,7 +262,8 @@ std::optional<RpmPayloadCompression> compression_from_magic(const std::array<uns
     if (magic[0] == 'B' && magic[1] == 'Z' && magic[2] == 'h') {
         return RpmPayloadCompression::Bzip2;
     }
-    if (magic[0] == 0xFDU && magic[1] == '7' && magic[2] == 'z' && magic[3] == 'X' && magic[4] == 'Z' && magic[5] == 0x00U) {
+    if (magic[0] == 0xFDU && magic[1] == '7' && magic[2] == 'z' && magic[3] == 'X' && magic[4] == 'Z' &&
+        magic[5] == 0x00U) {
         return RpmPayloadCompression::Xz;
     }
     if (magic[0] == 0x28U && magic[1] == 0xB5U && magic[2] == 0x2FU && magic[3] == 0xFDU) {
@@ -259,7 +275,8 @@ std::optional<RpmPayloadCompression> compression_from_magic(const std::array<uns
 // Purpose: Read the leading payload bytes for compression detection.
 // Inputs: `input` is the RPM stream, `payload_offset` is the absolute start, and `payload_size` bounds readable bytes.
 // Outputs: Returns a zero-filled six-byte buffer containing available leading payload bytes.
-std::array<unsigned char, 6U> read_payload_magic(std::ifstream& input, std::uint64_t payload_offset, std::uint64_t payload_size) {
+std::array<unsigned char, 6U> read_payload_magic(std::ifstream& input, std::uint64_t payload_offset,
+                                                 std::uint64_t payload_size) {
     std::array<unsigned char, 6U> magic{};
     const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(magic.size(), payload_size));
     if (to_read == 0U) {
@@ -272,6 +289,9 @@ std::array<unsigned char, 6U> read_payload_magic(std::ifstream& input, std::uint
 
 }  // namespace
 
+// Purpose: Parse and validate the RPM headers, then locate and classify the bounded payload stream.
+// Inputs: `archive_path` identifies an untrusted RPM package that must remain readable for the scan.
+// Outputs: Returns validated payload offsets, sizes, and compression metadata; throws ArchiveError on malformed input.
 RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
     const auto archive_size = std::filesystem::file_size(archive_path);
     if (archive_size < kRpmLeadBytes) {
@@ -284,13 +304,13 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
     }
 
     read_rpm_lead(input);
-    const auto signature = read_rpm_header(input, archive_size, "signature");
+    const auto signature = read_rpm_header(input, archive_size, "signature", false);
     const auto main_header_offset = align_rpm_eight(signature.end_offset);
     if (main_header_offset > archive_size) {
         throw ArchiveError("RPM signature padding extends past end of file");
     }
     seek_rpm_offset(input, main_header_offset, "RPM package header");
-    const auto package_header = read_rpm_header(input, archive_size, "package");
+    const auto package_header = read_rpm_header(input, archive_size, "package", true);
     const auto payload_offset = package_header.end_offset;
     if (payload_offset >= archive_size) {
         throw ArchiveError("RPM payload is empty");
@@ -311,11 +331,12 @@ RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path) {
     if (from_header.has_value() && from_magic.has_value() && *from_header != *from_magic) {
         throw ArchiveError("RPM payload compressor does not match payload magic");
     }
+    const auto compression = from_header.has_value() ? *from_header : *from_magic;
 
     return RpmPayloadInfo{
         .offset = payload_offset,
         .size = payload_size,
-        .compression = from_header.value_or(*from_magic),
+        .compression = compression,
         .payload_format = std::move(payload_format),
         .payload_compressor = std::move(payload_compressor),
     };

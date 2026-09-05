@@ -1,9 +1,13 @@
 #pragma once
 
+#include "app/input_limits.hpp"
+
 #include <cstddef>
 #include <climits>
+#include <cstring>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <windows.h>
@@ -52,25 +56,34 @@ class GlobalLockView {
     void* data_ = nullptr;
 };
 
-// Purpose: Append a wide null-terminated path list from a DROPFILES payload.
-// Inputs: `list` points to the first UTF-16 path string and `limit` is the byte limit of the global block.
-// Outputs: Appends nonempty filesystem paths until the terminating empty string or limit is reached.
-inline void append_wide_drop_paths(const wchar_t* list, const wchar_t* limit,
+// Purpose: Parse a bounded wide null-terminated path list from a DROPFILES payload.
+// Inputs: `list` and `limit` delimit trusted copied payload memory; `paths` receives complete paths only.
+// Outputs: Returns true only for a terminated list within all path-count and character budgets.
+inline bool append_wide_drop_paths(const wchar_t* list, const wchar_t* limit,
                                    std::vector<std::filesystem::path>& paths) {
     const wchar_t* cursor = list;
-    while (cursor < limit && *cursor != L'\0') {
+    std::size_t aggregate_characters = 0U;
+    while (cursor < limit) {
+        if (*cursor == L'\0') {
+            return !paths.empty() || (cursor + 1 < limit && cursor[1] == L'\0');
+        }
         const wchar_t* end = cursor;
         while (end < limit && *end != L'\0') {
             ++end;
         }
         if (end >= limit) {
-            return;
+            return false;
         }
-        if (end != cursor) {
-            paths.emplace_back(std::wstring(cursor, end));
+        const auto length = static_cast<std::size_t>(end - cursor);
+        if (length == 0U || length > kMaxShellPathCharacters || paths.size() >= kMaxQueueItems ||
+            length > kMaxShellDropPathCharacters - aggregate_characters) {
+            return false;
         }
+        paths.emplace_back(std::wstring(cursor, end));
+        aggregate_characters += length;
         cursor = end + 1;
     }
+    return false;
 }
 
 // Purpose: Convert a system-code-page byte string from a DROPFILES payload.
@@ -89,25 +102,37 @@ inline std::wstring ansi_drop_path_to_wide(const char* text, std::size_t length)
     return converted;
 }
 
-// Purpose: Append an ANSI null-terminated path list from a DROPFILES payload.
-// Inputs: `list` points to the first ANSI path string and `limit` is the byte limit of the global block.
-// Outputs: Appends converted nonempty filesystem paths until the terminating empty string or limit is reached.
-inline void append_ansi_drop_paths(const char* list, const char* limit, std::vector<std::filesystem::path>& paths) {
+// Purpose: Parse a bounded ANSI null-terminated path list from a DROPFILES payload.
+// Inputs: `list` and `limit` delimit trusted copied payload memory; `paths` receives complete converted paths only.
+// Outputs: Returns true only for a terminated list within all path-count and character budgets.
+inline bool append_ansi_drop_paths(const char* list, const char* limit, std::vector<std::filesystem::path>& paths) {
     const char* cursor = list;
-    while (cursor < limit && *cursor != '\0') {
+    std::size_t aggregate_characters = 0U;
+    while (cursor < limit) {
+        if (*cursor == '\0') {
+            return !paths.empty() || (cursor + 1 < limit && cursor[1] == '\0');
+        }
         const char* end = cursor;
         while (end < limit && *end != '\0') {
             ++end;
         }
         if (end >= limit) {
-            return;
+            return false;
         }
-        auto path = ansi_drop_path_to_wide(cursor, static_cast<std::size_t>(end - cursor));
-        if (!path.empty()) {
-            paths.emplace_back(std::move(path));
+        const auto byte_length = static_cast<std::size_t>(end - cursor);
+        if (byte_length == 0U || byte_length > kMaxShellPathCharacters || paths.size() >= kMaxQueueItems) {
+            return false;
         }
+        auto path = ansi_drop_path_to_wide(cursor, byte_length);
+        if (path.empty() || path.size() > kMaxShellPathCharacters ||
+            path.size() > kMaxShellDropPathCharacters - aggregate_characters) {
+            return false;
+        }
+        aggregate_characters += path.size();
+        paths.emplace_back(std::move(path));
         cursor = end + 1;
     }
+    return false;
 }
 
 }  // namespace detail
@@ -121,31 +146,76 @@ inline std::vector<std::filesystem::path> paths_from_dropfiles_global(HGLOBAL gl
         return paths;
     }
     const SIZE_T byte_size = GlobalSize(global);
-    if (byte_size < sizeof(detail::DropFilesHeader)) {
+    if (byte_size < sizeof(detail::DropFilesHeader) || byte_size > kMaxShellDropPayloadBytes) {
         return paths;
     }
-    const detail::GlobalLockView view(global);
-    const auto* bytes = static_cast<const unsigned char*>(view.data());
-    if (bytes == nullptr) {
-        return paths;
-    }
-    const auto* header = reinterpret_cast<const detail::DropFilesHeader*>(bytes);
-    if (header->pFiles < sizeof(detail::DropFilesHeader) || static_cast<SIZE_T>(header->pFiles) >= byte_size) {
-        return paths;
-    }
-    const auto* list = bytes + header->pFiles;
-    const auto* end = bytes + byte_size;
-    if (header->fWide) {
-        const auto remaining = static_cast<SIZE_T>(end - list);
-        if (remaining < sizeof(wchar_t) || (remaining % sizeof(wchar_t)) != 0U) {
+    std::vector<unsigned char> payload(byte_size);
+    {
+        const detail::GlobalLockView view(global);
+        const auto* bytes = static_cast<const unsigned char*>(view.data());
+        if (bytes == nullptr) {
             return paths;
         }
-        detail::append_wide_drop_paths(reinterpret_cast<const wchar_t*>(list), reinterpret_cast<const wchar_t*>(end),
-                                       paths);
+        std::memcpy(payload.data(), bytes, byte_size);
+    }
+    detail::DropFilesHeader header{};
+    std::memcpy(&header, payload.data(), sizeof(header));
+    if (header.pFiles < sizeof(detail::DropFilesHeader) || static_cast<SIZE_T>(header.pFiles) >= byte_size) {
+        return paths;
+    }
+    const auto* list = payload.data() + header.pFiles;
+    const auto* end = payload.data() + payload.size();
+    bool valid = false;
+    if (header.fWide) {
+        const auto remaining = static_cast<SIZE_T>(end - list);
+        if ((header.pFiles % alignof(wchar_t)) != 0U || remaining < (2U * sizeof(wchar_t)) ||
+            (remaining % sizeof(wchar_t)) != 0U) {
+            return paths;
+        }
+        valid = detail::append_wide_drop_paths(reinterpret_cast<const wchar_t*>(list),
+                                               reinterpret_cast<const wchar_t*>(end), paths);
     } else {
-        detail::append_ansi_drop_paths(reinterpret_cast<const char*>(list), reinterpret_cast<const char*>(end), paths);
+        if (end - list < 2) {
+            return paths;
+        }
+        valid = detail::append_ansi_drop_paths(reinterpret_cast<const char*>(list), reinterpret_cast<const char*>(end),
+                                               paths);
+    }
+    if (!valid) {
+        paths.clear();
     }
     return paths;
+}
+
+// Purpose: Reject shell-drop paths that could trigger remote authentication or device-path interpretation.
+// Inputs: `path` is untrusted lexical shell metadata; this function performs no file or directory probe.
+// Outputs: Returns true only for bounded absolute DOS paths rooted on a local Windows drive.
+inline bool is_supported_local_drop_path(const std::filesystem::path& path) {
+    const auto& value = path.native();
+    const auto is_separator = [](wchar_t character) { return character == L'\\' || character == L'/'; };
+    const auto is_drive_letter = [](wchar_t character) {
+        return (character >= L'A' && character <= L'Z') || (character >= L'a' && character <= L'z');
+    };
+    if (value.size() < 3U || value.size() > kMaxShellPathCharacters || value.find(L'\0') != std::wstring::npos ||
+        !is_drive_letter(value[0]) || value[1] != L':' || !is_separator(value[2]) ||
+        value.find(L':', 2U) != std::wstring::npos) {
+        return false;
+    }
+    for (const auto& component : path) {
+        if (component == L"." || component == L"..") {
+            return false;
+        }
+    }
+    const wchar_t root[] = {value[0], L':', L'\\', L'\0'};
+    switch (GetDriveTypeW(root)) {
+    case DRIVE_FIXED:
+    case DRIVE_REMOVABLE:
+    case DRIVE_CDROM:
+    case DRIVE_RAMDISK:
+        return true;
+    default:
+        return false;
+    }
 }
 
 }  // namespace superzip::app

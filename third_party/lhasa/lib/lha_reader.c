@@ -232,6 +232,12 @@ int lha_reader_check(LHAReader *reader,
 		return 1;
 	}
 
-	return open_decoder(reader, callback, callback_data)
-	    && do_decode(reader);
+	// Continue an existing decoder so a streaming caller verifies the exact
+	// decoded bytes it consumed instead of reopening at end-of-input.
+	if (reader->decoder == NULL
+	 && !open_decoder(reader, callback, callback_data)) {
+		return 0;
+	}
+
+	return do_decode(reader);
 }

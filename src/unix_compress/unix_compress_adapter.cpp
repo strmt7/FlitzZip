@@ -1,5 +1,6 @@
 #include "unix_compress/unix_compress_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -664,7 +665,10 @@ OperationStats compress_unix_compress_file(const std::filesystem::path& source_f
         throw SecurityError("refusing to overwrite the Unix Compress source file: " + output_archive.string());
     }
 
-    const auto input_size = regular_file_size(source_file);
+    const auto manifest = build_manifest({source_file});
+    const auto& source_entry = manifest.entries.front();
+    const auto source_lock = lock_manifest_source(source_entry);
+    const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
     progress.set_current(source_file.filename().string());
@@ -689,7 +693,7 @@ OperationStats compress_unix_compress_file(const std::filesystem::path& source_f
             throw ArchiveError("failed to finalize Unix Compress archive: " + output_archive.string());
         }
 
-        commit_verified_file(temporary.file, output_archive, true);
+        commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {
@@ -742,12 +746,11 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
     // `.Z` streams have no embedded trusted filename; derive one safe member
     // name from the host archive path and validate it through the shared join.
     const auto entry_name = unix_compress_output_entry_name(archive_path);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing Unix Compress extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     const auto temporary = reserve_file_publish_target(target);
     bool temporary_active = true;
@@ -771,7 +774,7 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
         }
         // Publish only after the whole LZW stream has decoded without dictionary
         // violations.
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
         progress.finish_entry();

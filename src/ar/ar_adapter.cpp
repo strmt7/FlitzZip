@@ -26,7 +26,7 @@ constexpr std::string_view kArMemberMagic = "`\n";
 constexpr std::size_t kArHeaderBytes = 60U;
 constexpr std::size_t kArNameBytes = 16U;
 constexpr std::size_t kArIoBufferBytes = 64U * 1024U;
-constexpr std::uint64_t kMaxArNameBytes = 64U * 1024U;
+constexpr std::uint64_t kMaxArNameBytes = kMaxArchivePathBytes;
 constexpr std::uint64_t kMaxArStringTableBytes = 16U * 1024U * 1024U;
 constexpr std::uint64_t kMaxArDecimalField = 9'999'999'999ULL;
 
@@ -44,6 +44,7 @@ struct ArEntryMetadata {
 struct ArScanResult {
     std::vector<ArEntryMetadata> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
 };
 
 // Purpose: Add two AR byte counters while detecting unsigned wraparound.
@@ -261,12 +262,18 @@ std::string resolve_gnu_long_name(const std::string& string_table, std::uint64_t
     if (end == std::string::npos) {
         end = string_table.size();
     }
+    if ((end - start) > kMaxArNameBytes + 1U) {
+        throw ArchiveError("AR GNU long name exceeds SuperZip path length limit");
+    }
     auto name = string_table.substr(start, end - start);
     if (!name.empty() && name.back() == '/') {
         name.pop_back();
     }
     if (name.empty()) {
         throw ArchiveError("AR GNU long-name entry is empty");
+    }
+    if (name.size() > kMaxArNameBytes) {
+        throw ArchiveError("AR GNU long name exceeds SuperZip path length limit");
     }
     return name;
 }
@@ -369,6 +376,9 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path) {
             const auto consumed =
                 entry.has_value() && raw.name.starts_with("#1/") ? static_cast<std::uint64_t>(entry->path.size()) : 0U;
             if (entry.has_value()) {
+                result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+                    result.path_metadata_bytes, static_cast<std::uint64_t>(entry->path.size()) * 2U,
+                    "AR retained path metadata");
                 validation_entries.push_back(ArchivePathValidationEntry{
                     .path = entry->path,
                     .directory = false,
@@ -403,7 +413,6 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
         throw ArchiveError("failed to seek AR payload");
     }
 
-    std::filesystem::create_directories(target.parent_path());
     auto temporary_target = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
@@ -425,7 +434,7 @@ void extract_ar_file_payload(std::ifstream& input, const ArEntryMetadata& entry,
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
         cleanup_file_publish_target(temporary_target);
@@ -443,7 +452,8 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
                            const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto manifest = build_manifest(sources);
-    std::ofstream output(output_archive, std::ios::binary);
+    FilePublishTransaction publication(output_archive);
+    std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
         throw ArchiveError("cannot create AR archive: " + output_archive.string());
     }
@@ -458,6 +468,7 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
         }
         progress.set_current(entry.archive_path);
         publish_progress(progress, progress_callback);
+        const auto source_lock = lock_manifest_source(entry);
         const auto header = make_bsd_ar_header(entry.archive_path, entry.size);
         write_ar_bytes(output, header.data(), header.size());
         write_ar_bytes(output, entry.archive_path.data(), entry.archive_path.size());
@@ -471,6 +482,7 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to finalize AR archive: " + output_archive.string());
     }
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = manifest.total_file_bytes;
@@ -489,10 +501,11 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
 OperationStats extract_ar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto scanned = scan_ar(archive_path);
-    std::filesystem::create_directories(destination);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto scanned = scan_ar(archive_source.path());
+    create_verified_directories(destination);
 
-    std::ifstream input(archive_path, std::ios::binary);
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open AR archive: " + archive_path.string());
     }
@@ -509,7 +522,7 @@ OperationStats extract_ar(const std::filesystem::path& archive_path, const std::
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(scanned.entries.size());
     stats.gpu_used = false;

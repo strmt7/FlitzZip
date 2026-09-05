@@ -1,0 +1,7 @@
+--index-url https://pypi.org/simple
+--only-binary=:all:
+clang-format==23.1.0
+cmakelang==0.6.13
+pymarkdownlnt==0.9.39
+ruff==0.16.6
+yamllint==1.38.0

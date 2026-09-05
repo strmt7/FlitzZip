@@ -184,7 +184,7 @@ Rules:
 - LHA/LZH compatibility changes must exercise successful nested extraction,
   overwrite refusal, truncated/corrupt payload rejection, absolute-path
   rejection, parent-directory rejection, and symbolic-link rejection. Keep the
-  decoder in process through the vendored Lhasa 0.5.0 library and preserve the
+  decoder in process through the vendored Lhasa 0.6.0 library and preserve the
   original upstream release archive/checksum under `third_party/upstream/lhasa/`.
 - WIM compatibility changes must exercise successful standalone WIM extraction,
   overwrite refusal, corrupt payload rejection, app-local `libwim-15.dll`
@@ -195,13 +195,13 @@ Rules:
 - LZMA compatibility changes must exercise successful `.lzma` single-file
   extraction, overwrite refusal, truncated/corrupt stream rejection, oversized
   dictionary rejection, and fuzz coverage. Keep extraction in-process through
-  the vendored LZMA SDK 26.01 decoder and do not call `7z.exe`, PowerShell, or
+  the vendored LZMA SDK 26.03 decoder and do not call `7z.exe`, PowerShell, or
   host archive tools.
 - Lzip compatibility changes must exercise successful `.lz` single-file
   extraction, concatenated-member extraction, `.tar.lz`/`.tlz` TAR extraction,
   overwrite refusal, corrupt trailer rejection, invalid dictionary rejection,
   unsafe TAR path rejection, and fuzz coverage. Keep extraction in process
-  through SuperZip's lzip wrapper over the vendored LZMA SDK 26.01 decoder.
+  through SuperZip's lzip wrapper over the vendored LZMA SDK 26.03 decoder.
 - CPIO.GZ compatibility changes must exercise successful `.cpio.gz`/`.cpgz`
   extraction, overwrite refusal, unsafe inner CPIO path rejection, inner
   `070702` checksum rejection, Gzip trailer rejection, and CPIO parser fuzz

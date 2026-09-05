@@ -9,7 +9,7 @@ namespace superzip {
 
 // Purpose: Create a single-file Zstandard stream from exactly one regular file.
 // Inputs: `sources` must contain one existing regular file, `output_archive` is the destination `.zst`,
-// `compression_level` is a Zstandard 1-9 level, and `progress_callback` receives synchronous progress snapshots.
+// `compression_level` is a product 1-9 effort mapped to Zstandard 1-22; `progress_callback` receives progress.
 // Outputs: Returns operation statistics; throws when the source set is empty, has multiple paths, or is not a regular
 // file.
 OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,

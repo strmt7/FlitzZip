@@ -20,6 +20,11 @@ constexpr std::uint32_t kMaxArchiveEntries = 250'000U;
 constexpr std::uint32_t kMaxBlocksPerEntry = 4'000'000U;
 constexpr std::uint32_t kMaxArchiveBlocks = 4'000'000U;
 constexpr std::uint64_t kMaxArchiveIndexBytes = 256ULL * 1024ULL * 1024ULL;
+constexpr std::uint32_t kMaxArchivePathBytes = 32U * 1024U;
+constexpr std::uint32_t kMaxArchivePathComponentBytes = 1024U;
+constexpr std::uint32_t kMaxArchivePathComponents = 256U;
+constexpr std::uint64_t kMaxArchivePathMetadataBytes = 64ULL * 1024ULL * 1024ULL;
+constexpr std::uint32_t kMaxSourceDirectoryDepth = 256U;
 
 // Host and device memory policy keeps SuperZip below resource-exhaustion thresholds.
 constexpr std::uint32_t kHostMemoryTargetUsagePercent = 80U;

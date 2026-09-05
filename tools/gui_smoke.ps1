@@ -137,15 +137,22 @@ function Assert-GuiSecurityPickerContract {
 
     foreach ($requiredSecurityCall in @(
         'hash_path(output, IntegrityMode::Sha256)',
-        'hash_path(archive, IntegrityMode::Sha256)',
-        'hash_path(path, IntegrityMode::Sha256)',
+        'hash_path(archive_source.path(), IntegrityMode::Sha256)',
+        'hash_path(pinned.path(), IntegrityMode::Sha256)',
         'scan_with_windows_defender(output, DefenderScanMode::FullPath)',
-        'scan_with_windows_defender(archive, DefenderScanMode::FullPath)',
-        'scan_with_windows_defender(path, DefenderScanMode::FullPath)'
+        'scan_with_windows_defender(archive_source.path(), DefenderScanMode::FullPath)',
+        'scan_with_windows_defender(pinned.path(), DefenderScanMode::FullPath)',
+        'validate_detected_archive(',
+        'SecurityCheckState::Passed',
+        'SecurityCheckState::Incomplete'
     )) {
         if (-not $SourceText.Contains($requiredSecurityCall)) {
             throw "GUI security options must call the real integrity and Defender paths; missing $requiredSecurityCall."
         }
+    }
+    if ($SourceText.Contains('{L"Path safety", L"Safe"') -or
+        $SourceText.Contains('{L"CRC metadata", L"Verified"')) {
+        throw "Security-page result rows must not contain fixed positive claims."
     }
     if ($SourceText -cmatch 'OPENFILENAMEW|GetOpenFileNameW|SHBrowseForFolderW|SHGetPathFromIDListW') {
         throw "Queue Add files/Add folder must use the modern shell picker without fixed legacy buffers."
@@ -201,6 +208,20 @@ function Assert-GuiFormatTelemetryLicenseContract {
     }
     if ($SourceText.Contains('WS_EX_ACCEPTFILES')) {
         throw "GUI drag/drop must not set WS_EX_ACCEPTFILES on the whole window; OLE hit testing controls the allowed drop surface."
+    }
+    if ($SourceText.Contains('ChangeWindowMessageFilterEx')) {
+        throw "GUI drag/drop must preserve UIPI defaults for elevated windows."
+    }
+    foreach ($requiredDropBoundary in @(
+        'kMaxShellDropPayloadBytes',
+        'kMaxQueueItems',
+        'is_supported_local_drop_path',
+        'kMaxFolderSizeEntries',
+        'kMaxFolderSizeDuration'
+    )) {
+        if (-not $SourceText.Contains($requiredDropBoundary)) {
+            throw "Queue drag/drop and folder metadata work must remain local-only and bounded; missing $requiredDropBoundary."
+        }
     }
     if (-not $SourceText.Contains('is_copy_accelerator')) {
         throw "SuperZip-owned UI must consume text-copy accelerators instead of exposing copyable text."

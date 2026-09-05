@@ -62,9 +62,9 @@ runs:
         }
 
     - name: Setup Python
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: "3.14.4"
+        python-version: "3.14.7"
 
     - name: Resolve release metadata
       id: meta
@@ -232,8 +232,9 @@ runs:
 
     - name: Setup .NET for WiX
       if: inputs.create_msi == 'true'
-      uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
       with:
+        # WiX 7.0.0 ships a net8.0 tool; use its supported runtime explicitly.
         dotnet-version: "8.0.x"
 
     - name: Install WiX

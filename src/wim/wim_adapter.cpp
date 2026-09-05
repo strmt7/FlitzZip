@@ -1,9 +1,12 @@
 #include "wim/wim_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
+#include "core/trusted_runtime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -44,6 +47,7 @@ namespace {
 
 constexpr std::size_t kWimCopyBufferBytes = 256U * 1024U;
 constexpr std::uint64_t kMaxWimTotalFileBytes = kMaxPipelineMemoryBytes;
+constexpr std::size_t kMaxWimTextUtf16Units = kMaxArchivePathBytes;
 
 #if defined(_WIN32)
 constexpr std::uint32_t kExpectedWimlibVersionNumber = 1062917U;
@@ -60,6 +64,7 @@ struct WimEntry {
 struct WimMetadata {
     std::vector<WimEntry> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
     std::uint32_t image_count = 0;
 };
 
@@ -72,61 +77,55 @@ std::string windows_error_text(DWORD code) {
     return out.str();
 }
 
-// Purpose: Resolve the directory containing the running SuperZip executable.
-// Inputs: None.
-// Outputs: Returns the executable directory or throws on Windows API failure.
-std::filesystem::path executable_directory() {
-    std::array<wchar_t, 32768> buffer{};
-    const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (length == 0U) {
-        throw ArchiveError("cannot locate SuperZip executable directory: " + windows_error_text(GetLastError()));
+// Purpose: Find a required terminator in bounded wimlib UTF-16 text.
+// Inputs: `value` points to wimlib-owned text and `max_units` is the maximum permitted non-NUL length.
+// Outputs: Returns the length before NUL or throws without reading beyond `max_units + 1` code units.
+std::size_t bounded_wide_length(const wchar_t* value, std::size_t max_units) {
+    if (value == nullptr) {
+        return 0U;
     }
-    if (length >= buffer.size()) {
-        throw ArchiveError("SuperZip executable path exceeds loader buffer");
+    for (std::size_t length = 0; length <= max_units; ++length) {
+        if (value[length] == L'\0') {
+            return length;
+        }
     }
-    return std::filesystem::path(buffer.data()).parent_path();
+    throw ArchiveError("wimlib text exceeds SuperZip metadata limits or is not terminated");
 }
 
-// Purpose: Convert a UTF-16 string returned by wimlib into UTF-8 for SuperZip archive path handling and diagnostics.
-// Inputs: `value` is a null-terminated wimlib UTF-16 string.
+// Purpose: Convert bounded UTF-16 text returned by wimlib into UTF-8 for path handling and diagnostics.
+// Inputs: `value` is wimlib-owned text that must terminate within the shared metadata limit.
 // Outputs: Returns a UTF-8 string or throws if Windows reports invalid UTF-16 input.
 std::string wide_to_utf8(const wchar_t* value) {
     if (value == nullptr) {
         return {};
     }
-    const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, -1, nullptr, 0, nullptr, nullptr);
+    const auto length = bounded_wide_length(value, kMaxWimTextUtf16Units);
+    if (length == 0U) {
+        return {};
+    }
+    const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, static_cast<int>(length), nullptr, 0,
+                                             nullptr, nullptr);
     if (required <= 0) {
         throw ArchiveError("wimlib returned invalid UTF-16 text: " + windows_error_text(GetLastError()));
     }
-    std::string result(static_cast<std::size_t>(required - 1), '\0');
-    if (!result.empty()) {
-        const int written = WideCharToMultiByte(
-            CP_UTF8,
-            WC_ERR_INVALID_CHARS,
-            value,
-            -1,
-            result.data(),
-            required,
-            nullptr,
-            nullptr);
-        if (written != required) {
-            throw ArchiveError("failed to convert wimlib UTF-16 text: " + windows_error_text(GetLastError()));
-        }
+    if (static_cast<std::size_t>(required) > kMaxArchivePathBytes) {
+        throw ArchiveError("wimlib UTF-8 text exceeds SuperZip metadata limits");
+    }
+    std::string result(static_cast<std::size_t>(required), '\0');
+    const int written = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, static_cast<int>(length),
+                                            result.data(), required, nullptr, nullptr);
+    if (written != required) {
+        throw ArchiveError("failed to convert wimlib UTF-16 text: " + windows_error_text(GetLastError()));
     }
     return result;
 }
 
 class WimRuntime final {
-public:
+  public:
     using OpenWimFn = int (*)(const wimlib_tchar*, int, WIMStruct**);
     using GetWimInfoFn = int (*)(WIMStruct*, wimlib_wim_info*);
-    using IterateDirTreeFn = int (*)(
-        WIMStruct*,
-        int,
-        const wimlib_tchar*,
-        int,
-        wimlib_iterate_dir_tree_callback_t,
-        void*);
+    using IterateDirTreeFn = int (*)(WIMStruct*, int, const wimlib_tchar*, int, wimlib_iterate_dir_tree_callback_t,
+                                     void*);
     using ExtractImageFn = int (*)(WIMStruct*, int, const wimlib_tchar*, int);
     using FreeWimFn = void (*)(WIMStruct*);
     using ErrorStringFn = const wimlib_tchar* (*)(wimlib_error_code);
@@ -137,42 +136,27 @@ public:
     // Purpose: Load and validate the app-local wimlib runtime once for the process.
     // Inputs: None.
     // Outputs: Owns the checked DLL handle and required ABI symbols or throws on loader/version/init failure.
-    WimRuntime() {
-        const auto dll_path = executable_directory() / kWimlibDllName;
-        const auto handle = LoadLibraryExW(
-            dll_path.c_str(),
-            nullptr,
-            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        if (handle == nullptr) {
-            throw ArchiveError("cannot load bundled wimlib runtime from " + dll_path.string() + ": " + windows_error_text(GetLastError()));
-        }
-        try {
-            module_ = handle;
-            open_wim_ = load_required_symbol<OpenWimFn>("wimlib_open_wim");
-            get_wim_info_ = load_required_symbol<GetWimInfoFn>("wimlib_get_wim_info");
-            iterate_dir_tree_ = load_required_symbol<IterateDirTreeFn>("wimlib_iterate_dir_tree");
-            extract_image_ = load_required_symbol<ExtractImageFn>("wimlib_extract_image");
-            free_wim_ = load_required_symbol<FreeWimFn>("wimlib_free");
-            get_error_string_ = load_required_symbol<ErrorStringFn>("wimlib_get_error_string");
-            version_number_ = load_required_symbol<VersionNumberFn>("wimlib_get_version");
-            global_init_ = load_required_symbol<GlobalInitFn>("wimlib_global_init");
-            global_cleanup_ = load_required_symbol<GlobalCleanupFn>("wimlib_global_cleanup");
+    WimRuntime() : module_(load_trusted_app_local_runtime(kWimlibDllName, SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)) {
+        open_wim_ = load_required_symbol<OpenWimFn>("wimlib_open_wim");
+        get_wim_info_ = load_required_symbol<GetWimInfoFn>("wimlib_get_wim_info");
+        iterate_dir_tree_ = load_required_symbol<IterateDirTreeFn>("wimlib_iterate_dir_tree");
+        extract_image_ = load_required_symbol<ExtractImageFn>("wimlib_extract_image");
+        free_wim_ = load_required_symbol<FreeWimFn>("wimlib_free");
+        get_error_string_ = load_required_symbol<ErrorStringFn>("wimlib_get_error_string");
+        version_number_ = load_required_symbol<VersionNumberFn>("wimlib_get_version");
+        global_init_ = load_required_symbol<GlobalInitFn>("wimlib_global_init");
+        global_cleanup_ = load_required_symbol<GlobalCleanupFn>("wimlib_global_cleanup");
 
-            const auto version = version_number_();
-            if (version != kExpectedWimlibVersionNumber) {
-                std::ostringstream out;
-                out << "bundled wimlib runtime version mismatch: expected "
-                    << kExpectedWimlibVersionNumber << ", loaded " << version;
-                throw ArchiveError(out.str());
-            }
-            const int init_status = global_init_(0);
-            if (init_status != 0) {
-                throw ArchiveError("wimlib initialization failed: " + error_message(init_status));
-            }
-        } catch (...) {
-            FreeLibrary(handle);
-            module_ = nullptr;
-            throw;
+        const auto version = version_number_();
+        if (version != kExpectedWimlibVersionNumber) {
+            std::ostringstream out;
+            out << "bundled wimlib runtime version mismatch: expected " << kExpectedWimlibVersionNumber << ", loaded "
+                << version;
+            throw ArchiveError(out.str());
+        }
+        const int init_status = global_init_(0);
+        if (init_status != 0) {
+            throw ArchiveError("wimlib initialization failed: " + error_message(init_status));
         }
     }
 
@@ -183,12 +167,8 @@ public:
     // Inputs: None.
     // Outputs: Frees resources owned by this runtime object; never throws.
     ~WimRuntime() {
-        if (module_ != nullptr) {
-            if (global_cleanup_ != nullptr) {
-                global_cleanup_();
-            }
-            FreeLibrary(static_cast<HMODULE>(module_));
-            module_ = nullptr;
+        if (global_cleanup_ != nullptr) {
+            global_cleanup_();
         }
     }
 
@@ -220,15 +200,10 @@ public:
     // Purpose: Iterate one image tree through wimlib.
     // Inputs: `wim`, `image`, `callback`, and `context` are passed directly to wimlib's recursive tree iterator.
     // Outputs: Returns wimlib status; callback-owned failures are carried in the callback context.
-    [[nodiscard]] int iterate_image(
-        WIMStruct* wim,
-        std::uint32_t image,
-        wimlib_iterate_dir_tree_callback_t callback,
-        void* context) const {
-        constexpr int kIterateFlags =
-            WIMLIB_ITERATE_DIR_TREE_FLAG_RECURSIVE |
-            WIMLIB_ITERATE_DIR_TREE_FLAG_CHILDREN |
-            WIMLIB_ITERATE_DIR_TREE_FLAG_RESOURCES_NEEDED;
+    [[nodiscard]] int iterate_image(WIMStruct* wim, std::uint32_t image, wimlib_iterate_dir_tree_callback_t callback,
+                                    void* context) const {
+        constexpr int kIterateFlags = WIMLIB_ITERATE_DIR_TREE_FLAG_RECURSIVE | WIMLIB_ITERATE_DIR_TREE_FLAG_CHILDREN |
+                                      WIMLIB_ITERATE_DIR_TREE_FLAG_RESOURCES_NEEDED;
         return iterate_dir_tree_(wim, static_cast<int>(image), nullptr, kIterateFlags, callback, context);
     }
 
@@ -237,9 +212,7 @@ public:
     // Outputs: Writes staged files or throws with a wimlib diagnostic.
     void extract_image(WIMStruct* wim, std::uint32_t image, const std::filesystem::path& target) const {
         constexpr int kExtractFlags =
-            WIMLIB_EXTRACT_FLAG_NO_ACLS |
-            WIMLIB_EXTRACT_FLAG_NORPFIX |
-            WIMLIB_EXTRACT_FLAG_NO_ATTRIBUTES;
+            WIMLIB_EXTRACT_FLAG_NO_ACLS | WIMLIB_EXTRACT_FLAG_NORPFIX | WIMLIB_EXTRACT_FLAG_NO_ATTRIBUTES;
         const int status = extract_image_(wim, static_cast<int>(image), target.wstring().c_str(), kExtractFlags);
         if (status != 0) {
             throw ArchiveError("failed to stage WIM image: " + error_message(status));
@@ -264,20 +237,19 @@ public:
         return text.empty() ? "unknown wimlib error" : text;
     }
 
-private:
+  private:
     // Purpose: Resolve one required wimlib export from the loaded runtime.
     // Inputs: `name` is the exact exported C ABI symbol.
     // Outputs: Returns the typed function pointer or throws when the runtime is incompatible.
-    template <typename Function>
-    [[nodiscard]] Function load_required_symbol(const char* name) const {
-        const auto proc = GetProcAddress(static_cast<HMODULE>(module_), name);
+    template <typename Function> [[nodiscard]] Function load_required_symbol(const char* name) const {
+        const auto proc = GetProcAddress(static_cast<HMODULE>(module_.native_handle()), name);
         if (proc == nullptr) {
             throw ArchiveError(std::string("bundled wimlib runtime is missing export: ") + name);
         }
         return reinterpret_cast<Function>(proc);
     }
 
-    void* module_ = nullptr;
+    TrustedRuntimeModule module_;
     OpenWimFn open_wim_ = nullptr;
     GetWimInfoFn get_wim_info_ = nullptr;
     IterateDirTreeFn iterate_dir_tree_ = nullptr;
@@ -290,7 +262,7 @@ private:
 };
 
 class WimHandle final {
-public:
+  public:
     // Purpose: Bind a runtime-owned WIM handle to RAII lifetime management.
     // Inputs: `runtime` must outlive this handle, and `handle` must be null or allocated by wimlib.
     // Outputs: Stores the handle for automatic release.
@@ -313,7 +285,7 @@ public:
         return handle_;
     }
 
-private:
+  private:
     const WimRuntime& runtime_;
     WIMStruct* handle_ = nullptr;
 };
@@ -331,9 +303,8 @@ private:
 // Outputs: Returns true when the filename extension is `.swm` case-insensitively.
 bool has_split_wim_extension(const std::filesystem::path& archive_path) {
     auto extension = archive_path.extension().wstring();
-    std::ranges::transform(extension, extension.begin(), [](wchar_t ch) {
-        return static_cast<wchar_t>(std::towlower(ch));
-    });
+    std::ranges::transform(extension, extension.begin(),
+                           [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
     return extension == L".swm";
 }
 
@@ -359,9 +330,7 @@ std::string normalized_wim_source_path(const wimlib_dir_entry& entry) {
         throw SecurityError("WIM entry is missing a full path");
     }
     auto raw = wide_to_utf8(entry.full_path);
-    if (raw.size() >= 2U &&
-        (raw[0] == '/' || raw[0] == '\\') &&
-        (raw[1] == '/' || raw[1] == '\\')) {
+    if (raw.size() >= 2U && (raw[0] == '/' || raw[0] == '\\') && (raw[1] == '/' || raw[1] == '\\')) {
         throw SecurityError("WIM entry uses a UNC-like path");
     }
     if (!raw.empty() && (raw.front() == '/' || raw.front() == '\\')) {
@@ -372,25 +341,27 @@ std::string normalized_wim_source_path(const wimlib_dir_entry& entry) {
 }
 
 // Purpose: Prefix a WIM member path when the archive contains multiple images.
-// Inputs: `image` is one-based, `source_path` is already normalized, and `multi_image` indicates whether image folders are needed.
-// Outputs: Returns the final archive path used below the destination.
+// Inputs: `image` is one-based, `source_path` is already normalized, and `multi_image` indicates whether image folders
+// are needed. Outputs: Returns the final archive path used below the destination.
 std::string wim_output_path(std::uint32_t image, const std::string& source_path, bool multi_image) {
     if (!multi_image) {
         return source_path;
     }
-    return "image-" + std::to_string(image) + "/" + source_path;
+    const auto prefix = "image-" + std::to_string(image) + "/";
+    if (source_path.size() > kMaxArchivePathBytes - prefix.size()) {
+        throw ArchiveError("WIM output path exceeds SuperZip path length limit");
+    }
+    return prefix + source_path;
 }
 
 // Purpose: Reject WIM entry features that SuperZip does not publish safely.
 // Inputs: `entry` is the untrusted wimlib directory entry being scanned.
-// Outputs: Returns normally for directories and regular unnamed data streams; throws on links, reparse points, devices, named streams, or other unsupported attributes.
+// Outputs: Returns normally for directories and regular unnamed data streams; throws on links, reparse points, devices,
+// named streams, or other unsupported attributes.
 void validate_wim_entry_kind(const wimlib_dir_entry& entry) {
     constexpr std::uint32_t kUnsupportedAttributes =
-        WIMLIB_FILE_ATTRIBUTE_DEVICE |
-        WIMLIB_FILE_ATTRIBUTE_REPARSE_POINT |
-        WIMLIB_FILE_ATTRIBUTE_OFFLINE |
-        WIMLIB_FILE_ATTRIBUTE_ENCRYPTED |
-        WIMLIB_FILE_ATTRIBUTE_VIRTUAL;
+        WIMLIB_FILE_ATTRIBUTE_DEVICE | WIMLIB_FILE_ATTRIBUTE_REPARSE_POINT | WIMLIB_FILE_ATTRIBUTE_OFFLINE |
+        WIMLIB_FILE_ATTRIBUTE_ENCRYPTED | WIMLIB_FILE_ATTRIBUTE_VIRTUAL;
     if ((entry.attributes & kUnsupportedAttributes) != 0U) {
         throw SecurityError("WIM entry uses unsupported Windows file attributes");
     }
@@ -430,11 +401,20 @@ void record_wim_entry(WimScanContext& context, const wimlib_dir_entry& entry) {
     if (context.metadata->entries.size() >= kMaxArchiveEntries) {
         throw ArchiveError("WIM entry count exceeds SuperZip resource limit");
     }
+    if (entry.depth > kMaxArchivePathComponents) {
+        throw ArchiveError("WIM entry depth exceeds SuperZip resource limit");
+    }
 
     validate_wim_entry_kind(entry);
     const bool directory = (entry.attributes & WIMLIB_FILE_ATTRIBUTE_DIRECTORY) != 0U;
     const auto source_path = normalized_wim_source_path(entry);
     const auto output_path = wim_output_path(context.image, source_path, context.multi_image);
+    context.metadata->path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+        context.metadata->path_metadata_bytes, static_cast<std::uint64_t>(source_path.size()) * 2U,
+        "WIM retained source path metadata");
+    context.metadata->path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+        context.metadata->path_metadata_bytes, static_cast<std::uint64_t>(output_path.size()) * 2U,
+        "WIM retained output path metadata");
     const auto size = directory ? 0U : entry.streams[0].resource.uncompressed_size;
     if (!directory) {
         context.metadata->total_file_bytes = checked_add_wim_bytes(context.metadata->total_file_bytes, size);
@@ -511,8 +491,9 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
 }
 
 // Purpose: Join a normalized archive key under a trusted staging root.
-// Inputs: `root` is a SuperZip-created staging directory and `normalized_path` has already passed `normalize_archive_path_key`.
-// Outputs: Returns a filesystem path below `root`; this function does not validate untrusted input.
+// Inputs: `root` is a SuperZip-created staging directory and `normalized_path` has already passed
+// `normalize_archive_path_key`. Outputs: Returns a filesystem path below `root`; this function does not validate
+// untrusted input.
 std::filesystem::path join_normalized_path(const std::filesystem::path& root, const std::string& normalized_path) {
     std::filesystem::path result = root;
     std::string component;
@@ -539,61 +520,27 @@ ReservedFilePublishTarget reserve_wim_stage(const std::filesystem::path& destina
     return reserve_file_publish_target(destination / ".superzip-wim-stage");
 }
 
-// Purpose: Remove only a staging directory that follows SuperZip's WIM staging naming convention.
+// Purpose: Remove only the state-bound private WIM staging directory.
 // Inputs: `stage` is the reserved staging directory returned by `reserve_wim_stage`.
-// Outputs: Best-effort recursive cleanup of that private stage.
+// Outputs: Releases its locks and best-effort removes the private tree.
 void cleanup_wim_stage(const ReservedFilePublishTarget& stage) {
-    const auto name = stage.directory.filename().wstring();
-    if (name.find(L".superzip-wim-stage.sztmp-") == std::wstring::npos) {
-        return;
-    }
-    std::error_code ignored;
-    std::filesystem::remove_all(stage.directory, ignored);
-}
-
-// Purpose: Detect Windows reparse points in staged extraction output before publication.
-// Inputs: `path` is a staged file path created by wimlib.
-// Outputs: Returns true for reparse points or throws when attributes cannot be read.
-bool is_reparse_point(const std::filesystem::path& path) {
-    const auto attributes = GetFileAttributesW(path.wstring().c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES) {
-        throw ArchiveError("failed to inspect staged WIM file attributes: " + path.string());
-    }
-    return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U;
-}
-
-// Purpose: Validate a staged file is an ordinary file with the expected size.
-// Inputs: `source` is a staged path and `expected_size` is the prevalidated WIM stream size.
-// Outputs: Returns normally for a safe staged file or throws on mismatch/special file.
-void validate_staged_wim_file(const std::filesystem::path& source, std::uint64_t expected_size) {
-    if (is_reparse_point(source)) {
-        throw SecurityError("refusing to publish staged WIM reparse point: " + source.string());
-    }
-    std::error_code kind_error;
-    if (!std::filesystem::is_regular_file(source, kind_error) || kind_error) {
-        throw ArchiveError("staged WIM payload is not a regular file: " + source.string());
-    }
-    std::error_code size_error;
-    const auto size = std::filesystem::file_size(source, size_error);
-    if (size_error || size != expected_size) {
-        throw ArchiveError("staged WIM payload size changed after validation: " + source.string());
-    }
+    cleanup_file_publish_target(stage);
 }
 
 // Purpose: Copy one staged WIM payload through the standard verified publication path.
-// Inputs: `source` is the private staged file, `target` is the final safe output path, `expected_size` is the validated file size, and `overwrite` controls replacement.
-// Outputs: Publishes the file atomically or throws after cleaning the temporary publication target.
-void publish_staged_wim_file(
-    const std::filesystem::path& source,
-    const std::filesystem::path& target,
-    std::uint64_t expected_size,
-    bool overwrite) {
-    validate_staged_wim_file(source, expected_size);
-    std::filesystem::create_directories(target.parent_path());
+// Inputs: `source` is the private staged file, `target` is the final safe output path, `expected_size` is the validated
+// file size, and `overwrite` controls replacement. Outputs: Publishes the file atomically or throws after cleaning the
+// temporary publication target.
+void publish_staged_wim_file(const std::filesystem::path& source, const std::filesystem::path& target,
+                             std::uint64_t expected_size, bool overwrite) {
+    const auto staged_source = pin_source_file(source);
+    if (staged_source.size() != expected_size) {
+        throw ArchiveError("staged WIM payload size does not match validated metadata: " + source.string());
+    }
     const auto temporary = reserve_file_publish_target(target);
     bool temporary_active = true;
     try {
-        std::ifstream input(source, std::ios::binary);
+        std::ifstream input(staged_source.path(), std::ios::binary);
         if (!input) {
             throw ArchiveError("failed to open staged WIM payload: " + source.string());
         }
@@ -621,7 +568,7 @@ void publish_staged_wim_file(
         if (!output) {
             throw ArchiveError("failed to finalize temporary WIM extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {
@@ -635,28 +582,23 @@ void publish_staged_wim_file(
 // Purpose: Stage every WIM image through wimlib after metadata validation.
 // Inputs: `runtime`, `archive_path`, and `metadata` identify the archive and image count; `stage` is the private root.
 // Outputs: Writes staged files below image-specific stage directories or throws on wimlib failure.
-void stage_wim_images(
-    const WimRuntime& runtime,
-    const std::filesystem::path& archive_path,
-    const WimMetadata& metadata,
-    const std::filesystem::path& stage) {
+void stage_wim_images(const WimRuntime& runtime, const std::filesystem::path& archive_path, const WimMetadata& metadata,
+                      const std::filesystem::path& stage) {
     WimHandle wim(runtime, runtime.open_checked_wim(archive_path));
     for (std::uint32_t image = 1; image <= metadata.image_count; ++image) {
         const auto image_stage = stage / ("image-" + std::to_string(image));
-        std::filesystem::create_directories(image_stage);
+        create_verified_directories(image_stage);
         runtime.extract_image(wim.get(), image, image_stage);
     }
 }
 
 // Purpose: Publish validated staged WIM files into the requested destination.
-// Inputs: `metadata` contains the prevalidated entries, `destination` is the extraction root, `stage` is the private staging root, and `overwrite`/`progress_callback` control publication.
-// Outputs: Creates directories and verified files below `destination` or throws without intentionally deleting caller-owned output.
-void publish_wim_entries(
-    const WimMetadata& metadata,
-    const std::filesystem::path& destination,
-    const std::filesystem::path& stage,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `metadata` contains the prevalidated entries, `destination` is the extraction root, `stage` is the private
+// staging root, and `overwrite`/`progress_callback` control publication. Outputs: Creates directories and verified
+// files below `destination` or throws without intentionally deleting caller-owned output.
+void publish_wim_entries(const WimMetadata& metadata, const std::filesystem::path& destination,
+                         const std::filesystem::path& stage, bool overwrite,
+                         const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
     for (const auto& entry : metadata.entries) {
@@ -664,7 +606,7 @@ void publish_wim_entries(
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.output_path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
         } else {
             const auto image_stage = stage / ("image-" + std::to_string(entry.image));
             const auto source = join_normalized_path(image_stage, entry.source_path);
@@ -679,23 +621,24 @@ void publish_wim_entries(
 
 }  // namespace
 
-OperationStats extract_wim(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a standalone WIM through pinned input, bounded metadata, private staging, and verified publication.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry on Windows or throws without retaining unverified staged files.
+OperationStats extract_wim(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
 #if defined(_WIN32)
     const auto started = std::chrono::steady_clock::now();
     if (has_split_wim_extension(archive_path)) {
         throw ArchiveError("split WIM (.swm) extraction is not implemented yet; use a standalone .wim archive");
     }
+    const auto archive_source = pin_source_file(archive_path);
     const auto& runtime = wim_runtime();
-    const auto metadata = scan_wim_metadata(runtime, archive_path);
-    std::filesystem::create_directories(destination);
+    const auto metadata = scan_wim_metadata(runtime, archive_source.path());
+    create_verified_directories(destination);
     const auto stage = reserve_wim_stage(destination);
     bool stage_active = true;
     try {
-        stage_wim_images(runtime, archive_path, metadata, stage.directory);
+        stage_wim_images(runtime, archive_source.path(), metadata, stage.directory);
         publish_wim_entries(metadata, destination, stage.directory, overwrite, progress_callback);
         cleanup_wim_stage(stage);
         stage_active = false;
@@ -707,7 +650,7 @@ OperationStats extract_wim(
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = metadata.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(metadata.entries.size());
     stats.gpu_used = false;

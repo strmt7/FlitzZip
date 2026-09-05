@@ -220,7 +220,7 @@ function Get-DiskResourceSample {
 function Get-ResourceSample {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [AllowNull()][double]$CpuPct
+        [AllowNull()][Nullable[double]]$CpuPct
     )
     $gpu = $null
     try {
@@ -247,7 +247,7 @@ function Get-ResourceSample {
 # Inputs: `Value` is a byte-per-second counter sample.
 # Outputs: Returns MiB/s, preserving null when the counter was unavailable.
 function ConvertTo-MiBPerSecond {
-    param([AllowNull()][double]$Value)
+    param([AllowNull()][Nullable[double]]$Value)
     if ($null -eq $Value) {
         return $null
     }
@@ -386,7 +386,7 @@ function Invoke-SuperZipStat {
         }
         $statsLine = $output | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
         if ($script:ShowOperationStatsEnabled) {
-            Write-BenchmarkMessage "operation_stats $($Arguments -join ' ') :: $statsLine"
+            Write-Information "operation_stats $($Arguments -join ' ') :: $statsLine" -InformationAction Continue
         }
         $stats = ConvertFrom-StatsLine -Line $statsLine
         foreach ($key in @(
@@ -415,6 +415,8 @@ function Invoke-SuperZipStat {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $process = [Diagnostics.Process]::Start($psi)
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     $initialIo = Get-ProcessIoTransfer -Process $process
     $samples = [System.Collections.Generic.List[object]]::new()
     $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -436,15 +438,17 @@ function Invoke-SuperZipStat {
         $samples.Add((Get-ResourceSample -ProcessId $process.Id -CpuPct $cpuPct))
     }
     $finalIo = Get-ProcessIoTransfer -Process $process
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
     $process.WaitForExit()
-    if ($process.ExitCode -ne 0) {
-        throw "superzip_cli failed with exit code $($process.ExitCode) while running: $($Arguments -join ' '): $stderr"
+    $exitCode = $process.ExitCode
+    $process.Dispose()
+    if ($exitCode -ne 0) {
+        throw "superzip_cli failed with exit code $exitCode while running: $($Arguments -join ' '): $stderr"
     }
     $statsLine = $stdout -split "`r?`n" | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
     if ($script:ShowOperationStatsEnabled) {
-        Write-BenchmarkMessage "operation_stats $($Arguments -join ' ') :: $statsLine"
+        Write-Information "operation_stats $($Arguments -join ' ') :: $statsLine" -InformationAction Continue
     }
     $stats = ConvertFrom-StatsLine -Line $statsLine
     $resourceStats = Measure-ResourceSample -Samples $samples

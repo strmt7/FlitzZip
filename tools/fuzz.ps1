@@ -148,3 +148,6 @@ docker run --rm `
     -e OUT=/out `
     $Image `
     bash -lc $script
+if ($LASTEXITCODE -ne 0) {
+    throw "ClusterFuzzLite build or smoke run failed with exit code $LASTEXITCODE."
+}

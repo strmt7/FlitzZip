@@ -1,7 +1,9 @@
 #include "sevenzip/sevenzip_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -32,8 +34,8 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kSevenZipInputBufferBytes = 256U * 1024U;
-constexpr std::size_t kMaxSevenZipNameUtf16Units = 64U * 1024U;
-constexpr std::uint32_t kMaxSevenZipEntries = 1U * 1024U * 1024U;
+constexpr std::size_t kMaxSevenZipNameUtf16Units = kMaxArchivePathBytes + 1U;
+constexpr std::uint32_t kMaxSevenZipEntries = kMaxArchiveEntries;
 constexpr std::uint64_t kMaxSevenZipTotalFileBytes = kMaxPipelineMemoryBytes;
 constexpr std::uint64_t kMaxSevenZipDecoderAllocationBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 
@@ -47,6 +49,7 @@ struct SevenZipEntry {
 struct SevenZipMetadata {
     std::vector<SevenZipEntry> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
 };
 
 struct SevenZipAllocationBudget {
@@ -61,21 +64,36 @@ thread_local std::shared_ptr<SevenZipAllocationBudget> g_sevenzip_allocation_bud
 // Outputs: Returns human-readable text without throwing.
 std::string sevenzip_result_message(SRes result) {
     switch (result) {
-    case SZ_OK: return "7z operation completed";
-    case SZ_ERROR_DATA: return "7z archive data is malformed";
-    case SZ_ERROR_MEM: return "7z decoder exceeded memory limits";
-    case SZ_ERROR_CRC: return "7z payload CRC check failed";
-    case SZ_ERROR_UNSUPPORTED: return "7z archive uses an unsupported compression, encryption, or metadata feature";
-    case SZ_ERROR_PARAM: return "7z decoder received invalid parameters";
-    case SZ_ERROR_INPUT_EOF: return "7z archive is truncated";
-    case SZ_ERROR_OUTPUT_EOF: return "7z decoder output ended unexpectedly";
-    case SZ_ERROR_READ: return "7z archive read failed";
-    case SZ_ERROR_WRITE: return "7z output write failed";
-    case SZ_ERROR_PROGRESS: return "7z operation was cancelled";
-    case SZ_ERROR_THREAD: return "7z decoder thread failure";
-    case SZ_ERROR_ARCHIVE: return "7z archive structure is malformed";
-    case SZ_ERROR_NO_ARCHIVE: return "file is not a 7z archive";
-    default: return "7z decoder failed with SDK result " + std::to_string(result);
+    case SZ_OK:
+        return "7z operation completed";
+    case SZ_ERROR_DATA:
+        return "7z archive data is malformed";
+    case SZ_ERROR_MEM:
+        return "7z decoder exceeded memory limits";
+    case SZ_ERROR_CRC:
+        return "7z payload CRC check failed";
+    case SZ_ERROR_UNSUPPORTED:
+        return "7z archive uses an unsupported compression, encryption, or metadata feature";
+    case SZ_ERROR_PARAM:
+        return "7z decoder received invalid parameters";
+    case SZ_ERROR_INPUT_EOF:
+        return "7z archive is truncated";
+    case SZ_ERROR_OUTPUT_EOF:
+        return "7z decoder output ended unexpectedly";
+    case SZ_ERROR_READ:
+        return "7z archive read failed";
+    case SZ_ERROR_WRITE:
+        return "7z output write failed";
+    case SZ_ERROR_PROGRESS:
+        return "7z operation was cancelled";
+    case SZ_ERROR_THREAD:
+        return "7z decoder thread failure";
+    case SZ_ERROR_ARCHIVE:
+        return "7z archive structure is malformed";
+    case SZ_ERROR_NO_ARCHIVE:
+        return "file is not a 7z archive";
+    default:
+        return "7z decoder failed with SDK result " + std::to_string(result);
     }
 }
 
@@ -109,7 +127,7 @@ void* sevenzip_alloc(ISzAllocPtr, std::size_t size) {
     const auto bytes = size == 0 ? 1U : size;
     const auto budget = g_sevenzip_allocation_budget;
     if (budget && (bytes > kMaxSevenZipDecoderAllocationBytes ||
-        budget->current_bytes > kMaxSevenZipDecoderAllocationBytes - bytes)) {
+                   budget->current_bytes > kMaxSevenZipDecoderAllocationBytes - bytes)) {
         return nullptr;
     }
     void* allocation = std::calloc(1U, bytes);
@@ -148,12 +166,11 @@ void sevenzip_free(ISzAllocPtr, void* address) {
 }
 
 class ScopedSevenZipAllocationBudget {
-public:
+  public:
     // Purpose: Install a bounded allocation budget for SDK callbacks on the current thread.
     // Inputs: None.
     // Outputs: Restores any previous allocator budget when destroyed.
-    ScopedSevenZipAllocationBudget()
-        : previous_(std::move(g_sevenzip_allocation_budget)) {
+    ScopedSevenZipAllocationBudget() : previous_(std::move(g_sevenzip_allocation_budget)) {
         g_sevenzip_allocation_budget = std::make_shared<SevenZipAllocationBudget>();
     }
 
@@ -167,7 +184,7 @@ public:
         g_sevenzip_allocation_budget = std::move(previous_);
     }
 
-private:
+  private:
     std::shared_ptr<SevenZipAllocationBudget> previous_;
 };
 
@@ -223,9 +240,8 @@ SRes sevenzip_stream_seek(ISeekInStreamPtr stream, Int64* position, ESzSeek orig
     if (requested < 0 && static_cast<std::uint64_t>(-requested) > base) {
         return SZ_ERROR_PARAM;
     }
-    const auto target = requested < 0
-        ? base - static_cast<std::uint64_t>(-requested)
-        : base + static_cast<std::uint64_t>(requested);
+    const auto target =
+        requested < 0 ? base - static_cast<std::uint64_t>(-requested) : base + static_cast<std::uint64_t>(requested);
     if (target > self.size || target > static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max())) {
         return SZ_ERROR_PARAM;
     }
@@ -239,7 +255,7 @@ SRes sevenzip_stream_seek(ISeekInStreamPtr stream, Int64* position, ESzSeek orig
 }
 
 class SevenZipArchive {
-public:
+  public:
     // Purpose: Open a 7z archive and parse its database through the LZMA SDK.
     // Inputs: `archive_path` identifies the archive to read.
     // Outputs: Owns SDK stream/database state or throws on open/parse failure.
@@ -268,12 +284,11 @@ public:
             look_stream_.realStream = &file_.vt;
             LookToRead2_INIT(&look_stream_);
 
-            std::call_once(crc_once_, []() {
-                CrcGenerateTable();
-            });
+            std::call_once(crc_once_, []() { CrcGenerateTable(); });
             SzArEx_Init(&database_);
             database_initialized_ = true;
-            throw_on_7z_error(SzArEx_Open(&database_, &look_stream_.vt, &allocator_, &allocator_), "failed to open 7z archive");
+            throw_on_7z_error(SzArEx_Open(&database_, &look_stream_.vt, &allocator_, &allocator_),
+                              "failed to open 7z archive");
         } catch (...) {
             cleanup();
             throw;
@@ -321,25 +336,13 @@ public:
     std::span<const std::byte> extract_to_cache(UInt32 index) {
         std::size_t offset = 0;
         std::size_t size = 0;
-        throw_on_7z_error(
-            SzArEx_Extract(
-                &database_,
-                &look_stream_.vt,
-                index,
-                &block_index_,
-                &out_buffer_,
-                &out_buffer_size_,
-                &offset,
-                &size,
-                &allocator_,
-                &allocator_),
-            "failed to extract 7z member");
+        throw_on_7z_error(SzArEx_Extract(&database_, &look_stream_.vt, index, &block_index_, &out_buffer_,
+                                         &out_buffer_size_, &offset, &size, &allocator_, &allocator_),
+                          "failed to extract 7z member");
         if (offset > out_buffer_size_ || size > out_buffer_size_ - offset) {
             throw ArchiveError("7z decoder returned an invalid output window");
         }
-        return std::span<const std::byte>(
-            reinterpret_cast<const std::byte*>(out_buffer_ + offset),
-            size);
+        return std::span<const std::byte>(reinterpret_cast<const std::byte*>(out_buffer_ + offset), size);
     }
 
     // Purpose: Reset the SDK solid-block cache between validation and extraction passes.
@@ -354,7 +357,7 @@ public:
         block_index_ = 0xFFFFFFFFU;
     }
 
-private:
+  private:
     static std::once_flag crc_once_;
 
     const ISzAlloc allocator_{sevenzip_alloc, sevenzip_free};
@@ -388,6 +391,9 @@ void append_utf8_code_point(std::string& output, std::uint32_t code_point) {
         output.push_back(static_cast<char>(0x80U | ((code_point >> 6U) & 0x3FU)));
         output.push_back(static_cast<char>(0x80U | (code_point & 0x3FU)));
     }
+    if (output.size() > kMaxArchivePathBytes) {
+        throw ArchiveError("7z filename exceeds SuperZip path length limit");
+    }
 }
 
 // Purpose: Convert a NUL-terminated SDK UTF-16 filename to UTF-8.
@@ -415,24 +421,29 @@ std::string utf16_name_to_utf8(const std::vector<UInt16>& name) {
 }
 
 // Purpose: Return a validated UTF-8 path for a 7z entry.
-// Inputs: `database` is the parsed SDK archive and `index` identifies an entry.
+// Inputs: `database` is the parsed SDK archive, `index` identifies an entry, and `metadata_bytes` tracks retained
+// conversion allocations.
 // Outputs: Returns the raw archive path converted to UTF-8 before SuperZip normalization.
-std::string sevenzip_entry_path(const CSzArEx& database, UInt32 index) {
+std::string sevenzip_entry_path(const CSzArEx& database, UInt32 index, std::uint64_t& metadata_bytes) {
     const auto units = SzArEx_GetFileNameUtf16(&database, index, nullptr);
     if (units == 0 || units > kMaxSevenZipNameUtf16Units) {
         throw ArchiveError("7z filename exceeds SuperZip resource limit");
     }
+    metadata_bytes = checked_add_archive_path_metadata_bytes(
+        metadata_bytes, static_cast<std::uint64_t>(units) * sizeof(UInt16), "7z filename conversion metadata");
     std::vector<UInt16> name(units);
     const auto written = SzArEx_GetFileNameUtf16(&database, index, name.data());
     if (written == 0 || written > name.size() || name.back() != 0) {
         throw ArchiveError("7z filename metadata is malformed");
     }
-    return utf16_name_to_utf8(name);
+    auto utf8 = utf16_name_to_utf8(name);
+    metadata_bytes = checked_add_archive_path_metadata_bytes(metadata_bytes, utf8.size(), "7z UTF-8 filename metadata");
+    return utf8;
 }
 
 // Purpose: Detect 7z attributes that SuperZip does not safely publish.
-// Inputs: `database` is the parsed SDK archive, `index` identifies the entry, and `directory` is the decoded entry kind.
-// Outputs: Throws for reparse points, devices, or POSIX special-file modes.
+// Inputs: `database` is the parsed SDK archive, `index` identifies the entry, and `directory` is the decoded entry
+// kind. Outputs: Throws for reparse points, devices, or POSIX special-file modes.
 void reject_unsupported_7z_attributes(const CSzArEx& database, UInt32 index, bool directory) {
     if (!SzBitWithVals_Check(&database.Attribs, index)) {
         return;
@@ -467,8 +478,11 @@ SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
     for (UInt32 index = 0; index < database.NumFiles; ++index) {
         const bool directory = SzArEx_IsDir(&database, index) != 0;
         reject_unsupported_7z_attributes(database, index, directory);
-        const auto path = sevenzip_entry_path(database, index);
+        const auto path = sevenzip_entry_path(database, index, metadata.path_metadata_bytes);
         const auto normalized = normalize_archive_path_key(path);
+        metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+            metadata.path_metadata_bytes, static_cast<std::uint64_t>(normalized.size()) * 2U,
+            "7z retained path metadata");
         const auto size = directory ? 0U : SzArEx_GetFileSize(&database, index);
         if (!directory) {
             metadata.total_file_bytes = checked_add_7z_bytes(metadata.total_file_bytes, size);
@@ -505,15 +519,11 @@ void validate_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& meta
 }
 
 // Purpose: Write one decoded 7z payload through SuperZip's atomic publication path.
-// Inputs: `destination` is the extraction root, `entry` names the target, `payload` contains decoded bytes, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file or throws after cleanup.
-void publish_7z_payload(
-    const std::filesystem::path& destination,
-    const SevenZipEntry& entry,
-    std::span<const std::byte> payload,
-    bool overwrite) {
+// Inputs: `destination` is the extraction root, `entry` names the target, `payload` contains decoded bytes, and
+// `overwrite` controls replacement. Outputs: Publishes the verified file or throws after cleanup.
+void publish_7z_payload(const std::filesystem::path& destination, const SevenZipEntry& entry,
+                        std::span<const std::byte> payload, bool overwrite) {
     const auto target = safe_join_archive_path(destination, entry.path);
-    std::filesystem::create_directories(target.parent_path());
     auto temporary = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary.file, std::ios::binary);
@@ -528,7 +538,7 @@ void publish_7z_payload(
         if (!output) {
             throw ArchiveError("failed to finalize temporary 7z extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
     } catch (...) {
         cleanup_file_publish_target(temporary);
@@ -537,14 +547,12 @@ void publish_7z_payload(
 }
 
 // Purpose: Extract validated 7z entries to disk.
-// Inputs: `archive` owns SDK state, `metadata` contains safe entries, `destination` is the extraction root, and `overwrite`/progress fields control publication behavior.
-// Outputs: Writes directories and files below `destination`, or throws before leaving untracked temporary files.
-void extract_7z_payloads(
-    SevenZipArchive& archive,
-    const SevenZipMetadata& metadata,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive` owns SDK state, `metadata` contains safe entries, `destination` is the extraction root, and
+// `overwrite`/progress fields control publication behavior. Outputs: Writes directories and files below `destination`,
+// or throws before leaving untracked temporary files.
+void extract_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metadata,
+                         const std::filesystem::path& destination, bool overwrite,
+                         const ProgressCallback& progress_callback) {
     ProgressState progress;
     progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
     for (const auto& entry : metadata.entries) {
@@ -552,7 +560,7 @@ void extract_7z_payloads(
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             progress.finish_entry();
             publish_progress(progress, progress_callback);
             continue;
@@ -570,21 +578,22 @@ void extract_7z_payloads(
 
 }  // namespace
 
-OperationStats extract_7z(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a 7z archive under one allocation budget after metadata and payload prevalidation.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry or throws before retaining any unverified file.
+OperationStats extract_7z(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                          bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto archive_source = pin_source_file(archive_path);
     ScopedSevenZipAllocationBudget allocation_budget;
-    SevenZipArchive archive(archive_path);
+    SevenZipArchive archive(archive_source.path());
     const auto metadata = scan_7z_metadata(archive.database());
     validate_7z_payloads(archive, metadata);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     extract_7z_payloads(archive, metadata, destination, overwrite, progress_callback);
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = metadata.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(metadata.entries.size());
     stats.gpu_used = false;

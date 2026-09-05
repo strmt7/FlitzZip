@@ -451,10 +451,14 @@ static int read_code(LHANewDecoder *decoder)
 static int lhark_read_offset_code(LHANewDecoder *decoder, int code)
 {
 	unsigned int num_low_bits;
+	unsigned int result;
 	int low_bits;
 
 	if (code < 4) {
 		return code;
+	}
+	if (code > HISTORY_BITS * 2 - 1) {
+		return -1;
 	}
 
 	num_low_bits = (code - 2) / 2;
@@ -462,8 +466,9 @@ static int lhark_read_offset_code(LHANewDecoder *decoder, int code)
 	if (low_bits < 0) {
 		return -1;
 	}
-	return ((2 + (code % 2)) << num_low_bits)
-	     + low_bits;
+	result = ((2U + (unsigned int) (code % 2)) << num_low_bits)
+	       + (unsigned int) low_bits;
+	return (int) result;
 }
 #endif
 

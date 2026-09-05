@@ -38,8 +38,9 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
 
+    FilePublishTransaction publication(output_archive);
     mz_zip_archive zip{};
-    if (!mz_zip_writer_init_file(&zip, output_archive.string().c_str(), 0)) {
+    if (!mz_zip_writer_init_file(&zip, publication.staging_path().string().c_str(), 0)) {
         throw ArchiveError("cannot create ZIP archive: " + output_archive.string());
     }
     bool finalized = false;
@@ -55,6 +56,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
                 progress.finish_entry();
                 continue;
             }
+            const auto source_lock = lock_manifest_source(entry);
             if (!mz_zip_writer_add_file(&zip, entry.archive_path.c_str(), entry.source_path.string().c_str(), nullptr,
                                         0, static_cast<mz_uint>(compression_level))) {
                 throw ArchiveError("failed to add ZIP file: " + entry.archive_path);
@@ -67,6 +69,7 @@ OperationStats compress_zip(const std::vector<std::filesystem::path>& sources,
         }
         finalized = true;
         mz_zip_writer_end(&zip);
+        publication.commit(true);
     } catch (...) {
         if (!finalized) {
             mz_zip_writer_end(&zip);
@@ -91,7 +94,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     mz_zip_archive zip{};
-    if (!mz_zip_reader_init_file(&zip, archive_path.string().c_str(), 0)) {
+    if (!mz_zip_reader_init_file(&zip, archive_path.string().c_str(), MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY)) {
         throw ArchiveError("cannot open ZIP archive: " + archive_path.string());
     }
     try {
@@ -119,7 +122,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
         }
         validate_archive_path_set(path_entries);
 
-        std::filesystem::create_directories(destination);
+        create_verified_directories(destination);
         ProgressState progress;
         progress.start(OperationKind::Extract, total_bytes, file_count);
 
@@ -132,14 +135,13 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
             publish_progress(progress, progress_callback);
             const auto target = safe_join_archive_path(destination, stat.m_filename);
             if (mz_zip_reader_is_file_a_directory(&zip, i)) {
-                std::filesystem::create_directories(target);
+                create_verified_directories(target);
                 progress.finish_entry();
                 continue;
             }
             if (!overwrite && std::filesystem::exists(target)) {
                 throw SecurityError("refusing to overwrite existing ZIP extraction target: " + target.string());
             }
-            std::filesystem::create_directories(target.parent_path());
             // Miniz extracts to a private same-directory target first; only verified output is published.
             const auto temporary_target = reserve_file_publish_target(target);
             bool temporary_active = true;
@@ -147,7 +149,7 @@ OperationStats extract_zip(const std::filesystem::path& archive_path, const std:
                 if (!mz_zip_reader_extract_to_file(&zip, i, temporary_target.file.string().c_str(), 0)) {
                     throw ArchiveError("failed to extract ZIP entry: " + std::string(stat.m_filename));
                 }
-                commit_verified_file(temporary_target.file, target, overwrite);
+                commit_verified_file(temporary_target, target, overwrite);
                 cleanup_file_publish_target(temporary_target);
                 temporary_active = false;
             } catch (...) {

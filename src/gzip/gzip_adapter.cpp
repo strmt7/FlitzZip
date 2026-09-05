@@ -1,5 +1,6 @@
 #include "gzip/gzip_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -316,7 +317,7 @@ void write_gzip_archive_payload(const std::filesystem::path& source_file, const 
             throw ArchiveError("failed to finalize Gzip archive: " + output_archive.string());
         }
 
-        commit_verified_file(temporary.file, output_archive, true);
+        commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {
@@ -351,7 +352,10 @@ OperationStats compress_gzip_file(const std::filesystem::path& source_file, cons
         throw SecurityError("refusing to overwrite the Gzip source file: " + output_archive.string());
     }
 
-    const auto input_size = regular_file_size(source_file);
+    const auto manifest = build_manifest({source_file});
+    const auto& source_entry = manifest.entries.front();
+    const auto source_lock = lock_manifest_source(source_entry);
+    const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
     progress.set_current(source_file.filename().string());
@@ -394,12 +398,11 @@ OperationStats extract_gzip_file(const std::filesystem::path& archive_path, cons
     }
     const auto header = parse_gzip_header(input, archive_size);
     const auto entry_name = gzip_output_entry_name(archive_path);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing Gzip extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     // Progress is measured against the compressed payload because wrapper and
     // trailer bytes are parsed separately before extraction starts.
@@ -482,7 +485,7 @@ OperationStats extract_gzip_file(const std::filesystem::path& archive_path, cons
             throw ArchiveError("failed to finalize Gzip extraction target: " + target.string());
         }
 
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
         progress.finish_entry();

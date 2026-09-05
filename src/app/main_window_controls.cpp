@@ -91,9 +91,9 @@ bool MainWindow::can_start_extract(const UiState& state) const {
 
 // Purpose: Return whether Security verification can start from a copied UI snapshot.
 // Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
-// Outputs: Returns true when at least one queue item is enabled and no operation is running.
+// Outputs: Returns true when at least one selected extractable archive exists and no operation is running.
 bool MainWindow::can_start_security_verify(const UiState& state) const {
-    return !operation_running(state) && has_selected_queue_items(state);
+    return !operation_running(state) && !selected_extract_archive_paths(state).empty();
 }
 
 // Purpose: Draw a DPI-scaled opt-in settings toggle row.

@@ -80,22 +80,38 @@ void checked_add_lzma_output_bytes(std::uint64_t& total, std::uint64_t bytes) {
 // Outputs: Returns human-readable text without throwing.
 std::string lzma_result_message(SRes result) {
     switch (result) {
-    case SZ_OK: return "LZMA operation completed";
-    case SZ_ERROR_DATA: return "LZMA stream data is malformed";
-    case SZ_ERROR_MEM: return "LZMA decoder exceeded memory limits";
-    case SZ_ERROR_CRC: return "LZMA integrity check failed";
-    case SZ_ERROR_UNSUPPORTED: return "LZMA stream uses unsupported properties";
-    case SZ_ERROR_PARAM: return "LZMA decoder received invalid parameters";
-    case SZ_ERROR_INPUT_EOF: return "LZMA stream is truncated";
-    case SZ_ERROR_OUTPUT_EOF: return "LZMA decoder output ended unexpectedly";
-    case SZ_ERROR_READ: return "LZMA archive read failed";
-    case SZ_ERROR_WRITE: return "LZMA output write failed";
-    case SZ_ERROR_PROGRESS: return "LZMA operation was cancelled";
-    case SZ_ERROR_FAIL: return "LZMA decoder failed";
-    case SZ_ERROR_THREAD: return "LZMA decoder thread failure";
-    case SZ_ERROR_ARCHIVE: return "LZMA archive structure is malformed";
-    case SZ_ERROR_NO_ARCHIVE: return "file is not an LZMA stream";
-    default: return "LZMA decoder failed with SDK result " + std::to_string(result);
+    case SZ_OK:
+        return "LZMA operation completed";
+    case SZ_ERROR_DATA:
+        return "LZMA stream data is malformed";
+    case SZ_ERROR_MEM:
+        return "LZMA decoder exceeded memory limits";
+    case SZ_ERROR_CRC:
+        return "LZMA integrity check failed";
+    case SZ_ERROR_UNSUPPORTED:
+        return "LZMA stream uses unsupported properties";
+    case SZ_ERROR_PARAM:
+        return "LZMA decoder received invalid parameters";
+    case SZ_ERROR_INPUT_EOF:
+        return "LZMA stream is truncated";
+    case SZ_ERROR_OUTPUT_EOF:
+        return "LZMA decoder output ended unexpectedly";
+    case SZ_ERROR_READ:
+        return "LZMA archive read failed";
+    case SZ_ERROR_WRITE:
+        return "LZMA output write failed";
+    case SZ_ERROR_PROGRESS:
+        return "LZMA operation was cancelled";
+    case SZ_ERROR_FAIL:
+        return "LZMA decoder failed";
+    case SZ_ERROR_THREAD:
+        return "LZMA decoder thread failure";
+    case SZ_ERROR_ARCHIVE:
+        return "LZMA archive structure is malformed";
+    case SZ_ERROR_NO_ARCHIVE:
+        return "file is not an LZMA stream";
+    default:
+        return "LZMA decoder failed with SDK result " + std::to_string(result);
     }
 }
 
@@ -114,8 +130,8 @@ void throw_on_lzma_error(SRes result, const char* context) {
 void* lzma_alloc(ISzAllocPtr, std::size_t size) {
     const auto bytes = size == 0U ? 1U : size;
     const auto budget = g_lzma_allocation_budget;
-    if (budget && (bytes > kMaxLzmaDecoderAllocationBytes ||
-        budget->current_bytes > kMaxLzmaDecoderAllocationBytes - bytes)) {
+    if (budget &&
+        (bytes > kMaxLzmaDecoderAllocationBytes || budget->current_bytes > kMaxLzmaDecoderAllocationBytes - bytes)) {
         return nullptr;
     }
     void* allocation = std::calloc(1U, bytes);
@@ -154,12 +170,11 @@ void lzma_free(ISzAllocPtr, void* address) {
 }
 
 class ScopedLzmaAllocationBudget {
-public:
+  public:
     // Purpose: Install a bounded allocation budget for SDK callbacks on the current thread.
     // Inputs: None.
     // Outputs: Restores any previous allocator budget when destroyed.
-    ScopedLzmaAllocationBudget()
-        : previous_(std::move(g_lzma_allocation_budget)) {
+    ScopedLzmaAllocationBudget() : previous_(std::move(g_lzma_allocation_budget)) {
         g_lzma_allocation_budget = std::make_shared<LzmaAllocationBudget>();
     }
 
@@ -173,18 +188,19 @@ public:
         g_lzma_allocation_budget = std::move(previous_);
     }
 
-private:
+  private:
     std::shared_ptr<LzmaAllocationBudget> previous_;
 };
 
 class ScopedLzmaDecoder {
-public:
+  public:
     // Purpose: Allocate an LZMA decoder for one parsed LZMA-Alone header.
     // Inputs: `properties` are the five LZMA property bytes from the stream header.
     // Outputs: Owns initialized SDK decoder state or throws on unsupported properties/allocation limits.
     explicit ScopedLzmaDecoder(const std::array<Byte, LZMA_PROPS_SIZE>& properties) {
         LzmaDec_Construct(&decoder_);
-        throw_on_lzma_error(LzmaDec_Allocate(&decoder_, properties.data(), LZMA_PROPS_SIZE, &allocator_), "LZMA decoder allocation failed");
+        throw_on_lzma_error(LzmaDec_Allocate(&decoder_, properties.data(), LZMA_PROPS_SIZE, &allocator_),
+                            "LZMA decoder allocation failed");
         allocated_ = true;
         LzmaDec_Init(&decoder_);
     }
@@ -208,7 +224,7 @@ public:
         return decoder_;
     }
 
-private:
+  private:
     ISzAlloc allocator_{lzma_alloc, lzma_free};
     CLzmaDec decoder_{};
     bool allocated_ = false;
@@ -220,9 +236,7 @@ private:
 std::string lzma_output_entry_name(const std::filesystem::path& archive_path) {
     auto filename = archive_path.filename().string();
     auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.size() > 5U && lower.ends_with(".lzma")) {
         filename.resize(filename.size() - 5U);
     } else {
@@ -250,7 +264,8 @@ LzmaAloneHeader read_lzma_alone_header(std::ifstream& input) {
     LzmaAloneHeader parsed;
     std::copy_n(header.begin(), LZMA_PROPS_SIZE, parsed.properties.begin());
     CLzmaProps properties{};
-    throw_on_lzma_error(LzmaProps_Decode(&properties, parsed.properties.data(), LZMA_PROPS_SIZE), "LZMA properties are invalid");
+    throw_on_lzma_error(LzmaProps_Decode(&properties, parsed.properties.data(), LZMA_PROPS_SIZE),
+                        "LZMA properties are invalid");
     parsed.dictionary_size = properties.dicSize;
     if (parsed.dictionary_size > kMaxLzmaDictionaryBytes) {
         throw ArchiveError("LZMA dictionary exceeds SuperZip resource limit");
@@ -270,12 +285,8 @@ LzmaAloneHeader read_lzma_alone_header(std::ifstream& input) {
 // Purpose: Refill the compressed input buffer when all currently buffered bytes were consumed.
 // Inputs: `input` is the archive stream and buffer state is updated in place.
 // Outputs: Returns true when bytes are available after refill; false only at clean input EOF.
-bool refill_lzma_input(
-    std::ifstream& input,
-    std::array<Byte, kLzmaInputBufferBytes>& buffer,
-    std::size_t& position,
-    std::size_t& size,
-    bool& eof) {
+bool refill_lzma_input(std::ifstream& input, std::array<Byte, kLzmaInputBufferBytes>& buffer, std::size_t& position,
+                       std::size_t& size, bool& eof) {
     if (position < size) {
         return true;
     }
@@ -301,11 +312,7 @@ bool refill_lzma_input(
 // Purpose: Return whether unread compressed bytes remain after an end marker.
 // Inputs: `input` is the archive stream and buffer state describes already-read data.
 // Outputs: Returns true when the archive has trailing bytes after decoder completion.
-bool has_lzma_trailing_bytes(
-    std::ifstream& input,
-    std::size_t position,
-    std::size_t size,
-    bool eof) {
+bool has_lzma_trailing_bytes(std::ifstream& input, std::size_t position, std::size_t size, bool eof) {
     if (position < size) {
         return true;
     }
@@ -316,13 +323,12 @@ bool has_lzma_trailing_bytes(
 }
 
 // Purpose: Decode the LZMA-Alone payload into one private temporary output file.
-// Inputs: `input` is positioned immediately after the 13-byte header, `header` contains parsed policy-relevant metadata, `temporary_file` receives decoded bytes, and `target` is used only for diagnostics.
-// Outputs: Returns decoded byte count; throws before returning on malformed data, policy violations, or failed writes.
-std::uint64_t decode_lzma_stream_to_file(
-    std::ifstream& input,
-    const LzmaAloneHeader& header,
-    const std::filesystem::path& temporary_file,
-    const std::filesystem::path& target) {
+// Inputs: `input` is positioned immediately after the 13-byte header, `header` contains parsed policy-relevant
+// metadata, `temporary_file` receives decoded bytes, and `target` is used only for diagnostics. Outputs: Returns
+// decoded byte count; throws before returning on malformed data, policy violations, or failed writes.
+std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHeader& header,
+                                         const std::filesystem::path& temporary_file,
+                                         const std::filesystem::path& target) {
     std::uint64_t output_size = 0;
     ScopedLzmaAllocationBudget allocation_budget;
     ScopedLzmaDecoder decoder(header.properties);
@@ -358,17 +364,13 @@ std::uint64_t decode_lzma_stream_to_file(
             }
         }
 
-        SizeT destination_length = static_cast<SizeT>(std::min<std::uint64_t>(output_buffer.size(), remaining_declared));
+        SizeT destination_length =
+            static_cast<SizeT>(std::min<std::uint64_t>(output_buffer.size(), remaining_declared));
         SizeT source_length = static_cast<SizeT>(input_size - input_position);
         ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
-        const SRes result = LzmaDec_DecodeToBuf(
-            &decoder.get(),
-            output_buffer.data(),
-            &destination_length,
-            input_buffer.data() + input_position,
-            &source_length,
-            LZMA_FINISH_ANY,
-            &status);
+        const SRes result =
+            LzmaDec_DecodeToBuf(&decoder.get(), output_buffer.data(), &destination_length,
+                                input_buffer.data() + input_position, &source_length, LZMA_FINISH_ANY, &status);
         throw_on_lzma_error(result, "LZMA decode failed");
         input_position += static_cast<std::size_t>(source_length);
 
@@ -377,7 +379,8 @@ std::uint64_t decode_lzma_stream_to_file(
             if (header.declared_size != kUnknownLzmaUncompressedSize && output_size > header.declared_size) {
                 throw ArchiveError("LZMA stream produced more bytes than declared");
             }
-            output.write(reinterpret_cast<const char*>(output_buffer.data()), static_cast<std::streamsize>(destination_length));
+            output.write(reinterpret_cast<const char*>(output_buffer.data()),
+                         static_cast<std::streamsize>(destination_length));
             if (!output) {
                 throw ArchiveError("failed to write LZMA extraction target: " + target.string());
             }
@@ -411,13 +414,11 @@ std::uint64_t decode_lzma_stream_to_file(
 }  // namespace
 
 // Purpose: Extract one legacy LZMA-Alone stream into a single verified output file.
-// Inputs: `archive_path` is the source `.lzma` stream, `destination` is the extraction root, `overwrite` controls existing targets, and `progress_callback` receives progress snapshots.
-// Outputs: Returns extraction telemetry; throws on malformed streams, unsafe output names, refused overwrite, resource limits, or publish failures.
-OperationStats extract_lzma_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` is the source `.lzma` stream, `destination` is the extraction root, `overwrite` controls
+// existing targets, and `progress_callback` receives progress snapshots. Outputs: Returns extraction telemetry; throws
+// on malformed streams, unsafe output names, refused overwrite, resource limits, or publish failures.
+OperationStats extract_lzma_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -427,12 +428,11 @@ OperationStats extract_lzma_file(
     const auto header = read_lzma_alone_header(input);
     const auto entry_name = lzma_output_entry_name(archive_path);
 
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing LZMA extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     ProgressState progress;
     progress.start(OperationKind::Extract, archive_size, 1);
@@ -446,7 +446,7 @@ OperationStats extract_lzma_file(
         output_size = decode_lzma_stream_to_file(input, header, temporary.file, target);
         progress.add_bytes(archive_size);
         publish_progress(progress, progress_callback);
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
         progress.finish_entry();

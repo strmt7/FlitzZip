@@ -10,6 +10,7 @@
 #include "cab/cab_adapter.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
+#include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "cpio/cpio_adapter.hpp"
 #include "gzip/gzip_adapter.hpp"
@@ -312,6 +313,21 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
     }
     throw ArchiveError(std::string("archive format recognized but not implemented for extraction: ") +
                        archive_format_info(archive_format).key);
+}
+
+// Purpose: Fully validate one detected archive without retaining extracted output.
+// Inputs: `archive_format`, identity-pinned `archive`, GPU policy, and optional progress callback describe the run.
+// Outputs: Returns validation telemetry or throws on format, path, decode, checksum, or resource-limit failure.
+OperationStats validate_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
+                                         bool gpu_required, const ProgressCallback& progress_callback) {
+    if (archive_format == ArchiveFormat::SuperZip) {
+        ExtractOptions options;
+        options.gpu_required = gpu_required;
+        return verify_suzip(archive, options, progress_callback);
+    }
+    DirectoryPublishTransaction discard(app_storage_directory() / "security-validation");
+    return extract_detected_archive(archive_format, archive, discard.staging_directory(), gpu_required, true,
+                                    progress_callback);
 }
 
 // Purpose: Return the user-facing compression-level label.

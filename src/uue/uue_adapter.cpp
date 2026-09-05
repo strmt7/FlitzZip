@@ -1,5 +1,6 @@
 #include "uue/uue_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -240,7 +241,10 @@ OperationStats compress_uue_file(const std::filesystem::path& source_file, const
         throw SecurityError("refusing to overwrite the UUE source file: " + output_archive.string());
     }
 
-    const auto input_size = regular_file_size(source_file);
+    const auto manifest = build_manifest({source_file});
+    const auto& source_entry = manifest.entries.front();
+    const auto source_lock = lock_manifest_source(source_entry);
+    const auto input_size = source_entry.size;
     const auto entry_name = normalize_archive_path_key(source_file.filename().string());
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
@@ -281,7 +285,7 @@ OperationStats compress_uue_file(const std::filesystem::path& source_file, const
         if (!output) {
             throw ArchiveError("failed to finalize UUE archive: " + output_archive.string());
         }
-        commit_verified_file(temporary.file, output_archive, true);
+        commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {
@@ -329,12 +333,11 @@ OperationStats extract_uue_file(const std::filesystem::path& archive_path, const
         throw ArchiveError("cannot open UUE archive: " + archive_path.string());
     }
     const auto header = read_uue_header(input);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, header.entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing UUE extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     ProgressState progress;
     progress.start(OperationKind::Extract, archive_size, 1);
@@ -393,7 +396,7 @@ OperationStats extract_uue_file(const std::filesystem::path& archive_path, const
         if (!output) {
             throw ArchiveError("failed to finalize UUE extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {

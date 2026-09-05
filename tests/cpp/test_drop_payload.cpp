@@ -171,3 +171,37 @@ TEST_CASE(drop_payload_rejects_malformed_offset) {
 
     REQUIRE_TRUE(paths.empty());
 }
+
+TEST_CASE(drop_payload_rejects_path_count_over_queue_budget) {
+    std::vector<std::wstring> paths(superzip::app::kMaxQueueItems + 1U, L"C:\\SuperZip\\bounded.txt");
+    const auto handle = make_wide_drop_payload(paths);
+
+    const auto parsed = superzip::app::paths_from_dropfiles_global(handle.get());
+
+    REQUIRE_TRUE(parsed.empty());
+}
+
+TEST_CASE(drop_payload_rejects_overlong_path) {
+    std::wstring path = L"C:\\";
+    path.append(superzip::app::kMaxShellPathCharacters, L'a');
+    const auto handle = make_wide_drop_payload({path});
+
+    const auto parsed = superzip::app::paths_from_dropfiles_global(handle.get());
+
+    REQUIRE_TRUE(parsed.empty());
+}
+
+TEST_CASE(drop_path_policy_rejects_remote_device_and_ambiguous_paths) {
+    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"\\\\server\\share\\input.bin"));
+    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"\\\\?\\C:\\input.bin"));
+    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"C:\\safe\\..\\input.bin"));
+    REQUIRE_TRUE(!superzip::app::is_supported_local_drop_path(L"relative\\input.bin"));
+}
+
+TEST_CASE(drop_path_policy_accepts_local_absolute_path) {
+    std::error_code error;
+    const auto path = std::filesystem::temp_directory_path(error) / L"SuperZip-drop-input.bin";
+
+    REQUIRE_TRUE(!error);
+    REQUIRE_TRUE(superzip::app::is_supported_local_drop_path(path));
+}

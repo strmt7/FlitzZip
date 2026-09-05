@@ -79,8 +79,8 @@ function Install-PythonLinterEnvironment {
 # Outputs: Extracts the module into `.psmodules` when it is not already present.
 function Install-PinnedPSScriptAnalyzer {
     $moduleName = "PSScriptAnalyzer"
-    $version = "1.24.0"
-    $expectedSha256 = "E86C97D44BB1BC8A1DE35E753B85EA1D938F6F9F881639A181507E079BCA4556"
+    $version = "1.25.0"
+    $expectedSha256 = "14E634C828EB98EFB9F40B2918BA90F139ED5ECCDF663A2A747736D996995D60"
     $modulePath = Join-Path $localModuleRoot "$moduleName/$version"
     $manifest = Join-Path $modulePath "$moduleName.psd1"
     if (Test-Path -LiteralPath $manifest) {

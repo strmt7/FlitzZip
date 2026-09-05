@@ -204,7 +204,6 @@ INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path,
             publish_cab_progress(context);
         }
         const auto target = safe_join_archive_path(context.destination, path);
-        std::filesystem::create_directories(target.parent_path());
         auto temporary = reserve_file_publish_target(target);
         const auto fd =
             _wopen(temporary.file.wstring().c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
@@ -251,7 +250,7 @@ bool close_and_publish_cab_output(CabFdiContext& context, INT_PTR hf) {
     }
 
     try {
-        commit_verified_file(output.temporary.file, output.final_path, context.overwrite);
+        commit_verified_file(output.temporary, output.final_path, context.overwrite);
         cleanup_file_publish_target(output.temporary);
         if (context.progress_enabled) {
             context.progress.add_bytes(output.size);
@@ -440,7 +439,7 @@ OperationStats extract_cab(const std::filesystem::path& archive_path, const std:
     const auto metadata = scan_cab_metadata(archive_path);
 
     run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Validate, overwrite, {});
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
     run_cab_fdi_pass(archive_path, destination, metadata, CabFdiPass::Extract, overwrite, progress_callback);
 

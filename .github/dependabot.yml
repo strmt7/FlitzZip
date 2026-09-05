@@ -10,6 +10,10 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
+    groups:
+      actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: deps(actions)
   - package-ecosystem: pip
@@ -22,5 +26,9 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
+    groups:
+      python-tooling:
+        patterns:
+          - "*"
     commit-message:
       prefix: deps(python)

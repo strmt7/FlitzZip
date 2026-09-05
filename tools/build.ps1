@@ -4,6 +4,8 @@ param(
     [switch]$EnableHip,
     [switch]$CpuOnlyValidation,
     [switch]$ConfigureOnly,
+    [ValidateSet("Visual Studio 17 2022", "Visual Studio 18 2026")]
+    [string]$Generator = "Visual Studio 17 2022",
     [string]$HipArch = "gfx1201",
     [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",
@@ -118,7 +120,7 @@ $MsiProductIdentity = Assert-MsiProductIdentity -Identity $MsiProductIdentity
 $configureArgs = @(
     "-S", $repo,
     "-B", $build,
-    "-G", "Visual Studio 17 2022",
+    "-G", $Generator,
     "-A", "x64",
     "-DSUPERZIP_ENABLE_HIP=$hipArg",
     "-DSUPERZIP_HIP_ARCH=$HipArch",

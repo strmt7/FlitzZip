@@ -109,7 +109,11 @@ add_library(
   miniz STATIC third_party/miniz/miniz.c third_party/miniz/miniz_tdef.c
                third_party/miniz/miniz_tinfl.c third_party/miniz/miniz_zip.c)
 target_include_directories(miniz PUBLIC third_party/miniz)
-target_compile_definitions(miniz PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_definitions(
+  miniz
+  PRIVATE _CRT_SECURE_NO_WARNINGS
+          MZ_ZIP_MAX_READER_FILES=250000U
+          MZ_ZIP_MAX_READER_METADATA_SIZE=268435456ULL)
 
 add_library(
   bzip2 STATIC
@@ -352,6 +356,7 @@ add_library(
   src/core/path_safety.cpp
   src/core/progress.cpp
   src/core/resource_usage.cpp
+  src/core/trusted_runtime.cpp
   src/cpio/cpio_adapter.cpp
   src/gzip/gzip_adapter.cpp
   src/gzip/gzip_stream.cpp
@@ -389,6 +394,11 @@ target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z
 target_compile_definitions(
   superzip_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
                        SUPERZIP_VERSION="${SUPERZIP_PACKAGE_VERSION}")
+target_compile_definitions(
+  superzip_core
+  PRIVATE
+    SUPERZIP_ZSTD_RUNTIME_DLL_SHA256="${SUPERZIP_ZSTD_RUNTIME_DLL_SHA256}"
+    SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256="${SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256}")
 target_compile_definitions(superzip_core PRIVATE XZ_DEC_CONCATENATED
                                                  XZ_USE_CRC64)
 
@@ -637,7 +647,8 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
 endif()
 
 if(WIN32)
-  target_link_libraries(superzip_core PUBLIC bcrypt cabinet)
+  target_link_libraries(superzip_core PUBLIC advapi32 bcrypt cabinet ole32
+                                               shell32 wintrust)
 endif()
 
 if(SUPERZIP_BUILD_TESTS)
@@ -711,8 +722,8 @@ if(SUPERZIP_BUILD_FUZZERS)
 
   add_executable(
     superzip_iso_fuzzer
-    fuzz/iso_fuzzer.cpp src/iso/iso_adapter.cpp src/core/file_publish.cpp
-    src/core/path_safety.cpp src/core/progress.cpp)
+    fuzz/iso_fuzzer.cpp src/iso/iso_adapter.cpp src/core/file_manifest.cpp
+    src/core/file_publish.cpp src/core/path_safety.cpp src/core/progress.cpp)
   target_include_directories(superzip_iso_fuzzer PRIVATE src)
   target_compile_definitions(superzip_iso_fuzzer PRIVATE SUPERZIP_ENABLE_HIP=0)
 

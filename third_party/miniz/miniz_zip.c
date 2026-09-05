@@ -156,9 +156,11 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         /* ZIP archive identifiers and record sizes */
         MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIG = 0x06054b50,
         MZ_ZIP_CENTRAL_DIR_HEADER_SIG = 0x02014b50,
+        MZ_ZIP_CENTRAL_DIR_DIGITAL_SIGNATURE_SIG = 0x05054b50,
         MZ_ZIP_LOCAL_DIR_HEADER_SIG = 0x04034b50,
         MZ_ZIP_LOCAL_DIR_HEADER_SIZE = 30,
         MZ_ZIP_CENTRAL_DIR_HEADER_SIZE = 46,
+        MZ_ZIP_CENTRAL_DIR_DIGITAL_SIGNATURE_HEADER_SIZE = 6,
         MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIZE = 22,
 
         /* ZIP64 archive identifier and record sizes */
@@ -730,7 +732,23 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if (cdir_size < (mz_uint64)pZip->m_total_files * MZ_ZIP_CENTRAL_DIR_HEADER_SIZE)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
 
-        if ((cdir_ofs + (mz_uint64)cdir_size) > pZip->m_archive_size)
+#ifdef MZ_ZIP_MAX_READER_FILES
+        if (pZip->m_total_files > MZ_ZIP_MAX_READER_FILES)
+            return mz_zip_set_error(pZip, MZ_ZIP_TOO_MANY_FILES);
+#endif
+
+#ifdef MZ_ZIP_MAX_READER_METADATA_SIZE
+        {
+            const mz_uint64 offset_array_count = sort_central_dir ? 2U : 1U;
+            const mz_uint64 offset_bytes =
+                (mz_uint64)pZip->m_total_files * sizeof(mz_uint32) * offset_array_count;
+            if ((offset_bytes > MZ_ZIP_MAX_READER_METADATA_SIZE) ||
+                ((mz_uint64)cdir_size > MZ_ZIP_MAX_READER_METADATA_SIZE - offset_bytes))
+                return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_CDIR_SIZE);
+        }
+#endif
+
+        if (cdir_size > pZip->m_archive_size || cdir_ofs > pZip->m_archive_size - cdir_size)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
 
         if (eocd_ofs < cdir_ofs + cdir_size)
@@ -890,6 +908,19 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 
                 n -= total_header_size;
                 p += total_header_size;
+            }
+
+            /* Consume exactly the declared records plus the optional standard
+             * central-directory digital signature. Arbitrary trailing bytes
+             * are malformed metadata, not allocatable padding. */
+            if (n)
+            {
+                if ((n < MZ_ZIP_CENTRAL_DIR_DIGITAL_SIGNATURE_HEADER_SIZE) ||
+                    (MZ_READ_LE32(p) != MZ_ZIP_CENTRAL_DIR_DIGITAL_SIGNATURE_SIG) ||
+                    ((mz_uint)MZ_READ_LE16(p + sizeof(mz_uint32)) +
+                         MZ_ZIP_CENTRAL_DIR_DIGITAL_SIGNATURE_HEADER_SIZE !=
+                     n))
+                    return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
             }
         }
 

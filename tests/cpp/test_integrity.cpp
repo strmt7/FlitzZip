@@ -4,11 +4,13 @@
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 #include "core/result.hpp"
+#include "core/trusted_runtime.hpp"
 
 #include <array>
 #include <cstddef>
 #include <fstream>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -162,3 +164,47 @@ TEST_CASE(defender_enabled_rejects_missing_target) {
     }
     REQUIRE_TRUE(rejected);
 }
+
+// Purpose: Verify opt-in Defender policy accepts only a positive clean zero-exit result.
+// Inputs: Synthetic clean, unavailable, timeout, and detected scan states.
+// Outputs: Throws if any ambiguous or failed state passes the fail-closed predicate.
+TEST_CASE(defender_policy_is_fail_closed) {
+    REQUIRE_TRUE(superzip::defender_scan_passed(
+        superzip::DefenderScanResult{.attempted = true, .clean = true, .timed_out = false, .exit_code = 0}));
+    REQUIRE_TRUE(!superzip::defender_scan_passed(
+        superzip::DefenderScanResult{.attempted = false, .clean = false, .timed_out = false, .exit_code = -1}));
+    REQUIRE_TRUE(!superzip::defender_scan_passed(
+        superzip::DefenderScanResult{.attempted = true, .clean = false, .timed_out = true, .exit_code = -2}));
+    REQUIRE_TRUE(!superzip::defender_scan_passed(
+        superzip::DefenderScanResult{.attempted = true, .clean = false, .timed_out = false, .exit_code = 2}));
+    REQUIRE_TRUE(!superzip::defender_scan_passed(
+        superzip::DefenderScanResult{.attempted = true, .clean = true, .timed_out = false, .exit_code = 1}));
+}
+
+#if defined(_WIN32)
+// Purpose: Verify runtime loading rejects bytes that do not match build-pinned provenance.
+// Inputs: The real app-local Zstandard DLL and a deliberately incorrect SHA-256 digest.
+// Outputs: Throws if the loader reaches export lookup instead of failing closed at integrity validation.
+TEST_CASE(trusted_runtime_rejects_unpinned_digest_before_export_lookup) {
+    bool rejected = false;
+    try {
+        (void)superzip::load_trusted_app_local_runtime(L"libzstd.dll", std::string(64U, '0'));
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+
+// Purpose: Verify app-local runtime selection cannot escape the executable directory.
+// Inputs: A path-bearing DLL name and a syntactically valid dummy SHA-256 digest.
+// Outputs: Throws if parent traversal is accepted as a runtime filename.
+TEST_CASE(trusted_runtime_rejects_path_bearing_module_names) {
+    bool rejected = false;
+    try {
+        (void)superzip::load_trusted_app_local_runtime(L"..\\libzstd.dll", std::string(64U, '0'));
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+#endif

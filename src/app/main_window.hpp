@@ -206,11 +206,6 @@ class MainWindow {
     // Outputs: Returns true only on the Queue page, with no SuperZip modal active, and inside the Queue table.
     [[nodiscard]] bool queue_drop_target_contains(POINT point);
 
-    // Purpose: Allow shell file-drop messages through UIPI for elevated windows.
-    // Inputs: None; applies only to the main HWND and only when the process is elevated.
-    // Outputs: Returns true when no extra filter is needed or the narrow filter was applied.
-    [[nodiscard]] bool enable_elevated_drag_drop_messages() const;
-
     // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
     // Inputs: None.
     // Outputs: Arms timers and returns the handled Win32 result.
@@ -984,6 +979,11 @@ class MainWindow {
     // Outputs: Adds missing enabled flags, removes stale flags, and normalizes selected index.
     void normalize_queue_selection_locked();
 
+    // Purpose: Invalidate result states when the selected archive set or verification policy changes.
+    // Inputs: None; caller holds `mutex_`.
+    // Outputs: Resets every Security-page result to NotRun.
+    void reset_security_review_locked();
+
     // Purpose: Append filesystem paths to the Queue through one shared mutation path.
     // Inputs: `paths` are selected or dropped filesystem paths and `status` is the visible status after success.
     // Outputs: Returns the number of nonempty paths appended, updates selection/scroll state, and repaints on success.
@@ -1064,10 +1064,16 @@ class MainWindow {
     // Outputs: Returns true when the security review command consumed the click.
     bool handle_security_click(const RECT& content, int x, int y);
 
-    // Purpose: Start a background security verification pass for visible archive settings.
-    // Inputs: None; reads queue and opt-in settings from UI state.
-    // Outputs: Launches a Verify worker or reports missing queue input.
+    // Purpose: Start an exact-byte security verification pass for selected archives.
+    // Inputs: None; reads selected archives and opt-in settings from UI state.
+    // Outputs: Launches a Verify worker or reports missing archive input.
     void start_security_verify();
+
+    // Purpose: Execute archive, optional SHA-256, and optional Defender checks for a worker job.
+    // Inputs: `sources` are selected archives and booleans describe requested security and GPU policies.
+    // Outputs: Publishes progress/history/result state or throws after recording the failed/incomplete stage.
+    void run_security_review(const std::vector<std::filesystem::path>& sources, bool integrity, bool defender,
+                             bool gpu_required);
 
     // Purpose: Request cancellation of the active background operation.
     // Inputs: None; reads synchronized UI progress state.

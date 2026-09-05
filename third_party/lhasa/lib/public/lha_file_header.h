@@ -123,6 +123,9 @@ extern "C" {
  */
 #define LHA_FILE_64BIT_SIZES           0x20
 
+/** Upstream flag for synthetic names; SuperZip rejects unnamed file entries. */
+#define LHA_FILE_FAKE_NAME             0x40
+
 /**
  * Macro that evaluates to true if the specified flag is set in the
  * given @ref LHAFileHeader.

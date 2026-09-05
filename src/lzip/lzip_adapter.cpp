@@ -36,9 +36,7 @@ void checked_add_lzip_adapter_bytes(std::uint64_t& total, std::uint64_t bytes, c
 std::string lzip_output_entry_name(const std::filesystem::path& archive_path) {
     auto filename = archive_path.filename().string();
     auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
+    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (lower.size() > 7U && lower.ends_with(".tar.lz")) {
         filename.resize(filename.size() - 3U);
     } else if (lower.size() > 4U && lower.ends_with(".tlz")) {
@@ -57,19 +55,18 @@ std::string lzip_output_entry_name(const std::filesystem::path& archive_path) {
 
 }  // namespace
 
-OperationStats extract_lzip_file(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a single lzip payload through bounded decoding and verified file publication.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry or throws before retaining a partial or unverified file.
+OperationStats extract_lzip_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto entry_name = lzip_output_entry_name(archive_path);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing lzip extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     LzipInputStream input(archive_path);
     ProgressState progress;
@@ -106,7 +103,7 @@ OperationStats extract_lzip_file(
         if (!output) {
             throw ArchiveError("failed to finalize lzip extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
         progress.finish_entry();

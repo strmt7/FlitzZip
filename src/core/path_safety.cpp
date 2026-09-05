@@ -1,5 +1,6 @@
 #include "core/path_safety.hpp"
 
+#include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -26,7 +27,15 @@ bool is_windows_reserved_name(std::string name) {
         "CON",  "PRN",  "AUX",  "NUL",  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
         "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     };
-    return std::find(reserved.begin(), reserved.end(), name) != reserved.end();
+    if (std::find(reserved.begin(), reserved.end(), name) != reserved.end()) {
+        return true;
+    }
+    static constexpr std::array<std::string_view, 3> superscript_digits = {"\xC2\xB9", "\xC2\xB2", "\xC2\xB3"};
+    if (!name.starts_with("COM") && !name.starts_with("LPT")) {
+        return false;
+    }
+    const auto suffix = std::string_view(name).substr(3);
+    return std::find(superscript_digits.begin(), superscript_digits.end(), suffix) != superscript_digits.end();
 }
 
 // Purpose: Detect drive-rooted paths such as `C:`.
@@ -126,6 +135,9 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
     if (archive_path.empty()) {
         throw SecurityError("archive entry path is empty");
     }
+    if (archive_path.size() > kMaxArchivePathBytes) {
+        throw SecurityError("archive entry path exceeds SuperZip path length limit");
+    }
     if (archive_path.starts_with('/') || archive_path.starts_with('\\') || archive_path.starts_with("//") ||
         archive_path.starts_with("\\\\") || has_drive_prefix(archive_path)) {
         throw SecurityError("archive entry uses an absolute or drive-rooted path: " + archive_path);
@@ -133,6 +145,7 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
 
     std::string normalized;
     std::string component;
+    std::uint32_t component_count = 0;
     auto flush_component = [&]() {
         if (component.empty() || component == ".") {
             component.clear();
@@ -140,6 +153,12 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
         }
         if (component == "..") {
             throw SecurityError("archive entry attempts path traversal: " + archive_path);
+        }
+        if (component.size() > kMaxArchivePathComponentBytes) {
+            throw SecurityError("archive entry component exceeds SuperZip path length limit");
+        }
+        if (component_count >= kMaxArchivePathComponents) {
+            throw SecurityError("archive entry path exceeds SuperZip component-depth limit");
         }
         if (contains_windows_control_character(component)) {
             throw SecurityError("archive entry component contains a Windows control character");
@@ -157,6 +176,7 @@ std::string normalize_archive_path_key(const std::string& archive_path) {
             normalized.push_back('/');
         }
         normalized.append(component);
+        ++component_count;
         component.clear();
     };
 

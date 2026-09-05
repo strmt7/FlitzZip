@@ -23,7 +23,7 @@ namespace {
 constexpr std::size_t kCpioHeaderBytes = 110U;
 constexpr std::size_t kCpioAlignment = 4U;
 constexpr std::size_t kCpioIoBufferBytes = 64U * 1024U;
-constexpr std::uint32_t kMaxCpioNameBytes = 64U * 1024U;
+constexpr std::uint32_t kMaxCpioNameBytes = kMaxArchivePathBytes + 1U;
 constexpr std::string_view kCpioNewAsciiMagic = "070701";
 constexpr std::string_view kCpioCrcMagic = "070702";
 constexpr std::string_view kCpioTrailerName = "TRAILER!!!";
@@ -63,6 +63,7 @@ struct CpioStreamRecord {
 struct CpioScanResult {
     std::vector<CpioEntryMetadata> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
 };
 
 // Purpose: Return the number of bytes needed to align a CPIO section.
@@ -274,7 +275,6 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
         throw ArchiveError("failed to seek CPIO payload");
     }
 
-    std::filesystem::create_directories(target.parent_path());
     auto temporary_target = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
@@ -283,20 +283,29 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
         }
         std::array<char, kCpioIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
+        std::uint32_t sum = 0;
         while (remaining > 0) {
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             read_exact(input, buffer.data(), chunk, "CPIO file payload");
+            if (entry.crc) {
+                for (std::size_t i = 0; i < chunk; ++i) {
+                    sum += static_cast<unsigned char>(buffer[i]);
+                }
+            }
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
                 throw ArchiveError("failed to write temporary extracted file: " + target.string());
             }
             remaining -= chunk;
         }
+        if (entry.crc && sum != entry.check) {
+            throw ArchiveError("CPIO CRC entry checksum changed between validation and publication: " + entry.path);
+        }
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
         cleanup_file_publish_target(temporary_target);
@@ -313,7 +322,6 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing CPIO extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
     auto temporary_target = reserve_file_publish_target(target);
     std::uint32_t sum = 0;
     try {
@@ -345,7 +353,7 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
         cleanup_file_publish_target(temporary_target);
@@ -405,6 +413,8 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
         if (header.namesize == 0 || header.namesize > kMaxCpioNameBytes) {
             throw ArchiveError("CPIO entry name size is invalid");
         }
+        result.path_metadata_bytes =
+            checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, header.namesize, "CPIO path metadata");
 
         std::string raw_name(header.namesize, '\0');
         read_exact(input, raw_name.data(), raw_name.size(), "CPIO entry name");
@@ -423,6 +433,9 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
         if (result.entries.size() >= kMaxArchiveEntries) {
             throw ArchiveError("CPIO archive contains too many entries");
         }
+        result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+            result.path_metadata_bytes, static_cast<std::uint64_t>(raw_name.size()) * 2U,
+            "CPIO retained path metadata");
 
         const bool directory = classify_cpio_entry(header, raw_name);
         std::uint64_t payload_offset = 0;
@@ -499,6 +512,7 @@ CpioWriteStats write_cpio_stream(const std::vector<std::filesystem::path>& sourc
                                 entry.directory ? (kCpioDirectoryMode | 0755U) : (kCpioRegularMode | 0644U),
                                 entry.directory ? 0U : static_cast<std::uint32_t>(entry.size), ino++);
         if (!entry.directory) {
+            const auto source_lock = lock_manifest_source(entry);
             copy_file_to_cpio(entry.source_path, output, entry.size);
             write_zero_padding(output, cpio_padding(entry.size));
             progress.add_bytes(entry.size);
@@ -587,7 +601,7 @@ void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& sc
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, expected.path);
         if (expected.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             discard_stream_bytes(input, cpio_padding(expected.size), "CPIO file padding");
             progress.finish_entry();
         } else {
@@ -611,7 +625,8 @@ void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& sc
 OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
                              const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    std::ofstream output(output_archive, std::ios::binary);
+    FilePublishTransaction publication(output_archive);
+    std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
         throw ArchiveError("cannot create CPIO archive: " + output_archive.string());
     }
@@ -620,6 +635,7 @@ OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to finalize CPIO archive: " + output_archive.string());
     }
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
@@ -638,13 +654,16 @@ OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sour
                                   const std::filesystem::path& output_archive, int compression_level,
                                   const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    GzipOutputStream output(output_archive, compression_level);
+    FilePublishTransaction publication(output_archive);
+    GzipOutputStream output(publication.staging_path(), compression_level);
     const auto write_stats = write_cpio_stream(sources, output, progress_callback);
     output.close();
+    const auto output_bytes = output.output_bytes();
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
-    stats.output_bytes = output.output_bytes();
+    stats.output_bytes = output_bytes;
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -658,10 +677,11 @@ OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sour
 OperationStats extract_cpio(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                             bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto scanned = scan_cpio(archive_path);
-    std::filesystem::create_directories(destination);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto scanned = scan_cpio(archive_source.path());
+    create_verified_directories(destination);
 
-    std::ifstream input(archive_path, std::ios::binary);
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open CPIO archive: " + archive_path.string());
     }
@@ -673,7 +693,7 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             progress.finish_entry();
             continue;
         }
@@ -683,7 +703,7 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(scanned.entries.size());
     stats.gpu_used = false;
@@ -698,12 +718,13 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
 OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    GzipInputStream scan_input(archive_path);
+    const auto archive_source = pin_source_file(archive_path);
+    GzipInputStream scan_input(archive_source.path());
     const auto scanned = scan_cpio_stream(scan_input, false);
     scan_input.finish();
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
-    GzipInputStream extract_input(archive_path);
+    GzipInputStream extract_input(archive_source.path());
     extract_validated_cpio_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 

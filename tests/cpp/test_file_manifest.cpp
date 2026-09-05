@@ -34,3 +34,25 @@ TEST_CASE(file_manifest_rejects_directory_junction_sources) {
     std::filesystem::remove_all(outside);
     REQUIRE_TRUE(rejected);
 }
+
+// Purpose: Verify a source replaced after manifest construction cannot be reopened by a format writer.
+// Inputs: A captured regular file whose pathname is moved aside and replaced with different bytes.
+// Outputs: `lock_manifest_source` throws `SecurityError` before any replacement bytes can be read.
+TEST_CASE(file_manifest_source_lock_rejects_path_replacement) {
+    const auto root = test_temp_dir("manifest-source-replacement");
+    const auto source = root / "source.txt";
+    std::ofstream(source, std::ios::binary) << "original";
+    const auto manifest = superzip::build_manifest({source});
+    REQUIRE_EQ(manifest.entries.size(), static_cast<std::size_t>(1));
+
+    std::filesystem::rename(source, root / "original.txt");
+    std::ofstream(source, std::ios::binary) << "replacement with different identity and size";
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::lock_manifest_source(manifest.entries.front()));
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}

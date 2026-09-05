@@ -1,15 +1,15 @@
 # SuperZip Lhasa Integration Notes
 
-SuperZip vendors Lhasa `0.5.0` for native extract-only LHA/LZH compatibility.
+SuperZip vendors Lhasa `0.6.0` for native extract-only LHA/LZH compatibility.
 
-- Upstream: https://github.com/fragglet/lhasa
-- Release tag: `v0.5.0`
-- Release commit: `450172de282c8f8730696f4370a57cf49bfabf22`
-- Source archive SHA-256: `1ae8d82d37fc12ec2c52c520b6528ec61268e243f33eca4446b440e182c66d91`
+- Upstream: <https://github.com/fragglet/lhasa>
+- Release tag: `v0.6.0`
+- Release commit: `75ed83559f23e9538e0045c62f53f77ab03d03d6`
+- Source archive SHA-256: `9840154367f73e9d9c3196f944a121ab4d398d84e921c8fe8fca8a931274aed7`
 - License: ISC, preserved at `third_party/lhasa/COPYING.md`
 
 The unmodified release archive is stored under
-`third_party/upstream/lhasa/0.5.0/` for provenance. Production integration
+`third_party/upstream/lhasa/0.6.0/` for provenance. Production integration
 changes belong only in `third_party/lhasa/`.
 
 Local hardening changes in the production copy:
@@ -26,6 +26,15 @@ Local hardening changes in the production copy:
 - Preservation of decoded `..` path components so SuperZip's strict path
   validator rejects malicious archive paths instead of accepting rewritten
   names.
+- The PM2 code-count guard previously backported from
+  `765658909da866238055b8309034d2e3fe7f81b6` is included in upstream 0.6.0.
+- Unlike upstream 0.6.0, unnamed regular-file entries remain rejected.
+  SuperZip does not manufacture destination names for malformed metadata.
+- LK7 offset codes are restricted to the 16-bit history domain and shifted as
+  unsigned values, preventing attacker-controlled signed-overflow behavior.
+- `lha_reader_check` finishes and validates an already-open decoder so the
+  extraction publication pass verifies the exact streamed payload rather than
+  attempting to reopen a decoder at end-of-input.
 - Removal of Lhasa's unused filesystem extraction helpers and platform write
   abstraction from the production copy. SuperZip retains only header parsing,
   decompression, and CRC validation.

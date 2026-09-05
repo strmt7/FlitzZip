@@ -1,8 +1,10 @@
 #include "hqx/hqx_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
+#include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -18,6 +20,11 @@
 
 namespace superzip {
 namespace {
+
+constexpr std::uint64_t kMaxHqxDecodedWorkBytes = 1024ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t kMaxHqxDiscardedResourceBytes = 256ULL * 1024ULL * 1024ULL;
+constexpr std::uint64_t kMaxHqxRleExpansionRatio = 128U;
+constexpr std::uint64_t kMaxHqxArchiveBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 
 constexpr std::size_t kMaxHqxPreambleBytes = 64U * 1024U;
 constexpr std::uint8_t kHqxRleMarker = 0x90U;
@@ -37,21 +44,6 @@ enum class HqxParseState {
     ResourceCrcLow,
     Done,
 };
-
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried or represented.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
 
 // Purpose: Update the BinHex CRC-16 register with one byte using the documented bit order.
 // Inputs: `crc` is the mutable register and `byte` is the next data byte.
@@ -174,7 +166,7 @@ class HqxExtractParser {
         if (!output_) {
             throw ArchiveError("failed to finalize BinHex extraction target: " + target_.string());
         }
-        commit_verified_file(temporary_.file, target_, overwrite_);
+        commit_verified_file(temporary_, target_, overwrite_);
         cleanup_file_publish_target(temporary_);
         temporary_active_ = false;
     }
@@ -233,6 +225,10 @@ class HqxExtractParser {
         const auto length_offset = 1U + name_length + 1U + 4U + 4U + 2U;
         data_length_ = read_be_u32(header_bytes_, length_offset);
         resource_length_ = read_be_u32(header_bytes_, length_offset + 4U);
+        const auto declared_work = static_cast<std::uint64_t>(data_length_) + resource_length_;
+        if (resource_length_ > kMaxHqxDiscardedResourceBytes || declared_work > kMaxHqxDecodedWorkBytes) {
+            throw ArchiveError("BinHex declared fork work exceeds SuperZip resource limits");
+        }
     }
 
     // Purpose: Validate header CRC before opening any output file.
@@ -250,12 +246,11 @@ class HqxExtractParser {
     // Inputs: Uses `destination_`, `entry_name_`, and `overwrite_`.
     // Outputs: Opens `output_` under a private temp path or throws before final-file publication.
     void open_output_target() {
-        std::filesystem::create_directories(destination_);
+        create_verified_directories(destination_);
         target_ = safe_join_archive_path(destination_, entry_name_);
         if (!overwrite_ && std::filesystem::exists(target_)) {
             throw SecurityError("refusing to overwrite existing BinHex extraction target: " + target_.string());
         }
-        std::filesystem::create_directories(target_.parent_path());
         temporary_ = reserve_file_publish_target(target_);
         temporary_active_ = true;
         output_.open(temporary_.file, std::ios::binary | std::ios::trunc);
@@ -352,6 +347,10 @@ class HqxRleDecoder {
     // Inputs: `byte` is one pre-RLE byte.
     // Outputs: Forwards zero or more expanded bytes to `parser`; throws on malformed marker sequences.
     void feed(std::uint8_t byte) {
+        if (encoded_bytes_ >= kMaxHqxDecodedWorkBytes) {
+            throw ArchiveError("BinHex encoded RLE work exceeds SuperZip limits");
+        }
+        ++encoded_bytes_;
         if (pending_marker_) {
             feed_marker_count(byte);
             return;
@@ -394,6 +393,11 @@ class HqxRleDecoder {
     // Inputs: `byte` is the decoded logical byte.
     // Outputs: Sends `byte` to the parser and updates repeat state.
     void emit(std::uint8_t byte) {
+        if (decoded_bytes_ >= kMaxHqxDecodedWorkBytes ||
+            decoded_bytes_ + 1U > encoded_bytes_ * kMaxHqxRleExpansionRatio) {
+            throw ArchiveError("BinHex RLE expansion exceeds SuperZip work limits");
+        }
+        ++decoded_bytes_;
         parser_.feed(byte);
         previous_ = byte;
         have_previous_ = true;
@@ -403,6 +407,8 @@ class HqxRleDecoder {
     bool pending_marker_ = false;
     bool have_previous_ = false;
     std::uint8_t previous_ = 0;
+    std::uint64_t encoded_bytes_ = 0;
+    std::uint64_t decoded_bytes_ = 0;
 };
 
 class HqxSixBitDecoder {
@@ -547,8 +553,12 @@ void decode_hqx_payload(std::ifstream& input, HqxExtractParser& parser) {
 OperationStats extract_hqx_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
-    std::ifstream input(archive_path, std::ios::binary);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto archive_size = archive_source.size();
+    if (archive_size > kMaxHqxArchiveBytes) {
+        throw ArchiveError("BinHex text stream exceeds SuperZip work limits");
+    }
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open BinHex archive: " + archive_path.string());
     }

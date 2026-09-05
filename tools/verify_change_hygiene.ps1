@@ -246,6 +246,10 @@ function Test-ChangedWorkflowPolicy {
         if ($line -match '(--exclude|skip-dirs|ignore-globs|paths-ignore).*(src|tests|tools|third_party|\.github)') {
             throw "Workflow scanner exclusion covers source-controlled code in $($Path):$($i + 1)"
         }
+        if ($line -match '^\s*uses:\s+(?!\./)(?<action>[^@\s]+)@(?<reference>[^\s#]+)' -and
+            $Matches.reference -notmatch '^[0-9a-f]{40}$') {
+            throw "Third-party workflow actions must use an immutable 40-character commit SHA: $($Path):$($i + 1)"
+        }
     }
     Assert-NoGithubContextInRunBlock -Path $Path -Lines $lines
     Assert-NoFragilePowerShellGalleryBootstrap -Path $Path -Lines $lines

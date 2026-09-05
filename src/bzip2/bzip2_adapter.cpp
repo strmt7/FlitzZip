@@ -1,6 +1,7 @@
 #include "bzip2/bzip2_adapter.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -75,7 +76,10 @@ OperationStats compress_bzip2_file(const std::filesystem::path& source_file,
         throw SecurityError("refusing to overwrite the Bzip2 source file: " + output_archive.string());
     }
 
-    const auto input_size = regular_file_size(source_file);
+    const auto manifest = build_manifest({source_file});
+    const auto& source_entry = manifest.entries.front();
+    const auto source_lock = lock_manifest_source(source_entry);
+    const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
     progress.set_current(source_file.filename().string());
@@ -111,7 +115,7 @@ OperationStats compress_bzip2_file(const std::filesystem::path& source_file,
         }
         output.close();
         output_size = output.output_bytes();
-        commit_verified_file(temporary.file, output_archive, true);
+        commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {
@@ -151,12 +155,11 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
     const auto entry_name = bzip2_output_entry_name(archive_path);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     const auto target = safe_join_archive_path(destination, entry_name);
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing Bzip2 extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
 
     ProgressState progress;
     progress.start(OperationKind::Extract, archive_size, 1);
@@ -194,7 +197,7 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
         if (!output) {
             throw ArchiveError("failed to finalize Bzip2 extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
         progress.finish_entry();

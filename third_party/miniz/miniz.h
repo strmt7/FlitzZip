@@ -274,11 +274,11 @@ extern "C"
         MZ_DEFAULT_COMPRESSION = -1
     };
 
-#define MZ_VERSION "11.3.1"
-#define MZ_VERNUM 0xB301
+#define MZ_VERSION "11.3.2"
+#define MZ_VERNUM 0xB302
 #define MZ_VER_MAJOR 11
 #define MZ_VER_MINOR 3
-#define MZ_VER_REVISION 1
+#define MZ_VER_REVISION 2
 #define MZ_VER_SUBREVISION 0
 
 #ifndef MINIZ_NO_ZLIB_APIS

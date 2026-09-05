@@ -1,7 +1,9 @@
 #include "xar/xar_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -30,6 +32,10 @@ constexpr std::uint16_t kXarVersion = 1U;
 constexpr std::size_t kXarBufferBytes = 64U * 1024U;
 constexpr std::uint64_t kMaxXarTocBytes = kMaxArchiveIndexBytes;
 constexpr std::uint64_t kMaxXarTotalFileBytes = kMaxPipelineMemoryBytes;
+constexpr std::size_t kMaxXarXmlTagBytes = 1024U;
+constexpr std::size_t kMaxXarScalarTextBytes = 256U;
+constexpr std::uint32_t kMaxXarXmlDepth = kMaxArchivePathComponents + 32U;
+constexpr std::uint64_t kMaxXarXmlElements = static_cast<std::uint64_t>(kMaxArchiveEntries) * 32U;
 
 static_assert(kMaxXarTocBytes <= static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()));
 static_assert(kMaxXarTocBytes <= static_cast<std::uint64_t>(std::numeric_limits<mz_ulong>::max()));
@@ -61,11 +67,16 @@ struct XarMetadata {
     XarHeader header;
     std::vector<XarEntry> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
 };
 
 struct XarFileContext {
+    std::string parent_path;
     std::string name;
+    std::string path;
     std::string type;
+    bool has_name = false;
+    bool has_type = false;
     bool in_data = false;
     bool has_offset = false;
     bool has_size = false;
@@ -74,6 +85,7 @@ struct XarFileContext {
     std::uint64_t compressed_size = 0;
     std::uint64_t size = 0;
     std::string encoding_style;
+    bool has_encoding_style = false;
 };
 
 // Purpose: Return true for XML whitespace characters used in XAR TOCs.
@@ -207,17 +219,15 @@ std::uint64_t parse_decimal_u64(std::string_view text, const char* field) {
 // Outputs: Returns the decoded integer.
 std::uint16_t read_be16(const unsigned char* bytes) {
     return static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[0]) << 8U) |
-        static_cast<std::uint16_t>(bytes[1]));
+                                      static_cast<std::uint16_t>(bytes[1]));
 }
 
 // Purpose: Decode a big-endian unsigned 32-bit field.
 // Inputs: `bytes` points to at least four bytes.
 // Outputs: Returns the decoded integer.
 std::uint32_t read_be32(const unsigned char* bytes) {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24U) |
-        (static_cast<std::uint32_t>(bytes[1]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 8U) |
-        static_cast<std::uint32_t>(bytes[3]);
+    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
 }
 
 // Purpose: Decode a big-endian unsigned 64-bit field.
@@ -242,21 +252,6 @@ std::streamoff to_streamoff(std::uint64_t value, const char* context) {
     return static_cast<std::streamoff>(value);
 }
 
-// Purpose: Query a regular file size in the archive counter type.
-// Inputs: `path` is a host path.
-// Outputs: Returns the byte size or throws on filesystem errors/overflow.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read XAR file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("XAR file size exceeds host limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
 // Purpose: Add two byte counts while rejecting unsigned wraparound.
 // Inputs: `lhs` and `rhs` are byte counts; `context` identifies diagnostics.
 // Outputs: Returns the sum or throws before overflow.
@@ -270,11 +265,8 @@ std::uint64_t checked_add_u64(std::uint64_t lhs, std::uint64_t rhs, const char* 
 // Purpose: Read a bounded byte range from a stream.
 // Inputs: `input` is open, `offset`/`size` define the range, and `context` names diagnostics.
 // Outputs: Returns exactly `size` bytes or throws on seek/read/resource errors.
-std::vector<unsigned char> read_range(
-    std::ifstream& input,
-    std::uint64_t offset,
-    std::uint64_t size,
-    const char* context) {
+std::vector<unsigned char> read_range(std::ifstream& input, std::uint64_t offset, std::uint64_t size,
+                                      const char* context) {
     if (size > kMaxXarTocBytes) {
         throw ArchiveError(std::string("XAR ") + context + " exceeds resource limits");
     }
@@ -294,12 +286,10 @@ std::vector<unsigned char> read_range(
 }
 
 // Purpose: Inflate a bounded zlib buffer to an exact size.
-// Inputs: `compressed` is the zlib stream, `expected_size` is the required output size, and `context` names diagnostics.
-// Outputs: Returns exactly `expected_size` bytes or throws on decompression/resource errors.
-std::vector<unsigned char> inflate_zlib_buffer(
-    std::span<const unsigned char> compressed,
-    std::uint64_t expected_size,
-    const char* context) {
+// Inputs: `compressed` is the zlib stream, `expected_size` is the required output size, and `context` names
+// diagnostics. Outputs: Returns exactly `expected_size` bytes or throws on decompression/resource errors.
+std::vector<unsigned char> inflate_zlib_buffer(std::span<const unsigned char> compressed, std::uint64_t expected_size,
+                                               const char* context) {
     if (expected_size == 0U || expected_size > kMaxXarTocBytes) {
         throw ArchiveError(std::string("XAR ") + context + " uncompressed size exceeds resource limits");
     }
@@ -435,25 +425,40 @@ XarEncoding xar_encoding_from_style(std::string_view style) {
     throw ArchiveError("unsupported XAR payload encoding: " + std::string(style));
 }
 
-// Purpose: Build the archive path for the current nested XAR file stack.
-// Inputs: `stack` contains the active file contexts including the current entry.
-// Outputs: Returns the slash-separated path or throws when parent metadata is invalid.
-std::string xar_current_path(const std::vector<XarFileContext>& stack) {
-    std::string path;
-    for (std::size_t index = 0; index < stack.size(); ++index) {
-        const auto& item = stack[index];
-        if (item.name.empty()) {
-            throw ArchiveError("XAR file entry is missing a name before nested entries");
-        }
-        if (index + 1U < stack.size() && item.type != "directory") {
-            throw ArchiveError("XAR file entry is nested below a non-directory entry");
-        }
-        if (!path.empty()) {
-            path.push_back('/');
-        }
-        path.append(item.name);
+// Purpose: Decode and retain one bounded XAR filename while incrementally constructing its full path.
+// Inputs: `context` is the active file, `text` is raw XML name content, and `metadata` owns the aggregate path budget.
+// Outputs: Sets the context name/path once or throws before oversized, nested, or duplicate metadata is allocated.
+void set_xar_file_name(XarFileContext& context, std::string_view text, XarMetadata& metadata) {
+    if (context.has_name) {
+        throw ArchiveError("XAR file entry contains duplicate name metadata");
     }
-    return path;
+    if (trim_ascii(text).size() > kMaxArchivePathComponentBytes) {
+        throw ArchiveError("XAR filename exceeds SuperZip component length limit");
+    }
+    auto name = decode_xml_text(text);
+    if (name.empty() || name.find_first_of("/\\") != std::string::npos) {
+        throw SecurityError("XAR filename is empty or contains a path separator");
+    }
+    const auto normalized_name = normalize_archive_path_key(name);
+    if (normalized_name != name) {
+        throw SecurityError("XAR filename is not a single canonical path component");
+    }
+    const auto separator_bytes = context.parent_path.empty() ? 0U : 1U;
+    const auto required_bytes = name.size() + separator_bytes;
+    if (required_bytes > kMaxArchivePathBytes || context.parent_path.size() > kMaxArchivePathBytes - required_bytes) {
+        throw ArchiveError("XAR path exceeds SuperZip path length limit");
+    }
+    std::string path = context.parent_path;
+    if (!path.empty()) {
+        path.push_back('/');
+    }
+    path.append(name);
+    metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+        metadata.path_metadata_bytes, static_cast<std::uint64_t>(name.size()) + path.size(),
+        "XAR active path metadata");
+    context.name = std::move(name);
+    context.path = std::move(path);
+    context.has_name = true;
 }
 
 // Purpose: Add an entry's decoded size to the archive total with resource limits.
@@ -474,8 +479,16 @@ void finalize_xar_file(std::vector<XarFileContext>& stack, XarMetadata& metadata
     if (stack.empty()) {
         throw ArchiveError("XAR TOC closes a file entry without opening one");
     }
+    if (metadata.entries.size() >= kMaxArchiveEntries) {
+        throw ArchiveError("XAR archive contains too many entries");
+    }
     const auto& current = stack.back();
-    const auto path = normalize_archive_path_key(xar_current_path(stack));
+    if (!current.has_name || current.path.empty()) {
+        throw ArchiveError("XAR file entry is missing a name");
+    }
+    const auto path = normalize_archive_path_key(current.path);
+    metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(metadata.path_metadata_bytes, path.size(),
+                                                                           "XAR retained entry path metadata");
     if (current.type == "directory") {
         metadata.entries.push_back(XarEntry{.path = path, .directory = true});
     } else if (current.type == "file") {
@@ -493,7 +506,7 @@ void finalize_xar_file(std::vector<XarFileContext>& stack, XarMetadata& metadata
         });
     } else if (current.type == "symlink" || current.type == "hardlink") {
         throw SecurityError("XAR symbolic and hard links are not supported");
-    } else if (current.type.empty()) {
+    } else if (!current.has_type || current.type.empty()) {
         throw ArchiveError("XAR file entry is missing a type");
     } else {
         throw SecurityError("unsupported XAR file entry type: " + current.type);
@@ -502,24 +515,39 @@ void finalize_xar_file(std::vector<XarFileContext>& stack, XarMetadata& metadata
 }
 
 // Purpose: Apply decoded XML text to the active XAR file context.
-// Inputs: `tag` is the current element name, `text` is raw XML character data, and `stack` contains active files.
+// Inputs: `tag` is the current element name, `text` is raw XML character data, `stack` contains active files, and
+// `metadata` owns aggregate path accounting.
 // Outputs: Mutates the current context for supported fields.
-void apply_xar_text(std::string_view tag, std::string_view text, std::vector<XarFileContext>& stack) {
+void apply_xar_text(std::string_view tag, std::string_view text, std::vector<XarFileContext>& stack,
+                    XarMetadata& metadata) {
     if (stack.empty()) {
         return;
     }
     auto& current = stack.back();
     if (!current.in_data && tag == "name") {
-        current.name = decode_xml_text(text);
+        set_xar_file_name(current, text, metadata);
     } else if (!current.in_data && tag == "type") {
+        if (current.has_type || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
+            throw ArchiveError("XAR file entry contains duplicate or oversized type metadata");
+        }
         current.type = decode_xml_text(text);
+        current.has_type = true;
     } else if (current.in_data && tag == "offset") {
+        if (current.has_offset || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
+            throw ArchiveError("XAR payload offset metadata is duplicate or oversized");
+        }
         current.offset = parse_decimal_u64(text, "payload offset");
         current.has_offset = true;
     } else if (current.in_data && tag == "size") {
+        if (current.has_size || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
+            throw ArchiveError("XAR payload size metadata is duplicate or oversized");
+        }
         current.compressed_size = parse_decimal_u64(text, "payload encoded size");
         current.has_size = true;
     } else if (current.in_data && tag == "length") {
+        if (current.has_length || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
+            throw ArchiveError("XAR payload length metadata is duplicate or oversized");
+        }
         current.size = parse_decimal_u64(text, "payload decoded length");
         current.has_length = true;
     }
@@ -544,104 +572,154 @@ void validate_xar_ranges(const XarMetadata& metadata, std::uint64_t archive_size
     }
 }
 
+struct XarTocParseState {
+    XarMetadata metadata;
+    std::vector<XarFileContext> file_stack;
+    std::vector<std::string> tag_stack;
+    std::uint64_t tag_stack_bytes = 0;
+    std::uint64_t element_count = 0;
+};
+
+// Purpose: Apply one bounded XML text interval to the active XAR element.
+// Inputs: `xml`, `start`, and `end` delimit text; `state` owns active tag/file context.
+// Outputs: Updates active metadata or returns without effect when no element can consume text.
+void consume_xar_toc_text(std::string_view xml, std::size_t start, std::size_t end, XarTocParseState& state) {
+    if (end > start && !state.tag_stack.empty()) {
+        apply_xar_text(state.tag_stack.back(), xml.substr(start, end - start), state.file_stack, state.metadata);
+    }
+}
+
+// Purpose: Close one validated XML element and its XAR file/data state.
+// Inputs: `name` is the canonical closing tag name and `state` owns active stacks.
+// Outputs: Pops matching state or throws on mismatched or context-invalid XML.
+void close_xar_toc_tag(const std::string& name, XarTocParseState& state) {
+    if (state.tag_stack.empty() || state.tag_stack.back() != name) {
+        throw ArchiveError("XAR TOC contains mismatched XML tags");
+    }
+    if (name == "file") {
+        finalize_xar_file(state.file_stack, state.metadata);
+    } else if (name == "data") {
+        if (state.file_stack.empty()) {
+            throw ArchiveError("XAR TOC closes data outside a file entry");
+        }
+        state.file_stack.back().in_data = false;
+    }
+    state.tag_stack_bytes -= state.tag_stack.back().size();
+    state.tag_stack.pop_back();
+}
+
+// Purpose: Open one validated XML element and update active XAR file/data state.
+// Inputs: `tag` is raw bounded tag text, `name` is canonical, `self_closing` is syntax state, and `state` is mutable.
+// Outputs: Pushes/finalizes bounded context or throws before invalid nesting or duplicate metadata is retained.
+void open_xar_toc_tag(std::string_view tag, const std::string& name, bool self_closing, XarTocParseState& state) {
+    if (name == "file") {
+        if (state.file_stack.size() >= kMaxArchivePathComponents ||
+            state.metadata.entries.size() >= kMaxArchiveEntries) {
+            throw ArchiveError("XAR file nesting or entry count exceeds SuperZip limits");
+        }
+        XarFileContext context;
+        if (!state.file_stack.empty()) {
+            const auto& parent = state.file_stack.back();
+            if (!parent.has_name || parent.path.empty() || !parent.has_type || parent.type != "directory") {
+                throw ArchiveError("XAR file entry is nested below incomplete or non-directory metadata");
+            }
+            state.metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+                state.metadata.path_metadata_bytes, parent.path.size(), "XAR nested parent path metadata");
+            context.parent_path = parent.path;
+        }
+        state.file_stack.push_back(std::move(context));
+    } else if (name == "data") {
+        if (state.file_stack.empty()) {
+            throw ArchiveError("XAR TOC opens data outside a file entry");
+        }
+        state.file_stack.back().in_data = !self_closing;
+    } else if (name == "encoding" && !state.file_stack.empty() && state.file_stack.back().in_data) {
+        const auto style = xml_attribute(tag, "style");
+        if (!style.empty()) {
+            if (style.size() > kMaxXarScalarTextBytes || state.file_stack.back().has_encoding_style) {
+                throw ArchiveError("XAR payload encoding metadata is duplicate or oversized");
+            }
+            state.file_stack.back().encoding_style = style;
+            state.file_stack.back().has_encoding_style = true;
+        }
+    }
+    if (!self_closing) {
+        if (state.tag_stack.size() >= kMaxXarXmlDepth) {
+            throw ArchiveError("XAR XML nesting exceeds SuperZip limits");
+        }
+        state.tag_stack_bytes =
+            checked_add_archive_path_metadata_bytes(state.tag_stack_bytes, name.size(), "XAR active XML tag metadata");
+        state.tag_stack.push_back(name);
+    } else if (name == "file") {
+        finalize_xar_file(state.file_stack, state.metadata);
+    }
+}
+
+// Purpose: Apply final aggregate path validation to parsed XAR entries.
+// Inputs: `metadata` owns all complete entry paths and the running metadata-byte budget.
+// Outputs: Updates validation-work accounting and throws on duplicates, conflicts, or unsafe paths.
+void validate_xar_toc_paths(XarMetadata& metadata) {
+    std::vector<ArchivePathValidationEntry> validation_entries;
+    validation_entries.reserve(metadata.entries.size());
+    for (const auto& entry : metadata.entries) {
+        metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+            metadata.path_metadata_bytes, entry.path.size(), "XAR path validation metadata");
+        validation_entries.push_back({entry.path, entry.directory});
+    }
+    validate_archive_path_set(validation_entries);
+}
+
 // Purpose: Parse the decompressed XAR XML TOC into archive metadata.
 // Inputs: `toc_bytes` contains UTF-8 XML and `header` contains binary TOC bounds.
 // Outputs: Returns validated entry metadata or throws on unsupported TOC constructs.
 XarMetadata parse_xar_toc(std::span<const unsigned char> toc_bytes, const XarHeader& header) {
     const std::string_view xml(reinterpret_cast<const char*>(toc_bytes.data()), toc_bytes.size());
-    XarMetadata metadata;
-    metadata.header = header;
-    std::vector<XarFileContext> file_stack;
-    std::vector<std::string> tag_stack;
+    XarTocParseState state;
+    state.metadata.header = header;
     std::size_t position = 0;
     std::size_t text_start = 0;
-
-    auto consume_text = [&](std::size_t end) {
-        if (end <= text_start || tag_stack.empty()) {
-            return;
-        }
-        apply_xar_text(tag_stack.back(), xml.substr(text_start, end - text_start), file_stack);
-    };
-
     while (position < xml.size()) {
         const auto open = xml.find('<', position);
         if (open == std::string_view::npos) {
-            consume_text(xml.size());
+            consume_xar_toc_text(xml, text_start, xml.size(), state);
             break;
         }
-        consume_text(open);
+        consume_xar_toc_text(xml, text_start, open, state);
         const auto close = xml.find('>', open + 1U);
         if (close == std::string_view::npos) {
             throw ArchiveError("XAR TOC contains an unterminated XML tag");
         }
-        auto tag = trim_ascii(xml.substr(open + 1U, close - open - 1U));
+        if (close - open - 1U > kMaxXarXmlTagBytes || ++state.element_count > kMaxXarXmlElements) {
+            throw ArchiveError("XAR TOC XML element exceeds SuperZip metadata limits");
+        }
+        const auto tag = trim_ascii(xml.substr(open + 1U, close - open - 1U));
         if (tag.empty()) {
             throw ArchiveError("XAR TOC contains an empty XML tag");
         }
-        if (tag.starts_with("!--") || tag.front() == '!') {
+        if (tag.front() == '!') {
             throw SecurityError("XAR TOC comments, DTDs, and declarations are not supported");
         }
-        if (tag.front() == '?') {
-            position = close + 1U;
-            text_start = position;
-            continue;
-        }
-        const bool closing = tag.front() == '/';
-        const bool self_closing = !closing && tag.back() == '/';
-        const auto name = xml_tag_name(tag);
-        if (closing) {
-            if (tag_stack.empty() || tag_stack.back() != name) {
-                throw ArchiveError("XAR TOC contains mismatched XML tags");
-            }
-            if (name == "file") {
-                finalize_xar_file(file_stack, metadata);
-            } else if (name == "data") {
-                if (file_stack.empty()) {
-                    throw ArchiveError("XAR TOC closes data outside a file entry");
-                }
-                file_stack.back().in_data = false;
-            }
-            tag_stack.pop_back();
-        } else {
-            if (name == "file") {
-                file_stack.push_back(XarFileContext{});
-            } else if (name == "data") {
-                if (file_stack.empty()) {
-                    throw ArchiveError("XAR TOC opens data outside a file entry");
-                }
-                file_stack.back().in_data = true;
-                if (self_closing) {
-                    file_stack.back().in_data = false;
-                }
-            } else if (name == "encoding" && !file_stack.empty() && file_stack.back().in_data) {
-                const auto style = xml_attribute(tag, "style");
-                if (!style.empty()) {
-                    file_stack.back().encoding_style = style;
-                }
-            }
-            if (!self_closing) {
-                tag_stack.push_back(name);
-            } else if (name == "file") {
-                finalize_xar_file(file_stack, metadata);
+        if (tag.front() != '?') {
+            const bool closing = tag.front() == '/';
+            const bool self_closing = !closing && tag.back() == '/';
+            const auto name = xml_tag_name(tag);
+            if (closing) {
+                close_xar_toc_tag(name, state);
+            } else {
+                open_xar_toc_tag(tag, name, self_closing, state);
             }
         }
         position = close + 1U;
         text_start = position;
     }
-    if (!tag_stack.empty() || !file_stack.empty()) {
+    if (!state.tag_stack.empty() || !state.file_stack.empty()) {
         throw ArchiveError("XAR TOC ended with unclosed XML elements");
     }
-    if (metadata.entries.empty()) {
+    if (state.metadata.entries.empty()) {
         throw ArchiveError("XAR archive contains no extractable entries");
     }
-
-    std::vector<ArchivePathValidationEntry> validation_entries;
-    validation_entries.reserve(metadata.entries.size());
-    for (const auto& entry : metadata.entries) {
-        validation_entries.push_back({entry.path, entry.directory});
-    }
-    validate_archive_path_set(validation_entries);
-    return metadata;
+    validate_xar_toc_paths(state.metadata);
+    return std::move(state.metadata);
 }
 
 // Purpose: Read and parse XAR metadata from disk.
@@ -663,11 +741,8 @@ XarMetadata read_xar_metadata(const std::filesystem::path& archive_path, std::ui
 // Purpose: Consume one stored XAR payload range.
 // Inputs: `input` is open, `start`/`size` define the payload, and `sink` receives bytes.
 // Outputs: Returns decoded bytes or throws on read/sink failure.
-std::uint64_t process_stored_payload(
-    std::ifstream& input,
-    std::uint64_t start,
-    std::uint64_t size,
-    const std::function<void(std::span<const unsigned char>)>& sink) {
+std::uint64_t process_stored_payload(std::ifstream& input, std::uint64_t start, std::uint64_t size,
+                                     const std::function<void(std::span<const unsigned char>)>& sink) {
     input.clear();
     input.seekg(to_streamoff(start, "payload"), std::ios::beg);
     if (!input) {
@@ -690,14 +765,12 @@ std::uint64_t process_stored_payload(
 }
 
 // Purpose: Inflate and consume one zlib-compressed XAR payload range.
-// Inputs: `input` is open, `start`/`encoded_size` bound the compressed stream, `expected_size` is the required decoded length, and `sink` receives decoded bytes.
-// Outputs: Returns decoded bytes or throws on malformed streams, trailing data, or sink failure.
-std::uint64_t process_zlib_payload(
-    std::ifstream& input,
-    std::uint64_t start,
-    std::uint64_t encoded_size,
-    std::uint64_t expected_size,
-    const std::function<void(std::span<const unsigned char>)>& sink) {
+// Inputs: `input` is open, `start`/`encoded_size` bound the compressed stream, `expected_size` is the required decoded
+// length, and `sink` receives decoded bytes. Outputs: Returns decoded bytes or throws on malformed streams, trailing
+// data, or sink failure.
+std::uint64_t process_zlib_payload(std::ifstream& input, std::uint64_t start, std::uint64_t encoded_size,
+                                   std::uint64_t expected_size,
+                                   const std::function<void(std::span<const unsigned char>)>& sink) {
     input.clear();
     input.seekg(to_streamoff(start, "payload"), std::ios::beg);
     if (!input) {
@@ -758,13 +831,10 @@ std::uint64_t process_zlib_payload(
 }
 
 // Purpose: Process one XAR file payload through validation or publication.
-// Inputs: `input` is open, `metadata` supplies heap base, `entry` describes one file, and `sink` receives decoded bytes.
-// Outputs: Returns decoded bytes or throws on malformed payloads.
-std::uint64_t process_xar_payload(
-    std::ifstream& input,
-    const XarMetadata& metadata,
-    const XarEntry& entry,
-    const std::function<void(std::span<const unsigned char>)>& sink) {
+// Inputs: `input` is open, `metadata` supplies heap base, `entry` describes one file, and `sink` receives decoded
+// bytes. Outputs: Returns decoded bytes or throws on malformed payloads.
+std::uint64_t process_xar_payload(std::ifstream& input, const XarMetadata& metadata, const XarEntry& entry,
+                                  const std::function<void(std::span<const unsigned char>)>& sink) {
     const auto start = checked_add_u64(metadata.header.heap_offset, entry.offset, "payload start");
     if (entry.encoding == XarEncoding::Stored) {
         return process_stored_payload(input, start, entry.compressed_size, sink);
@@ -794,22 +864,24 @@ void validate_xar_payloads(const std::filesystem::path& archive_path, const XarM
 
 }  // namespace
 
-OperationStats extract_xar(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract the supported XAR subset after TOC and complete payload prevalidation.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry or throws before retaining any unverified file.
+OperationStats extract_xar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
-    const auto metadata = read_xar_metadata(archive_path, archive_size);
-    validate_xar_payloads(archive_path, metadata);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto archive_size = archive_source.size();
+    const auto metadata = read_xar_metadata(archive_source.path(), archive_size);
+    validate_xar_payloads(archive_source.path(), metadata);
 
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     ProgressState progress;
-    progress.start(OperationKind::Extract, metadata.total_file_bytes, static_cast<std::uint64_t>(metadata.entries.size()));
+    progress.start(OperationKind::Extract, metadata.total_file_bytes,
+                   static_cast<std::uint64_t>(metadata.entries.size()));
     publish_progress(progress, progress_callback);
 
-    std::ifstream input(archive_path, std::ios::binary);
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open XAR archive: " + archive_path.string());
     }
@@ -818,7 +890,7 @@ OperationStats extract_xar(
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             progress.finish_entry();
             publish_progress(progress, progress_callback);
             continue;
@@ -826,7 +898,6 @@ OperationStats extract_xar(
         if (!overwrite && std::filesystem::exists(target)) {
             throw SecurityError("refusing to overwrite existing XAR extraction target: " + target.string());
         }
-        std::filesystem::create_directories(target.parent_path());
         const auto temporary = reserve_file_publish_target(target);
         bool temporary_active = true;
         try {
@@ -836,7 +907,8 @@ OperationStats extract_xar(
             }
             const auto sink = [&](std::span<const unsigned char> bytes) {
                 if (!bytes.empty()) {
-                    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+                    output.write(reinterpret_cast<const char*>(bytes.data()),
+                                 static_cast<std::streamsize>(bytes.size()));
                     if (!output) {
                         throw ArchiveError("failed to write temporary XAR extraction target: " + target.string());
                     }
@@ -852,7 +924,7 @@ OperationStats extract_xar(
             if (!output) {
                 throw ArchiveError("failed to finalize temporary XAR extraction target: " + target.string());
             }
-            commit_verified_file(temporary.file, target, overwrite);
+            commit_verified_file(temporary, target, overwrite);
             cleanup_file_publish_target(temporary);
             temporary_active = false;
         } catch (...) {

@@ -1,15 +1,19 @@
 #include "core/integrity.hpp"
 
+#include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
-#include <fstream>
+#include <cstring>
 #include <iomanip>
+#include <limits>
 #include <span>
 #include <sstream>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -21,6 +25,7 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kIntegrityBufferBytes = 1024U * 1024U;
+constexpr auto kIntegrityTimeLimit = std::chrono::minutes(30);
 
 #ifdef _WIN32
 
@@ -116,66 +121,205 @@ void update_text(Sha256Hasher& hasher, std::string_view text) {
     hasher.update(std::as_bytes(std::span<const char>(text.data(), text.size())));
 }
 
-// Purpose: Return whether a Windows path is a reparse point.
-// Inputs: `path` is an existing filesystem path.
-// Outputs: Returns true for symlinks, junctions, and other reparse-point entries; throws when attributes cannot be
-// read.
-bool is_reparse_point(const std::filesystem::path& path) {
-    const DWORD attributes = GetFileAttributesW(path.wstring().c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES) {
-        throw ArchiveError("cannot inspect integrity target attributes: " + path.string());
+class IntegrityHandle {
+  public:
+    explicit IntegrityHandle(HANDLE handle = INVALID_HANDLE_VALUE) noexcept : handle_(handle) {}
+    IntegrityHandle(const IntegrityHandle&) = delete;
+    IntegrityHandle& operator=(const IntegrityHandle&) = delete;
+
+    // Purpose: Transfer an opened no-follow integrity object without closing it.
+    // Inputs: `other` relinquishes handle ownership.
+    // Outputs: This object owns the handle and `other` becomes invalid.
+    IntegrityHandle(IntegrityHandle&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = INVALID_HANDLE_VALUE;
     }
-    return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U;
+
+    // Purpose: Replace this handle with another move-owned integrity object.
+    // Inputs: `other` relinquishes handle ownership.
+    // Outputs: Closes any previous handle and leaves `other` invalid.
+    IntegrityHandle& operator=(IntegrityHandle&& other) noexcept {
+        if (this != &other) {
+            close();
+            handle_ = other.handle_;
+            other.handle_ = INVALID_HANDLE_VALUE;
+        }
+        return *this;
+    }
+
+    // Purpose: Close one no-follow file or directory handle.
+    // Inputs: Uses the currently owned handle.
+    // Outputs: Releases the OS object exactly once without throwing.
+    ~IntegrityHandle() {
+        close();
+    }
+
+    // Purpose: Expose the exact opened object to metadata and read APIs.
+    // Inputs: None.
+    // Outputs: Returns a borrowed valid handle.
+    [[nodiscard]] HANDLE get() const noexcept {
+        return handle_;
+    }
+
+  private:
+    // Purpose: Close the owned object if valid.
+    // Inputs: Uses `handle_`.
+    // Outputs: Invalidates this owner without throwing.
+    void close() noexcept {
+        if (handle_ != INVALID_HANDLE_VALUE && handle_ != nullptr) {
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+        }
+    }
+
+    HANDLE handle_ = INVALID_HANDLE_VALUE;
+};
+
+struct IntegrityObjectState {
+    FILE_ID_INFO id{};
+    FILE_BASIC_INFO basic{};
+    FILE_STANDARD_INFO standard{};
+    DWORD attributes = 0;
+};
+
+struct IntegrityObject {
+    IntegrityHandle handle;
+    IntegrityObjectState state;
+};
+
+// Purpose: Snapshot identity, size, timestamps, and type from one already-opened filesystem object.
+// Inputs: `handle` was opened without following a reparse point.
+// Outputs: Returns exact handle-bound metadata or throws for reparses, unsupported types, or API failure.
+IntegrityObjectState query_integrity_object_state(HANDLE handle) {
+    IntegrityObjectState state;
+    FILE_ATTRIBUTE_TAG_INFO tag{};
+    if (GetFileInformationByHandleEx(handle, FileIdInfo, &state.id, sizeof(state.id)) == 0 ||
+        GetFileInformationByHandleEx(handle, FileBasicInfo, &state.basic, sizeof(state.basic)) == 0 ||
+        GetFileInformationByHandleEx(handle, FileStandardInfo, &state.standard, sizeof(state.standard)) == 0 ||
+        GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &tag, sizeof(tag)) == 0) {
+        throw ArchiveError("cannot inspect integrity target through its open handle");
+    }
+    state.attributes = tag.FileAttributes;
+    if ((state.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U || state.standard.DeletePending != FALSE ||
+        state.standard.EndOfFile.QuadPart < 0) {
+        throw SecurityError("SHA-256 integrity hashing rejects reparse or deleting objects");
+    }
+    return state;
+}
+
+// Purpose: Open and lock one exact file or directory without following reparses or permitting mutation/delete sharing.
+// Inputs: `path` is an absolute or caller-selected existing filesystem path.
+// Outputs: Returns an owned handle and initial identity snapshot, or throws without traversing an unsafe object.
+IntegrityObject open_integrity_object(const std::filesystem::path& path) {
+    const auto handle =
+        CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw ArchiveError("cannot open and lock integrity target: " + path.string());
+    }
+    IntegrityHandle owner(handle);
+    return IntegrityObject{.handle = std::move(owner), .state = query_integrity_object_state(handle)};
+}
+
+// Purpose: Compare two snapshots from the same open integrity handle.
+// Inputs: `before` and `after` bracket enumeration or payload hashing.
+// Outputs: Returns true only when identity, size, write time, and attributes remained unchanged.
+bool integrity_state_matches(const IntegrityObjectState& before, const IntegrityObjectState& after) {
+    return before.id.VolumeSerialNumber == after.id.VolumeSerialNumber &&
+           std::memcmp(before.id.FileId.Identifier, after.id.FileId.Identifier, sizeof(before.id.FileId.Identifier)) ==
+               0 &&
+           before.standard.EndOfFile.QuadPart == after.standard.EndOfFile.QuadPart &&
+           before.basic.LastWriteTime.QuadPart == after.basic.LastWriteTime.QuadPart &&
+           before.attributes == after.attributes;
 }
 
 #endif
 
-// Purpose: Validate that a hash target exists before hashing is enabled.
-// Inputs: `path` is supplied by the caller.
-// Outputs: Throws `ArchiveError` when the target is missing or cannot be inspected.
-void require_existing_hash_target(const std::filesystem::path& path) {
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    if (ec || !exists) {
-        throw ArchiveError("hash target does not exist: " + path.string());
-    }
-}
-
 #ifdef _WIN32
 
-// Purpose: Convert a path under a directory root to a stable UTF-8 slash-separated key.
-// Inputs: `root` is the hashed directory root and `path` is an entry below it.
-// Outputs: Returns a deterministic relative path string or throws when the path cannot be relativized.
+struct IntegrityBudget {
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+    std::uint64_t entries = 0;
+    std::uint64_t path_bytes = 0;
+    std::uint64_t content_bytes = 0;
+
+    // Purpose: Charge one discovered tree entry and its retained path metadata.
+    // Inputs: `path_size` is the UTF-8 relative key length.
+    // Outputs: Updates cumulative counters or throws at entry, path, or elapsed-time limits.
+    void charge_entry(std::size_t path_size) {
+        if (++entries > kMaxArchiveEntries || path_size > kMaxArchivePathBytes ||
+            path_bytes > kMaxArchivePathMetadataBytes - path_size) {
+            throw ArchiveError("SHA-256 tree metadata exceeds SuperZip resource limits");
+        }
+        path_bytes += path_size;
+        check_time();
+    }
+
+    // Purpose: Charge file bytes before feeding them to the integrity hash.
+    // Inputs: `bytes` is the next successful handle-bound read length.
+    // Outputs: Updates cumulative content work or throws above the global output budget.
+    void charge_content(std::uint64_t bytes) {
+        if (bytes > kMaxExtractedOutputBytes || content_bytes > kMaxExtractedOutputBytes - bytes) {
+            throw ArchiveError("SHA-256 content work exceeds SuperZip resource limits");
+        }
+        content_bytes += bytes;
+        check_time();
+    }
+
+    // Purpose: Enforce the cumulative wall-time bound for one hash operation.
+    // Inputs: Uses the construction timestamp.
+    // Outputs: Throws when hashing exceeds the fixed product time limit.
+    void check_time() const {
+        if (std::chrono::steady_clock::now() - started > kIntegrityTimeLimit) {
+            throw ArchiveError("SHA-256 hashing exceeded the SuperZip time limit");
+        }
+    }
+};
+
+// Purpose: Convert a path under a directory root to a stable lexical UTF-8 slash-separated key.
+// Inputs: `root` is the hashed directory root and `path` is a direct or nested descendant.
+// Outputs: Returns a deterministic relative path without filesystem resolution or throws for escape/size violations.
 std::string relative_integrity_key(const std::filesystem::path& root, const std::filesystem::path& path) {
-    std::error_code ec;
-    const auto relative = std::filesystem::relative(path, root, ec);
-    if (ec || relative.empty()) {
+    const auto relative = path.lexically_normal().lexically_relative(root);
+    if (relative.empty() || relative.is_absolute()) {
         throw ArchiveError("cannot compute relative integrity path: " + path.string());
+    }
+    for (const auto& component : relative) {
+        if (component == L"..") {
+            throw SecurityError("integrity path escaped the selected directory");
+        }
     }
     const auto utf8 = relative.generic_u8string();
     return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
 }
 
-// Purpose: Stream one file into a SHA-256 context.
-// Inputs: `hasher` receives bytes, `path` is an existing regular file, and `result` receives counters.
-// Outputs: Mutates the hash state and result counters; throws on read failures.
-void hash_regular_file_contents(Sha256Hasher& hasher, const std::filesystem::path& path, IntegrityResult& result) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw ArchiveError("cannot open hash target: " + path.string());
+// Purpose: Stream one exact locked regular file handle into a SHA-256 context.
+// Inputs: `hasher` receives bytes, `object` is a no-follow immutable handle, and result/budget receive counters.
+// Outputs: Hashes the complete initial object and throws if identity, size, timestamp, read, or work limits change.
+void hash_regular_file_contents(Sha256Hasher& hasher, IntegrityObject& object, IntegrityResult& result,
+                                IntegrityBudget& budget) {
+    if ((object.state.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+        throw ArchiveError("hash target is not a regular file");
     }
-    std::vector<char> buffer(kIntegrityBufferBytes);
-    while (input) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto got = input.gcount();
-        if (got > 0) {
-            hasher.update(std::as_bytes(std::span<const char>(buffer.data(), static_cast<std::size_t>(got))));
-            result.bytes_hashed += static_cast<std::uint64_t>(got);
+    std::vector<std::byte> buffer(kIntegrityBufferBytes);
+    std::uint64_t read_total = 0;
+    while (true) {
+        DWORD count = 0;
+        if (ReadFile(object.handle.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr) == 0) {
+            throw ArchiveError("cannot read complete hash target through its locked handle");
         }
+        if (count == 0U) {
+            break;
+        }
+        budget.charge_content(count);
+        hasher.update(std::span<const std::byte>(buffer.data(), count));
+        read_total += count;
     }
-    if (input.bad()) {
-        throw ArchiveError("cannot read complete hash target: " + path.string());
+    const auto after = query_integrity_object_state(object.handle.get());
+    if (!integrity_state_matches(object.state, after) ||
+        read_total != static_cast<std::uint64_t>(object.state.standard.EndOfFile.QuadPart)) {
+        throw SecurityError("hash target changed while its integrity digest was computed");
     }
+    result.bytes_hashed += read_total;
 }
 
 // Purpose: Add one unambiguous tree metadata record to the directory hash.
@@ -191,71 +335,103 @@ void update_tree_record(Sha256Hasher& hasher, std::string_view record_type, std:
     update_text(hasher, std::string_view{"\0", 1});
 }
 
-// Purpose: Return directory entries sorted by stable relative path.
-// Inputs: `root` is the tree root and `directory` is the current directory.
-// Outputs: Returns direct children only; throws instead of silently skipping unreadable entries.
-std::vector<std::filesystem::path> sorted_directory_entries(const std::filesystem::path& root,
-                                                            const std::filesystem::path& directory) {
-    std::error_code ec;
-    std::vector<std::filesystem::path> entries;
-    std::filesystem::directory_iterator iterator(directory, ec);
-    if (ec) {
-        throw ArchiveError("cannot enumerate integrity directory: " + directory.string());
-    }
-    const std::filesystem::directory_iterator end;
-    while (iterator != end) {
-        entries.push_back(iterator->path());
-        iterator.increment(ec);
-        if (ec) {
-            throw ArchiveError("cannot enumerate complete integrity directory: " + directory.string());
+struct IntegrityChild {
+    std::filesystem::path path;
+    std::string relative_path;
+};
+
+// Purpose: Enumerate and sort direct children while the exact directory remains locked against replacement.
+// Inputs: `root` and `directory` are normalized paths and `budget` receives cumulative entry/path work.
+// Outputs: Returns deterministic child records or throws on enumeration, fanout, metadata, or time limits.
+std::vector<IntegrityChild> enumerate_integrity_children(const std::filesystem::path& root,
+                                                         const std::filesystem::path& directory,
+                                                         IntegrityBudget& budget) {
+    std::error_code error;
+    std::vector<IntegrityChild> children;
+    for (std::filesystem::directory_iterator iterator(directory, error), end; !error && iterator != end;
+         iterator.increment(error)) {
+        if (children.size() >= kMaxArchiveEntries) {
+            throw ArchiveError("SHA-256 directory fanout exceeds SuperZip resource limits");
         }
+        auto relative = relative_integrity_key(root, iterator->path());
+        budget.charge_entry(relative.size());
+        children.push_back(IntegrityChild{.path = iterator->path(), .relative_path = std::move(relative)});
     }
-    std::ranges::sort(entries, [&root](const auto& left, const auto& right) {
-        return relative_integrity_key(root, left) < relative_integrity_key(root, right);
-    });
-    return entries;
+    if (error) {
+        throw ArchiveError("cannot enumerate complete integrity directory: " + error.message());
+    }
+    std::ranges::sort(children,
+                      [](const auto& left, const auto& right) { return left.relative_path < right.relative_path; });
+    return children;
 }
 
-// Purpose: Recursively hash a directory tree with deterministic entry ordering.
-// Inputs: `hasher` is the mutable context, `root` is the tree root, `directory` is the current directory, and `result`
-// tracks counts. Outputs: Mutates the hash state; rejects reparse points and unsupported entry types.
-void hash_directory_tree(Sha256Hasher& hasher, const std::filesystem::path& root,
-                         const std::filesystem::path& directory, IntegrityResult& result) {
-    for (const auto& entry : sorted_directory_entries(root, directory)) {
-        if (is_reparse_point(entry)) {
-            throw ArchiveError("SHA-256 directory hashing rejects reparse points: " + entry.string());
-        }
-        std::error_code ec;
-        const auto status = std::filesystem::status(entry, ec);
-        if (ec) {
-            throw ArchiveError("cannot inspect integrity directory entry: " + entry.string());
-        }
-        const auto relative = relative_integrity_key(root, entry);
-        if (std::filesystem::is_directory(status)) {
-            update_tree_record(hasher, "D", relative);
-            ++result.directories_hashed;
-            hash_directory_tree(hasher, root, entry, result);
-        } else if (std::filesystem::is_regular_file(status)) {
-            const auto size = std::filesystem::file_size(entry, ec);
-            if (ec) {
-                throw ArchiveError("cannot inspect integrity file size: " + entry.string());
+struct IntegrityDirectoryFrame {
+    std::filesystem::path path;
+    IntegrityObject object;
+    std::vector<IntegrityChild> children;
+    std::size_t next_child = 0;
+    std::uint32_t depth = 0;
+};
+
+// Purpose: Iteratively hash a directory tree while retaining one immutable no-follow handle per active depth.
+// Inputs: `hasher`, normalized `root`, root `object`, `result`, and `budget` describe one bounded operation.
+// Outputs: Mutates the tree digest/counters and rejects reparses, races, unsupported objects, or excess work.
+void hash_directory_tree(Sha256Hasher& hasher, const std::filesystem::path& root, IntegrityObject root_object,
+                         IntegrityResult& result, IntegrityBudget& budget) {
+    std::vector<IntegrityDirectoryFrame> frames;
+    auto root_children = enumerate_integrity_children(root, root, budget);
+    frames.push_back(IntegrityDirectoryFrame{
+        .path = root,
+        .object = std::move(root_object),
+        .children = std::move(root_children),
+        .next_child = 0,
+        .depth = 0,
+    });
+    while (!frames.empty()) {
+        auto& frame = frames.back();
+        if (frame.next_child >= frame.children.size()) {
+            const auto after = query_integrity_object_state(frame.object.handle.get());
+            if (!integrity_state_matches(frame.object.state, after)) {
+                throw SecurityError("integrity directory changed while it was enumerated");
             }
-            update_tree_record(hasher, "F", relative, static_cast<std::uint64_t>(size));
-            hash_regular_file_contents(hasher, entry, result);
-            ++result.files_hashed;
+            frames.pop_back();
+            continue;
+        }
+        const auto child = frame.children[frame.next_child++];
+        auto object = open_integrity_object(child.path);
+        const bool directory = (object.state.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U;
+        if (directory) {
+            const auto depth = frame.depth + 1U;
+            if (depth > kMaxArchivePathComponents) {
+                throw ArchiveError("SHA-256 directory depth exceeds SuperZip resource limits");
+            }
+            update_tree_record(hasher, "D", child.relative_path);
+            ++result.directories_hashed;
+            auto children = enumerate_integrity_children(root, child.path, budget);
+            frames.push_back(IntegrityDirectoryFrame{
+                .path = child.path,
+                .object = std::move(object),
+                .children = std::move(children),
+                .next_child = 0,
+                .depth = depth,
+            });
         } else {
-            throw ArchiveError("SHA-256 directory hashing rejects unsupported entry type: " + entry.string());
+            const auto size = static_cast<std::uint64_t>(object.state.standard.EndOfFile.QuadPart);
+            update_tree_record(hasher, "F", child.relative_path, size);
+            hash_regular_file_contents(hasher, object, result, budget);
+            ++result.files_hashed;
         }
     }
 }
 
 // Purpose: Hash one regular file with standard SHA-256 semantics.
-// Inputs: `path` is an existing regular file.
+// Inputs: `object` is an already-opened regular file locked against mutation and replacement.
 // Outputs: Returns digest and counters; throws when the target cannot be read.
-IntegrityResult hash_regular_file(const std::filesystem::path& path) {
+IntegrityResult hash_regular_file(IntegrityObject object) {
     Sha256Hasher hasher;
+    IntegrityBudget budget;
     IntegrityResult result{.attempted = true, .algorithm = "SHA-256", .target = "file"};
-    hash_regular_file_contents(hasher, path, result);
+    hash_regular_file_contents(hasher, object, result, budget);
     result.files_hashed = 1;
     result.hex_digest = hasher.finish_hex();
     return result;
@@ -264,16 +440,14 @@ IntegrityResult hash_regular_file(const std::filesystem::path& path) {
 // Purpose: Hash one directory tree with SuperZip's deterministic SHA-256 tree contract.
 // Inputs: `path` is an existing directory.
 // Outputs: Returns digest and counters; throws when any entry is unsafe, unreadable, or unsupported.
-IntegrityResult hash_directory(const std::filesystem::path& path) {
-    if (is_reparse_point(path)) {
-        throw ArchiveError("SHA-256 directory hashing rejects reparse points: " + path.string());
-    }
+IntegrityResult hash_directory(const std::filesystem::path& path, IntegrityObject object) {
     Sha256Hasher hasher;
+    IntegrityBudget budget;
     IntegrityResult result{.attempted = true, .algorithm = "SHA-256", .target = "directory"};
     update_text(hasher, "SUPERZIP-DIRECTORY-SHA256");
     update_text(hasher, std::string_view{"\0v1\0", 4});
     result.directories_hashed = 1;
-    hash_directory_tree(hasher, path, path, result);
+    hash_directory_tree(hasher, path, std::move(object), result, budget);
     result.hex_digest = hasher.finish_hex();
     return result;
 }
@@ -289,15 +463,14 @@ IntegrityResult hash_file(const std::filesystem::path& path, IntegrityMode mode)
     if (mode == IntegrityMode::Disabled) {
         return {};
     }
-    require_existing_hash_target(path);
 #ifndef _WIN32
     throw ArchiveError("SHA-256 integrity hashing is currently implemented through Windows CNG");
 #else
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec) || ec) {
+    auto object = open_integrity_object(path);
+    if ((object.state.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
         throw ArchiveError("hash target is not a regular file: " + path.string());
     }
-    return hash_regular_file(path);
+    return hash_regular_file(std::move(object));
 #endif
 }
 
@@ -308,22 +481,19 @@ IntegrityResult hash_path(const std::filesystem::path& path, IntegrityMode mode)
     if (mode == IntegrityMode::Disabled) {
         return {};
     }
-    require_existing_hash_target(path);
 #ifndef _WIN32
     throw ArchiveError("SHA-256 integrity hashing is currently implemented through Windows CNG");
 #else
-    std::error_code ec;
-    const auto status = std::filesystem::status(path, ec);
-    if (ec) {
-        throw ArchiveError("cannot inspect hash target: " + path.string());
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error).lexically_normal();
+    if (error) {
+        throw ArchiveError("cannot resolve hash target: " + error.message());
     }
-    if (std::filesystem::is_regular_file(status)) {
-        return hash_regular_file(path);
+    auto object = open_integrity_object(absolute);
+    if ((object.state.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+        return hash_directory(absolute, std::move(object));
     }
-    if (std::filesystem::is_directory(status)) {
-        return hash_directory(path);
-    }
-    throw ArchiveError("hash target is not a regular file or directory: " + path.string());
+    return hash_regular_file(std::move(object));
 #endif
 }
 

@@ -15,7 +15,7 @@
 
 SuperZip is a Windows x64 archive application built around AMD HIP acceleration.
 Its native `.suzip` format is the GPU-first path. Standard `.zip` support exists
-for compatibility and is handled by the vendored miniz 3.1.1 codebase. `.zipx`
+for compatibility and is handled by the vendored miniz 3.1.2 codebase. `.zipx`
 files are recognized separately and extracted through the same ZIP
 compatibility reader when they use ZIP records and compression methods that the
 vendored backend supports; unsupported ZIPX methods fail explicitly.
@@ -63,7 +63,7 @@ CPIO payloads with supported `none`, Gzip, Bzip2, XZ, and Zstandard compression
 before using the same CPIO path-safety checks. Microsoft Cabinet `.cab` files
 are extracted through a native metadata scanner plus the Windows Cabinet API,
 with all CAB names and sizes validated before FDI output is published. 7-Zip
-`.7z` archives are extracted with a vendored in-process LZMA SDK 26.01 decoder
+`.7z` archives are extracted with a vendored in-process LZMA SDK 26.03 decoder
 and the same pre-write path validation used by other extraction adapters.
 ARJ `.arj` archives are extracted by a native read-only adapter for stored
 regular-file and directory entries; compressed ARJ methods fail explicitly until
@@ -72,7 +72,7 @@ SEA ARC `.arc` and `.ark` archives are extracted by a native read-only adapter
 for unpacked method-1 and method-2 regular files; compressed ARC methods and
 unrelated `.arc` formats fail explicitly.
 LHA/LZH `.lha` and `.lzh` archives are extracted with the vendored in-process
-Lhasa 0.5.0 decoder while SuperZip keeps ownership of path validation and
+Lhasa 0.6.0 decoder while SuperZip keeps ownership of path validation and
 verified output publication.
 Standalone Windows Imaging `.wim` archives are extracted through the bundled
 app-local wimlib 1.14.5 runtime after SuperZip validates all image paths,
@@ -112,6 +112,17 @@ Development systems additionally need:
 - AMD HIP SDK for Windows with `HIP_PATH` pointing at the SDK root.
 
 ## Build
+
+The default CMake generator is Visual Studio 2022. On a fresh build directory,
+VS 2026 can be selected with `-Generator "Visual Studio 18 2026"` and CMake
+4.2 or newer. Do not change generators inside an existing CMake build tree.
+The hosted CPU-only workflow defines test lanes for Windows Server 2022 with VS 2022 and Windows Server
+2025 with VS 2026. These checks do not establish AMD GPU runtime support on
+Windows Server or hardware that was not exercised. The release runtime target
+remains Windows 11 x64 with the build's supported AMD HIP configuration.
+
+References: [CMake VS 2026 generator](https://cmake.org/cmake/help/latest/generator/Visual%20Studio%2018%202026.html)
+and [GitHub runner images](https://github.com/actions/runner-images).
 
 The normal local build is HIP-enabled:
 

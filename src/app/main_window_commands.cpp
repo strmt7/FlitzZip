@@ -12,10 +12,6 @@
 #ifndef DWMWA_BORDER_COLOR
 #define DWMWA_BORDER_COLOR 34
 #endif
-#ifndef MSGFLT_ALLOW
-#define MSGFLT_ALLOW 1
-#endif
-
 namespace superzip::app {
 
 namespace {
@@ -218,9 +214,10 @@ std::vector<std::filesystem::path> selected_files_from_dialog(HWND owner) {
     require_succeeded(dialog->GetResults(items.put()), "File picker result query");
     DWORD count = 0;
     require_succeeded(items->GetCount(&count), "File picker result count");
+    const DWORD bounded_count = std::min(count, static_cast<DWORD>(kMaxQueueItems));
     std::vector<std::filesystem::path> paths;
-    paths.reserve(count);
-    for (DWORD index = 0; index < count; ++index) {
+    paths.reserve(bounded_count);
+    for (DWORD index = 0; index < bounded_count; ++index) {
         ComPtr<IShellItem> item;
         require_succeeded(items->GetItemAt(index, item.put()), "File picker item lookup");
         auto path = shell_item_filesystem_path(item.get());
@@ -358,6 +355,7 @@ void MainWindow::clear_queue() {
         std::lock_guard lock(mutex_);
         state_.queued_paths.clear();
         state_.queued_enabled.clear();
+        reset_security_review_locked();
         state_.selected_queue_index = -1;
         queue_scroll_first_row_ = 0;
         queue_wheel_delta_remainder_ = 0;
@@ -516,7 +514,8 @@ void MainWindow::start_compress() {
             if (defender) {
                 const auto scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
                 append_history_entry("Security", output.filename().string(), output.string(),
-                                     defender_history_status("Defender", scan), !scan.attempted || scan.clean);
+                                     defender_history_status("Defender", scan), defender_scan_passed(scan));
+                require_clean_defender_scan(scan, output);
             }
         },
         "Compressing", OperationKind::Compress);

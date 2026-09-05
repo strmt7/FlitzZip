@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/trusted_runtime.hpp"
+
 #include <cstddef>
 #include <string>
 
@@ -27,6 +29,9 @@ enum class ZstdEndDirective : int {
 };
 
 constexpr int kZstdCompressionLevelParameter = 100;
+constexpr int kZstdCompressionWindowLogParameter = 101;
+constexpr int kZstdCompressionHashLogParameter = 102;
+constexpr int kZstdCompressionChainLogParameter = 103;
 constexpr int kZstdContentChecksumParameter = 201;
 constexpr int kZstdWindowLogMaxParameter = 100;
 
@@ -34,7 +39,7 @@ constexpr int kZstdWindowLogMaxParameter = 100;
 // Inputs: Constructed lazily from `zstd_runtime()` with no caller arguments.
 // Outputs: Provides checked function dispatch to the app-local `libzstd.dll` runtime.
 class ZstdRuntime final {
-public:
+  public:
     ZstdRuntime();
     ~ZstdRuntime();
 
@@ -54,16 +59,14 @@ public:
     // Purpose: Set an integer compression parameter on a live compression context.
     // Inputs: `context` is the target context, `parameter` is a Zstandard parameter id, `value` is the assigned value.
     // Outputs: Returns a Zstandard status code for caller validation.
-    [[nodiscard]] std::size_t set_compression_parameter(ZstdCompressionContext* context, int parameter, int value) const;
+    [[nodiscard]] std::size_t set_compression_parameter(ZstdCompressionContext* context, int parameter,
+                                                        int value) const;
 
     // Purpose: Compress one streaming chunk through the bundled runtime.
     // Inputs: `context`, `output`, `input`, and `directive` mirror the Zstandard stable C ABI.
     // Outputs: Returns remaining work or a Zstandard error code.
-    [[nodiscard]] std::size_t compress_stream(
-        ZstdCompressionContext* context,
-        ZstdOutputBuffer* output,
-        ZstdInputBuffer* input,
-        ZstdEndDirective directive) const;
+    [[nodiscard]] std::size_t compress_stream(ZstdCompressionContext* context, ZstdOutputBuffer* output,
+                                              ZstdInputBuffer* input, ZstdEndDirective directive) const;
 
     // Purpose: Create a decompression stream owned by the caller.
     // Inputs: None.
@@ -78,15 +81,14 @@ public:
     // Purpose: Set an integer decompression parameter on a live decompression stream.
     // Inputs: `stream` is the target stream, `parameter` is a Zstandard parameter id, `value` is the assigned value.
     // Outputs: Returns a Zstandard status code for caller validation.
-    [[nodiscard]] std::size_t set_decompression_parameter(ZstdDecompressionStream* stream, int parameter, int value) const;
+    [[nodiscard]] std::size_t set_decompression_parameter(ZstdDecompressionStream* stream, int parameter,
+                                                          int value) const;
 
     // Purpose: Decompress one streaming chunk through the bundled runtime.
     // Inputs: `stream`, `output`, and `input` mirror the Zstandard stable C ABI.
     // Outputs: Returns remaining frame work or a Zstandard error code.
-    [[nodiscard]] std::size_t decompress_stream(
-        ZstdDecompressionStream* stream,
-        ZstdOutputBuffer* output,
-        ZstdInputBuffer* input) const;
+    [[nodiscard]] std::size_t decompress_stream(ZstdDecompressionStream* stream, ZstdOutputBuffer* output,
+                                                ZstdInputBuffer* input) const;
 
     // Purpose: Test whether a runtime status code represents a Zstandard error.
     // Inputs: `code` is a value returned by a Zstandard runtime function.
@@ -98,11 +100,12 @@ public:
     // Outputs: Returns the error name reported by the bundled runtime.
     [[nodiscard]] std::string error_name(std::size_t code) const;
 
-private:
+  private:
     using CreateCompressionContextFn = ZstdCompressionContext* (*)();
     using FreeCompressionContextFn = std::size_t (*)(ZstdCompressionContext*);
     using SetCompressionParameterFn = std::size_t (*)(ZstdCompressionContext*, int, int);
-    using CompressStreamFn = std::size_t (*)(ZstdCompressionContext*, ZstdOutputBuffer*, ZstdInputBuffer*, ZstdEndDirective);
+    using CompressStreamFn = std::size_t (*)(ZstdCompressionContext*, ZstdOutputBuffer*, ZstdInputBuffer*,
+                                             ZstdEndDirective);
     using CreateDecompressionStreamFn = ZstdDecompressionStream* (*)();
     using FreeDecompressionStreamFn = std::size_t (*)(ZstdDecompressionStream*);
     using SetDecompressionParameterFn = std::size_t (*)(ZstdDecompressionStream*, int, int);
@@ -111,7 +114,7 @@ private:
     using GetErrorNameFn = const char* (*)(std::size_t);
     using VersionNumberFn = unsigned int (*)();
 
-    void* module_ = nullptr;
+    TrustedRuntimeModule module_;
     CreateCompressionContextFn create_compression_context_ = nullptr;
     FreeCompressionContextFn free_compression_context_ = nullptr;
     SetCompressionParameterFn set_compression_parameter_ = nullptr;

@@ -1,10 +1,16 @@
 #include "test_util.hpp"
 #include "core/archive_format.hpp"
+#include "core/resource_limits.hpp"
 #include "zip/zip_adapter.hpp"
 #include "core/result.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 #include <windows.h>
@@ -42,6 +48,89 @@ struct StoredZipEntry {
     std::string payload;
 };
 
+struct VirtualZipArchive {
+    std::uint64_t archive_size = 0;
+    std::uint64_t eocd_offset = 0;
+    std::array<unsigned char, 22> eocd{};
+};
+
+struct BoundedZipAllocator {
+    std::size_t largest_request = 0U;
+    std::size_t allocation_limit = 1024U * 1024U;
+};
+
+// Purpose: Keep a hostile ZIP regression from allocating substantial memory if the production precheck regresses.
+// Inputs: `opaque` is a BoundedZipAllocator and `items` times `size` is the requested allocation.
+// Outputs: Returns malloc storage only within the test cap and records every bounded or rejected request.
+void* bounded_zip_alloc(void* opaque, std::size_t items, std::size_t size) {
+    auto& allocator = *static_cast<BoundedZipAllocator*>(opaque);
+    if (size != 0U && items > std::numeric_limits<std::size_t>::max() / size) {
+        allocator.largest_request = std::numeric_limits<std::size_t>::max();
+        return nullptr;
+    }
+    const std::size_t bytes = items * size;
+    allocator.largest_request = std::max(allocator.largest_request, bytes);
+    return bytes <= allocator.allocation_limit ? std::malloc(bytes) : nullptr;
+}
+
+// Purpose: Resize miniz test storage while preserving the hostile-regression allocation ceiling.
+// Inputs: `opaque` is a BoundedZipAllocator, `address` is realloc-compatible storage, and `items` times `size` is
+// requested. Outputs: Returns resized storage only within the test cap and records rejected oversized requests.
+void* bounded_zip_realloc(void* opaque, void* address, std::size_t items, std::size_t size) {
+    auto& allocator = *static_cast<BoundedZipAllocator*>(opaque);
+    if (size != 0U && items > std::numeric_limits<std::size_t>::max() / size) {
+        allocator.largest_request = std::numeric_limits<std::size_t>::max();
+        return nullptr;
+    }
+    const std::size_t bytes = items * size;
+    allocator.largest_request = std::max(allocator.largest_request, bytes);
+    return bytes <= allocator.allocation_limit ? std::realloc(address, bytes) : nullptr;
+}
+
+// Purpose: Release storage returned by the bounded ZIP test allocator.
+// Inputs: `opaque` is unused and `address` is malloc-compatible storage.
+// Outputs: Releases `address` through free.
+void bounded_zip_free(void*, void* address) {
+    std::free(address);
+}
+
+// Purpose: Serve a sparse synthetic ZIP view without allocating or writing its declared central directory.
+// Inputs: `opaque` is a VirtualZipArchive; `file_offset`, `buffer`, and `size` describe one miniz read.
+// Outputs: Returns `size` after copying overlapping EOCD bytes into an otherwise zero-filled response, or zero OOB.
+std::size_t read_virtual_zip(void* opaque, mz_uint64 file_offset, void* buffer, std::size_t size) {
+    const auto& archive = *static_cast<const VirtualZipArchive*>(opaque);
+    if (file_offset > archive.archive_size || size > archive.archive_size - file_offset) {
+        return 0U;
+    }
+    std::memset(buffer, 0, size);
+    const std::uint64_t request_end = file_offset + size;
+    const std::uint64_t eocd_end = archive.eocd_offset + archive.eocd.size();
+    const std::uint64_t overlap_start = std::max(file_offset, archive.eocd_offset);
+    const std::uint64_t overlap_end = std::min(request_end, eocd_end);
+    if (overlap_start < overlap_end) {
+        std::memcpy(static_cast<unsigned char*>(buffer) + (overlap_start - file_offset),
+                    archive.eocd.data() + (overlap_start - archive.eocd_offset), overlap_end - overlap_start);
+    }
+    return size;
+}
+
+// Purpose: Write a little-endian integer into a synthetic ZIP record.
+// Inputs: `record` is a fixed byte array, `offset` is in bounds, and `value` is the encoded integer.
+// Outputs: Mutates four bytes at `offset`.
+void set_zip_u32(std::array<unsigned char, 22>& record, std::size_t offset, std::uint32_t value) {
+    for (std::size_t index = 0; index < 4U; ++index) {
+        record[offset + index] = static_cast<unsigned char>((value >> (index * 8U)) & 0xFFU);
+    }
+}
+
+// Purpose: Write a little-endian integer into a synthetic ZIP record.
+// Inputs: `record` is a fixed byte array, `offset` is in bounds, and `value` is the encoded integer.
+// Outputs: Mutates two bytes at `offset`.
+void set_zip_u16(std::array<unsigned char, 22>& record, std::size_t offset, std::uint16_t value) {
+    record[offset] = static_cast<unsigned char>(value & 0xFFU);
+    record[offset + 1U] = static_cast<unsigned char>((value >> 8U) & 0xFFU);
+}
+
 // Purpose: Create a minimal stored ZIP with arbitrary raw entry names for hostile metadata tests.
 // Inputs: `archive` is the output ZIP path and `entries` are written verbatim as stored file entries.
 // Outputs: Writes a ZIP archive or throws through stream failure in the test body.
@@ -55,7 +144,8 @@ void write_stored_zip_with_entries(const std::filesystem::path& archive, const s
     std::vector<CentralEntry> central_entries;
     central_entries.reserve(entries.size());
     for (const auto& entry : entries) {
-        const auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const unsigned char*>(entry.payload.data()), entry.payload.size()));
+        const auto crc = static_cast<std::uint32_t>(mz_crc32(
+            MZ_CRC32_INIT, reinterpret_cast<const unsigned char*>(entry.payload.data()), entry.payload.size()));
         const auto name_size = static_cast<std::uint16_t>(entry.name.size());
         const auto payload_size = static_cast<std::uint32_t>(entry.payload.size());
         const auto local_offset = static_cast<std::uint32_t>(out.tellp());
@@ -118,7 +208,8 @@ void write_stored_zip_with_entries(const std::filesystem::path& archive, const s
 // Purpose: Create a minimal stored ZIP with one arbitrary raw entry name for hostile metadata tests.
 // Inputs: `archive` is the output ZIP path, `entry_name` is written verbatim, and `payload` is stored uncompressed.
 // Outputs: Writes a one-entry ZIP archive or throws through stream failure in the test body.
-void write_stored_zip_with_name(const std::filesystem::path& archive, const std::string& entry_name, const std::string& payload) {
+void write_stored_zip_with_name(const std::filesystem::path& archive, const std::string& entry_name,
+                                const std::string& payload) {
     write_stored_zip_with_entries(archive, {StoredZipEntry{.name = entry_name, .payload = payload}});
 }
 
@@ -171,9 +262,9 @@ TEST_CASE(zip_compat_roundtrip) {
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Verify `.zipx` files route through the ZIP-compatible reader without being treated as plain `.zip` in detection.
-// Inputs: A standard ZIP archive copied to a `.zipx` path.
-// Outputs: Throws if ZIPX detection or extraction regresses.
+// Purpose: Verify `.zipx` files route through the ZIP-compatible reader without being treated as plain `.zip` in
+// detection. Inputs: A standard ZIP archive copied to a `.zipx` path. Outputs: Throws if ZIPX detection or extraction
+// regresses.
 TEST_CASE(zipx_extracts_zip_compatible_records) {
     const auto root = test_temp_dir("zipx-compatible");
     const auto input = root / "input";
@@ -220,14 +311,8 @@ TEST_CASE(zip_extract_rejects_traversal_entry) {
 // Outputs: Throws if extraction accepts any unsafe ZIP entry name.
 TEST_CASE(zip_extract_rejects_windows_unsafe_entries) {
     const std::vector<std::string> names = {
-        "/absolute.txt",
-        "\\absolute.txt",
-        "C:drive.txt",
-        "dir/CON.txt",
-        "dir/file.",
-        "dir/file ",
-        "dir/a?b.txt",
-        std::string("dir/control") + static_cast<char>(0x1F) + ".txt",
+        "/absolute.txt", "\\absolute.txt", "C:drive.txt", "dir/CON.txt",
+        "dir/file.",     "dir/file ",      "dir/a?b.txt", std::string("dir/control") + static_cast<char>(0x1F) + ".txt",
     };
     for (const auto& name : names) {
         const auto root = test_temp_dir("zip-unsafe-entry");
@@ -251,12 +336,10 @@ TEST_CASE(zip_extract_rejects_windows_unsafe_entries) {
 TEST_CASE(zip_extract_rejects_duplicate_normalized_entry_paths) {
     const auto root = test_temp_dir("zip-duplicate-paths");
     const auto archive = root / "duplicate.zip";
-    write_stored_zip_with_entries(
-        archive,
-        {
-            StoredZipEntry{.name = "dir/file.txt", .payload = "first"},
-            StoredZipEntry{.name = "dir//file.txt", .payload = "second"},
-        });
+    write_stored_zip_with_entries(archive, {
+                                               StoredZipEntry{.name = "dir/file.txt", .payload = "first"},
+                                               StoredZipEntry{.name = "dir//file.txt", .payload = "second"},
+                                           });
 
     bool rejected = false;
     try {
@@ -275,12 +358,10 @@ TEST_CASE(zip_extract_rejects_duplicate_normalized_entry_paths) {
 TEST_CASE(zip_extract_rejects_file_entry_with_child_entry) {
     const auto root = test_temp_dir("zip-file-child-conflict");
     const auto archive = root / "conflict.zip";
-    write_stored_zip_with_entries(
-        archive,
-        {
-            StoredZipEntry{.name = "dir", .payload = "parent"},
-            StoredZipEntry{.name = "dir/child.txt", .payload = "child"},
-        });
+    write_stored_zip_with_entries(archive, {
+                                               StoredZipEntry{.name = "dir", .payload = "parent"},
+                                               StoredZipEntry{.name = "dir/child.txt", .payload = "child"},
+                                           });
 
     bool rejected = false;
     try {
@@ -359,11 +440,74 @@ TEST_CASE(zip_extract_removes_partial_file_after_crc_failure) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(overwrite_output), static_cast<std::uint64_t>(1));
-    REQUIRE_EQ(std::filesystem::file_size(overwrite_output / entry_name), static_cast<std::uintmax_t>(preserved_text.size()));
+    REQUIRE_EQ(std::filesystem::file_size(overwrite_output / entry_name),
+               static_cast<std::uintmax_t>(preserved_text.size()));
     std::ifstream preserved(overwrite_output / entry_name, std::ios::binary);
     std::string actual(preserved_text.size(), '\0');
     preserved.read(actual.data(), static_cast<std::streamsize>(actual.size()));
     preserved.close();
     REQUIRE_EQ(actual, preserved_text);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify malformed PNG dimensions fail before arithmetic or image access.
+// Inputs: Small backing storage and invalid dimensions, channel counts, or null pointers.
+// Outputs: Throws if an invalid request allocates output or leaves a nonzero output size.
+TEST_CASE(miniz_png_rejects_invalid_dimensions_before_reading_pixels) {
+    const std::array<unsigned char, 4> pixel{0, 1, 2, 255};
+    const std::array<std::array<int, 3>, 9> invalid{{
+        {0, 1, 4},
+        {-1, 1, 4},
+        {1, 0, 4},
+        {1, 1, 0},
+        {1, 1, 5},
+        {65536, 1, 4},
+        {1, 65536, 4},
+        {65535, 65535, 4},
+        {std::numeric_limits<int>::max(), 1, 4},
+    }};
+    for (const auto& dimensions : invalid) {
+        std::size_t size = 123;
+        void* output = tdefl_write_image_to_png_file_in_memory_ex(pixel.data(), dimensions[0], dimensions[1],
+                                                                  dimensions[2], &size, 6, MZ_FALSE);
+        mz_free(output);
+        REQUIRE_TRUE(output == nullptr);
+        REQUIRE_EQ(size, static_cast<std::size_t>(0));
+    }
+    std::size_t size = 123;
+    REQUIRE_TRUE(tdefl_write_image_to_png_file_in_memory_ex(nullptr, 1, 1, 4, &size, 6, MZ_FALSE) == nullptr);
+    REQUIRE_EQ(size, static_cast<std::size_t>(0));
+    REQUIRE_TRUE(tdefl_write_image_to_png_file_in_memory_ex(pixel.data(), 1, 1, 4, nullptr, 6, MZ_FALSE) == nullptr);
+    void* output = tdefl_write_image_to_png_file_in_memory_ex(pixel.data(), 1, 1, 4, &size, 6, MZ_FALSE);
+    const bool encoded = output != nullptr && size > 8;
+    mz_free(output);
+    REQUIRE_TRUE(encoded);
+}
+
+// Purpose: Verify miniz rejects oversized central-directory metadata before attempting the declared allocation.
+// Inputs: A sparse callback-backed ZIP declaring one entry and a central directory one byte over product policy.
+// Outputs: Throws if reader initialization succeeds or reports any error other than the metadata-size limit.
+TEST_CASE(zip_reader_rejects_central_directory_over_metadata_budget_before_allocation) {
+    VirtualZipArchive archive;
+    const auto central_size = static_cast<std::uint32_t>(superzip::kMaxArchiveIndexBytes + 1U);
+    archive.eocd_offset = central_size;
+    archive.archive_size = archive.eocd_offset + archive.eocd.size();
+    set_zip_u32(archive.eocd, 0U, 0x06054B50U);
+    set_zip_u16(archive.eocd, 8U, 1U);
+    set_zip_u16(archive.eocd, 10U, 1U);
+    set_zip_u32(archive.eocd, 12U, central_size);
+    set_zip_u32(archive.eocd, 16U, 0U);
+
+    mz_zip_archive zip{};
+    BoundedZipAllocator allocator;
+    zip.m_pRead = read_virtual_zip;
+    zip.m_pIO_opaque = &archive;
+    zip.m_pAlloc = bounded_zip_alloc;
+    zip.m_pRealloc = bounded_zip_realloc;
+    zip.m_pFree = bounded_zip_free;
+    zip.m_pAlloc_opaque = &allocator;
+
+    REQUIRE_TRUE(mz_zip_reader_init(&zip, archive.archive_size, 0U) == 0);
+    REQUIRE_EQ(zip.m_last_error, MZ_ZIP_UNSUPPORTED_CDIR_SIZE);
+    REQUIRE_TRUE(allocator.largest_request <= allocator.allocation_limit);
 }

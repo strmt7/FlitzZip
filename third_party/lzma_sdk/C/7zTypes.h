@@ -572,6 +572,7 @@ struct ISzAlloc
 
 
 #define Z7_ZERO_ARRAY(a)  Z7_ByteFill((Byte *)(void *)(a), 0, sizeof(a))
+#define Z7_memset_0_VAR(a)  Z7_ByteFill((Byte *)(void *)&(a), 0, sizeof(a))
 
 #ifndef Z7_ARRAY_SIZE
 #define Z7_ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))

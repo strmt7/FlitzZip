@@ -10,6 +10,8 @@
 #include "core/checksum.hpp"
 #include "cpio/cpio_adapter.hpp"
 #include "core/defender_scan.hpp"
+#include "core/file_manifest.hpp"
+#include "core/file_publish.hpp"
 #include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_adapter.hpp"
@@ -195,8 +197,8 @@ void print_defender_scan(const std::filesystem::path& path, bool block_if_detect
     std::cout << "defender_clean=" << (scan.clean ? "true" : "false") << "\n";
     std::cout << "defender_timed_out=" << (scan.timed_out ? "true" : "false") << "\n";
     std::cout << "defender_exit_code=" << scan.exit_code << "\n";
-    if (block_if_detected && scan.attempted && !scan.clean) {
-        throw superzip::SecurityError("Microsoft Defender did not report the target as clean: " + path.string());
+    if (block_if_detected) {
+        superzip::require_clean_defender_scan(scan, path);
     }
 }
 
@@ -512,9 +514,6 @@ int run_compress_command(const std::vector<std::string>& args) {
     if (command.sha256) {
         print_integrity_hash(command.output);
     }
-    if (command.defender_scan) {
-        print_defender_scan(command.output, false);
-    }
     return 0;
 }
 
@@ -709,7 +708,7 @@ superzip::OperationStats extract_by_format(superzip::ArchiveFormat archive_forma
 // Inputs: `args` is the full argument vector beginning with `extract`.
 // Outputs: Returns a process exit code and writes operation telemetry to stdout.
 int run_extract_command(const std::vector<std::string>& args) {
-    const auto command = parse_extract_command(args);
+    auto command = parse_extract_command(args);
     if (command.output.empty() || command.archive.empty()) {
         usage();
         return 2;
@@ -717,20 +716,35 @@ int run_extract_command(const std::vector<std::string>& args) {
     if (command.require_gpu && command.force_cpu) {
         throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
+    const auto archive_source = superzip::pin_source_file(command.archive);
+    command.archive = archive_source.path();
     if (command.sha256) {
-        print_integrity_hash(command.archive);
+        print_integrity_hash(archive_source.path());
     }
     if (command.defender_scan) {
-        print_defender_scan(command.archive, true);
+        print_defender_scan(archive_source.path(), true);
     }
-    const auto archive_format = resolve_cli_archive_format(command.format, command.archive, true);
+    const auto archive_format = resolve_cli_archive_format(command.format, archive_source.path(), true);
     reject_unsupported_cli_format(archive_format, "extract");
-    print_stats(extract_by_format(archive_format, command));
+    if (command.defender_scan) {
+        superzip::DirectoryPublishTransaction quarantine(command.output);
+        const auto final_output = command.output;
+        const auto overwrite = command.overwrite;
+        command.output = quarantine.staging_directory();
+        command.overwrite = false;
+        const auto stats = extract_by_format(archive_format, command);
+        print_defender_scan(quarantine.staging_directory(), true);
+        quarantine.publish(overwrite);
+        command.output = final_output;
+        print_stats(stats);
+    } else {
+        print_stats(extract_by_format(archive_format, command));
+    }
     if (command.sha256) {
         print_integrity_hash(command.output, "output_integrity");
     }
     if (command.defender_scan) {
-        print_defender_scan(command.output, false);
+        print_defender_scan(command.output, true);
     }
     return 0;
 }
@@ -841,7 +855,7 @@ int run_verify_command(const std::vector<std::string>& args) {
         print_integrity_hash(command.archive);
     }
     if (command.defender_scan) {
-        print_defender_scan(command.archive, false);
+        print_defender_scan(command.archive, true);
     }
     return 0;
 }

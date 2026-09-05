@@ -12,10 +12,6 @@
 #ifndef DWMWA_BORDER_COLOR
 #define DWMWA_BORDER_COLOR 34
 #endif
-#ifndef MSGFLT_ALLOW
-#define MSGFLT_ALLOW 1
-#endif
-
 namespace superzip::app {
 
 class QueueDropTarget final : public IDropTarget {
@@ -254,6 +250,7 @@ bool MainWindow::queue_drop_target_contains(POINT point) {
 // Outputs: Returns true and mutates queue state when the drop is accepted; otherwise reports rejection.
 bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, POINT point) {
     set_queue_drop_highlight(false);
+    const bool local_paths_only = std::ranges::all_of(paths, is_supported_local_drop_path);
     LogSeverity severity = LogSeverity::Debug;
     std::string message;
     bool may_append = false;
@@ -269,6 +266,14 @@ bool MainWindow::accept_dropped_paths(std::vector<std::filesystem::path> paths, 
             state_.status = "No drop items received";
             severity = LogSeverity::Warning;
             message = "Shell drop did not contain usable paths";
+        } else if (!local_paths_only) {
+            state_.status = "Only local absolute files and folders can be dropped";
+            severity = LogSeverity::Warning;
+            message = "Shell drop rejected a remote, device, relative, or malformed path";
+        } else if (state_.queued_paths.size() >= kMaxQueueItems) {
+            state_.status = "Queue limit reached (4,096 items)";
+            severity = LogSeverity::Warning;
+            message = "Shell drop rejected because the Queue is full";
         } else {
             may_append = true;
         }
@@ -302,27 +307,6 @@ void MainWindow::set_queue_drop_highlight(bool active) {
     request_repaint();
 }
 
-// Purpose: Allow shell file-drop messages through UIPI for elevated windows.
-// Inputs: None; applies only to the main HWND and only when the process is elevated.
-// Outputs: Returns true when no extra filter is needed or the narrow filter was applied.
-bool MainWindow::enable_elevated_drag_drop_messages() const {
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-        return true;
-    }
-    TOKEN_ELEVATION elevation{};
-    DWORD returned = 0;
-    const BOOL queried = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &returned) != FALSE;
-    CloseHandle(token);
-    if (!queried || elevation.TokenIsElevated == 0) {
-        return true;
-    }
-    const BOOL drop_allowed = ChangeWindowMessageFilterEx(hwnd_, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
-    const BOOL copy_allowed = ChangeWindowMessageFilterEx(hwnd_, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
-    const BOOL query_allowed = ChangeWindowMessageFilterEx(hwnd_, kDragQueryMessage, MSGFLT_ALLOW, nullptr);
-    return drop_allowed != FALSE && copy_allowed != FALSE && query_allowed != FALSE;
-}
-
 // Purpose: Initialize drag/drop, performance sampling, and smoke timers during window creation.
 // Inputs: None.
 // Outputs: Arms timers and returns the handled Win32 result.
@@ -340,15 +324,9 @@ LRESULT MainWindow::handle_create() {
     } else {
         append_log_entry(LogSeverity::Warning, "OLE Queue drag/drop initialization failed");
     }
-    if (!enable_elevated_drag_drop_messages()) {
-        {
-            std::lock_guard lock(mutex_);
-            state_.status = "Elevated drag/drop filter unavailable";
-        }
-        append_log_entry(LogSeverity::Warning, "Elevated shell drop message filter could not be applied");
-    } else {
-        append_log_entry(LogSeverity::Information, "Application initialized");
-    }
+    // Elevated windows intentionally keep UIPI defaults. OLE remains the only
+    // interactive Queue drop surface and lower-integrity message injection fails closed.
+    append_log_entry(LogSeverity::Information, "Application initialized");
     initialize_performance_monitor();
     update_performance_sample();
     reset_performance_timer(state_.performance_update_seconds);

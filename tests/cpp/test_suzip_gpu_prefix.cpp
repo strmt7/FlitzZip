@@ -1,4 +1,5 @@
 #include "core/archive.hpp"
+#include "core/checksum.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
 #include "gpu/gpu_codec.hpp"
@@ -7,6 +8,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
+#include <array>
 
 namespace {
 
@@ -133,6 +136,48 @@ PrefixBlockLocation find_first_prefix_block(const superzip::ArchiveIndex& index)
 }
 
 }  // namespace
+
+// Purpose: Verify HIP prefix decoding covers single segments, uneven segment counts, and partial final segments.
+// Inputs: RAM-only deterministic static/adaptive inputs with one through 129 segments.
+// Outputs: Requires byte-identical CPU/HIP decoding and matching GPU CRC without changing encoded format semantics.
+TEST_CASE(suzip_gpu_prefix_segment_boundaries_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::array<std::size_t, 5> segment_counts{1U, 31U, 127U, 128U, 129U};
+    for (const auto segments : segment_counts) {
+        for (const int level : {5, 9}) {
+            const auto tail_trim = segments == 1U ? 0U : 13U;
+            std::vector<std::byte> input(segments * superzip::kGpuPrefixSegmentBytes - tail_trim);
+            std::uint32_t random = 0xC001D00DU;
+            for (auto& byte : input) {
+                random = random * 1664525U + 1013904223U;
+                const auto symbol = (random >> 16U) & 3U;
+                byte = static_cast<std::byte>(level == 9 ? symbol + 201U : symbol);
+            }
+            superzip::GpuCodecOptions options;
+            options.require_gpu = true;
+            options.compression_level = level;
+            options.block_size = 1024U * 1024U;
+            const auto encoded = superzip::encode_chunk(input, options);
+            const auto expected_kind =
+                level == 9 ? superzip::BlockKind::GpuAdaptivePrefix : superzip::BlockKind::GpuPrefix;
+            REQUIRE_TRUE(std::ranges::any_of(
+                encoded.blocks, [expected_kind](const auto& block) { return block.kind == expected_kind; }));
+            std::vector<std::byte> decoded(input.size(), std::byte{0xAA});
+            REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+            REQUIRE_TRUE(decoded == input);
+            const auto crc = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, input.size(), options);
+            REQUIRE_TRUE(crc.gpu_used);
+            REQUIRE_EQ(crc.crc32, superzip::crc32(input));
+            options.require_gpu = false;
+            options.force_cpu = true;
+            std::fill(decoded.begin(), decoded.end(), std::byte{0xBB});
+            REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+            REQUIRE_TRUE(decoded == input);
+        }
+    }
+}
 
 // Purpose: Verify required-HIP compression can emit a real GPU prefix-compressed native block.
 // Inputs: A low-byte payload that is not fill or periodic and is compressed with `gpu_required`.

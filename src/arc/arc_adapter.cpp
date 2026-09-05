@@ -53,19 +53,16 @@ struct ArcScanResult {
 // Inputs: `bytes` points to at least two bounded metadata bytes.
 // Outputs: Returns the decoded unsigned integer.
 std::uint16_t read_le16(const unsigned char* bytes) {
-    return static_cast<std::uint16_t>(
-        static_cast<std::uint16_t>(bytes[0]) |
-        static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[1]) << 8U));
+    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[0]) |
+                                      static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[1]) << 8U));
 }
 
 // Purpose: Decode a little-endian 32-bit ARC field.
 // Inputs: `bytes` points to at least four bounded metadata bytes.
 // Outputs: Returns the decoded unsigned integer.
 std::uint32_t read_le32(const unsigned char* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24U);
+    return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
 }
 
 // Purpose: Add two ARC byte counters while detecting unsigned wraparound.
@@ -103,8 +100,8 @@ void seek_arc_offset(std::ifstream& input, std::uint64_t offset, const char* lab
 }
 
 // Purpose: Validate that a declared ARC payload range is inside the archive file.
-// Inputs: `payload_offset` is the absolute payload start, `payload_size` is the declared compressed size, and `archive_size` is the file length.
-// Outputs: Throws when the declared payload range is outside the archive.
+// Inputs: `payload_offset` is the absolute payload start, `payload_size` is the declared compressed size, and
+// `archive_size` is the file length. Outputs: Throws when the declared payload range is outside the archive.
 void validate_payload_extent(std::uint64_t payload_offset, std::uint64_t payload_size, std::uint64_t archive_size) {
     const auto payload_end = checked_add_arc_bytes(payload_offset, payload_size, "ARC payload extent overflows");
     if (payload_end > archive_size) {
@@ -228,7 +225,8 @@ void validate_unpacked_payload(std::ifstream& input, const ArcHeader& header, st
 
 // Purpose: Scan a full SEA ARC archive and validate metadata plus unpacked payload CRCs before extraction.
 // Inputs: `archive_path` is the ARC/ARK file to parse.
-// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods, duplicates, or corrupt stored data.
+// Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, unsupported methods,
+// duplicates, or corrupt stored data.
 ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
     const auto archive_size = std::filesystem::file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
@@ -254,10 +252,8 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
             throw ArchiveError("failed to read ARC payload offset");
         }
         validate_unpacked_payload(input, header, archive_size);
-        result.total_file_bytes = checked_add_arc_bytes(
-            result.total_file_bytes,
-            header.original_size,
-            "ARC extracted byte count overflows");
+        result.total_file_bytes =
+            checked_add_arc_bytes(result.total_file_bytes, header.original_size, "ARC extracted byte count overflows");
         if (result.total_file_bytes > kMaxPipelineMemoryBytes) {
             throw ArchiveError("ARC extracted payload exceeds SuperZip resource limits");
         }
@@ -282,15 +278,12 @@ ArcScanResult scan_arc(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Publish one validated unpacked ARC file payload.
-// Inputs: `input` is an archive stream, `entry` is trusted scan metadata, `target` is the destination file, and `overwrite` controls replacement.
-// Outputs: Writes and atomically publishes the file, or throws without leaving a final partial output.
-void extract_arc_file_payload(
-    std::ifstream& input,
-    const ArcEntryMetadata& entry,
-    const std::filesystem::path& target,
-    bool overwrite) {
+// Inputs: `input` is an archive stream, `entry` is trusted scan metadata, `target` is the destination file, and
+// `overwrite` controls replacement. Outputs: Writes and atomically publishes the file, or throws without leaving a
+// final partial output.
+void extract_arc_file_payload(std::ifstream& input, const ArcEntryMetadata& entry, const std::filesystem::path& target,
+                              bool overwrite) {
     seek_arc_offset(input, entry.payload_offset, "ARC payload");
-    std::filesystem::create_directories(target.parent_path());
     auto temporary_target = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
@@ -317,7 +310,7 @@ void extract_arc_file_payload(
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
         cleanup_file_publish_target(temporary_target);
@@ -327,14 +320,14 @@ void extract_arc_file_payload(
 
 }  // namespace
 
-OperationStats extract_arc(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract a bounded SEA ARC/ARK archive with second-pass CRC validation and verified publication.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry or throws before retaining any unverified file.
+OperationStats extract_arc(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto scanned = scan_arc(archive_path);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {

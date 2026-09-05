@@ -105,6 +105,7 @@ bool MainWindow::toggle_bool_setting(bool UiState::* member, ToggleId id) {
         previous = state_.*member;
         state_.*member = !previous;
         next = state_.*member;
+        reset_security_review_locked();
     }
     start_toggle_animation(id, previous, next);
     request_repaint();
@@ -119,6 +120,7 @@ bool MainWindow::checkbox_bool_setting(bool UiState::* member, const char* statu
         std::lock_guard lock(mutex_);
         state_.*member = !(state_.*member);
         state_.status = status;
+        reset_security_review_locked();
     }
     request_repaint();
     return true;
@@ -141,36 +143,60 @@ void MainWindow::normalize_queue_selection_locked() {
     }
 }
 
+// Purpose: Invalidate result states when the selected archive set or verification policy changes.
+// Inputs: None; caller holds `mutex_`.
+// Outputs: Resets every Security-page result to NotRun.
+void MainWindow::reset_security_review_locked() {
+    state_.security_archive_paths = SecurityCheckState::NotRun;
+    state_.security_payload_integrity = SecurityCheckState::NotRun;
+    state_.security_sha256 = SecurityCheckState::NotRun;
+    state_.security_defender = SecurityCheckState::NotRun;
+}
+
 // Purpose: Append filesystem paths to the Queue through one shared mutation path.
 // Inputs: `paths` are selected or dropped filesystem paths and `status` is the visible status after success.
 // Outputs: Returns the number of nonempty paths appended, updates selection/scroll state, and repaints on success.
 std::size_t MainWindow::append_queued_paths(std::vector<std::filesystem::path> paths, std::string status) {
     std::size_t added = 0;
+    bool capacity_reached = false;
     {
         std::lock_guard lock(mutex_);
-        const bool was_empty = state_.queued_paths.empty();
-        state_.queued_paths.reserve(state_.queued_paths.size() + paths.size());
-        state_.queued_enabled.reserve(state_.queued_enabled.size() + paths.size());
-        for (auto& path : paths) {
-            if (path.empty()) {
-                continue;
+        if (state_.queued_paths.size() >= kMaxQueueItems) {
+            state_.status = "Queue limit reached (4,096 items)";
+            capacity_reached = true;
+        } else {
+            const bool was_empty = state_.queued_paths.empty();
+            const std::size_t remaining = kMaxQueueItems - state_.queued_paths.size();
+            const std::size_t reserve_count = std::min(remaining, paths.size());
+            state_.queued_paths.reserve(state_.queued_paths.size() + reserve_count);
+            state_.queued_enabled.reserve(state_.queued_enabled.size() + reserve_count);
+            for (auto& path : paths) {
+                if (path.empty()) {
+                    continue;
+                }
+                if (added >= remaining) {
+                    capacity_reached = true;
+                    break;
+                }
+                state_.queued_paths.emplace_back(std::move(path));
+                state_.queued_enabled.push_back(true);
+                ++added;
             }
-            state_.queued_paths.emplace_back(std::move(path));
-            state_.queued_enabled.push_back(true);
-            ++added;
+            if (added > 0U) {
+                reset_security_review_locked();
+                normalize_queue_selection_locked();
+                if (was_empty) {
+                    state_.selected_queue_index = 0;
+                    queue_scroll_first_row_ = 0;
+                    queue_wheel_delta_remainder_ = 0;
+                }
+                state_.status = capacity_reached ? "Queue limit reached (4,096 items)" : std::move(status);
+            }
         }
-        if (added == 0U) {
-            return 0U;
-        }
-        normalize_queue_selection_locked();
-        if (was_empty) {
-            state_.selected_queue_index = 0;
-            queue_scroll_first_row_ = 0;
-            queue_wheel_delta_remainder_ = 0;
-        }
-        state_.status = std::move(status);
     }
-    request_repaint();
+    if (added > 0U || capacity_reached) {
+        request_repaint();
+    }
     return added;
 }
 
@@ -201,6 +227,7 @@ bool MainWindow::toggle_all_queue_items() {
         const bool all_enabled = std::all_of(state_.queued_enabled.begin(), state_.queued_enabled.end(),
                                              [](bool enabled) { return enabled; });
         std::fill(state_.queued_enabled.begin(), state_.queued_enabled.end(), !all_enabled);
+        reset_security_review_locked();
         state_.status = all_enabled ? "All queue items deselected" : "All queue items selected";
     }
     request_repaint();
@@ -218,6 +245,7 @@ bool MainWindow::toggle_queue_item(std::size_t index) {
             return false;
         }
         state_.queued_enabled[index] = !state_.queued_enabled[index];
+        reset_security_review_locked();
         state_.selected_queue_index = static_cast<int>(index);
         state_.status = state_.queued_enabled[index] ? "Queue item selected" : "Queue item deselected";
     }
@@ -252,6 +280,7 @@ bool MainWindow::remove_selected_queue_items() {
         }
         state_.queued_paths = std::move(remaining_paths);
         state_.queued_enabled = std::move(remaining_enabled);
+        reset_security_review_locked();
         state_.selected_queue_index = state_.queued_paths.empty() ? -1 : 0;
         queue_scroll_first_row_ = 0;
         queue_wheel_delta_remainder_ = 0;

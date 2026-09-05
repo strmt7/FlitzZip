@@ -7,6 +7,10 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Every third-party GitHub Action and reusable workflow is pinned to a full
+  40-character commit SHA. `tools\verify_change_hygiene.ps1` checks changed
+  workflow files and `tools\security_scan.ps1` checks the complete workflow
+  tree so a mutable tag cannot silently re-enter the supply chain.
 - Workflow `run` blocks must not interpolate `${{ github.* }}` directly.
   `tools\verify_change_hygiene.ps1` and `tools\security_scan.ps1` require
   environment-variable indirection so Semgrep-style script-injection findings
@@ -71,6 +75,10 @@ the Security tab, released artifacts, or the product UI again.
   release workflow edits that restore unbounded `Start-Process -Wait` calls for
   HIP SDK setup or MSI install/repair/uninstall smoke tests, and the MSI smoke timeout
   must remain 300 seconds by default.
+- Standalone fuzz targets must link every transitive source dependency, and the
+  local Docker driver must turn native failures into a nonzero PowerShell exit.
+  `tools\security_scan.ps1` enforces both rules so sanitizer linker failures
+  cannot be reported as a successful verification lane.
 
 ## Adding A New Lesson
 

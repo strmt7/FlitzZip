@@ -1,5 +1,6 @@
 #include "iso/iso_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
@@ -12,8 +13,9 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <limits>
-#include <set>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -53,11 +55,14 @@ struct IsoPendingDirectory {
     std::string path;
     std::uint32_t extent_sector = 0;
     std::uint32_t data_length = 0;
+    std::uint32_t depth = 0;
 };
 
 struct IsoScanResult {
     std::vector<IsoEntryMetadata> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
+    std::uint64_t metadata_work_bytes = 0;
 };
 
 // Purpose: Add two ISO byte counters while detecting unsigned wraparound.
@@ -234,10 +239,38 @@ std::size_t next_iso_sector_boundary(std::size_t offset, std::size_t size) {
 // Inputs: `parent` is slash-separated and `child` is one normalized ISO identifier.
 // Outputs: Returns the child archive path without touching the host filesystem.
 std::string join_iso_archive_path(const std::string& parent, const std::string& child) {
+    const auto separator_bytes = parent.empty() ? 0U : 1U;
+    const auto required_bytes = child.size() + separator_bytes;
+    if (required_bytes > kMaxArchivePathBytes || parent.size() > kMaxArchivePathBytes - required_bytes) {
+        throw ArchiveError("ISO path exceeds SuperZip path length limit");
+    }
     if (parent.empty()) {
         return child;
     }
     return parent + "/" + child;
+}
+
+// Purpose: Admit one unique, non-overlapping ISO directory extent for parsing.
+// Inputs: `extents` stores half-open byte intervals; sector/length identify the candidate and `archive_size` bounds it.
+// Outputs: Inserts the candidate or throws for zero-length, duplicate, overlapping, or out-of-image metadata.
+void insert_iso_directory_extent(std::map<std::uint64_t, std::uint64_t>& extents, std::uint32_t extent_sector,
+                                 std::uint32_t data_length, std::uint64_t archive_size) {
+    if (data_length == 0U) {
+        throw ArchiveError("ISO directory extent is empty");
+    }
+    const auto start = validate_iso_extent(extent_sector, data_length, archive_size);
+    const auto end = checked_add_iso_bytes(start, data_length, "ISO directory extent end overflow");
+    const auto next = extents.lower_bound(start);
+    if (next != extents.end() && next->first < end) {
+        throw ArchiveError("ISO directory extents overlap or reinterpret the same bytes");
+    }
+    if (next != extents.begin()) {
+        const auto previous = std::prev(next);
+        if (previous->second > start) {
+            throw ArchiveError("ISO directory extents overlap or reinterpret the same bytes");
+        }
+    }
+    extents.emplace(start, end);
 }
 
 // Purpose: Locate and parse the ISO Primary Volume Descriptor root directory.
@@ -295,12 +328,13 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
 
     IsoScanResult result;
     std::vector<ArchivePathValidationEntry> validation_entries;
-    std::set<std::pair<std::uint32_t, std::uint32_t>> visited_directories;
-    visited_directories.insert({root.extent_sector, root.data_length});
+    std::map<std::uint64_t, std::uint64_t> directory_extents;
+    insert_iso_directory_extent(directory_extents, root.extent_sector, root.data_length, archive_size);
     std::vector<IsoPendingDirectory> pending{IsoPendingDirectory{
         .path = {},
         .extent_sector = root.extent_sector,
         .data_length = root.data_length,
+        .depth = 0,
     }};
 
     for (std::size_t directory_index = 0; directory_index < pending.size(); ++directory_index) {
@@ -308,6 +342,11 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
             throw ArchiveError("ISO image contains too many directories");
         }
         const auto directory = pending[directory_index];
+        result.metadata_work_bytes = checked_add_iso_bytes(result.metadata_work_bytes, directory.data_length,
+                                                           "ISO metadata work byte count overflows");
+        if (result.metadata_work_bytes > kMaxArchiveIndexBytes) {
+            throw ArchiveError("ISO directory metadata work exceeds SuperZip limits");
+        }
         const auto bytes =
             read_iso_directory_extent(input, directory.extent_sector, directory.data_length, archive_size);
         std::size_t offset = 0;
@@ -324,6 +363,11 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
                 std::span<const unsigned char>(bytes.data() + static_cast<std::ptrdiff_t>(offset), record_length),
                 "ISO directory");
             offset += record_length;
+            result.metadata_work_bytes = checked_add_iso_bytes(result.metadata_work_bytes, record_length,
+                                                               "ISO directory record work byte count overflows");
+            if (result.metadata_work_bytes > kMaxArchiveIndexBytes) {
+                throw ArchiveError("ISO directory metadata work exceeds SuperZip limits");
+            }
             if (record.special) {
                 continue;
             }
@@ -331,7 +375,14 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
                 throw ArchiveError("ISO image contains too many entries");
             }
             const auto payload_offset = validate_iso_extent(record.extent_sector, record.data_length, archive_size);
+            if (directory.depth >= kMaxArchivePathComponents) {
+                throw ArchiveError("ISO directory depth exceeds SuperZip limits");
+            }
             const auto path = join_iso_archive_path(directory.path, record.name);
+            const auto retained_copies = record.directory ? 3U : 2U;
+            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+                result.path_metadata_bytes, static_cast<std::uint64_t>(path.size()) * retained_copies,
+                "ISO retained path metadata");
             validation_entries.push_back(ArchivePathValidationEntry{
                 .path = path,
                 .directory = record.directory,
@@ -343,13 +394,12 @@ IsoScanResult scan_iso(const std::filesystem::path& archive_path) {
                 .size = record.data_length,
             });
             if (record.directory) {
-                if (!visited_directories.insert({record.extent_sector, record.data_length}).second) {
-                    throw ArchiveError("ISO directory extent cycle or duplicate is not supported");
-                }
+                insert_iso_directory_extent(directory_extents, record.extent_sector, record.data_length, archive_size);
                 pending.push_back(IsoPendingDirectory{
                     .path = path,
                     .extent_sector = record.extent_sector,
                     .data_length = record.data_length,
+                    .depth = directory.depth + 1U,
                 });
             } else {
                 result.total_file_bytes = checked_add_extracted_output_bytes(
@@ -369,7 +419,6 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
                               bool overwrite) {
     seek_iso_offset(input, entry.payload_offset, "ISO file payload");
 
-    std::filesystem::create_directories(target.parent_path());
     auto temporary_target = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
@@ -391,7 +440,7 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
         if (!output) {
             throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
     } catch (...) {
         cleanup_file_publish_target(temporary_target);
@@ -409,10 +458,11 @@ void extract_iso_file_payload(std::ifstream& input, const IsoEntryMetadata& entr
 OperationStats extract_iso(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto scanned = scan_iso(archive_path);
-    std::filesystem::create_directories(destination);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto scanned = scan_iso(archive_source.path());
+    create_verified_directories(destination);
 
-    std::ifstream input(archive_path, std::ios::binary);
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open ISO image: " + archive_path.string());
     }
@@ -424,7 +474,7 @@ OperationStats extract_iso(const std::filesystem::path& archive_path, const std:
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             progress.finish_entry();
             continue;
         }
@@ -434,7 +484,7 @@ OperationStats extract_iso(const std::filesystem::path& archive_path, const std:
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(scanned.entries.size());
     stats.gpu_used = false;

@@ -368,6 +368,9 @@ function Get-SuperZipVerificationPlan {
         if ($scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
         }
+        if ($scope.touchesPerformance -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-reporting-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_benchmark_reporting.ps1") -Reason "benchmark reporting must preserve typed results and unavailable counter values without running a timed workload")
+        }
         if ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "security-scan" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/security_scan.ps1") -Reason "security boundaries, workflows, packaging, or verifier changes require repository policy checks")
         }
@@ -388,6 +391,7 @@ function Get-SuperZipVerificationPlan {
         }
         if ($scope.touchesMcp -or $scope.touchesVerification) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-python-compile" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "py_compile", "mcp/superzip_mcp.py") -Reason "MCP Python changes require syntax validation")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-bounded-child-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "mcp.test_superzip_mcp") -Reason "MCP changes require output, timeout, and descendant-containment regressions")
         }
     }
 

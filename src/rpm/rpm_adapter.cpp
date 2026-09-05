@@ -1,6 +1,7 @@
 #include "rpm/rpm_adapter.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "cpio/cpio_adapter.hpp"
@@ -101,10 +102,8 @@ void copy_stream_to_file(std::istream& input, const std::filesystem::path& outpu
 // Purpose: Copy the compressed RPM payload tail into a private temporary file.
 // Inputs: `archive_path` is the RPM file, `payload` describes the tail, and `target` receives exact payload bytes.
 // Outputs: Writes a compressed payload file suitable for the existing stream decoders.
-void copy_payload_tail(
-    const std::filesystem::path& archive_path,
-    const RpmPayloadInfo& payload,
-    const std::filesystem::path& target) {
+void copy_payload_tail(const std::filesystem::path& archive_path, const RpmPayloadInfo& payload,
+                       const std::filesystem::path& target) {
     assert_rpm_temporary_payload_budget(payload.size, "compressed RPM payload");
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
@@ -123,13 +122,11 @@ void copy_payload_tail(
 }
 
 // Purpose: Decode an RPM payload into a temporary CPIO file.
-// Inputs: `archive_path` is the RPM file, `payload` describes the payload, `temporary_directory` holds intermediate files, and `cpio_path` receives decoded CPIO bytes.
-// Outputs: Creates `cpio_path` or throws before extraction starts.
-void materialize_cpio_payload(
-    const std::filesystem::path& archive_path,
-    const RpmPayloadInfo& payload,
-    const std::filesystem::path& temporary_directory,
-    const std::filesystem::path& cpio_path) {
+// Inputs: `archive_path` is the RPM file, `payload` describes the payload, `temporary_directory` holds intermediate
+// files, and `cpio_path` receives decoded CPIO bytes. Outputs: Creates `cpio_path` or throws before extraction starts.
+void materialize_cpio_payload(const std::filesystem::path& archive_path, const RpmPayloadInfo& payload,
+                              const std::filesystem::path& temporary_directory,
+                              const std::filesystem::path& cpio_path) {
     if (payload.compression == RpmPayloadCompression::None) {
         assert_rpm_temporary_payload_budget(payload.size, "RPM CPIO payload");
         std::ifstream input(archive_path, std::ios::binary);
@@ -192,20 +189,18 @@ void cleanup_rpm_payload_target(const ReservedFilePublishTarget& temporary) {
 
 }  // namespace
 
-OperationStats extract_rpm(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+OperationStats extract_rpm(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto payload = scan_rpm_payload(archive_path);
-    std::filesystem::create_directories(destination);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto payload = scan_rpm_payload(archive_source.path());
+    create_verified_directories(destination);
 
     const auto temporary = reserve_file_publish_target(destination / ".superzip-rpm-payload.cpio");
     try {
-        materialize_cpio_payload(archive_path, payload, temporary.directory, temporary.file);
+        materialize_cpio_payload(archive_source.path(), payload, temporary.directory, temporary.file);
         auto stats = extract_cpio(temporary.file, destination, overwrite, progress_callback);
-        stats.input_bytes = std::filesystem::file_size(archive_path);
+        stats.input_bytes = archive_source.size();
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         cleanup_rpm_payload_target(temporary);
         return stats;

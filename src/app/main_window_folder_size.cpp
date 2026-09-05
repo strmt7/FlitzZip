@@ -104,11 +104,18 @@ void MainWindow::stop_folder_size_worker() {
 // Inputs: `path` is a directory path; `folder_size_stop_` can cancel traversal.
 // Outputs: Returns total bytes, or empty when traversal is cancelled or inaccessible.
 std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const std::filesystem::path& path) const {
-    std::error_code ec;
-    if (!std::filesystem::is_directory(path, ec) || ec) {
+    if (!is_supported_local_drop_path(path)) {
         return std::nullopt;
     }
+    const DWORD root_attributes = GetFileAttributesW(path.c_str());
+    if (root_attributes == INVALID_FILE_ATTRIBUTES || (root_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U ||
+        (root_attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
+        return std::nullopt;
+    }
+    std::error_code ec;
     std::uintmax_t total = 0;
+    std::size_t entry_count = 0U;
+    const auto deadline = std::chrono::steady_clock::now() + kMaxFolderSizeDuration;
     std::filesystem::recursive_directory_iterator iterator(
         path, std::filesystem::directory_options::skip_permission_denied, ec);
     const std::filesystem::recursive_directory_iterator end;
@@ -117,20 +124,30 @@ std::optional<std::uintmax_t> MainWindow::calculate_folder_size(const std::files
     }
     std::uint32_t entries_since_yield = 0;
     while (iterator != end) {
-        if (folder_size_stop_.load()) {
+        if (folder_size_stop_.load() || std::chrono::steady_clock::now() >= deadline ||
+            entry_count >= kMaxFolderSizeEntries || static_cast<std::size_t>(iterator.depth()) >= kMaxFolderSizeDepth) {
             return std::nullopt;
         }
-        if (iterator->is_regular_file(ec) && !ec) {
-            const auto size = iterator->file_size(ec);
-            if (!ec) {
-                const auto room = std::numeric_limits<std::uintmax_t>::max() - total;
-                total += std::min(room, size);
+        ++entry_count;
+        const DWORD attributes = GetFileAttributesW(iterator->path().c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES) {
+            return std::nullopt;
+        }
+        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
+            if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+                iterator.disable_recursion_pending();
             }
+        } else if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U) {
+            const auto size = iterator->file_size(ec);
+            if (ec || size > std::numeric_limits<std::uintmax_t>::max() - total) {
+                return std::nullopt;
+            }
+            total += size;
         }
         ec.clear();
         iterator.increment(ec);
         if (ec) {
-            ec.clear();
+            return std::nullopt;
         }
         ++entries_since_yield;
         if (entries_since_yield >= 512U) {

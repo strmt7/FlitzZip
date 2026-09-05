@@ -45,6 +45,7 @@ struct TarEntryMetadata {
 struct TarScanResult {
     std::vector<TarEntryMetadata> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
 };
 
 struct TarWriteStats {
@@ -458,10 +459,16 @@ PendingTarExtensions parse_pax_payload(const std::string& payload) {
         }
         const auto equals = payload.find('=', record_begin);
         if (equals != std::string::npos && equals < record_end) {
-            const auto key = payload.substr(record_begin, equals - record_begin);
-            const auto value = payload.substr(equals + 1U, record_end - equals - 2U);
+            const auto key = std::string_view(payload).substr(record_begin, equals - record_begin);
+            const auto value = std::string_view(payload).substr(equals + 1U, record_end - equals - 2U);
             if (key == "path") {
-                parsed.path = value;
+                if (parsed.path.has_value()) {
+                    throw ArchiveError("TAR PAX metadata contains duplicate path records");
+                }
+                if (value.empty() || value.size() > kMaxArchivePathBytes) {
+                    throw ArchiveError("TAR PAX path exceeds SuperZip path limits");
+                }
+                parsed.path = std::string(value);
             }
         }
         offset = record_end;
@@ -479,14 +486,18 @@ std::string parse_gnu_long_name(std::string payload) {
     if (payload.empty()) {
         throw ArchiveError("TAR long-name metadata is empty");
     }
+    if (payload.size() > kMaxArchivePathBytes) {
+        throw ArchiveError("TAR long-name metadata exceeds SuperZip path limits");
+    }
     return payload;
 }
 
 // Purpose: Scan a TAR stream and validate metadata before any extraction writes occur.
-// Inputs: `input` is positioned at the TAR start, `source_label` names diagnostics, and `seekable` controls payload
-// skipping strategy. Outputs: Returns validated entry metadata and total file bytes; throws on malformed or unsafe TAR
-// records.
-TarScanResult scan_tar_stream(std::istream& input, const std::string& source_label, bool seekable) {
+// Inputs: `input` is positioned at the TAR start, `source_label` names diagnostics, `seekable` controls payload
+// skipping, and `archive_size` bounds seekable extents. Outputs: Returns validated metadata or throws on malformed,
+// unsafe, or resource-exhaustive records.
+TarScanResult scan_tar_stream(std::istream& input, const std::string& source_label, bool seekable,
+                              std::optional<std::uint64_t> archive_size = std::nullopt) {
     (void)source_label;
     TarScanResult result;
     PendingTarExtensions pending;
@@ -512,17 +523,31 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
                 throw ArchiveError("TAR payload offset is invalid");
             }
             payload_offset = static_cast<std::uint64_t>(position);
+            if (!archive_size.has_value()) {
+                throw ArchiveError("seekable TAR scan is missing an archive-size bound");
+            }
+            const auto padded_size = checked_add_tar_bytes(size, tar_padding(size), "TAR payload extent overflows");
+            const auto payload_end = checked_add_tar_bytes(payload_offset, padded_size, "TAR payload extent overflows");
+            if (payload_end > *archive_size) {
+                throw ArchiveError("TAR payload extent extends past the end of the archive");
+            }
         }
 
         if (typeflag == 'x') {
+            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
+                                                                                 "TAR extended metadata payloads");
             pending = parse_pax_payload(read_tar_metadata_payload(input, size));
             continue;
         }
         if (typeflag == 'g') {
+            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
+                                                                                 "TAR global metadata payloads");
             static_cast<void>(read_tar_metadata_payload(input, size));
             continue;
         }
         if (typeflag == 'L') {
+            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
+                                                                                 "TAR long-name metadata payloads");
             pending.path = parse_gnu_long_name(read_tar_metadata_payload(input, size));
             continue;
         }
@@ -532,6 +557,8 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
                 throw ArchiveError("TAR entry count exceeds SuperZip resource limit");
             }
             const bool directory = typeflag == '5';
+            result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+                result.path_metadata_bytes, entry_path.size(), "TAR retained entry paths");
             if (!directory) {
                 result.total_file_bytes =
                     checked_add_extracted_output_bytes(result.total_file_bytes, size, "TAR uncompressed payload");
@@ -557,6 +584,8 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
     std::vector<ArchivePathValidationEntry> validation_entries;
     validation_entries.reserve(result.entries.size());
     for (const auto& entry : result.entries) {
+        result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+            result.path_metadata_bytes, entry.path.size(), "TAR path validation metadata");
         validation_entries.push_back(ArchivePathValidationEntry{
             .path = entry.path,
             .directory = entry.directory,
@@ -574,7 +603,7 @@ TarScanResult scan_tar(const std::filesystem::path& archive_path) {
     if (!input) {
         throw ArchiveError("cannot open TAR archive: " + archive_path.string());
     }
-    return scan_tar_stream(input, archive_path.string(), true);
+    return scan_tar_stream(input, archive_path.string(), true, std::filesystem::file_size(archive_path));
 }
 
 // Purpose: Copy one already-positioned TAR payload from a stream to a verified temporary file.
@@ -586,7 +615,6 @@ void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
     const auto temporary_target = reserve_file_publish_target(target);
     bool temporary_active = true;
     try {
@@ -613,7 +641,7 @@ void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata
         if (!output) {
             throw ArchiveError("failed to flush TAR extraction target: " + temporary_target.file.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
         temporary_active = false;
     } catch (...) {
@@ -690,7 +718,7 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
             publish_progress(progress, progress_callback);
             const auto target = safe_join_archive_path(destination, expected.path);
             if (expected.directory) {
-                std::filesystem::create_directories(target);
+                create_verified_directories(target);
                 skip_tar_payload(input, size, false);
                 progress.finish_entry();
             } else {
@@ -722,7 +750,6 @@ void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entr
     if (!overwrite && std::filesystem::exists(target)) {
         throw SecurityError("refusing to overwrite existing TAR extraction target: " + target.string());
     }
-    std::filesystem::create_directories(target.parent_path());
     const auto temporary_target = reserve_file_publish_target(target);
     bool temporary_active = true;
     try {
@@ -749,7 +776,7 @@ void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entr
         if (!output) {
             throw ArchiveError("failed to flush TAR extraction target: " + temporary_target.file.string());
         }
-        commit_verified_file(temporary_target.file, target, overwrite);
+        commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
         temporary_active = false;
     } catch (...) {
@@ -776,6 +803,7 @@ TarWriteStats write_tar_stream(const std::vector<std::filesystem::path>& sources
         write_entry_header(output, entry.archive_path, entry.directory ? '5' : '0', entry.directory ? 0 : entry.size,
                            ordinal++);
         if (!entry.directory) {
+            const auto source_lock = lock_manifest_source(entry);
             copy_file_to_tar(entry.source_path, output, entry.size);
             write_tar_padding(output, entry.size);
             progress.add_bytes(entry.size);
@@ -799,7 +827,8 @@ TarWriteStats write_tar_stream(const std::vector<std::filesystem::path>& sources
 OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
                             const std::filesystem::path& output_archive, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    std::ofstream output(output_archive, std::ios::binary);
+    FilePublishTransaction publication(output_archive);
+    std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
         throw ArchiveError("cannot create TAR archive: " + output_archive.string());
     }
@@ -808,6 +837,7 @@ OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to finalize TAR archive: " + output_archive.string());
     }
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
@@ -825,13 +855,16 @@ OperationStats compress_tar_gzip(const std::vector<std::filesystem::path>& sourc
                                  const std::filesystem::path& output_archive, int compression_level,
                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    GzipOutputStream output(output_archive, compression_level);
+    FilePublishTransaction publication(output_archive);
+    GzipOutputStream output(publication.staging_path(), compression_level);
     const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
+    const auto output_bytes = output.output_bytes();
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
-    stats.output_bytes = output.output_bytes();
+    stats.output_bytes = output_bytes;
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -845,13 +878,16 @@ OperationStats compress_tar_bzip2(const std::vector<std::filesystem::path>& sour
                                   const std::filesystem::path& output_archive, int compression_level,
                                   const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    Bzip2OutputStream output(output_archive, compression_level);
+    FilePublishTransaction publication(output_archive);
+    Bzip2OutputStream output(publication.staging_path(), compression_level);
     const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
+    const auto output_bytes = output.output_bytes();
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
-    stats.output_bytes = output.output_bytes();
+    stats.output_bytes = output_bytes;
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -865,13 +901,16 @@ OperationStats compress_tar_zstd(const std::vector<std::filesystem::path>& sourc
                                  const std::filesystem::path& output_archive, int compression_level,
                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    ZstdOutputStream output(output_archive, compression_level);
+    FilePublishTransaction publication(output_archive);
+    ZstdOutputStream output(publication.staging_path(), compression_level);
     const auto write_stats = write_tar_stream(sources, output, progress_callback);
     output.close();
+    const auto output_bytes = output.output_bytes();
+    publication.commit(true);
 
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
-    stats.output_bytes = output.output_bytes();
+    stats.output_bytes = output_bytes;
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -884,10 +923,11 @@ OperationStats compress_tar_zstd(const std::vector<std::filesystem::path>& sourc
 OperationStats extract_tar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto scanned = scan_tar(archive_path);
-    std::filesystem::create_directories(destination);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto scanned = scan_tar(archive_source.path());
+    create_verified_directories(destination);
 
-    std::ifstream input(archive_path, std::ios::binary);
+    std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open TAR archive: " + archive_path.string());
     }
@@ -899,7 +939,7 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             progress.finish_entry();
             continue;
         }
@@ -909,7 +949,7 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
     }
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = scanned.total_file_bytes;
     stats.entries = scanned.entries.size();
     stats.gpu_used = false;
@@ -923,12 +963,13 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
 OperationStats extract_tar_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    GzipInputStream scan_input(archive_path);
-    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    const auto archive_source = pin_source_file(archive_path);
+    GzipInputStream scan_input(archive_source.path());
+    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
     scan_input.finish();
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
-    GzipInputStream extract_input(archive_path);
+    GzipInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 
@@ -947,12 +988,13 @@ OperationStats extract_tar_gzip(const std::filesystem::path& archive_path, const
 OperationStats extract_tar_bzip2(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    Bzip2InputStream scan_input(archive_path);
-    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    const auto archive_source = pin_source_file(archive_path);
+    Bzip2InputStream scan_input(archive_source.path());
+    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
     scan_input.finish();
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
-    Bzip2InputStream extract_input(archive_path);
+    Bzip2InputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 
@@ -972,12 +1014,13 @@ OperationStats extract_tar_bzip2(const std::filesystem::path& archive_path, cons
 OperationStats extract_tar_xz(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                               bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    XzInputStream scan_input(archive_path);
-    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    const auto archive_source = pin_source_file(archive_path);
+    XzInputStream scan_input(archive_source.path());
+    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
     scan_input.finish();
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
-    XzInputStream extract_input(archive_path);
+    XzInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 
@@ -997,12 +1040,13 @@ OperationStats extract_tar_xz(const std::filesystem::path& archive_path, const s
 OperationStats extract_tar_lzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    LzipInputStream scan_input(archive_path);
-    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    const auto archive_source = pin_source_file(archive_path);
+    LzipInputStream scan_input(archive_source.path());
+    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
     scan_input.finish();
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
-    LzipInputStream extract_input(archive_path);
+    LzipInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 
@@ -1021,12 +1065,13 @@ OperationStats extract_tar_lzip(const std::filesystem::path& archive_path, const
 OperationStats extract_tar_zstd(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                 bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    ZstdInputStream scan_input(archive_path);
-    const auto scanned = scan_tar_stream(scan_input, archive_path.string(), false);
+    const auto archive_source = pin_source_file(archive_path);
+    ZstdInputStream scan_input(archive_source.path());
+    const auto scanned = scan_tar_stream(scan_input, archive_source.path().string(), false);
     scan_input.finish();
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
 
-    ZstdInputStream extract_input(archive_path);
+    ZstdInputStream extract_input(archive_source.path());
     extract_validated_tar_stream(extract_input, scanned, destination, overwrite, progress_callback);
     extract_input.finish();
 

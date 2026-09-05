@@ -240,6 +240,10 @@ function Test-WorkflowSecurityPolicy {
             if ($line -match 'Install-PackageProvider\s+-Name\s+NuGet') {
                 throw "Workflow must not rely on Install-PackageProvider NuGet bootstrap; use hash-checked package installation: $($file.FullName):$($i + 1)"
             }
+            if ($line -match '^\s*uses:\s+(?!\./)(?<action>[^@\s]+)@(?<reference>[^\s#]+)' -and
+                $Matches.reference -notmatch '^[0-9a-f]{40}$') {
+                throw "Third-party workflow actions must use an immutable 40-character commit SHA: $($file.FullName):$($i + 1)"
+            }
         }
         Assert-NoGithubContextInRunBlock -Path $file.FullName -Lines $lines
     }
@@ -392,6 +396,20 @@ function Test-GuiOwnedSurfacePolicy {
     if ($sourceText.Contains('DragAcceptFiles(hwnd_, TRUE)') -or $sourceText.Contains('WS_EX_ACCEPTFILES')) {
         throw "SuperZip-owned drag/drop must be accepted only by the Queue OLE drop target, not the full HWND."
     }
+    if ($sourceText.Contains('ChangeWindowMessageFilterEx')) {
+        throw "SuperZip must not weaken UIPI message filtering for drag/drop or legacy shell messages."
+    }
+    foreach ($requiredDropBoundary in @(
+        'kMaxShellDropPayloadBytes',
+        'kMaxQueueItems',
+        'is_supported_local_drop_path',
+        'kMaxFolderSizeEntries',
+        'kMaxFolderSizeDuration'
+    )) {
+        if (-not $sourceText.Contains($requiredDropBoundary)) {
+            throw "Queue drag/drop and metadata work must remain local-only and resource-bounded; missing $requiredDropBoundary."
+        }
+    }
     if (-not $sourceText.Contains('is_copy_accelerator')) {
         throw "SuperZip-owned UI must consume text-copy accelerators before page-specific key handling."
     }
@@ -401,6 +419,33 @@ function Test-GuiOwnedSurfacePolicy {
 }
 
 Test-GuiOwnedSurfacePolicy
+
+# Purpose: Verify Security-page result claims are bound to exact archive validation work.
+# Inputs: Reads the joined native GUI source.
+# Outputs: Throws when fixed success labels or existence-only verification can reach the user.
+function Test-GuiSecurityResultPolicy {
+    $appSources = Get-ChildItem -LiteralPath (Join-Path $repo "src\app") -File -Recurse -Include *.cpp,*.hpp,*.h
+    $sourceText = ($appSources | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+    if ($sourceText.Contains('{L"Path safety", L"Safe"') -or
+        $sourceText.Contains('{L"CRC metadata", L"Verified"')) {
+        throw "Security-page status rows must never claim fixed path or CRC success."
+    }
+    foreach ($requiredResultBoundary in @(
+        'pin_source_file(source)',
+        'validate_detected_archive(',
+        'verify_suzip(archive, options',
+        'DirectoryPublishTransaction discard',
+        'SecurityCheckState::Passed',
+        'SecurityCheckState::Failed',
+        'SecurityCheckState::Incomplete'
+    )) {
+        if (-not $sourceText.Contains($requiredResultBoundary)) {
+            throw "Security-page results must be backed by exact-byte archive validation; missing $requiredResultBoundary."
+        }
+    }
+}
+
+Test-GuiSecurityResultPolicy
 
 # Purpose: Verify CAB extraction cannot let the FDI callback open arbitrary local paths.
 # Inputs: Reads the Windows CAB adapter source.
@@ -427,12 +472,80 @@ function Test-HipRuntimeLoadPolicy {
     if ($sourceText -match 'GetEnvironmentVariableW\s*\(\s*L"HIP_PATH"') {
         throw "Product runtime HIP loading must not trust HIP_PATH. HIP_PATH is build-tooling input only."
     }
-    if ($sourceText -notmatch 'LOAD_LIBRARY_SEARCH_DEFAULT_DIRS' -or $sourceText -notmatch 'LOAD_LIBRARY_SEARCH_SYSTEM32') {
-        throw "Product runtime HIP loading must stay constrained to trusted Windows loader directories."
+    foreach ($requiredRuntimeBoundary in @(
+        'FOLDERID_ProgramFiles',
+        'FILE_FLAG_OPEN_REPARSE_POINT',
+        'WinVerifyTrust',
+        'LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR',
+        'LOAD_LIBRARY_SEARCH_SYSTEM32',
+        'GetModuleFileNameW'
+    )) {
+        if (-not $sourceText.Contains($requiredRuntimeBoundary)) {
+            throw "Product runtime HIP loading must pin, authenticate, and verify an absolute trusted installation path; missing $requiredRuntimeBoundary."
+        }
     }
 }
 
 Test-HipRuntimeLoadPolicy
+
+# Purpose: Verify app-local compatibility DLLs remain pinned to their recorded build provenance at runtime.
+# Inputs: Reads the shared runtime loader plus Zstandard and wimlib call sites.
+# Outputs: Throws when loading can race replacement, skip SHA-256, broaden dependency search, or substitute another module.
+function Test-AppLocalRuntimeLoadPolicy {
+    $trustedRuntime = Get-Content -LiteralPath (Join-Path $repo "src\core\trusted_runtime.cpp") -Raw
+    foreach ($requiredBoundary in @(
+            'pin_source_file(dll_path)',
+            'hash_file(source.path(), IntegrityMode::Sha256)',
+            'LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32',
+            'std::filesystem::equivalent(source.path(), loaded_path')) {
+        if (-not $trustedRuntime.Contains($requiredBoundary)) {
+            throw "App-local runtime loading must pin and hash the exact DLL, restrict dependency search, and verify the loaded object; missing $requiredBoundary."
+        }
+    }
+
+    $zstdRuntime = Get-Content -LiteralPath (Join-Path $repo "src\zstd\zstd_runtime.cpp") -Raw
+    if (-not $zstdRuntime.Contains(
+            'load_trusted_app_local_runtime(kZstdDllName, SUPERZIP_ZSTD_RUNTIME_DLL_SHA256)')) {
+        throw "Zstandard must use the checksum-pinned app-local runtime loader."
+    }
+    $wimAdapter = Get-Content -LiteralPath (Join-Path $repo "src\wim\wim_adapter.cpp") -Raw
+    if (-not $wimAdapter.Contains(
+            'load_trusted_app_local_runtime(kWimlibDllName, SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)')) {
+        throw "wimlib must use the checksum-pinned app-local runtime loader."
+    }
+}
+
+Test-AppLocalRuntimeLoadPolicy
+
+# Purpose: Verify the local MCP bounds child output while it is produced and contains descendant processes.
+# Inputs: Reads the repository-local MCP implementation and verification selector.
+# Outputs: Throws when child execution can buffer unbounded streams or skip its containment regressions.
+function Test-McpChildExecutionPolicy {
+    $mcpSource = Get-Content -LiteralPath (Join-Path $repo "mcp\superzip_mcp.py") -Raw
+    foreach ($requiredBoundary in @(
+        'MAX_CHILD_OUTPUT_BYTES',
+        'MAX_REQUEST_CHARACTERS',
+        'subprocess.Popen',
+        'class BoundedOutput',
+        'class ChildContainment',
+        'TerminateJobObject',
+        'output_limit_exceeded',
+        'timed_out'
+    )) {
+        if (-not $mcpSource.Contains($requiredBoundary)) {
+            throw "Local MCP child execution must remain stream-bounded and process-tree contained; missing $requiredBoundary."
+        }
+    }
+    if ($mcpSource -match 'subprocess\.run\([^\)]*capture_output\s*=\s*True') {
+        throw "Local MCP must not buffer complete child stdout/stderr with subprocess.run(capture_output=True)."
+    }
+    $verificationSelector = Get-Content -LiteralPath (Join-Path $repo "tools\superzip_verification.psm1") -Raw
+    if (-not $verificationSelector.Contains('mcp-bounded-child-tests')) {
+        throw "MCP changes must route through bounded child-output and descendant-containment tests."
+    }
+}
+
+Test-McpChildExecutionPolicy
 
 # Purpose: Verify GUI shell launches do not depend on executable search order.
 # Inputs: Reads the main-window command source.
@@ -616,6 +729,35 @@ function Test-InstallerScopePolicy {
     Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction
 }
 
+# Purpose: Keep standalone sanitizer targets linked to publication dependencies and make Docker failures fatal.
+# Inputs: Reads the local fuzz driver, ClusterFuzzLite build script, and CMake fuzz target declarations.
+# Outputs: Throws when a publication-enabled fuzzer omits source identity support or native failures can be masked.
+function Test-FuzzHarnessPolicy {
+    $fuzzScript = Get-Content -LiteralPath (Join-Path $repo "tools\fuzz.ps1") -Raw
+    if ($fuzzScript -notmatch 'if\s*\(\$LASTEXITCODE\s+-ne\s+0\)\s*\{\s*throw') {
+        throw "tools/fuzz.ps1 must convert a failed Docker build or smoke run into a failing PowerShell exit."
+    }
+
+    $clusterBuild = Get-Content -LiteralPath (Join-Path $repo ".clusterfuzzlite\build.sh") -Raw
+    if ($clusterBuild -notmatch 'MINIZ_SOURCE="third_party/miniz"' -or
+        $clusterBuild -match 'MINIZ_UPSTREAM_SOURCE|prepare_upstream_miniz' -or
+        $clusterBuild -notmatch '-DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1') {
+        throw "Miniz sanitizer targets must exercise the patched production source with its test-only allocator."
+    }
+    $compileBlocks = [regex]::Matches($clusterBuild, '(?ms)^"\$CXX".*?(?=^"\$CXX"|\z)')
+    foreach ($match in $compileBlocks) {
+        if ($match.Value -match 'src/core/file_publish\.cpp' -and $match.Value -notmatch 'src/core/file_manifest\.cpp') {
+            throw ".clusterfuzzlite/build.sh must link file_manifest.cpp beside every standalone file_publish.cpp target."
+        }
+    }
+
+    $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
+    if ($cmakeLists -notmatch '(?s)add_executable\(\s*superzip_iso_fuzzer.*?src/core/file_manifest\.cpp.*?\)') {
+        throw "The standalone CMake ISO fuzzer must link file_manifest.cpp with file_publish.cpp."
+    }
+}
+
+Test-FuzzHarnessPolicy
 Test-InstallerScopePolicy
 
 # Normalize handled native-command exit codes so pwsh returns the logical scan result.

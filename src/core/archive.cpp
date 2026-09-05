@@ -5,6 +5,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -689,8 +690,8 @@ ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& ind
             .path = entry.path,
             .directory = entry.directory,
         });
-        summary.total_uncompressed_bytes = checked_add_u64(summary.total_uncompressed_bytes, entry.uncompressed_size,
-                                                           "archive uncompressed size overflows");
+        summary.total_uncompressed_bytes = checked_add_extracted_output_bytes(
+            summary.total_uncompressed_bytes, entry.uncompressed_size, "archive uncompressed size");
         for (const auto& block : entry.blocks) {
             summary.largest_decoded_block_bytes =
                 std::max<std::uint64_t>(summary.largest_decoded_block_bytes, block.uncompressed_len);
@@ -785,6 +786,7 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
                                   std::ofstream& output, ArchiveEntry& entry, OperationStats& stats,
                                   std::uint64_t& archive_block_count, ProgressState& progress,
                                   const ProgressCallback& progress_callback) {
+    const auto source_lock = lock_manifest_source(manifest_entry);
     auto input_buffer = make_file_stream_buffer();
     std::ifstream input;
     configure_file_stream_buffer(input, input_buffer);
@@ -849,10 +851,11 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
 
+    FilePublishTransaction publication(output_archive);
     auto archive_output_buffer = make_file_stream_buffer();
     std::ofstream output;
     configure_file_stream_buffer(output, archive_output_buffer);
-    output.open(output_archive, std::ios::binary | std::ios::trunc);
+    output.open(publication.staging_path(), std::ios::binary | std::ios::trunc);
     if (!output) {
         throw ArchiveError("cannot create archive: " + output_archive.string());
     }
@@ -899,6 +902,11 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to finalize archive");
     }
+    output.close();
+    if (!output) {
+        throw ArchiveError("failed to close finalized archive");
+    }
+    publication.commit(true);
     stats.output_bytes = std::filesystem::file_size(output_archive);
     stats.gpu_runtime = snapshot_gpu_telemetry(*gpu_telemetry);
 
@@ -943,7 +951,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
     const auto validation = validate_archive_index_metadata(index);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
     const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
-    std::filesystem::create_directories(destination);
+    create_verified_directories(destination);
     ProgressState progress;
     progress.start(OperationKind::Extract, validation.total_uncompressed_bytes, index.entries.size());
     OperationStats stats;
@@ -962,7 +970,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
         publish_progress(progress, progress_callback);
         const auto target = safe_join_archive_path(destination, entry.path);
         if (entry.directory) {
-            std::filesystem::create_directories(target);
+            create_verified_directories(target);
             progress.finish_entry();
             continue;
         }
@@ -977,7 +985,6 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
             .worker_count = resolve_codec_worker_count(budget, entry_windows),
             .telemetry = gpu_telemetry,
         };
-        std::filesystem::create_directories(target.parent_path());
         // Decode into a private same-directory temporary target so failures never expose partial output.
         const auto temporary_target = reserve_file_publish_target(target);
         bool temporary_active = false;
@@ -1009,7 +1016,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
                 throw ArchiveError("CRC mismatch while extracting: " + entry.path);
             }
             // The final path is touched only after stream close and CRC verification have both succeeded.
-            commit_verified_file(temporary_target.file, target, options.overwrite);
+            commit_verified_file(temporary_target, target, options.overwrite);
             cleanup_file_publish_target(temporary_target);
             temporary_active = false;
         } catch (...) {

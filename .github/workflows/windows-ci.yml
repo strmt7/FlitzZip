@@ -14,11 +14,23 @@ concurrency:
 
 jobs:
   build-test:
-    name: Build, test, and security scan
-    runs-on: windows-2022
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - os: windows-2022
+            generator: Visual Studio 17 2022
+          - os: windows-2025-vs2026
+            generator: Visual Studio 18 2026
+    env:
+      SUPERZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Toolchain diagnostics
@@ -32,10 +44,10 @@ jobs:
           Get-Command cmake | Select-Object Source,Version
       - name: Configure
         shell: pwsh
-        run: tools/build.ps1 -ConfigureOnly -CpuOnlyValidation
+        run: tools/build.ps1 -ConfigureOnly -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
       - name: Build
         shell: pwsh
-        run: tools/build.ps1 -CpuOnlyValidation
+        run: tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
       - name: Test
         shell: pwsh
         run: tools/test.ps1

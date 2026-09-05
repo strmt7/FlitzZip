@@ -32,7 +32,7 @@ jobs:
       GREENBONE_TARGET_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Resolve Greenbone configuration through OIDC
@@ -180,9 +180,9 @@ jobs:
                   output.write(f"{key}={value}\n")
           PY
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
+          python-version: "3.14.7"
       - name: Install Greenbone tools
         shell: bash
         run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-gvm-tools-linux.txt
@@ -239,11 +239,11 @@ jobs:
           print("Greenbone/OpenVAS reported zero critical, high, medium, or low vulnerabilities.")
           PY
       - name: Vulnetix health check
-        uses: Vulnetix/cli@bcfaca703d9c893a97d0a8e584ebd5b0070b109a # v3.32.0
+        uses: Vulnetix/cli@a32bc6768a87c71480dff7b3bd646b3afc43974a # v3.104.1
         with:
           org-id: ${{ steps.config.outputs.vulnetix_org_id }}
       - name: Upload OpenVAS artifacts to Vulnetix
-        uses: Vulnetix/cli@bcfaca703d9c893a97d0a8e584ebd5b0070b109a # v3.32.0
+        uses: Vulnetix/cli@a32bc6768a87c71480dff7b3bd646b3afc43974a # v3.104.1
         with:
           org-id: ${{ steps.config.outputs.vulnetix_org_id }}
           task: upload

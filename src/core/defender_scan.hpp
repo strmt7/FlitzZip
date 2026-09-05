@@ -26,4 +26,14 @@ struct DefenderScanResult {
 // scan target does not exist.
 DefenderScanResult scan_with_windows_defender(const std::filesystem::path& path, DefenderScanMode mode);
 
+// Purpose: Apply the fail-closed product policy to one completed Defender result.
+// Inputs: `result` is returned by `scan_with_windows_defender` for an enabled scan.
+// Outputs: Returns true only for an attempted, non-timeout, zero-exit, clean scan.
+[[nodiscard]] bool defender_scan_passed(const DefenderScanResult& result) noexcept;
+
+// Purpose: Reject any enabled Defender scan that did not positively report a clean target.
+// Inputs: `result` is completed scan state and `path` identifies the user-visible target for diagnostics.
+// Outputs: Returns normally only for a positive clean result; otherwise throws `SecurityError`.
+void require_clean_defender_scan(const DefenderScanResult& result, const std::filesystem::path& path);
+
 }  // namespace superzip

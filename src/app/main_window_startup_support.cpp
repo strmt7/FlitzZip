@@ -122,28 +122,10 @@ std::filesystem::path current_user_downloads_directory() {
 
 // Purpose: Convert a shell HDROP payload into filesystem paths.
 // Inputs: `drop` is a valid HDROP handle owned by the caller.
-// Outputs: Returns every nonempty path advertised by the shell payload.
+// Outputs: Returns only a complete, bounded DROPFILES list; malformed payloads fail closed.
 std::vector<std::filesystem::path> paths_from_hdrop(HDROP drop) {
-    std::vector<std::filesystem::path> paths;
     if (drop == nullptr) {
-        return paths;
-    }
-    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-    paths.reserve(count);
-    for (UINT i = 0; i < count; ++i) {
-        const UINT length = DragQueryFileW(drop, i, nullptr, 0);
-        if (length == 0) {
-            continue;
-        }
-        std::wstring path(length + 1, L'\0');
-        if (DragQueryFileW(drop, i, path.data(), length + 1) == 0) {
-            continue;
-        }
-        path.resize(length);
-        paths.emplace_back(std::move(path));
-    }
-    if (!paths.empty()) {
-        return paths;
+        return {};
     }
     return paths_from_dropfiles_global(reinterpret_cast<HGLOBAL>(drop));
 }

@@ -1,12 +1,12 @@
 # Third-Party Notices
 
-## miniz 3.1.1
+## miniz 3.1.2
 
-SuperZip vendors miniz release `3.1.1` for standards-oriented ZIP compatibility.
+SuperZip vendors miniz release `3.1.2` for standards-oriented ZIP compatibility.
 
 - Upstream: <https://github.com/richgel999/miniz>
-- Tag: `3.1.1`
-- Commit: `d10b03cc73475af673df40f06e5cefd1d5f940d9`
+- Tag: `3.1.2`
+- Commit: `77d0dce8627735138c51770d1799a1ef48f2117d`
 - License: MIT, preserved at `third_party/miniz/LICENSE`
 
 SuperZip uses miniz for bounded CPU-codec purposes: standards-oriented `.zip`
@@ -17,8 +17,8 @@ HIP-only; miniz does not provide GPU acceleration, does not finish required-HIP
 decode work, and is not an alternate archive pipeline.
 
 The production copy under `third_party/miniz/` carries narrow local hardening
-patches. The unmodified upstream 3.1.1 source archive and checksum are stored
-under `third_party/upstream/miniz/3.1.1/` for provenance. Do not edit the
+patches. The unmodified upstream 3.1.2 source archive and checksum are stored
+under `third_party/upstream/miniz/3.1.2/` for provenance. Do not edit the
 upstream archive; production fixes belong in `third_party/miniz/` and must be
 covered by tests and security scanning.
 
@@ -88,32 +88,32 @@ validates runtime version `10507` (`1.5.7`), and never shells out to `zstd.exe`.
 The original source archive, official Win64 package, and checksums are stored
 under `third_party/upstream/zstd/v1.5.7/` for provenance.
 
-## LZMA SDK 26.01
+## LZMA SDK 26.03
 
 SuperZip vendors the minimal ANSI-C decoder subset from the official LZMA SDK
-release `26.01` for extract-only 7z and LZMA-Alone `.lzma` compatibility.
+release `26.03` for extract-only 7z, LZMA-Alone, and lzip compatibility.
 
 - Upstream: <https://www.7-zip.org/sdk.html>
-- Release archive: <https://www.7-zip.org/a/lzma2601.7z>
-- SHA-256: `b860f17f9df3c0524dd2ef2c639ab5e43ad0006b77b8f7bb6d191bf528536885`
+- Release archive: <https://github.com/ip7z/7zip/releases/download/26.03/lzma2603.7z>
+- SHA-256: `86c213f752520ab5325c310f50bef63ec344b56dd1c80b0246d06dc6cec953b2`
 - License: public domain, as stated in `DOC/lzma-sdk.txt` inside the upstream
   archive
 
-SuperZip uses this SDK only for read-only `.7z` extraction and single-file
-`.lzma` extraction. It does not ship or execute the SDK sample tools, does not
+SuperZip uses this SDK for read-only `.7z`, `.lzma`, and `.lz` extraction and
+the `.tar.lz` stream adapter. It does not ship or execute SDK sample tools or
 call `7z.exe`, and does not use the SDK as a SUZIP codec or GPU path. The
 patched production copy is under `third_party/lzma_sdk/`, while the unmodified
 upstream archive and checksum are stored under
-`third_party/upstream/lzma-sdk/26.01/`.
+`third_party/upstream/lzma-sdk/26.03/`. The older 26.01 provenance is retained.
 
-## Lhasa 0.5.0
+## Lhasa 0.6.0
 
-SuperZip vendors Lhasa release `0.5.0` for extract-only LHA/LZH compatibility.
+SuperZip vendors Lhasa release `0.6.0` for extract-only LHA/LZH compatibility.
 
 - Upstream: <https://github.com/fragglet/lhasa>
-- Release tag: `v0.5.0`
-- Release commit: `450172de282c8f8730696f4370a57cf49bfabf22`
-- Source archive SHA-256: `1ae8d82d37fc12ec2c52c520b6528ec61268e243f33eca4446b440e182c66d91`
+- Release tag: `v0.6.0`
+- Release commit: `75ed83559f23e9538e0045c62f53f77ab03d03d6`
+- Source archive SHA-256: `9840154367f73e9d9c3196f944a121ab4d398d84e921c8fe8fca8a931274aed7`
 - License: ISC, preserved at `third_party/lhasa/COPYING.md`
 
 SuperZip uses Lhasa only as an in-process LHA/LZH decoder and metadata reader.
@@ -125,7 +125,7 @@ publishes files through the standard verified temporary-file path.
 The production copy under `third_party/lhasa/` carries narrow local hardening
 patches documented in `third_party/lhasa/README.SUPERZIP.md`. The unmodified
 upstream source archive and checksum are stored under
-`third_party/upstream/lhasa/0.5.0/` for provenance.
+`third_party/upstream/lhasa/0.6.0/` for provenance.
 
 ## wimlib 1.14.5
 

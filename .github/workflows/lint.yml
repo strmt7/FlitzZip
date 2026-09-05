@@ -18,14 +18,14 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
+          python-version: "3.14.7"
       - name: Install Python linters
         shell: pwsh
         run: |
@@ -39,8 +39,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $moduleName = "PSScriptAnalyzer"
-          $version = "1.24.0"
-          $expectedSha256 = "E86C97D44BB1BC8A1DE35E753B85EA1D938F6F9F881639A181507E079BCA4556"
+          $version = "1.25.0"
+          $expectedSha256 = "14E634C828EB98EFB9F40B2918BA90F139ED5ECCDF663A2A747736D996995D60"
           $package = Join-Path $env:RUNNER_TEMP "$moduleName.$version.nupkg"
           $modulePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell/Modules/$moduleName/$version"
           Invoke-WebRequest `

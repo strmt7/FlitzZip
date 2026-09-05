@@ -136,6 +136,7 @@ Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packagi
 $mcpPlan = Get-SuperZipVerificationPlan -ChangedPath @("mcp/superzip_mcp.py")
 Assert-Selector $mcpPlan.scope.fullEscalationRequired "MCP verifier-adjacent changes must escalate"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-python-compile") "MCP changes must compile Python"
+Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-bounded-child-tests") "MCP changes must test bounded child execution"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "verification-selector-self-test") "MCP/verifier changes must self-test selector"
 
 $verifierPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/superzip_verification.psm1")
@@ -157,6 +158,9 @@ Assert-Selector ($unknownPlan.scope.unknownPaths.Count -eq 1) "unknown path must
 $forcedPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md") -SuspectGlobalBug
 Assert-Selector $forcedPlan.scope.fullEscalationRequired "SuspectGlobalBug must escalate even for docs"
 Assert-Selector (Test-RequiredCommand -Plan $forcedPlan -Id "security-scan") "forced full profile must include security scan"
+Assert-Selector (Test-RequiredCommand -Plan $forcedPlan -Id "benchmark-reporting-test") "full verification must cover typed benchmark reporting"
+$benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/bench.ps1")
+Assert-Selector (Test-RequiredCommand -Plan $benchmarkPlan -Id "benchmark-reporting-test") "benchmark changes must test reporting without running timing workloads"
 
 Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "docs/targeted-verification.md", "-Mode", "defer")) -eq 0) "waiter must allow docs-only lint workflow deferral without GitHub"
 Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "src/core/checksum.cpp", "-Mode", "defer")) -eq 0) "waiter must allow defer for ordinary source changes"

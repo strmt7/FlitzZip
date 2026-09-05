@@ -18,12 +18,12 @@ function Test-LicenseNoticeGeneration {
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     $requiredTitles = @(
         "SuperZip",
-        "miniz 3.1.1",
+        "miniz 3.1.2",
         "bzip2 1.0.8",
         "XZ Embedded",
-        "LZMA SDK 26.01",
+        "LZMA SDK 26.03",
         "Zstandard 1.5.7",
-        "Lhasa 0.5.0",
+        "Lhasa 0.6.0",
         "wimlib 1.14.5",
         "libdivsufsort-lite"
     )
@@ -56,7 +56,7 @@ function Test-LicenseNoticeGeneration {
     if ($archiveBacked.Count -ne 0) {
         throw "License notices must use source-controlled text files, not build-time archive extraction."
     }
-    $lzmaNotice = @($manifest.notices | Where-Object { $_.title -eq "LZMA SDK 26.01" } | Select-Object -First 1)
+    $lzmaNotice = @($manifest.notices | Where-Object { $_.title -eq "LZMA SDK 26.03" } | Select-Object -First 1)
     if (-not $lzmaNotice -or [string]$lzmaNotice.source -ne "third_party/lzma_sdk/LICENSE") {
         throw "The LZMA SDK notice must use the checked-in upstream license text."
     }

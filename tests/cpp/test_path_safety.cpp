@@ -1,7 +1,10 @@
+#include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
 #include "core/result.hpp"
 #include "test_util.hpp"
 
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 #include <windows.h>
@@ -59,6 +62,8 @@ TEST_CASE(path_safety_rejects_windows_unsafe_forms) {
         "./.",
         "dir/COM9.txt",
         "dir/LPT1",
+        "dir/COM\xC2\xB9.txt",
+        "dir/LPT\xC2\xB2",
         std::string("dir/control") + static_cast<char>(0x1F) + ".txt",
     };
     for (const auto& path : unsafe_paths) {
@@ -113,4 +118,126 @@ TEST_CASE(path_safety_rejects_existing_reparse_parent_escape) {
 // Outputs: Throws if the normalized key is not the deterministic archive key used for collision checks.
 TEST_CASE(path_safety_normalizes_archive_path_key) {
     REQUIRE_EQ(superzip::normalize_archive_path_key("dir//./nested/file.txt"), std::string("dir/nested/file.txt"));
+}
+
+// Purpose: Verify a publication reservation prevents its final parent from being renamed during commit.
+// Inputs: A nested output target and an attempted parent move while the reservation is active.
+// Outputs: The move fails, the exact staged file publishes, and private staging data is removed.
+TEST_CASE(file_publish_pins_parent_identity_until_commit) {
+    const auto root = test_temp_dir("file-publish-parent-pin");
+    const auto target = root / "nested" / "payload.txt";
+    const auto reservation = superzip::reserve_file_publish_target(target);
+    std::ofstream(reservation.file, std::ios::binary) << "verified payload";
+
+    const auto parent_text = target.parent_path().wstring();
+    const auto moved_text = (root / "moved-parent").wstring();
+    REQUIRE_TRUE(MoveFileExW(parent_text.c_str(), moved_text.c_str(), MOVEFILE_WRITE_THROUGH) == 0);
+
+    superzip::commit_verified_file(reservation, target, false);
+    superzip::cleanup_file_publish_target(reservation);
+    std::ifstream input(target, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
+               std::string("verified payload"));
+    REQUIRE_TRUE(!std::filesystem::exists(reservation.directory));
+}
+
+// Purpose: Verify publication state cannot be reused to redirect a verified payload to another path.
+// Inputs: A valid reservation and a different final filename in the same parent.
+// Outputs: Throws `SecurityError` and leaves both final paths absent.
+TEST_CASE(file_publish_rejects_target_not_bound_to_reservation) {
+    const auto root = test_temp_dir("file-publish-target-binding");
+    const auto target = root / "expected.txt";
+    const auto redirected = root / "redirected.txt";
+    const auto reservation = superzip::reserve_file_publish_target(target);
+    std::ofstream(reservation.file, std::ios::binary) << "verified payload";
+
+    bool rejected = false;
+    try {
+        superzip::commit_verified_file(reservation, redirected, false);
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(target));
+    REQUIRE_TRUE(!std::filesystem::exists(redirected));
+    superzip::cleanup_file_publish_target(reservation);
+}
+
+// Purpose: Verify publication never traverses a preexisting output-parent junction.
+// Inputs: A final target below a junction that points outside the selected tree.
+// Outputs: Reservation throws and no outside payload is created.
+TEST_CASE(file_publish_rejects_reparse_parent_chain) {
+    const auto root = test_temp_dir("file-publish-reparse-root");
+    const auto outside = test_temp_dir("file-publish-reparse-outside");
+    const auto junction = root / "linked";
+    if (!superzip_test::try_create_test_directory_junction(junction, outside)) {
+        return;
+    }
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::reserve_file_publish_target(junction / "payload.txt"));
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(outside / "payload.txt"));
+    superzip_test::remove_test_directory_junction(junction);
+}
+
+// Purpose: Verify quarantined extraction bytes remain private until explicit publication.
+// Inputs: A staged nested file and an empty final destination.
+// Outputs: Throws if the file appears early, fails to publish, or changes content during the merge.
+TEST_CASE(directory_publish_quarantines_until_explicit_publish) {
+    const auto root = test_temp_dir("directory-publish-success");
+    const auto destination = root / "output";
+    superzip::DirectoryPublishTransaction transaction(destination);
+    std::filesystem::create_directories(transaction.staging_directory() / "nested");
+    std::ofstream(transaction.staging_directory() / "nested" / "payload.txt", std::ios::binary) << "clean payload";
+    REQUIRE_TRUE(!std::filesystem::exists(destination / "nested" / "payload.txt"));
+
+    transaction.publish(false);
+    std::ifstream input(destination / "nested" / "payload.txt", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
+               std::string("clean payload"));
+}
+
+// Purpose: Verify failed or abandoned security scans remove all quarantined extraction bytes.
+// Inputs: An uncommitted directory publication transaction containing one payload.
+// Outputs: Throws if destructor cleanup exposes a final file or leaves the private staging tree behind.
+TEST_CASE(directory_publish_abandonment_removes_quarantine) {
+    const auto root = test_temp_dir("directory-publish-abandon");
+    const auto destination = root / "output";
+    std::filesystem::path quarantine;
+    {
+        superzip::DirectoryPublishTransaction transaction(destination);
+        quarantine = transaction.staging_directory();
+        std::ofstream(quarantine / "detected.bin", std::ios::binary) << "detected payload";
+    }
+    REQUIRE_TRUE(!std::filesystem::exists(quarantine));
+    REQUIRE_TRUE(!std::filesystem::exists(destination / "detected.bin"));
+}
+
+// Purpose: Verify overwrite refusal happens before any quarantined file is published.
+// Inputs: Two staged files and one conflicting final path with overwrite disabled.
+// Outputs: Throws if the existing file changes or a nonconflicting staged file leaks through a partial publication.
+TEST_CASE(directory_publish_preflights_overwrite_conflicts) {
+    const auto root = test_temp_dir("directory-publish-conflict");
+    const auto destination = root / "output";
+    std::filesystem::create_directories(destination);
+    std::ofstream(destination / "b.txt", std::ios::binary) << "existing";
+
+    bool rejected = false;
+    try {
+        superzip::DirectoryPublishTransaction transaction(destination);
+        std::ofstream(transaction.staging_directory() / "a.txt", std::ios::binary) << "new a";
+        std::ofstream(transaction.staging_directory() / "b.txt", std::ios::binary) << "new b";
+        transaction.publish(false);
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(destination / "a.txt"));
+    std::ifstream input(destination / "b.txt", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
+               std::string("existing"));
 }

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -159,21 +160,176 @@ inline std::size_t checked_multiply_bytes(std::size_t count, std::size_t bytes_p
     return count * bytes_per_item;
 }
 
-// Purpose: Ensure a HIP operation leaves reserved VRAM for the OS, display, and other processes.
-// Inputs: `required_bytes` is the total planned device allocation and `action` labels the operation.
-// Outputs: Returns normally when free VRAM can cover the allocation plus reserve; throws `GpuError` otherwise.
-inline void ensure_device_memory_budget(std::size_t required_bytes, const char* action) {
-    std::size_t free_bytes = 0;
-    std::size_t total_bytes = 0;
-    check_hip(hipMemGetInfo(&free_bytes, &total_bytes), "hipMemGetInfo");
-    const auto reserve_target =
-        std::max<std::size_t>(static_cast<std::size_t>(kDeviceMemoryReserveFloorBytes), total_bytes / 20U);
-    const auto reserve = std::min<std::size_t>(free_bytes / 4U, reserve_target);
-    const auto usable_bytes = free_bytes - reserve;
-    if (required_bytes > usable_bytes) {
-        throw GpuError(std::string(action) + ": insufficient AMD GPU VRAM for bounded chunk");
-    }
+struct HipDeviceReservationState {
+    std::mutex mutex;
+    std::size_t reserved_bytes = 0;
+    std::size_t capacity_bytes = 0;
+};
+
+// Purpose: Return the process-wide HIP memory admission state shared by all codec translation units.
+// Inputs: None.
+// Outputs: Returns a singleton whose mutex serializes aggregate VRAM reservations.
+inline HipDeviceReservationState& hip_device_reservation_state() {
+    static HipDeviceReservationState state;
+    return state;
 }
+
+class HipDeviceMemoryReservation {
+  public:
+    HipDeviceMemoryReservation() = default;
+
+    // Purpose: Atomically reserve planned device bytes against live and process-wide VRAM limits.
+    // Inputs: `required_bytes` is the direct allocation plan and `action` labels admission failures.
+    // Outputs: Owns an aggregate reservation until destruction or throws before any allocation occurs.
+    HipDeviceMemoryReservation(std::size_t required_bytes, const char* action) {
+        if (required_bytes == 0U) {
+            return;
+        }
+        auto& state = hip_device_reservation_state();
+        std::scoped_lock lock(state.mutex);
+        std::size_t free_bytes = 0;
+        std::size_t total_bytes = 0;
+        check_hip(hipMemGetInfo(&free_bytes, &total_bytes), "hipMemGetInfo");
+        const auto reserve_target =
+            std::max<std::size_t>(static_cast<std::size_t>(kDeviceMemoryReserveFloorBytes), total_bytes / 20U);
+        const auto reserve = std::min<std::size_t>(free_bytes / 4U, reserve_target);
+        const auto usable_free_bytes = free_bytes - reserve;
+        if (state.reserved_bytes == 0U) {
+            state.capacity_bytes = usable_free_bytes;
+        }
+        if (required_bytes > usable_free_bytes || state.reserved_bytes > state.capacity_bytes ||
+            required_bytes > state.capacity_bytes - state.reserved_bytes) {
+            throw GpuError(std::string(action) + ": insufficient aggregate AMD GPU VRAM reservation");
+        }
+        state.reserved_bytes += required_bytes;
+        bytes_ = required_bytes;
+    }
+
+    HipDeviceMemoryReservation(const HipDeviceMemoryReservation&) = delete;
+    HipDeviceMemoryReservation& operator=(const HipDeviceMemoryReservation&) = delete;
+
+    // Purpose: Transfer one aggregate reservation without changing the global reserved byte count.
+    // Inputs: `other` relinquishes ownership.
+    // Outputs: This object releases the reservation on destruction; `other` becomes empty.
+    HipDeviceMemoryReservation(HipDeviceMemoryReservation&& other) noexcept : bytes_(other.bytes_) {
+        other.bytes_ = 0;
+    }
+
+    // Purpose: Replace this reservation with another while releasing any currently owned bytes.
+    // Inputs: `other` relinquishes ownership.
+    // Outputs: Updates global accounting exactly once for the replaced reservation.
+    HipDeviceMemoryReservation& operator=(HipDeviceMemoryReservation&& other) noexcept {
+        if (this != &other) {
+            release();
+            bytes_ = other.bytes_;
+            other.bytes_ = 0;
+        }
+        return *this;
+    }
+
+    // Purpose: Release planned device bytes from process-wide admission accounting.
+    // Inputs: Uses the reservation acquired by the constructor.
+    // Outputs: Decrements aggregate accounting without throwing.
+    ~HipDeviceMemoryReservation() {
+        release();
+    }
+
+  private:
+    // Purpose: Return owned bytes to the global reservation manager exactly once.
+    // Inputs: Uses `bytes_`; zero means no reservation.
+    // Outputs: Mutates process-wide accounting and clears this owner without throwing.
+    void release() noexcept {
+        if (bytes_ == 0U) {
+            return;
+        }
+        auto& state = hip_device_reservation_state();
+        std::scoped_lock lock(state.mutex);
+        state.reserved_bytes = bytes_ > state.reserved_bytes ? 0U : state.reserved_bytes - bytes_;
+        if (state.reserved_bytes == 0U) {
+            state.capacity_bytes = 0U;
+        }
+        bytes_ = 0U;
+    }
+
+    std::size_t bytes_ = 0;
+};
+
+template <typename T> class HipDeviceBuffer {
+  public:
+    HipDeviceBuffer() = default;
+
+    // Purpose: Allocate one HIP device buffer and assume ownership immediately.
+    // Inputs: `bytes` is the nonzero allocation size and `action` labels HIP failures.
+    // Outputs: Owns the device pointer or throws without leaking a partial allocation.
+    HipDeviceBuffer(std::size_t bytes, const char* action) {
+        if (bytes == 0U) {
+            return;
+        }
+        T* pointer = nullptr;
+        check_hip(hipMalloc(reinterpret_cast<void**>(&pointer), bytes), action);
+        pointer_ = pointer;
+    }
+
+    HipDeviceBuffer(const HipDeviceBuffer&) = delete;
+    HipDeviceBuffer& operator=(const HipDeviceBuffer&) = delete;
+
+    // Purpose: Transfer one device allocation without copying device memory.
+    // Inputs: `other` relinquishes pointer ownership.
+    // Outputs: This object owns the pointer and `other` becomes empty.
+    HipDeviceBuffer(HipDeviceBuffer&& other) noexcept : pointer_(other.pointer_) {
+        other.pointer_ = nullptr;
+    }
+
+    // Purpose: Replace this device allocation with another move-owned pointer.
+    // Inputs: `other` relinquishes pointer ownership.
+    // Outputs: Frees any previous pointer and leaves `other` empty.
+    HipDeviceBuffer& operator=(HipDeviceBuffer&& other) noexcept {
+        if (this != &other) {
+            reset_noexcept();
+            pointer_ = other.pointer_;
+            other.pointer_ = nullptr;
+        }
+        return *this;
+    }
+
+    // Purpose: Release an owned HIP allocation on every normal and exceptional exit.
+    // Inputs: Uses the pointer acquired by the constructor.
+    // Outputs: Best-effort frees device memory without throwing.
+    ~HipDeviceBuffer() {
+        reset_noexcept();
+    }
+
+    // Purpose: Expose the device pointer to HIP copies and kernels.
+    // Inputs: None.
+    // Outputs: Returns the borrowed pointer without transferring ownership.
+    [[nodiscard]] T* get() const noexcept {
+        return pointer_;
+    }
+
+    // Purpose: Free the device allocation while reporting HIP failures to the active operation.
+    // Inputs: `action` labels a possible `hipFree` failure.
+    // Outputs: Clears ownership after a successful free or throws while retaining it for destructor retry.
+    void reset_checked(const char* action) {
+        if (pointer_ == nullptr) {
+            return;
+        }
+        check_hip(hipFree(pointer_), action);
+        pointer_ = nullptr;
+    }
+
+  private:
+    // Purpose: Best-effort free for destructors and move assignment.
+    // Inputs: Uses `pointer_` when non-null.
+    // Outputs: Clears local ownership after asking HIP to release the allocation; never throws.
+    void reset_noexcept() noexcept {
+        if (pointer_ != nullptr) {
+            (void)hipFree(pointer_);
+            pointer_ = nullptr;
+        }
+    }
+
+    T* pointer_ = nullptr;
+};
 
 // Purpose: Append a little-endian GPU prefix table offset to a payload vector.
 // Inputs: `output` is the mutable encoded payload and `value` is the table offset.

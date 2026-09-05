@@ -30,6 +30,30 @@ std::wstring history_detail_text(const HistoryEntry& entry) {
            widen(entry.detail);
 }
 
+struct SecurityCheckDisplay {
+    std::wstring_view text;
+    COLORREF color = kMuted;
+};
+
+// Purpose: Map one recorded Security verification state to honest result text and color.
+// Inputs: `state` is the latest aggregate state for the current selected archive set.
+// Outputs: Returns a stable label/color pair without implying an unperformed check passed.
+SecurityCheckDisplay security_check_display(SecurityCheckState state) {
+    switch (state) {
+    case SecurityCheckState::Running:
+        return {L"Running", kInfo};
+    case SecurityCheckState::Passed:
+        return {L"Passed", kOk};
+    case SecurityCheckState::Failed:
+        return {L"Failed", kDanger};
+    case SecurityCheckState::Incomplete:
+        return {L"Incomplete", kWarn};
+    case SecurityCheckState::NotRun:
+    default:
+        return {L"Not run", kMuted};
+    }
+}
+
 }  // namespace
 
 // Purpose: Draw the Queue page toolbar controls.
@@ -317,6 +341,7 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     const RECT stop_button = secondary_action_rect_left_of(verify_button);
     const bool active_verify = state.active_operation == OperationKind::Verify;
     const bool can_start = can_start_security_verify(state);
+    const auto selected_archives = selected_extract_archive_paths(state);
     if (active_verify) {
         draw_button(dc, stop_button, L"Stop", false);
     }
@@ -336,22 +361,24 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
               L"Status", kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_line(dc, summary.left, summary.top + scale(36), summary.right, summary.top + scale(36), kBorder);
     struct Row {
-        const wchar_t* name;
-        const wchar_t* status;
+        std::wstring_view name;
+        std::wstring_view status;
         COLORREF color;
     };
+    const auto archive_paths = security_check_display(state.security_archive_paths);
+    const auto payload_integrity = security_check_display(state.security_payload_integrity);
+    const auto sha256 = state.integrity_hash_opt_in ? security_check_display(state.security_sha256)
+                                                    : SecurityCheckDisplay{L"Not selected", kMuted};
+    const auto defender = state.defender_scan_opt_in ? security_check_display(state.security_defender)
+                                                     : SecurityCheckDisplay{L"Not selected", kMuted};
     const Row rows[] = {
-        {L"Path safety", L"Safe", kOk},
-        {L"CRC metadata", L"Verified", kOk},
-        {L"Post-write verify", state.verify_after_write_opt_in ? L"Selected" : L"Not selected",
-         state.verify_after_write_opt_in ? kOk : kWarn},
-        {L"SHA-256 optional", state.integrity_hash_opt_in ? L"Selected" : L"Not selected",
-         state.integrity_hash_opt_in ? kOk : kWarn},
-        {L"Defender optional", state.defender_scan_opt_in ? L"Selected" : L"Not selected",
-         state.defender_scan_opt_in ? kOk : kWarn},
-        {L"Overwrite policy", state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting",
+        {L"Archive path set", archive_paths.text, archive_paths.color},
+        {L"Payload integrity", payload_integrity.text, payload_integrity.color},
+        {L"SHA-256 optional", sha256.text, sha256.color},
+        {L"Defender optional", defender.text, defender.color},
+        {L"Overwrite setting", state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting",
          state.overwrite ? kWarn : kOk},
-        {L"GPU requirement", state.gpu_required ? L"AMD HIP required" : L"Fallback allowed",
+        {L"GPU policy", state.gpu_required ? L"AMD HIP required" : L"Fallback allowed",
          state.gpu_required ? kInfo : kWarn},
     };
     int y = summary.top + scale(36);
@@ -382,12 +409,11 @@ void MainWindow::draw_security_page(HDC dc, const RECT& rect, const UiState& sta
     draw_field(
         dc, RECT{detail.left + scale(18), detail.top + scale(184), detail.right - scale(18), detail.top + scale(234)},
         L"Archive",
-        state.queued_paths.empty() ? L"Select one or more archives from the queue"
-                                   : state.queued_paths.front().wstring(),
-        false, true, false, state.queued_paths.empty() ? kMuted : CLR_INVALID);
+        selected_archives.empty() ? L"Select one or more archives from the queue" : selected_archives.front().wstring(),
+        false, true, false, selected_archives.empty() ? kMuted : CLR_INVALID);
     draw_field(
         dc, RECT{detail.left + scale(18), detail.top + scale(252), detail.left + scale(248), detail.top + scale(302)},
-        L"Files", std::to_wstring(state.queued_paths.size()), false);
+        L"Archives", std::to_wstring(selected_archives.size()), false);
     draw_field(
         dc, RECT{detail.left + scale(270), detail.top + scale(252), detail.right - scale(18), detail.top + scale(302)},
         L"Total size", L"Calculated during job", false);

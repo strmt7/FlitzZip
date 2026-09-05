@@ -23,6 +23,14 @@ enum class Page {
     About,
 };
 
+enum class SecurityCheckState {
+    NotRun,
+    Running,
+    Passed,
+    Failed,
+    Incomplete,
+};
+
 enum class ToggleId {
     None,
     VerifyAfterWrite,
@@ -219,6 +227,10 @@ struct UiState {
     bool integrity_hash_opt_in = false;
     bool defender_scan_opt_in = false;
     bool verify_after_write_opt_in = false;
+    SecurityCheckState security_archive_paths = SecurityCheckState::NotRun;
+    SecurityCheckState security_payload_integrity = SecurityCheckState::NotRun;
+    SecurityCheckState security_sha256 = SecurityCheckState::NotRun;
+    SecurityCheckState security_defender = SecurityCheckState::NotRun;
     bool extract_overwrite_prompt_visible = false;
     bool license_notices_dialog_visible = false;
     bool operation_cancel_requested = false;

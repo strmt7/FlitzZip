@@ -60,12 +60,8 @@ void append_be32(std::vector<unsigned char>& bytes, std::uint32_t value) {
 // Purpose: Append one RPM header index entry.
 // Inputs: `header` receives bytes; tag/type/offset/count are RPM index fields.
 // Outputs: Appends a 16-byte index record.
-void append_rpm_index_entry(
-    std::vector<unsigned char>& header,
-    std::uint32_t tag,
-    std::uint32_t type,
-    std::uint32_t offset,
-    std::uint32_t count) {
+void append_rpm_index_entry(std::vector<unsigned char>& header, std::uint32_t tag, std::uint32_t type,
+                            std::uint32_t offset, std::uint32_t count) {
     append_be32(header, tag);
     append_be32(header, type);
     append_be32(header, offset);
@@ -135,10 +131,8 @@ void gzip_file(const std::filesystem::path& source, const std::filesystem::path&
 // Purpose: Build a minimal RPM wrapper around a CPIO payload.
 // Inputs: `archive` is the RPM path, `payload` is the payload file, and `compressor` is written into RPM metadata.
 // Outputs: Creates a complete RPM file with a valid lead, signature header, package header, and payload.
-void write_rpm_fixture(
-    const std::filesystem::path& archive,
-    const std::filesystem::path& payload,
-    std::string_view compressor) {
+void write_rpm_fixture(const std::filesystem::path& archive, const std::filesystem::path& payload,
+                       std::string_view compressor) {
     std::vector<unsigned char> bytes(96U, 0);
     bytes[0] = 0xED;
     bytes[1] = 0xAB;
@@ -218,6 +212,29 @@ TEST_CASE(rpm_extraction_reads_gzip_cpio_payload) {
     const auto stats = superzip::extract_rpm(archive, output, false);
     REQUIRE_TRUE(stats.entries >= 2);
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), read_text_file(root / "input" / "alpha.txt"));
+}
+
+// Purpose: Verify an RPM header compressor is selected without evaluating an absent magic fallback.
+// Inputs: A package declaring Gzip whose intentionally malformed payload has no recognized compression magic.
+// Outputs: Returns Gzip metadata without dereferencing a disengaged optional; later decode remains fail-closed.
+TEST_CASE(rpm_scanner_uses_recognized_header_when_payload_magic_is_unknown) {
+    const auto root = test_temp_dir("rpm-header-only-compressor");
+    const auto payload = root / "opaque-payload.bin";
+    std::ofstream(payload, std::ios::binary) << "not-compressed";
+    const auto archive = root / "package.rpm";
+    write_rpm_fixture(archive, payload, "gzip");
+
+    const auto info = superzip::scan_rpm_payload(archive);
+    REQUIRE_EQ(info.compression, superzip::RpmPayloadCompression::Gzip);
+
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::extract_rpm(archive, root / "out", false));
+    } catch (const superzip::Error&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
 }
 
 // Purpose: Verify RPM extraction refuses overwriting existing files unless explicitly allowed.

@@ -197,27 +197,40 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
             for (std::size_t index = 0; index < request.archives.size(); ++index) {
                 const auto& archive = request.archives[index];
                 const auto& output = outputs[index];
+                const auto archive_source = pin_source_file(archive);
                 if (request.integrity) {
-                    const auto hash = hash_path(archive, IntegrityMode::Sha256);
+                    const auto hash = hash_path(archive_source.path(), IntegrityMode::Sha256);
                     append_history_entry("Security", archive.filename().string(), archive.string(),
                                          integrity_history_status("Archive", hash), true);
                 }
                 if (request.defender) {
-                    const auto pre_scan = scan_with_windows_defender(archive, DefenderScanMode::FullPath);
+                    const auto pre_scan = scan_with_windows_defender(archive_source.path(), DefenderScanMode::FullPath);
                     append_history_entry("Security", archive.filename().string(), archive.string(),
                                          defender_history_status("Defender archive", pre_scan),
-                                         !pre_scan.attempted || pre_scan.clean);
-                    if (pre_scan.attempted && !pre_scan.clean) {
-                        throw SecurityError("Microsoft Defender did not report the archive as clean: " +
-                                            archive.string());
-                    }
+                                         defender_scan_passed(pre_scan));
+                    require_clean_defender_scan(pre_scan, archive);
                 }
                 auto progress_callback = [this](const ProgressSnapshot& snapshot) {
                     publish_progress_snapshot_or_cancel(snapshot);
                 };
-                const auto archive_format = detect_archive_format(archive);
-                const auto stats = extract_detected_archive(archive_format, archive, output, request.gpu_required,
-                                                            request.overwrite, progress_callback);
+                const auto archive_format = detect_archive_format(archive_source.path());
+                OperationStats stats;
+                if (request.defender) {
+                    DirectoryPublishTransaction quarantine(output);
+                    stats =
+                        extract_detected_archive(archive_format, archive_source.path(), quarantine.staging_directory(),
+                                                 request.gpu_required, false, progress_callback);
+                    const auto post_scan =
+                        scan_with_windows_defender(quarantine.staging_directory(), DefenderScanMode::FullPath);
+                    append_history_entry("Security", output.filename().string(), output.string(),
+                                         defender_history_status("Defender output", post_scan),
+                                         defender_scan_passed(post_scan));
+                    require_clean_defender_scan(post_scan, output);
+                    quarantine.publish(request.overwrite);
+                } else {
+                    stats = extract_detected_archive(archive_format, archive_source.path(), output,
+                                                     request.gpu_required, request.overwrite, progress_callback);
+                }
                 std::ostringstream line;
                 line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
                      << stats.seconds << "s";
@@ -226,12 +239,6 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                     const auto hash = hash_path(output, IntegrityMode::Sha256);
                     append_history_entry("Security", output.filename().string(), output.string(),
                                          integrity_history_status("Output", hash), true);
-                }
-                if (request.defender) {
-                    const auto post_scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-                    append_history_entry("Security", output.filename().string(), output.string(),
-                                         defender_history_status("Defender output", post_scan),
-                                         !post_scan.attempted || post_scan.clean);
                 }
             }
         },

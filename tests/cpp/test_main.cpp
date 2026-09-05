@@ -32,14 +32,16 @@ void register_test(std::string name, TestFn fn) {
 
 // Purpose: Execute registered tests, optionally filtered by substring.
 // Inputs: `argc`/`argv` may contain one filter string.
-// Outputs: Returns zero when all selected tests pass and nonzero on failure.
+// Outputs: Returns zero when at least one selected test passes without failures; rejects empty selections.
 int main(int argc, char** argv) {
     const std::string filter = argc > 1 ? argv[1] : "";
     int failed = 0;
+    std::size_t selected = 0;
     for (const auto& test : registry()) {
         if (!filter.empty() && test.name.find(filter) == std::string::npos) {
             continue;
         }
+        ++selected;
         try {
             std::cout << "[RUN ] " << test.name << "\n" << std::flush;
             test.fn();
@@ -52,6 +54,10 @@ int main(int argc, char** argv) {
             std::cerr << "[FAIL] " << test.name << ": unknown exception\n";
         }
     }
-    std::cout << registry().size() << " tests, " << failed << " failed\n";
+    if (selected == 0) {
+        std::cerr << "No tests matched the requested filter\n";
+        return 2;
+    }
+    std::cout << selected << " tests, " << failed << " failed\n";
     return failed == 0 ? 0 : 1;
 }

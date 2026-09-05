@@ -186,6 +186,11 @@ static int read_code_tree(LHAPM2Decoder *decoder)
 		return 0;
 	}
 
+	// Values above 28 can index past copy_decode (GHSA-j2m3-h278-rrg9).
+	if (num_codes > 29) {
+		return 0;
+	}
+
 	// Store flag variable indicating whether we want to read
 	// the offset tree as well.
 

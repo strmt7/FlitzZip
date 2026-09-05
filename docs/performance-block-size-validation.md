@@ -89,6 +89,24 @@ ratio.
 
 ## Required Telemetry
 
+On a shared development host, timing requires representative headroom, not a
+perfectly idle machine. Record concurrent CPU/GPU load, available RAM, and disk
+activity before and during a run, without modifying unrelated processes.
+Sustained saturation, paging, storage queues, or substantial repeat-to-repeat
+variation make timing inconclusive. Modest stable background use is acceptable.
+Treat small differences within measured repeat-to-repeat variation as
+inconclusive, not automatic grounds to reject an optimization. Repeat in
+alternating order when results overlap. Prioritize opportunities for multi-fold
+end-to-end gains over tuning noise; require byte-exact correctness and unchanged
+format contracts before interpreting throughput. A local rejection does not
+rule out a different implementation or hardware configuration.
+Builds and correctness tests need not wait for a timing window. Compression
+sizes and byte-exact roundtrip results remain valid independently of timing.
+
+Per-process summed GPU engine percentages and accumulated concurrent HIP kernel
+time are not total-device utilization percentages; either can exceed 100.
+Do not compare those values directly to Task Manager's busiest-engine display.
+
 Record these fields for every block size:
 
 | Field | Reason |
@@ -104,6 +122,33 @@ Record these fields for every block size:
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
 
 ## Storage Policy
+
+### Rejected Prefix Scheduling Experiment (2026-09-05)
+
+A candidate packed independent 4 KiB prefix decode segments into 128-thread
+blocks instead of the existing one-thread blocks. Correctness passed for static
+and adaptive prefix data, including one segment, uneven segment counts, and
+partial final segments. The candidate nevertheless regressed the production
+RAM-only pipeline and was removed. The boundary regression test remains.
+
+The A/B comparison used preserved Release binaries, AMD Radeon RX 9070 XT,
+10,737,418,240 input bytes, Mixed profile, required HIP, four workers,
+1 MiB blocks, and three repetitions per binary and compression level. Run order
+alternated old/new and new/old. All 12 runs produced 4,570,658,964 output bytes
+(ratio 0.425676), validated roundtrips, and reported `memory_only=true` and
+`disk_write_bytes=0`.
+
+| Level | Existing mean total seconds | Candidate mean total seconds | Existing mean verify seconds | Candidate mean verify seconds |
+| --- | --- | --- | --- | --- |
+| 5 | 17.219 | 18.584 | 1.517 | 2.155 |
+| 9 | 17.982 | 19.614 | 1.517 | 2.308 |
+
+Pre-run samples showed 1.7-8.0% CPU, about 29 GiB available RAM, low paging and
+disk activity, and no individual GPU engine above 5%. During-run spot samples
+showed other GPU activity, so this is a local rejection decision, not a universal
+hardware claim. The consistent repeated regression is sufficient not to ship
+the candidate. More active lanes alone do not establish a faster kernel;
+instruction divergence, memory access, and end-to-end effects require profiling.
 
 Large filesystem benchmarks are intentionally excluded from development. They
 write generated input, archives, and extracted outputs, which can produce tens

@@ -3,6 +3,7 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "zstd/zstd_adapter.hpp"
+#include "zstd/zstd_stream.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -80,6 +81,71 @@ TEST_CASE(zstd_roundtrip_single_file) {
     const auto extract_stats = superzip::extract_zstd_file(archive, output, false);
     REQUIRE_EQ(extract_stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_text_file(output / "payload.bin"), payload);
+}
+
+// Purpose: Verify every supported compression effort roundtrips through the bounded decoder.
+// Inputs: Each supported product effort and a bounded deterministic payload.
+// Outputs: Throws if any effort creates a frame rejected by the bounded decoder.
+TEST_CASE(zstd_all_compression_levels_roundtrip) {
+    const auto root = test_temp_dir("zstd-levels");
+    const auto input = root / "payload.bin";
+    const auto payload = mixed_payload(4096);
+    write_text_file(input, payload);
+    for (int level = 1; level <= 9; ++level) {
+        const auto archive = root / ("level-" + std::to_string(level) + ".zst");
+        (void)superzip::compress_zstd({input}, archive, level);
+        const auto output = root / ("out-" + std::to_string(level));
+        (void)superzip::extract_zstd_file(archive, output, false);
+        REQUIRE_EQ(read_text_file(output / archive.stem()), payload);
+    }
+}
+
+// Purpose: Prove Maximum recovers long-distance redundancy missed by Balanced.
+// Inputs: An 8 MiB stream containing a seeded 4 MiB pseudorandom region repeated exactly twice.
+// Outputs: Requires at least 25 percent fewer encoded bytes and a byte-exact bounded-decoder roundtrip.
+TEST_CASE(zstd_maximum_compacts_long_distance_repeats) {
+    const auto root = test_temp_dir("zstd-long-distance");
+    std::string payload(4U * 1024U * 1024U, '\0');
+    std::uint32_t state = 0x13579BDFU;
+    for (auto& byte : payload) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        byte = static_cast<char>(state & 0xFFU);
+    }
+    payload += payload;
+    const auto input = root / "payload.bin";
+    write_text_file(input, payload);
+    const auto balanced = superzip::compress_zstd({input}, root / "balanced.zst", 5);
+    const auto maximum = superzip::compress_zstd({input}, root / "maximum.zst", 9);
+    REQUIRE_EQ(balanced.input_bytes, static_cast<std::uint64_t>(payload.size()));
+    REQUIRE_EQ(maximum.input_bytes, balanced.input_bytes);
+    REQUIRE_TRUE(maximum.output_bytes < balanced.output_bytes * 3U / 4U);
+    const auto output = root / "out";
+    (void)superzip::extract_zstd_file(root / "maximum.zst", output, false);
+    REQUIRE_EQ(read_text_file(output / "maximum"), payload);
+}
+
+// Purpose: Verify stream lifecycle rejects invalid efforts and writes after finalization.
+// Inputs: Invalid level values and a directly constructed output stream.
+// Outputs: Throws if invalid construction succeeds, repeated close fails, or a closed stream accepts bytes.
+TEST_CASE(zstd_stream_validates_effort_and_close_state) {
+    const auto root = test_temp_dir("zstd-lifecycle");
+    for (const int level : {0, 10}) {
+        bool rejected = false;
+        try {
+            superzip::ZstdOutputStream stream(root / "invalid.zst", level);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    superzip::ZstdOutputStream stream(root / "closed.zst");
+    stream << "payload";
+    stream.close();
+    stream.close();
+    stream << "late write";
+    REQUIRE_TRUE(!stream.good());
 }
 
 // Purpose: Verify `.zstd` extension aliases derive a safe output filename.

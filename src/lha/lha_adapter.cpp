@@ -1,7 +1,9 @@
 #include "lha/lha_adapter.hpp"
 
+#include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -37,6 +39,7 @@ struct LhaEntry {
 struct LhaMetadata {
     std::vector<LhaEntry> entries;
     std::uint64_t total_file_bytes = 0;
+    std::uint64_t path_metadata_bytes = 0;
 };
 
 // Purpose: Add an LHA file size to a bounded archive total.
@@ -54,8 +57,8 @@ std::uint64_t checked_add_lha_bytes(std::uint64_t total, std::uint64_t size) {
 }
 
 // Purpose: Read bytes from a heap-owned C++ stream for the Lhasa C API.
-// Inputs: `handle` points to an open `std::ifstream`, `buffer` receives bytes, and `buffer_len` is the requested byte count.
-// Outputs: Returns bytes read or -1 when the stream reports a non-EOF read failure.
+// Inputs: `handle` points to an open `std::ifstream`, `buffer` receives bytes, and `buffer_len` is the requested byte
+// count. Outputs: Returns bytes read or -1 when the stream reports a non-EOF read failure.
 int lha_stream_read(void* handle, void* buffer, std::size_t buffer_len) {
     constexpr auto kMaxCallbackRead = static_cast<std::size_t>(std::numeric_limits<int>::max());
     if (handle == nullptr || buffer_len > kMaxCallbackRead) {
@@ -91,7 +94,7 @@ const LHAInputStreamType kSuperZipLhaInputStreamType{
 };
 
 class LhaReaderSession {
-public:
+  public:
     // Purpose: Open one LHA/LZH archive and bind it to a Lhasa reader.
     // Inputs: `archive_path` identifies the archive to decode.
     // Outputs: Owns the C stream/reader state or throws on open/allocation failure.
@@ -134,7 +137,7 @@ public:
         return reader_;
     }
 
-private:
+  private:
     std::unique_ptr<std::ifstream> input_;
     LHAInputStream* stream_ = nullptr;
     LHAReader* reader_ = nullptr;
@@ -144,8 +147,24 @@ private:
 // Inputs: `header` is the current Lhasa header pointer.
 // Outputs: Returns true for directory members and false for regular payloads.
 bool lha_header_is_directory(const LHAFileHeader& header) {
-    return std::strcmp(header.compress_method, LHA_COMPRESS_TYPE_DIR) == 0 &&
-        header.symlink_target == nullptr;
+    return std::strcmp(header.compress_method, LHA_COMPRESS_TYPE_DIR) == 0 && header.symlink_target == nullptr;
+}
+
+// Purpose: Copy one required NUL-terminated Lhasa metadata string under an explicit byte bound.
+// Inputs: `value` is null or library-owned text, `max_bytes` is the permitted length, and `label` names diagnostics.
+// Outputs: Returns a bounded copy or throws without reading beyond `max_bytes + 1` bytes.
+std::string bounded_lha_string(const char* value, std::size_t max_bytes, const char* label) {
+    if (value == nullptr) {
+        return {};
+    }
+    std::size_t length = 0;
+    while (length <= max_bytes && value[length] != '\0') {
+        ++length;
+    }
+    if (length > max_bytes) {
+        throw ArchiveError(std::string("LHA ") + label + " exceeds SuperZip path limits");
+    }
+    return std::string(value, length);
 }
 
 // Purpose: Build the full archive path from Lhasa's split path/name fields.
@@ -156,13 +175,19 @@ std::string lha_header_path(const LHAFileHeader& header) {
         throw SecurityError("LHA symbolic links are not supported");
     }
 
-    std::string path = header.path == nullptr ? std::string{} : std::string(header.path);
-    const std::string filename = header.filename == nullptr ? std::string{} : std::string(header.filename);
+    std::string path = bounded_lha_string(header.path, kMaxArchivePathBytes, "directory path");
+    const std::string filename = bounded_lha_string(header.filename, kMaxArchivePathComponentBytes, "filename");
     if (filename.empty()) {
         return path;
     }
     if (!path.empty() && path.back() != '/') {
+        if (path.size() >= kMaxArchivePathBytes) {
+            throw ArchiveError("LHA member path exceeds SuperZip path limits");
+        }
         path.push_back('/');
+    }
+    if (filename.size() > kMaxArchivePathBytes - path.size()) {
+        throw ArchiveError("LHA member path exceeds SuperZip path limits");
     }
     path.append(filename);
     return path;
@@ -170,7 +195,8 @@ std::string lha_header_path(const LHAFileHeader& header) {
 
 // Purpose: Validate every LHA member path and payload before destination writes start.
 // Inputs: `archive_path` identifies the archive to scan.
-// Outputs: Returns safe metadata; throws on parser failure, unsafe path, unsupported entry type, CRC mismatch, or resource exhaustion.
+// Outputs: Returns safe metadata; throws on parser failure, unsafe path, unsupported entry type, CRC mismatch, or
+// resource exhaustion.
 LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
     LhaReaderSession session(archive_path);
     LhaMetadata metadata;
@@ -189,6 +215,9 @@ LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
 
         const bool directory = lha_header_is_directory(*header);
         const auto normalized_path = normalize_archive_path_key(lha_header_path(*header));
+        metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
+            metadata.path_metadata_bytes, static_cast<std::uint64_t>(normalized_path.size()) * 2U,
+            "LHA retained path metadata");
         if (!directory) {
             metadata.total_file_bytes = checked_add_lha_bytes(metadata.total_file_bytes, header->length);
             if (lha_reader_check(session.reader(), nullptr, nullptr) == 0) {
@@ -214,15 +243,11 @@ LhaMetadata scan_lha_metadata(const std::filesystem::path& archive_path) {
 }
 
 // Purpose: Write one decoded LHA payload through SuperZip's atomic publication path.
-// Inputs: `reader` is positioned on `entry`, `destination` is the extraction root, and `overwrite` controls replacement.
-// Outputs: Publishes the verified file or throws after cleanup.
-void publish_lha_payload(
-    LHAReader* reader,
-    const LhaEntry& entry,
-    const std::filesystem::path& destination,
-    bool overwrite) {
+// Inputs: `reader` is positioned on `entry`, `destination` is the extraction root, and `overwrite` controls
+// replacement. Outputs: Publishes the verified file or throws after cleanup.
+void publish_lha_payload(LHAReader* reader, const LhaEntry& entry, const std::filesystem::path& destination,
+                         bool overwrite) {
     const auto target = safe_join_archive_path(destination, entry.path);
-    std::filesystem::create_directories(target.parent_path());
     auto temporary = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary.file, std::ios::binary);
@@ -234,8 +259,7 @@ void publish_lha_payload(
         std::uint64_t written = 0;
         while (written < entry.size) {
             const auto remaining = entry.size - written;
-            const auto request = static_cast<std::size_t>(
-                std::min<std::uint64_t>(remaining, buffer.size()));
+            const auto request = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
             const auto decoded = lha_reader_read(reader, buffer.data(), request);
             if (decoded == 0) {
                 throw ArchiveError("LHA decoder ended before expected payload size: " + entry.path);
@@ -249,12 +273,15 @@ void publish_lha_payload(
             }
             written += static_cast<std::uint64_t>(decoded);
         }
+        if (lha_reader_check(reader, nullptr, nullptr) == 0) {
+            throw ArchiveError("LHA payload CRC or size changed during publication: " + entry.path);
+        }
 
         output.close();
         if (!output) {
             throw ArchiveError("failed to finalize temporary LHA extraction target: " + target.string());
         }
-        commit_verified_file(temporary.file, target, overwrite);
+        commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
     } catch (...) {
         cleanup_file_publish_target(temporary);
@@ -263,14 +290,12 @@ void publish_lha_payload(
 }
 
 // Purpose: Extract validated LHA entries to disk.
-// Inputs: `archive_path` identifies the archive, `metadata` contains safe entries, `destination` is the extraction root, and `overwrite`/progress fields control publication behavior.
-// Outputs: Writes directories and files below `destination`, or throws before leaving untracked temporary files.
-void extract_lha_payloads(
-    const std::filesystem::path& archive_path,
-    const LhaMetadata& metadata,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Inputs: `archive_path` identifies the archive, `metadata` contains safe entries, `destination` is the extraction
+// root, and `overwrite`/progress fields control publication behavior. Outputs: Writes directories and files below
+// `destination`, or throws before leaving untracked temporary files.
+void extract_lha_payloads(const std::filesystem::path& archive_path, const LhaMetadata& metadata,
+                          const std::filesystem::path& destination, bool overwrite,
+                          const ProgressCallback& progress_callback) {
     LhaReaderSession session(archive_path);
     ProgressState progress;
     progress.start(OperationKind::Extract, metadata.total_file_bytes, metadata.entries.size());
@@ -293,7 +318,7 @@ void extract_lha_payloads(
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
         if (entry.directory) {
-            std::filesystem::create_directories(safe_join_archive_path(destination, entry.path));
+            create_verified_directories(safe_join_archive_path(destination, entry.path));
         } else {
             publish_lha_payload(session.reader(), entry, destination, overwrite);
             progress.add_bytes(entry.size);
@@ -309,18 +334,19 @@ void extract_lha_payloads(
 
 }  // namespace
 
-OperationStats extract_lha(
-    const std::filesystem::path& archive_path,
-    const std::filesystem::path& destination,
-    bool overwrite,
-    const ProgressCallback& progress_callback) {
+// Purpose: Extract an LHA/LZH archive through two identity-bound passes with repeated payload checks.
+// Inputs: `archive_path`, `destination`, overwrite policy, and optional progress callback describe the operation.
+// Outputs: Returns extraction telemetry or throws before retaining any unverified file.
+OperationStats extract_lha(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto metadata = scan_lha_metadata(archive_path);
-    std::filesystem::create_directories(destination);
-    extract_lha_payloads(archive_path, metadata, destination, overwrite, progress_callback);
+    const auto archive_source = pin_source_file(archive_path);
+    const auto metadata = scan_lha_metadata(archive_source.path());
+    create_verified_directories(destination);
+    extract_lha_payloads(archive_source.path(), metadata, destination, overwrite, progress_callback);
 
     OperationStats stats;
-    stats.input_bytes = std::filesystem::file_size(archive_path);
+    stats.input_bytes = archive_source.size();
     stats.output_bytes = metadata.total_file_bytes;
     stats.entries = static_cast<std::uint64_t>(metadata.entries.size());
     stats.gpu_used = false;

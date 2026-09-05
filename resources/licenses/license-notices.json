@@ -6,7 +6,7 @@
       "source": "LICENSE"
     },
     {
-      "title": "miniz 3.1.1",
+      "title": "miniz 3.1.2",
       "group": "Other",
       "source": "third_party/miniz/LICENSE"
     },
@@ -21,7 +21,7 @@
       "source": "third_party/xz_embedded/COPYING"
     },
     {
-      "title": "LZMA SDK 26.01",
+      "title": "LZMA SDK 26.03",
       "group": "Other",
       "source": "third_party/lzma_sdk/LICENSE"
     },
@@ -31,7 +31,7 @@
       "source": "third_party/zstd/LICENSE"
     },
     {
-      "title": "Lhasa 0.5.0",
+      "title": "Lhasa 0.6.0",
       "group": "Other",
       "source": "third_party/lhasa/COPYING.md"
     },

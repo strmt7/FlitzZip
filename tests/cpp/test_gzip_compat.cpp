@@ -3,7 +3,9 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_adapter.hpp"
+#include "miniz.h"
 
+#include <array>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -65,6 +67,28 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 }
 
 }  // namespace
+
+// Purpose: Verify malformed zero-bit Huffman symbols fail instead of producing unbounded output without input progress.
+// Inputs: The prefix of the upstream miniz pull-request-370 regression stream.
+// Outputs: `mz_inflate` returns `MZ_DATA_ERROR` in one bounded call and produces no output.
+TEST_CASE(miniz_inflate_rejects_zero_bit_huffman_symbol_without_progress) {
+    constexpr std::array<unsigned char, 32> encoded{
+        0x78, 0x01, 0xEC, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77, 0x66, 0x1E, 0x28, 0xA0,
+        0xFA, 0x3B, 0x3A, 0x3D, 0xDD, 0x49, 0xBD, 0x44, 0xC3, 0x80, 0xD8, 0x11, 0xA0, 0x36, 0x86, 0x15,
+    };
+    std::array<unsigned char, 64U * 1024U> output{};
+    mz_stream stream{};
+    REQUIRE_EQ(mz_inflateInit(&stream), MZ_OK);
+    stream.next_in = encoded.data();
+    stream.avail_in = static_cast<unsigned int>(encoded.size());
+    stream.next_out = output.data();
+    stream.avail_out = static_cast<unsigned int>(output.size());
+
+    const auto status = mz_inflate(&stream, MZ_NO_FLUSH);
+    REQUIRE_EQ(status, MZ_DATA_ERROR);
+    REQUIRE_EQ(stream.total_out, static_cast<mz_ulong>(0));
+    REQUIRE_EQ(mz_inflateEnd(&stream), MZ_OK);
+}
 
 // Purpose: Verify native Gzip compatibility roundtrip for a regular file.
 // Inputs: A temporary source file compressed through the miniz raw-deflate adapter.
