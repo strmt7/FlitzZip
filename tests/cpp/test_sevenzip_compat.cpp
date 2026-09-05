@@ -1,4 +1,5 @@
 #include "test_compat_fixture.hpp"
+#include "test_sevenzip_unicode_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -13,6 +14,7 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -128,6 +130,38 @@ TEST_CASE(sevenzip_extraction_reads_nested_payload) {
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "nested" / "payload.txt"), "sevenzip payload");
     superzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Preserve UTF-16 archive names through extraction and explicit replacement.
+// Inputs: An independently generated LZMA2 fixture with accented, CJK, and supplementary names.
+// Outputs: Checks exact names and payloads, empty entries, and overwrite behavior.
+TEST_CASE(sevenzip_unicode_names_extract_and_overwrite) {
+    const auto root = test_temp_dir("sevenzip-unicode") / L"\u65e5\u672c";
+    std::filesystem::create_directories(root);
+    const auto archive = root / L"archive-\u03a9.7z";
+    const auto output = root / L"output-\u00e9";
+    const auto relative = std::filesystem::path(L"caf\u00e9") / L"\u65e5\u672c-\U0001f680.txt";
+    write_7z_fixture(archive, superzip_test::kUnicodeSevenZipFixture);
+    const auto stats = superzip::extract_7z(archive, output, false);
+    REQUIRE_EQ(stats.entries, 4U);
+    REQUIRE_EQ(stats.output_bytes, std::string_view("sevenzip unicode payload\n").size());
+    REQUIRE_EQ(read_text_file(output / relative), "sevenzip unicode payload\n");
+    REQUIRE_TRUE(std::filesystem::is_directory(output / L"empty-\u03a9"));
+    REQUIRE_EQ(std::filesystem::file_size(output / L"empty-\u00e9.txt"), 0U);
+    REQUIRE_EQ(count_regular_files(output), 2U);
+    std::ofstream(output / relative, std::ios::binary | std::ios::trunc) << "old";
+    bool refused = false;
+    try {
+        (void)superzip::extract_7z(archive, output, false);
+    } catch (const superzip::SecurityError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_EQ(read_text_file(output / relative), "old");
+    (void)superzip::extract_7z(archive, output, true);
+    REQUIRE_EQ(read_text_file(output / relative), "sevenzip unicode payload\n");
+    superzip_test::export_compat_fixture(archive, output);
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Verify 7z extraction refuses overwriting existing files unless explicitly allowed.

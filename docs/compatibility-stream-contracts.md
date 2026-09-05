@@ -149,6 +149,54 @@ exercise all 128 high-byte CP437 values. These are correctness results, not
 compression-speed measurements or proof of Unicode support in every adapter.
 The reproduced CPIO/CPIO.GZ and AR Unicode defects remain open.
 
+## Extract-Only Unicode Boundaries
+
+The 7z and WIM readers already convert library-provided UTF-16 names to UTF-8.
+Their final filesystem joins now explicitly decode that UTF-8 rather than
+passing it through the host ANSI code page. WIM's private staged-file lookup
+uses typed UTF-8 paths too; single-image output remains unprefixed and
+multiple images retain their existing `image-N/` prefixes. XAR's existing XML
+UTF-8 names, including decoded character references, use the same explicit
+filesystem encoding. This does not add support for other XML encodings or
+change any legacy adapter's encoding policy.
+
+Shared file and directory publication, plus these three adapters, now format
+native path diagnostics as UTF-8. A valid Unicode output name therefore does
+not replace an intended overwrite refusal with a code-page conversion error.
+The helper is for diagnostic text only, not path validation or normalization;
+invalid native encoding and allocation failures may still throw.
+
+Regression evidence includes:
+
+- A 219-byte LZMA2 fixture generated and independently extracted by
+  [py7zr 1.1.3](https://pypi.org/project/py7zr/1.1.3/), embedded as test source
+  in `tests/cpp/test_sevenzip_unicode_fixture.hpp`. It contains
+  `caf\u00e9/\u65e5\u672c-\U0001f680.txt` with the ASCII payload
+  `sevenzip unicode payload\n`, `empty-\u03a9/`, and `empty-\u00e9.txt`.
+  The escapes here identify exact Unicode characters, not literal archive
+  backslashes. The fixture was generated with `SevenZipFile` in write mode,
+  `FILTER_LZMA2` preset 1, and `write(path, relative_posix_name)` for each
+  sorted source entry. Python is not required to run the embedded fixture.
+- WIM fixtures generated during native tests by the pinned wimlib 1.14.5
+  writer API, with ACL capture disabled, no compression, one writer thread,
+  and integrity checking. Tests exercise one and two images through the
+  product reader; no WIM writer is exposed as a product feature.
+- XAR stored and zlib fixtures mixing literal UTF-8, decimal and hexadecimal
+  character references, supplementary characters, and the XML ampersand
+  entity. Exact restored paths and payloads are checked for both encodings.
+- Shared publication tests verify UTF-8 error text, preservation of existing
+  files on refusal, explicit replacement, and cleanup of private staging.
+
+The registry-driven CLI format matrix uses these Unicode fixtures for 7z,
+WIM, and XAR. It checks automatic and explicit format routing, exact restored
+trees, overwrite refusal, explicit overwrite, and registered aliases, in
+addition to the independent native test assertions.
+
+These are tiny filesystem correctness fixtures, not performance benchmarks.
+The Windows libarchive 3.8.8 7z writer crashed during the initial independent
+fixture-generation attempt; py7zr generated the retained fixture instead.
+No libarchive-wide compatibility or speed conclusion follows from that crash.
+
 ## Remaining Scope
 
 These contracts do not establish optimal ratios or performance for every

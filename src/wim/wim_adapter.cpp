@@ -3,6 +3,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -490,27 +491,12 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
     return metadata;
 }
 
-// Purpose: Join a normalized archive key under a trusted staging root.
-// Inputs: `root` is a SuperZip-created staging directory and `normalized_path` has already passed
+// Purpose: Join a normalized UTF-8 archive key under a trusted staging root.
+// Inputs: `root` is a SuperZip-created staging directory and UTF-8 `normalized_path` has already passed
 // `normalize_archive_path_key`. Outputs: Returns a filesystem path below `root`; this function does not validate
 // untrusted input.
 std::filesystem::path join_normalized_path(const std::filesystem::path& root, const std::string& normalized_path) {
-    std::filesystem::path result = root;
-    std::string component;
-    for (const char ch : normalized_path) {
-        if (ch == '/') {
-            if (!component.empty()) {
-                result /= component;
-                component.clear();
-            }
-        } else {
-            component.push_back(ch);
-        }
-    }
-    if (!component.empty()) {
-        result /= component;
-    }
-    return result;
+    return root / std::filesystem::path(std::u8string(normalized_path.begin(), normalized_path.end()));
 }
 
 // Purpose: Reserve a private staging directory for a wimlib image apply operation.
@@ -535,18 +521,19 @@ void publish_staged_wim_file(const std::filesystem::path& source, const std::fil
                              std::uint64_t expected_size, bool overwrite) {
     const auto staged_source = pin_source_file(source);
     if (staged_source.size() != expected_size) {
-        throw ArchiveError("staged WIM payload size does not match validated metadata: " + source.string());
+        throw ArchiveError("staged WIM payload size does not match validated metadata: " +
+                           path_diagnostic_utf8(source));
     }
     const auto temporary = reserve_file_publish_target(target);
     bool temporary_active = true;
     try {
         std::ifstream input(staged_source.path(), std::ios::binary);
         if (!input) {
-            throw ArchiveError("failed to open staged WIM payload: " + source.string());
+            throw ArchiveError("failed to open staged WIM payload: " + path_diagnostic_utf8(source));
         }
         std::ofstream output(temporary.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary WIM extraction target: " + target.string());
+            throw ArchiveError("failed to create temporary WIM extraction target: " + path_diagnostic_utf8(target));
         }
         std::vector<char> buffer(kWimCopyBufferBytes);
         std::uint64_t copied = 0;
@@ -556,17 +543,17 @@ void publish_staged_wim_file(const std::filesystem::path& source, const std::fil
             input.read(buffer.data(), static_cast<std::streamsize>(requested));
             const auto read = static_cast<std::size_t>(input.gcount());
             if (read == 0U) {
-                throw ArchiveError("staged WIM payload ended early: " + source.string());
+                throw ArchiveError("staged WIM payload ended early: " + path_diagnostic_utf8(source));
             }
             output.write(buffer.data(), static_cast<std::streamsize>(read));
             if (!output) {
-                throw ArchiveError("failed to write temporary WIM extraction target: " + target.string());
+                throw ArchiveError("failed to write temporary WIM extraction target: " + path_diagnostic_utf8(target));
             }
             copied += read;
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary WIM extraction target: " + target.string());
+            throw ArchiveError("failed to finalize temporary WIM extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
@@ -593,7 +580,7 @@ void stage_wim_images(const WimRuntime& runtime, const std::filesystem::path& ar
 }
 
 // Purpose: Publish validated staged WIM files into the requested destination.
-// Inputs: `metadata` contains the prevalidated entries, `destination` is the extraction root, `stage` is the private
+// Inputs: `metadata` contains prevalidated UTF-8 entries, `destination` is the extraction root, `stage` is the private
 // staging root, and `overwrite`/`progress_callback` control publication. Outputs: Creates directories and verified
 // files below `destination` or throws without intentionally deleting caller-owned output.
 void publish_wim_entries(const WimMetadata& metadata, const std::filesystem::path& destination,
@@ -604,7 +591,7 @@ void publish_wim_entries(const WimMetadata& metadata, const std::filesystem::pat
     for (const auto& entry : metadata.entries) {
         progress.set_current(entry.output_path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.output_path);
+        const auto target = safe_join_archive_path(destination, entry.output_path, ArchivePathEncoding::Utf8);
         if (entry.directory) {
             create_verified_directories(target);
         } else {

@@ -2,6 +2,7 @@
 
 #include "core/file_manifest.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -324,14 +325,14 @@ HANDLE open_pinned_directory(const std::filesystem::path& directory, bool public
                                     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     if (handle.get() == INVALID_HANDLE_VALUE) {
         const auto error = GetLastError();
-        throw SecurityError("unable to pin output directory: " + directory.string() + " (Windows error " +
+        throw SecurityError("unable to pin output directory: " + path_diagnostic_utf8(directory) + " (Windows error " +
                             std::to_string(error) + ")");
     }
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (GetFileInformationByHandleEx(handle.get(), FileAttributeTagInfo, &attributes, sizeof(attributes)) == 0 ||
         (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0U ||
         (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
-        throw SecurityError("output directory chain contains an unsafe object: " + directory.string());
+        throw SecurityError("output directory chain contains an unsafe object: " + path_diagnostic_utf8(directory));
     }
     return handle.release();
 }
@@ -356,7 +357,7 @@ std::vector<HANDLE> create_and_pin_directory_chain(const std::filesystem::path& 
             current /= component;
             const auto text = current.wstring();
             if (CreateDirectoryW(text.c_str(), nullptr) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) {
-                throw ArchiveError("unable to create output directory: " + current.string());
+                throw ArchiveError("unable to create output directory: " + path_diagnostic_utf8(current));
             }
             handles.push_back(open_pinned_directory(current));
         }
@@ -402,7 +403,7 @@ void create_private_staging_directory(const std::filesystem::path& target, FileP
         if (CreateDirectoryW(text.c_str(), &security) == 0) {
             if (GetLastError() == ERROR_ALREADY_EXISTS)
                 continue;
-            throw ArchiveError("unable to reserve private publication directory: " + target.string());
+            throw ArchiveError("unable to reserve private publication directory: " + path_diagnostic_utf8(target));
         }
         try {
             state.temporary_directory_handle = open_pinned_directory(directory);
@@ -414,7 +415,7 @@ void create_private_staging_directory(const std::filesystem::path& target, FileP
             throw;
         }
     }
-    throw ArchiveError("unable to reserve a unique publication directory: " + target.string());
+    throw ArchiveError("unable to reserve a unique publication directory: " + path_diagnostic_utf8(target));
 }
 
 // Purpose: Validate a staged payload and open the exact file for handle-relative rename.
@@ -456,9 +457,9 @@ void rename_payload_to_pinned_path(HANDLE payload, const std::filesystem::path& 
         const auto error = GetLastError();
         if (!overwrite &&
             (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS || error == ERROR_ACCESS_DENIED)) {
-            throw SecurityError("refusing to overwrite existing file: " + target.string());
+            throw SecurityError("refusing to overwrite existing file: " + path_diagnostic_utf8(target));
         }
-        throw ArchiveError("failed to publish verified output: " + target.string() + " (Windows error " +
+        throw ArchiveError("failed to publish verified output: " + path_diagnostic_utf8(target) + " (Windows error " +
                            std::to_string(error) + ")");
     }
 }
@@ -552,7 +553,7 @@ void commit_verified_file(const ReservedFilePublishTarget& temporary, const std:
     std::error_code error;
     std::filesystem::create_hard_link(temporary.file, temporary.state->target, error);
     if (error)
-        throw SecurityError("refusing to overwrite existing file: " + target.string());
+        throw SecurityError("refusing to overwrite existing file: " + path_diagnostic_utf8(target));
     std::filesystem::remove(temporary.file, error);
 #endif
 }
@@ -626,7 +627,7 @@ void DirectoryPublishTransaction::publish(bool overwrite) {
         const auto target = safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8);
         std::error_code error;
         if (!overwrite && !entry.directory && std::filesystem::exists(target, error)) {
-            throw SecurityError("refusing to overwrite existing file: " + target.string());
+            throw SecurityError("refusing to overwrite existing file: " + path_diagnostic_utf8(target));
         }
         if (error) {
             throw ArchiveError("cannot inspect extraction publication target: " + error.message());

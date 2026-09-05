@@ -3,6 +3,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -263,12 +264,12 @@ class SevenZipArchive {
         try {
             file_.input.open(archive_path, std::ios::binary);
             if (!file_.input) {
-                throw ArchiveError("cannot open 7z archive: " + archive_path.string());
+                throw ArchiveError("cannot open 7z archive: " + path_diagnostic_utf8(archive_path));
             }
             file_.input.seekg(0, std::ios::end);
             const auto end = file_.input.tellg();
             if (end < 0) {
-                throw ArchiveError("failed to determine 7z archive size: " + archive_path.string());
+                throw ArchiveError("failed to determine 7z archive size: " + path_diagnostic_utf8(archive_path));
             }
             file_.size = static_cast<std::uint64_t>(end);
             file_.input.seekg(0, std::ios::beg);
@@ -519,24 +520,24 @@ void validate_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& meta
 }
 
 // Purpose: Write one decoded 7z payload through SuperZip's atomic publication path.
-// Inputs: `destination` is the extraction root, `entry` names the target, `payload` contains decoded bytes, and
+// Inputs: `destination` is the extraction root, `entry` names the UTF-8 target, `payload` contains decoded bytes, and
 // `overwrite` controls replacement. Outputs: Publishes the verified file or throws after cleanup.
 void publish_7z_payload(const std::filesystem::path& destination, const SevenZipEntry& entry,
                         std::span<const std::byte> payload, bool overwrite) {
-    const auto target = safe_join_archive_path(destination, entry.path);
+    const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
     auto temporary = reserve_file_publish_target(target);
     try {
         std::ofstream output(temporary.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary 7z extraction target: " + target.string());
+            throw ArchiveError("failed to create temporary 7z extraction target: " + path_diagnostic_utf8(target));
         }
         output.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
         if (!output) {
-            throw ArchiveError("failed to write temporary 7z extraction target: " + target.string());
+            throw ArchiveError("failed to write temporary 7z extraction target: " + path_diagnostic_utf8(target));
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary 7z extraction target: " + target.string());
+            throw ArchiveError("failed to finalize temporary 7z extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);
@@ -547,9 +548,9 @@ void publish_7z_payload(const std::filesystem::path& destination, const SevenZip
 }
 
 // Purpose: Extract validated 7z entries to disk.
-// Inputs: `archive` owns SDK state, `metadata` contains safe entries, `destination` is the extraction root, and
-// `overwrite`/progress fields control publication behavior. Outputs: Writes directories and files below `destination`,
-// or throws before leaving untracked temporary files.
+// Inputs: `archive` owns SDK state, `metadata` contains validated UTF-8 entries, `destination` is the extraction root,
+// and `overwrite`/progress fields control publication behavior. Outputs: Writes directories and files below
+// `destination`, or throws before leaving untracked temporary files.
 void extract_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metadata,
                          const std::filesystem::path& destination, bool overwrite,
                          const ProgressCallback& progress_callback) {
@@ -558,7 +559,7 @@ void extract_7z_payloads(SevenZipArchive& archive, const SevenZipMetadata& metad
     for (const auto& entry : metadata.entries) {
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.path);
+        const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
         if (entry.directory) {
             create_verified_directories(target);
             progress.finish_entry();

@@ -3,6 +3,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -728,7 +729,7 @@ XarMetadata parse_xar_toc(std::span<const unsigned char> toc_bytes, const XarHea
 XarMetadata read_xar_metadata(const std::filesystem::path& archive_path, std::uint64_t archive_size) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open XAR archive: " + archive_path.string());
+        throw ArchiveError("cannot open XAR archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto header = read_xar_header(input, archive_size);
     const auto compressed_toc = read_range(input, header.header_size, header.toc_compressed_size, "TOC");
@@ -848,7 +849,7 @@ std::uint64_t process_xar_payload(std::ifstream& input, const XarMetadata& metad
 void validate_xar_payloads(const std::filesystem::path& archive_path, const XarMetadata& metadata) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open XAR archive: " + archive_path.string());
+        throw ArchiveError("cannot open XAR archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto discard = [](std::span<const unsigned char>) {};
     for (const auto& entry : metadata.entries) {
@@ -883,12 +884,12 @@ OperationStats extract_xar(const std::filesystem::path& archive_path, const std:
 
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open XAR archive: " + archive_path.string());
+        throw ArchiveError("cannot open XAR archive: " + path_diagnostic_utf8(archive_path));
     }
     for (const auto& entry : metadata.entries) {
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.path);
+        const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
         if (entry.directory) {
             create_verified_directories(target);
             progress.finish_entry();
@@ -896,21 +897,23 @@ OperationStats extract_xar(const std::filesystem::path& archive_path, const std:
             continue;
         }
         if (!overwrite && std::filesystem::exists(target)) {
-            throw SecurityError("refusing to overwrite existing XAR extraction target: " + target.string());
+            throw SecurityError("refusing to overwrite existing XAR extraction target: " +
+                                path_diagnostic_utf8(target));
         }
         const auto temporary = reserve_file_publish_target(target);
         bool temporary_active = true;
         try {
             std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
             if (!output) {
-                throw ArchiveError("failed to create temporary XAR extraction target: " + target.string());
+                throw ArchiveError("failed to create temporary XAR extraction target: " + path_diagnostic_utf8(target));
             }
             const auto sink = [&](std::span<const unsigned char> bytes) {
                 if (!bytes.empty()) {
                     output.write(reinterpret_cast<const char*>(bytes.data()),
                                  static_cast<std::streamsize>(bytes.size()));
                     if (!output) {
-                        throw ArchiveError("failed to write temporary XAR extraction target: " + target.string());
+                        throw ArchiveError("failed to write temporary XAR extraction target: " +
+                                           path_diagnostic_utf8(target));
                     }
                     progress.add_bytes(static_cast<std::uint64_t>(bytes.size()));
                     publish_progress(progress, progress_callback);
@@ -922,7 +925,8 @@ OperationStats extract_xar(const std::filesystem::path& archive_path, const std:
             }
             output.close();
             if (!output) {
-                throw ArchiveError("failed to finalize temporary XAR extraction target: " + target.string());
+                throw ArchiveError("failed to finalize temporary XAR extraction target: " +
+                                   path_diagnostic_utf8(target));
             }
             commit_verified_file(temporary, target, overwrite);
             cleanup_file_publish_target(temporary);

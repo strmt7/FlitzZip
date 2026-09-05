@@ -154,6 +154,51 @@ TEST_CASE(xar_extraction_reads_nested_zlib_payload) {
     superzip_test::export_compat_fixture(archive, output);
 }
 
+// Purpose: Preserve XML UTF-8 and character-reference names through extraction and replacement.
+// Inputs: Stored and zlib fixtures mix raw UTF-8 with numeric and named XML entities.
+// Outputs: Checks Unicode filesystem paths, exact content, and unchanged overwrite semantics.
+TEST_CASE(xar_unicode_names_extract_and_overwrite) {
+    const auto root = test_temp_dir("xar-unicode") / L"\u65e5\u672c";
+    std::filesystem::create_directories(root);
+    const std::string payload = "xar unicode payload\n";
+    for (const bool compressed : {false, true}) {
+        const auto archive = root / (compressed ? L"compressed-\u03a9.xar" : L"stored-\u03a9.xar");
+        const auto output = root / (compressed ? L"compressed-\u00e9" : L"stored-\u00e9");
+        const auto relative = std::filesystem::path(L"caf\u00e9") / L"\u65e5\u672c-\U0001f680&.txt";
+        const auto heap =
+            compressed ? zlib_compress(payload) : std::vector<unsigned char>(payload.begin(), payload.end());
+        const std::string toc = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xar><toc>"
+                                "<file id=\"1\"><name>caf\xC3\xA9</name><type>directory</type>"
+                                "<file id=\"2\"><name>&#26085;&#x672C;-&#x1F680;&amp;.txt</name><type>file</type>"
+                                "<data><length>" +
+                                std::to_string(payload.size()) + "</length><offset>0</offset><size>" +
+                                std::to_string(heap.size()) + "</size><encoding style=\"" +
+                                (compressed ? "application/x-gzip" : "application/octet-stream") +
+                                "\"/></data></file></file></toc></xar>";
+        write_xar_fixture(archive, toc, heap);
+        const auto stats = superzip::extract_xar(archive, output, false);
+        REQUIRE_EQ(stats.entries, 2U);
+        REQUIRE_EQ(stats.output_bytes, payload.size());
+        REQUIRE_EQ(read_text_file(output / relative), payload);
+        REQUIRE_EQ(count_regular_files(output), 1U);
+        std::ofstream(output / relative, std::ios::binary | std::ios::trunc) << "old";
+        bool refused = false;
+        try {
+            (void)superzip::extract_xar(archive, output, false);
+        } catch (const superzip::SecurityError&) {
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+        REQUIRE_EQ(read_text_file(output / relative), "old");
+        (void)superzip::extract_xar(archive, output, true);
+        REQUIRE_EQ(read_text_file(output / relative), payload);
+        if (compressed) {
+            superzip_test::export_compat_fixture(archive, output);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify XAR extraction refuses overwriting existing files unless explicitly allowed.
 // Inputs: A nested XAR member and a preexisting destination file of the same name.
 // Outputs: Throws `SecurityError` and preserves the original file.

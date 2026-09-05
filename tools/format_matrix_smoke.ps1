@@ -360,7 +360,7 @@ function Get-MatrixExtractOnlyTestName {
 
     $coverage = @{
         "zipx" = "zipx_extracts_zip_compatible_records"
-        "7z" = "sevenzip_extraction_reads_nested_payload"
+        "7z" = "sevenzip_unicode_names_extract_and_overwrite"
         "tar.xz" = "tar_xz_extracts_files_and_directories"
         "tar.lz" = "tar_lzip_extracts_files_and_directories"
         "b64" = "base64_compat_roundtrip"
@@ -376,8 +376,8 @@ function Get-MatrixExtractOnlyTestName {
         "xxe" = "xxe_compat_roundtrip"
         "uue" = "uue_compat_roundtrip"
         "lha" = "lha_extraction_reads_nested_payload"
-        "wim" = "wim_fixture_extracts_with_native_adapter"
-        "xar" = "xar_extraction_reads_nested_zlib_payload"
+        "wim" = "wim_unicode_names_extract_and_overwrite"
+        "xar" = "xar_unicode_names_extract_and_overwrite"
         "deb" = "deb_outer_container_extracts_with_native_ar_adapter"
         "rpm" = "rpm_extraction_reads_gzip_cpio_payload"
     }

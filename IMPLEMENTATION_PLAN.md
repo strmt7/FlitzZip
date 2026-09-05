@@ -41,6 +41,12 @@ Security tab or a published release.
    arguments and format detection no longer narrow Unicode paths through the
    host ANSI code page. Process-level Unicode checks cover the native, ZIP,
    and writable TAR containers; CPIO/CPIO.GZ and AR name handling remains open.
+   The 7z, WIM, and XAR readers now also preserve their Unicode metadata at
+   filesystem joins. WIM staging lookup uses the same explicit UTF-8 contract.
+   Shared publication diagnostics no longer lose the original overwrite error
+   while trying to narrow a valid Unicode filename to the host code page.
+   New fixtures cover supplementary names, empty entries, single/multiple WIM
+   images, and exact overwrite behavior; legacy encoding policy remains open.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

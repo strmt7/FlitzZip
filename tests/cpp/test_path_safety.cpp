@@ -1,5 +1,6 @@
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/result.hpp"
 #include "test_util.hpp"
 
@@ -10,6 +11,63 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+
+// Purpose: Keep Unicode overwrite diagnostics and transaction cleanup equivalent to ASCII paths.
+// Inputs: Existing Unicode files and new payloads in per-file and directory publication transactions.
+// Outputs: Checks UTF-8 messages, preserved original bytes, explicit replacement, and absence of private leftovers.
+TEST_CASE(file_publication_unicode_overwrite_diagnostics) {
+    const auto root = test_temp_dir("publish-unicode") / L"caf\u00e9";
+    std::filesystem::create_directories(root);
+    const std::u8string utf8_name = u8"\u65e5\u672c-\U0001f680.txt";
+    const std::string expected_name(utf8_name.begin(), utf8_name.end());
+    const std::filesystem::path name(utf8_name);
+    REQUIRE_EQ(superzip::path_diagnostic_utf8(name), expected_name);
+    REQUIRE_EQ(superzip::path_diagnostic_utf8(std::filesystem::path{}), "");
+    for (const bool directory : {false, true}) {
+        const auto output = root / (directory ? "directory" : "file");
+        std::filesystem::create_directories(output);
+        const auto target = output / name;
+        std::ofstream(target, std::ios::binary) << "old";
+        bool refused = false;
+        try {
+            if (directory) {
+                superzip::DirectoryPublishTransaction transaction(output);
+                std::ofstream(transaction.staging_directory() / name, std::ios::binary) << "new";
+                transaction.publish(false);
+            } else {
+                superzip::FilePublishTransaction transaction(target);
+                std::ofstream(transaction.staging_path(), std::ios::binary) << "new";
+                transaction.commit(false);
+            }
+        } catch (const superzip::SecurityError& error) {
+            const std::string message(error.what());
+            REQUIRE_TRUE(message.find("refusing to overwrite existing file:") != std::string::npos);
+            REQUIRE_TRUE(message.find(expected_name) != std::string::npos);
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+        {
+            std::ifstream input(target, std::ios::binary);
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "old");
+        }
+        if (directory) {
+            superzip::DirectoryPublishTransaction transaction(output);
+            std::ofstream(transaction.staging_directory() / name, std::ios::binary) << "new";
+            transaction.publish(true);
+        } else {
+            superzip::FilePublishTransaction transaction(target);
+            std::ofstream(transaction.staging_path(), std::ios::binary) << "new";
+            transaction.commit(true);
+        }
+        {
+            std::ifstream input(target, std::ios::binary);
+            REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "new");
+        }
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}),
+                   1);
+    }
+    std::filesystem::remove_all(root);
+}
 
 // Purpose: Reject file/descendant conflicts even when punctuation siblings separate their sorted keys.
 // Inputs: All permutations of a file parent, a valid sibling, and a nested child, plus a directory-parent control.
