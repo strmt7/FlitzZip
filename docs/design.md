@@ -78,6 +78,14 @@ visible alongside graphs; a graph without the live number is a regression. The
 I/O card includes a compact fixed-drive selector and excludes optical,
 removable, network, unknown, and other non-fixed volumes.
 
+The runtime, acceleration policy, and device architecture occupy a compact,
+unframed status band. The monitor follows immediately below, with individual
+metric cards but no enclosing decorative panel. Rendering and dropdown anchors
+share `src/app/system_layout.hpp`; geometry tests cover 100%-250% DPI and
+multiple content bounds. Those rectangle tests are not proof of full-app
+small-screen support: the fixed-window limitation in `docs/portability.md`
+still applies, and screenshots must be inspected at the actual tested DPI.
+
 Sampling is deliberately bounded. The refresh-interval dropdown offers exactly
 1, 3, 5, and 10 seconds, maps directly to the Win32 timer interval, and re-arms
 the timer when changed. CPU values use total-system and process-dedicated
@@ -92,3 +100,8 @@ bitmap graph assets, no unbounded animations, no full-window transparency, and
 no polling faster than the selected interval. `tools\gui_smoke.ps1` must keep
 opening the refresh-interval dropdown, capture the expanded menu, and assert that
 the performance monitor region contains the expected graph color families.
+Smoke also selects every refresh interval, requires a newly appended command
+result, and saves the non-default interval through Settings to verify the
+persisted value. The fixed-drive selection must report the drive actually
+chosen. Screenshot color variation alone does not prove a dropdown was opened
+or its selection reached the application.

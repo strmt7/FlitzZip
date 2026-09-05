@@ -775,64 +775,23 @@ void MainWindow::draw_history_page(HDC dc, const RECT& rect, const UiState& stat
 // Inputs: `dc` is the double-buffered paint target, `rect` is the page bounds, and `state` supplies live GPU/status
 // text. Outputs: Renders system diagnostics controls and informational panels without mutating state.
 void MainWindow::draw_gpu_page(HDC dc, const RECT& rect, const UiState& state) {
-    RECT area = inset_rect(rect, scale(kPageInsetX), scale(kPageInsetY));
+    const auto layout = make_system_layout(rect, dpi_);
     SelectObject(dc, title_font_);
-    draw_text(dc, page_title_rect(area), L"System", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-    const bool ready = gpu_ready(state);
-    RECT top{area.left, area.top + scale(54), area.right, area.top + scale(142)};
-    fill_round_rect(dc, top, kPanel, scale(4));
-    stroke_rect(dc, top, kBorder);
+    draw_text(dc, page_title_rect(layout.area), L"System", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, small_font_);
-    draw_text(dc, RECT{top.left + scale(18), top.top + scale(12), top.left + scale(180), top.top + scale(40)},
-              L"HIP status", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{top.left + scale(190), top.top + scale(12), top.right - scale(18), top.top + scale(40)},
-              widen(state.gpu_status), ready ? kOk : kWarn, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    const auto runtime = std::wstring(L"Runtime: ") + widen(state.gpu_status);
+    draw_text(dc, layout.runtime, runtime, gpu_ready(state) ? kOk : kWarn,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, tiny_font_);
-    draw_text(dc, RECT{top.left + scale(18), top.top + scale(50), top.right - scale(18), top.bottom - scale(12)},
-              ready ? L"SuperZip will use AMD HIP for native .suzip jobs that require GPU acceleration."
-                    : L"This build or host is not reporting an active AMD HIP device. GPU-required jobs fail instead "
-                      L"of silently using a different vendor path.",
-              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-
-    const int card_w = (area.right - area.left - scale(28)) / 3;
-    RECT gpu{area.left, area.top + scale(166), area.left + card_w, area.top + scale(316)};
-    RECT memory{gpu.right + scale(14), gpu.top, gpu.right + scale(14) + card_w, gpu.bottom};
-    RECT accel{memory.right + scale(14), gpu.top, area.right, gpu.bottom};
-    fill_round_rect(dc, gpu, kPanel, scale(4));
-    fill_round_rect(dc, memory, kPanel, scale(4));
-    fill_round_rect(dc, accel, kPanel, scale(4));
-    stroke_rect(dc, gpu, kBorder);
-    stroke_rect(dc, memory, kBorder);
-    stroke_rect(dc, accel, kBorder);
-    SelectObject(dc, small_font_);
-    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(12), gpu.right, gpu.top + scale(36)}, L"GPU", kText,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{memory.left + scale(16), memory.top + scale(12), memory.right, memory.top + scale(36)}, L"RAM",
-              kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, RECT{accel.left + scale(16), accel.top + scale(12), accel.right, accel.top + scale(36)},
-              L"Acceleration", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    SelectObject(dc, tiny_font_);
-    const std::wstring gpu_detail =
-        ready ? (std::wstring(L"Backend: AMD HIP\nDevice: ") +
-                 (state.gpu_device_name.empty() ? L"Detected by HIP runtime" : widen(state.gpu_device_name)) +
-                 L"\nArchitecture: " + (state.gpu_arch.empty() ? L"Runtime default" : widen(state.gpu_arch)))
-              : L"Backend unavailable\nNo CUDA/WebGPU fallback\nHost stays AMD-only";
-    draw_text(dc, RECT{gpu.left + scale(16), gpu.top + scale(48), gpu.right - scale(16), gpu.bottom - scale(14)},
-              gpu_detail, kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(
-        dc, RECT{memory.left + scale(16), memory.top + scale(48), memory.right - scale(16), memory.bottom - scale(14)},
-        L"Bounded chunks keep archive work from loading whole archives into RAM. Archive and compression adapters "
-        L"cover ZIP, TAR filters, Gzip, Bzip2, Zstandard, Unix Compress, CAB, RPM, XZ, and LZMA; legacy transfer "
-        L"decoders remain extract-only and path-validated.",
-        kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-    draw_text(dc,
-              RECT{accel.left + scale(16), accel.top + scale(48), accel.right - scale(16), accel.bottom - scale(14)},
-              state.gpu_required ? L"Mode: GPU required\nFallback: blocked for .suzip jobs\nDevice scope: AMD HIP only"
-                                 : L"Mode: GPU preferred\nFallback: CPU codec allowed\nDevice scope: AMD HIP only",
-              kMuted, DT_LEFT | DT_TOP | DT_WORDBREAK);
-
-    draw_performance_monitor(dc, RECT{area.left, area.top + scale(342), area.right, area.bottom}, state);
+    draw_text(dc, layout.policy,
+              state.gpu_required ? L"Policy: AMD HIP required" : L"Policy: AMD HIP preferred; CPU fallback allowed",
+              kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    const auto architecture =
+        std::wstring(L"Architecture: ") + (state.gpu_arch.empty() ? L"Unavailable" : widen(state.gpu_arch));
+    draw_text(dc, layout.architecture, architecture, kMuted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_line(dc, layout.area.left, layout.monitor.top - scale(8), layout.area.right, layout.monitor.top - scale(8),
+              kBorder);
+    draw_performance_monitor(dc, layout.monitor, state);
 }
 
 // Purpose: Draw one metric card inside the live performance monitor.
@@ -933,8 +892,6 @@ RECT MainWindow::performance_io_drive_rect(const RECT& monitor) const {
 // Outputs: Renders CPU, total GPU, RAM, and selected-drive total I/O utilization history cards.
 void MainWindow::draw_performance_monitor(HDC dc, const RECT& monitor, const UiState& state) {
     const auto& sample = state.performance;
-    fill_round_rect(dc, monitor, kPanel, scale(4));
-    stroke_rect(dc, monitor, kBorder);
     SelectObject(dc, small_font_);
     const RECT update_speed = performance_update_speed_rect(monitor);
     draw_text(

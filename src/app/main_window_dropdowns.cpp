@@ -93,11 +93,16 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.performance_update_seconds = kPerformanceUpdateSecondsOptions[static_cast<std::size_t>(
             std::clamp(option_index, 0, static_cast<int>(kPerformanceUpdateSecondsOptions.size()) - 1))];
         feedback.performance_seconds = state.performance_update_seconds;
+        feedback.add_log = true;
+        feedback.log_message = "System refresh interval: " + std::to_string(state.performance_update_seconds) + " s";
         state.status = "Refresh interval changed";
         break;
     case DropdownId::SystemIoDrive:
         state.io_drive_index = normalize_io_drive_index(option_index);
         feedback.io_drive_changed = true;
+        feedback.add_log = true;
+        feedback.log_message =
+            "System I/O drive: " + std::filesystem::path(io_drive_option_text(state.io_drive_index)).string();
         state.status = "I/O drive changed";
         break;
     default:

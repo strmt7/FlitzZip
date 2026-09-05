@@ -338,10 +338,10 @@ function Assert-SettingsValue {
     }
 }
 
-# Purpose: Wait for a newly appended Settings command result rather than assuming input was processed.
+# Purpose: Wait for a newly appended GUI command result rather than assuming input was processed.
 # Inputs: Path is the smoke log, PreviousLength is its prior byte length, and Message is expected row text.
 # Outputs: Returns after the expected new row, or throws after five seconds without it.
-function Wait-SettingsLogEvent {
+function Wait-GuiLogEvent {
     param([string]$Path, [long]$PreviousLength, [string]$Message)
 
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -352,7 +352,7 @@ function Wait-SettingsLogEvent {
         }
         Start-Sleep -Milliseconds 50
     }
-    throw "Settings command did not report '$Message' within five seconds."
+    throw "GUI command did not report '$Message' within five seconds."
 }
 
 # Purpose: Verify failed Apply and Restore Defaults keep the last successfully saved settings active.
@@ -381,7 +381,7 @@ function Assert-SettingsSaveFailureRollback {
         try {
             $logLength = (Get-Item -LiteralPath $logPath).Length
             Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $command.X -DesignY 666
-            Wait-SettingsLogEvent -Path $logPath -PreviousLength $logLength -Message $command.Failure
+            Wait-GuiLogEvent -Path $logPath -PreviousLength $logLength -Message $command.Failure
             if ((Get-Content -Raw -LiteralPath $Path) -cne $original) {
                 throw "Failed $($command.Name) changed the persisted settings."
             }
@@ -394,7 +394,7 @@ function Assert-SettingsSaveFailureRollback {
         Start-Sleep -Milliseconds 250
         $logLength = (Get-Item -LiteralPath $logPath).Length
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666
-        Wait-SettingsLogEvent -Path $logPath -PreviousLength $logLength -Message "Settings applied"
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $logLength -Message "Settings applied"
         if ((Get-Content -Raw -LiteralPath $Path) -cne $original) {
             throw "Failed $($command.Name) replaced the applied snapshot with unsaved settings."
         }
@@ -803,19 +803,36 @@ try {
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 5
     Start-Sleep -Milliseconds 250
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed" -OpenX 1160 -OpenY 446 -SelectX 1160 -SelectY 554 -MenuLeft 1070 -MenuTop 470 -MenuRight 1220 -MenuBottom 606 -BasePath $basePath -Extension $extension
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-IODrive" -OpenX 1100 -OpenY 446 -SelectX 1100 -SelectY 506 -MenuLeft 1058 -MenuTop 470 -MenuRight 1140 -MenuBottom 526 -BasePath $basePath -Extension $extension
+    $systemLogPath = Join-Path (Split-Path -Parent $smokeSettingsFile) "superzip.log"
+    foreach ($choice in @(@{ Seconds = 3; Y = 312 }, @{ Seconds = 5; Y = 344 },
+            @{ Seconds = 10; Y = 376 }, @{ Seconds = 1; Y = 280 })) {
+        $logLength = (Get-Item -LiteralPath $systemLogPath).Length
+        $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-UpdateSpeed-$($choice.Seconds)" -OpenX 1110 -OpenY 245 -SelectX 1110 -SelectY $choice.Y -MenuLeft 1072 -MenuTop 264 -MenuRight 1150 -MenuBottom 394 -BasePath $basePath -Extension $extension
+        Wait-GuiLogEvent -Path $systemLogPath -PreviousLength $logLength -Message "System refresh interval: $($choice.Seconds) s"
+    }
+    $fixedDrives = @([System.IO.DriveInfo]::GetDrives() |
+        Where-Object { $_.DriveType -eq [System.IO.DriveType]::Fixed } | Sort-Object Name)
+    if ($fixedDrives.Count -eq 0) { throw "System I/O smoke requires a fixed local drive." }
+    $firstDrive = $fixedDrives[0].Name.TrimEnd('\')
+    $logLength = (Get-Item -LiteralPath $systemLogPath).Length
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "System-IODrive" -OpenX 1106 -OpenY 297 -SelectX 1106 -SelectY 328 -MenuLeft 1074 -MenuTop 312 -MenuRight 1138 -MenuBottom 344 -BasePath $basePath -Extension $extension
+    Wait-GuiLogEvent -Path $systemLogPath -PreviousLength $logLength -Message "System I/O drive: $firstDrive"
     $systemMonitorPath = "${basePath}-System-PerformanceMonitor$extension"
     $captures += Save-SuperZipScreenshot -Handle $windowHandle -Path $systemMonitorPath
     $offset = Get-ClientCaptureOffset -Handle $windowHandle
-    Assert-DesignRectHasDetail -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
-    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 63 -ExpectedGreen 181 -ExpectedBlue 221
-    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 83 -ExpectedGreen 210 -ExpectedBlue 101
-    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 237 -ExpectedGreen 179 -ExpectedBlue 61
-    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 488 -Right 1138 -Bottom 696 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45
+    Assert-DesignRectHasDetail -Path $systemMonitorPath -Dpi $windowDpi -Left 146 -Top 348 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 8
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 308 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 63 -ExpectedGreen 181 -ExpectedBlue 221
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 308 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 83 -ExpectedGreen 210 -ExpectedBlue 101
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 308 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 237 -ExpectedGreen 179 -ExpectedBlue 61
+    Assert-DesignRectHasColor -Path $systemMonitorPath -Dpi $windowDpi -Left 140 -Top 308 -Right 1138 -Bottom 678 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 6
     Start-Sleep -Milliseconds 250
+    $logLength = (Get-Item -LiteralPath $systemLogPath).Length
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
+    Wait-GuiLogEvent -Path $systemLogPath -PreviousLength $logLength -Message "Settings applied"
+    Assert-SettingsValue -Path $smokeSettingsFile -Name "performanceUpdateSeconds" -Expected 1
+    Write-Output "System dropdown actions and refresh persistence passed."
     foreach ($point in @(
         @(175, 193),
         @(175, 227),

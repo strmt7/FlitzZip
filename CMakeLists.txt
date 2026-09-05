@@ -679,6 +679,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_log_retention.cpp
     tests/cpp/test_folder_size_cache.cpp
     tests/cpp/test_gdi_back_buffer.cpp
+    tests/cpp/test_system_layout.cpp
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_resource_usage.cpp
