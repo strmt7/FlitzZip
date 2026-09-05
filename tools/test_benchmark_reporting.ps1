@@ -40,4 +40,50 @@ foreach ($showStats in @($false, $true)) {
         throw "Statistics or unavailable counter semantics changed."
     }
 }
+foreach ($file in @('gpu_proof.ps1', 'gpu_diagnostic.ps1', 'transfer_diagnostics.ps1')) {
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot $file), [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) { throw "$file did not parse." }
+    foreach ($definition in $ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst]
+        }, $false)) {
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+}
+
+$validGpu = @{
+    gpu_used = 'true'; gpu_kernel_launches = '2'; gpu_kernel_ms = '1.25'
+    gpu_h2d_bytes = '4096'; gpu_device_allocation_bytes = '8192'
+    gpu_pattern_blocks = '1'; gpu_prefix_blocks = '1'
+}
+Assert-GpuBackendStat -Stats $validGpu -Label 'finite fixture'
+Assert-GpuProofStat -Stats $validGpu -Label 'finite fixture'
+foreach ($invalid in @('NaN', 'nan', 'Infinity', '-Infinity')) {
+    $stats = $validGpu.Clone()
+    $stats.gpu_kernel_ms = $invalid
+    if ($null -ne (Get-StatsNumber -Stats $stats -Key 'gpu_kernel_ms')) {
+        throw 'Non-finite timing must remain unavailable.'
+    }
+    foreach ($check in @(
+            { Assert-GpuBackendStat -Stats $stats -Label 'invalid fixture' },
+            { Assert-GpuProofStat -Stats $stats -Label 'invalid fixture' },
+            { Get-SuperZipStatNumber -Stats $stats -Name 'gpu_kernel_ms' }
+        )) {
+        $rejected = $false
+        try { & $check | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'A GPU evidence consumer accepted non-finite timing.' }
+    }
+}
+$diagnostic = @{
+    diagnostic_kernel_launches = '2'; diagnostic_kernel_ms = '1.25'
+    diagnostic_h2d_bytes = '4096'; diagnostic_d2h_bytes = '128'
+    diagnostic_device_allocation_bytes = '8192'; diagnostic_checksum = '42'
+}
+Assert-GpuDiagnosticStat -Stats $diagnostic
+foreach ($invalid in @('NaN', 'nan', 'Infinity', '-Infinity', '0', '-1')) {
+    $diagnostic.diagnostic_kernel_ms = $invalid
+    $rejected = $false
+    try { Assert-GpuDiagnosticStat -Stats $diagnostic } catch { $rejected = $true }
+    if (-not $rejected) { throw 'A diagnostic accepted invalid timing.' }
+}
 Write-Output "benchmark_reporting status=passed"

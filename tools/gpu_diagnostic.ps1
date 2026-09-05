@@ -19,7 +19,7 @@ if (-not (Test-Path $cli)) {
 # Purpose: Parse a key/value block emitted by the diagnostic CLI.
 # Inputs: `Lines` is stdout from `superzip_cli gpu-diagnostic`.
 # Outputs: Returns a dictionary of parsed keys and values.
-function ConvertFrom-KeyValueLines {
+function ConvertFrom-KeyValueBlock {
     param([Parameter(Mandatory = $true)][string[]]$Lines)
     $result = @{}
     foreach ($line in $Lines) {
@@ -29,6 +29,21 @@ function ConvertFrom-KeyValueLines {
         }
     }
     return $result
+}
+
+# Purpose: Reject incomplete, non-finite, or non-positive GPU diagnostic evidence.
+# Inputs: `Stats` is the parsed diagnostic CLI dictionary.
+# Outputs: Returns normally only when all required execution and timing fields are finite and positive.
+function Assert-GpuDiagnosticStat {
+    param([Parameter(Mandatory = $true)][hashtable]$Stats)
+    foreach ($key in @('diagnostic_kernel_launches', 'diagnostic_kernel_ms', 'diagnostic_h2d_bytes',
+            'diagnostic_d2h_bytes', 'diagnostic_device_allocation_bytes', 'diagnostic_checksum')) {
+        if (-not $Stats.ContainsKey($key)) { throw "HIP diagnostic is missing $key." }
+        $value = [double]$Stats[$key]
+        if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -le 0) {
+            throw "HIP diagnostic $key is unavailable, non-finite, or non-positive."
+        }
+    }
 }
 
 # Purpose: Quote one Windows command-line argument for `ProcessStartInfo.Arguments`.
@@ -171,19 +186,12 @@ if ($process.ExitCode -ne 0) {
 }
 
 $lines = $stdout -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 }
-$stats = ConvertFrom-KeyValueLines -Lines $lines
+$stats = ConvertFrom-KeyValueBlock -Lines $lines
 foreach ($line in $lines) {
-    Write-Host $line
+    Write-Information $line -InformationAction Continue
 }
 
-if ([double]$stats["diagnostic_kernel_launches"] -le 0 -or
-    [double]$stats["diagnostic_kernel_ms"] -le 0 -or
-    [double]$stats["diagnostic_h2d_bytes"] -le 0 -or
-    [double]$stats["diagnostic_d2h_bytes"] -le 0 -or
-    [double]$stats["diagnostic_device_allocation_bytes"] -le 0 -or
-    [double]$stats["diagnostic_checksum"] -le 0) {
-    throw "HIP diagnostic did not prove device execution."
-}
+Assert-GpuDiagnosticStat -Stats $stats
 
 $gpuMemoryAvgMiB = (Get-OptionalAverage -Values ($samples | ForEach-Object { $_.GpuMemoryBytes })) / 1MB
 $gpuMemoryPeakMiB = (Get-OptionalMaximum -Values ($samples | ForEach-Object { $_.GpuMemoryBytes })) / 1MB
@@ -195,6 +203,6 @@ $gpuMemoryPeakMiB = (Get-OptionalMaximum -Values ($samples | ForEach-Object { $_
     WindowsGpuMemoryAvgMiB = $gpuMemoryAvgMiB
     WindowsGpuMemoryPeakMiB = $gpuMemoryPeakMiB
     SampleCount = $samples.Count
-} | Format-List | Out-String -Width 220 | Write-Host
+} | Format-List | Out-String -Width 220 | ForEach-Object { Write-Information $_ -InformationAction Continue }
 
-Write-Host "GPU diagnostic passed: HIP event timing, transfers, allocation, and device checksum are nonzero."
+Write-Information "GPU diagnostic passed: HIP event timing, transfers, allocation, and device checksum are nonzero." -InformationAction Continue

@@ -46,7 +46,11 @@ function Get-SuperZipStatNumber {
     if (-not $Stats.ContainsKey($Name)) {
         throw "Missing SuperZip statistic: $Name"
     }
-    return [double]::Parse([string]$Stats[$Name], [Globalization.CultureInfo]::InvariantCulture)
+    $value = [double]::Parse([string]$Stats[$Name], [Globalization.CultureInfo]::InvariantCulture)
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) {
+        throw "Unavailable or non-finite SuperZip statistic: $Name"
+    }
+    return $value
 }
 
 # Purpose: Run one RAM-only memory benchmark lane and collect transfer counters.

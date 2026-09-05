@@ -34,7 +34,7 @@ struct GpuRuntimeStats {
     std::uint64_t device_allocation_bytes = 0;
     std::uint64_t pattern_blocks = 0;
     std::uint64_t prefix_blocks = 0;
-    double kernel_ms = 0.0;
+    double kernel_ms = 0.0;  // NaN means at least one event time or its accumulated total was invalid.
 };
 
 struct GpuTelemetry {
@@ -46,7 +46,7 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> device_allocation_bytes{0};
     std::atomic<std::uint64_t> pattern_blocks{0};
     std::atomic<std::uint64_t> prefix_blocks{0};
-    std::atomic<std::uint64_t> kernel_microseconds{0};
+    std::atomic<std::uint64_t> kernel_microseconds{0};  // UINT64_MAX permanently marks unavailable timing.
 };
 
 struct GpuCodecOptions {
@@ -72,7 +72,7 @@ struct GpuDiagnosticResult {
     std::uint64_t d2h_bytes = 0;
     std::uint64_t device_allocation_bytes = 0;
     std::uint64_t checksum = 0;
-    double kernel_ms = 0.0;
+    double kernel_ms = 0.0;  // NaN means event timing is unavailable; execution counters remain valid.
     double wall_seconds = 0.0;
 };
 
@@ -83,7 +83,7 @@ struct DecodedChunkCrc {
 
 // Purpose: Snapshot per-operation AMD HIP telemetry into plain counters.
 // Inputs: `telemetry` is the operation-owned counter set shared with codec tasks.
-// Outputs: Returns stable numeric counters suitable for operation statistics.
+// Outputs: Returns operation counters; kernel_ms is NaN when any event time or its total was invalid.
 GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry);
 
 // Purpose: Record that one archive chunk entered the AMD HIP encode backend.
@@ -123,7 +123,8 @@ void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count);
 
 // Purpose: Record one AMD HIP kernel launch and its device-event elapsed time.
 // Inputs: `telemetry` is optional operation-owned telemetry and `milliseconds` is measured with HIP events.
-// Outputs: Atomically increments launch count and adds elapsed device time when telemetry is present.
+// Outputs: Counts the launch even if timing is invalid; negative/non-finite/overflowing times mark the total
+// unavailable.
 void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds);
 
 // Purpose: Inspect the compiled GPU backend and available AMD HIP device.

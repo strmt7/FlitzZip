@@ -5,12 +5,30 @@
 #include "core/result.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 
 namespace superzip {
 namespace {
+
+constexpr auto kUnavailableKernelTime = std::numeric_limits<std::uint64_t>::max();
+
+// Purpose: Accumulate event time without wrapping or losing an unavailable-time marker.
+// Inputs: `counter` is shared timing state and `microseconds` is a duration or the unavailable sentinel.
+// Outputs: Atomically adds valid durations; overflow or any unavailable input permanently marks the total unavailable.
+void accumulate_kernel_microseconds(std::atomic<std::uint64_t>& counter, std::uint64_t microseconds) {
+    auto current = counter.load(std::memory_order_relaxed);
+    while (current != kUnavailableKernelTime) {
+        const auto next =
+            microseconds >= kUnavailableKernelTime - current ? kUnavailableKernelTime : current + microseconds;
+        if (counter.compare_exchange_weak(current, next, std::memory_order_relaxed)) {
+            return;
+        }
+    }
+}
 
 // Purpose: Convert backend-selection options to CPU archive codec options.
 // Inputs: `options` contains GPU requirement flags plus shared codec tuning.
@@ -80,7 +98,8 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
     merge_gpu_counter(target->device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
-    merge_gpu_counter(target->kernel_microseconds, source.kernel_microseconds.load(std::memory_order_relaxed));
+    accumulate_kernel_microseconds(target->kernel_microseconds,
+                                   source.kernel_microseconds.load(std::memory_order_relaxed));
 }
 
 // Purpose: Route optional HIP work through temporary telemetry so failed attempts do not pollute CPU fallback stats.
@@ -141,7 +160,11 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
 std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                     std::uint64_t output_size, const GpuCodecOptions& options);
 
+// Purpose: Snapshot completed codec telemetry without presenting invalid timing as a duration.
+// Inputs: `telemetry` owns atomic execution counters; callers join workers before the final snapshot.
+// Outputs: Returns counters with NaN kernel_ms for invalid events or timing-total overflow.
 GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
+    const auto microseconds = telemetry.kernel_microseconds.load(std::memory_order_relaxed);
     return GpuRuntimeStats{
         .encode_chunks = telemetry.encode_chunks.load(std::memory_order_relaxed),
         .decode_chunks = telemetry.decode_chunks.load(std::memory_order_relaxed),
@@ -151,7 +174,8 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         .device_allocation_bytes = telemetry.device_allocation_bytes.load(std::memory_order_relaxed),
         .pattern_blocks = telemetry.pattern_blocks.load(std::memory_order_relaxed),
         .prefix_blocks = telemetry.prefix_blocks.load(std::memory_order_relaxed),
-        .kernel_ms = static_cast<double>(telemetry.kernel_microseconds.load(std::memory_order_relaxed)) / 1000.0,
+        .kernel_ms = microseconds == kUnavailableKernelTime ? std::numeric_limits<double>::quiet_NaN()
+                                                            : static_cast<double>(microseconds) / 1000.0,
     };
 }
 
@@ -200,11 +224,19 @@ void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
     }
 }
 
+// Purpose: Count a completed launch and safely accumulate its device-event duration.
+// Inputs: Optional operation telemetry and an untrusted numeric HIP event time in milliseconds.
+// Outputs: Counts execution and marks invalid or overflowing timing unavailable without failing archive work.
 void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds) {
     if (telemetry) {
         telemetry->kernel_launches.fetch_add(1, std::memory_order_relaxed);
-        const auto microseconds = static_cast<std::uint64_t>((milliseconds * 1000.0) + 0.5);
-        telemetry->kernel_microseconds.fetch_add(microseconds, std::memory_order_relaxed);
+        const auto rounded = (milliseconds * 1000.0) + 0.5;
+        // UINT64_MAX rounds up to 2^64 as a double; use that exclusive bound before converting.
+        const auto microseconds = !std::isfinite(milliseconds) || milliseconds < 0.0 || !std::isfinite(rounded) ||
+                                          rounded >= std::ldexp(1.0, 64)
+                                      ? kUnavailableKernelTime
+                                      : static_cast<std::uint64_t>(rounded);
+        accumulate_kernel_microseconds(telemetry->kernel_microseconds, microseconds);
     }
 }
 

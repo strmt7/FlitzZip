@@ -86,6 +86,13 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Adding A New Lesson
 
+HIP event timing now has bounded accumulation and a persistent unavailable
+state. `test_gpu_telemetry.cpp` covers invalid numbers, total overflow, and
+concurrent updates; `tools/test_benchmark_reporting.ps1` rejects non-finite
+evidence and checks lowercase native `nan` handling on Windows PowerShell.
+Successful HIP API calls must not be taken as proof that returned durations
+are valid.
+
 When a failure exposes a repeatable class of mistake, add the narrowest useful
 guard in this order:
 

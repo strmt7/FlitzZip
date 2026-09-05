@@ -326,7 +326,7 @@ function Get-OptionalSum {
 
 # Purpose: Read a numeric CLI statistic from a parsed stats dictionary.
 # Inputs: `Stats` is a dictionary returned by `ConvertFrom-StatsLine` and `Key` is the statistic name.
-# Outputs: Returns a double value or null when the key is absent.
+# Outputs: Returns a finite invariant-culture double or null for absent, invalid, or non-finite data.
 function Get-StatsNumber {
     param(
         [Parameter(Mandatory = $true)]$Stats,
@@ -335,7 +335,11 @@ function Get-StatsNumber {
     if (-not $Stats.ContainsKey($Key)) {
         return $null
     }
-    return [double]$Stats[$Key]
+    $value = 0.0
+    if (-not [double]::TryParse([string]$Stats[$Key], [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$value)) { return $null }
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) { return $null }
+    return $value
 }
 
 # Purpose: Assert that a required-GPU benchmark operation really submitted AMD HIP work.

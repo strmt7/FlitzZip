@@ -107,6 +107,16 @@ Per-process summed GPU engine percentages and accumulated concurrent HIP kernel
 time are not total-device utilization percentages; either can exceed 100.
 Do not compare those values directly to Task Manager's busiest-engine display.
 
+HIP event timing is not assumed valid merely because the runtime call succeeds.
+Negative, non-finite, unrepresentable, or overflowing elapsed-time totals are
+reported as `gpu_kernel_ms=nan` (or `diagnostic_kernel_ms=nan`), never wrapped
+integer values or fabricated zero durations. Launch and transfer counters
+remain available, and archive work does not fail solely because timing is
+invalid. The unavailable marker survives concurrent accumulation, successful
+attempt merges, and operation-total aggregation. Benchmark readers retain it
+as unavailable and reject it as HIP timing evidence. This does not identify
+the cause of an invalid device clock or establish performance improvements.
+
 Record these fields for every block size:
 
 | Field | Reason |

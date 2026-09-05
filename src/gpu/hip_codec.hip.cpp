@@ -853,6 +853,7 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
                   "hipMemcpy diagnostic input");
 
         GpuDiagnosticResult result;
+        GpuTelemetry timing;
         result.info = info;
         result.bytes = bytes;
         result.h2d_bytes = bytes;
@@ -870,8 +871,7 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
             check_hip(hipEventSynchronize(events.stop), "synchronize diagnostic_compute_kernel");
             float milliseconds = 0.0F;
             check_hip(hipEventElapsedTime(&milliseconds, events.start, events.stop), "time diagnostic_compute_kernel");
-            result.kernel_ms += static_cast<double>(milliseconds);
-            ++result.kernel_launches;
+            record_gpu_kernel_launch(&timing, static_cast<double>(milliseconds));
             seed += 0x9E3779B9U;
         }
 
@@ -885,8 +885,10 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
         float checksum_ms = 0.0F;
         check_hip(hipEventElapsedTime(&checksum_ms, checksum_events.start, checksum_events.stop),
                   "time diagnostic_checksum_kernel");
-        result.kernel_ms += static_cast<double>(checksum_ms);
-        ++result.kernel_launches;
+        record_gpu_kernel_launch(&timing, static_cast<double>(checksum_ms));
+        const auto timing_stats = snapshot_gpu_telemetry(timing);
+        result.kernel_ms = timing_stats.kernel_ms;
+        result.kernel_launches = timing_stats.kernel_launches;
 
         std::vector<unsigned long long> partials(blocks);
         check_hip(hipMemcpy(partials.data(), device_partials.get(), partial_bytes, hipMemcpyDeviceToHost),

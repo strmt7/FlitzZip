@@ -34,7 +34,7 @@ function ConvertFrom-StatsLine {
 
 # Purpose: Return a numeric statistic from a parsed CLI stats dictionary.
 # Inputs: `Stats` is a dictionary and `Key` is a metric name.
-# Outputs: Returns the metric as a double or throws if the key is absent.
+# Outputs: Returns a finite double or throws if the key is absent, invalid, or non-finite.
 function Get-RequiredStatsNumber {
     param(
         [Parameter(Mandatory = $true)]$Stats,
@@ -43,7 +43,11 @@ function Get-RequiredStatsNumber {
     if (-not $Stats.ContainsKey($Key)) {
         throw "Required statistic missing: $Key"
     }
-    return [double]$Stats[$Key]
+    $value = [double]$Stats[$Key]
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) {
+        throw "Required statistic is unavailable or non-finite: $Key"
+    }
+    return $value
 }
 
 # Purpose: Quote one Windows command-line argument for `ProcessStartInfo.Arguments`.
