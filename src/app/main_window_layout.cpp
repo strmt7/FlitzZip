@@ -346,8 +346,7 @@ bool MainWindow::scroll_history_rows(int delta_rows) {
         return false;
     }
     const auto visible = filtered_history_indices(state);
-    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
-    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const RECT table = history_layout(content_rect()).table;
     const int previous = history_scroll_first_row_;
     history_scroll_first_row_ =
         std::clamp(history_scroll_first_row_ + delta_rows, 0, history_max_scroll_offset(table, visible.size()));
@@ -427,8 +426,7 @@ void MainWindow::update_history_scroll_drag(int y) {
         state = state_;
     }
     const auto visible = filtered_history_indices(state);
-    const RECT area = inset_rect(content_rect(), scale(kPageInsetX), scale(kPageInsetY));
-    const RECT table{area.left, area.top + scale(112), area.right, area.bottom - scale(96)};
+    const RECT table = history_layout(content_rect()).table;
     const int max_offset = history_max_scroll_offset(table, visible.size());
     if (max_offset <= 0) {
         history_scroll_first_row_ = 0;

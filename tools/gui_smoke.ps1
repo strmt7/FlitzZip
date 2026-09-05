@@ -402,6 +402,60 @@ function Assert-SettingsSaveFailureRollback {
     }
 }
 
+# Purpose: Exercise History overflow through real rows and each pointer scrolling path.
+# Inputs: Handle/Dpi identify the smoke window; SettingsPath is isolated smoke storage; BasePath/Extension name captures.
+# Outputs: Returns screenshots and throws if wheel, track clicks, or dragging cannot reach both table boundaries.
+function Assert-HistoryScrollEndpoint {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4
+    Start-Sleep -Milliseconds 150
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1100 -DesignY 90
+    foreach ($x in @(220, 390)) {
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY 145
+        Start-Sleep -Milliseconds 100
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $x -DesignY 182
+        Start-Sleep -Milliseconds 100
+    }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) "superzip.log"
+    foreach ($index in 1..20) {
+        $logLength = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $logLength -Message "Settings applied and saved"
+    }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4
+    Start-Sleep -Milliseconds 200
+    $offset = Get-ClientCaptureOffset -Handle $Handle
+    foreach ($method in @('Wheel', 'Track', 'Drag')) {
+        foreach ($direction in @('Bottom', 'Top')) {
+            if ($method -eq 'Wheel') {
+                $delta = if ($direction -eq 'Bottom') { -12000 } else { 12000 }
+                Invoke-ClientWheel -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 400 -Delta $delta
+            } elseif ($method -eq 'Track') {
+                $y = if ($direction -eq 'Bottom') { 572 } else { 236 }
+                foreach ($click in 1..4) {
+                    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1158 -DesignY $y
+                    Start-Sleep -Milliseconds 60
+                }
+            } else {
+                $startY = if ($direction -eq 'Bottom') { 236 } else { 572 }
+                $endY = if ($direction -eq 'Bottom') { 580 } else { 228 }
+                Invoke-ClientDrag -Handle $Handle -Dpi $Dpi -StartX 1158 -StartY $startY -EndX 1158 -EndY $endY
+            }
+            # Move hover away so endpoint evidence uses the normal thumb color.
+            [void][SuperZipNativeUi]::PostMessage($Handle, 0x0200, [IntPtr]::Zero,
+                (ConvertTo-MouseLParam -X 0 -Y 0))
+            Start-Sleep -Milliseconds 250
+            $path = "${BasePath}-History-$method-$direction$Extension"
+            Save-SuperZipScreenshot -Handle $Handle -Path $path
+            $top = if ($direction -eq 'Bottom') { 570 } else { 234 }
+            Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1156 -Top $top -Right 1160 -Bottom ($top + 4) -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -ExpectedRed 64 -ExpectedGreen 83 -ExpectedBlue 90 -Tolerance 12 -MinPixels 8
+        }
+    }
+    Write-Information "History overflow endpoints passed: wheel, track click, and thumb drag." -InformationAction Continue
+}
+
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
 $smokeDestination = Join-Path $smokeRoot "SuperZip-destination"
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
@@ -870,6 +924,8 @@ try {
     Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
 
     Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile
+
+    $captures += Assert-HistoryScrollEndpoint -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
 
     for ($index = 0; $index -lt $pageNames.Count; ++$index) {
         Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex $index

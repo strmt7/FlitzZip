@@ -73,7 +73,7 @@ near them:
 | Security | Empty queue state, selected archive state, Defender opt-in, hash opt-in, Verify, progress bar, status/history/log behavior. |
 | System | HIP status, CPU total/dedicated counters, RAM total/dedicated counters, I/O counters, total GPU utilization graph, VRAM total/dedicated rows, refresh interval, axis labels, repaint stability. |
 | Settings | Load, draft changes, tab-leave revert, Apply persistence, Restore Defaults, every toggle, every dropdown, log retention pruning. |
-| History | Filtering, clear action, row rendering, long text, keyboard traversal. |
+| History | Filtering, clear action, row rendering, long text, keyboard traversal, overflow wheel/track/drag endpoints. |
 | About | Single-source logo rendering, tagline consistency, author/version spacing, keyboard behavior. |
 
 ## Native Debugging Checklist
@@ -113,6 +113,16 @@ understand the result:
   is required by the task.
 
 ## Regression Rules
+
+History scrolling must use `history_layout(...).table`, as rendering, keyboard
+navigation, and click hit testing do. The former wheel/drag paths independently
+reserved 96 DIPs for details instead of the layout's 118 DIPs. At the default
+window size this counted an extra visible row and prevented pointer scrolling
+from reaching the last row. The GUI smoke reproduces overflow using 20 real
+Settings saves in isolated test storage, then verifies both painted scrollbar
+endpoints for wheel input, track clicks, and thumb dragging. The regression
+failed against the pre-fix binary at the wheel's bottom endpoint. This check
+does not certify responsive window sizing or untested display configurations.
 
 - Never add a new UI feature without retesting the existing interactions in the
   same page.
