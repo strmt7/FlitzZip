@@ -319,21 +319,30 @@ class GzipOutputStream::Buffer final : public std::streambuf {
     }
 
   private:
-    // Purpose: Deflate one caller-provided uncompressed byte range.
-    // Inputs: `data` points to bytes and `size` is the byte count.
-    // Outputs: Writes compressed bytes to `output_` and updates CRC/ISIZE state.
+    // Purpose: Deflate borrowed caller bytes synchronously without an input staging copy.
+    // Inputs: `data` remains readable until this call returns and `size` is its byte count.
+    // Outputs: Writes compressed bytes and updates CRC/ISIZE; clears all borrowed pointers even on failure.
     void compress_bytes(const unsigned char* data, std::size_t size) {
         if (closed_) {
             throw ArchiveError("cannot write to a closed Gzip stream");
         }
         crc32_ = static_cast<std::uint32_t>(mz_crc32(crc32_, data, size));
         checked_add_stream_bytes(input_bytes_, size, "Gzip input");
+        struct InputBorrow {
+            mz_stream& stream;
+            // Purpose: End the input borrow before caller storage can disappear.
+            // Inputs: The still-live compressor stream.
+            // Outputs: Clears the input pointer/count on normal return or exception unwinding.
+            ~InputBorrow() {
+                stream.next_in = nullptr;
+                stream.avail_in = 0;
+            }
+        } input_borrow{stream_};
         std::size_t offset = 0;
         while (offset < size) {
             const auto chunk =
-                std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
-            std::copy_n(data + offset, chunk, input_buffer_.data());
-            stream_.next_in = input_buffer_.data();
+                std::min<std::size_t>({size - offset, kGzipStreamBufferBytes, static_cast<std::size_t>(UINT_MAX)});
+            stream_.next_in = data + offset;
             stream_.avail_in = static_cast<unsigned int>(chunk);
             while (stream_.avail_in > 0U) {
                 stream_.next_out = output_buffer_.data();
@@ -353,7 +362,6 @@ class GzipOutputStream::Buffer final : public std::streambuf {
     mz_stream stream_{};
     bool stream_active_ = false;
     bool closed_ = false;
-    std::array<unsigned char, kGzipStreamBufferBytes> input_buffer_{};
     std::array<unsigned char, kGzipStreamBufferBytes> output_buffer_{};
     std::uint32_t crc32_ = 0;
     std::uint64_t input_bytes_ = 0;
@@ -507,9 +515,11 @@ class GzipInputStream::Buffer final : public std::streambuf {
 
 // Purpose: Construct an output stream that writes a complete Gzip member.
 // Inputs: `output_path` is the target file and `compression_level` is the miniz 1-9 setting.
-// Outputs: Installs an owned stream buffer or throws on setup failure.
+// Outputs: Rejects invalid effort before opening the destination; otherwise installs an owned buffer or throws.
 GzipOutputStream::GzipOutputStream(const std::filesystem::path& output_path, int compression_level)
-    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path, compression_level)) {
+    : std::ostream(nullptr) {
+    (void)gzip_compression_level(compression_level);
+    buffer_ = std::make_unique<Buffer>(output_path, compression_level);
     rdbuf(buffer_.get());
 }
 

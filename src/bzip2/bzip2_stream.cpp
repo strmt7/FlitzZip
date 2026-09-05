@@ -393,9 +393,11 @@ class Bzip2InputStream::Buffer final : public std::streambuf {
 
 // Purpose: Construct an output stream that writes a complete Bzip2 member.
 // Inputs: `output_path` is the target file and `compression_level` is the libbzip2 1-9 block-size setting.
-// Outputs: Installs an owned stream buffer or throws on setup failure.
+// Outputs: Rejects invalid effort before opening the destination; otherwise installs an owned buffer or throws.
 Bzip2OutputStream::Bzip2OutputStream(const std::filesystem::path& output_path, int compression_level)
-    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path, compression_level)) {
+    : std::ostream(nullptr) {
+    (void)bzip2_compression_level(compression_level);
+    buffer_ = std::make_unique<Buffer>(output_path, compression_level);
     rdbuf(buffer_.get());
 }
 

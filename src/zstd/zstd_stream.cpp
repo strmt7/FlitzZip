@@ -356,9 +356,11 @@ class ZstdInputStream::Buffer final : public std::streambuf {
 
 // Purpose: Construct an output stream that writes a complete checksummed Zstandard frame.
 // Inputs: `output_path` is the target file and `compression_level` is product effort 1-9.
-// Outputs: Installs an owned stream buffer or throws on setup failure.
+// Outputs: Rejects invalid effort before opening the destination; otherwise installs an owned buffer or throws.
 ZstdOutputStream::ZstdOutputStream(const std::filesystem::path& output_path, int compression_level)
-    : std::ostream(nullptr), buffer_(std::make_unique<Buffer>(output_path, compression_level)) {
+    : std::ostream(nullptr) {
+    (void)zstd_compression_level(compression_level);
+    buffer_ = std::make_unique<Buffer>(output_path, compression_level);
     rdbuf(buffer_.get());
 }
 

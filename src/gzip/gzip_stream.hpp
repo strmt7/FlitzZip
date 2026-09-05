@@ -13,7 +13,7 @@ namespace superzip {
 // Purpose: Stream Gzip-compressed bytes to a file while writing a valid single-member wrapper.
 // Inputs: Construct with `output_path` and a 1-9 miniz `compression_level`; callers write uncompressed bytes through
 // the `std::ostream` interface. Outputs: Writes Gzip header, raw deflate payload, and CRC32/ISIZE trailer; throws on
-// I/O or compressor failure.
+// I/O or compressor failure. Invalid effort is rejected before opening the destination.
 class GzipOutputStream final : public std::ostream {
   public:
     explicit GzipOutputStream(const std::filesystem::path& output_path,

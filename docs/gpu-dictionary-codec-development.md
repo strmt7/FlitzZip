@@ -59,10 +59,10 @@ the same fixture; the experimental level-9 block stores 16,671 bytes.
 Lower settings are not padded or deliberately degraded. Incompressible or
 already optimally represented data can legitimately have equal sizes.
 
-No speed conclusion is drawn. The maintainer deferred timing while the host
-is heavily used. Further timing requires a substantially calmer window that
-stays reasonably calm throughout measurements. Correctness and size checks
-continue separately. Negative HIP event durations were observed in earlier
+No speed conclusion is drawn from these size checks. The maintainer initially
+deferred timing during heavy host use, then re-enabled benchmarks with CPU,
+GPU, RAM, and storage contention checks before and throughout measurements.
+Correctness and size checks remain separate. Negative HIP event durations were observed in earlier
 diagnostics; the experimental matcher now represents negative and non-finite
 durations as unavailable, not zero. Runtime errors still propagate.
 

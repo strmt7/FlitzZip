@@ -5,6 +5,7 @@
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
+#include "gzip/gzip_stream.hpp"
 
 #include <algorithm>
 #include <array>
@@ -82,19 +83,6 @@ void write_exact(std::ofstream& output, const unsigned char* data, std::size_t s
     if (!output) {
         throw ArchiveError("failed to write Gzip stream");
     }
-}
-
-// Purpose: Write a little-endian 32-bit Gzip trailer field.
-// Inputs: `output` is the destination stream and `value` is the CRC32 or ISIZE field.
-// Outputs: Appends four bytes or throws on stream failure.
-void write_le32(std::ofstream& output, std::uint32_t value) {
-    const std::array<unsigned char, 4> bytes{
-        static_cast<unsigned char>(value & 0xFFU),
-        static_cast<unsigned char>((value >> 8U) & 0xFFU),
-        static_cast<unsigned char>((value >> 16U) & 0xFFU),
-        static_cast<unsigned char>((value >> 24U) & 0xFFU),
-    };
-    write_exact(output, bytes.data(), bytes.size());
 }
 
 // Purpose: Read a little-endian 32-bit Gzip trailer field.
@@ -233,10 +221,11 @@ std::string gzip_output_entry_name(const std::filesystem::path& archive_path) {
     return normalize_archive_path_key(filename);
 }
 
-// Purpose: Write one regular file into a temporary Gzip archive and publish it atomically.
+// Purpose: Use the shared Gzip stream to compress one regular file before atomic publication.
 // Inputs: `source_file` is openable input, `output_archive` is the final target, `compression_level` is 1-9, `progress`
 // is the caller-owned progress state, and `progress_callback` receives snapshots.
-// Outputs: Publishes `output_archive` or throws after cleaning temporary compressor/output state.
+// Outputs: Publishes `output_archive` or throws after cleaning temporary output; framing and compressor ownership
+// remain shared with TAR.GZ and CPIO.GZ.
 void write_gzip_archive_payload(const std::filesystem::path& source_file, const std::filesystem::path& output_archive,
                                 int compression_level, ProgressState& progress,
                                 const ProgressCallback& progress_callback) {
@@ -246,56 +235,21 @@ void write_gzip_archive_payload(const std::filesystem::path& source_file, const 
     }
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
-    mz_stream stream{};
-    bool stream_active = false;
     try {
-        std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            throw ArchiveError("cannot create Gzip archive: " + output_archive.string());
-        }
-
-        const std::array<unsigned char, 10> header{0x1F, 0x8B, 8U, 0U, 0U, 0U, 0U, 0U, 0U, 255U};
-        write_exact(output, header.data(), header.size());
-        if (mz_deflateInit2(&stream, compression_level, MZ_DEFLATED, -MZ_DEFAULT_WINDOW_BITS, 9, MZ_DEFAULT_STRATEGY) !=
-            MZ_OK) {
-            throw ArchiveError("failed to initialize Gzip compressor");
-        }
-        stream_active = true;
-
-        std::array<unsigned char, kGzipBufferBytes> input_buffer{};
-        std::array<unsigned char, kGzipBufferBytes> output_buffer{};
-        auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, nullptr, 0));
-        std::uint64_t processed = 0;
-        auto pump_deflate = [&](int flush) {
-            int status = MZ_OK;
-            do {
-                stream.next_out = output_buffer.data();
-                stream.avail_out = static_cast<unsigned int>(output_buffer.size());
-                status = mz_deflate(&stream, flush);
-                if (status != MZ_OK && status != MZ_STREAM_END) {
-                    throw ArchiveError("Gzip compression failed");
-                }
-                const auto produced = output_buffer.size() - stream.avail_out;
-                write_exact(output, output_buffer.data(), produced);
-            } while (stream.avail_out == 0U || (flush == MZ_NO_FLUSH && stream.avail_in > 0U));
-            return status;
-        };
-
+        GzipOutputStream output(temporary.file, compression_level);
+        std::array<char, kGzipBufferBytes> input_buffer{};
         for (;;) {
-            input.read(reinterpret_cast<char*>(input_buffer.data()), static_cast<std::streamsize>(input_buffer.size()));
+            input.read(input_buffer.data(), static_cast<std::streamsize>(input_buffer.size()));
             const auto bytes_read = static_cast<std::size_t>(input.gcount());
             if (bytes_read > 0U) {
-                crc = static_cast<std::uint32_t>(mz_crc32(crc, input_buffer.data(), bytes_read));
-                checked_add_bytes(processed, bytes_read, "Gzip input");
-                stream.next_in = input_buffer.data();
-                stream.avail_in = static_cast<unsigned int>(bytes_read);
-                while (stream.avail_in > 0U) {
-                    (void)pump_deflate(MZ_NO_FLUSH);
+                output.write(input_buffer.data(), static_cast<std::streamsize>(bytes_read));
+                if (!output) {
+                    throw ArchiveError("failed to write Gzip stream");
                 }
                 progress.add_bytes(bytes_read);
                 publish_progress(progress, progress_callback);
             }
-            if (input.bad()) {
+            if (input.bad() || (input.fail() && !input.eof())) {
                 throw ArchiveError("failed to read Gzip source file: " + source_file.string());
             }
             if (input.eof()) {
@@ -303,27 +257,12 @@ void write_gzip_archive_payload(const std::filesystem::path& source_file, const 
             }
         }
 
-        int status = MZ_OK;
-        do {
-            status = pump_deflate(MZ_FINISH);
-        } while (status != MZ_STREAM_END);
-        mz_deflateEnd(&stream);
-        stream_active = false;
-
-        write_le32(output, crc);
-        write_le32(output, static_cast<std::uint32_t>(processed & 0xFFFFFFFFULL));
         output.close();
-        if (!output) {
-            throw ArchiveError("failed to finalize Gzip archive: " + output_archive.string());
-        }
 
         commit_verified_file(temporary, output_archive, true);
         cleanup_file_publish_target(temporary);
         temporary_active = false;
     } catch (...) {
-        if (stream_active) {
-            mz_deflateEnd(&stream);
-        }
         if (temporary_active) {
             cleanup_file_publish_target(temporary);
         }

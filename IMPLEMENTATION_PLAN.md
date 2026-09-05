@@ -20,6 +20,12 @@ Security tab or a published release.
    and independent readers. Do not mistake format-matrix correctness for
    measured efficiency or force identical capabilities onto uncompressed
    containers, fixed-policy codecs, and extract-only formats.
+   Shared Gzip/Bzip2/Zstandard streams now reject invalid effort before touching
+   output paths. Standalone Gzip reuses the container stream writer, whose
+   redundant input copy has been removed with scoped input lifetime handling.
+   [Common stream contracts](docs/compatibility-stream-contracts.md) cover all
+   levels, caller-buffer reuse, close behavior, and byte identity; timing and
+   the rest of the all-format efficiency review remain open.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

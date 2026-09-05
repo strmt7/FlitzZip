@@ -13,7 +13,7 @@ namespace superzip {
 // Purpose: Stream Bzip2-compressed bytes to a file with libbzip2-managed framing.
 // Inputs: Construct with `output_path` and a 1-9 libbzip2 block-size `compression_level`; callers write uncompressed
 // bytes through the `std::ostream` interface. Outputs: Writes a complete `.bz2` stream; throws on I/O or compressor
-// failure.
+// failure. Invalid effort is rejected before opening the destination.
 class Bzip2OutputStream final : public std::ostream {
   public:
     explicit Bzip2OutputStream(const std::filesystem::path& output_path,

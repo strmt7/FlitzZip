@@ -667,6 +667,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_arj_compat.cpp
     tests/cpp/test_base64_compat.cpp
     tests/cpp/test_bzip2_compat.cpp
+    tests/cpp/test_compression_streams.cpp
     tests/cpp/test_cab_compat.cpp
     tests/cpp/test_compat_compression_levels.cpp
     tests/cpp/test_cpio_compat.cpp
