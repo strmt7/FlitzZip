@@ -17,6 +17,13 @@ Security tab or a published release.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
+   Before a possible proprietary edition, review contributor rights and every
+   dependency license; do not assume repository privacy changes existing
+   license grants. Audit public package contents, symbols, embedded build paths,
+   and diagnostics. Evaluate selective native-code obfuscation only with
+   measured CPU/HIP, size, compatibility, and debugging costs. Preserve private
+   diagnostic symbols where needed, required notices, and format interoperability;
+   do not claim that a distributed executable cannot be reverse-engineered.
 4. Push the verified iteration, audit its exact commit's workflows, code-scanning
    results, Dependabot alerts, and open pull requests, and fix regressions in
    follow-up pushes. Run the installed Codex Security workflow with the minimum required worker
