@@ -90,21 +90,30 @@ TEST_CASE(window_layout_real_hidden_window_has_the_requested_client_and_frame_di
     REQUIRE_TRUE(window != nullptr);
     const UINT dpi = GetDpiForWindow(window.get());
     const auto frame = frame_size(dpi);
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    REQUIRE_TRUE(GetMonitorInfoW(MonitorFromWindow(window.get(), MONITOR_DEFAULTTONEAREST), &monitor));
     for (const SIZE size : {SIZE{1100, 700}, SIZE{1200, 760}}) {
         const LONG width = MulDiv(size.cx, static_cast<int>(dpi), 96) + frame.cx;
         const LONG height = MulDiv(size.cy, static_cast<int>(dpi), 96) + frame.cy;
-        const RECT work{100, 100, 100 + width, 100 + height};
-        const auto result = superzip::app::make_window_layout(work, RECT{}, frame, dpi);
+        // Real windows obey the host's tracking limits; synthetic work areas belong to the pure tests above.
+        const RECT work{monitor.rcWork.left, monitor.rcWork.top,
+                        std::min(monitor.rcWork.right, monitor.rcWork.left + width),
+                        std::min(monitor.rcWork.bottom, monitor.rcWork.top + height)};
+        const auto result = superzip::app::make_window_layout(work, work, frame, dpi);
         REQUIRE_TRUE(result && result->minimum_fits);
         const auto& bounds = result->bounds;
         REQUIRE_TRUE(SetWindowPos(window.get(), nullptr, bounds.left, bounds.top, bounds.right - bounds.left,
                                   bounds.bottom - bounds.top, SWP_NOZORDER | SWP_NOACTIVATE));
         RECT actual{};
         REQUIRE_TRUE(GetWindowRect(window.get(), &actual));
-        REQUIRE_TRUE(EqualRect(&actual, &bounds));
+        REQUIRE_EQ(actual.left, bounds.left);
+        REQUIRE_EQ(actual.top, bounds.top);
+        REQUIRE_EQ(actual.right, bounds.right);
+        REQUIRE_EQ(actual.bottom, bounds.bottom);
         REQUIRE_TRUE(GetClientRect(window.get(), &actual));
-        REQUIRE_EQ(actual.right, width - frame.cx);
-        REQUIRE_EQ(actual.bottom, height - frame.cy);
+        REQUIRE_EQ(actual.right, bounds.right - bounds.left - frame.cx);
+        REQUIRE_EQ(actual.bottom, bounds.bottom - bounds.top - frame.cy);
         REQUIRE_TRUE(!IsWindowVisible(window.get()));
     }
 }
