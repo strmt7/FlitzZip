@@ -623,7 +623,7 @@ void DirectoryPublishTransaction::publish(bool overwrite) {
     }
     const auto entries = inventory_quarantine_tree(quarantine_.directory);
     for (const auto& entry : entries) {
-        const auto target = safe_join_archive_path(destination_, entry.relative_path);
+        const auto target = safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8);
         std::error_code error;
         if (!overwrite && !entry.directory && std::filesystem::exists(target, error)) {
             throw SecurityError("refusing to overwrite existing file: " + target.string());
@@ -634,12 +634,13 @@ void DirectoryPublishTransaction::publish(bool overwrite) {
     }
     for (const auto& entry : entries) {
         if (entry.directory) {
-            create_verified_directories(safe_join_archive_path(destination_, entry.relative_path));
+            create_verified_directories(
+                safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8));
         }
     }
     for (const auto& entry : entries) {
         if (!entry.directory) {
-            const auto target = safe_join_archive_path(destination_, entry.relative_path);
+            const auto target = safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8);
             publish_quarantine_file(entry.source, target, overwrite);
         }
     }

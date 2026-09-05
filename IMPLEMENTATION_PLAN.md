@@ -31,6 +31,11 @@ Security tab or a published release.
    regression-tested size admission and unknown-size container behavior.
    Measured small-file allocations fall substantially, but a held-out fixture
    exposed a ten-byte size increase; this is not a universal ratio/speed gain.
+   TAR.ZST now counts the exact serialized stream using its actual header,
+   PAX, padding, and footer writers, without reading payloads twice. New
+   Unicode fixtures exposed an existing extraction bug: PAX encoding and
+   internal publication paths now receive explicit UTF-8 conversion, with
+   legacy code-page behavior retained where no UTF-8 declaration exists.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

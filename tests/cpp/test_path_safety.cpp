@@ -123,6 +123,37 @@ TEST_CASE(path_safety_accepts_nested_relative_path) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Preserve explicit UTF-8 filenames independently of the Windows ANSI code page.
+// Inputs: Nested accented, CJK, supplementary-plane, and decomposed Unicode path components.
+// Outputs: Requires native path equality and an exact UTF-8 archive-name roundtrip.
+TEST_CASE(path_safety_utf8_filename_roundtrip) {
+    const auto root = test_temp_dir("utf8-path-roundtrip");
+    for (const auto* name : {u8"caf\u00e9/file.txt", u8"\u65e5\u672c/\U0001f4c1.txt", u8"e\u0301.txt"}) {
+        const std::filesystem::path relative(name);
+        const auto archive_name = superzip::normalize_entry_name(relative);
+        const auto target = superzip::safe_join_archive_path(root, archive_name, superzip::ArchivePathEncoding::Utf8);
+        REQUIRE_EQ(target, std::filesystem::weakly_canonical(root) / relative);
+        REQUIRE_EQ(superzip::normalize_entry_name(target.lexically_relative(root)), archive_name);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve UTF-8 names while publishing an internally inventoried extraction tree.
+// Inputs: A staged Unicode directory and filename with an exact known payload.
+// Outputs: Requires publication at the original native filename with unchanged content.
+TEST_CASE(directory_publish_preserves_unicode_names) {
+    const auto root = test_temp_dir("unicode-publication");
+    const auto destination = root / "output";
+    const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9-\U0001f4c1.txt");
+    superzip::DirectoryPublishTransaction transaction(destination);
+    std::filesystem::create_directories((transaction.staging_directory() / relative).parent_path());
+    std::ofstream(transaction.staging_directory() / relative, std::ios::binary) << "Unicode payload";
+    transaction.publish(false);
+    std::ifstream input(destination / relative, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
+               std::string("Unicode payload"));
+}
+
 // Purpose: Verify existing destination junction parents cannot redirect archive entries outside the extraction root.
 // Inputs: A destination root containing a real Windows directory junction to another temporary directory.
 // Outputs: Throws if the joined archive path is accepted through the reparse parent.

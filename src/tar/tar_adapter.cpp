@@ -37,6 +37,7 @@ struct TarHeaderName {
 
 struct TarEntryMetadata {
     std::string path;
+    ArchivePathEncoding encoding = ArchivePathEncoding::HostCodePage;
     bool directory = false;
     std::uint64_t size = 0;
     std::uint64_t payload_offset = 0;
@@ -55,6 +56,7 @@ struct TarWriteStats {
 
 struct PendingTarExtensions {
     std::optional<std::string> path;
+    ArchivePathEncoding encoding = ArchivePathEncoding::HostCodePage;
 };
 
 // Purpose: Add two TAR byte counters while detecting unsigned wraparound.
@@ -279,7 +281,8 @@ std::string make_pax_record(std::string_view key, std::string_view value) {
 // Inputs: `output` is the TAR stream, `path` is the full archive path, and `ordinal` makes the metadata name stable.
 // Outputs: Writes a PAX extended header and padded payload when needed.
 void write_pax_path_if_needed(std::ostream& output, const std::string& path, std::uint64_t ordinal) {
-    if (split_ustar_name(path).has_value()) {
+    const bool ascii = std::ranges::all_of(path, [](unsigned char byte) { return byte < 0x80U; });
+    if (ascii && split_ustar_name(path).has_value()) {
         return;
     }
     const auto payload = make_pax_record("path", path);
@@ -299,6 +302,77 @@ void write_entry_header(std::ostream& output, const std::string& path, char type
     const auto header_path = split_ustar_name(path).has_value() ? path : "superzip-pax-entry";
     const auto header = make_tar_header(header_path, typeflag, size, typeflag == '5' ? 0755 : 0644);
     write_bytes(output, header.data(), header.size());
+}
+
+// Purpose: Write the canonical pair of TAR end-of-archive records for counting and serialization alike.
+// Inputs: A writable destination stream.
+// Outputs: Emits exactly two zero header blocks or propagates a write failure.
+void write_tar_footer(std::ostream& output) {
+    const std::array<char, kTarBlockSize> zero{};
+    write_bytes(output, zero.data(), zero.size());
+    write_bytes(output, zero.data(), zero.size());
+}
+
+class TarByteCounter final : public std::streambuf {
+  public:
+    // Purpose: Account for payload extents without reading, allocating, or copying file content.
+    // Inputs: The number of bytes emitted by the corresponding serialization step.
+    // Outputs: Adds the count or throws before unsigned overflow.
+    void add(std::uint64_t bytes) {
+        bytes_ = checked_add_tar_bytes(bytes_, bytes, "TAR serialized size overflows");
+    }
+
+    // Purpose: Return the exact count accumulated by header, payload, padding, and footer accounting.
+    // Inputs: None.
+    // Outputs: Returns serialized byte count without mutating state.
+    [[nodiscard]] std::uint64_t bytes() const {
+        return bytes_;
+    }
+
+  protected:
+    // Purpose: Count a serializer write without retaining its bytes.
+    // Inputs: Unused source storage and a nonnegative stream write length.
+    // Outputs: Returns the accepted length or throws on count overflow.
+    std::streamsize xsputn(const char*, std::streamsize count) override {
+        if (count <= 0) {
+            return 0;
+        }
+        add(static_cast<std::uint64_t>(count));
+        return count;
+    }
+
+    // Purpose: Support single-byte serializer writes without a put buffer.
+    // Inputs: A character or the stream EOF sentinel.
+    // Outputs: Counts real bytes, accepts the sentinel, and propagates count overflow.
+    int_type overflow(int_type value) override {
+        if (!traits_type::eq_int_type(value, traits_type::eof())) {
+            add(1U);
+        }
+        return traits_type::not_eof(value);
+    }
+
+  private:
+    std::uint64_t bytes_ = 0;
+};
+
+// Purpose: Derive exact TAR length using the production metadata serializer, without a payload-reading prepass.
+// Inputs: The same immutable source manifest later used to write the archive.
+// Outputs: Returns serialized size including PAX, padding, and footer, or throws on metadata/count errors.
+std::uint64_t tar_stream_size(const Manifest& manifest) {
+    TarByteCounter counter;
+    std::ostream metadata(&counter);
+    metadata.exceptions(std::ios::badbit | std::ios::failbit);
+    std::uint64_t ordinal = 0;
+    for (const auto& entry : manifest.entries) {
+        write_entry_header(metadata, entry.archive_path, entry.directory ? '5' : '0', entry.directory ? 0 : entry.size,
+                           ordinal++);
+        if (!entry.directory) {
+            counter.add(entry.size);
+            write_tar_padding(metadata, entry.size);
+        }
+    }
+    write_tar_footer(metadata);
+    return counter.bytes();
 }
 
 // Purpose: Detect an all-zero TAR end-of-archive block.
@@ -436,6 +510,7 @@ std::string read_tar_metadata_payload(std::istream& input, std::uint64_t size) {
 // Outputs: Returns pending one-shot path metadata; ignores unrelated keys.
 PendingTarExtensions parse_pax_payload(const std::string& payload) {
     PendingTarExtensions parsed;
+    parsed.encoding = ArchivePathEncoding::Utf8;
     std::size_t offset = 0;
     while (offset < payload.size()) {
         const auto space = payload.find(' ', offset);
@@ -469,6 +544,14 @@ PendingTarExtensions parse_pax_payload(const std::string& payload) {
                     throw ArchiveError("TAR PAX path exceeds SuperZip path limits");
                 }
                 parsed.path = std::string(value);
+            } else if (key == "hdrcharset") {
+                if (value == "BINARY") {
+                    parsed.encoding = ArchivePathEncoding::HostCodePage;
+                } else if (value == "ISO-IR 10646 2000 UTF-8") {
+                    parsed.encoding = ArchivePathEncoding::Utf8;
+                } else {
+                    throw ArchiveError("unsupported TAR PAX header character set");
+                }
             }
         }
         offset = record_end;
@@ -549,8 +632,10 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
             result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
                                                                                  "TAR long-name metadata payloads");
             pending.path = parse_gnu_long_name(read_tar_metadata_payload(input, size));
+            pending.encoding = ArchivePathEncoding::HostCodePage;
             continue;
         }
+        const auto encoding = pending.path ? pending.encoding : ArchivePathEncoding::HostCodePage;
         const auto entry_path = tar_entry_path(header, pending);
         if (typeflag == '0' || typeflag == '5') {
             if (result.entries.size() >= kMaxArchiveEntries) {
@@ -565,6 +650,7 @@ TarScanResult scan_tar_stream(std::istream& input, const std::string& source_lab
             }
             result.entries.push_back(TarEntryMetadata{
                 .path = entry_path,
+                .encoding = encoding,
                 .directory = directory,
                 .size = directory ? 0 : size,
                 .payload_offset = payload_offset,
@@ -656,7 +742,8 @@ void extract_tar_stream_file_payload(std::istream& input, const TarEntryMetadata
 // Inputs: `actual` is metadata read during extraction and `expected` is first-pass validated metadata.
 // Outputs: Returns normally when path, kind, and size match; throws on changed or inconsistent streams.
 void require_matching_scanned_entry(const TarEntryMetadata& actual, const TarEntryMetadata& expected) {
-    if (actual.path != expected.path || actual.directory != expected.directory || actual.size != expected.size) {
+    if (actual.path != expected.path || actual.encoding != expected.encoding ||
+        actual.directory != expected.directory || actual.size != expected.size) {
         throw ArchiveError("TAR stream changed between validation and extraction passes");
     }
 }
@@ -698,8 +785,10 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
         }
         if (typeflag == 'L') {
             pending.path = parse_gnu_long_name(read_tar_metadata_payload(input, size));
+            pending.encoding = ArchivePathEncoding::HostCodePage;
             continue;
         }
+        const auto encoding = pending.path ? pending.encoding : ArchivePathEncoding::HostCodePage;
         const auto entry_path = tar_entry_path(header, pending);
         if (typeflag == '0' || typeflag == '5') {
             const bool directory = typeflag == '5';
@@ -708,6 +797,7 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
             }
             const TarEntryMetadata actual{
                 .path = entry_path,
+                .encoding = encoding,
                 .directory = directory,
                 .size = directory ? 0 : size,
                 .payload_offset = 0,
@@ -716,7 +806,7 @@ void extract_validated_tar_stream(std::istream& input, const TarScanResult& scan
             require_matching_scanned_entry(actual, expected);
             progress.set_current(expected.path);
             publish_progress(progress, progress_callback);
-            const auto target = safe_join_archive_path(destination, expected.path);
+            const auto target = safe_join_archive_path(destination, expected.path, expected.encoding);
             if (expected.directory) {
                 create_verified_directories(target);
                 skip_tar_payload(input, size, false);
@@ -788,11 +878,10 @@ void extract_tar_file_payload(std::ifstream& input, const TarEntryMetadata& entr
 }
 
 // Purpose: Write a TAR stream to any output stream using shared compatibility semantics.
-// Inputs: `sources` are existing files/directories, `output` receives TAR bytes, and `progress_callback` receives
+// Inputs: `manifest` fixes source entries, `output` receives TAR bytes, and `progress_callback` receives
 // synchronous snapshots. Outputs: Returns uncompressed input byte/entry counts; throws on source/path/write failures.
-TarWriteStats write_tar_stream(const std::vector<std::filesystem::path>& sources, std::ostream& output,
+TarWriteStats write_tar_stream(const Manifest& manifest, std::ostream& output,
                                const ProgressCallback& progress_callback) {
-    const auto manifest = build_manifest(sources);
     ProgressState progress;
     progress.start(OperationKind::Compress, manifest.total_file_bytes, manifest.entries.size());
 
@@ -810,9 +899,7 @@ TarWriteStats write_tar_stream(const std::vector<std::filesystem::path>& sources
         }
         progress.finish_entry();
     }
-    std::array<char, kTarBlockSize> zero{};
-    write_bytes(output, zero.data(), zero.size());
-    write_bytes(output, zero.data(), zero.size());
+    write_tar_footer(output);
     return TarWriteStats{
         .input_bytes = manifest.total_file_bytes,
         .entries = static_cast<std::uint64_t>(manifest.entries.size()),
@@ -832,7 +919,7 @@ OperationStats compress_tar(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("cannot create TAR archive: " + output_archive.string());
     }
-    const auto write_stats = write_tar_stream(sources, output, progress_callback);
+    const auto write_stats = write_tar_stream(build_manifest(sources), output, progress_callback);
     output.close();
     if (!output) {
         throw ArchiveError("failed to finalize TAR archive: " + output_archive.string());
@@ -857,7 +944,7 @@ OperationStats compress_tar_gzip(const std::vector<std::filesystem::path>& sourc
     const auto started = std::chrono::steady_clock::now();
     FilePublishTransaction publication(output_archive);
     GzipOutputStream output(publication.staging_path(), compression_level);
-    const auto write_stats = write_tar_stream(sources, output, progress_callback);
+    const auto write_stats = write_tar_stream(build_manifest(sources), output, progress_callback);
     output.close();
     const auto output_bytes = output.output_bytes();
     publication.commit(true);
@@ -880,7 +967,7 @@ OperationStats compress_tar_bzip2(const std::vector<std::filesystem::path>& sour
     const auto started = std::chrono::steady_clock::now();
     FilePublishTransaction publication(output_archive);
     Bzip2OutputStream output(publication.staging_path(), compression_level);
-    const auto write_stats = write_tar_stream(sources, output, progress_callback);
+    const auto write_stats = write_tar_stream(build_manifest(sources), output, progress_callback);
     output.close();
     const auto output_bytes = output.output_bytes();
     publication.commit(true);
@@ -896,14 +983,16 @@ OperationStats compress_tar_bzip2(const std::vector<std::filesystem::path>& sour
 
 // Purpose: Create a TAR.ZST stream from files/directories with bounded app-local Zstandard compression.
 // Inputs: `sources`, `output_archive`, `compression_level`, and `progress_callback` define the archive run.
-// Outputs: Writes the archive and returns telemetry, or throws on source, TAR, or Zstandard failures.
+// Outputs: Sizes codec workspace from exact serialized bytes, writes the archive, and returns telemetry or throws.
 OperationStats compress_tar_zstd(const std::vector<std::filesystem::path>& sources,
                                  const std::filesystem::path& output_archive, int compression_level,
                                  const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
+    const auto manifest = build_manifest(sources);
+    const auto serialized_size = tar_stream_size(manifest);
     FilePublishTransaction publication(output_archive);
-    ZstdOutputStream output(publication.staging_path(), compression_level);
-    const auto write_stats = write_tar_stream(sources, output, progress_callback);
+    ZstdOutputStream output(publication.staging_path(), compression_level, serialized_size);
+    const auto write_stats = write_tar_stream(manifest, output, progress_callback);
     output.close();
     const auto output_bytes = output.output_bytes();
     publication.commit(true);
@@ -937,7 +1026,7 @@ OperationStats extract_tar(const std::filesystem::path& archive_path, const std:
     for (const auto& entry : scanned.entries) {
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.path);
+        const auto target = safe_join_archive_path(destination, entry.path, entry.encoding);
         if (entry.directory) {
             create_verified_directories(target);
             progress.finish_entry();

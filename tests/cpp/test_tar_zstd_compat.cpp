@@ -3,6 +3,8 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "tar/tar_adapter.hpp"
+#include "zstd/zstd_adapter.hpp"
+#include "zstd/zstd_stream.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -127,4 +129,59 @@ TEST_CASE(tar_zstd_rejects_bad_stream_without_output) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+}
+
+// Purpose: Prove TAR.ZST admits the exact serialized TAR size, including PAX records and block padding.
+// Inputs: Empty-directory and mixed boundary trees, long ASCII/UTF-8 paths, and all nine compression efforts.
+// Outputs: Requires wire parity with exact-size standalone compression of the same TAR and exact extracted files.
+TEST_CASE(tar_zstd_exact_serialized_size_parity) {
+    const auto root = test_temp_dir("tar-zstd-size-parity");
+    const auto input = root / "input";
+    std::filesystem::create_directories(input / "empty-dir");
+    for (const bool populated : {false, true}) {
+        if (populated) {
+            for (const auto size : {0U, 1U, 511U, 512U, 513U, 65537U}) {
+                write_text_file(input / ("size-" + std::to_string(size)), std::string(size, 'A'));
+            }
+            write_text_file(input / std::string(100U, 'n'), "USTAR name boundary");
+            write_text_file(input / std::string(101U, 'p'), "PAX path payload");
+            std::u8string unicode_name;
+            for (unsigned int index = 0; index < 51U; ++index) {
+                unicode_name += u8"\u00e9";
+            }
+            write_text_file(input / std::filesystem::path(unicode_name), "UTF-8 PAX path payload");
+            write_text_file(input / std::filesystem::path(u8"\u65e5\u672c\U0001f4c1") /
+                                std::filesystem::path(u8"caf\u00e9.txt"),
+                            "short Unicode path payload");
+        }
+        const auto plain = root / "reference.tar";
+        const auto plain_stats = superzip::compress_tar({input}, plain);
+        const auto serialized = read_text_file(plain);
+        REQUIRE_EQ(serialized.size() % 512U, 0U);
+        for (int level = 1; level <= 9; ++level) {
+            const auto direct = root / "direct.tar.zst";
+            const auto expected = root / "reference.tar.zst";
+            const auto direct_stats = superzip::compress_tar_zstd({input}, direct, level);
+            (void)superzip::compress_zstd({plain}, expected, level);
+            REQUIRE_EQ(read_text_file(direct), read_text_file(expected));
+            REQUIRE_EQ(direct_stats.input_bytes, plain_stats.input_bytes);
+            REQUIRE_EQ(direct_stats.entries, plain_stats.entries);
+            REQUIRE_EQ(direct_stats.output_bytes, std::filesystem::file_size(direct));
+            superzip::ZstdInputStream decoded(direct);
+            const std::string restored{std::istreambuf_iterator<char>(decoded), std::istreambuf_iterator<char>()};
+            decoded.finish();
+            REQUIRE_EQ(restored, serialized);
+        }
+        const auto destination = root / (populated ? "populated-output" : "empty-output");
+        const auto extracted = superzip::extract_tar_zstd(root / "direct.tar.zst", destination, false);
+        REQUIRE_EQ(extracted.output_bytes, plain_stats.input_bytes);
+        REQUIRE_TRUE(std::filesystem::is_directory(destination / "input" / "empty-dir"));
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(input)) {
+            if (entry.is_regular_file()) {
+                REQUIRE_EQ(read_text_file(destination / "input" / entry.path().lexically_relative(input)),
+                           read_text_file(entry.path()));
+            }
+        }
+    }
+    std::filesystem::remove_all(root);
 }

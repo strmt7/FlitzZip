@@ -95,6 +95,30 @@ grew from 16,410 to 16,420 bytes. This deterministic size tradeoff is not host
 timing noise. The change materially reduces small-file codec allocation; it
 does not guarantee smaller output on every input or establish optimal ratios.
 
+## TAR Size And Filename Contracts
+
+TAR.ZST now supplies the exact serialized TAR size to the shared Zstandard
+stream. Counting and writing use the same immutable manifest, header/PAX
+serializer, padding rules, and two-block footer. Counting does not read file
+payloads or buffer an archive. Regression coverage compares every effort
+against standalone exact-size compression of the same TAR, including empty
+directories, 511/512/513-byte boundaries, and long UTF-8 PAX paths. This extends
+size-aware workspace selection to TAR.ZST; it is not a new measured speedup.
+
+That coverage exposed an existing Windows filename conversion defect. PAX
+paths now retain their declared encoding through both extraction passes;
+UTF-8 is converted explicitly rather than through the host ANSI code page.
+Writers emit PAX path metadata for short non-ASCII names as well as long names.
+The shared publication transaction likewise decodes its internally generated
+UTF-8 inventory explicitly. Unmarked USTAR/GNU names and PAX `hdrcharset=BINARY`
+retain the prior host-code-page interpretation. Unknown local PAX character
+sets are rejected rather than guessed. Global PAX overrides remain outside
+the existing supported subset. This does not establish Unicode support for
+every legacy adapter or change their default encoding.
+
+The encoding boundary follows the
+[PAX character-set contract](https://docs.oracle.com/cd/E88353_01/html/E37839/pax-1.html).
+
 ## Remaining Scope
 
 These contracts do not establish optimal ratios or performance for every

@@ -109,18 +109,22 @@ bool is_archive_path_descendant(const std::string& child, const std::string& par
 }  // namespace
 
 // Purpose: Resolve one untrusted archive path below a destination root without following escaping parent reparses.
-// Inputs: `destination_root` is the extraction root and `archive_path` is untrusted archive metadata.
+// Inputs: `destination_root` is the extraction root; `archive_path` uses the explicitly selected metadata encoding.
 // Outputs: Returns the validated target path or throws `SecurityError`/`ArchiveError` when containment cannot be
 // proven.
 std::filesystem::path safe_join_archive_path(const std::filesystem::path& destination_root,
-                                             const std::string& archive_path) {
+                                             const std::string& archive_path, ArchivePathEncoding encoding) {
     const auto normalized_archive_path = normalize_archive_path_key(archive_path);
     std::error_code ec;
     const auto root = std::filesystem::weakly_canonical(destination_root, ec);
     if (ec) {
         throw SecurityError("destination root cannot be canonicalized: " + ec.message());
     }
-    const auto target = (root / std::filesystem::path(normalized_archive_path)).lexically_normal();
+    const auto relative =
+        encoding == ArchivePathEncoding::Utf8
+            ? std::filesystem::path(std::u8string(normalized_archive_path.begin(), normalized_archive_path.end()))
+            : std::filesystem::path(normalized_archive_path);
+    const auto target = (root / relative).lexically_normal();
     if (!starts_with_path(target, root)) {
         throw SecurityError("archive entry resolves outside destination root: " + archive_path);
     }

@@ -15,14 +15,15 @@ namespace {
 // Purpose: Write a fixed-size TAR string field for handcrafted fixtures.
 // Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is ASCII metadata.
 // Outputs: Copies `value` into the field; throws through the test harness if it cannot fit.
-void put_test_tar_string(std::array<char, 512>& header, std::size_t offset, std::size_t length, std::string_view value) {
+void put_test_tar_string(std::array<char, 512>& header, std::size_t offset, std::size_t length,
+                         std::string_view value) {
     REQUIRE_TRUE(value.size() <= length);
     std::copy(value.begin(), value.end(), header.begin() + static_cast<std::ptrdiff_t>(offset));
 }
 
 // Purpose: Write a simple octal TAR numeric field for small handcrafted fixtures.
-// Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is the small integer to encode.
-// Outputs: Encodes a NUL-terminated octal field.
+// Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is the small integer to
+// encode. Outputs: Encodes a NUL-terminated octal field.
 void put_test_tar_octal(std::array<char, 512>& header, std::size_t offset, std::size_t length, std::uint64_t value) {
     std::string encoded(length - 1U, '0');
     for (std::size_t i = 0; i < encoded.size(); ++i) {
@@ -63,13 +64,10 @@ std::array<char, 512> make_test_tar_header(std::string_view path, char typeflag,
 }
 
 // Purpose: Write a one-entry TAR archive fixture.
-// Inputs: `archive` is the output TAR path, `path` is the entry name, `typeflag` is the TAR type, and `payload` is file or link payload data.
-// Outputs: Creates a complete TAR stream with end markers.
-void write_one_entry_tar(
-    const std::filesystem::path& archive,
-    std::string_view path,
-    char typeflag,
-    std::string_view payload) {
+// Inputs: `archive` is the output TAR path, `path` is the entry name, `typeflag` is the TAR type, and `payload` is file
+// or link payload data. Outputs: Creates a complete TAR stream with end markers.
+void write_one_entry_tar(const std::filesystem::path& archive, std::string_view path, char typeflag,
+                         std::string_view payload) {
     std::ofstream output(archive, std::ios::binary);
     const auto header = make_test_tar_header(path, typeflag, typeflag == '5' ? 0 : payload.size());
     output.write(header.data(), static_cast<std::streamsize>(header.size()));
@@ -85,6 +83,42 @@ void write_one_entry_tar(
 }
 
 }  // namespace
+
+// Purpose: Preserve declared PAX encodings while leaving unmarked legacy TAR names unchanged.
+// Inputs: An independently serialized PAX record with UTF-8 or BINARY names and an unmarked USTAR control.
+// Outputs: Requires exact filename restoration for each declared character set.
+TEST_CASE(tar_pax_filename_encoding_contract) {
+    const auto root = test_temp_dir("tar-pax-encoding");
+    const std::string name = "caf\xC3\xA9.txt";
+    for (const auto* charset : {"", "BINARY", "ISO-IR 10646 2000 UTF-8", "legacy"}) {
+        const auto archive = root / "input.tar";
+        const std::string charset_name(charset);
+        std::ofstream output(archive, std::ios::binary);
+        if (charset_name != "legacy") {
+            const std::string metadata = (charset_name.empty()       ? ""
+                                          : charset_name == "BINARY" ? "21 hdrcharset=BINARY\n"
+                                                                     : "38 hdrcharset=ISO-IR 10646 2000 UTF-8\n") +
+                                         std::string("18 path=") + name + "\n";
+            const auto header = make_test_tar_header("PaxHeaders/name", 'x', metadata.size());
+            output.write(header.data(), header.size());
+            output.write(metadata.data(), static_cast<std::streamsize>(metadata.size()));
+            const std::array<char, 512> zero{};
+            output.write(zero.data(), static_cast<std::streamsize>((512U - metadata.size() % 512U) % 512U));
+        }
+        const auto header = make_test_tar_header(charset_name == "legacy" ? name : "fallback", '0', 0);
+        output.write(header.data(), header.size());
+        const std::array<char, 1024> footer{};
+        output.write(footer.data(), footer.size());
+        output.close();
+        const auto destination = root / (charset_name.empty() ? "default" : charset_name);
+        (void)superzip::extract_tar(archive, destination, false);
+        const auto expected = charset_name == "BINARY" || charset_name == "legacy"
+                                  ? std::filesystem::path(name)
+                                  : std::filesystem::path(u8"caf\u00e9.txt");
+        REQUIRE_TRUE(std::filesystem::is_regular_file(destination / expected));
+    }
+    std::filesystem::remove_all(root);
+}
 
 TEST_CASE(tar_roundtrip_extracts_files_and_directories) {
     const auto root = test_temp_dir("tar-roundtrip");
