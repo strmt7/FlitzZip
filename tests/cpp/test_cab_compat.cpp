@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "cab/cab_adapter.hpp"
@@ -105,12 +106,10 @@ void write_binary_file(const std::filesystem::path& path, const std::vector<unsi
 }
 
 // Purpose: Build a minimal uncompressed single-folder CAB fixture.
-// Inputs: `archive` is the output path, `entries` are member paths/payloads, and `flags` can inject malformed spanned-CAB metadata.
-// Outputs: Creates a CAB file that Windows FDI can extract when metadata is valid.
-void write_uncompressed_cab(
-    const std::filesystem::path& archive,
-    const std::vector<CabFixtureEntry>& entries,
-    std::uint16_t flags = 0U) {
+// Inputs: `archive` is the output path, `entries` are member paths/payloads, and `flags` can inject malformed
+// spanned-CAB metadata. Outputs: Creates a CAB file that Windows FDI can extract when metadata is valid.
+void write_uncompressed_cab(const std::filesystem::path& archive, const std::vector<CabFixtureEntry>& entries,
+                            std::uint16_t flags = 0U) {
     REQUIRE_TRUE(entries.size() <= 0xFFFFU);
     std::uint64_t payload_size = 0;
     std::uint64_t file_table_size = 0;
@@ -197,6 +196,7 @@ TEST_CASE(cab_extraction_reads_uncompressed_payload) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("cab payload\n").size()));
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), "cab payload\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify CAB extraction rejects traversal paths before output.
@@ -287,12 +287,10 @@ TEST_CASE(cab_scanner_rejects_data_block_extent_past_cabinet_boundary) {
 TEST_CASE(cab_scanner_rejects_duplicate_normalized_paths) {
     const auto root = test_temp_dir("cab-duplicate-path");
     const auto archive = root / "duplicate.cab";
-    write_uncompressed_cab(
-        archive,
-        {
-            {.name = "dir\\alpha.txt", .payload = "one"},
-            {.name = "dir/alpha.txt", .payload = "two"},
-        });
+    write_uncompressed_cab(archive, {
+                                        {.name = "dir\\alpha.txt", .payload = "one"},
+                                        {.name = "dir/alpha.txt", .payload = "two"},
+                                    });
 
     bool rejected = false;
     try {
@@ -309,12 +307,10 @@ TEST_CASE(cab_scanner_rejects_duplicate_normalized_paths) {
 TEST_CASE(cab_scanner_rejects_file_child_path_conflicts) {
     const auto root = test_temp_dir("cab-file-child-conflict");
     const auto archive = root / "conflict.cab";
-    write_uncompressed_cab(
-        archive,
-        {
-            {.name = "dir", .payload = "file"},
-            {.name = "dir\\child.txt", .payload = "child"},
-        });
+    write_uncompressed_cab(archive, {
+                                        {.name = "dir", .payload = "file"},
+                                        {.name = "dir\\child.txt", .payload = "child"},
+                                    });
 
     bool rejected = false;
     try {

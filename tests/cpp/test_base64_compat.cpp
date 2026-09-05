@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "base64/base64_adapter.hpp"
@@ -32,9 +33,7 @@ void write_text_file(const std::filesystem::path& path, const std::string& text)
 // Outputs: Returns the complete file payload.
 std::vector<unsigned char> read_binary_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    return std::vector<unsigned char>(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
+    return std::vector<unsigned char>(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
 // Purpose: Count regular files below a directory for cleanup assertions.
@@ -76,6 +75,7 @@ TEST_CASE(base64_compat_roundtrip) {
     const auto extract_stats = superzip::extract_base64_file(archive, output, false);
     REQUIRE_EQ(extract_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
+    superzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -91,8 +91,23 @@ TEST_CASE(base64_extracts_raw_payload_by_extension) {
     const auto stats = superzip::extract_base64_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "hello.txt"), std::vector<unsigned char>({
-        'S', 'u', 'p', 'e', 'r', 'Z', 'i', 'p', ' ', 'r', 'a', 'w', ' ', 'b', '6', '4',
-    }));
+                                                           'S',
+                                                           'u',
+                                                           'p',
+                                                           'e',
+                                                           'r',
+                                                           'Z',
+                                                           'i',
+                                                           'p',
+                                                           ' ',
+                                                           'r',
+                                                           'a',
+                                                           'w',
+                                                           ' ',
+                                                           'b',
+                                                           '6',
+                                                           '4',
+                                                       }));
     std::filesystem::remove_all(root);
 }
 
@@ -160,7 +175,17 @@ TEST_CASE(base64_extract_rejects_overwrite_by_default) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(read_binary_file(output / "sample.txt"), std::vector<unsigned char>({
-        'o', 'l', 'd', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd',
-    }));
+                                                            'o',
+                                                            'l',
+                                                            'd',
+                                                            ' ',
+                                                            'p',
+                                                            'a',
+                                                            'y',
+                                                            'l',
+                                                            'o',
+                                                            'a',
+                                                            'd',
+                                                        }));
     std::filesystem::remove_all(root);
 }

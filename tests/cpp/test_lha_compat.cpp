@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -129,6 +130,7 @@ TEST_CASE(lha_extraction_reads_nested_payload) {
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("hello world\n").size()));
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "subdir" / "subdir2" / "hello.txt"), "hello world\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify LHA extraction refuses overwriting existing files unless explicitly allowed.

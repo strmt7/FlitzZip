@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -39,9 +40,7 @@ void write_binary_file(const std::filesystem::path& path, const std::vector<unsi
 // Outputs: Returns the complete file payload.
 std::vector<unsigned char> read_binary_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    return std::vector<unsigned char>(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
+    return std::vector<unsigned char>(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
 // Purpose: Count regular files below a directory for cleanup assertions.
@@ -165,15 +164,11 @@ std::string wrap_hqx_text(const std::string& encoded) {
 }
 
 // Purpose: Build a complete test-side BinHex 4.0 fixture.
-// Inputs: `name` is the embedded output name, `data` is the data fork, `resource` is the resource fork, and corruption flags flip stored CRC bits.
-// Outputs: Returns a complete `.hqx` text stream.
-std::string make_hqx_fixture(
-    std::string_view name,
-    const std::vector<unsigned char>& data,
-    const std::vector<unsigned char>& resource = {},
-    bool corrupt_header_crc = false,
-    bool corrupt_data_crc = false,
-    bool corrupt_resource_crc = false) {
+// Inputs: `name` is the embedded output name, `data` is the data fork, `resource` is the resource fork, and corruption
+// flags flip stored CRC bits. Outputs: Returns a complete `.hqx` text stream.
+std::string make_hqx_fixture(std::string_view name, const std::vector<unsigned char>& data,
+                             const std::vector<unsigned char>& resource = {}, bool corrupt_header_crc = false,
+                             bool corrupt_data_crc = false, bool corrupt_resource_crc = false) {
     std::vector<unsigned char> header;
     header.push_back(static_cast<unsigned char>(name.size()));
     header.insert(header.end(), name.begin(), name.end());
@@ -227,6 +222,7 @@ TEST_CASE(hqx_extracts_data_fork_and_discards_resource_fork) {
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(1));
+    superzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 

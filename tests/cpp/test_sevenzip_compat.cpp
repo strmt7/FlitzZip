@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -126,6 +127,7 @@ TEST_CASE(sevenzip_extraction_reads_nested_payload) {
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("sevenzip payload").size()));
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "nested" / "payload.txt"), "sevenzip payload");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify 7z extraction refuses overwriting existing files unless explicitly allowed.

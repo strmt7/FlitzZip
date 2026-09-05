@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_stream_failure.hpp"
 
@@ -153,6 +154,7 @@ TEST_CASE(lzip_extracts_single_file_fixture) {
     const auto stats = superzip::extract_lzip_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip lzip fixture payload.\nSecond line.\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify concatenated lzip members decode as one continuous single-file payload.
@@ -272,6 +274,7 @@ TEST_CASE(tar_lzip_extracts_files_and_directories) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(3));
     REQUIRE_EQ(read_text_file(output / "dir" / "hello.txt"), "hello from tar.lz\n");
     REQUIRE_EQ(read_text_file(output / "root.txt"), "root tar lzip payload");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify `.tar.lz` extraction rejects traversal metadata during the validation pass.

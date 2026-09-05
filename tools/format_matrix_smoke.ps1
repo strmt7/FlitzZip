@@ -14,6 +14,70 @@ $cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
 if (-not (Test-Path -LiteralPath $cli)) {
     throw "CLI binary not found. Run tools/build.ps1 first."
 }
+$testRunner = Join-Path $repo "build\$Configuration\superzip_tests.exe"
+if (-not (Test-Path -LiteralPath $testRunner)) {
+    throw "Native fixture test binary not found. Run tools/build.ps1 first."
+}
+
+# Purpose: Preserve one exact argument through the Windows CRT command-line parser.
+# Inputs: Value is a possibly empty argument, including spaces, quotes, or trailing backslashes.
+# Outputs: Returns a correctly quoted ProcessStartInfo.Arguments component.
+function ConvertTo-MatrixArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+    $builder = [System.Text.StringBuilder]::new()
+    [void]$builder.Append('"')
+    $slashes = 0
+    foreach ($char in $Value.ToCharArray()) {
+        if ($char -eq '\') { ++$slashes; continue }
+        if ($char -eq '"') {
+            [void]$builder.Append(('\' * ($slashes * 2 + 1)))
+        } elseif ($slashes -gt 0) {
+            [void]$builder.Append(('\' * $slashes))
+        }
+        [void]$builder.Append($char)
+        $slashes = 0
+    }
+    if ($slashes -gt 0) { [void]$builder.Append(('\' * ($slashes * 2))) }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+# Purpose: Execute one matrix command without leaking its native exit code to the host shell.
+# Inputs: FilePath/Arguments select the executable; FixtureRoot optionally requests native fixture export.
+# Outputs: Returns exit code and captured lines; throws on launch failure or the two-minute deadline.
+function Invoke-MatrixProcess {
+    param([string]$FilePath, [string[]]$Arguments, [string]$FixtureRoot = "")
+
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $FilePath
+    $start.Arguments = (($Arguments | ForEach-Object { ConvertTo-MatrixArgument -Value $_ }) -join ' ')
+    $start.WorkingDirectory = $repo
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.EnvironmentVariables.Remove('SUPERZIP_TEST_FIXTURE_EXPORT')
+    if ($FixtureRoot) { $start.EnvironmentVariables['SUPERZIP_TEST_FIXTURE_EXPORT'] = $FixtureRoot }
+    $process = [System.Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(120000)) {
+            $process.Kill()
+            [void]$process.WaitForExit(5000)
+            throw "Matrix command timed out: $FilePath"
+        }
+        $output = $stdout.GetAwaiter().GetResult() + "`n" + $stderr.GetAwaiter().GetResult()
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Output = @($output -split '\r?\n' | Where-Object { $_.Length -gt 0 })
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
 
 # Purpose: Run the SuperZip CLI and fail with captured output on nonzero exit.
 # Inputs: `Arguments` are passed verbatim and `Label` names the operation.
@@ -24,12 +88,11 @@ function Invoke-SuperZipMatrixCommand {
         [Parameter(Mandatory = $true)][string]$Label
     )
 
-    $output = & $cli @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "$Label failed with exit code $exitCode. Output: $($output -join "`n")"
+    $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments
+    if ($result.ExitCode -ne 0) {
+        throw "$Label failed with exit code $($result.ExitCode). Output: $($result.Output -join "`n")"
     }
-    return @($output)
+    return @($result.Output)
 }
 
 # Purpose: Run a SuperZip CLI command that must fail with a specific diagnostic fragment.
@@ -42,29 +105,9 @@ function Invoke-ExpectedMatrixFailure {
         [Parameter(Mandatory = $true)][string]$ExpectedText
     )
 
-    $stdoutPath = [System.IO.Path]::GetTempFileName()
-    $stderrPath = [System.IO.Path]::GetTempFileName()
-    try {
-        $process = Start-Process `
-            -FilePath $cli `
-            -ArgumentList $Arguments `
-            -NoNewWindow `
-            -Wait `
-            -PassThru `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath
-        $output = @()
-        if (Test-Path -LiteralPath $stdoutPath) {
-            $output += Get-Content -LiteralPath $stdoutPath
-        }
-        if (Test-Path -LiteralPath $stderrPath) {
-            $output += Get-Content -LiteralPath $stderrPath
-        }
-    } finally {
-        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
-    }
-
-    if ($process.ExitCode -eq 0) {
+    $result = Invoke-MatrixProcess -FilePath $cli -Arguments $Arguments
+    $output = $result.Output
+    if ($result.ExitCode -eq 0) {
         throw "$Label unexpectedly succeeded. Output: $($output -join "`n")"
     }
     if (($output -join "`n") -notmatch [regex]::Escape($ExpectedText)) {
@@ -275,39 +318,100 @@ function Get-MatrixIdentifiedFormat {
     return $Matches.key
 }
 
-# Purpose: Return the test file that exercises an extract-only format.
+# Purpose: Return a passing-fixture test for an extract-only format.
 # Inputs: `Key` is a CLI archive format key.
-# Outputs: Returns a repository-relative test path or `$null` when coverage is missing.
-function Get-MatrixExtractOnlyTestPath {
+# Outputs: Returns the exact native test name or `$null` when coverage is missing.
+function Get-MatrixExtractOnlyTestName {
     param([Parameter(Mandatory = $true)][string]$Key)
 
     $coverage = @{
-        "zipx" = "tests\cpp\test_zip_compat.cpp"
-        "7z" = "tests\cpp\test_sevenzip_compat.cpp"
-        "tar.xz" = "tests\cpp\test_tar_xz_compat.cpp"
-        "tar.lz" = "tests\cpp\test_lzip_compat.cpp"
-        "b64" = "tests\cpp\test_base64_compat.cpp"
-        "xz" = "tests\cpp\test_xz_compat.cpp"
-        "lzma" = "tests\cpp\test_lzma_compat.cpp"
-        "lz" = "tests\cpp\test_lzip_compat.cpp"
-        "cab" = "tests\cpp\test_cab_compat.cpp"
-        "iso" = "tests\cpp\test_iso_compat.cpp"
-        "arj" = "tests\cpp\test_arj_compat.cpp"
-        "arc" = "tests\cpp\test_arc_compat.cpp"
-        "hqx" = "tests\cpp\test_hqx_compat.cpp"
-        "macbinary" = "tests\cpp\test_macbinary_compat.cpp"
-        "xxe" = "tests\cpp\test_xxe_compat.cpp"
-        "uue" = "tests\cpp\test_uue_compat.cpp"
-        "lha" = "tests\cpp\test_lha_compat.cpp"
-        "wim" = "tests\cpp\test_wim_compat.cpp"
-        "xar" = "tests\cpp\test_xar_compat.cpp"
-        "deb" = "tests\cpp\test_ar_compat.cpp"
-        "rpm" = "tests\cpp\test_rpm_compat.cpp"
+        "zipx" = "zipx_extracts_zip_compatible_records"
+        "7z" = "sevenzip_extraction_reads_nested_payload"
+        "tar.xz" = "tar_xz_extracts_files_and_directories"
+        "tar.lz" = "tar_lzip_extracts_files_and_directories"
+        "b64" = "base64_compat_roundtrip"
+        "xz" = "xz_extracts_single_file_fixture"
+        "lzma" = "lzma_extracts_single_file_fixture"
+        "lz" = "lzip_extracts_single_file_fixture"
+        "cab" = "cab_extraction_reads_uncompressed_payload"
+        "iso" = "iso_extraction_reads_basic_iso9660_files_and_directories"
+        "arj" = "arj_extracts_stored_files_and_directories"
+        "arc" = "arc_extracts_unpacked_files"
+        "hqx" = "hqx_extracts_data_fork_and_discards_resource_fork"
+        "macbinary" = "macbinary_extracts_data_fork_and_discards_resource_fork"
+        "xxe" = "xxe_compat_roundtrip"
+        "uue" = "uue_compat_roundtrip"
+        "lha" = "lha_extraction_reads_nested_payload"
+        "wim" = "wim_fixture_extracts_with_native_adapter"
+        "xar" = "xar_extraction_reads_nested_zlib_payload"
+        "deb" = "deb_outer_container_extracts_with_native_ar_adapter"
+        "rpm" = "rpm_extraction_reads_gzip_cpio_payload"
     }
     return $coverage[$Key]
 }
 
-$work = Join-Path $WorkRoot ("superzip-format-matrix-" + [guid]::NewGuid().ToString("N"))
+# Purpose: Prove an extract-only format through its fixture test and public CLI paths.
+# Inputs: Format is one registry row; Work is the caller-owned temporary matrix directory.
+# Outputs: Throws on missing/failed fixtures, identification, byte/tree mismatch, or overwrite behavior.
+function Test-MatrixExtractOnlyFormat {
+    param([Parameter(Mandatory = $true)]$Format, [string]$Work)
+
+    $name = Get-MatrixExtractOnlyTestName -Key $Format.Key
+    if (-not $name) { throw "Extract-only format $($Format.Key) is missing a fixture test mapping." }
+    $token = ConvertTo-MatrixToken -Key $Format.Key
+    $export = Join-Path $Work "fixture-$token"
+    $result = Invoke-MatrixProcess -FilePath $testRunner -Arguments @($name) -FixtureRoot $export
+    if ($result.ExitCode -ne 0 -or $result.Output -cnotcontains "[PASS] $name" -or
+        $result.Output -cnotcontains '1 tests, 0 failed') {
+        throw "Fixture test $name did not pass exactly once. Output: $($result.Output -join "`n")"
+    }
+    $archiveRoot = Join-Path $export "archive"
+    $expected = Join-Path $export "expected"
+    $archives = @(Get-ChildItem -LiteralPath $archiveRoot -File)
+    if ($archives.Count -ne 1 -or -not (Test-Path -LiteralPath $expected -PathType Container)) {
+        throw "Fixture test $name did not export one archive and its verified output tree. Rebuild the test binary."
+    }
+    $archive = $archives[0].FullName
+    if ((Get-MatrixIdentifiedFormat -Archive $archive) -ne $Format.Key) {
+        throw "CLI identification disagrees with the $($Format.Key) fixture."
+    }
+    foreach ($mode in @('auto', $Format.Key)) {
+        $output = Join-Path $export "extract-$mode"
+        $arguments = @('extract', '--format', $mode, '--output', $output, $archive)
+        Invoke-SuperZipMatrixCommand -Arguments $arguments -Label "fixture extract $($Format.Key) mode=$mode" | Out-Null
+        Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
+        Invoke-ExpectedMatrixFailure -Arguments $arguments -Label "fixture overwrite refusal $($Format.Key)" -ExpectedText 'refusing to overwrite'
+        Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
+        $overwrite = @('extract', '--format', $mode, '--overwrite', '--output', $output, $archive)
+        Invoke-SuperZipMatrixCommand -Arguments $overwrite -Label "fixture overwrite $($Format.Key) mode=$mode" | Out-Null
+        Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
+    }
+    $sourceExtension = @($Format.Extensions -split ',' |
+        Where-Object { $archive.EndsWith($_, [System.StringComparison]::OrdinalIgnoreCase) } |
+        Sort-Object -Property Length -Descending | Select-Object -First 1)
+    # A header-detected fixture (for example MacBinary .bin) need not use an advertised alias.
+    $suffix = if ($sourceExtension.Count -eq 1) { $sourceExtension[0] } else { [System.IO.Path]::GetExtension($archive) }
+    $baseName = $archives[0].Name.Substring(0, $archives[0].Name.Length - $suffix.Length)
+    foreach ($alias in ($Format.Extensions -split ',')) {
+        $aliasRoot = Join-Path $export ("alias" + $alias)
+        New-Item -ItemType Directory -Path $aliasRoot | Out-Null
+        $aliasArchive = Join-Path $aliasRoot ("$baseName$alias")
+        Copy-Item -LiteralPath $archive -Destination $aliasArchive
+        if ((Get-MatrixIdentifiedFormat -Archive $aliasArchive) -ne $Format.Key) {
+            throw "Alias $alias did not identify as $($Format.Key)."
+        }
+        $output = Join-Path $export ("alias-output" + $alias)
+        Invoke-SuperZipMatrixCommand -Arguments @('extract', '--format', 'auto', '--output', $output, $aliasArchive) -Label "fixture alias $alias" | Out-Null
+        Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
+    }
+    Write-Output "format_matrix extract_only=$($Format.Key) status=passed verification=cli_fixture test=$name"
+}
+
+$rootPrefix = [System.IO.Path]::GetFullPath($WorkRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+$work = [System.IO.Path]::GetFullPath((Join-Path $rootPrefix ("superzip-format-matrix-" + [guid]::NewGuid().ToString("N"))))
+if (-not $work.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Matrix temporary directory escaped the requested workspace."
+}
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     $fixtures = Initialize-FormatMatrixFixture -Root (Join-Path $work "fixtures")
@@ -403,8 +507,10 @@ try {
                     -Label "compression-level rejection $($format.Key)" `
                     -ExpectedText "does not support compression-level flags"
             } else {
-                foreach ($level in @("1", "9")) {
-                    $levelArchive = Join-Path $archives ("level-$level-$token$extension")
+                foreach ($level in @("1", "2", "3", "4", "6", "7", "8", "9")) {
+                    $levelRoot = Join-Path $work "level-$level-$token"
+                    New-Item -ItemType Directory -Path $levelRoot | Out-Null
+                    $levelArchive = Join-Path $levelRoot (Split-Path -Leaf $archive)
                     $levelArgs = @("compress", "--format", $format.Key)
                     if ($format.Key -eq "suzip") {
                         $levelArgs += @("--force-cpu")
@@ -415,7 +521,20 @@ try {
                     if ($levelDetected -ne $format.Key) {
                         throw "Level $level archive detected $levelDetected; expected $($format.Key)"
                     }
+                    $levelOutput = Join-Path $levelRoot "output"
+                    $levelExtract = @("extract", "--format", "auto", "--output", $levelOutput)
+                    if ($format.Key -eq "suzip") { $levelExtract += "--force-cpu" }
+                    $levelExtract += $levelArchive
+                    Invoke-SuperZipMatrixCommand -Arguments $levelExtract -Label "level $level extract $($format.Key)" | Out-Null
+                    $levelExpected = Join-Path $levelOutput (Split-Path -Leaf $source)
+                    if ($single) {
+                        Test-MatrixFileMatch -ExpectedFile $source -ActualFile $levelExpected
+                    } else {
+                        Test-MatrixDirectoryMatch -ExpectedRoot $source -ActualRoot $levelExpected `
+                            -CompareDirectories (Test-MatrixDirectoryPreservingFormat -Key $format.Key)
+                    }
                 }
+                Write-Output "format_matrix compression_levels=$($format.Key) levels=1-9 status=passed verification=cli_roundtrip"
             }
 
             Write-Output "format_matrix create_extract=$($format.Key) status=passed archive_bytes=$((Get-Item -LiteralPath $archive).Length)"
@@ -434,14 +553,7 @@ try {
                 -Label "unsupported extract $($format.Key)" `
                 -ExpectedText "recognized but not yet implemented for extract"
         } elseif (-not $format.CanCreate) {
-            $testPath = Get-MatrixExtractOnlyTestPath -Key $format.Key
-            if (-not $testPath) {
-                throw "Extract-only format $($format.Key) is missing matrix coverage mapping"
-            }
-            if (-not (Test-Path -LiteralPath (Join-Path $repo $testPath))) {
-                throw "Extract-only format $($format.Key) coverage file is missing: $testPath"
-            }
-            Write-Output "format_matrix extract_only=$($format.Key) status=covered test=$testPath"
+            Test-MatrixExtractOnlyFormat -Format $format -Work $work
         }
     }
 } finally {

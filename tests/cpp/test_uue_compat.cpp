@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -32,9 +33,7 @@ void write_text_file(const std::filesystem::path& path, const std::string& text)
 // Outputs: Returns the complete file payload.
 std::vector<unsigned char> read_binary_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    return std::vector<unsigned char>(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
+    return std::vector<unsigned char>(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
 // Purpose: Count regular files below a directory for cleanup assertions.
@@ -76,6 +75,7 @@ TEST_CASE(uue_compat_roundtrip) {
     const auto extract_stats = superzip::extract_uue_file(archive, output, false);
     REQUIRE_EQ(extract_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_binary_file(output / "payload.bin"), payload);
+    superzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -162,6 +162,7 @@ TEST_CASE(uue_extract_rejects_overwrite_by_default) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
-    REQUIRE_EQ(read_binary_file(output / "sample.txt"), std::vector<unsigned char>({'o', 'l', 'd', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd'}));
+    REQUIRE_EQ(read_binary_file(output / "sample.txt"),
+               std::vector<unsigned char>({'o', 'l', 'd', ' ', 'p', 'a', 'y', 'l', 'o', 'a', 'd'}));
     std::filesystem::remove_all(root);
 }

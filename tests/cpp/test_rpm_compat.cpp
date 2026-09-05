@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -212,6 +213,7 @@ TEST_CASE(rpm_extraction_reads_gzip_cpio_payload) {
     const auto stats = superzip::extract_rpm(archive, output, false);
     REQUIRE_TRUE(stats.entries >= 2);
     REQUIRE_EQ(read_text_file(output / "input" / "alpha.txt"), read_text_file(root / "input" / "alpha.txt"));
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify an RPM header compressor is selected without evaluating an absent magic fallback.

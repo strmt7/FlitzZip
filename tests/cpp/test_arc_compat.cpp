@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "arc/arc_adapter.hpp"
@@ -149,12 +150,11 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 TEST_CASE(arc_extracts_unpacked_files) {
     const auto root = test_temp_dir("arc-unpacked");
     const auto archive = root / "sample.arc";
-    write_binary_file(
-        archive,
-        make_arc_archive({
-            ArcFixtureEntry{.name = "hello.txt", .payload = {'h', 'e', 'l', 'l', 'o'}, .method = 2},
-            ArcFixtureEntry{.name = "old.txt", .payload = {'o', 'l', 'd'}, .method = 1},
-        }));
+    write_binary_file(archive,
+                      make_arc_archive({
+                          ArcFixtureEntry{.name = "hello.txt", .payload = {'h', 'e', 'l', 'l', 'o'}, .method = 2},
+                          ArcFixtureEntry{.name = "old.txt", .payload = {'o', 'l', 'd'}, .method = 1},
+                      }));
 
     REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Arc);
     const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Arc);
@@ -166,6 +166,7 @@ TEST_CASE(arc_extracts_unpacked_files) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(2));
     REQUIRE_EQ(read_text_file(output / "hello.txt"), std::string("hello"));
     REQUIRE_EQ(read_text_file(output / "old.txt"), std::string("old"));
+    superzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -218,7 +219,8 @@ TEST_CASE(arc_extract_rejects_unsafe_paths) {
 TEST_CASE(arc_extract_rejects_compressed_methods_without_output) {
     const auto root = test_temp_dir("arc-compressed-method");
     const auto archive = root / "compressed.arc";
-    write_binary_file(archive, make_arc_archive({ArcFixtureEntry{.name = "packed.txt", .payload = {'x'}, .method = 3}}));
+    write_binary_file(archive,
+                      make_arc_archive({ArcFixtureEntry{.name = "packed.txt", .payload = {'x'}, .method = 3}}));
 
     const auto output = root / "out";
     bool rejected = false;

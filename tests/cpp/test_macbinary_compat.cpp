@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -27,9 +28,7 @@ void write_binary_file(const std::filesystem::path& path, const std::vector<unsi
 // Outputs: Returns the complete file payload.
 std::vector<unsigned char> read_binary_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    return std::vector<unsigned char>(
-        std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
+    return std::vector<unsigned char>(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
 // Purpose: Count regular files below a directory for cleanup assertions.
@@ -99,14 +98,12 @@ std::uint16_t macbinary_header_crc(const std::array<unsigned char, 128>& header)
 }
 
 // Purpose: Build a complete MacBinary fixture with optional MacBinary II header CRC.
-// Inputs: `name` is the embedded output name, `data` is the data fork, `resource` is the resource fork, `with_crc` selects MacBinary II markers, and `corrupt_crc` flips the stored CRC.
-// Outputs: Returns a complete MacBinary byte stream.
-std::vector<unsigned char> make_macbinary_fixture(
-    std::string_view name,
-    const std::vector<unsigned char>& data,
-    const std::vector<unsigned char>& resource = {},
-    bool with_crc = true,
-    bool corrupt_crc = false) {
+// Inputs: `name` is the embedded output name, `data` is the data fork, `resource` is the resource fork, `with_crc`
+// selects MacBinary II markers, and `corrupt_crc` flips the stored CRC. Outputs: Returns a complete MacBinary byte
+// stream.
+std::vector<unsigned char> make_macbinary_fixture(std::string_view name, const std::vector<unsigned char>& data,
+                                                  const std::vector<unsigned char>& resource = {}, bool with_crc = true,
+                                                  bool corrupt_crc = false) {
     std::array<unsigned char, 128> header{};
     header[1] = static_cast<unsigned char>(name.size());
     for (std::size_t i = 0; i < name.size(); ++i) {
@@ -156,6 +153,7 @@ TEST_CASE(macbinary_extracts_data_fork_and_discards_resource_fork) {
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_binary_file(output / "payload.dat"), payload);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(1));
+    superzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 

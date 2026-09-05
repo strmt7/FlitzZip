@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -15,12 +16,11 @@
 namespace {
 
 constexpr std::array<unsigned char, 68> kSingleFileLzmaFixture{{
-    0x5DU, 0x00U, 0x00U, 0x80U, 0x00U, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU,
-    0xFFU, 0x00U, 0x29U, 0x9DU, 0x4AU, 0x06U, 0x67U, 0x91U, 0xC2U, 0xBFU, 0xC5U, 0x03U,
-    0x48U, 0x70U, 0x03U, 0x6CU, 0xFDU, 0xF9U, 0x68U, 0xEDU, 0x8BU, 0x91U, 0xC4U, 0x45U,
-    0x84U, 0x1EU, 0x3CU, 0xC6U, 0xD9U, 0xC4U, 0xA4U, 0x44U, 0xCEU, 0xB9U, 0xB4U, 0xB1U,
-    0xC6U, 0x33U, 0xF0U, 0xDEU, 0x9AU, 0x42U, 0x96U, 0x4FU, 0xFFU, 0xD3U, 0xA8U, 0xCDU,
-    0xD9U, 0xD9U, 0x83U, 0xFFU, 0xE1U, 0xDFU, 0x80U, 0x00U,
+    0x5DU, 0x00U, 0x00U, 0x80U, 0x00U, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0x00U,
+    0x29U, 0x9DU, 0x4AU, 0x06U, 0x67U, 0x91U, 0xC2U, 0xBFU, 0xC5U, 0x03U, 0x48U, 0x70U, 0x03U, 0x6CU,
+    0xFDU, 0xF9U, 0x68U, 0xEDU, 0x8BU, 0x91U, 0xC4U, 0x45U, 0x84U, 0x1EU, 0x3CU, 0xC6U, 0xD9U, 0xC4U,
+    0xA4U, 0x44U, 0xCEU, 0xB9U, 0xB4U, 0xB1U, 0xC6U, 0x33U, 0xF0U, 0xDEU, 0x9AU, 0x42U, 0x96U, 0x4FU,
+    0xFFU, 0xD3U, 0xA8U, 0xCDU, 0xD9U, 0xD9U, 0x83U, 0xFFU, 0xE1U, 0xDFU, 0x80U, 0x00U,
 }};
 
 // Purpose: Write exact fixture bytes to disk.
@@ -79,6 +79,7 @@ TEST_CASE(lzma_extracts_single_file_fixture) {
     const auto stats = superzip::extract_lzma_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip LZMA fixture payload.\nSecond line.\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify `.lzma` extraction refuses overwriting existing files unless explicitly allowed.
@@ -130,10 +131,23 @@ TEST_CASE(lzma_rejects_corrupt_payload_without_output) {
     const auto root = test_temp_dir("lzma-corrupt-payload");
     const auto archive = root / "payload.bin.lzma";
     write_binary_file(archive, {
-        0x5DU, 0x00U, 0x00U, 0x80U, 0x00U,
-        0x05U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
-        0x00U, 0x00U, 0x00U,
-    });
+                                   0x5DU,
+                                   0x00U,
+                                   0x00U,
+                                   0x80U,
+                                   0x00U,
+                                   0x05U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                                   0x00U,
+                               });
 
     const auto output = root / "out";
     bool rejected = false;
@@ -174,10 +188,21 @@ TEST_CASE(lzma_rejects_oversized_dictionary_without_output) {
     const auto root = test_temp_dir("lzma-oversized-dict");
     const auto archive = root / "huge.lzma";
     write_binary_file(archive, {
-        0x5DU, 0xFFU, 0xFFU, 0xFFU, 0x7FU,
-        0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU,
-        0x00U,
-    });
+                                   0x5DU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0x7FU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0xFFU,
+                                   0x00U,
+                               });
 
     const auto output = root / "out";
     bool rejected = false;

@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -52,12 +53,8 @@ std::vector<unsigned char> zlib_compress(std::string_view text) {
     auto capacity = mz_compressBound(static_cast<mz_ulong>(text.size()));
     std::vector<unsigned char> output(static_cast<std::size_t>(capacity));
     auto output_size = capacity;
-    const auto status = mz_compress2(
-        output.data(),
-        &output_size,
-        reinterpret_cast<const unsigned char*>(text.data()),
-        static_cast<mz_ulong>(text.size()),
-        MZ_BEST_COMPRESSION);
+    const auto status = mz_compress2(output.data(), &output_size, reinterpret_cast<const unsigned char*>(text.data()),
+                                     static_cast<mz_ulong>(text.size()), MZ_BEST_COMPRESSION);
     REQUIRE_EQ(status, MZ_OK);
     output.resize(static_cast<std::size_t>(output_size));
     return output;
@@ -66,11 +63,8 @@ std::vector<unsigned char> zlib_compress(std::string_view text) {
 // Purpose: Write a complete XAR archive fixture.
 // Inputs: `archive` is the destination, `toc` is uncompressed XML, and `heap` is the archive heap.
 // Outputs: Creates or replaces the XAR file.
-void write_xar_fixture(
-    const std::filesystem::path& archive,
-    const std::string& toc,
-    std::span<const unsigned char> heap,
-    std::uint32_t checksum_algorithm = 0U) {
+void write_xar_fixture(const std::filesystem::path& archive, const std::string& toc,
+                       std::span<const unsigned char> heap, std::uint32_t checksum_algorithm = 0U) {
     const auto compressed_toc = zlib_compress(toc);
     std::vector<unsigned char> bytes;
     bytes.reserve(28U + compressed_toc.size() + heap.size());
@@ -92,18 +86,21 @@ void write_xar_fixture(
 // Outputs: Writes a zlib-compressed XAR payload fixture.
 void write_nested_xar_fixture(const std::filesystem::path& archive, std::string_view payload) {
     const auto compressed_payload = zlib_compress(payload);
-    const std::string toc =
-        "<?xml version=\"1.0\"?>"
-        "<xar><toc>"
-        "<file id=\"1\"><name>subdir</name><type>directory</type>"
-        "<file id=\"2\"><name>hello.txt</name><type>file</type>"
-        "<data><length>" + std::to_string(payload.size()) + "</length>"
-        "<offset>0</offset>"
-        "<size>" + std::to_string(compressed_payload.size()) + "</size>"
-        "<encoding style=\"application/x-gzip\"/>"
-        "</data></file>"
-        "</file>"
-        "</toc></xar>";
+    const std::string toc = "<?xml version=\"1.0\"?>"
+                            "<xar><toc>"
+                            "<file id=\"1\"><name>subdir</name><type>directory</type>"
+                            "<file id=\"2\"><name>hello.txt</name><type>file</type>"
+                            "<data><length>" +
+                            std::to_string(payload.size()) +
+                            "</length>"
+                            "<offset>0</offset>"
+                            "<size>" +
+                            std::to_string(compressed_payload.size()) +
+                            "</size>"
+                            "<encoding style=\"application/x-gzip\"/>"
+                            "</data></file>"
+                            "</file>"
+                            "</toc></xar>";
     write_xar_fixture(archive, toc, compressed_payload);
 }
 
@@ -154,6 +151,7 @@ TEST_CASE(xar_extraction_reads_nested_zlib_payload) {
     REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("hello xar\n").size()));
     REQUIRE_TRUE(!stats.gpu_used);
     REQUIRE_EQ(read_text_file(output / "subdir" / "hello.txt"), "hello xar\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify XAR extraction refuses overwriting existing files unless explicitly allowed.
@@ -185,11 +183,14 @@ TEST_CASE(xar_extraction_rejects_parent_directory_paths) {
     const auto archive = root / "dotdot.xar";
     const std::string payload = "bad\n";
     const auto compressed_payload = zlib_compress(payload);
-    const std::string toc =
-        "<xar><toc><file id=\"1\"><name>../escape.txt</name><type>file</type>"
-        "<data><length>" + std::to_string(payload.size()) + "</length><offset>0</offset>"
-        "<size>" + std::to_string(compressed_payload.size()) + "</size>"
-        "<encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
+    const std::string toc = "<xar><toc><file id=\"1\"><name>../escape.txt</name><type>file</type>"
+                            "<data><length>" +
+                            std::to_string(payload.size()) +
+                            "</length><offset>0</offset>"
+                            "<size>" +
+                            std::to_string(compressed_payload.size()) +
+                            "</size>"
+                            "<encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
     write_xar_fixture(archive, toc, compressed_payload);
 
     bool rejected = false;
@@ -209,8 +210,7 @@ TEST_CASE(xar_extraction_rejects_parent_directory_paths) {
 TEST_CASE(xar_extraction_rejects_symbolic_links) {
     const auto root = test_temp_dir("xar-symlink");
     const auto archive = root / "symlink.xar";
-    const std::string toc =
-        "<xar><toc><file id=\"1\"><name>link.txt</name><type>symlink</type></file></toc></xar>";
+    const std::string toc = "<xar><toc><file id=\"1\"><name>link.txt</name><type>symlink</type></file></toc></xar>";
     const std::array<unsigned char, 1> empty_heap{0};
     write_xar_fixture(archive, toc, std::span<const unsigned char>(empty_heap.data(), 0));
 
@@ -231,14 +231,16 @@ TEST_CASE(xar_extraction_rejects_unsupported_encoding) {
     const auto root = test_temp_dir("xar-unsupported-encoding");
     const auto archive = root / "unsupported.xar";
     const std::string payload = "plain";
-    const std::string toc =
-        "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
-        "<data><length>" + std::to_string(payload.size()) + "</length><offset>0</offset>"
-        "<size>" + std::to_string(payload.size()) + "</size>"
-        "<encoding style=\"application/x-bzip2\"/></data></file></toc></xar>";
+    const std::string toc = "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
+                            "<data><length>" +
+                            std::to_string(payload.size()) +
+                            "</length><offset>0</offset>"
+                            "<size>" +
+                            std::to_string(payload.size()) +
+                            "</size>"
+                            "<encoding style=\"application/x-bzip2\"/></data></file></toc></xar>";
     write_xar_fixture(
-        archive,
-        toc,
+        archive, toc,
         std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(payload.data()), payload.size()));
 
     bool rejected = false;
@@ -258,15 +260,15 @@ TEST_CASE(xar_extraction_rejects_unverified_toc_checksum_algorithm) {
     const auto root = test_temp_dir("xar-toc-checksum");
     const auto archive = root / "checksum.xar";
     const std::string payload = "plain";
-    const std::string toc =
-        "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
-        "<data><length>" + std::to_string(payload.size()) + "</length><offset>0</offset>"
-        "<size>" + std::to_string(payload.size()) + "</size></data></file></toc></xar>";
+    const std::string toc = "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
+                            "<data><length>" +
+                            std::to_string(payload.size()) +
+                            "</length><offset>0</offset>"
+                            "<size>" +
+                            std::to_string(payload.size()) + "</size></data></file></toc></xar>";
     write_xar_fixture(
-        archive,
-        toc,
-        std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(payload.data()), payload.size()),
-        1U);
+        archive, toc,
+        std::span<const unsigned char>(reinterpret_cast<const unsigned char*>(payload.data()), payload.size()), 1U);
 
     bool rejected = false;
     try {
@@ -287,11 +289,14 @@ TEST_CASE(xar_extraction_rejects_corrupt_zlib_payload_before_output) {
     const std::string payload = "hello xar\n";
     auto compressed_payload = zlib_compress(payload);
     compressed_payload.back() ^= 0x01U;
-    const std::string toc =
-        "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
-        "<data><length>" + std::to_string(payload.size()) + "</length><offset>0</offset>"
-        "<size>" + std::to_string(compressed_payload.size()) + "</size>"
-        "<encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
+    const std::string toc = "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
+                            "<data><length>" +
+                            std::to_string(payload.size()) +
+                            "</length><offset>0</offset>"
+                            "<size>" +
+                            std::to_string(compressed_payload.size()) +
+                            "</size>"
+                            "<encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
     write_xar_fixture(archive, toc, compressed_payload);
 
     bool rejected = false;

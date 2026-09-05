@@ -96,6 +96,30 @@ brand verification, short local fuzz smoke, and package smoke. RAM-only
 benchmark sweeps stay manual unless a performance claim or tuning decision is
 being made.
 
+## Format Matrix Evidence
+
+`tools/format_matrix_smoke.ps1` reads the built CLI registry and tests each
+registered format's public contract. Create-capable formats roundtrip generated
+files and directories; level-aware writers roundtrip every accepted level 1-9.
+These are small correctness fixtures, not timing or compression-ratio benchmarks.
+The SUZIP lane here is explicitly CPU-only; required-HIP proof remains separate.
+
+For extract-only formats, the matrix runs an exact positive C++ fixture test
+and requires one passing test plus its exported archive and verified output
+tree. It then checks CLI identification, auto and explicit-format extraction,
+overwrite refusal without output changes, explicit overwrite, and every
+advertised extension alias. Each extraction must reproduce the expected path
+tree and SHA-256 file hashes. A test source file's existence is not coverage.
+Fixture export is opt-in for that child process through the test-only
+`SUPERZIP_TEST_FIXTURE_EXPORT` variable; ordinary unit tests do not export files.
+
+Both the CLI and native test executable must be rebuilt before this check.
+Child commands have a two-minute deadline, captured diagnostics, and exact
+Windows argument quoting. Running with a spaced `-WorkRoot` also exercises
+paths that previously failed through the expected-error subprocess wrapper.
+All fixture copies and CLI outputs stay inside the matrix-owned temporary
+directory and are cleaned up on completion or failure.
+
 ## Workflow Wait Strategy
 
 GitHub Actions waiting must be relevant and time-aware:

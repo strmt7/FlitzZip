@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "test_stream_failure.hpp"
 
@@ -83,6 +84,7 @@ TEST_CASE(xz_extracts_single_file_fixture) {
     const auto stats = superzip::extract_xz_file(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip XZ fixture payload.\nSecond line.\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify `.xz` extraction refuses overwriting existing files unless explicitly allowed.

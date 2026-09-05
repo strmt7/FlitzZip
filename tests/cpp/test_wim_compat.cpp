@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -49,6 +50,7 @@ TEST_CASE(wim_fixture_extracts_with_native_adapter) {
     REQUIRE_TRUE(stats.entries >= 2U);
     REQUIRE_EQ(read_text(destination / "root.txt"), std::string("wim-root"));
     REQUIRE_EQ(read_text(destination / "nested" / "hello.txt"), std::string("hello wim"));
+    superzip_test::export_compat_fixture(fixture, destination);
 }
 
 TEST_CASE(wim_extraction_refuses_to_overwrite_existing_files) {

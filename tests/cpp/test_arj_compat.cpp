@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "arj/arj_adapter.hpp"
@@ -72,15 +73,11 @@ void append_arj_header(std::vector<unsigned char>& archive, const std::vector<un
 }
 
 // Purpose: Build one ARJ basic header for tests.
-// Inputs: `name`, `method`, `file_type`, `compressed_size`, `original_size`, and `crc` are written into ARJ metadata fields.
-// Outputs: Returns a complete basic header payload for `append_arj_header`.
-std::vector<unsigned char> make_arj_basic_header(
-    const std::string& name,
-    std::uint8_t method,
-    std::uint8_t file_type,
-    std::uint32_t compressed_size,
-    std::uint32_t original_size,
-    std::uint32_t crc) {
+// Inputs: `name`, `method`, `file_type`, `compressed_size`, `original_size`, and `crc` are written into ARJ metadata
+// fields. Outputs: Returns a complete basic header payload for `append_arj_header`.
+std::vector<unsigned char> make_arj_basic_header(const std::string& name, std::uint8_t method, std::uint8_t file_type,
+                                                 std::uint32_t compressed_size, std::uint32_t original_size,
+                                                 std::uint32_t crc) {
     std::vector<unsigned char> header;
     header.reserve(32U + name.size());
     header.push_back(30);
@@ -169,13 +166,11 @@ std::vector<unsigned char> make_arj_archive(const std::vector<ArjFixtureEntry>& 
 TEST_CASE(arj_extracts_stored_files_and_directories) {
     const auto root = test_temp_dir("arj-stored");
     const auto archive = root / "sample.arj";
-    write_binary_file(
-        archive,
-        make_arj_archive({
-            ArjFixtureEntry{.name = "nested", .file_type = 3},
-            ArjFixtureEntry{.name = "nested/hello.txt", .payload = {'h', 'e', 'l', 'l', 'o'}},
-            ArjFixtureEntry{.name = "root.txt", .payload = {'r', 'o', 'o', 't'}},
-        }));
+    write_binary_file(archive, make_arj_archive({
+                                   ArjFixtureEntry{.name = "nested", .file_type = 3},
+                                   ArjFixtureEntry{.name = "nested/hello.txt", .payload = {'h', 'e', 'l', 'l', 'o'}},
+                                   ArjFixtureEntry{.name = "root.txt", .payload = {'r', 'o', 'o', 't'}},
+                               }));
 
     REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Arj);
     const auto info = superzip::archive_format_info(superzip::ArchiveFormat::Arj);
@@ -188,6 +183,7 @@ TEST_CASE(arj_extracts_stored_files_and_directories) {
     REQUIRE_TRUE(std::filesystem::is_directory(output / "nested"));
     REQUIRE_EQ(read_text_file(output / "nested" / "hello.txt"), std::string("hello"));
     REQUIRE_EQ(read_text_file(output / "root.txt"), std::string("root"));
+    superzip_test::export_compat_fixture(archive, output);
     std::filesystem::remove_all(root);
 }
 
@@ -240,7 +236,8 @@ TEST_CASE(arj_extract_rejects_unsafe_paths) {
 TEST_CASE(arj_extract_rejects_compressed_methods_without_output) {
     const auto root = test_temp_dir("arj-compressed-method");
     const auto archive = root / "compressed.arj";
-    write_binary_file(archive, make_arj_archive({ArjFixtureEntry{.name = "compressed.txt", .payload = {'x'}, .method = 1}}));
+    write_binary_file(archive,
+                      make_arj_archive({ArjFixtureEntry{.name = "compressed.txt", .payload = {'x'}, .method = 1}}));
 
     const auto output = root / "out";
     bool rejected = false;
@@ -260,9 +257,8 @@ TEST_CASE(arj_extract_rejects_compressed_methods_without_output) {
 TEST_CASE(arj_extract_rejects_payload_crc_mismatch_without_output) {
     const auto root = test_temp_dir("arj-crc-mismatch");
     const auto archive = root / "bad-crc.arj";
-    write_binary_file(
-        archive,
-        make_arj_archive({ArjFixtureEntry{.name = "bad.txt", .payload = {'b', 'a', 'd'}, .crc_override = 0x12345678U}}));
+    write_binary_file(archive, make_arj_archive({ArjFixtureEntry{
+                                   .name = "bad.txt", .payload = {'b', 'a', 'd'}, .crc_override = 0x12345678U}}));
 
     const auto output = root / "out";
     bool rejected = false;

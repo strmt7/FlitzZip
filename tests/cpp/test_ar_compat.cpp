@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "ar/ar_adapter.hpp"
@@ -169,6 +170,7 @@ TEST_CASE(deb_outer_container_extracts_with_native_ar_adapter) {
     const auto stats = superzip::extract_ar(archive, output, false);
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "debian-binary"), "2.0\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify AR extraction rejects traversal metadata during the validation pass.

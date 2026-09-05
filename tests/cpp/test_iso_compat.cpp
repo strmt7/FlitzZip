@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
@@ -96,13 +97,11 @@ void put_both_endian_u16(std::span<unsigned char> buffer, std::size_t offset, st
 }
 
 // Purpose: Build one ISO 9660 directory record for handcrafted fixtures.
-// Inputs: `extent_sector`/`data_length` describe payload location, `flags` controls file/directory bits, and `identifier` is the raw file identifier.
-// Outputs: Returns a padded directory record ready for a directory extent or PVD root field.
-std::vector<unsigned char> make_iso_record(
-    std::uint32_t extent_sector,
-    std::uint32_t data_length,
-    std::uint8_t flags,
-    const std::vector<unsigned char>& identifier) {
+// Inputs: `extent_sector`/`data_length` describe payload location, `flags` controls file/directory bits, and
+// `identifier` is the raw file identifier. Outputs: Returns a padded directory record ready for a directory extent or
+// PVD root field.
+std::vector<unsigned char> make_iso_record(std::uint32_t extent_sector, std::uint32_t data_length, std::uint8_t flags,
+                                           const std::vector<unsigned char>& identifier) {
     const auto raw_length = 33U + identifier.size();
     const auto record_length = raw_length + (raw_length % 2U == 0U ? 0U : 1U);
     REQUIRE_TRUE(record_length <= 255U);
@@ -120,13 +119,10 @@ std::vector<unsigned char> make_iso_record(
 }
 
 // Purpose: Append a directory record inside a sector without crossing the sector boundary.
-// Inputs: `image` receives bytes, `sector` selects the directory extent, `cursor` is advanced, and `record` is the encoded entry.
-// Outputs: Copies `record` into the fixture image.
-void append_iso_directory_record(
-    std::vector<unsigned char>& image,
-    std::uint32_t sector,
-    std::size_t& cursor,
-    const std::vector<unsigned char>& record) {
+// Inputs: `image` receives bytes, `sector` selects the directory extent, `cursor` is advanced, and `record` is the
+// encoded entry. Outputs: Copies `record` into the fixture image.
+void append_iso_directory_record(std::vector<unsigned char>& image, std::uint32_t sector, std::size_t& cursor,
+                                 const std::vector<unsigned char>& record) {
     REQUIRE_TRUE(cursor + record.size() <= kTestIsoSectorBytes);
     const auto offset = sector_offset(sector) + cursor;
     std::copy(record.begin(), record.end(), image.begin() + static_cast<std::ptrdiff_t>(offset));
@@ -151,12 +147,10 @@ void write_iso_descriptors(std::vector<unsigned char>& image, const std::vector<
     std::copy_n("CD001", 5, image.begin() + static_cast<std::ptrdiff_t>(pvd_offset + 1U));
     image[pvd_offset + 6U] = 1U;
     put_both_endian_u32(
-        std::span<unsigned char>(image.data() + static_cast<std::ptrdiff_t>(pvd_offset), kTestIsoSectorBytes),
-        80U,
+        std::span<unsigned char>(image.data() + static_cast<std::ptrdiff_t>(pvd_offset), kTestIsoSectorBytes), 80U,
         static_cast<std::uint32_t>(image.size() / kTestIsoSectorBytes));
     put_both_endian_u16(
-        std::span<unsigned char>(image.data() + static_cast<std::ptrdiff_t>(pvd_offset), kTestIsoSectorBytes),
-        128U,
+        std::span<unsigned char>(image.data() + static_cast<std::ptrdiff_t>(pvd_offset), kTestIsoSectorBytes), 128U,
         kTestIsoSectorBytes);
     std::copy(root_record.begin(), root_record.end(), image.begin() + static_cast<std::ptrdiff_t>(pvd_offset + 156U));
 
@@ -183,23 +177,34 @@ void write_iso_fixture(const std::filesystem::path& archive, IsoFixtureMode mode
     const bool reserved = mode == IsoFixtureMode::ReservedName;
     const bool directory_cycle = mode == IsoFixtureMode::DirectoryCycle;
     const std::uint32_t root_file_sector = truncated ? 31U : kTestIsoRootFileSector;
-    const std::uint32_t root_file_size = truncated ? (2U * kTestIsoSectorBytes) : static_cast<std::uint32_t>(root_payload.size());
+    const std::uint32_t root_file_size =
+        truncated ? (2U * kTestIsoSectorBytes) : static_cast<std::uint32_t>(root_payload.size());
     const std::uint8_t root_file_flags = multi_extent ? 0x80U : 0U;
     const auto root_file_name = reserved ? iso_identifier("CON.TXT;1") : iso_identifier("ROOT.TXT;1");
 
     std::size_t root_cursor = 0;
     append_iso_directory_record(image, kTestIsoRootSector, root_cursor, root_record);
-    append_iso_directory_record(image, kTestIsoRootSector, root_cursor, make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 0x02U, parent));
+    append_iso_directory_record(image, kTestIsoRootSector, root_cursor,
+                                make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 0x02U, parent));
     if (directory_cycle) {
-        append_iso_directory_record(image, kTestIsoRootSector, root_cursor, make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 0x02U, iso_identifier("LOOP")));
+        append_iso_directory_record(
+            image, kTestIsoRootSector, root_cursor,
+            make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 0x02U, iso_identifier("LOOP")));
     }
-    append_iso_directory_record(image, kTestIsoRootSector, root_cursor, make_iso_record(kTestIsoDirSector, kTestIsoSectorBytes, 0x02U, iso_identifier("DIR")));
-    append_iso_directory_record(image, kTestIsoRootSector, root_cursor, make_iso_record(root_file_sector, root_file_size, root_file_flags, root_file_name));
+    append_iso_directory_record(image, kTestIsoRootSector, root_cursor,
+                                make_iso_record(kTestIsoDirSector, kTestIsoSectorBytes, 0x02U, iso_identifier("DIR")));
+    append_iso_directory_record(image, kTestIsoRootSector, root_cursor,
+                                make_iso_record(root_file_sector, root_file_size, root_file_flags, root_file_name));
 
     std::size_t dir_cursor = 0;
-    append_iso_directory_record(image, kTestIsoDirSector, dir_cursor, make_iso_record(kTestIsoDirSector, kTestIsoSectorBytes, 0x02U, current));
-    append_iso_directory_record(image, kTestIsoDirSector, dir_cursor, make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 0x02U, parent));
-    append_iso_directory_record(image, kTestIsoDirSector, dir_cursor, make_iso_record(kTestIsoNestedFileSector, static_cast<std::uint32_t>(nested_payload.size()), 0U, iso_identifier("README.;1")));
+    append_iso_directory_record(image, kTestIsoDirSector, dir_cursor,
+                                make_iso_record(kTestIsoDirSector, kTestIsoSectorBytes, 0x02U, current));
+    append_iso_directory_record(image, kTestIsoDirSector, dir_cursor,
+                                make_iso_record(kTestIsoRootSector, kTestIsoSectorBytes, 0x02U, parent));
+    append_iso_directory_record(image, kTestIsoDirSector, dir_cursor,
+                                make_iso_record(kTestIsoNestedFileSector,
+                                                static_cast<std::uint32_t>(nested_payload.size()), 0U,
+                                                iso_identifier("README.;1")));
 
     if (!truncated) {
         write_iso_payload(image, kTestIsoRootFileSector, root_payload);
@@ -228,9 +233,11 @@ TEST_CASE(iso_extraction_reads_basic_iso9660_files_and_directories) {
 
     const auto output = root / "out";
     const auto stats = superzip::extract_iso(archive, output, false);
-    REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("root payload\n").size() + std::string_view("nested payload\n").size()));
+    REQUIRE_EQ(stats.output_bytes, static_cast<std::uint64_t>(std::string_view("root payload\n").size() +
+                                                              std::string_view("nested payload\n").size()));
     REQUIRE_EQ(read_text_file(output / "ROOT.TXT"), "root payload\n");
     REQUIRE_EQ(read_text_file(output / "DIR" / "README"), "nested payload\n");
+    superzip_test::export_compat_fixture(archive, output);
 }
 
 // Purpose: Verify ISO extraction refuses overwriting existing files unless explicitly allowed.

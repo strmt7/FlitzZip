@@ -1,3 +1,4 @@
+#include "test_compat_fixture.hpp"
 #include "test_util.hpp"
 #include "core/archive_format.hpp"
 #include "core/resource_limits.hpp"
@@ -10,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <vector>
@@ -278,7 +280,11 @@ TEST_CASE(zipx_extracts_zip_compatible_records) {
     REQUIRE_EQ(superzip::detect_archive_format(zipx_archive), superzip::ArchiveFormat::Zipx);
     const auto output = root / "out";
     (void)superzip::extract_zip(zipx_archive, output, false);
-    REQUIRE_TRUE(std::filesystem::exists(output / "input" / "hello.txt"));
+    std::ifstream extracted(output / "input" / "hello.txt", std::ios::binary);
+    const std::string payload((std::istreambuf_iterator<char>(extracted)), std::istreambuf_iterator<char>());
+    REQUIRE_EQ(payload, std::string("hello zipx"));
+    extracted.close();
+    superzip_test::export_compat_fixture(zipx_archive, output);
     std::filesystem::remove_all(root);
 }
 
