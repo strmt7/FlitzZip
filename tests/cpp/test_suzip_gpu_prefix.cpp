@@ -11,6 +11,7 @@
 #include <iostream>
 #include <algorithm>
 #include <array>
+#include <utility>
 
 namespace {
 
@@ -136,7 +137,130 @@ PrefixBlockLocation find_first_prefix_block(const superzip::ArchiveIndex& index)
     return PrefixBlockLocation{};
 }
 
+// Purpose: Resolve one reference symbol without using the production GPU encoder.
+// Inputs: Byte value and an empty static or serialized adaptive codebook.
+// Outputs: Returns little-bit-order code and width for the native prefix format.
+std::pair<std::uint32_t, std::uint32_t> reference_prefix_symbol(std::byte value, std::span<const std::byte> codebook) {
+    const auto literal = static_cast<std::uint32_t>(value);
+    const auto rank =
+        codebook.empty()
+            ? literal
+            : static_cast<std::uint32_t>(std::find(codebook.begin(), codebook.end(), value) - codebook.begin());
+    if (rank < 4U) {
+        return {rank << 1U, 3U};
+    }
+    if (rank < 20U) {
+        return {1U | ((rank - 4U) << 2U), 6U};
+    }
+    if (rank < 84U) {
+        return {3U | ((rank - 20U) << 3U), 9U};
+    }
+    return {7U | ((codebook.empty() ? literal - 84U : literal) << 3U), 11U};
+}
+
+// Purpose: Encode a bounded test block using independent bit-by-bit reference logic.
+// Inputs: Uncompressed input and either no codebook or the 84-byte adaptive codebook.
+// Outputs: Returns the complete native prefix payload, including little-endian offsets and zero padding.
+std::vector<std::byte> reference_prefix_payload(std::span<const std::byte> input, std::span<const std::byte> codebook) {
+    const auto segments = (input.size() + superzip::kGpuPrefixSegmentBytes - 1U) / superzip::kGpuPrefixSegmentBytes;
+    std::vector<std::byte> result(codebook.size() + (segments + 1U) * 4U);
+    std::copy(codebook.begin(), codebook.end(), result.begin());
+    std::uint32_t offset = 0;
+    for (std::size_t segment = 0; segment <= segments; ++segment) {
+        for (unsigned int byte = 0; byte < 4U; ++byte) {
+            result[codebook.size() + segment * 4U + byte] = static_cast<std::byte>(offset >> (byte * 8U));
+        }
+        if (segment == segments) {
+            break;
+        }
+        const auto start = segment * superzip::kGpuPrefixSegmentBytes;
+        const auto bytes =
+            input.subspan(start, std::min<std::size_t>(superzip::kGpuPrefixSegmentBytes, input.size() - start));
+        std::vector<std::byte> stream(((bytes.size() * 11U + 31U) / 32U) * 4U);
+        std::size_t position = 0;
+        for (const auto value : bytes) {
+            const auto [code, width] = reference_prefix_symbol(value, codebook);
+            for (std::uint32_t bit = 0; bit < width; ++bit, ++position) {
+                stream[position / 8U] |= static_cast<std::byte>(((code >> bit) & 1U) << (position % 8U));
+            }
+        }
+        stream.resize(((position + 31U) / 32U) * 4U);
+        offset += static_cast<std::uint32_t>(stream.size());
+        result.insert(result.end(), stream.begin(), stream.end());
+    }
+    return result;
+}
+
 }  // namespace
+
+// Purpose: Anchor the independent encoder to manually calculated format bytes even on CPU-only hosts.
+// Inputs: The four three-bit static symbols and a four-byte-aligned segment.
+// Outputs: Requires the exact offset table and 0x0D10 little-bit-order symbol stream.
+TEST_CASE(suzip_prefix_reference_known_bytes) {
+    const std::array input{std::byte{0}, std::byte{1}, std::byte{2}, std::byte{3}};
+    const std::vector<std::byte> expected{std::byte{0},    std::byte{0},    std::byte{0}, std::byte{0},
+                                          std::byte{4},    std::byte{0},    std::byte{0}, std::byte{0},
+                                          std::byte{0x10}, std::byte{0x0D}, std::byte{0}, std::byte{0}};
+    REQUIRE_TRUE(reference_prefix_payload(input, {}) == expected);
+}
+
+// Purpose: Prove exact HIP packing against independent reference bytes across symbols and word boundaries.
+// Inputs: RAM-only fixtures with every static symbol at all 32 bit alignments, shifted alphabets, and partial tails.
+// Outputs: Requires exact payloads, including offset tables and padding, plus CPU/HIP byte-exact decoding.
+TEST_CASE(suzip_gpu_prefix_packing_matches_reference) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> fixture;
+    std::uint32_t bit_position = 0;
+    for (std::uint32_t value = 0; value < 256U; ++value) {
+        for (std::uint32_t alignment = 0; alignment < 32U; ++alignment) {
+            while (bit_position % 32U != alignment) {
+                fixture.push_back(std::byte{0});
+                bit_position += 3U;
+                if (fixture.size() % superzip::kGpuPrefixSegmentBytes == 0U) {
+                    bit_position = 0;
+                }
+            }
+            fixture.push_back(static_cast<std::byte>(value));
+            bit_position += reference_prefix_symbol(static_cast<std::byte>(value), {}).second;
+            if (fixture.size() % superzip::kGpuPrefixSegmentBytes == 0U) {
+                bit_position = 0;
+            }
+        }
+    }
+    const auto aligned_size = ((fixture.size() + 4095U) / 4096U) * 4096U;
+    for (const int level : {5, 9}) {
+        for (const std::size_t tail : {0U, 1U, 15U, 16U, 17U, 31U, 32U, 4095U}) {
+            auto input = fixture;
+            input.resize(aligned_size + tail, std::byte{2});
+            if (level == 9) {
+                for (auto& byte : input) {
+                    byte = static_cast<std::byte>((static_cast<std::uint32_t>(byte) + 201U) & 255U);
+                }
+            }
+            superzip::GpuCodecOptions options;
+            options.block_size = 256U * 1024U;
+            options.compression_level = level;
+            const auto encoded = superzip::encode_chunk(input, options);
+            REQUIRE_TRUE(encoded.gpu_used);
+            REQUIRE_EQ(encoded.blocks.size(), 1U);
+            REQUIRE_EQ(encoded.blocks.front().kind,
+                       level == 5 ? superzip::BlockKind::GpuPrefix : superzip::BlockKind::GpuAdaptivePrefix);
+            REQUIRE_TRUE(encoded.payload.size() >= (level == 9 ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U));
+            const auto codebook = std::span<const std::byte>(encoded.payload)
+                                      .first(level == 9 ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U);
+            REQUIRE_TRUE(encoded.payload == reference_prefix_payload(input, codebook));
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+            REQUIRE_TRUE(decoded == input);
+            options.require_gpu = false;
+            options.force_cpu = true;
+            REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+            REQUIRE_TRUE(decoded == input);
+        }
+    }
+}
 
 // Purpose: Keep the smallest native representation independently for each block in a heterogeneous chunk.
 // Inputs: RAM-only low/high-byte entropy, fill, pattern, and short raw regions at strong compression levels.

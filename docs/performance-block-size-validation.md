@@ -150,6 +150,23 @@ block-size coverage, not an old/new speedup. The 306-test native suite and full
 GUI smoke also passed. Dedicated security review remains explicitly deferred;
 this checkpoint is not release-wide performance or security certification.
 
+### Register Word-Packing Experiment (2026-09-05)
+
+A register-buffer rewrite of both prefix packers passed independent bit-exact
+reference tests, but did not demonstrate the requested substantial improvement.
+It was removed; the reference tests remain. The comparison used the same Mixed
+10 GiB required-HIP workload, four workers, 1 MiB blocks, and three alternating
+old/new repetitions at each of levels 5 and 9. All 12 runs produced
+4,570,658,964 bytes with verified roundtrips, RAM-only mode, and no workload
+disk writes. Level-9 mean compression time was 8.5681 seconds before and
+8.5242 after; level-5 times varied from 8.0679 to 9.5573 seconds across both
+binaries. Neither establishes a substantial end-to-end benefit.
+
+Shared-host samples showed CPU up to 36.7%, at least 31,509 MiB available RAM,
+disk activity up to 3.7%, and individual GPU engine utilization up to 67.3%.
+Timing variation remains inconclusive, not proof that all related approaches
+are slower. Do not repeat this candidate without new profiling evidence.
+
 ## Storage Policy
 
 ### Rejected Prefix Scheduling Experiment (2026-09-05)

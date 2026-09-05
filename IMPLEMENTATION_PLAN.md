@@ -40,6 +40,13 @@ Security tab or a published release.
    and incompressible data. Track compression speed and encoded size together;
    removing redundant candidate work alone is not the requested dramatic joint
    speed-and-ratio improvement or the final kernel/pipeline redesign.
+   Prioritize repeated-substring matching and stronger entropy coding over
+   further small scheduling/bit-packing experiments unless profiling identifies
+   those operations as limiting the full pipeline. Evaluate a learned codec or
+   effort selector only after useful backend alternatives exist, against a
+   deterministic selector on held-out workloads. Count inference time, memory,
+   model/package size, portability, and decoding dependencies; do not add cloud
+   calls or model downloads to ordinary archive operations.
 6. After implementation and performance changes, review the entire repository
    with a file-level coverage record. Include first-party source, frontend,
    backend, tests, scripts, workflows, build/release configuration, skills, and
