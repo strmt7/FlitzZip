@@ -678,6 +678,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_macbinary_compat.cpp
     tests/cpp/test_log_retention.cpp
     tests/cpp/test_folder_size_cache.cpp
+    tests/cpp/test_gdi_back_buffer.cpp
     tests/cpp/test_path_safety.cpp
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_resource_usage.cpp
@@ -696,7 +697,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_xz_compat.cpp
     tests/cpp/test_zstd_compat.cpp
     tests/cpp/test_zip_compat.cpp)
-  target_link_libraries(superzip_tests PRIVATE superzip_core)
+  target_link_libraries(superzip_tests PRIVATE superzip_core gdi32 user32)
   superzip_copy_zstd_runtime(superzip_tests)
   superzip_copy_wimlib_runtime(superzip_tests)
   target_compile_definitions(

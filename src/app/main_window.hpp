@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/folder_size_cache.hpp"
+#include "app/gdi_back_buffer.hpp"
 #include "app/main_window_layout.hpp"
 #include "app/main_window_state.hpp"
 #include "core/progress.hpp"
@@ -1352,6 +1353,7 @@ class MainWindow {
     [[nodiscard]] int scale(int value) const;
 
     HWND hwnd_ = nullptr;
+    GdiBackBuffer back_buffer_;
     HFONT title_font_ = nullptr;
     HFONT body_font_ = nullptr;
     HFONT small_font_ = nullptr;

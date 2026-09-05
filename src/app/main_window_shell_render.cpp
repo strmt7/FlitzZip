@@ -20,7 +20,7 @@ namespace superzip::app {
 
 // Purpose: Paint the current frame through an off-screen buffer.
 // Inputs: None; uses the current window paint region.
-// Outputs: Draws the full client frame and releases GDI objects before returning.
+// Outputs: Draws the client frame using a retained surface, recovering with direct paint on GDI allocation failure.
 void MainWindow::paint() {
     PAINTSTRUCT ps{};
     HDC dc = BeginPaint(hwnd_, &ps);
@@ -28,14 +28,15 @@ void MainWindow::paint() {
     GetClientRect(hwnd_, &rect);
     const int width = std::max(1L, rect.right - rect.left);
     const int height = std::max(1L, rect.bottom - rect.top);
-    HDC buffer_dc = CreateCompatibleDC(dc);
-    HBITMAP bitmap = CreateCompatibleBitmap(dc, width, height);
-    HGDIOBJ previous_bitmap = SelectObject(buffer_dc, bitmap);
-    layout_and_draw(buffer_dc, rect);
-    BitBlt(dc, 0, 0, width, height, buffer_dc, 0, 0, SRCCOPY);
-    SelectObject(buffer_dc, previous_bitmap);
-    DeleteObject(bitmap);
-    DeleteDC(buffer_dc);
+    try {
+        if (dc && !back_buffer_.render(dc, width, height, MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST),
+                                       [this, &rect](HDC buffer) { layout_and_draw(buffer, rect); })) {
+            layout_and_draw(dc, rect);
+        }
+    } catch (...) {
+        EndPaint(hwnd_, &ps);
+        throw;
+    }
     EndPaint(hwnd_, &ps);
 }
 

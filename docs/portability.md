@@ -89,6 +89,14 @@ coordinates use integer scaling, and painting is double-buffered. Progress
 repaint requests are coalesced so fast jobs or high-refresh displays do not
 accumulate redundant paint work.
 
+The current client area remains fixed at 1200 by 760 DIPs, plus the native window
+frame. At 150% scaling that is 1800 by 1140 physical client pixels, so the full
+window does not fit a 1080p work area. DPI awareness alone does not establish
+small-screen compatibility. A responsive all-page layout and corresponding
+mouse/keyboard tests are still required before removing this limitation; the
+application must not claim arbitrary display-size support based on the existing
+single-size GUI smoke.
+
 ## User Data
 
 Future persistence should store preferences and history under the user's Windows

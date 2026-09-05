@@ -143,9 +143,14 @@ LRESULT CALLBACK MainWindow::window_proc(HWND hwnd, UINT message, WPARAM wparam,
 // Outputs: Returns the Win32 message result for handled or defaulted messages.
 LRESULT MainWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
+    case WM_DISPLAYCHANGE:
+        back_buffer_.reset();
+        request_repaint();
+        return 0;
     case WM_DPICHANGED: {
         // Keep the fixed design client area while honoring Windows' suggested
         // monitor position for the new DPI.
+        back_buffer_.reset();
         dpi_ = HIWORD(wparam);
         rebuild_fonts();
         const auto* suggested = reinterpret_cast<RECT*>(lparam);

@@ -69,6 +69,24 @@ rendering, but it is not the main path to archive throughput. It must be treated
 as a separate UI-rendering increment, not as evidence that compression is GPU
 accelerated.
 
+The GDI renderer now retains one off-screen bitmap and memory DC across paints.
+The surface is recreated when client dimensions or monitor identity change and
+invalidated on DPI/display changes. Per-frame SaveDC/RestoreDC keeps fonts,
+clipping, and coordinate transforms from leaking into later frames. Allocation
+or presentation failure falls back to direct painting; it must not leave a
+blank window. The cache holds at most one surface, bounded to 67,108,864 pixels,
+and releases the old surface before allocating a replacement.
+
+The memory-only `gdi_back_buffer` tests verify 200 same-size frames with one
+surface allocation, changed destination pixels, resize and monitor invalidation,
+destination clipping, font release, callback-exception recovery, invalid-size
+rejection, and unchanged process GDI-handle counts after repeated destruction.
+This proves avoided allocation work, not measured FPS or GPU codec acceleration.
+The resource ownership and state-reset rules follow Microsoft's
+[memory DC](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createcompatibledc)
+and [SaveDC](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-savedc)
+contracts.
+
 ### GPU compression and decompression systems
 
 High-throughput GPU decompression systems do not send one large serial stream to
