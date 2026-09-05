@@ -22,13 +22,26 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $testRunner = Join-Path $build "$Configuration/superzip_tests.exe"
-$previousErrorPreference = $ErrorActionPreference
+$selectionStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+$selectionStartInfo.FileName = $testRunner
+$selectionStartInfo.Arguments = "__superzip_no_test_must_match_this_filter__"
+$selectionStartInfo.UseShellExecute = $false
+$selectionStartInfo.RedirectStandardOutput = $true
+$selectionStartInfo.RedirectStandardError = $true
+# Keep the expected failure isolated from the calling shell's native exit status.
+$selectionProcess = [System.Diagnostics.Process]::Start($selectionStartInfo)
 try {
-    $ErrorActionPreference = "Continue"
-    & $testRunner "__superzip_no_test_must_match_this_filter__" 2>&1 | Out-Null
-    $emptySelectionExitCode = $LASTEXITCODE
+    $selectionOutput = $selectionProcess.StandardOutput.ReadToEndAsync()
+    $selectionError = $selectionProcess.StandardError.ReadToEndAsync()
+    if (-not $selectionProcess.WaitForExit(30000)) {
+        $selectionProcess.Kill()
+        throw "The C++ test runner timed out while checking empty filter selection."
+    }
+    $emptySelectionExitCode = $selectionProcess.ExitCode
+    $selectionOutput.GetAwaiter().GetResult() | Out-Null
+    $selectionError.GetAwaiter().GetResult() | Out-Null
 } finally {
-    $ErrorActionPreference = $previousErrorPreference
+    $selectionProcess.Dispose()
 }
 if ($emptySelectionExitCode -ne 2) {
     throw "The C++ test runner must reject filters that select no tests."

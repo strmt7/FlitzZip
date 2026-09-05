@@ -8,6 +8,41 @@
 #include <string>
 #include <vector>
 #include <windows.h>
+#include <algorithm>
+#include <array>
+
+// Purpose: Reject file/descendant conflicts even when punctuation siblings separate their sorted keys.
+// Inputs: All permutations of a file parent, a valid sibling, and a nested child, plus a directory-parent control.
+// Outputs: Requires rejection of every file-parent set and acceptance of the corresponding directory-parent set.
+TEST_CASE(path_set_rejects_nonadjacent_file_descendants) {
+    for (const auto* sibling : {"root/a-sibling", "root/a.sibling", "root/a sibling", "root/a!sibling"}) {
+        const std::array<superzip::ArchivePathValidationEntry, 3> entries{{
+            {.path = "root/a", .directory = false},
+            {.path = sibling, .directory = false},
+            {.path = "root/a/b.txt", .directory = false},
+        }};
+        std::array<std::size_t, 3> order{0U, 1U, 2U};
+        do {
+            std::vector<superzip::ArchivePathValidationEntry> permuted;
+            for (const auto index : order) {
+                permuted.push_back(entries[index]);
+            }
+            bool rejected = false;
+            try {
+                superzip::validate_archive_path_set(permuted);
+            } catch (const superzip::SecurityError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            for (auto& entry : permuted) {
+                if (entry.path == "root/a") {
+                    entry.directory = true;
+                }
+            }
+            superzip::validate_archive_path_set(permuted);
+        } while (std::next_permutation(order.begin(), order.end()));
+    }
+}
 
 // Purpose: Verify archive path traversal is rejected before extraction.
 // Inputs: A relative path containing a `..` segment.

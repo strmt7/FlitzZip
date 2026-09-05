@@ -7,6 +7,10 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Expected-failure native tests run in an isolated process so their checked
+  exit status cannot leak into GitHub Actions' PowerShell wrapper. The local
+  unit-test command propagates native exit codes like CI instead of relying on
+  PowerShell's different `-File` success behavior.
 - Every third-party GitHub Action and reusable workflow is pinned to a full
   40-character commit SHA. `tools\verify_change_hygiene.ps1` checks changed
   workflow files and `tools\security_scan.ps1` checks the complete workflow

@@ -214,9 +214,15 @@ void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entri
         if (i > 0 && paths[i - 1].key == paths[i].key) {
             throw SecurityError("archive contains duplicate entry path: " + paths[i].original_path);
         }
-        if (!paths[i].directory && (i + 1U) < paths.size() &&
-            is_archive_path_descendant(paths[i + 1U].key, paths[i].key)) {
-            throw SecurityError("archive file entry conflicts with child entry: " + paths[i].original_path);
+        if (!paths[i].directory) {
+            // Punctuation siblings can sort between a file and its first descendant.
+            const auto prefix = paths[i].key + '/';
+            const auto child = std::lower_bound(
+                paths.begin(), paths.end(), prefix,
+                [](const NormalizedArchivePath& candidate, const std::string& key) { return candidate.key < key; });
+            if (child != paths.end() && is_archive_path_descendant(child->key, paths[i].key)) {
+                throw SecurityError("archive file entry conflicts with child entry: " + paths[i].original_path);
+            }
         }
     }
 }
