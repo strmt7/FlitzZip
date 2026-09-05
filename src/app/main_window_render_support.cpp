@@ -240,39 +240,6 @@ std::wstring current_user_time_text() {
     return local_time_text(std::chrono::system_clock::now());
 }
 
-// Purpose: Safely format a filesystem entry size for the queue table.
-// Inputs: `path` is a file or folder path that may no longer exist.
-// Outputs: Returns display text; folders and inaccessible paths are shown without throwing.
-std::wstring entry_size_text(const std::filesystem::path& path) {
-    std::error_code ec;
-    if (std::filesystem::is_directory(path, ec)) {
-        return L"Folder";
-    }
-    const auto size = std::filesystem::file_size(path, ec);
-    if (ec) {
-        return L"--";
-    }
-    return widen(human_bytes(static_cast<double>(size)));
-}
-
-// Purpose: Return a user-facing entry type for a queued path.
-// Inputs: `path` is a file or folder path that may no longer exist.
-// Outputs: Returns `Folder`, `Archive`, `File`, or `Missing`; archive detection is extension-only and non-blocking.
-std::wstring entry_type_text(const std::filesystem::path& path) {
-    std::error_code ec;
-    if (std::filesystem::is_directory(path, ec)) {
-        return L"Folder";
-    }
-    if (std::filesystem::is_regular_file(path, ec)) {
-        const auto extension_format = detect_archive_format_by_extension(path);
-        if (archive_format_info(extension_format).can_extract) {
-            return L"Archive";
-        }
-        return L"File";
-    }
-    return L"Missing";
-}
-
 // Purpose: Return the detected archive format label for the extraction page.
 // Inputs: `paths` is the current queue; only the first path is the extraction archive.
 // Outputs: Returns a display label without throwing for empty queues or unreadable probes.
@@ -285,30 +252,6 @@ std::wstring detected_archive_format_text(const std::vector<std::filesystem::pat
         return L"-";
     }
     return widen(archive_format_extension_info_for_path(format, paths.front()).display_name);
-}
-
-// Purpose: Collect selected queue entries that can be extracted as archives by extension.
-// Inputs: `state` is a stable UI snapshot; only regular-file queue rows with selected ticks are considered.
-// Outputs: Returns selected archive paths in queue order without reading file content.
-std::vector<std::filesystem::path> selected_extract_archive_paths(const UiState& state) {
-    std::vector<std::filesystem::path> archives;
-    archives.reserve(state.queued_paths.size());
-    for (std::size_t index = 0; index < state.queued_paths.size(); ++index) {
-        const bool selected = index >= state.queued_enabled.size() || state.queued_enabled[index];
-        if (!selected) {
-            continue;
-        }
-        std::error_code ec;
-        const auto& path = state.queued_paths[index];
-        if (!std::filesystem::is_regular_file(path, ec)) {
-            continue;
-        }
-        const auto extension_format = detect_archive_format_by_extension(path);
-        if (archive_format_info(extension_format).can_extract) {
-            archives.push_back(path);
-        }
-    }
-    return archives;
 }
 
 // Purpose: Format the Extract page archive-path field for zero, one, or multiple selected archives.

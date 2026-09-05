@@ -359,6 +359,7 @@ void MainWindow::clear_queue() {
         state_.selected_queue_index = -1;
         queue_scroll_first_row_ = 0;
         queue_wheel_delta_remainder_ = 0;
+        queue_metadata_.synchronize({});
         std::lock_guard folder_lock(folder_size_mutex_);
         folder_size_cache_.retain({});
     }

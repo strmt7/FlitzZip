@@ -78,6 +78,15 @@ class FolderSizeCache {
         return true;
     }
 
+    // Purpose: Invalidate a changed path; inputs: former folder key; outputs: cancels pending/in-flight stale sizes.
+    void invalidate(const std::filesystem::path& path) {
+        if (const auto task = find(path)) {
+            task->cancelled.store(true);
+            entries_.erase(path.wstring());
+            std::erase_if(pending_, [](const auto& pending) { return pending->cancelled.load(); });
+        }
+    }
+
     // Purpose: Drop removed rows and their pending scans; inputs: current queue paths; outputs: cancels stale tasks.
     void retain(std::span<const std::filesystem::path> paths) {
         std::unordered_set<std::wstring> retained;

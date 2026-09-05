@@ -54,6 +54,30 @@ against the reference direction.
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
 
+## Queue Metadata
+
+Queue size/type cells and Extract/Verify candidate selection use display-only
+metadata snapshots. `QueueMetadataCache` performs filesystem status and size
+queries on one lazy background-priority thread, never during painting or
+button eligibility checks. Archive jobs still open and validate their sources
+independently; a cached file classification is not authority to extract it.
+
+Membership is bounded by the 4,096-row Queue limit. Repeated requests for the
+same path share one pending read. Removed rows lose pending work, and an
+in-flight result cannot populate a later row with the same path. Existing
+snapshots remain visible during refresh; pending rows show `...`, and missing
+or inaccessible metadata is explicit. A requested snapshot becomes eligible
+for refresh two seconds after completion. This is not a promise of two-second
+filesystem latency: a refresh requires another display request, and shutdown
+joins any current OS metadata query.
+
+File type changes invalidate the separate bounded folder-size task. Recursive
+folder totals retain their existing queue-lifetime caching behavior; changes
+deep inside a folder are not a live filesystem-watch feature. Tests cover
+blocked reads, deduplication, removal/re-addition, failures and retry, real
+file resize/delete/recreation, and candidate ordering/ticks/type filtering.
+These are responsiveness and lifecycle checks, not codec speed benchmarks.
+
 ## Performance Monitor Contract
 
 References checked on 2026-06-18:

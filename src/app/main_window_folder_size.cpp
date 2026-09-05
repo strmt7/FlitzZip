@@ -6,11 +6,14 @@ namespace superzip::app {
 
 // Purpose: Return a resource-bounded display size for one Queue entry.
 // Inputs: `path` is a queued file or folder path that may be inaccessible.
-// Outputs: Returns file size immediately, `...` for pending folder size, or the cached folder size.
+// Outputs: Returns cached bytes, `...` while pending, or `--` when unavailable; performs no filesystem query.
 std::wstring MainWindow::queue_entry_size_text(const std::filesystem::path& path) {
-    std::error_code ec;
-    if (!std::filesystem::is_directory(path, ec)) {
-        return entry_size_text(path);
+    const auto metadata = queue_metadata_.get(path);
+    if (metadata.kind == QueueFileKind::Pending) {
+        return L"...";
+    }
+    if (metadata.kind != QueueFileKind::Directory) {
+        return metadata.bytes ? widen(human_bytes(static_cast<double>(*metadata.bytes))) : L"--";
     }
 
     {

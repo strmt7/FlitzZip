@@ -162,7 +162,7 @@ void MainWindow::draw_queue_table_rows(HDC dc, const RECT& table, const RECT& co
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         draw_text(dc, inset_rect(columns.size, scale(8), 0), queue_entry_size_text(path), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, inset_rect(columns.type, scale(8), 0), entry_type_text(path), kMuted,
+        draw_text(dc, inset_rect(columns.type, scale(8), 0), queue_entry_type_text(path), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, inset_rect(columns.path, scale(8), 0), path.wstring(), kMuted,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);

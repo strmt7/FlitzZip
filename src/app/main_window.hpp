@@ -2,6 +2,7 @@
 
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
+#include "app/queue_metadata.hpp"
 #include "app/system_layout.hpp"
 #include "app/main_window_layout.hpp"
 #include "app/main_window_state.hpp"
@@ -821,8 +822,15 @@ class MainWindow {
 
     // Purpose: Return a resource-bounded display size for one Queue entry.
     // Inputs: `path` is a queued file or folder path that may be inaccessible.
-    // Outputs: Returns file size immediately, `...` for pending folder size, or the cached folder size.
+    // Outputs: Returns cached bytes, `...` while pending, or `--` when unavailable; performs no filesystem query.
     [[nodiscard]] std::wstring queue_entry_size_text(const std::filesystem::path& path);
+
+    // Purpose: Classify a displayed row; inputs: queued path; outputs: cached type text without filesystem I/O.
+    [[nodiscard]] std::wstring queue_entry_type_text(const std::filesystem::path& path) const;
+
+    // Purpose: Collect selectable archives; inputs: UI snapshot; outputs: cached regular-file candidates, not open
+    // authority.
+    [[nodiscard]] std::vector<std::filesystem::path> selected_extract_archive_paths(const UiState& state) const;
 
     // Purpose: Enqueue one folder-size scan when the Queue first renders a folder.
     // Inputs: `path` is a queued directory path.
@@ -1391,6 +1399,7 @@ class MainWindow {
     int queue_scroll_drag_start_offset_ = 0;
     int queue_wheel_delta_remainder_ = 0;
     bool queue_scroll_dragging_ = false;
+    mutable QueueMetadataCache queue_metadata_;
     std::mutex folder_size_mutex_;
     std::condition_variable folder_size_cv_;
     FolderSizeCache folder_size_cache_;

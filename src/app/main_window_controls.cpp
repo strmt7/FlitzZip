@@ -91,7 +91,7 @@ bool MainWindow::can_start_extract(const UiState& state) const {
 
 // Purpose: Return whether Security verification can start from a copied UI snapshot.
 // Inputs: `state` is a stable UI snapshot with queue paths and enable flags.
-// Outputs: Returns true when at least one selected extractable archive exists and no operation is running.
+// Outputs: Returns true for a cached selected archive candidate when idle; the job must still open and validate it.
 bool MainWindow::can_start_security_verify(const UiState& state) const {
     return !operation_running(state) && !selected_extract_archive_paths(state).empty();
 }

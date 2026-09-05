@@ -4,6 +4,21 @@
 using superzip::app::FolderSizeCache;
 using superzip::app::FolderSizeTask;
 
+TEST_CASE(folder_size_cache_invalidates_changed_kind_without_publishing_its_old_scan) {
+    FolderSizeCache cache;
+    REQUIRE_TRUE(cache.enqueue("changed"));
+    const auto old = cache.take_next();
+    REQUIRE_TRUE(cache.enqueue("unchanged"));
+    cache.invalidate("changed");
+    REQUIRE_TRUE(old->cancelled.load());
+    REQUIRE_TRUE(!cache.complete(old, 99));
+    REQUIRE_TRUE(cache.enqueue("changed"));
+    REQUIRE_EQ(cache.take_next()->path, std::filesystem::path("unchanged"));
+    REQUIRE_TRUE(cache.complete(cache.take_next(), 20));
+    REQUIRE_EQ(cache.find("changed")->bytes, 20U);
+    cache.invalidate("absent");
+}
+
 TEST_CASE(folder_size_cache_requeues_changed_folder_after_clear) {
     FolderSizeCache cache;
     REQUIRE_TRUE(cache.enqueue("folder"));

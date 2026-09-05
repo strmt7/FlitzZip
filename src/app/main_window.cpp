@@ -20,13 +20,21 @@ namespace superzip::app {
 
 // Purpose: Construct a main window controller with default UI state.
 // Inputs: None.
-// Outputs: Initializes fields only; the native HWND is created by `run`.
-MainWindow::MainWindow() = default;
+// Outputs: Initializes lazy metadata callbacks only; the native HWND is created by `run`.
+MainWindow::MainWindow()
+    : queue_metadata_(read_queue_file_metadata, [this](const std::filesystem::path& path, bool kind_changed) {
+          if (kind_changed) {
+              std::lock_guard lock(folder_size_mutex_);
+              folder_size_cache_.invalidate(path);
+          }
+          request_repaint();
+      }) {}
 
 // Purpose: Join worker threads and release GDI/GDI+ handles.
 // Inputs: None.
 // Outputs: Blocks until active work finishes, then frees owned native resources.
 MainWindow::~MainWindow() {
+    queue_metadata_.stop();
     stop_folder_size_worker();
     if (worker_.joinable()) {
         worker_.join();

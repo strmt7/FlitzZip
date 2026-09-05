@@ -607,6 +607,8 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       src/app/main_window_extract_jobs.cpp
       src/app/main_window_focus.cpp
       src/app/main_window_folder_size.cpp
+      src/app/main_window_queue_metadata.cpp
+      src/app/queue_metadata.cpp
       src/app/main_window_input.cpp
       src/app/main_window_layout.cpp
       src/app/main_window_license_dialog.cpp
@@ -678,6 +680,8 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_macbinary_compat.cpp
     tests/cpp/test_log_retention.cpp
     tests/cpp/test_folder_size_cache.cpp
+    tests/cpp/test_queue_metadata.cpp
+    src/app/queue_metadata.cpp
     tests/cpp/test_gdi_back_buffer.cpp
     tests/cpp/test_system_layout.cpp
     tests/cpp/test_path_safety.cpp

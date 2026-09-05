@@ -183,6 +183,7 @@ std::size_t MainWindow::append_queued_paths(std::vector<std::filesystem::path> p
                 ++added;
             }
             if (added > 0U) {
+                queue_metadata_.synchronize(state_.queued_paths);
                 reset_security_review_locked();
                 normalize_queue_selection_locked();
                 if (was_empty) {
@@ -280,6 +281,7 @@ bool MainWindow::remove_selected_queue_items() {
         }
         state_.queued_paths = std::move(remaining_paths);
         state_.queued_enabled = std::move(remaining_enabled);
+        queue_metadata_.synchronize(state_.queued_paths);
         {
             std::lock_guard folder_lock(folder_size_mutex_);
             folder_size_cache_.retain(state_.queued_paths);
