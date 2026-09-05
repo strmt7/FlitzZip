@@ -218,7 +218,7 @@ class MainWindow {
 
     // Purpose: Reset Settings draft and applied snapshot to safe defaults.
     // Inputs: None.
-    // Outputs: Updates UI, applied snapshot, and the persisted config file.
+    // Outputs: Saves defaults before changing UI or applied state; a save failure leaves both unchanged.
     void reset_settings_to_defaults();
 
     // Purpose: Dispatch timers owned by the main window.

@@ -59,8 +59,8 @@ void MainWindow::apply_settings() {
         state_.status = "Settings applied";
     }
     reset_performance_timer(applied_settings_.performance_update_seconds);
-    append_history_entry("Settings", "Settings", settings_file_path().string(), "Applied for current session", true);
-    append_log_entry(LogSeverity::Information, "Settings applied for current session");
+    append_history_entry("Settings", "Settings", settings_file_path().string(), "Saved and applied", true);
+    append_log_entry(LogSeverity::Information, "Settings applied and saved");
 }
 
 // Purpose: Revert Settings page controls to the last applied snapshot.
@@ -86,10 +86,11 @@ void MainWindow::revert_settings_draft() {
 
 // Purpose: Reset Settings draft and applied snapshot to safe defaults.
 // Inputs: None.
-// Outputs: Updates UI, applied snapshot, and the persisted config file.
+// Outputs: Saves defaults before changing UI or applied state; a save failure leaves both unchanged.
 void MainWindow::reset_settings_to_defaults() {
-    applied_settings_ = {};
-    write_settings_file(settings_file_path(), applied_settings_);
+    const AppSettings defaults;
+    write_settings_file(settings_file_path(), defaults);
+    applied_settings_ = defaults;
     {
         std::lock_guard lock(mutex_);
         apply_settings_to_state(applied_settings_, state_);

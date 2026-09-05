@@ -338,6 +338,70 @@ function Assert-SettingsValue {
     }
 }
 
+# Purpose: Wait for a newly appended Settings command result rather than assuming input was processed.
+# Inputs: Path is the smoke log, PreviousLength is its prior byte length, and Message is expected row text.
+# Outputs: Returns after the expected new row, or throws after five seconds without it.
+function Wait-SettingsLogEvent {
+    param([string]$Path, [long]$PreviousLength, [string]$Message)
+
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($timer.Elapsed.TotalSeconds -lt 5) {
+        if ((Get-Item -LiteralPath $Path).Length -gt $PreviousLength) {
+            $lastLine = Get-Content -LiteralPath $Path -Tail 1
+            if ($lastLine -like "*$Message*") { return }
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    throw "Settings command did not report '$Message' within five seconds."
+}
+
+# Purpose: Verify failed Apply and Restore Defaults keep the last successfully saved settings active.
+# Inputs: Handle/Dpi identify the smoke window; Path is its redirected temporary settings file.
+# Outputs: Exercises both save failures and throws if navigation promotes unsaved settings.
+function Assert-SettingsSaveFailureRollback {
+    param(
+        [IntPtr]$Handle,
+        [int]$Dpi,
+        [string]$Path
+    )
+
+    $original = Get-Content -Raw -LiteralPath $Path
+    $logPath = Join-Path (Split-Path -Parent $Path) "superzip.log"
+    foreach ($command in @(
+        @{ Name = "Apply"; X = 1110; Failure = "Settings apply failed" },
+        @{ Name = "Restore Defaults"; X = 985; Failure = "Settings reset failed" }
+    )) {
+        # Select a different draft value before trying to save or reset it.
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 700 -DesignY 384
+        Start-Sleep -Milliseconds 150
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 700 -DesignY 456
+        Start-Sleep -Milliseconds 150
+        $lockedFile = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        try {
+            $logLength = (Get-Item -LiteralPath $logPath).Length
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $command.X -DesignY 666
+            Wait-SettingsLogEvent -Path $logPath -PreviousLength $logLength -Message $command.Failure
+            if ((Get-Content -Raw -LiteralPath $Path) -cne $original) {
+                throw "Failed $($command.Name) changed the persisted settings."
+            }
+        } finally {
+            $lockedFile.Dispose()
+        }
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0
+        Start-Sleep -Milliseconds 250
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6
+        Start-Sleep -Milliseconds 250
+        $logLength = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666
+        Wait-SettingsLogEvent -Path $logPath -PreviousLength $logLength -Message "Settings applied"
+        if ((Get-Content -Raw -LiteralPath $Path) -cne $original) {
+            throw "Failed $($command.Name) replaced the applied snapshot with unsaved settings."
+        }
+        Write-Output "Settings save-failure rollback passed: $($command.Name)."
+    }
+}
+
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
 $smokeDestination = Join-Path $smokeRoot "SuperZip-destination"
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
@@ -787,6 +851,8 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
     Start-Sleep -Milliseconds 250
     Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
+
+    Assert-SettingsSaveFailureRollback -Handle $windowHandle -Dpi $windowDpi -Path $smokeSettingsFile
 
     for ($index = 0; $index -lt $pageNames.Count; ++$index) {
         Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex $index
