@@ -26,6 +26,11 @@ Security tab or a published release.
    [Common stream contracts](docs/compatibility-stream-contracts.md) cover all
    levels, caller-buffer reuse, close behavior, and byte identity; timing and
    the rest of the all-format efficiency review remain open.
+   Bzip2 also consumes caller input without a staging copy. Standalone
+   Zstandard now supplies exact source size to bound codec workspace, with
+   regression-tested size admission and unknown-size container behavior.
+   Measured small-file allocations fall substantially, but a held-out fixture
+   exposed a ten-byte size increase; this is not a universal ratio/speed gain.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

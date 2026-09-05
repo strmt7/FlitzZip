@@ -98,7 +98,7 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
     try {
-        ZstdOutputStream output(temporary.file, compression_level);
+        ZstdOutputStream output(temporary.file, compression_level, input_size);
         std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));

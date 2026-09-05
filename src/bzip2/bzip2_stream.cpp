@@ -202,20 +202,30 @@ class Bzip2OutputStream::Buffer final : public std::streambuf {
     }
 
   private:
-    // Purpose: Compress one caller-provided uncompressed byte range.
-    // Inputs: `data` points to bytes and `size` is the byte count.
-    // Outputs: Writes compressed bytes to `output_` and updates byte counters.
+    // Purpose: Compress borrowed immutable caller bytes synchronously without an input staging copy.
+    // Inputs: `data` stays readable until this call returns and `size` is its byte count.
+    // Outputs: Writes compressed bytes and updates counters; clears borrowed pointers on every exit.
     void compress_bytes(const unsigned char* data, std::size_t size) {
         if (closed_) {
             throw ArchiveError("cannot write to a closed Bzip2 stream");
         }
         checked_add_stream_bytes(input_bytes_, size, "Bzip2 input");
+        struct InputBorrow {
+            bz_stream& stream;
+            // Purpose: End the input borrow before caller storage can disappear.
+            // Inputs: The still-live compressor stream.
+            // Outputs: Clears input pointer/count on return or exception unwinding.
+            ~InputBorrow() {
+                stream.next_in = nullptr;
+                stream.avail_in = 0;
+            }
+        } input_borrow{stream_};
         std::size_t offset = 0;
         while (offset < size) {
             const auto chunk =
-                std::min<std::size_t>({size - offset, input_buffer_.size(), static_cast<std::size_t>(UINT_MAX)});
-            std::copy_n(data + offset, chunk, input_buffer_.data());
-            stream_.next_in = reinterpret_cast<char*>(input_buffer_.data());
+                std::min<std::size_t>({size - offset, kBzip2StreamBufferBytes, static_cast<std::size_t>(UINT_MAX)});
+            // Libbzip2's legacy non-const ABI only reads next_in and advances the pointer.
+            stream_.next_in = const_cast<char*>(reinterpret_cast<const char*>(data + offset));
             stream_.avail_in = static_cast<unsigned int>(chunk);
             while (stream_.avail_in > 0U) {
                 stream_.next_out = output_buffer_.data();
@@ -235,7 +245,6 @@ class Bzip2OutputStream::Buffer final : public std::streambuf {
     bz_stream stream_{};
     bool stream_active_ = false;
     bool closed_ = false;
-    std::array<unsigned char, kBzip2StreamBufferBytes> input_buffer_{};
     std::array<char, kBzip2StreamBufferBytes> output_buffer_{};
     std::uint64_t input_bytes_ = 0;
     std::uint64_t output_bytes_ = 0;

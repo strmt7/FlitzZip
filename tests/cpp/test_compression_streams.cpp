@@ -5,6 +5,7 @@
 #include "gzip/gzip_stream.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "zstd/zstd_stream.hpp"
+#include "zstd/zstd_adapter.hpp"
 
 #include <array>
 #include <fstream>
@@ -236,5 +237,126 @@ TEST_CASE(compression_stream_gzip_callback_failure_preserves_output) {
     REQUIRE_EQ(read_stream_fixture(archive), sentinel);
     REQUIRE_EQ(read_stream_fixture(source), input);
     REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(root), std::filesystem::directory_iterator()), 2);
+    std::filesystem::remove_all(root);
+}
+
+namespace {
+
+// Purpose: Exercise exact-size streaming with immediate caller-buffer reuse and explicit workspace accounting.
+// Inputs: A disposable path, immutable bounded fixture, effort 1-9, and whole/fragmented write selection.
+// Outputs: Returns complete encoded bytes and observed codec workspace; requires exact counters and released state.
+std::pair<std::string, std::size_t> write_sized_zstd_stream(const std::filesystem::path& path, const std::string& input,
+                                                            int level, bool fragmented) {
+    superzip::ZstdOutputStream output(path, level, input.size());
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    std::size_t peak = output.workspace_bytes();
+    for (std::size_t offset = 0; offset < input.size();) {
+        const auto count = std::min(input.size() - offset, fragmented ? 8191U : input.size());
+        auto scratch = input.substr(offset, count);
+        output.write(scratch.data(), static_cast<std::streamsize>(count));
+        std::fill(scratch.begin(), scratch.end(), static_cast<char>(0xA5));
+        peak = std::max(peak, output.workspace_bytes());
+        offset += count;
+    }
+    output.close();
+    output.close();
+    REQUIRE_EQ(output.input_bytes(), input.size());
+    REQUIRE_EQ(output.output_bytes(), std::filesystem::file_size(path));
+    REQUIRE_EQ(output.workspace_bytes(), 0U);
+    return {read_stream_fixture(path), peak};
+}
+
+}  // namespace
+
+// Purpose: Keep exact-size admission compatible with every product effort and caller write partition.
+// Inputs: Empty/tiny/boundary fixtures, levels 1-9, and matching standalone/shared writers.
+// Outputs: Requires exact decoding, matching wire bytes, bounded small-file workspace, and accurate adapter telemetry.
+TEST_CASE(compression_stream_zstd_declared_size_contract) {
+    const auto root = test_temp_dir("zstd-declared-size");
+    const auto fixture = make_stream_partition_fixture();
+    for (const auto length : {0U, 1U, 257U, 65536U, 262161U}) {
+        const auto input = fixture.substr(0, length);
+        const auto source = root / "source.bin";
+        {
+            std::ofstream file(source, std::ios::binary);
+            file.exceptions(std::ios::badbit | std::ios::failbit);
+            file.write(input.data(), static_cast<std::streamsize>(input.size()));
+        }
+        for (int level = 1; level <= 9; ++level) {
+            const auto whole = root / "whole.zst";
+            const auto fragmented = root / "fragmented.zst";
+            const auto archive = root / "standalone.zst";
+            const auto [encoded, workspace] = write_sized_zstd_stream(whole, input, level, false);
+            const auto [partitioned, partition_workspace] = write_sized_zstd_stream(fragmented, input, level, true);
+            REQUIRE_EQ(encoded, partitioned);
+            REQUIRE_TRUE(workspace < 16U * 1024U * 1024U);
+            REQUIRE_TRUE(partition_workspace < 16U * 1024U * 1024U);
+            const auto stats = superzip::compress_zstd({source}, archive, level);
+            REQUIRE_EQ(read_stream_fixture(archive), encoded);
+            REQUIRE_EQ(stats.input_bytes, input.size());
+            REQUIRE_EQ(stats.output_bytes, encoded.size());
+            superzip::ZstdInputStream decoded(archive);
+            const std::string restored{std::istreambuf_iterator<char>(decoded), std::istreambuf_iterator<char>()};
+            decoded.finish();
+            REQUIRE_EQ(restored, input);
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject exact-size overruns and underruns instead of completing a frame with an incorrect promise.
+// Inputs: Zero/nonzero pledges, split oversized writes, short finalization, and the reserved unknown sentinel.
+// Outputs: Requires errors before excess bytes are counted and requires overrun state to prevent close success.
+TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
+    const auto root = test_temp_dir("zstd-size-mismatch");
+    for (const std::uint64_t promised : {0U, 1U, 4U}) {
+        superzip::ZstdOutputStream output(root / "overrun.zst", 5, promised);
+        output.exceptions(std::ios::badbit | std::ios::failbit);
+        const std::string valid(static_cast<std::size_t>(promised), 'A');
+        output.write(valid.data(), static_cast<std::streamsize>(valid.size()));
+        bool rejected = false;
+        try {
+            output.put('x');
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(output.input_bytes(), promised);
+        rejected = false;
+        try {
+            output.close();
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(output.workspace_bytes(), 0U);
+    }
+    for (const bool write_prefix : {false, true}) {
+        superzip::ZstdOutputStream output(root / "underrun.zst", 5, 4U);
+        if (write_prefix) {
+            output.write("abc", 3);
+        }
+        bool rejected = false;
+        try {
+            output.close();
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(output.workspace_bytes(), 0U);
+    }
+    const auto sentinel = root / "sentinel.zst";
+    {
+        std::ofstream file(sentinel, std::ios::binary);
+        file << "unchanged";
+    }
+    bool rejected = false;
+    try {
+        superzip::ZstdOutputStream output(sentinel, 5, std::numeric_limits<std::uint64_t>::max());
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(read_stream_fixture(sentinel), "unchanged");
     std::filesystem::remove_all(root);
 }

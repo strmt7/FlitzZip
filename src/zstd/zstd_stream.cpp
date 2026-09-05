@@ -106,10 +106,11 @@ void write_counted(std::ofstream& output, const char* bytes, std::size_t size, s
 class ZstdOutputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open a Zstandard output file and initialize the compression context.
-    // Inputs: `output_path` is the destination and `compression_level` is validated as 1-9.
+    // Inputs: Destination, validated effort 1-9, and an optional exact input size from the caller.
     // Outputs: Creates an active libzstd stream or throws on I/O/runtime failure.
-    explicit Buffer(const std::filesystem::path& output_path, int compression_level)
-        : output_(output_path, std::ios::binary | std::ios::trunc) {
+    explicit Buffer(const std::filesystem::path& output_path, int compression_level,
+                    std::optional<std::uint64_t> expected_input_bytes)
+        : output_(output_path, std::ios::binary | std::ios::trunc), expected_input_bytes_(expected_input_bytes) {
         if (!output_) {
             throw ArchiveError("cannot create Zstandard stream: " + output_path.string());
         }
@@ -134,6 +135,13 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
         }
         require_zstd_ok(zstd_, zstd_.set_compression_parameter(context_.get(), kZstdContentChecksumParameter, 1),
                         "failed to enable Zstandard content checksum");
+        if (expected_input_bytes_) {
+            require_zstd_ok(zstd_, zstd_.set_compression_source_size(context_.get(), *expected_input_bytes_),
+                            "failed to declare Zstandard input size");
+            // Preserve size-omitted streaming framing while letting the codec bound its workspace.
+            require_zstd_ok(zstd_, zstd_.set_compression_parameter(context_.get(), kZstdContentSizeParameter, 0),
+                            "failed to preserve Zstandard stream framing");
+        }
     }
 
     ~Buffer() override {
@@ -152,6 +160,10 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
             return;
         }
         closed_ = true;
+        if (size_mismatch_ || (expected_input_bytes_ && input_bytes_ != *expected_input_bytes_)) {
+            context_.reset();
+            throw ArchiveError("Zstandard input size differs from the declared size");
+        }
         ZstdInputBuffer input{nullptr, 0U, 0U};
         std::size_t remaining = 0;
         do {
@@ -181,6 +193,13 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
         return output_bytes_;
     }
 
+    // Purpose: Expose the compressor's actual bounded allocation for diagnostics and resource regression checks.
+    // Inputs: No concurrent compressor operation.
+    // Outputs: Returns codec-owned memory, or zero after the context has been released.
+    [[nodiscard]] std::size_t workspace_bytes() const {
+        return context_ ? zstd_.compression_workspace_bytes(context_.get()) : 0U;
+    }
+
   protected:
     int_type overflow(int_type ch) override {
         if (traits_type::eq_int_type(ch, traits_type::eof())) {
@@ -205,11 +224,15 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
 
   private:
     // Purpose: Compress one caller-provided uncompressed byte range.
-    // Inputs: `data` points to bytes and `size` is the byte count.
-    // Outputs: Writes compressed bytes to `output_` and updates byte counters.
+    // Inputs: Borrowed immutable bytes consumed synchronously; size must fit any declared total.
+    // Outputs: Writes compressed bytes and updates counters; a size overrun permanently prevents finalization.
     void compress_bytes(const unsigned char* data, std::size_t size) {
         if (closed_) {
             throw ArchiveError("cannot write to a closed Zstandard stream");
+        }
+        if (size_mismatch_ || (expected_input_bytes_ && size > *expected_input_bytes_ - input_bytes_)) {
+            size_mismatch_ = true;
+            throw ArchiveError("Zstandard input exceeds the declared size");
         }
         checked_add_stream_bytes(input_bytes_, size, "Zstandard input");
         ZstdInputBuffer input{data, size, 0U};
@@ -224,6 +247,8 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
     const ZstdRuntime& zstd_ = zstd_runtime();
     std::ofstream output_;
     std::unique_ptr<ZstdCompressionContext, CompressionContextDeleter> context_{nullptr, {&zstd_}};
+    std::optional<std::uint64_t> expected_input_bytes_;
+    bool size_mismatch_ = false;
     bool closed_ = false;
     std::array<char, kZstdStreamBufferBytes> output_buffer_{};
     std::uint64_t input_bytes_ = 0;
@@ -355,12 +380,16 @@ class ZstdInputStream::Buffer final : public std::streambuf {
 };
 
 // Purpose: Construct an output stream that writes a complete checksummed Zstandard frame.
-// Inputs: `output_path` is the target file and `compression_level` is product effort 1-9.
-// Outputs: Rejects invalid effort before opening the destination; otherwise installs an owned buffer or throws.
-ZstdOutputStream::ZstdOutputStream(const std::filesystem::path& output_path, int compression_level)
+// Inputs: Destination, effort 1-9, and optional exact input size; omitted size retains streaming behavior.
+// Outputs: Rejects invalid effort or the reserved unknown-size sentinel before opening the destination.
+ZstdOutputStream::ZstdOutputStream(const std::filesystem::path& output_path, int compression_level,
+                                   std::optional<std::uint64_t> expected_input_bytes)
     : std::ostream(nullptr) {
     (void)zstd_compression_level(compression_level);
-    buffer_ = std::make_unique<Buffer>(output_path, compression_level);
+    if (expected_input_bytes == std::numeric_limits<std::uint64_t>::max()) {
+        throw ArchiveError("Zstandard exact input size cannot use the unknown-size sentinel");
+    }
+    buffer_ = std::make_unique<Buffer>(output_path, compression_level, expected_input_bytes);
     rdbuf(buffer_.get());
 }
 
@@ -381,6 +410,13 @@ std::uint64_t ZstdOutputStream::input_bytes() const {
 
 std::uint64_t ZstdOutputStream::output_bytes() const {
     return buffer_->output_bytes();
+}
+
+// Purpose: Report current codec allocation without including unrelated process memory.
+// Inputs: No concurrent stream operation.
+// Outputs: Returns runtime-owned workspace bytes, or zero after release.
+std::size_t ZstdOutputStream::workspace_bytes() const {
+    return buffer_->workspace_bytes();
 }
 
 ZstdInputStream::ZstdInputStream(const std::filesystem::path& archive_path)

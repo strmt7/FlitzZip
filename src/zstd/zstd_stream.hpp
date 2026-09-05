@@ -7,17 +7,20 @@
 #include <istream>
 #include <memory>
 #include <ostream>
+#include <optional>
 
 namespace superzip {
 
 // Purpose: Stream Zstandard-compressed bytes to a file with libzstd-managed framing.
 // Inputs: Construct with `output_path` and product effort 1-9 (Zstandard 1-22); callers write uncompressed bytes
 // through the `std::ostream` interface. Outputs: Writes a complete `.zst` stream with a content checksum; throws on I/O
-// or compressor failure. Invalid effort is rejected before opening the destination.
+// or compressor failure. Invalid effort is rejected before opening the destination. Optional exact input size
+// bounds codec workspace and is enforced before frame completion; omission retains unknown-size streaming.
 class ZstdOutputStream final : public std::ostream {
   public:
     explicit ZstdOutputStream(const std::filesystem::path& output_path,
-                              int compression_level = kDefaultCompressionLevel);
+                              int compression_level = kDefaultCompressionLevel,
+                              std::optional<std::uint64_t> expected_input_bytes = std::nullopt);
     ~ZstdOutputStream() override;
 
     ZstdOutputStream(const ZstdOutputStream&) = delete;
@@ -37,6 +40,11 @@ class ZstdOutputStream final : public std::ostream {
     // Inputs: None.
     // Outputs: Returns `.zst` bytes written so far.
     [[nodiscard]] std::uint64_t output_bytes() const;
+
+    // Purpose: Report current codec-owned compression memory separately from process or wrapper allocation.
+    // Inputs: No concurrent writes or close calls; query during the synchronous stream's lifetime.
+    // Outputs: Returns libzstd context/workspace bytes, or zero after context release.
+    [[nodiscard]] std::size_t workspace_bytes() const;
 
   private:
     class Buffer;

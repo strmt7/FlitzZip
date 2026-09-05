@@ -42,6 +42,9 @@ ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName
     create_compression_context_ = load_required_symbol<CreateCompressionContextFn>(module, "ZSTD_createCCtx");
     free_compression_context_ = load_required_symbol<FreeCompressionContextFn>(module, "ZSTD_freeCCtx");
     set_compression_parameter_ = load_required_symbol<SetCompressionParameterFn>(module, "ZSTD_CCtx_setParameter");
+    set_compression_source_size_ =
+        load_required_symbol<SetCompressionSourceSizeFn>(module, "ZSTD_CCtx_setPledgedSrcSize");
+    compression_workspace_bytes_ = load_required_symbol<CompressionWorkspaceBytesFn>(module, "ZSTD_sizeof_CCtx");
     compress_stream_ = load_required_symbol<CompressStreamFn>(module, "ZSTD_compressStream2");
     create_decompression_stream_ = load_required_symbol<CreateDecompressionStreamFn>(module, "ZSTD_createDStream");
     free_decompression_stream_ = load_required_symbol<FreeDecompressionStreamFn>(module, "ZSTD_freeDStream");
@@ -72,8 +75,25 @@ void ZstdRuntime::free_compression_context(ZstdCompressionContext* context) cons
     }
 }
 
+// Purpose: Apply one stable compression parameter through the pinned runtime.
+// Inputs: A live context, parameter identifier, and integer value.
+// Outputs: Returns the runtime status for caller validation.
 std::size_t ZstdRuntime::set_compression_parameter(ZstdCompressionContext* context, int parameter, int value) const {
     return set_compression_parameter_(context, parameter, value);
+}
+
+// Purpose: Declare exact frame input size through the pinned runtime's stable API.
+// Inputs: A live context and exact unsigned byte count; zero declares an empty frame.
+// Outputs: Returns a runtime status for caller validation.
+std::size_t ZstdRuntime::set_compression_source_size(ZstdCompressionContext* context, unsigned long long bytes) const {
+    return set_compression_source_size_(context, bytes);
+}
+
+// Purpose: Query actual codec-owned compression workspace without process-wide memory noise.
+// Inputs: A live context with no concurrent operation.
+// Outputs: Returns the runtime's context allocation size, excluding application-owned buffers.
+std::size_t ZstdRuntime::compression_workspace_bytes(const ZstdCompressionContext* context) const {
+    return compression_workspace_bytes_(context);
 }
 
 // Purpose: Advance one bounded Zstandard compression stream operation through the pinned runtime.

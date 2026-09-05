@@ -32,6 +32,7 @@ constexpr int kZstdCompressionLevelParameter = 100;
 constexpr int kZstdCompressionWindowLogParameter = 101;
 constexpr int kZstdCompressionHashLogParameter = 102;
 constexpr int kZstdCompressionChainLogParameter = 103;
+constexpr int kZstdContentSizeParameter = 200;
 constexpr int kZstdContentChecksumParameter = 201;
 constexpr int kZstdWindowLogMaxParameter = 100;
 
@@ -61,6 +62,17 @@ class ZstdRuntime final {
     // Outputs: Returns a Zstandard status code for caller validation.
     [[nodiscard]] std::size_t set_compression_parameter(ZstdCompressionContext* context, int parameter,
                                                         int value) const;
+
+    // Purpose: Declare the exact next-frame input size so libzstd can size its compression workspace.
+    // Inputs: A live context and exact byte count; zero means empty, not unknown.
+    // Outputs: Returns a checked-by-caller runtime status; libzstd validates the pledge when finishing.
+    [[nodiscard]] std::size_t set_compression_source_size(ZstdCompressionContext* context,
+                                                          unsigned long long bytes) const;
+
+    // Purpose: Report memory owned by a live compression context using the stable runtime ABI.
+    // Inputs: A live context; no concurrent compression may mutate it during this call.
+    // Outputs: Returns context/workspace bytes, excluding wrapper and caller buffers.
+    [[nodiscard]] std::size_t compression_workspace_bytes(const ZstdCompressionContext* context) const;
 
     // Purpose: Compress one streaming chunk through the bundled runtime.
     // Inputs: `context`, `output`, `input`, and `directive` mirror the Zstandard stable C ABI.
@@ -104,6 +116,8 @@ class ZstdRuntime final {
     using CreateCompressionContextFn = ZstdCompressionContext* (*)();
     using FreeCompressionContextFn = std::size_t (*)(ZstdCompressionContext*);
     using SetCompressionParameterFn = std::size_t (*)(ZstdCompressionContext*, int, int);
+    using SetCompressionSourceSizeFn = std::size_t (*)(ZstdCompressionContext*, unsigned long long);
+    using CompressionWorkspaceBytesFn = std::size_t (*)(const ZstdCompressionContext*);
     using CompressStreamFn = std::size_t (*)(ZstdCompressionContext*, ZstdOutputBuffer*, ZstdInputBuffer*,
                                              ZstdEndDirective);
     using CreateDecompressionStreamFn = ZstdDecompressionStream* (*)();
@@ -118,6 +132,8 @@ class ZstdRuntime final {
     CreateCompressionContextFn create_compression_context_ = nullptr;
     FreeCompressionContextFn free_compression_context_ = nullptr;
     SetCompressionParameterFn set_compression_parameter_ = nullptr;
+    SetCompressionSourceSizeFn set_compression_source_size_ = nullptr;
+    CompressionWorkspaceBytesFn compression_workspace_bytes_ = nullptr;
     CompressStreamFn compress_stream_ = nullptr;
     CreateDecompressionStreamFn create_decompression_stream_ = nullptr;
     FreeDecompressionStreamFn free_decompression_stream_ = nullptr;
