@@ -23,7 +23,7 @@ mode, so the product exposes the non-store levels.
 | Fast | `--compression-level 3` | Speed-biased compression. |
 | Balanced | `--compression-level 5` | Default release baseline for benchmarks and normal use. |
 | Strong | `--compression-level 7` | Ratio-biased compression; required-HIP `.suzip` may evaluate adaptive GPU-prefix codebooks. |
-| Maximum | `--compression-level 9` | Highest miniz effort; required-HIP `.suzip` uses the full adaptive GPU-prefix codebook selection effort. |
+| Maximum | `--compression-level 9` | Highest miniz effort; required-HIP `.suzip` currently uses the same adaptive-prefix effort as Strong. |
 
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
 GUI, and `tools\bench.ps1`. Benchmarks may sweep all five levels, but release
@@ -38,6 +38,27 @@ throughput. Levels 7 and 9 may spend extra HIP work evaluating per-block
 adaptive codebooks, and the encoder publishes the adaptive block only when the
 measured encoded byte count beats the existing GPU-native candidate. Required
 GPU mode still must not emit CPU Deflate blocks.
+
+The current native HIP implementation has two effective effort tiers, not nine
+distinct compression searches: levels 1-6 use static prefix evaluation, and
+levels 7-9 add the same full-histogram adaptive evaluation. The shared level
+scale also controls CPU compatibility codecs, whose mappings are different.
+Identical native output sizes can therefore be legitimate, but this limited
+effort policy is not a completed implementation of distinct Fastest/Fast or
+Strong/Maximum GPU strategies.
+
+The Mixed workload's low-byte distribution favors the static code, so equal
+level-5/level-9 sizes there do not demonstrate compression-strength coverage.
+RAM-only shifted-alphabet regressions additionally require a real strong-tier
+size reduction and CPU/HIP roundtrips. Future codec work must cover both kinds
+of distribution and longer repetitions; do not weaken lower levels merely to
+manufacture a size difference.
+
+Adaptive selection now compares each block's measured payload size, including
+codebook and offset-table overhead, against its existing representation before
+packing. Losing adaptive candidates are not packed or transferred back. Mixed
+chunks retain smaller static blocks alongside winning adaptive blocks, without
+changing version-3 decoding or required-HIP semantics.
 
 ## Benchmark Score
 

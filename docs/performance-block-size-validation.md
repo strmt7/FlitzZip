@@ -121,6 +121,35 @@ Record these fields for every block size:
 | `MemoryOnly`, `DiskWriteBytes` | Confirms the benchmark did not write the workload to storage. |
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
 
+### Per-Block Adaptive Selection (2026-09-05)
+
+The adaptive encoder now compares each candidate against that block's existing
+static/raw representation before packing. It retains smaller static blocks in
+mixed chunks and does not transfer losing adaptive payloads. The native format
+and GPU kernels are unchanged in this checkpoint.
+
+Three alternating old/new repetitions at levels 5 and 9 used the Mixed 10 GiB
+RAM-only workload, four workers, and 1 MiB blocks on an RX 9070 XT. All 12 runs
+produced 4,570,658,964 bytes and passed roundtrip verification. At level 9,
+mean compression time changed from 9.1101 to 8.6601 seconds; total operation
+time changed from 18.2572 to 17.9439 seconds with overlapping run ranges.
+Kernel launches decreased from 420 to 400, and device-to-host bytes decreased
+from 14,517,430,568 to 12,633,988,244. The unchanged level-5 path's small timing
+movement is inconclusive. These are modest improvements, not multi-fold gains
+or a solution to the two-tier effort limitation.
+
+Concurrent A/B samples recorded CPU utilization up to 37.7%, at least 31,042 MiB
+available RAM, disk activity up to 37.2%, and a maximum sampled individual GPU
+engine utilization of 64.6%. Invalid dynamic-counter instances were unavailable,
+not zero. These observations do not establish an entirely idle host.
+
+The subsequent standard level-5 sweep passed all seven block sizes in both
+CPU and required-HIP lanes: 14 runs, each with 10,737,418,240 input bytes,
+`memory_only=true`, and `disk_write_bytes=0`. This sweep validates production
+block-size coverage, not an old/new speedup. The 306-test native suite and full
+GUI smoke also passed. Dedicated security review remains explicitly deferred;
+this checkpoint is not release-wide performance or security certification.
+
 ## Storage Policy
 
 ### Rejected Prefix Scheduling Experiment (2026-09-05)

@@ -33,6 +33,13 @@ Security tab or a published release.
    portability beyond the local host, distinguishing compiled targets, hosted
    CPU-only test configurations, and GPU hardware actually tested. Retain only
    performance changes supported by correctness and controlled measurements.
+   Native HIP currently has only two effort tiers (1-6 static, 7-9 adaptive),
+   unlike the richer CPU codec mappings. Replace that limitation with meaningful
+   measured compression strategies, not artificially weakened lower levels.
+   Cover low-byte and shifted-byte entropy, longer repeats, small-file batches,
+   and incompressible data. Track compression speed and encoded size together;
+   removing redundant candidate work alone is not the requested dramatic joint
+   speed-and-ratio improvement or the final kernel/pipeline redesign.
 6. After implementation and performance changes, review the entire repository
    with a file-level coverage record. Include first-party source, frontend,
    backend, tests, scripts, workflows, build/release configuration, skills, and

@@ -693,13 +693,12 @@ std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_i
                                                        GpuTelemetry* telemetry);
 
 // Purpose: Evaluate adaptive GPU-prefix blocks for verified raw blocks inside one uploaded native chunk.
-// Inputs: `device_input`, host `input`, block settings, `source_blocks`, `compression_level`, and `telemetry` describe
-// the chunk.
-// Outputs: Returns an encoded native chunk when adaptive blocks improve size; otherwise returns empty.
-std::optional<EncodedChunk> encode_adaptive_prefix_chunk_device(const std::byte* device_input,
-                                                                std::span<const std::byte> input,
-                                                                std::uint32_t block_size,
-                                                                std::span<const BlockDescriptor> source_blocks,
-                                                                int compression_level, GpuTelemetry* telemetry);
+// Inputs: Device/host input, block settings, verified source blocks, optional static `baseline`, level, and telemetry.
+// Outputs: Packs only adaptive blocks smaller than the corresponding baseline block, retaining all other baseline
+// bytes; returns empty when no block improves. The borrowed baseline remains alive for the whole call.
+std::optional<EncodedChunk>
+encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
+                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry);
 
 }  // namespace superzip::hip_detail
