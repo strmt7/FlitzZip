@@ -229,6 +229,7 @@ mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/cpio_fuzzer.cpp \
   src/cpio/cpio_adapter.cpp \
+  src/core/archive_name_encoding.cpp \
   src/gzip/gzip_stream.cpp \
   src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
