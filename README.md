@@ -132,6 +132,14 @@ tools/test.ps1 -Configuration Release
 build/Release/superzip_cli.exe dependency-check
 ```
 
+Single-target development builds remain supported. For the multi-target
+release configuration, use `-HipArch release`; a custom subset can be passed
+as a quoted list such as `-HipArch "gfx1100,gfx1201"`. The release preset
+contains `gfx1100`, `gfx1101`, `gfx1102`, `gfx1151`, `gfx1200`, and `gfx1201`.
+The compiler emits a device image for each target into the same Windows x64
+binary. Compilation coverage is not runtime validation on every GPU; see
+[release validation](docs/release.md#gpu-targets).
+
 The build script defaults to HIP. Use `-CpuOnlyValidation` only for hosted CI or
 static-analysis jobs that cannot install the AMD HIP SDK:
 

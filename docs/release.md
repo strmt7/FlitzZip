@@ -10,6 +10,42 @@ Every product release must be Windows x64 and HIP-enabled. The portable ZIP and
 MSI contain the same application binaries and the same documentation. The
 portable package is installation-free, not feature-reduced.
 
+## GPU Targets
+
+The release workflow selects the `release` architecture preset from
+`tools/hip_architecture.ps1`: `gfx1100`, `gfx1101`, `gfx1102`, `gfx1151`,
+`gfx1200`, and `gfx1201`. One Windows x64 binary contains HIP device images
+for all six targets; the driver selects the matching image. This replaces
+the previous release configuration that compiled only `gfx1201`.
+Target selections are bounded, checked for duplicates, and passed as separate
+`--offload-arch` arguments. CMake tracks the shared resolver as an object
+dependency so changing the preset rebuilds affected kernels.
+
+Local development keeps the fast single-target default. Use:
+
+```powershell
+tools/build.ps1 -Configuration Release -HipArch release
+tools/test.ps1 -Configuration Release
+tools/package.ps1 -Configuration Release
+```
+
+The compiler supports multiple target images as documented in
+[Clang HIP support](https://clang.llvm.org/docs/HIPSupport.html).
+The selected families appear in AMD's
+[HIP SDK 7.1.1 Windows support table](https://rocm.docs.amd.com/projects/install-on-windows/en/docs-7.1.1/reference/system-requirements.html).
+An unsupported target or incompatible SDK must fail compilation, not silently
+drop a target. This does not add support for non-AMD GPUs, unlisted GPU
+families, unsupported operating systems, or arbitrary driver versions.
+
+The September 2026 multi-target build passed the 356 native tests on an
+RX 9070 XT. LLVM section extraction and the offload bundler confirmed all six
+images in the main, static-prefix, adaptive-prefix, and experimental dictionary
+objects. Other targets are compile-validated, not hardware-tested. Timing,
+correctness, and memory behavior on additional GPUs remain release validation
+work; a fat binary alone cannot prove them.
+
+## Installation
+
 The MSI defaults to the release deployment scope: per-machine install under
 `C:\Program Files\SuperZip`. This matches normal Windows desktop installers and
 requires elevation when the installing user does not already have administrator

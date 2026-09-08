@@ -22,7 +22,7 @@ inputs:
     description: Build with AMD HIP.
     required: true
   hip_arch:
-    description: AMD HIP GPU architecture, for example gfx1201.
+    description: HIP gfx target, comma-separated targets, or the repository release preset.
     required: true
   allow_hip:
     description: Whether this runner profile is allowed to produce HIP-enabled binaries.
@@ -120,9 +120,8 @@ runs:
         if ($env:ALLOW_HIP -notin @("true", "false")) {
             throw "allow_hip must be true or false."
         }
-        if ($env:HIP_ARCH -notmatch '^gfx[0-9a-z]+$') {
-            throw "hip_arch must look like gfx1201."
-        }
+        . (Join-Path $PWD "tools/hip_architecture.ps1")
+        $null = Resolve-HipArchitecture -Architecture ([string]$env:HIP_ARCH)
         if ($env:ENABLE_HIP -eq "true" -and $env:ALLOW_HIP -ne "true") {
             throw "enable_hip=true requires allow_hip=true for this runner profile."
         }

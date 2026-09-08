@@ -17,6 +17,7 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
 . (Join-Path $PSScriptRoot "version.ps1")
+. (Join-Path $PSScriptRoot "hip_architecture.ps1")
 
 # Purpose: Find a usable CMake executable on a Windows development or CI host.
 # Inputs: None; probes known install paths and PATH.
@@ -107,6 +108,7 @@ function Assert-MsiProductIdentity {
     return $trimmed
 }
 
+$HipArch = Resolve-HipArchitecture -Architecture $HipArch
 $cmake = Find-CMake
 if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."

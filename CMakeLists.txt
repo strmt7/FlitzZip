@@ -16,7 +16,7 @@ option(SUPERZIP_BUILD_FUZZERS "Build libFuzzer targets for parser hardening"
        OFF)
 set(SUPERZIP_HIP_ARCH
     "gfx1201"
-    CACHE STRING "AMD GPU target architecture for HIP kernels")
+    CACHE STRING "HIP gfx target, comma-separated targets, or release preset")
 string(CONCAT SUPERZIP_VCVARS_VERSION_HELP
               "Optional MSVC toolset version used by hipcc on Windows; "
               "empty auto-selects a compatible installed toolset when possible")
@@ -462,7 +462,8 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1")
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1")
 
   # Purpose: Compile one HIP translation unit with the pinned Windows HIP path.
   # Inputs: source is repo-relative, output is the generated object path, and

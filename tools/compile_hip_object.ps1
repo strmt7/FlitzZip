@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "hip_architecture.ps1")
+$Arch = Resolve-HipArchitecture -Architecture $Arch
 
 # Purpose: Reject values that cannot be safely embedded in the generated cmd.exe command line.
 # Inputs: Name is the diagnostic label; Value is the string to validate.
@@ -80,7 +82,7 @@ function Find-VcvarsAll {
 # Purpose: Enumerate MSVC toolsets available under the Visual Studio instance that owns vcvarsall.bat.
 # Inputs: VcvarsAll is the resolved path to Visual Studio's vcvarsall.bat.
 # Outputs: Returns installed MSVC toolset directory names sorted from newest to oldest.
-function Get-MsvcToolsetVersions {
+function Get-MsvcToolsetVersion {
     param(
         [Parameter(Mandatory = $true)]
         [string]$VcvarsAll
@@ -105,7 +107,7 @@ function Get-MsvcToolsetVersions {
 # Purpose: Choose a HIP-compatible MSVC toolset prefix when the caller did not provide one.
 # Inputs: AvailableVersions is the installed MSVC list; RequestedVersion is the optional caller override.
 # Outputs: Returns candidate vcvars versions in preferred order, with an empty string meaning Visual Studio default.
-function Resolve-VcvarsVersionCandidates {
+function Resolve-VcvarsVersionCandidate {
     param(
         [string[]]$AvailableVersions,
         [AllowEmptyString()]
@@ -135,7 +137,7 @@ function Resolve-VcvarsVersionCandidates {
 }
 
 # Purpose: Build the HIP object with one Visual Studio environment candidate.
-# Inputs: CandidateVersion is a vcvars toolset prefix or empty for default Visual Studio; other values come from script parameters.
+# Inputs: CandidateVersion selects MSVC; validated Arch selects one or more GPU images in the output object.
 # Outputs: Returns hipcc's native process exit code.
 function Invoke-HipCompile {
     param(
@@ -152,17 +154,18 @@ function Invoke-HipCompile {
     $vcvarsArgs = "amd64"
     if ($CandidateVersion) {
         $vcvarsArgs += " -vcvars_ver=$CandidateVersion"
-        Write-Host "Compiling HIP object with MSVC toolset $CandidateVersion."
+        Write-Information "Compiling HIP object with MSVC toolset $CandidateVersion." -InformationAction Continue
     } else {
-        Write-Host "Compiling HIP object with the Visual Studio default MSVC toolset."
+        Write-Information "Compiling HIP object with the Visual Studio default MSVC toolset." -InformationAction Continue
     }
 
     if (Test-Path -LiteralPath $Output) {
         Remove-Item -LiteralPath $Output -Force
     }
 
-    $cmd = "call `"$VcvarsAll`" $vcvarsArgs >nul && `"$HipccPath`" --offload-arch=$Arch -std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$IncludePath`" -c `"$Source`" -o `"$Output`""
-    cmd /c $cmd
+    $offloadArguments = Get-HipOffloadArgument -Architecture $Arch
+    $cmd = "call `"$VcvarsAll`" $vcvarsArgs >nul && `"$HipccPath`" $offloadArguments -std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$IncludePath`" -c `"$Source`" -o `"$Output`""
+    cmd /c $cmd | ForEach-Object { Write-Information ([string]$_) -InformationAction Continue }
     return $LASTEXITCODE
 }
 
@@ -175,9 +178,6 @@ if (-not (Test-Path $hipcc)) {
     throw "hipcc.exe not found at $hipcc"
 }
 
-if ($Arch -notmatch '^gfx[0-9a-z]+$') {
-    throw "Arch must look like gfx1201."
-}
 if ($VcvarsVersion -and $VcvarsVersion -notmatch '^[0-9]+(\.[0-9]+)*$') {
     throw "VcvarsVersion must be empty or a dotted MSVC toolset version such as 14.44."
 }
@@ -194,8 +194,8 @@ $outputDir = Split-Path -Parent $Output
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $include = Join-Path $RepoRoot "src"
-$availableToolsets = @(Get-MsvcToolsetVersions -VcvarsAll $vcvars)
-$vcvarsCandidates = @(Resolve-VcvarsVersionCandidates -AvailableVersions $availableToolsets -RequestedVersion $VcvarsVersion)
+$availableToolsets = @(Get-MsvcToolsetVersion -VcvarsAll $vcvars)
+$vcvarsCandidates = @(Resolve-VcvarsVersionCandidate -AvailableVersions $availableToolsets -RequestedVersion $VcvarsVersion)
 
 $attempts = New-Object System.Collections.Generic.List[string]
 foreach ($candidate in $vcvarsCandidates) {

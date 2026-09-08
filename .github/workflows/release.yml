@@ -69,5 +69,5 @@ jobs:
           release_track: ${{ inputs.release_track }}
           create_msi: ${{ inputs.create_msi }}
           enable_hip: "true"
-          hip_arch: gfx1201
+          hip_arch: release
           allow_hip: "true"
