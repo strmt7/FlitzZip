@@ -84,6 +84,10 @@ Security tab or a published release.
    now produces real independent block payloads with nine effort-dependent sizes
    on a controlled repeated-record fixture. Its cooperative HIP decoder now
    restores independent blocks with bounded workspace and exact-output checks.
+   Dense/tiled search now preserves encoded bytes while reducing global GPU
+   workspace in high-effort large batches. Automatic dispatch retains dense
+   search where tiled search measured slower; controlled host-wall comparisons
+   and their shared-host telemetry limits are recorded in the codec document.
    Native archive integration, the production CPU reader,
    complete candidate-cost selection, portability, and timing validation remain
    open; this does not yet replace the production two-tier policy.

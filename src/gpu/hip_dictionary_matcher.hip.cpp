@@ -221,21 +221,16 @@ __device__ std::uint32_t extend_dictionary_match(const std::byte* input, std::ui
     return length;
 }
 
-// Purpose: Search deterministic predecessor chains with explicit per-position work budgets.
-// Inputs: Immutable source bytes, ordered predecessor links, bounded effort, and one output record per byte.
-// Outputs: Writes verified matches of 4..8192 bytes, preserving nearest references on equal length and accounting work.
-__global__ void search_dictionary_matches(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
-                                          Effort effort, Match* matches) {
-    const auto position = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (position >= size) {
-        return;
-    }
+// Purpose: Search one deterministic predecessor chain with explicit per-position work budgets.
+// Inputs: Immutable source, valid position, ordered links, and bounded effort.
+// Outputs: Returns a verified 4..8192-byte match, preserving nearest references on ties and exact work accounting.
+__device__ Match search_dictionary_position(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
+                                            Effort effort, std::uint32_t position) {
     Match best{};
     const auto segment_start = (position / kSegmentBytes) * kSegmentBytes;
     const auto end = min(size, segment_start + kSegmentBytes);
     if (end - position < kMinMatchBytes) {
-        matches[position] = best;
-        return;
+        return best;
     }
     const auto limit = min(kMaxMatchBytes, end - position);
     auto candidate = previous[position];
@@ -256,7 +251,18 @@ __global__ void search_dictionary_matches(const std::byte* input, std::uint32_t 
         }
         candidate = previous[candidate];
     }
-    matches[position] = best;
+    return best;
+}
+
+// Purpose: Materialize diagnostic matches for every source position using the shared bounded search.
+// Inputs: Immutable source, ordered links, bounded effort, and one output record per byte.
+// Outputs: Writes exact match records without affecting the demand-driven encoding path.
+__global__ void search_dictionary_matches(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
+                                          Effort effort, Match* matches) {
+    const auto position = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (position < size) {
+        matches[position] = search_dictionary_position(input, size, previous, effort, position);
+    }
 }
 
 // Purpose: Finish a multi-kernel stage without misreporting a library operation as a single kernel launch.
@@ -291,11 +297,13 @@ __device__ std::uint32_t write_length_extension(std::byte* output, std::uint32_t
     return position;
 }
 
-// Purpose: Select and pack independent LZ4-format blocks with cooperative literal search and copying.
-// Inputs: Original bytes and verified GPU matches; fixed-capacity output slots and one size per segment.
+// Purpose: Pack identical LZ4 blocks from dense matches or a cooperative demand-filled cache.
+// Inputs: Source, predecessor links, effort, optional dense records, output slots, and segment sizes.
 // Outputs: Writes complete blocks, or a zero size if a capacity invariant fails; no output crosses its slot.
-__global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t size, const Match* matches,
-                                           std::byte* output, std::uint32_t* encoded_sizes) {
+template <bool Dense>
+__global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
+                                           Effort effort, const Match* matches, std::byte* output,
+                                           std::uint32_t* encoded_sizes) {
     const auto segment = static_cast<std::uint32_t>(blockIdx.x);
     const auto start = segment * kSegmentBytes;
     const auto end = min(size, start + kSegmentBytes);
@@ -305,10 +313,16 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
     __shared__ std::uint32_t written;
     __shared__ std::uint32_t literal_output;
     __shared__ std::uint32_t match_length;
+    __shared__ std::uint32_t cache_start;
+    __shared__ std::uint32_t cache_end;
+    __shared__ std::uint16_t cached_lengths[kThreads];
+    __shared__ std::uint16_t cached_distances[kThreads];
     __shared__ bool failed;
     if (threadIdx.x == 0U) {
         cursor = start;
         written = 0;
+        cache_start = start;
+        cache_end = start;
         failed = false;
     }
     __syncthreads();
@@ -317,10 +331,29 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
             next_match = end;
         }
         __syncthreads();
-        // Stop all lanes at the first useful tile instead of rescanning the remaining suffix in empty lanes.
-        for (auto tile = cursor; tile < end && end - tile >= 12U; tile += kThreads) {
-            const auto position = tile + static_cast<std::uint32_t>(threadIdx.x);
-            if (position < end && end - position >= 12U && matches[position].length >= kMinMatchBytes) {
+        // Reuse a tile across short matches; long matches skip tiles whose records would never be consumed.
+        for (auto tile = cursor; tile < end && end - tile >= 12U; tile = Dense ? tile + kThreads : cache_end) {
+            if constexpr (!Dense) {
+                const bool refill = tile >= cache_end;
+                __syncthreads();
+                if (refill) {
+                    if (threadIdx.x == 0U) {
+                        cache_start = tile;
+                        cache_end = min(end, tile + kThreads);
+                    }
+                    __syncthreads();
+                    const auto position = cache_start + static_cast<std::uint32_t>(threadIdx.x);
+                    const auto match = position < end && end - position >= 12U
+                                           ? search_dictionary_position(input, size, previous, effort, position)
+                                           : Match{};
+                    cached_lengths[threadIdx.x] = match.length;
+                    cached_distances[threadIdx.x] = match.distance;
+                    __syncthreads();
+                }
+            }
+            const auto position = (Dense ? tile : cache_start) + static_cast<std::uint32_t>(threadIdx.x);
+            if (position >= cursor && position < end && end - position >= 12U &&
+                (Dense ? matches[position].length : cached_lengths[threadIdx.x]) >= kMinMatchBytes) {
                 atomicMin(&next_match, position);
             }
             __syncthreads();
@@ -332,8 +365,10 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
         const auto literal_bytes = next_match - cursor;
         const bool last = next_match == end;
         if (threadIdx.x == 0U) {
-            match_length =
-                last ? 0U : min(static_cast<std::uint32_t>(matches[next_match].length), end - next_match - 5U);
+            match_length = last ? 0U
+                                : min(static_cast<std::uint32_t>(Dense ? matches[next_match].length
+                                                                       : cached_lengths[next_match - cache_start]),
+                                      end - next_match - 5U);
             const auto match_code = last ? 0U : match_length - kMinMatchBytes;
             const auto needed = 1U + length_extension_bytes(literal_bytes) + literal_bytes +
                                 (last ? 0U : 2U + length_extension_bytes(match_code));
@@ -343,7 +378,8 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
                 literal_output = write_length_extension(destination, written, literal_bytes);
                 written = literal_output + literal_bytes;
                 if (!last) {
-                    const auto distance = matches[next_match].distance;
+                    const auto distance =
+                        Dense ? matches[next_match].distance : cached_distances[next_match - cache_start];
                     destination[written++] = static_cast<std::byte>(distance & 0xFFU);
                     destination[written++] = static_cast<std::byte>(distance >> 8U);
                     written = write_length_extension(destination, written, match_code);
@@ -374,17 +410,15 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
     }
 }
 
-// Purpose: Share bounded GPU indexing/search while keeping matches resident for the chosen consumer.
-// Inputs: Validated input/effort, additional consumer workspace, and a synchronous consumer of borrowed device buffers.
-// Outputs: Returns the consumer's result; owns and releases all index/search allocations, including on failure.
+// Purpose: Build bounded GPU predecessor links shared by diagnostics and demand-driven encoding.
+// Inputs: Validated input, additional consumer workspace, and a synchronous consumer of borrowed device buffers.
+// Outputs: Returns the consumer's result; owns and releases index allocations, including on failure.
 template <typename Consumer>
-auto with_dictionary_matches(std::span<const std::byte> input, const Effort& effort, std::size_t consumer_bytes,
-                             Consumer consume) {
+auto with_dictionary_index(std::span<const std::byte> input, std::size_t consumer_bytes, Consumer consume) {
     const auto size = static_cast<std::uint32_t>(input.size());
     const auto blocks = (size + kThreads - 1U) / kThreads;
     const auto key_bytes = checked_multiply_bytes(input.size(), sizeof(std::uint64_t), "dictionary keys");
     const auto previous_bytes = checked_multiply_bytes(input.size(), sizeof(std::uint32_t), "dictionary links");
-    const auto match_bytes = checked_multiply_bytes(input.size(), sizeof(Match), "dictionary matches");
     std::size_t temporary_bytes = 0;
     check_hip(rocprim::radix_sort_keys(nullptr, temporary_bytes, static_cast<std::uint64_t*>(nullptr),
                                        static_cast<std::uint64_t*>(nullptr), size, 0, 64, hipStreamPerThread),
@@ -393,7 +427,6 @@ auto with_dictionary_matches(std::span<const std::byte> input, const Effort& eff
     auto required_bytes = checked_add_bytes(input.size(), key_bytes, "dictionary workspace");
     required_bytes = checked_add_bytes(required_bytes, key_bytes, "dictionary workspace");
     required_bytes = checked_add_bytes(required_bytes, previous_bytes, "dictionary workspace");
-    required_bytes = checked_add_bytes(required_bytes, match_bytes, "dictionary workspace");
     required_bytes = checked_add_bytes(required_bytes, scratch_bytes, "dictionary workspace");
     required_bytes = checked_add_bytes(required_bytes, consumer_bytes, "dictionary consumer workspace");
     if (required_bytes > kMaxWorkspaceBytes) {
@@ -404,7 +437,6 @@ auto with_dictionary_matches(std::span<const std::byte> input, const Effort& eff
     HipDeviceBuffer<std::uint64_t> keys(key_bytes, "allocate dictionary keys");
     HipDeviceBuffer<std::uint64_t> sorted_keys(key_bytes, "allocate sorted dictionary keys");
     HipDeviceBuffer<std::uint32_t> previous(previous_bytes, "allocate dictionary links");
-    HipDeviceBuffer<Match> matches(match_bytes, "allocate dictionary matches");
     HipDeviceBuffer<std::byte> temporary(scratch_bytes, "allocate dictionary radix workspace");
     check_hip(hipMemcpy(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice),
               "upload dictionary input");
@@ -420,19 +452,12 @@ auto with_dictionary_matches(std::span<const std::byte> input, const Effort& eff
     check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary index");
     MatchBatch result;
     result.index_ms = finish_dictionary_stage(events);
-    check_hip(hipEventRecord(events.start, hipStreamPerThread), "start dictionary search");
-    search_dictionary_matches<<<blocks, kThreads, 0, hipStreamPerThread>>>(device_input.get(), size, previous.get(),
-                                                                           effort, matches.get());
-    check_hip(hipGetLastError(), "launch dictionary search");
-    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary search");
-    result.search_ms = finish_dictionary_stage(events);
     result.device_workspace_bytes = required_bytes;
     result.h2d_bytes = input.size();
     result.primitive_version = ROCPRIM_VERSION;
     result.gpu_used = true;
-    auto consumed = consume(device_input.get(), matches.get(), result);
+    auto consumed = consume(device_input.get(), previous.get(), result);
     temporary.reset_checked("free dictionary radix workspace");
-    matches.reset_checked("free dictionary matches");
     previous.reset_checked("free dictionary links");
     sorted_keys.reset_checked("free sorted dictionary keys");
     keys.reset_checked("free dictionary keys");
@@ -446,30 +471,59 @@ auto with_dictionary_matches(std::span<const std::byte> input, const Effort& eff
 // Inputs: A validated immutable batch and bounded effort.
 // Outputs: Returns exact match records and resource telemetry; no encoded payload is produced.
 MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effort) {
-    return with_dictionary_matches(
-        input, effort, 0U, [input](const std::byte*, const Match* device_matches, MatchBatch metadata) {
+    const auto match_bytes = checked_multiply_bytes(input.size(), sizeof(Match), "dictionary matches");
+    return with_dictionary_index(
+        input, match_bytes,
+        [input, effort, match_bytes](const std::byte* device_input, const std::uint32_t* previous,
+                                     MatchBatch metadata) {
+            HipDeviceBuffer<Match> matches(match_bytes, "allocate dictionary diagnostic matches");
+            const auto size = static_cast<std::uint32_t>(input.size());
+            const auto blocks = (size + kThreads - 1U) / kThreads;
+            const auto events = make_hip_event_pair("create dictionary search timing events");
+            check_hip(hipEventRecord(events.start, hipStreamPerThread), "start dictionary search");
+            search_dictionary_matches<<<blocks, kThreads, 0, hipStreamPerThread>>>(device_input, size, previous, effort,
+                                                                                   matches.get());
+            check_hip(hipGetLastError(), "launch dictionary search");
+            check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary search");
+            metadata.search_ms = finish_dictionary_stage(events);
             metadata.matches.resize(input.size());
-            metadata.d2h_bytes = input.size() * sizeof(Match);
-            check_hip(hipMemcpy(metadata.matches.data(), device_matches, metadata.d2h_bytes, hipMemcpyDeviceToHost),
+            metadata.d2h_bytes = match_bytes;
+            check_hip(hipMemcpy(metadata.matches.data(), matches.get(), metadata.d2h_bytes, hipMemcpyDeviceToHost),
                       "download dictionary matches");
+            matches.reset_checked("free dictionary diagnostic matches");
             return metadata;
         });
 }
 
-// Purpose: Pack GPU-resident matches into independent blocks and download only used bytes plus bounded sizes.
-// Inputs: Validated nonempty source and effort; output slots are bounded by the LZ4 compression bound.
+// Purpose: Encode with dense or tiled search and download only used bytes plus bounded sizes.
+// Inputs: Validated nonempty source, effort, and strategy; output slots obey the LZ4 compression bound.
 // Outputs: Returns encoded segments and transfer/workspace counters, or throws before exposing incomplete output.
-EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort) {
+EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort, EncodingSearch search) {
     const auto segment_count = (input.size() + kSegmentBytes - 1U) / kSegmentBytes;
     const auto output_bytes = segment_count * kEncodedSegmentCapacity;
     const auto sizes_bytes = segment_count * sizeof(std::uint32_t);
-    return with_dictionary_matches(
-        input, effort, output_bytes + sizes_bytes,
-        [=](const std::byte* device_input, const Match* device_matches, const MatchBatch& metadata) {
+    const bool dense = search == EncodingSearch::Dense;
+    const auto match_bytes = dense ? input.size() * sizeof(Match) : 0U;
+    return with_dictionary_index(
+        input, output_bytes + sizes_bytes + match_bytes,
+        [=](const std::byte* device_input, const std::uint32_t* previous, const MatchBatch& metadata) {
             HipDeviceBuffer<std::byte> output(output_bytes, "allocate dictionary encoded slots");
             HipDeviceBuffer<std::uint32_t> sizes(sizes_bytes, "allocate dictionary encoded sizes");
-            encode_dictionary_segments<<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                device_input, static_cast<std::uint32_t>(input.size()), device_matches, output.get(), sizes.get());
+            HipDeviceBuffer<Match> matches;
+            const auto size = static_cast<std::uint32_t>(input.size());
+            if (dense) {
+                matches = HipDeviceBuffer<Match>(match_bytes, "allocate dictionary dense matches");
+                search_dictionary_matches<<<(size + kThreads - 1U) / kThreads, kThreads, 0, hipStreamPerThread>>>(
+                    device_input, size, previous, effort, matches.get());
+                check_hip(hipGetLastError(), "launch dictionary dense search");
+                encode_dictionary_segments<true>
+                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                        device_input, size, previous, effort, matches.get(), output.get(), sizes.get());
+            } else {
+                encode_dictionary_segments<false>
+                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                        device_input, size, previous, effort, nullptr, output.get(), sizes.get());
+            }
             check_hip(hipGetLastError(), "launch dictionary segment encoder");
             check_hip(hipStreamSynchronize(hipStreamPerThread), "synchronize dictionary segment encoder");
             std::vector<std::uint32_t> host_sizes(segment_count);
@@ -496,6 +550,7 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
             }
             sizes.reset_checked("free dictionary encoded sizes");
             output.reset_checked("free dictionary encoded slots");
+            matches.reset_checked("free dictionary dense matches");
             return result;
         });
 }

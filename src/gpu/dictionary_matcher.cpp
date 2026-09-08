@@ -14,9 +14,9 @@ namespace superzip::dictionary {
 MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effort);
 
 // Purpose: Encode validated input using GPU-resident dictionary matches.
-// Inputs: A nonempty bounded batch and validated effort.
+// Inputs: A nonempty bounded batch, validated effort, and explicit search strategy.
 // Outputs: Returns encoded blocks, or throws on HIP/resource failure.
-EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort);
+EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort, EncodingSearch search);
 
 // Purpose: Execute HIP decoding after host-side segment-size admission.
 // Inputs: Nonempty bounded segments and their exact total decoded byte count.
@@ -71,22 +71,32 @@ MatchBatch find_matches(std::span<const std::byte> input, int level) {
 }
 
 // Purpose: Validate dictionary encoding requests and enforce required-HIP execution.
-// Inputs: Borrowed bytes and requested effort level.
+// Inputs: Borrowed bytes, requested effort level, and byte-equivalent search strategy.
 // Outputs: Returns empty output for empty input or GPU-encoded blocks; rejects invalid limits and missing HIP.
-EncodedBatch encode_segments(std::span<const std::byte> input, int level) {
+EncodedBatch encode_segments(std::span<const std::byte> input, int level, EncodingSearch search) {
     const auto effort = effort_for_level(level);
+    if (search != EncodingSearch::Dense && search != EncodingSearch::Tiled && search != EncodingSearch::Automatic) {
+        throw ArchiveError("invalid dictionary encoding search strategy");
+    }
     if (input.size() > kMaxBatchBytes) {
         throw ArchiveError("dictionary batch exceeds the bounded GPU workspace input limit");
     }
     if (input.empty()) {
         return {};
     }
+    if (search == EncodingSearch::Automatic) {
+        // Dense search exposes more parallel work for small batches; cache only the expensive search regimes.
+        constexpr std::uint64_t kTiledSearchWorkThreshold = 8ULL * 1024U * 1024U * 1024U;
+        search = static_cast<std::uint64_t>(input.size()) * effort.max_byte_comparisons >= kTiledSearchWorkThreshold
+                     ? EncodingSearch::Tiled
+                     : EncodingSearch::Dense;
+    }
 #if SUPERZIP_ENABLE_HIP
     const auto info = query_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
     }
-    return encode_segments_hip(input, effort);
+    return encode_segments_hip(input, effort, search);
 #else
     (void)effort;
     throw GpuError("AMD HIP dictionary encoding is not compiled into this build");

@@ -22,6 +22,9 @@ struct Effort {
     std::uint32_t max_byte_comparisons;
 };
 
+// Internal execution strategies; both produce the same bytes and require HIP.
+enum class EncodingSearch { Dense, Tiled, Automatic };
+
 struct Match {
     std::uint16_t distance = 0;
     std::uint16_t length = 0;
@@ -92,10 +95,11 @@ std::optional<double> validated_stage_milliseconds(double milliseconds);
 MatchBatch find_matches(std::span<const std::byte> input, int level);
 
 // Purpose: Encode independent dictionary blocks entirely on HIP without downloading the match table.
-// Inputs: At most 4 MiB of immutable source and effort 1..9; each block covers at most 64 KiB.
+// Inputs: At most 4 MiB of source, effort 1..9, and a search strategy; each block covers at most 64 KiB.
 // Outputs: Returns bounded LZ4-format block payloads and resource counts; throws if HIP is unavailable.
 // Empty input produces no blocks and needs no GPU work. No frame or SUZIP metadata is emitted.
-EncodedBatch encode_segments(std::span<const std::byte> input, int level);
+EncodedBatch encode_segments(std::span<const std::byte> input, int level,
+                             EncodingSearch search = EncodingSearch::Automatic);
 
 // Purpose: Decode independent dictionary segments on HIP without CPU materialization or fallback.
 // Inputs: At most 64 blocks, each declaring 1..65536 decoded bytes and a bounded nonempty payload.

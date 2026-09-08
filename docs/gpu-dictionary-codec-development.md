@@ -17,8 +17,11 @@ has the two prefix-code effort tiers described in
 - Matches remain within independent 64 KiB segments, have lengths 4-8,192,
   and use bounded, alignment-safe word comparisons with a byte tail.
 - HIP selects the next match in fixed-size cooperative tiles and packs the
-  literal bytes cooperatively. Empty lanes do not scan the full remaining
-  suffix again for every selected match.
+  literal bytes cooperatively. A 256-position shared-memory cache retains
+  lengths and distances across short matches in tiled mode. Longer matches
+  skip unused tiles; tiled encoding does not allocate or populate a global
+  match record for every input byte. Every refill is cooperative, with a barrier before
+  changing bounds so all lanes make the same refill decision.
 - The output uses the documented
   [LZ4 block format](https://github.com/lz4/lz4/blob/dev/doc/lz4_Block_format.md),
   including little-endian distances, extended lengths, final literal-only
@@ -27,6 +30,18 @@ has the two prefix-code effort tiers described in
 - The encoder downloads only used payload bytes and four bytes of length
   metadata per segment. The separate diagnostic matcher can download match
   records, but encoding does not take that path.
+- Compared with dense search, tiled global workspace falls by eight bytes per
+  source byte: 512 KiB for a 64 KiB input and 32 MiB for a 4 MiB batch. The
+  cache uses 1 KiB of static shared memory per thread block, separate from the
+  reported global allocation count. Search budgets, nearest-distance ties,
+  sequence selection, and encoded bytes are unchanged.
+- Automatic mode retains dense parallel search for small batches and low
+  efforts. It selects tiled search when input bytes times the per-position
+  comparison budget reaches 8 GiB: level 9 at 1 MiB, level 8 at 2 MiB, or
+  level 7 at 4 MiB. This product is a work-bound proxy, not an actual read
+  counter. The crossover policy follows local repeated comparisons; it is
+  not a hardware-independent optimum. Explicit dense and tiled modes remain
+  available in this internal API for equivalence checks and future tuning.
 - Batches are capped at 4 MiB, total reserved device workspace at 256 MiB,
   and each encoded slot at 65,809 bytes. Existing aggregate HIP reservations
   also apply. Capacity failure rejects the batch instead of exposing output.
@@ -94,14 +109,66 @@ Correctness and size checks remain separate. Negative HIP event durations were o
 diagnostics; the experimental matcher now represents negative and non-finite
 durations as unavailable, not zero. Runtime errors still propagate.
 
+## Encoder Timing Comparison
+
+On 2026-09-08, the HIP-enabled Release diagnostic compared dense and automatic
+search in four alternating pairs across 162 cases: all nine levels, six batch
+sizes, and three deterministic profiles. Hardware was a Radeon RX 9070 XT
+with driver 32.0.31041.1004 and Ryzen 9 9950X. These are isolated experimental
+encoder calls, not application throughput or a CPU-versus-GPU comparison.
+All cases preserved payload sizes. Selected level-9 results follow; speedup
+is the median of the four paired ratios, not the ratio of the two medians.
+
+| Input | Profile | Payload Bytes | Dense Median ms | Automatic Median ms | Paired Speedup |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 MiB | Repeated 16 KiB record | 266,736 | 5.60 | 3.60 | 1.57x |
+| 1 MiB | Period 13 | 4,896 | 6.37 | 3.67 | 1.74x |
+| 2 MiB | Repeated 16 KiB record | 533,472 | 10.53 | 5.08 | 2.09x |
+| 2 MiB | Period 13 | 9,792 | 11.95 | 4.50 | 2.62x |
+| 4 MiB | Repeated 16 KiB record | 1,066,944 | 19.69 | 8.01 | 2.51x |
+| 4 MiB | Period 13 | 19,584 | 21.67 | 6.75 | 3.35x |
+
+The 4 MiB level-9 paired ranges were 2.00-2.86x and 3.07-3.87x respectively.
+Random-data timings were mixed and do not establish a speed improvement.
+Earlier explicit-tiled comparisons showed substantial small-input slowdowns;
+automatic mode therefore retains dense search for those regimes. No output
+padding, reduced effort, format change, or CPU compression fallback is involved.
+
+Resource context was sampled throughout: CPU 1.8-28.3%, available RAM
+12,630-14,940 MiB, and disk queue 0-2. GPU counter refresh handled process
+churn without treating missing values as zero. Eleven of 53 samples lacked
+one or more GPU deltas; the short-lived benchmark children themselves did
+not yield paired GPU utilization samples. Thus the sampled background GPU
+values are not benchmark utilization, nor proof of exclusive GPU access.
+Host-wall timings include synchronization, but valid device-event timing and
+broader GPU hardware measurements remain open. Ordinary host variation is
+not grounds to label small timing differences a regression or a speedup.
+
 ## Verification And Remaining Work
 
 Native tests cover hand-derived golden blocks, all nine effort sizes, an
 independent bytewise decoder, overlapping copies, literal-length extensions,
 segment boundaries, sparse tile matches, maximum batches, resource admission,
-and missing-HIP behavior. Opt-in fixture export uses
+and missing-HIP behavior. Dense diagnostic matches also feed an independent
+serial reference packer at all nine efforts, checking exact encoded bytes and
+global workspace accounting across cache and segment boundaries.
+Opt-in fixture export uses
 `SUPERZIP_DICTIONARY_INTEROP_EXPORT`, refuses existing output filenames, and
 caps total writes at 64 MiB. Ordinary tests write no dictionary fixtures.
+
+`SUPERZIP_DICTIONARY_BENCHMARK=1` enables the otherwise inactive
+`dictionary_encoder_benchmark_opt_in` test. It measures the full host-wall
+`encode_segments` call, including allocation, indexing, packing, transfers,
+and synchronization, after a warmup. Independent CPU and required-HIP
+roundtrip checks run outside each timed span. The fixed RAM-only cases cover
+64 KiB and 4 MiB batches, random bytes, repeated 16 KiB records, period-13
+data, and efforts 1, 5, and 9. `SUPERZIP_DICTIONARY_BENCHMARK_EXTENDED=1`
+expands coverage to all nine efforts and 64, 128, 512, 1024, 2048, and
+4096 KiB batches. `SUPERZIP_DICTIONARY_TILED=1` selects explicit tiled search;
+`SUPERZIP_DICTIONARY_AUTOMATIC=1` takes precedence and selects automatic
+mode. Without either switch the diagnostic uses dense search. Fixture export is forbidden in that mode.
+Use a resource-monitoring harness and repeated alternating binaries; this
+diagnostic is not a production archive benchmark or device-event timing.
 
 All 320 native tests passed after cooperative tile search was added. An
 external `python-lz4` 4.4.5 decoder independently restored 242 exported blocks
@@ -117,6 +184,15 @@ After the cooperative decoder and final-token compatibility correction, all
 matrix, independent standard-format readers, benchmark-reporting tests,
 changed-function contracts, and portable packaging checks also passed.
 These are correctness gates, not controlled throughput measurements.
+
+After the dense/tiled strategy revision, all 356 native tests passed in the
+HIP-enabled Release build. The external python-lz4 4.4.5 decoder restored
+356 exported blocks covering 16,540,373 decoded bytes; all 242 preserved
+baseline block/raw pairs remained byte-identical. New checks cover all-nine
+effort reference packing, short tails, cache/segment boundaries, invalid
+strategy values, exact global workspace accounting, and automatic crossover
+boundaries. These results do not satisfy the remaining archive integration,
+release, or deferred security gates below.
 
 Before production integration:
 
