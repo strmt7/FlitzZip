@@ -62,6 +62,53 @@ void reject_oversized_codec_span(std::size_t size, const char* label) {
     }
 }
 
+// Purpose: Validate a dense independent-block batch before CPU work, HIP dispatch, or metadata allocation.
+// Inputs: input_size is bounded source storage; lengths describe consecutive blocks under the selected block_size.
+// Outputs: Returns for exact positive coverage, including the empty batch; throws ArchiveError otherwise.
+void validate_encode_batch(std::size_t input_size, std::span<const std::uint32_t> lengths, std::uint32_t block_size) {
+    if (lengths.size() > kMaxEncodeBatchBlocks) {
+        throw ArchiveError("encode batch exceeds the block-count limit");
+    }
+    std::size_t consumed = 0;
+    for (const auto length : lengths) {
+        if (length == 0 || length > block_size || length > input_size - consumed) {
+            throw ArchiveError("encode batch block is outside its input or block-size limit");
+        }
+        consumed += length;
+    }
+    if (consumed != input_size) {
+        throw ArchiveError("encode batch blocks do not cover the input exactly");
+    }
+}
+
+// Purpose: Apply the existing CPU block encoder to a validated independent-block batch.
+// Inputs: input and lengths have exact bounded coverage; options select the same policy as separate chunk encoding.
+// Outputs: Returns independent descriptors, concatenated payload, per-block CRCs, and combined CRC without GPU use.
+EncodedBlockBatch encode_block_batch_cpu(std::span<const std::byte> input, std::span<const std::uint32_t> lengths,
+                                         const ArchiveCodecOptions& options) {
+    EncodedBlockBatch batch;
+    batch.encoded.blocks.reserve(lengths.size());
+    batch.block_crc32.reserve(lengths.size());
+    std::size_t offset = 0;
+    for (const auto length : lengths) {
+        const auto source = input.subspan(offset, length);
+        auto encoded = encode_chunk_cpu(source, options);
+        if (encoded.blocks.size() != 1) {
+            throw ArchiveError("independent CPU batch block produced an unexpected descriptor count");
+        }
+        auto block = encoded.blocks.front();
+        block.encoded_offset += batch.encoded.payload.size();
+        batch.encoded.blocks.push_back(block);
+        batch.encoded.payload.insert(batch.encoded.payload.end(), encoded.payload.begin(), encoded.payload.end());
+        const auto checksum = crc32(source);
+        batch.block_crc32.push_back(checksum);
+        batch.encoded.source_crc32 = crc32_combine(batch.encoded.source_crc32, checksum, length);
+        offset += length;
+    }
+    batch.encoded.source_crc32_available = true;
+    return batch;
+}
+
 #if SUPERZIP_ENABLE_HIP
 // Purpose: Reject CPU-deflate block tables before entering the AMD HIP-only decode path.
 // Inputs: `blocks` is the archive chunk block table and `action` labels the failing operation.
@@ -147,6 +194,12 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
 // Inputs: `input` owns the uncompressed bytes and remains usable if HIP throws before a successful result.
 // Outputs: Returns HIP-classified blocks/payload and source CRC; may move from `input` only after success.
 EncodedChunk encode_owned_chunk_hip(std::vector<std::byte>& input, const GpuCodecOptions& options);
+
+// Purpose: Submit independently bounded owned blocks to the HIP backend.
+// Inputs: input and lengths have exact validated coverage; options supplies codec policy and operation telemetry.
+// Outputs: Returns ordered encoded blocks and source CRCs; input remains usable if HIP fails before success.
+EncodedBlockBatch encode_owned_block_batch_hip(std::vector<std::byte>& input, std::span<const std::uint32_t> lengths,
+                                               const GpuCodecOptions& options);
 
 // Purpose: Materialize one encoded chunk through the AMD HIP decoder.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output` is the exact decoded buffer, and `options` supplies
@@ -333,6 +386,39 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
     encoded.source_crc32 = crc32(std::span<const std::byte>(input.data(), input.size()));
     encoded.source_crc32_available = true;
     return encoded;
+}
+
+// Purpose: Dispatch a bounded independent-block batch without changing fallback or required-HIP semantics.
+// Inputs: input owns bytes, block_lengths define exact independent boundaries, and options select backend policy.
+// Outputs: Returns one descriptor/CRC per input block; invalid layouts fail before any GPU attempt.
+EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::span<const std::uint32_t> block_lengths,
+                                           const GpuCodecOptions& options) {
+    validate_gpu_codec_options(options);
+    reject_oversized_codec_span(input.size(), "codec batch input");
+    validate_encode_batch(input.size(), block_lengths, options.block_size);
+#if SUPERZIP_ENABLE_HIP
+    if (!options.force_cpu) {
+        std::shared_ptr<GpuTelemetry> attempt_telemetry;
+        const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
+        try {
+            auto batch = encode_owned_block_batch_hip(input, block_lengths, hip_options);
+            batch.encoded.gpu_used = !block_lengths.empty();
+            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+            return batch;
+        } catch (const GpuError&) {
+            if (options.require_gpu) {
+                throw;
+            }
+        }
+    } else if (options.require_gpu) {
+        throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+    }
+#else
+    if (options.require_gpu) {
+        throw GpuError("SuperZip was built without HIP acceleration");
+    }
+#endif
+    return encode_block_batch_cpu(input, block_lengths, archive_codec_options(options));
 }
 
 // Purpose: Decode one native SUZIP chunk through HIP when allowed, otherwise through the CPU codec.

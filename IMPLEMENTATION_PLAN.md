@@ -71,6 +71,12 @@ Security tab or a published release.
    history uses UTF-8 diagnostics for Unicode destination paths. Solid mode,
    timestamp policy, source deletion, and the optional metadata preflight still
    need end-to-end behavior review; these are not covered by the completion fix.
+   Native HIP creation now batches up to 64 small files under an 8 MiB/chunk
+   cap, preserving independent CRCs, source locks, and exact version-three
+   archive bytes. All-level and all-block-size regressions pass; repeated
+   RAM-only comparisons show large local small-file submission gains without
+   ratio changes. See [the measured scope](docs/small-file-gpu-batching.md);
+   sustained throughput and broader release validation remain separate gates.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

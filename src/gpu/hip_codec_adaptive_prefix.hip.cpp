@@ -185,14 +185,15 @@ build_adaptive_prefix_codebook(std::span<const std::byte> block, int compression
 }
 
 // Purpose: Return the expected block byte range for one verified descriptor.
-// Inputs: `input_size`, `block_size`, `block_index`, and `block` describe one dense block in the chunk.
+// Inputs: input_size bounds bytes, block_size caps each block, cursor is its offset, and block supplies its length.
 // Outputs: Returns the block start; throws if verified metadata no longer matches the chunk layout.
-std::size_t checked_block_start(std::size_t input_size, std::uint32_t block_size, std::uint32_t block_index,
+std::size_t checked_block_start(std::size_t input_size, std::uint32_t block_size, std::size_t& cursor,
                                 const BlockDescriptor& block) {
-    const auto start = static_cast<std::size_t>(block_index) * block_size;
-    if (start > input_size || block.uncompressed_len > input_size - start) {
+    const auto start = cursor;
+    if (start > input_size || block.uncompressed_len > input_size - start || block.uncompressed_len > block_size) {
         throw GpuError("GPU adaptive prefix source block exceeds uploaded chunk");
     }
+    cursor += block.uncompressed_len;
     return start;
 }
 
@@ -252,9 +253,10 @@ std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const
         throw GpuError("GPU adaptive baseline block count differs from source");
     }
     block_plans.reserve(source_blocks.size());
+    std::size_t cursor = 0;
     for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
         const auto& source_block = source_blocks[block_index];
-        const auto start = checked_block_start(input.size(), block_size, block_index, source_block);
+        const auto start = checked_block_start(input.size(), block_size, cursor, source_block);
         const auto len = source_block.uncompressed_len;
         const auto& previous = baseline ? baseline->blocks[block_index] : source_block;
         if (previous.uncompressed_len != len) {

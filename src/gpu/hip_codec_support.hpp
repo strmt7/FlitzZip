@@ -624,15 +624,20 @@ inline std::uint16_t sampled_pattern_period(std::span<const std::byte> bytes) {
 }
 
 // Purpose: Build per-block encode candidates that the GPU can verify in fixed-size parallel tiles.
-// Inputs: `input`, `block_size`, and `block_count` describe one bounded archive chunk.
+// Inputs: input and block settings describe bounded bytes; optional lengths define validated independent boundaries.
 // Outputs: Returns raw/fill/pattern candidates; non-raw candidates are provisional until HIP verification succeeds.
 inline std::vector<DeviceBlock> build_encode_analysis_candidates(std::span<const std::byte> input,
-                                                                 std::uint32_t block_size, std::uint32_t block_count) {
+                                                                 std::uint32_t block_size, std::uint32_t block_count,
+                                                                 std::span<const std::uint32_t> lengths = {}) {
     std::vector<DeviceBlock> candidates;
     candidates.reserve(block_count);
+    std::size_t offset = 0;
     for (std::uint32_t block_index = 0; block_index < block_count; ++block_index) {
-        const auto start = static_cast<std::size_t>(block_index) * block_size;
-        const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - start));
+        const auto start = offset;
+        const auto len = lengths.empty()
+                             ? static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - start))
+                             : lengths[block_index];
+        offset += len;
         const auto block = input.subspan(start, len);
         std::uint8_t fill = 0;
         if (sampled_block_is_fill(block, fill)) {
@@ -642,7 +647,7 @@ inline std::vector<DeviceBlock> build_encode_analysis_candidates(std::span<const
                 .reserved = 0,
                 .uncompressed_len = len,
                 .encoded_offset = 0,
-                .output_offset = 0,
+                .output_offset = start,
                 .encoded_len = 0,
             });
             continue;
@@ -654,7 +659,7 @@ inline std::vector<DeviceBlock> build_encode_analysis_candidates(std::span<const
                 .reserved = 0,
                 .uncompressed_len = len,
                 .encoded_offset = 0,
-                .output_offset = 0,
+                .output_offset = start,
                 .encoded_len = period,
             });
             continue;
@@ -665,7 +670,7 @@ inline std::vector<DeviceBlock> build_encode_analysis_candidates(std::span<const
             .reserved = 0,
             .uncompressed_len = len,
             .encoded_offset = 0,
-            .output_offset = 0,
+            .output_offset = start,
             .encoded_len = len,
         });
     }

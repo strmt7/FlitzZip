@@ -31,6 +31,10 @@ explicit:
 
 ## Detection
 
+Small-file GPU submission batching preserves these version-three records and
+independent file boundaries. See [the batching contract](small-file-gpu-batching.md)
+for its resource limits, byte-identity tests, and measurement scope.
+
 Format detection now treats `.suzip` as an extension hint and the footer/index
 magic as the native signature. A renamed native archive can be identified by:
 

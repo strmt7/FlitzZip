@@ -1,5 +1,6 @@
 #include "core/archive.hpp"
 
+#include "core/archive_encode_batch.hpp"
 #include "core/archive_index.hpp"
 #include "core/checksum.hpp"
 #include "core/file_manifest.hpp"
@@ -867,10 +868,19 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     stats.workers = budget.workers;
     stats.inflight_chunks = budget.inflight_chunks;
     std::uint64_t archive_block_count = 0;
-    for (const auto& manifest_entry : manifest.entries) {
+    for (std::size_t entry_index = 0; entry_index < manifest.entries.size(); ++entry_index) {
         if (progress.cancelled()) {
             throw ArchiveError("operation cancelled");
         }
+        const auto remaining_entries = std::span(manifest.entries).subspan(entry_index);
+        const auto batch_count = archive_encode_batch_count(remaining_entries, options);
+        if (batch_count != 0) {
+            compress_manifest_batch(remaining_entries.first(batch_count), options, output, index, stats,
+                                    archive_block_count, progress, progress_callback, gpu_telemetry);
+            entry_index += batch_count - 1U;
+            continue;
+        }
+        const auto& manifest_entry = manifest.entries[entry_index];
         progress.set_current(manifest_entry.archive_path);
         publish_progress(progress, progress_callback);
 
@@ -894,6 +904,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
         progress.finish_entry();
     }
 
+    publish_progress(progress, progress_callback);
     index.index_offset = stream_position(output);
     write_archive_index(output, index);
     index.index_size = stream_position(output) - index.index_offset;

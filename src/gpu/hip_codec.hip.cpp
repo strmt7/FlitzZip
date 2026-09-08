@@ -57,9 +57,8 @@ __device__ __constant__ std::uint32_t kDeviceCrc32Table[256] = {
 // Inputs: See the definition below.
 // Outputs: Writes per-block mismatch flags into device memory.
 __global__ void verify_analysis_candidates_kernel(const std::byte* input, std::size_t input_len,
-                                                  std::uint32_t block_size, const DeviceBlock* candidates,
-                                                  std::uint32_t* mismatches, std::uint32_t block_count,
-                                                  std::uint32_t segments_per_block);
+                                                  const DeviceBlock* candidates, std::uint32_t* mismatches,
+                                                  std::uint32_t block_count, std::uint32_t segments_per_block);
 
 struct PrefixDecodeSegment {
     std::uint64_t codebook_offset;
@@ -210,8 +209,7 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
     auto events = make_hip_event_pair("create verify_analysis_candidates_kernel events");
     check_hip(hipEventRecord(events.start, hipStreamPerThread), "record verify_analysis_candidates_kernel start");
     verify_analysis_candidates_kernel<<<static_cast<unsigned int>(grid64), 256, 0, hipStreamPerThread>>>(
-        device_input, input_len, block_size, device_candidates.get(), device_mismatches.get(), block_count,
-        segments_per_block);
+        device_input, input_len, device_candidates.get(), device_mismatches.get(), block_count, segments_per_block);
     check_hip(hipGetLastError(), "launch verify_analysis_candidates_kernel");
     check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record verify_analysis_candidates_kernel stop");
     finish_measured_kernel(telemetry, events, "synchronize verify_analysis_candidates_kernel");
@@ -307,8 +305,11 @@ void append_verified_encode_payload(EncodedChunk& out, std::span<const std::byte
         if (effective_kind == static_cast<std::uint8_t>(BlockKind::Fill)) {
             continue;
         }
-        const auto start = i * static_cast<std::size_t>(block_size);
+        const auto start = static_cast<std::size_t>(candidates[i].output_offset);
         const auto len = static_cast<std::size_t>(candidates[i].uncompressed_len);
+        if (start > input.size() || len > input.size() - start || len > block_size) {
+            throw GpuError("verified encode block exceeds its input layout");
+        }
         const auto encoded_len = effective_kind == static_cast<std::uint8_t>(BlockKind::Pattern)
                                      ? static_cast<std::size_t>(candidates[i].encoded_len)
                                      : len;
@@ -317,12 +318,11 @@ void append_verified_encode_payload(EncodedChunk& out, std::span<const std::byte
 }
 
 // Purpose: Verify provisional fill/pattern encode candidates over fixed-size GPU tiles.
-// Inputs: `input`, `block_size`, `candidates`, and `segments_per_block` describe candidate work; `mismatches` is one
+// Inputs: `input`, `input_len`, `candidates`, and `segments_per_block` describe candidate work; `mismatches` is one
 // flag per block. Outputs: Atomically marks blocks whose sampled candidate does not describe the full block.
 __global__ void verify_analysis_candidates_kernel(const std::byte* input, std::size_t input_len,
-                                                  std::uint32_t block_size, const DeviceBlock* candidates,
-                                                  std::uint32_t* mismatches, std::uint32_t block_count,
-                                                  std::uint32_t segments_per_block) {
+                                                  const DeviceBlock* candidates, std::uint32_t* mismatches,
+                                                  std::uint32_t block_count, std::uint32_t segments_per_block) {
     const auto global_segment = static_cast<std::uint32_t>(blockIdx.x);
     const auto block_index = global_segment / segments_per_block;
     if (block_index >= block_count) {
@@ -333,7 +333,7 @@ __global__ void verify_analysis_candidates_kernel(const std::byte* input, std::s
         return;
     }
     const auto segment_index = global_segment % segments_per_block;
-    const auto block_start = static_cast<std::size_t>(block_index) * block_size;
+    const auto block_start = static_cast<std::size_t>(candidate.output_offset);
     const auto block_end = min(block_start + static_cast<std::size_t>(candidate.uncompressed_len), input_len);
     const auto segment_start = block_start + static_cast<std::size_t>(segment_index) * kAnalyzeSegmentBytes;
     if (segment_start >= block_end) {
@@ -451,6 +451,29 @@ __global__ void crc32_segments_kernel(const std::byte* input, std::size_t input_
         .crc32 = crc ^ 0xFFFFFFFFU,
         .length = static_cast<std::uint32_t>(end - start),
     };
+}
+
+struct CrcInputRange {
+    std::uint64_t offset;
+    std::uint32_t length;
+};
+
+// Purpose: Checksum independent source ranges in a single HIP launch without crossing file/block boundaries.
+// Inputs: input and ranges are validated device storage; segment_count bounds the output table.
+// Outputs: Writes one finalized CRC and byte count per range, in stable input order.
+__global__ void crc32_independent_ranges_kernel(const std::byte* input, const CrcInputRange* ranges,
+                                                DeviceCrcSegment* segments, std::uint32_t segment_count) {
+    const auto index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (index >= segment_count) {
+        return;
+    }
+    const auto range = ranges[index];
+    std::uint32_t checksum = 0xFFFFFFFFU;
+    for (std::uint32_t pos = 0; pos < range.length; ++pos) {
+        const auto octet = static_cast<std::uint8_t>(input[range.offset + pos]);
+        checksum = kDeviceCrc32Table[(checksum ^ octet) & 0xFFU] ^ (checksum >> 8U);
+    }
+    segments[index] = DeviceCrcSegment{.crc32 = checksum ^ 0xFFFFFFFFU, .length = range.length};
 }
 
 // Purpose: Locate the decoded block that contains one output byte offset.
@@ -639,6 +662,62 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
     device_segments.reset_checked("hipFree CRC segments");
     return combine_crc_segments(host_segments);
+}
+
+// Purpose: Calculate a GPU source CRC for each independent block in a validated bounded batch.
+// Inputs: device_input contains the concatenated blocks; lengths define exact boundaries; telemetry records costs.
+// Outputs: Returns ordered block CRCs after one checksum launch; copies back metadata only and releases all scratch.
+std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_input,
+                                                      std::span<const std::uint32_t> lengths, GpuTelemetry* telemetry) {
+    std::vector<CrcInputRange> ranges;
+    std::size_t offset = 0;
+    for (const auto length : lengths) {
+        for (std::uint32_t pos = 0; pos < length;) {
+            const auto count = std::min(kCrcSegmentBytes, length - pos);
+            ranges.push_back(CrcInputRange{.offset = offset + pos, .length = count});
+            pos += count;
+        }
+        offset += length;
+    }
+    if (ranges.empty()) {
+        return {};
+    }
+    const auto range_bytes = checked_multiply_bytes(ranges.size(), sizeof(CrcInputRange), "batch CRC ranges");
+    const auto segment_bytes = checked_multiply_bytes(ranges.size(), sizeof(DeviceCrcSegment), "batch CRC results");
+    const auto total_bytes = checked_add_bytes(range_bytes, segment_bytes, "batch CRC scratch");
+    HipDeviceMemoryReservation reservation(total_bytes, "batch CRC scratch");
+    HipDeviceBuffer<CrcInputRange> device_ranges(range_bytes, "hipMalloc batch CRC ranges");
+    HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc batch CRC results");
+    record_gpu_device_allocation_bytes(telemetry, total_bytes);
+    check_hip(hipMemcpy(device_ranges.get(), ranges.data(), range_bytes, hipMemcpyHostToDevice),
+              "hipMemcpy batch CRC ranges");
+    record_gpu_h2d_bytes(telemetry, range_bytes);
+    const auto count = static_cast<std::uint32_t>(ranges.size());
+    constexpr unsigned int threads = 256;
+    const auto grid = (count + threads - 1U) / threads;
+    auto events = make_hip_event_pair("create independent CRC events");
+    check_hip(hipEventRecord(events.start, hipStreamPerThread), "record independent CRC start");
+    crc32_independent_ranges_kernel<<<grid, threads, 0, hipStreamPerThread>>>(device_input, device_ranges.get(),
+                                                                              device_segments.get(), count);
+    check_hip(hipGetLastError(), "launch independent CRC kernel");
+    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "record independent CRC stop");
+    finish_measured_kernel(telemetry, events, "synchronize independent CRC kernel");
+    std::vector<DeviceCrcSegment> segments(count);
+    check_hip(hipMemcpy(segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
+              "hipMemcpy independent CRC results");
+    record_gpu_d2h_bytes(telemetry, segment_bytes);
+    device_ranges.reset_checked("hipFree batch CRC ranges");
+    device_segments.reset_checked("hipFree batch CRC results");
+    std::vector<std::uint32_t> checksums;
+    checksums.reserve(lengths.size());
+    std::size_t first = 0;
+    for (const auto length : lengths) {
+        const auto segment_count = crc_segment_count(length);
+        checksums.push_back(
+            combine_crc_segments(std::span<const DeviceCrcSegment>(segments).subspan(first, segment_count)));
+        first += segment_count;
+    }
+    return checksums;
 }
 
 // Purpose: Launch the HIP decoded-stream CRC kernel without materializing decoded output.
@@ -903,11 +982,13 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
 }
 
 // Purpose: Classify one uncompressed chunk on the AMD GPU and compute its source CRC in VRAM.
-// Inputs: `input` is a bounded host chunk, `owned_input` optionally owns the same bytes, and `options` supplies tuning.
+// Inputs: input is bounded host bytes, owned_input optionally owns them, and options supplies tuning.
+// Optional block_lengths define exact independent boundaries; block_crcs receives their GPU checksums when supplied.
 // Outputs: Returns fill/raw/pattern descriptors, payload bytes, and GPU source CRC; may move `owned_input` after
 // success.
 EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
-                                   const GpuCodecOptions& options) {
+                                   const GpuCodecOptions& options, std::span<const std::uint32_t> block_lengths = {},
+                                   std::vector<std::uint32_t>* block_crcs = nullptr) {
     if (input.empty()) {
         EncodedChunk empty;
         empty.source_crc32 = 0;
@@ -921,22 +1002,33 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         throw GpuError(info.status);
     }
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
-    const auto computed_block_count = (input.size() + block_size - 1U) / block_size;
+    const auto computed_block_count =
+        block_lengths.empty() ? (input.size() + block_size - 1U) / block_size : block_lengths.size();
     if (computed_block_count > std::numeric_limits<std::uint32_t>::max()) {
         throw GpuError("encode block count exceeds HIP launch limits");
     }
     const auto block_count = static_cast<std::uint32_t>(computed_block_count);
-    auto host_candidates = build_encode_analysis_candidates(input, block_size, block_count);
+    auto host_candidates = build_encode_analysis_candidates(input, block_size, block_count, block_lengths);
     HipDeviceMemoryReservation reservation(input.size(), "encode input");
     HipDeviceBuffer<std::byte> device_input(input.size(), "hipMalloc input");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
     {
         check_hip(hipMemcpy(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice), "hipMemcpy input");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
-        const auto source_crc32 = compute_crc32_device(device_input.get(), static_cast<std::uint64_t>(input.size()),
-                                                       telemetry, "encode CRC device memory");
-        const auto mismatches = verify_encode_analysis_candidates_device(device_input.get(), input.size(), block_size,
-                                                                         host_candidates, telemetry);
+        std::uint32_t source_crc32 = 0;
+        if (block_crcs != nullptr) {
+            *block_crcs = compute_block_crc32_device(device_input.get(), block_lengths, telemetry);
+            for (std::size_t i = 0; i < block_lengths.size(); ++i) {
+                source_crc32 = crc32_combine(source_crc32, (*block_crcs)[i], block_lengths[i]);
+            }
+        } else {
+            source_crc32 = compute_crc32_device(device_input.get(), static_cast<std::uint64_t>(input.size()), telemetry,
+                                                "encode CRC device memory");
+        }
+        const auto verify_block_size =
+            block_lengths.empty() ? block_size : *std::max_element(block_lengths.begin(), block_lengths.end());
+        const auto mismatches = verify_encode_analysis_candidates_device(device_input.get(), input.size(),
+                                                                         verify_block_size, host_candidates, telemetry);
 
         EncodedChunk out;
         out.source_crc32 = source_crc32;
@@ -957,9 +1049,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             }
         }
         if (all_raw) {
-            if (owned_input != nullptr) {
-                out.payload = std::move(*owned_input);
-            } else {
+            if (owned_input == nullptr) {
                 out.payload.resize(input.size());
                 std::copy(input.begin(), input.end(), out.payload.begin());
             }
@@ -967,6 +1057,9 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             append_verified_encode_payload(out, input, block_size, host_candidates, mismatches);
         }
         device_input.reset_checked("hipFree input");
+        if (all_raw && owned_input != nullptr) {
+            out.payload = std::move(*owned_input);
+        }
         return out;
     }
 }
@@ -983,6 +1076,16 @@ EncodedChunk encode_chunk_hip(std::span<const std::byte> input, const GpuCodecOp
 // Outputs: Returns descriptors, payload, and GPU source CRC; moves `input` into payload only for all-raw chunks.
 EncodedChunk encode_owned_chunk_hip(std::vector<std::byte>& input, const GpuCodecOptions& options) {
     return encode_chunk_hip_impl(std::span<const std::byte>(input.data(), input.size()), &input, options);
+}
+
+// Purpose: Encode a validated dense batch with independent boundaries and device-computed per-block CRCs.
+// Inputs: input owns all bytes; lengths and options passed public validation before HIP dispatch.
+// Outputs: Returns ordered block payloads/CRCs; input moves only after all fallible GPU cleanup succeeds.
+EncodedBlockBatch encode_owned_block_batch_hip(std::vector<std::byte>& input, std::span<const std::uint32_t> lengths,
+                                               const GpuCodecOptions& options) {
+    EncodedBlockBatch batch;
+    batch.encoded = encode_chunk_hip_impl(input, &input, options, lengths, &batch.block_crc32);
+    return batch;
 }
 
 // Purpose: Decode GPU-supported block kinds into a caller-provided host buffer through AMD HIP.
