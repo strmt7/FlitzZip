@@ -611,12 +611,51 @@ static mz_bool tdefl_compress_lz_codes(tdefl_compressor *d)
 }
 #endif /* MINIZ_USE_UNALIGNED_LOADS_AND_STORES && MINIZ_LITTLE_ENDIAN && MINIZ_HAS_64BIT_REGISTERS */
 
+    /* Purpose: Select the smaller fixed or dynamic Huffman representation without repeating LZ search or token packing. */
+    /* Inputs: d contains one block's symbol counts, tokens, and the output bit state after BFINAL. */
+    /* Outputs: Writes the selected header and prepares its code tables; ties retain dynamic coding. */
+    static void tdefl_start_best_block(tdefl_compressor *d)
+    {
+        mz_uint i;
+        mz_uint8 *saved_output = d->m_pOutput_buf;
+        const mz_uint saved_bit_buffer = d->m_bit_buffer;
+        const mz_uint saved_bits_in = d->m_bits_in;
+        mz_uint64 dynamic_bits, fixed_bits = 2;
+
+        tdefl_start_dynamic_block(d);
+        dynamic_bits = (mz_uint64)(d->m_pOutput_buf - saved_output) * 8 + d->m_bits_in - saved_bits_in;
+        /* Length and distance extra bits are identical in both candidates and cancel from the comparison. */
+        for (i = 0; i < TDEFL_MAX_HUFF_SYMBOLS_0; ++i)
+        {
+            const mz_uint fixed_size = (i <= 143) ? 8 : ((i <= 255) ? 9 : ((i <= 279) ? 7 : 8));
+            const mz_uint64 count = d->m_huff_count[0][i];
+            fixed_bits += count * fixed_size;
+            dynamic_bits += count * d->m_huff_code_sizes[0][i];
+        }
+        for (i = 0; i < TDEFL_MAX_HUFF_SYMBOLS_1; ++i)
+        {
+            const mz_uint64 count = d->m_huff_count[1][i];
+            fixed_bits += count * 5;
+            dynamic_bits += count * d->m_huff_code_sizes[1][i];
+        }
+        if (fixed_bits < dynamic_bits)
+        {
+            d->m_pOutput_buf = saved_output;
+            d->m_bit_buffer = saved_bit_buffer;
+            d->m_bits_in = saved_bits_in;
+            tdefl_start_static_block(d);
+        }
+    }
+
+    /* Purpose: Emit one block using forced fixed coding or the cheaper measured Huffman representation. */
+    /* Inputs: d holds buffered tokens and static_block preserves explicit or short-block fixed coding. */
+    /* Outputs: Packs tokens exactly once and reports whether the bounded output buffer was sufficient. */
     static mz_bool tdefl_compress_block(tdefl_compressor *d, mz_bool static_block)
     {
         if (static_block)
             tdefl_start_static_block(d);
         else
-            tdefl_start_dynamic_block(d);
+            tdefl_start_best_block(d);
         return tdefl_compress_lz_codes(d);
     }
 

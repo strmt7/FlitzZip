@@ -4,6 +4,7 @@
 #include "core/result.hpp"
 #include "gzip/gzip_stream.hpp"
 #include "gzip/gzip_adapter.hpp"
+#include "miniz.h"
 #include "zstd/zstd_stream.hpp"
 #include "zstd/zstd_adapter.hpp"
 
@@ -11,8 +12,50 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 
 namespace {
+
+// Purpose: Exercise miniz block selection with bounded output windows and automatic cleanup.
+// Inputs: In-memory bytes, codec effort/strategy, and the maximum output bytes offered per call.
+// Outputs: Returns a completed zlib stream; requires forward progress and successful codec finalization.
+std::vector<unsigned char> encode_miniz_candidate(const std::string& input, int level, int strategy,
+                                                  std::size_t output_window) {
+    mz_stream stream{};
+    REQUIRE_EQ(mz_deflateInit2(&stream, level, MZ_DEFLATED, MZ_DEFAULT_WINDOW_BITS, 8, strategy), MZ_OK);
+    std::unique_ptr<mz_stream, decltype(&mz_deflateEnd)> cleanup(&stream, &mz_deflateEnd);
+    std::vector<unsigned char> output(mz_compressBound(static_cast<mz_ulong>(input.size())));
+    stream.next_in = reinterpret_cast<const unsigned char*>(input.data());
+    stream.avail_in = static_cast<unsigned int>(input.size());
+    for (;;) {
+        REQUIRE_TRUE(stream.total_out < output.size());
+        stream.next_out = output.data() + stream.total_out;
+        stream.avail_out = static_cast<unsigned int>(std::min(output.size() - stream.total_out, output_window));
+        const auto previous_output = stream.total_out;
+        const auto status = mz_deflate(&stream, MZ_FINISH);
+        if (status == MZ_STREAM_END) {
+            break;
+        }
+        REQUIRE_EQ(status, MZ_OK);
+        REQUIRE_TRUE(stream.total_out > previous_output);
+    }
+    REQUIRE_EQ(stream.total_in, input.size());
+    output.resize(stream.total_out);
+    return output;
+}
+
+// Purpose: Restore a generated miniz stream into exactly the expected bounded fixture size.
+// Inputs: A complete zlib stream and its known original bytes.
+// Outputs: Requires successful decompression, exact length, and byte equality.
+void require_miniz_candidate_roundtrip(const std::vector<unsigned char>& encoded, const std::string& expected) {
+    std::string decoded(expected.size(), '\0');
+    auto size = static_cast<mz_ulong>(decoded.size());
+    REQUIRE_EQ(mz_uncompress(reinterpret_cast<unsigned char*>(decoded.data()), &size, encoded.data(),
+                             static_cast<mz_ulong>(encoded.size())),
+               MZ_OK);
+    REQUIRE_EQ(size, expected.size());
+    REQUIRE_EQ(decoded, expected);
+}
 
 // Purpose: Read complete bounded fixture bytes and reject missing or unreadable fixture files.
 // Inputs: Path to a test-owned small file.
@@ -138,6 +181,59 @@ void require_consistent_stream_partitioning(const std::string& codec) {
 }
 
 }  // namespace
+
+// Purpose: Prevent dynamic Huffman metadata from overwhelming a short repeated sequence.
+// Inputs: A 511-byte period-three fixture at all efforts with whole and one-byte output windows.
+// Outputs: Requires default coding no larger than forced fixed coding and byte-identical incremental output.
+TEST_CASE(compression_stream_miniz_selects_smaller_huffman_block) {
+    std::string input(511U, '\0');
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        input[i] = static_cast<char>('a' + i % 3U);
+    }
+    for (int level = 1; level <= 9; ++level) {
+        const auto fixed = encode_miniz_candidate(input, level, MZ_FIXED, 65536U);
+        const auto selected = encode_miniz_candidate(input, level, MZ_DEFAULT_STRATEGY, 65536U);
+        REQUIRE_TRUE(selected.size() <= fixed.size());
+        REQUIRE_TRUE(selected.size() > 2U);
+        REQUIRE_EQ((selected[2] >> 1U) & 3U, 1U);
+        REQUIRE_EQ(encode_miniz_candidate(input, level, MZ_DEFAULT_STRATEGY, 1U), selected);
+        require_miniz_candidate_roundtrip(selected, input);
+    }
+}
+
+// Purpose: Check block-type cost selection over mixed alphabets, multiple blocks, and output-buffer boundaries.
+// Inputs: Four deterministic distributions across six sizes and three search efforts.
+// Outputs: Requires default coding no larger than forced fixed coding and exact decoding under fragmented output.
+TEST_CASE(compression_stream_miniz_huffman_cost_corpus) {
+    bool observed_dynamic_saving = false;
+    for (const auto size : {512U, 4096U, 32768U, 65536U, 131073U, 262145U}) {
+        for (unsigned int profile = 0; profile < 4U; ++profile) {
+            std::string input(size, '\0');
+            std::uint32_t state = 0x91AF386BU;
+            for (std::size_t i = 0; i < input.size(); ++i) {
+                state ^= state << 13U;
+                state ^= state >> 17U;
+                state ^= state << 5U;
+                const auto value = static_cast<unsigned char>(state >> 24U);
+                input[i] = static_cast<char>(profile == 1U ? value & 15U : value);
+                if (profile == 2U && i >= 16384U) {
+                    input[i] = input[i % 16384U];
+                } else if (profile == 3U && i % 32768U < 16384U) {
+                    input[i] = static_cast<char>(i % 3U);
+                }
+            }
+            for (const int level : {1, 5, 9}) {
+                const auto fixed = encode_miniz_candidate(input, level, MZ_FIXED, 65536U);
+                const auto selected = encode_miniz_candidate(input, level, MZ_DEFAULT_STRATEGY, 65536U);
+                REQUIRE_TRUE(selected.size() <= fixed.size());
+                observed_dynamic_saving = observed_dynamic_saving || selected.size() < fixed.size();
+                REQUIRE_EQ(encode_miniz_candidate(input, level, MZ_DEFAULT_STRATEGY, 257U), selected);
+                require_miniz_candidate_roundtrip(selected, input);
+            }
+        }
+    }
+    REQUIRE_TRUE(observed_dynamic_saving);
+}
 
 // Purpose: Protect Gzip destinations when compression options are rejected.
 // Inputs: Existing and missing disposable destinations with invalid levels.

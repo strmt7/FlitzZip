@@ -76,7 +76,8 @@ output capacity is one byte less than raw size; a candidate that fills it
 without finishing cannot save space. Existing descriptors and decoding remain
 unchanged, so this does not require a new native format version.
 
-September 2026 checks covered all nine efforts, tiny framing boundaries,
+At cutoff-fix checkpoint `4ef1d2c`, September 2026 checks covered all nine
+efforts, tiny framing boundaries,
 periodic/random inputs, and short tails after full-sized raw blocks with
 multiple worker budgets. An independent zlib 1.3.1 reader and the previous
 SuperZip executable verified 189 generated archives: 63 became smaller, none
@@ -85,6 +86,38 @@ grew, and tested inputs of 512 bytes or more stayed byte-identical. For one
 and the complete archive from 609 to 124 bytes. These are fixture-specific
 size results, not speed or GPU claims. The filesystem correctness experiment
 wrote 123,006 bytes of fixtures and archives, below the 64 MiB smoke limit.
+
+### Shared Deflate Block Selection
+
+The later miniz block selector compares dynamic header and symbol-code costs
+with fixed Huffman coding before packing tokens. Match-length/distance extra
+bits are identical for both candidates. It does not rerun substring search or
+pack both candidates. Explicit fixed/raw strategies and the existing tiny-block
+fixed fast path remain intact; dynamic wins ties and raw remains available.
+
+Independent before/after checks covered 300 real archives across native CPU
+SUZIP, ZIP, Gzip, TAR.GZ, and CPIO.GZ, with periodic, low-alphabet, random, and
+repeated-record inputs. All decoded exactly; 57 became smaller and none grew.
+The previous SuperZip executable also verified every new native archive.
+Fixture/archive writes totaled 11,587,837 bytes, below the 64 MiB smoke cap.
+Selected level-9 results for the 511-byte period-three fixture are complete
+archive/stream sizes, measured after the separate native cutoff fix above:
+
+| Format | Before Bytes | After Bytes |
+| --- | ---: | ---: |
+| Native SUZIP, CPU | 124 | 114 |
+| ZIP | 152 | 142 |
+| Gzip | 38 | 28 |
+| TAR.GZ | 110 | 99 |
+| CPIO.GZ | 105 | 91 |
+
+These fixture-specific size results do not establish a speedup or GPU gain.
+A three-pair, alternating 10 GiB RAM-only CPU timing series was attempted at
+level 5, 1 MiB blocks, and two pipeline workers. Three Mixed runs completed
+before the next baseline hit the existing 80% host-RAM guard. The paired
+series and the other profiles therefore remain incomplete; those samples do
+not support a throughput conclusion. The guard was not weakened and unrelated
+host processes were left alone.
 
 ## Benchmark Score
 

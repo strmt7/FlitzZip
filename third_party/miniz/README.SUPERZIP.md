@@ -42,3 +42,18 @@ archive.
   caller buffer addresses in `tdefl_compressor`.
 - Upstream maintenance notes in comments were reworded so security scanners do
   not report incomplete-production-work markers.
+
+## Compression Changes
+
+- When a block would otherwise use dynamic Huffman coding, its exact dynamic
+  header and symbol-code cost is compared with fixed Huffman coding. Common
+  length/distance extra bits cancel from that comparison. A smaller fixed
+  candidate restores the saved output bit state before writing its header;
+  ties keep dynamic coding. Tokens and substring matches are not regenerated.
+- Explicit fixed/raw strategies, the existing below-48-byte fixed fast path,
+  and the raw-block fallback remain unchanged. This is not a globally optimal
+  parser or a new Deflate format.
+- Regression tests cover all nine efforts on short repeats, four distributions
+  and multi-block sizes, exact decoding, and one-byte/257-byte output windows.
+  Independent ZIP, Gzip, TAR.GZ, CPIO.GZ, and native archive checks cover the
+  shared production writers. Upstream provenance archives remain unmodified.

@@ -16,8 +16,10 @@ native `.suzip` archives. The `.suzip` required-GPU boundary remains AMD
 HIP-only; miniz does not provide GPU acceleration, does not finish required-HIP
 decode work, and is not an alternate archive pipeline.
 
-The production copy under `third_party/miniz/` carries narrow local hardening
-patches. The unmodified upstream 3.1.2 source archive and checksum are stored
+The production copy under `third_party/miniz/` carries local hardening patches
+and measured Huffman block-cost selection, documented in
+`third_party/miniz/README.SUPERZIP.md`. The unmodified upstream 3.1.2 source
+archive and checksum are stored
 under `third_party/upstream/miniz/3.1.2/` for provenance. Do not edit the
 upstream archive; production fixes belong in `third_party/miniz/` and must be
 covered by tests and security scanning.

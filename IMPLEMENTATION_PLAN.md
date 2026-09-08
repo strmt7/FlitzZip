@@ -51,6 +51,10 @@ Security tab or a published release.
    Actual encoded size selects Raw or Deflate with bounded candidate capacity.
    All-nine-level tests and 189 independently decoded real archives establish
    small-file/tail savings and backward-reader compatibility, not a speed gain.
+   The shared miniz backend now compares fixed and dynamic Huffman costs before
+   packing eligible blocks, without repeating match search. Independent checks
+   across 300 native/ZIP/Gzip/TAR.GZ/CPIO.GZ archives found 57 size reductions
+   and no growth; throughput and broader release validation remain separate.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
