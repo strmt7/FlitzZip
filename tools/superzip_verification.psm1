@@ -255,7 +255,8 @@ function Get-SuperZipVerificationScope {
 
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^tools/(superzip_verification\.psm1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
+        '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
+        '^\.clusterfuzzlite/(build\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
     )
@@ -263,7 +264,7 @@ function Get-SuperZipVerificationScope {
     $touchesProductionSource = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/', '^CMakeLists\.txt$', '^cmake/', '^third_party/(?!upstream/)')
     $touchesArchiveParser = Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^src/(ar|arc|arj|base64|bzip2|cab|cpio|gzip|hqx|iso|lha|lzip|lzma|macbinary|rpm|sevenzip|tar|unix_compress|uue|wim|xar|xxe|xz|zip|zstd)/',
-        '^src/core/(archive|archive_format|archive_index|file_manifest|file_publish|path_safety|result|progress)\.',
+        '^src/core/(archive|archive_format|archive_index|archive_name_encoding|file_manifest|file_publish|path_safety|result|progress)\.',
         '^tests/cpp/test_.*(compat|archive|path|format).*\.cpp$',
         '^fuzz/'
     )
@@ -272,7 +273,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows)\.ps1$',
         '^\.github/'
     ))
-    $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$')
+    $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-SuperZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/superzip_brand_logo')
     $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$', '^\.github/actions/windows-release/', '^\.github/workflows/release\.yml$')
     $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern @(

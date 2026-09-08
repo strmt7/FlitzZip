@@ -1,6 +1,7 @@
 #include "app/main_window_impl.hpp"
 
 #include "app/log_policy.hpp"
+#include "core/path_text.hpp"
 
 #include <cmath>
 
@@ -191,6 +192,8 @@ void MainWindow::continue_extract_overwrite_prompt() {
 // Inputs: `request` contains archive, destination, GPU, security, and overwrite choices.
 // Outputs: Starts the worker, updates progress/history/status, and performs pre/post security scans.
 void MainWindow::launch_extract_job(ExtractJobRequest request) {
+    const auto destination_to_open =
+        operation_destination_path(OperationKind::Extract, request.output, false, request.open_destination);
     run_job(
         [this, request = std::move(request)] {
             const auto outputs = extraction_outputs_for_archives(request.archives, request.output);
@@ -200,14 +203,15 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                 const auto archive_source = pin_source_file(archive);
                 if (request.integrity) {
                     const auto hash = hash_path(archive_source.path(), IntegrityMode::Sha256);
-                    append_history_entry("Security", archive.filename().string(), archive.string(),
-                                         integrity_history_status("Archive", hash), true);
+                    append_history_entry("Security", path_diagnostic_utf8(archive.filename()),
+                                         path_diagnostic_utf8(archive), integrity_history_status("Archive", hash),
+                                         true);
                 }
                 if (request.defender) {
                     const auto pre_scan = scan_with_windows_defender(archive_source.path(), DefenderScanMode::FullPath);
-                    append_history_entry("Security", archive.filename().string(), archive.string(),
-                                         defender_history_status("Defender archive", pre_scan),
-                                         defender_scan_passed(pre_scan));
+                    append_history_entry(
+                        "Security", path_diagnostic_utf8(archive.filename()), path_diagnostic_utf8(archive),
+                        defender_history_status("Defender archive", pre_scan), defender_scan_passed(pre_scan));
                     require_clean_defender_scan(pre_scan, archive);
                 }
                 auto progress_callback = [this](const ProgressSnapshot& snapshot) {
@@ -222,9 +226,9 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                                                  request.gpu_required, false, progress_callback, request.name_encoding);
                     const auto post_scan =
                         scan_with_windows_defender(quarantine.staging_directory(), DefenderScanMode::FullPath);
-                    append_history_entry("Security", output.filename().string(), output.string(),
-                                         defender_history_status("Defender output", post_scan),
-                                         defender_scan_passed(post_scan));
+                    append_history_entry(
+                        "Security", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
+                        defender_history_status("Defender output", post_scan), defender_scan_passed(post_scan));
                     require_clean_defender_scan(post_scan, output);
                     quarantine.publish(request.overwrite);
                 } else {
@@ -233,17 +237,18 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                                                  request.overwrite, progress_callback, request.name_encoding);
                 }
                 std::ostringstream line;
-                line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
-                     << stats.seconds << "s";
-                append_history_entry("Extract", archive.filename().string(), output.string(), line.str(), true);
+                line << "Extracted " << archive_format_info(archive_format).key << " to "
+                     << path_diagnostic_utf8(output) << " in " << stats.seconds << "s";
+                append_history_entry("Extract", path_diagnostic_utf8(archive.filename()), path_diagnostic_utf8(output),
+                                     line.str(), true);
                 if (request.integrity) {
                     const auto hash = hash_path(output, IntegrityMode::Sha256);
-                    append_history_entry("Security", output.filename().string(), output.string(),
-                                         integrity_history_status("Output", hash), true);
+                    append_history_entry("Security", path_diagnostic_utf8(output.filename()),
+                                         path_diagnostic_utf8(output), integrity_history_status("Output", hash), true);
                 }
             }
         },
-        "Extracting", OperationKind::Extract);
+        "Extracting", OperationKind::Extract, destination_to_open);
 }
 
 // Purpose: Start a background extraction job from the current GUI queue.
@@ -261,6 +266,8 @@ void MainWindow::start_extract() {
         request.name_encoding = selected_name_encoding(state_).encoding;
         request.integrity = state_.integrity_hash_opt_in;
         request.defender = state_.defender_scan_opt_in;
+        request.open_destination =
+            applied_settings_.open_destination_after_operation || state_.open_destination_after_extract;
         request.output = extraction_output_path_for(state_);
     }
     if (request.archives.empty()) {
@@ -279,9 +286,10 @@ void MainWindow::start_extract() {
 }
 
 // Purpose: Run one long operation on the background worker thread.
-// Inputs: `job` performs the operation and `label` is the visible busy status.
+// Inputs: `job` performs the operation, `label` is busy text, and `destination_to_open` is a captured optional folder.
 // Outputs: Updates status, progress, history rows, and optional summary selection when the worker completes.
-void MainWindow::run_job(std::function<void()> job, std::string label, OperationKind operation) {
+void MainWindow::run_job(std::function<void()> job, std::string label, OperationKind operation,
+                         std::filesystem::path destination_to_open) {
     if (worker_running_.exchange(true)) {
         return;
     }
@@ -294,6 +302,7 @@ void MainWindow::run_job(std::function<void()> job, std::string label, Operation
     {
         std::lock_guard lock(mutex_);
         operation_summary_.begin(state_.history.size());
+        operation_destination_.begin(std::move(destination_to_open));
         state_.status = label;
         state_.progress = {};
         state_.progress.operation = operation;
@@ -350,6 +359,7 @@ void MainWindow::run_job(std::function<void()> job, std::string label, Operation
         {
             std::lock_guard lock(mutex_);
             operation_summary_.complete(state_.history, failure_operation, show_summary);
+            operation_destination_.complete(completed);
         }
         request_repaint();
     });

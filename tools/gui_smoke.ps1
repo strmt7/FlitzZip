@@ -349,8 +349,13 @@ function Wait-GuiLogEvent {
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     while ($timer.Elapsed.TotalSeconds -lt 5) {
         if ((Get-Item -LiteralPath $Path).Length -gt $PreviousLength) {
-            $lastLine = Get-Content -LiteralPath $Path -Tail 1
-            if ($lastLine -like "*$Message*") { return }
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                $stream.Position = $PreviousLength
+                $reader = [System.IO.StreamReader]::new($stream)
+                try { $newRows = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            } finally { $stream.Dispose() }
+            if ($newRows.Contains($Message)) { return }
         }
         Start-Sleep -Milliseconds 50
     }
@@ -367,6 +372,14 @@ function Assert-OperationSummary {
     $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
     $output = Join-Path $Destination 'SuperZip-output.zst'
     Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected $true
+    Assert-SettingsValue -Path $SettingsPath -Name 'openDestinationAfterOperation' -Expected $false
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
+    Assert-SettingsValue -Path $SettingsPath -Name 'openDestinationAfterOperation' -Expected $true
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
     Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($InputPath)
     Start-Sleep -Milliseconds 150
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
@@ -375,14 +388,17 @@ function Assert-OperationSummary {
     foreach ($scenario in @('Enabled', 'Disabled', 'Failure')) {
         if ($scenario -ne 'Enabled') {
             Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
             Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
             $length = (Get-Item -LiteralPath $logPath).Length
             Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
             Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
             Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected ($scenario -eq 'Failure')
+            Assert-SettingsValue -Path $SettingsPath -Name 'openDestinationAfterOperation' -Expected ($scenario -eq 'Failure')
             if ($scenario -eq 'Disabled') {
                 # An unapplied enable must not change the next job's captured preference.
                 Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
             } else {
                 Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4 -Synchronous
                 Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 220 -DesignY 154 -Synchronous
@@ -406,10 +422,15 @@ function Assert-OperationSummary {
             Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
             $eventText = if ($scenario -eq 'Disabled') { 'Compress: completed' } else { 'Operation summary shown: Compress' }
             Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message $eventText
-            $newRows = @(Get-Content -LiteralPath $logPath | Select-Object -Skip $lineCount)
+            $newRows = @(Get-Content -LiteralPath $logPath -Encoding UTF8 | Select-Object -Skip $lineCount)
             $expectedResult = if ($scenario -eq 'Failure') { 'Compress: failed' } else { 'Compress: completed' }
             if (-not ($newRows | Where-Object { $_.Contains($expectedResult) })) {
                 throw "Summary scenario $scenario did not report its expected worker result: $expectedResult."
+            }
+            $openRows = @($newRows | Where-Object { $_.Contains('Destination folder open suppressed (GUI smoke):') })
+            $expectedOpens = if ($scenario -eq 'Enabled') { 1 } else { 0 }
+            if ($openRows.Count -ne $expectedOpens -or ($expectedOpens -eq 1 -and -not $openRows[0].EndsWith($Destination))) {
+                throw "Summary scenario $scenario did not honor the captured destination-opening preference."
             }
         } finally {
             if ($null -ne $outputLock) { $outputLock.Dispose() }
@@ -429,10 +450,12 @@ function Assert-OperationSummary {
     }
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
     Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
     Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected $false
+    Assert-SettingsValue -Path $SettingsPath -Name 'openDestinationAfterOperation' -Expected $false
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1130 -DesignY 91 -Synchronous
 }
@@ -673,7 +696,11 @@ function Assert-LegacyNameExtraction {
             throw 'Cannot restore the smoke window after the encoding test.'
         }
     }
+    $logPath = Join-Path ([System.IO.Path]::GetTempPath()) 'SuperZip/superzip.log'
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 368 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message "Destination folder open suppressed (GUI smoke): $OutputRoot"
     $expected = @(Get-ChildItem -LiteralPath (Join-Path $FixtureRoot 'expected') -File)
     foreach ($file in $expected) {
         $target = Join-Path $OutputRoot $file.Name
@@ -684,6 +711,7 @@ function Assert-LegacyNameExtraction {
             throw "GUI legacy-name extraction failed for $($file.Name)."
         }
     }
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 368 -Synchronous
     Invoke-DropdownExercise -Handle $Handle -Dpi $Dpi -Name 'Extract-NameEncoding-UTF8' -OpenX 300 -OpenY 451 -SelectX 300 -SelectY 494 -MenuLeft 116 -MenuTop 478 -MenuRight 617 -MenuBottom 546 -BasePath $BasePath -Extension $Extension
 }
 
@@ -787,7 +815,7 @@ function Assert-CompactFormLayout {
 }
 
 $smokeRoot = Join-Path $repo "out\gui-smoke-work"
-$smokeDestination = Join-Path $smokeRoot "SuperZip-destination"
+$smokeDestination = Join-Path $smokeRoot ("SuperZip-destination-" + [char]0x03A9)
 New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
 $smokeInput = Join-Path $smokeRoot "drag-drop-input.txt"
 $smokeInputTwo = Join-Path $smokeRoot "drag-drop-input-two.txt"
@@ -846,6 +874,7 @@ $previousSmokeFolder = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE
 $previousSmokeAutoClose = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", "Process")
 $previousSmokeCloseFile = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", "Process")
 $previousSmokeSettingsRedirect = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "Process")
+$previousSmokeShellOpen = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "Process")
 $smokeAutoCloseMs = 300000
 if ($smokeAutoCloseMs -lt 240000) {
     throw "GUI smoke auto-close timeout must leave enough time for the full tab/control pass."
@@ -856,6 +885,7 @@ if ($smokeAutoCloseMs -lt 240000) {
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", [string]$smokeAutoCloseMs, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $smokeCloseFile, "Process")
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", "1", "Process")
+[Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "1", "Process")
 
 $previousDpiContext = [SuperZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
 $process = Start-Process -FilePath $exe -PassThru
@@ -1343,6 +1373,7 @@ try {
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", $previousSmokeAutoClose, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $previousSmokeCloseFile, "Process")
     [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", $previousSmokeSettingsRedirect, "Process")
+    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", $previousSmokeShellOpen, "Process")
     Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
     if ($cleanupFailure) {
         throw $cleanupFailure

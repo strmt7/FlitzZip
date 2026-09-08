@@ -121,6 +121,27 @@ $guiPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/app/main_window.cpp"
 Assert-Selector (Test-RequiredCommand -Plan $guiPlan -Id "gui-smoke") "GUI changes must run GUI smoke"
 Assert-Selector (Test-Workflow -Plan $guiPlan -Name "windows-ci") "GUI changes must wait for windows-ci"
 
+$guiHelperPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/SuperZip.GuiSmoke.Ui.psm1")
+Assert-Selector $guiHelperPlan.scope.touchesGui "GUI smoke helpers must be classified as GUI changes"
+Assert-Selector (Test-RequiredCommand -Plan $guiHelperPlan -Id "gui-smoke") "GUI smoke helper changes must exercise the GUI"
+Assert-Selector (Test-Workflow -Plan $guiHelperPlan -Name "windows-ci") "GUI smoke helper changes must select Windows CI"
+
+foreach ($path in @("src/core/archive_name_encoding.cpp", "src/core/archive_name_encoding.hpp")) {
+    $encodingPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector $encodingPlan.scope.touchesArchiveParser "archive name decoding must be classified as a parser boundary: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $encodingPlan -Id "format-matrix-smoke") "name decoding changes must run the format matrix: $path"
+    Assert-Selector (Test-LongRunningWorkflow -Plan $encodingPlan -Name "fuzzing") "name decoding changes must observe fuzzing: $path"
+}
+
+foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1")) {
+    $buildGraphPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector $buildGraphPlan.scope.touchesVerification "independent build graph and verifier tests must be classified as verification tooling: $path"
+    Assert-Selector $buildGraphPlan.scope.fullEscalationRequired "verification build inputs must escalate: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "verification-selector-self-test") "verification build inputs must test the selector: $path"
+    Assert-Selector (Test-LongRunningWorkflow -Plan $buildGraphPlan -Name "fuzzing") "verification build inputs must observe Linux build and fuzzing: $path"
+    Assert-Selector $buildGraphPlan.workflowWaitPolicy.immediateRequired "verification build inputs must require final workflow waiting: $path"
+}
+
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "security-scan") "workflow changes must run security scan"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "lint") "workflow changes must wait for lint"

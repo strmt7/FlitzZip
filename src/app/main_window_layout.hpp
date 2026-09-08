@@ -45,6 +45,7 @@ struct ExtractJobRequest {
     bool overwrite = false;
     bool integrity = false;
     bool defender = false;
+    bool open_destination = false;
     ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8;
 };
 

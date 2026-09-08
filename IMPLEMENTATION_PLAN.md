@@ -65,6 +65,12 @@ Security tab or a published release.
    roundtrips, ANSI names under the actual host code page, malformed UTF-8,
    AR raw-byte offsets, and both CPIO stream passes. Broader legacy-format
    encoding review and production release validation remain open.
+   GUI completion now consumes the applied destination-opening preference and
+   the extraction-specific option from the captured job, dispatching one
+   UI-thread request only after complete success. Compression/extraction
+   history uses UTF-8 diagnostics for Unicode destination paths. Solid mode,
+   timestamp policy, source deletion, and the optional metadata preflight still
+   need end-to-end behavior review; these are not covered by the completion fix.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

@@ -87,6 +87,8 @@ The full profile is selected automatically when:
 - at least 25 paths changed;
 - any changed path is unknown to the classifier;
 - verification tooling, MCP command routing, or SuperZip agent skills changed;
+- standalone Linux fuzz-build inputs (`.clusterfuzzlite/build.sh`, `Dockerfile`,
+  or `project.yaml`) or the selector's own regression tests changed;
 - a targeted local command fails under `tools\verify_changes.ps1`.
 
 The full profile remains SSD-safe. It includes language lint, build, C++ tests,

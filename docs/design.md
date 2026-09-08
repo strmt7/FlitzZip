@@ -59,6 +59,13 @@ against the reference direction.
   could hide it. Auxiliary hash/scan rows remain available without replacing
   the primary result. Disabling the preference preserves the current page;
   recording results in History is independent of automatic presentation.
+- The applied global destination-opening preference and the Extract page's
+  extraction-specific preference are captured before job launch, including
+  before overwrite confirmation. Either preference enables opening for Extract;
+  compression uses the global preference. Only complete success dispatches one
+  folder-opening request on the UI thread. Failed or cancelled jobs never open
+  a destination, and a batch extraction opens its common destination once.
+  Shell-opening errors are logged without changing the completed archive result.
 
 ## Compact Layout Foundation
 

@@ -1,5 +1,7 @@
 #include "app/main_window_impl.hpp"
 
+#include "core/path_text.hpp"
+
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
@@ -177,6 +179,15 @@ std::filesystem::path explorer_executable_path() {
         throw ArchiveError("Windows directory lookup failed");
     }
     return std::filesystem::path(windows_directory) / L"explorer.exe";
+}
+
+// Purpose: Suppress external shell windows only in explicitly configured GUI smoke runs.
+// Inputs: The process-local SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN flag.
+// Outputs: Returns true only for the exact value 1.
+bool suppress_smoke_shell_open() {
+    wchar_t value[8]{};
+    const auto length = GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", value, 8);
+    return length == 1 && value[0] == L'1';
 }
 
 // Purpose: Return the filesystem path represented by one shell item.
@@ -422,12 +433,7 @@ void MainWindow::open_log_file_location() {
     try {
         ensure_app_storage();
         const auto path = log_file_path();
-        wchar_t suppress_shell_open[8]{};
-        constexpr DWORD suppress_capacity =
-            static_cast<DWORD>(sizeof(suppress_shell_open) / sizeof(suppress_shell_open[0]));
-        const DWORD suppress_length =
-            GetEnvironmentVariableW(L"SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", suppress_shell_open, suppress_capacity);
-        if (!(suppress_length == 1 && suppress_shell_open[0] == L'1')) {
+        if (!suppress_smoke_shell_open()) {
             const auto explorer = explorer_executable_path();
             const std::wstring arguments = L"/select,\"" + path.wstring() + L"\"";
             const auto result = reinterpret_cast<INT_PTR>(
@@ -449,6 +455,42 @@ void MainWindow::open_log_file_location() {
         append_log_entry(LogSeverity::Warning, "Open log file failed");
     }
     request_repaint();
+}
+
+// Purpose: Open a successful job's captured destination on the UI thread.
+// Inputs: None; consumes the synchronized completion path only while no job is active.
+// Outputs: Dispatches one Shell folder-open request, or logs a warning without changing the archive result.
+void MainWindow::open_pending_operation_destination() {
+    std::filesystem::path destination;
+    {
+        std::lock_guard lock(mutex_);
+        if (state_.active_operation != OperationKind::Idle || worker_running_.load()) {
+            return;
+        }
+        destination = operation_destination_.take();
+    }
+    if (destination.empty()) {
+        return;
+    }
+    try {
+        if (!std::filesystem::is_directory(destination)) {
+            throw ArchiveError("completed destination is no longer a directory");
+        }
+        if (suppress_smoke_shell_open()) {
+            append_log_entry(LogSeverity::Information,
+                             "Destination folder open suppressed (GUI smoke): " + path_diagnostic_utf8(destination));
+            return;
+        }
+        const auto result = reinterpret_cast<INT_PTR>(
+            ShellExecuteW(hwnd_, L"open", destination.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+        if (result <= 32) {
+            throw ArchiveError("Windows Shell could not open the completed destination (code " +
+                               std::to_string(result) + ")");
+        }
+        append_log_entry(LogSeverity::Information, "Destination folder opened: " + path_diagnostic_utf8(destination));
+    } catch (const std::exception& error) {
+        append_log_entry(LogSeverity::Warning, std::string("Open destination failed: ") + error.what());
+    }
 }
 
 // Purpose: Advance the compression level selection by one visible option.
@@ -476,6 +518,7 @@ void MainWindow::start_compress() {
     int compression_level = superzip::kDefaultCompressionLevel;
     ArchiveFormat archive_format = ArchiveFormat::SuperZip;
     std::filesystem::path output;
+    std::filesystem::path destination_to_open;
     {
         std::lock_guard lock(mutex_);
         normalize_queue_selection_locked();
@@ -492,6 +535,8 @@ void MainWindow::start_compress() {
         compression_level = compression_level_value(state_.compression_level_index);
         archive_format = compression_format_value(state_.compression_format_index);
         output = compression_output_path_for(state_);
+        destination_to_open = operation_destination_path(OperationKind::Compress, output,
+                                                         applied_settings_.open_destination_after_operation, false);
     }
     if (sources.empty()) {
         {
@@ -510,22 +555,23 @@ void MainWindow::start_compress() {
             const auto stats = compress_gui_archive(sources, output, archive_format, gpu_required, verify_after_write,
                                                     block_size, compression_level, progress_callback);
             std::ostringstream line;
-            line << "Compressed " << archive_format_info(archive_format).key << " to " << output.string() << " in "
-                 << stats.seconds << "s";
-            append_history_entry("Compress", output.filename().string(), output.string(), line.str(), true);
+            line << "Compressed " << archive_format_info(archive_format).key << " to " << path_diagnostic_utf8(output)
+                 << " in " << stats.seconds << "s";
+            append_history_entry("Compress", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
+                                 line.str(), true);
             if (integrity) {
                 const auto hash = hash_path(output, IntegrityMode::Sha256);
-                append_history_entry("Security", output.filename().string(), output.string(),
+                append_history_entry("Security", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
                                      integrity_history_status("Archive", hash), true);
             }
             if (defender) {
                 const auto scan = scan_with_windows_defender(output, DefenderScanMode::FullPath);
-                append_history_entry("Security", output.filename().string(), output.string(),
+                append_history_entry("Security", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
                                      defender_history_status("Defender", scan), defender_scan_passed(scan));
                 require_clean_defender_scan(scan, output);
             }
         },
-        "Compressing", OperationKind::Compress);
+        "Compressing", OperationKind::Compress, destination_to_open);
 }
 
 // Purpose: Detect whether Ask-before-overwriting needs user confirmation.

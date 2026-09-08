@@ -4,6 +4,7 @@
 #include "app/folder_size_cache.hpp"
 #include "app/gdi_back_buffer.hpp"
 #include "app/operation_summary.hpp"
+#include "app/operation_destination.hpp"
 #include "app/queue_metadata.hpp"
 #include "app/system_layout.hpp"
 #include "app/main_window_layout.hpp"
@@ -1216,9 +1217,15 @@ class MainWindow {
     void launch_extract_job(ExtractJobRequest request);
 
     // Purpose: Run an archive operation on a single background worker.
-    // Inputs: `job` is the work closure and `label` is the status text shown while it runs.
+    // Inputs: `job` is the work closure, `label` is busy text, and `destination_to_open` is a captured optional folder.
     // Outputs: Updates status/history/progress and queues repaints; catches worker exceptions into UI state.
-    void run_job(std::function<void()> job, std::string label, OperationKind operation);
+    void run_job(std::function<void()> job, std::string label, OperationKind operation,
+                 std::filesystem::path destination_to_open = {});
+
+    // Purpose: Open a successful job's captured destination on the UI thread.
+    // Inputs: None; consumes synchronized completion state, independent of the current page or settings draft.
+    // Outputs: Opens at most one folder, or records a presentation warning without changing the job result.
+    void open_pending_operation_destination();
 
     // Purpose: Present a completed job's optional History summary on the UI thread.
     // Inputs: None; consumes the synchronized pending row selected by the worker.
@@ -1432,6 +1439,7 @@ class MainWindow {
     std::atomic_bool folder_size_stop_ = false;
     int history_scroll_first_row_ = 0;
     OperationSummarySelection operation_summary_;
+    OperationDestination operation_destination_;
     int history_scroll_drag_start_y_ = 0;
     int history_scroll_drag_start_offset_ = 0;
     int history_wheel_delta_remainder_ = 0;
