@@ -66,6 +66,10 @@ Security tab or a published release.
    portability beyond the local host, distinguishing compiled targets, hosted
    CPU-only test configurations, and GPU hardware actually tested. Retain only
    performance changes supported by correctness and controlled measurements.
+   Product release builds now select six HIP GPU targets through one shared,
+   tested architecture resolver. All four HIP objects contain the requested
+   images; native tests and GUI smoke passed on the available gfx1201 device.
+   Other target families remain compile-validated, not hardware-tested.
    Native HIP currently has only two effort tiers (1-6 static, 7-9 adaptive),
    unlike the richer CPU codec mappings. Replace that limitation with meaningful
    measured compression strategies, not artificially weakened lower levels.

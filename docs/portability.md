@@ -61,10 +61,13 @@ Visual Studio default only when no preferred toolset is installed. Use an
 explicit `-VcvarsVersion` for toolchain qualification or reproducing a compiler
 issue; do not hardcode developer-machine paths.
 
-The default HIP architecture is `gfx1201` for the current workstation. Use
-`tools/build.ps1 -HipArch <gfx...>` for another supported target. Distribution
-should either build per target architecture or add a validated fat-binary matrix
-when the Windows HIP toolchain supports it cleanly.
+Development builds default to the single `gfx1201` target. Use
+`tools/build.ps1 -HipArch <gfx...>` for another supported target, or pass a
+quoted comma-separated subset. Product releases use `-HipArch release` to
+embed six target images in the same Windows x64 binaries. The exact preset,
+SDK support boundary, and compile-versus-hardware validation evidence are in
+[GPU release targets](release.md#gpu-targets). Additional target images do
+not establish correctness or performance on hardware that has not been tested.
 
 ## Dependency Checks
 
