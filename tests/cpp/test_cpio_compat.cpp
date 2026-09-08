@@ -300,7 +300,7 @@ TEST_CASE(cpio_gzip_extraction_refuses_overwrite_by_default) {
 }
 
 // Purpose: Preserve overwrite diagnostics when a CPIO destination cannot use the host ANSI code page.
-// Inputs: Plain and Gzip CPIO fixtures, an ASCII member, and a supplementary Unicode destination.
+// Inputs: Plain and Gzip CPIO fixtures, an ASCII member, and a noncanonical supplementary Unicode destination.
 // Outputs: Requires exact UTF-8 diagnostics, unchanged refused output, and successful explicit replacement.
 TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
     const auto root = test_temp_dir("cpio-unicode-diagnostic");
@@ -309,11 +309,11 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
     write_one_entry_cpio(plain, "070701", "file.txt", kTestCpioRegularMode, 1, "new", 0);
     (void)superzip::compress_gzip_file(plain, compressed);
     for (const bool gzip : {false, true}) {
-        const auto output = root / (gzip ? "gzip" : "plain") / L"\u65e5\u672c-\U0001f680";
+        const auto output = root / (gzip ? "gzip" : "plain") / L"\u65e5\u672c-\U0001f680" / ".";
         const auto target = output / "file.txt";
         std::filesystem::create_directories(output);
         std::ofstream(target, std::ios::binary) << "old";
-        const auto expected_path = target.u8string();
+        const auto expected_path = (std::filesystem::weakly_canonical(output) / target.filename()).u8string();
         const std::string expected(reinterpret_cast<const char*>(expected_path.data()), expected_path.size());
         const auto extract = [&](bool overwrite) {
             return gzip ? superzip::extract_cpio_gzip(compressed, output, overwrite)
@@ -325,7 +325,10 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
         } catch (const superzip::SecurityError& error) {
             const std::string message = error.what();
             REQUIRE_TRUE(message.find("refusing to overwrite") != std::string::npos);
-            REQUIRE_TRUE(message.find(expected) != std::string::npos);
+            if (message.find(expected) == std::string::npos) {
+                throw std::runtime_error("overwrite diagnostic path mismatch; expected " + expected + "; got " +
+                                         message);
+            }
             rejected = true;
         }
         REQUIRE_TRUE(rejected);
