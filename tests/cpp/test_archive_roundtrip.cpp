@@ -3,6 +3,7 @@
 #include "core/checksum.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
+#include "miniz.h"
 #include "test_suzip_helpers.hpp"
 #include "test_util.hpp"
 
@@ -53,6 +54,84 @@ void write_raw_test_archive(const std::filesystem::path& path, const std::vector
 }
 
 }  // namespace
+
+// Purpose: Compare native CPU blocks with actual codec sizes instead of a size heuristic.
+// Inputs: Non-uniform periodic and random payloads around the framing and old 512-byte cutoffs at every effort.
+// Outputs: Requires the smaller Raw/Deflate representation, exact codec bytes, and lossless CPU decoding.
+TEST_CASE(suzip_cpu_short_blocks_use_smaller_deflate) {
+    for (const auto size :
+         {2U, 3U, 7U, 8U, 9U, 10U, 11U, 12U, 16U, 17U, 31U, 32U, 63U, 64U, 127U, 255U, 511U, 512U, 513U, 1024U}) {
+        for (const bool periodic : {false, true}) {
+            std::vector<std::byte> input(size);
+            std::uint32_t state = 0xE0DA746BU;
+            for (std::size_t i = 0; i < input.size(); ++i) {
+                state ^= state << 13U;
+                state ^= state >> 17U;
+                state ^= state << 5U;
+                input[i] = static_cast<std::byte>(periodic ? 'a' + i % 3U : state & 255U);
+            }
+            for (int level = 1; level <= 9; ++level) {
+                superzip::GpuCodecOptions options;
+                options.force_cpu = true;
+                options.require_gpu = false;
+                options.compression_level = level;
+                auto capacity = mz_compressBound(static_cast<mz_ulong>(input.size()));
+                std::vector<std::byte> reference(capacity);
+                REQUIRE_EQ(mz_compress2(reinterpret_cast<unsigned char*>(reference.data()), &capacity,
+                                        reinterpret_cast<const unsigned char*>(input.data()),
+                                        static_cast<mz_ulong>(input.size()), level),
+                           MZ_OK);
+                reference.resize(capacity);
+                const bool smaller = reference.size() < input.size();
+                const auto encoded = superzip::encode_chunk(input, options);
+                REQUIRE_EQ(encoded.blocks.size(), 1U);
+                REQUIRE_EQ(encoded.blocks.front().kind,
+                           smaller ? superzip::BlockKind::Deflate : superzip::BlockKind::Raw);
+                REQUIRE_EQ(encoded.payload, smaller ? reference : input);
+                REQUIRE_TRUE(!encoded.gpu_used);
+                std::vector<std::byte> decoded(input.size());
+                superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options);
+                REQUIRE_EQ(decoded, input);
+            }
+        }
+    }
+}
+
+// Purpose: Retain compression of a short final block after full-sized raw data in parallel CPU work.
+// Inputs: One deterministic random block followed by a 127-byte repeated sequence, three efforts and worker budgets.
+// Outputs: Requires raw then Deflate descriptors, contiguous payload, and byte-exact decoding.
+TEST_CASE(suzip_cpu_short_tail_after_raw_block) {
+    std::vector<std::byte> input(superzip::kMinArchiveBlockBytes + 127U);
+    std::uint32_t state = 0x43A81D27U;
+    for (std::size_t i = 0; i < superzip::kMinArchiveBlockBytes; ++i) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        input[i] = static_cast<std::byte>(state & 255U);
+    }
+    for (std::size_t i = superzip::kMinArchiveBlockBytes; i < input.size(); ++i) {
+        input[i] = static_cast<std::byte>(i % 3U);
+    }
+    for (const int level : {1, 5, 9}) {
+        for (const auto workers : {1U, 2U, 4U}) {
+            superzip::GpuCodecOptions options;
+            options.force_cpu = true;
+            options.require_gpu = false;
+            options.compression_level = level;
+            options.block_size = superzip::kMinArchiveBlockBytes;
+            options.worker_count = workers;
+            const auto encoded = superzip::encode_chunk(input, options);
+            REQUIRE_EQ(encoded.blocks.size(), 2U);
+            REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::Raw);
+            REQUIRE_EQ(encoded.blocks[1].kind, superzip::BlockKind::Deflate);
+            REQUIRE_EQ(encoded.blocks[1].encoded_offset, superzip::kMinArchiveBlockBytes);
+            REQUIRE_TRUE(encoded.payload.size() < input.size());
+            std::vector<std::byte> decoded(input.size());
+            superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options);
+            REQUIRE_EQ(decoded, input);
+        }
+    }
+}
 
 // Purpose: Restore native UTF-8 filenames without depending on the host's ANSI code page.
 // Inputs: Unicode source, archive, destination and entry paths in CPU and available required-HIP modes.

@@ -5,7 +5,6 @@
 #include "miniz.h"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <future>
 #include <string>
@@ -88,35 +87,15 @@ bool block_is_fill(std::span<const std::byte> bytes, std::uint8_t& value) {
     return std::ranges::all_of(bytes, [&](std::byte byte) { return static_cast<std::uint8_t>(byte) == value; });
 }
 
-// Purpose: Estimate whether a block is worth sending through deflate.
-// Inputs: `bytes` is a non-fill block.
-// Outputs: Returns true for blocks with repeated sampled bytes that are likely compressible.
-bool block_is_likely_compressible(std::span<const std::byte> bytes) {
-    if (bytes.size() < 512U) {
-        return false;
-    }
-    std::array<bool, 256> seen{};
-    std::size_t unique = 0;
-    const auto stride = std::max<std::size_t>(1U, bytes.size() / 512U);
-    std::size_t samples = 0;
-    for (std::size_t i = 0; i < bytes.size() && samples < 512U; i += stride, ++samples) {
-        const auto value = static_cast<std::uint8_t>(bytes[i]);
-        if (!seen[value]) {
-            seen[value] = true;
-            ++unique;
-        }
-    }
-    return samples > 0 && unique * 100U < samples * 85U;
-}
-
 // Purpose: Try miniz deflate for one bounded block.
 // Inputs: `block` is a non-fill block to compress and `compression_level` selects the miniz effort.
-// Outputs: Returns compressed bytes when smaller than raw, otherwise an empty vector.
+// Outputs: Returns compressed bytes only when smaller than raw, with trial output capacity bounded by that saving.
 std::vector<std::byte> try_deflate_block(std::span<const std::byte> block, int compression_level) {
-    if (!block_is_likely_compressible(block)) {
+    // A zlib stream needs six framing bytes plus at least two bytes for its Deflate block.
+    if (block.size() <= 8U) {
         return {};
     }
-    mz_ulong bound = compressBound(static_cast<mz_ulong>(block.size()));
+    mz_ulong bound = static_cast<mz_ulong>(block.size() - 1U);
     std::vector<std::byte> compressed(static_cast<std::size_t>(bound));
     const auto status = compress2(reinterpret_cast<unsigned char*>(compressed.data()), &bound,
                                   reinterpret_cast<const unsigned char*>(block.data()),

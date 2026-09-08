@@ -60,6 +60,32 @@ packing. Losing adaptive candidates are not packed or transferred back. Mixed
 chunks retain smaller static blocks alongside winning adaptive blocks, without
 changing version-3 decoding or required-HIP semantics.
 
+## Native CPU Blocks
+
+Non-uniform CPU blocks now try the selected miniz effort whenever a smaller
+zlib stream is possible. The former 512-byte cutoff discarded real savings
+on small files and final blocks. Its distinct-byte sample could not reject
+larger blocks: 512 samples contain at most 256 distinct values, always below
+the 85% threshold. The replacement uses actual encoded size, not that estimate.
+
+Inputs of at most eight bytes stay raw unless fill encoding wins first. The
+bound follows the six framing bytes in
+[RFC 1950](https://www.rfc-editor.org/rfc/rfc1950) plus the minimum two-byte
+Deflate block in [RFC 1951](https://www.rfc-editor.org/rfc/rfc1951). Trial
+output capacity is one byte less than raw size; a candidate that fills it
+without finishing cannot save space. Existing descriptors and decoding remain
+unchanged, so this does not require a new native format version.
+
+September 2026 checks covered all nine efforts, tiny framing boundaries,
+periodic/random inputs, and short tails after full-sized raw blocks with
+multiple worker budgets. An independent zlib 1.3.1 reader and the previous
+SuperZip executable verified 189 generated archives: 63 became smaller, none
+grew, and tested inputs of 512 bytes or more stayed byte-identical. For one
+511-byte period-three fixture at level 9, payload fell from 511 to 26 bytes
+and the complete archive from 609 to 124 bytes. These are fixture-specific
+size results, not speed or GPU claims. The filesystem correctness experiment
+wrote 123,006 bytes of fixtures and archives, below the 64 MiB smoke limit.
+
 ## Benchmark Score
 
 ### Zstandard Effort

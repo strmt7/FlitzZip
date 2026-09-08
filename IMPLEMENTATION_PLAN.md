@@ -47,6 +47,10 @@ Security tab or a published release.
    while trying to narrow a valid Unicode filename to the host code page.
    New fixtures cover supplementary names, empty entries, single/multiple WIM
    images, and exact overwrite behavior; legacy encoding policy remains open.
+   Native CPU blocks no longer reject every sub-512-byte compression candidate.
+   Actual encoded size selects Raw or Deflate with bounded candidate capacity.
+   All-nine-level tests and 189 independently decoded real archives establish
+   small-file/tail savings and backward-reader compatibility, not a speed gain.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
