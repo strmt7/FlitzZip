@@ -219,7 +219,7 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                     DirectoryPublishTransaction quarantine(output);
                     stats =
                         extract_detected_archive(archive_format, archive_source.path(), quarantine.staging_directory(),
-                                                 request.gpu_required, false, progress_callback);
+                                                 request.gpu_required, false, progress_callback, request.name_encoding);
                     const auto post_scan =
                         scan_with_windows_defender(quarantine.staging_directory(), DefenderScanMode::FullPath);
                     append_history_entry("Security", output.filename().string(), output.string(),
@@ -228,8 +228,9 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                     require_clean_defender_scan(post_scan, output);
                     quarantine.publish(request.overwrite);
                 } else {
-                    stats = extract_detected_archive(archive_format, archive_source.path(), output,
-                                                     request.gpu_required, request.overwrite, progress_callback);
+                    stats =
+                        extract_detected_archive(archive_format, archive_source.path(), output, request.gpu_required,
+                                                 request.overwrite, progress_callback, request.name_encoding);
                 }
                 std::ostringstream line;
                 line << "Extracted " << archive_format_info(archive_format).key << " to " << output.string() << " in "
@@ -257,6 +258,7 @@ void MainWindow::start_extract() {
         request.archives = selected_extract_archive_paths(state_);
         request.gpu_required = state_.gpu_required;
         request.overwrite = state_.overwrite;
+        request.name_encoding = selected_name_encoding(state_).encoding;
         request.integrity = state_.integrity_hash_opt_in;
         request.defender = state_.defender_scan_opt_in;
         request.output = extraction_output_path_for(state_);

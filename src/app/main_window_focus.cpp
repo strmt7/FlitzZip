@@ -182,6 +182,9 @@ void MainWindow::add_extract_focus_targets(std::vector<FocusTarget>& targets, co
     append_focus_target(targets, FocusTargetKind::ExtractOpenDestination, layout.open_destination_after_extract);
     append_focus_target(targets, FocusTargetKind::ExtractIntegrityHash, layout.sha);
     append_focus_target(targets, FocusTargetKind::ExtractDefenderScan, layout.defender);
+    if (extract_name_encoding_available(selected_extract_archive_paths(state))) {
+        append_focus_target(targets, FocusTargetKind::ExtractNameEncoding, layout.name_encoding);
+    }
 }
 
 // Purpose: Append all Settings page keyboard-focus targets.

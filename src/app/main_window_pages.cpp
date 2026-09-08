@@ -314,6 +314,8 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     draw_field(dc, layout.path_mode, L"Format", detected_format, false, detected_format != L"-");
     draw_field(dc, layout.overwrite_policy, L"Overwrite policy",
                state.overwrite ? L"Overwrite without asking" : L"Ask before overwriting", true);
+    draw_field(dc, layout.name_encoding, L"Member name encoding", std::wstring(selected_name_encoding(state).label),
+               true, extract_name_encoding_available(selected_archives));
 
     RECT checks = layout.checks;
     fill_round_rect(dc, checks, kPanel, scale(4));

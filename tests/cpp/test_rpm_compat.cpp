@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_legacy_name.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -175,6 +177,73 @@ std::filesystem::path make_cpio_payload(const std::filesystem::path& root, std::
 }
 
 }  // namespace
+
+// Purpose: Build a minimal CPIO stream with explicit raw member-name bytes for RPM encoding tests.
+// Inputs: Destination path and a bounded raw filename; the payload is the literal string "rpm".
+// Outputs: Writes one aligned regular-file record and the required trailer without using production name encoding.
+void write_rpm_name_payload(const std::filesystem::path& path, std::string_view name) {
+    std::ofstream output(path, std::ios::binary);
+    for (const bool trailer : {false, true}) {
+        const auto member = trailer ? std::string_view("TRAILER!!!") : name;
+        const std::array<std::uint32_t, 13> fields{1U,
+                                                   trailer ? 0U : 0100644U,
+                                                   0U,
+                                                   0U,
+                                                   1U,
+                                                   0U,
+                                                   trailer ? 0U : 3U,
+                                                   0U,
+                                                   0U,
+                                                   0U,
+                                                   0U,
+                                                   static_cast<std::uint32_t>(member.size() + 1U),
+                                                   0U};
+        output << "070701";
+        for (const auto field : fields) {
+            std::array<char, 9> hex{};
+            REQUIRE_EQ(std::snprintf(hex.data(), hex.size(), "%08X", field), 8);
+            output.write(hex.data(), 8);
+        }
+        output.write(member.data(), static_cast<std::streamsize>(member.size()));
+        output.put('\0');
+        for (auto size = 111U + member.size(); size % 4U != 0; ++size) {
+            output.put('\0');
+        }
+        if (!trailer) {
+            output.write("rpm\0", 4);
+        }
+    }
+}
+
+// Purpose: Verify explicit name encoding survives the RPM wrapper and temporary-payload boundary.
+// Inputs: Plain and Gzip RPM fixtures containing independent UTF-8 or Windows ANSI CPIO names.
+// Outputs: Requires exact filenames and payloads for default UTF-8 and explicitly selected legacy mode.
+TEST_CASE(rpm_member_names_encoding_forwarding) {
+    const auto root = test_temp_dir("rpm-name-encoding");
+    const auto [legacy, legacy_name] = test_legacy_archive_name();
+    for (const bool system : {false, true}) {
+        const std::string raw = system ? legacy : "\xe6\x97\xa5-\xf0\x9f\x9a\x80.txt";
+        const auto expected = system ? legacy_name : std::wstring(L"\u65e5-\U0001f680.txt");
+        const auto cpio = root / (system ? "legacy.cpio" : "utf8.cpio");
+        write_rpm_name_payload(cpio, raw);
+        const auto gzip = root / (system ? "legacy.gz" : "utf8.gz");
+        gzip_file(cpio, gzip);
+        for (const bool compressed : {false, true}) {
+            const auto archive = root / (std::to_string(system) + std::to_string(compressed) + ".rpm");
+            const auto output = root / archive.stem();
+            write_rpm_fixture(archive, compressed ? gzip : cpio, compressed ? "gzip" : "none");
+            const auto stats =
+                system ? superzip::extract_rpm(archive, output, false, {}, superzip::ArchivePathEncoding::HostCodePage)
+                       : superzip::extract_rpm(archive, output, false);
+            REQUIRE_EQ(stats.entries, 1U);
+            REQUIRE_EQ(read_text_file(output / expected), "rpm");
+            REQUIRE_EQ(count_regular_files(output), 1U);
+            if (system && compressed) {
+                superzip_test::export_compat_fixture(archive, output);
+            }
+        }
+    }
+}
 
 // Purpose: Verify native `.rpm` extraction reads an uncompressed CPIO payload.
 // Inputs: A handcrafted RPM wrapper around a real CPIO archive.

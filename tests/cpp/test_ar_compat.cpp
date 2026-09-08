@@ -1,5 +1,6 @@
 #include "test_compat_fixture.hpp"
 #include "test_util.hpp"
+#include "test_legacy_name.hpp"
 
 #include "ar/ar_adapter.hpp"
 #include "core/archive_format.hpp"
@@ -136,6 +137,82 @@ TEST_CASE(ar_roundtrip_extracts_files_from_directories) {
     REQUIRE_EQ(extract_stats.output_bytes, compress_stats.input_bytes);
     REQUIRE_EQ(read_text_file(output / "input" / "dir" / "hello.txt"), read_text_file(input / "dir" / "hello.txt"));
     REQUIRE_EQ(read_text_file(output / "input" / "root.txt"), read_text_file(input / "root.txt"));
+}
+
+// Purpose: Preserve Unicode AR member names without confusing byte lengths with decoded character lengths.
+// Inputs: Production BSD long-name archives containing a supplementary Unicode file and an ASCII sibling.
+// Outputs: Requires exact filenames, payloads, and member count after extraction.
+TEST_CASE(ar_unicode_member_names_roundtrip) {
+    const auto root = test_temp_dir("ar-unicode-members");
+    const auto source = root / "source";
+    std::filesystem::create_directories(source);
+    const auto name = std::filesystem::path(L"\u65e5\u672c-\U0001f680.txt");
+    std::ofstream(source / name, std::ios::binary) << "unicode payload";
+    std::ofstream(source / "sibling.txt", std::ios::binary) << "sibling payload";
+    const auto archive = root / "fixture.ar";
+    const auto output = root / "output";
+    (void)superzip::compress_ar({source}, archive);
+    (void)superzip::extract_ar(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / "source" / name), "unicode payload");
+    REQUIRE_EQ(read_text_file(output / "source" / "sibling.txt"), "sibling payload");
+    REQUIRE_EQ(count_regular_files(output), 2U);
+}
+
+// Purpose: Preserve explicitly selected legacy names without changing raw BSD byte offsets or GNU references.
+// Inputs: Independently encoded Windows ANSI names in short, BSD, and GNU members followed by an ASCII sibling.
+// Outputs: Requires exact native names, both payloads, and member counts for every layout.
+TEST_CASE(ar_legacy_member_names_all_layouts) {
+    const auto root = test_temp_dir("ar-legacy-members");
+    const auto [raw, expected] = test_legacy_archive_name();
+    for (int layout = 0; layout < 3; ++layout) {
+        const auto archive = root / (std::to_string(layout) + ".ar");
+        {
+            std::ofstream stream(archive, std::ios::binary);
+            stream.write("!<arch>\n", 8);
+            if (layout == 0) {
+                write_ar_member(stream, raw + "/", "legacy");
+            } else if (layout == 1) {
+                write_bsd_ar_member(stream, raw, "legacy");
+            } else {
+                write_ar_member(stream, "//", raw + "/\n");
+                write_ar_member(stream, "/0", "legacy");
+            }
+            write_ar_member(stream, "sibling.txt/", "next payload");
+        }
+        const auto output = root / std::to_string(layout);
+        const auto stats =
+            superzip::extract_ar(archive, output, false, {}, superzip::ArchivePathEncoding::HostCodePage);
+        REQUIRE_EQ(stats.entries, 2U);
+        REQUIRE_EQ(read_text_file(output / expected), "legacy");
+        REQUIRE_EQ(read_text_file(output / "sibling.txt"), "next payload");
+        REQUIRE_EQ(count_regular_files(output), 2U);
+        if (layout == 1) {
+            superzip_test::export_compat_fixture(archive, output);
+        }
+    }
+}
+
+// Purpose: Reject malformed default-encoding metadata during the complete AR preflight.
+// Inputs: A valid first member followed by a truncated UTF-8 BSD name.
+// Outputs: Requires ArchiveError before the destination exists, including for the earlier valid member.
+TEST_CASE(ar_invalid_member_encoding_prevents_all_output) {
+    const auto root = test_temp_dir("ar-invalid-name-encoding");
+    const auto archive = root / "fixture.ar";
+    {
+        std::ofstream stream(archive, std::ios::binary);
+        stream.write("!<arch>\n", 8);
+        write_ar_member(stream, "valid.txt/", "valid");
+        write_bsd_ar_member(stream, "\xf0\x90.txt", "invalid");
+    }
+    const auto output = root / "output";
+    bool rejected = false;
+    try {
+        (void)superzip::extract_ar(archive, output, false);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(output));
 }
 
 // Purpose: Verify GNU string-table AR names are resolved during extraction.

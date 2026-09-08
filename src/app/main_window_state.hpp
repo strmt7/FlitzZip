@@ -54,6 +54,7 @@ enum class DropdownId {
     CompressMethod,
     CompressBlockSize,
     ExtractOverwrite,
+    ExtractNameEncoding,
     HistoryOperation,
     HistoryStatus,
     GpuUpdateSpeed,
@@ -94,6 +95,7 @@ enum class FocusTargetKind {
     ExtractStop,
     ExtractDestination,
     ExtractOverwrite,
+    ExtractNameEncoding,
     ExtractVerifyMetadata,
     ExtractOpenDestination,
     ExtractIntegrityHash,
@@ -224,6 +226,7 @@ struct UiState {
     bool prefer_suzip = true;
     bool gpu_required = true;
     bool overwrite = false;
+    int extract_name_encoding_index = 0;
     bool integrity_hash_opt_in = false;
     bool defender_scan_opt_in = false;
     bool verify_after_write_opt_in = false;

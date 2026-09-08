@@ -97,6 +97,11 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.overwrite = option_index == 1;
         state.status = "Overwrite policy changed";
         break;
+    case DropdownId::ExtractNameEncoding:
+        state.extract_name_encoding_index =
+            std::clamp(option_index, 0, static_cast<int>(kArchiveNameEncodingChoices.size()) - 1);
+        state.status = "Member name encoding changed";
+        break;
     case DropdownId::HistoryOperation:
         state.history_operation_filter_index = std::clamp(option_index, 0, 4);
         state.status = "History operation filter changed";

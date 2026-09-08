@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/archive.hpp"
+#include "core/archive_name_encoding.hpp"
 
 #include <filesystem>
 #include <vector>
@@ -40,5 +41,18 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
 // verified-file publication failures.
 OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback = {});
+
+// Purpose: Extract CPIO with an explicit encoding for unmarked member names.
+// Inputs: Archive, destination, overwrite policy, progress callback, and the selected name encoding.
+// Outputs: Returns extraction statistics or throws before publishing invalid metadata.
+OperationStats extract_cpio(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                            bool overwrite, const ProgressCallback& progress_callback, ArchivePathEncoding encoding);
+
+// Purpose: Extract CPIO.GZ using the same explicit name encoding in both stream passes.
+// Inputs: Archive, destination, overwrite policy, progress callback, and the selected name encoding.
+// Outputs: Returns extraction statistics or throws on invalid or inconsistent metadata.
+OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback,
+                                 ArchivePathEncoding encoding);
 
 }  // namespace superzip

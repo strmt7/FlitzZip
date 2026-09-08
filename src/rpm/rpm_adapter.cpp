@@ -189,8 +189,20 @@ void cleanup_rpm_payload_target(const ReservedFilePublishTarget& temporary) {
 
 }  // namespace
 
+// Purpose: Extract RPM using the UTF-8 default for its unmarked CPIO member names.
+// Inputs: Archive, output root, overwrite policy, and synchronous progress callback.
+// Outputs: Returns payload extraction statistics or propagates a decoding or publication error.
 OperationStats extract_rpm(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                            bool overwrite, const ProgressCallback& progress_callback) {
+    return extract_rpm(archive_path, destination, overwrite, progress_callback, ArchivePathEncoding::Utf8);
+}
+
+// Purpose: Forward explicit filename encoding through RPM payload materialization to the CPIO reader.
+// Inputs: Archive, output root, overwrite policy, synchronous progress callback, and explicit name encoding.
+// Outputs: Returns extraction statistics and cleans temporary payloads, including on failure.
+OperationStats extract_rpm(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                           bool overwrite, const ProgressCallback& progress_callback, ArchivePathEncoding encoding) {
+    validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     const auto payload = scan_rpm_payload(archive_source.path());
@@ -199,7 +211,7 @@ OperationStats extract_rpm(const std::filesystem::path& archive_path, const std:
     const auto temporary = reserve_file_publish_target(destination / ".superzip-rpm-payload.cpio");
     try {
         materialize_cpio_payload(archive_source.path(), payload, temporary.directory, temporary.file);
-        auto stats = extract_cpio(temporary.file, destination, overwrite, progress_callback);
+        auto stats = extract_cpio(temporary.file, destination, overwrite, progress_callback, encoding);
         stats.input_bytes = archive_source.size();
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         cleanup_rpm_payload_target(temporary);

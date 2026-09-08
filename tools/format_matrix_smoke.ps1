@@ -148,7 +148,7 @@ function Test-MatrixUnicodePath {
     New-Item -ItemType Directory -Force -Path $nested | Out-Null
     $name = [char]::ConvertFromUtf32(0x1F4C1) + '.txt'
     [System.IO.File]::WriteAllText((Join-Path $nested $name), 'Unicode CLI payload')
-    foreach ($format in @('suzip', 'zip', 'tar', 'tar.gz', 'tar.bz2', 'tar.zst')) {
+    foreach ($format in @('suzip', 'zip', 'tar', 'tar.gz', 'tar.bz2', 'tar.zst', 'cpio', 'cpio.gz', 'ar')) {
         $archive = Join-Path $Root ($unicode + '.' + $format)
         $destination = Join-Path $Root ($unicode + '-out-' + $format)
         $create = @('compress', '--format', $format, '--output', $archive)
@@ -163,10 +163,58 @@ function Test-MatrixUnicodePath {
         }
         Invoke-SuperZipMatrixCommand -Arguments ($extract + $archive) -Label "Unicode extract $format" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $tree -ActualRoot (Join-Path $destination (Split-Path -Leaf $tree))
+        if ($format -in @('cpio', 'cpio.gz', 'ar')) {
+            Invoke-SuperZipMatrixCommand -Arguments ($extract + @('--overwrite', '--name-encoding', 'utf8', $archive)) -Label "Explicit UTF-8 $format" | Out-Null
+            Test-MatrixDirectoryMatch -ExpectedRoot $tree -ActualRoot (Join-Path $destination (Split-Path -Leaf $tree))
+        } else {
+            Invoke-ExpectedMatrixFailure -Arguments ($extract + @('--name-encoding', 'utf8', $archive)) -Label "Unsupported encoding option $format" -ExpectedText '--name-encoding is supported only'
+        }
+        Invoke-ExpectedMatrixFailure -Arguments ($extract + @('--name-encoding', 'guess', $archive)) -Label "Invalid encoding option $format" -ExpectedText '--name-encoding must be'
         if ($format -eq 'suzip') {
             Invoke-SuperZipMatrixCommand -Arguments @('verify', '--force-cpu', $archive) -Label 'Unicode native verify' | Out-Null
         }
         Write-Output "format_matrix unicode_paths=$format status=passed verification=cli_roundtrip"
+    }
+}
+
+# Purpose: Verify explicit legacy member decoding through real CLI routes, including package aliases.
+# Inputs: Root is a checked temporary workspace; native tests export independently verified ANSI fixtures.
+# Outputs: Requires identical filenames and payloads for AR, DEB, CPIO, CPIO.GZ, and RPM.
+function Test-MatrixLegacyName {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    foreach ($family in @('ar', 'cpio', 'rpm')) {
+        $export = Join-Path $Root $family
+        $testName = switch ($family) {
+            'ar' { 'ar_legacy_member_names_all_layouts' }
+            'cpio' { 'cpio_legacy_member_names_both_passes' }
+            'rpm' { 'rpm_member_names_encoding_forwarding' }
+        }
+        $fixture = Invoke-MatrixProcess -FilePath $testRunner -Arguments @($testName) -FixtureRoot $export
+        if ($fixture.ExitCode -ne 0) { throw "Legacy fixture failed: $($fixture.Output -join '`n')" }
+        $archive = @(Get-ChildItem -LiteralPath (Join-Path $export 'archive') -File)
+        if ($archive.Count -ne 1) { throw 'Legacy fixture must export exactly one archive.' }
+        $formats = switch ($family) {
+            'ar' { @('ar', 'deb') }
+            'cpio' { @('cpio', 'cpio.gz') }
+            'rpm' { @('rpm') }
+        }
+        foreach ($format in $formats) {
+            $inputArchive = $archive[0].FullName
+            if ($format -eq 'cpio.gz') {
+                $inputArchive = Join-Path $export 'fixture.cpio.gz'
+                Invoke-SuperZipMatrixCommand -Arguments @('compress', '--format', 'gz', '--output', $inputArchive, $archive[0].FullName) -Label 'Legacy CPIO Gzip wrapper' | Out-Null
+            } elseif ($format -eq 'deb') {
+                $inputArchive = Join-Path $export 'fixture.deb'
+                Copy-Item -LiteralPath $archive[0].FullName -Destination $inputArchive
+            }
+            foreach ($mode in @($format, 'auto')) {
+                $destination = Join-Path $export "output-$format-$mode"
+                Invoke-SuperZipMatrixCommand -Arguments @('extract', '--format', $mode, '--name-encoding', 'system', '--output', $destination, $inputArchive) -Label "Legacy $format mode=$mode" | Out-Null
+                Test-MatrixDirectoryMatch -ExpectedRoot (Join-Path $export 'expected') -ActualRoot $destination
+            }
+            Write-Output "format_matrix legacy_names=$format status=passed verification=cli_fixture"
+        }
     }
 }
 
@@ -449,6 +497,7 @@ if (-not $work.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreC
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
     Test-MatrixUnicodePath -Root (Join-Path $work 'unicode')
+    Test-MatrixLegacyName -Root (Join-Path $work 'legacy-names')
     $fixtures = Initialize-FormatMatrixFixture -Root (Join-Path $work "fixtures")
     $archives = Join-Path $work "archives"
     New-Item -ItemType Directory -Force -Path $archives | Out-Null

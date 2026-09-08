@@ -344,7 +344,7 @@ std::string read_string_table(std::ifstream& input, std::uint64_t size) {
 // Inputs: `archive_path` is the AR file to parse.
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
 // layout.
-ArScanResult scan_ar(const std::filesystem::path& archive_path) {
+ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncoding encoding) {
     const auto archive_size = std::filesystem::file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
@@ -372,10 +372,11 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path) {
         if (raw.name == "//") {
             string_table = read_string_table(input, raw.size);
         } else {
-            const auto entry = parse_member_name_and_payload(input, raw, string_table);
+            auto entry = parse_member_name_and_payload(input, raw, string_table);
             const auto consumed =
                 entry.has_value() && raw.name.starts_with("#1/") ? static_cast<std::uint64_t>(entry->path.size()) : 0U;
             if (entry.has_value()) {
+                entry->path = decode_archive_name(entry->path, encoding);
                 result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
                     result.path_metadata_bytes, static_cast<std::uint64_t>(entry->path.size()) * 2U,
                     "AR retained path metadata");
@@ -500,9 +501,18 @@ OperationStats compress_ar(const std::vector<std::filesystem::path>& sources,
 // failure.
 OperationStats extract_ar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                           bool overwrite, const ProgressCallback& progress_callback) {
+    return extract_ar(archive_path, destination, overwrite, progress_callback, ArchivePathEncoding::Utf8);
+}
+
+// Purpose: Extract AR entries after explicitly decoding unmarked names to UTF-8.
+// Inputs: Archive, output root, overwrite policy, synchronous progress callback, and explicit name encoding.
+// Outputs: Returns operation statistics or throws on invalid metadata, encoding, or publication failure.
+OperationStats extract_ar(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                          bool overwrite, const ProgressCallback& progress_callback, ArchivePathEncoding encoding) {
+    validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto scanned = scan_ar(archive_source.path());
+    const auto scanned = scan_ar(archive_source.path(), encoding);
     create_verified_directories(destination);
 
     std::ifstream input(archive_source.path(), std::ios::binary);
@@ -515,7 +525,7 @@ OperationStats extract_ar(const std::filesystem::path& archive_path, const std::
     for (const auto& entry : scanned.entries) {
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.path);
+        const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
         extract_ar_file_payload(input, entry, target, overwrite);
         progress.add_bytes(entry.size);
         progress.finish_entry();

@@ -58,6 +58,7 @@ struct ArchiveFormatInfo {
     bool can_extract = false;
     bool gpu_native = false;
     bool bundled_native = false;
+    bool supports_name_encoding = false;
 };
 
 struct ArchiveFormatExtensionInfo {

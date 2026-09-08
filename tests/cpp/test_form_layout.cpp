@@ -53,7 +53,7 @@ void require_extract(const superzip::app::ExtractLayout& layout) {
     REQUIRE_TRUE(layout.checks.bottom < layout.start.top);
     require_separate(std::array{layout.archive, layout.destination, layout.path_mode, layout.overwrite_policy,
                                 layout.verify_metadata, layout.open_destination_after_extract, layout.sha,
-                                layout.defender, layout.stop, layout.start},
+                                layout.defender, layout.name_encoding, layout.stop, layout.start},
                      layout.area);
 }
 

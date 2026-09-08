@@ -229,6 +229,12 @@ bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
         open_dropdown(DropdownId::ExtractOverwrite);
         return true;
     }
+    if (contains_point(layout.name_encoding, x, y)) {
+        if (extract_name_encoding_available(selected_extract_archive_paths(state))) {
+            open_dropdown(DropdownId::ExtractNameEncoding);
+        }
+        return true;
+    }
     if (contains_point(layout.verify_metadata, x, y)) {
         return toggle_bool_setting(&UiState::verify_metadata_before_extract, ToggleId::VerifyMetadata);
     }
@@ -398,8 +404,9 @@ void MainWindow::start_security_verify() {
         state_.security_defender = defender ? SecurityCheckState::Running : SecurityCheckState::NotRun;
     }
     request_repaint();
-    run_job([this, sources, integrity, defender,
-             gpu_required] { run_security_review(sources, integrity, defender, gpu_required); },
+    const auto name_encoding = selected_name_encoding(snapshot).encoding;
+    run_job([this, sources, integrity, defender, gpu_required,
+             name_encoding] { run_security_review(sources, integrity, defender, gpu_required, name_encoding); },
             "Verifying", OperationKind::Verify);
 }
 
@@ -407,7 +414,7 @@ void MainWindow::start_security_verify() {
 // Inputs: `sources` are selected archives and booleans describe requested security and GPU policies.
 // Outputs: Publishes progress/history/result state or throws after recording the failed/incomplete stage.
 void MainWindow::run_security_review(const std::vector<std::filesystem::path>& sources, bool integrity, bool defender,
-                                     bool gpu_required) {
+                                     bool gpu_required, ArchivePathEncoding name_encoding) {
     ProgressState progress;
     progress.start(OperationKind::Verify, sources.size(), sources.size());
     auto publish = [this, &progress] { publish_progress_snapshot_or_cancel(progress.snapshot()); };
@@ -435,7 +442,8 @@ void MainWindow::run_security_review(const std::vector<std::filesystem::path>& s
             const auto format = detect_archive_format(pinned.path());
             const auto stats = validate_detected_archive(
                 format, pinned.path(), gpu_required,
-                [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot_or_cancel(snapshot); });
+                [this](const ProgressSnapshot& snapshot) { publish_progress_snapshot_or_cancel(snapshot); },
+                name_encoding);
             append_history_entry("Security", pinned.path().filename().string(), pinned.path().string(),
                                  "Archive paths and payload integrity passed for " + std::to_string(stats.entries) +
                                      " entr" + (stats.entries == 1U ? "y" : "ies"),

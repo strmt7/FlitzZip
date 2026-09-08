@@ -297,7 +297,21 @@ CompatibilityExtractor compatibility_extractor_for(ArchiveFormat archive_format)
 // or corrupt.
 OperationStats extract_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
                                         const std::filesystem::path& output, bool gpu_required, bool overwrite,
-                                        const ProgressCallback& progress_callback) {
+                                        const ProgressCallback& progress_callback, ArchivePathEncoding name_encoding) {
+    validate_archive_name_encoding(name_encoding);
+    switch (archive_format) {
+    case ArchiveFormat::Cpio:
+        return extract_cpio(archive, output, overwrite, progress_callback, name_encoding);
+    case ArchiveFormat::CpioGzip:
+        return extract_cpio_gzip(archive, output, overwrite, progress_callback, name_encoding);
+    case ArchiveFormat::Ar:
+    case ArchiveFormat::Deb:
+        return extract_ar(archive, output, overwrite, progress_callback, name_encoding);
+    case ArchiveFormat::Rpm:
+        return extract_rpm(archive, output, overwrite, progress_callback, name_encoding);
+    default:
+        break;
+    }
     if (archive_format == ArchiveFormat::SuperZip) {
         ExtractOptions options;
         options.gpu_required = gpu_required;
@@ -319,7 +333,8 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
 // Inputs: `archive_format`, identity-pinned `archive`, GPU policy, and optional progress callback describe the run.
 // Outputs: Returns validation telemetry or throws on format, path, decode, checksum, or resource-limit failure.
 OperationStats validate_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
-                                         bool gpu_required, const ProgressCallback& progress_callback) {
+                                         bool gpu_required, const ProgressCallback& progress_callback,
+                                         ArchivePathEncoding name_encoding) {
     if (archive_format == ArchiveFormat::SuperZip) {
         ExtractOptions options;
         options.gpu_required = gpu_required;
@@ -327,7 +342,28 @@ OperationStats validate_detected_archive(ArchiveFormat archive_format, const std
     }
     DirectoryPublishTransaction discard(app_storage_directory() / "security-validation");
     return extract_detected_archive(archive_format, archive, discard.staging_directory(), gpu_required, true,
-                                    progress_callback);
+                                    progress_callback, name_encoding);
+}
+
+// Purpose: Enable the filename-encoding control only for formats with unmarked names.
+// Inputs: Selected archive paths from a synchronized queue snapshot.
+// Outputs: Returns true when at least one selected archive supports the explicit encoding policy.
+bool extract_name_encoding_available(std::span<const std::filesystem::path> archives) {
+    for (const auto& archive : archives) {
+        if (archive_format_info(detect_archive_format(archive)).supports_name_encoding) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Purpose: Resolve a UI selection against the shared archive-name encoding choices.
+// Inputs: A UI state snapshot that may contain a stale selection index.
+// Outputs: Returns a supported choice with a bounded index.
+const ArchiveNameEncodingChoice& selected_name_encoding(const UiState& state) {
+    const auto index =
+        std::clamp(state.extract_name_encoding_index, 0, static_cast<int>(kArchiveNameEncodingChoices.size()) - 1);
+    return kArchiveNameEncodingChoices[static_cast<std::size_t>(index)];
 }
 
 // Purpose: Return the user-facing compression-level label.
@@ -997,6 +1033,13 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
         }();
     case DropdownId::ExtractOverwrite:
         return {L"Ask before overwriting", L"Overwrite without asking"};
+    case DropdownId::ExtractNameEncoding: {
+        std::vector<std::wstring> labels;
+        for (const auto& choice : kArchiveNameEncodingChoices) {
+            labels.emplace_back(choice.label);
+        }
+        return labels;
+    }
     case DropdownId::HistoryOperation:
         return {history_operation_filter_text(0), history_operation_filter_text(1), history_operation_filter_text(2),
                 history_operation_filter_text(3), history_operation_filter_text(4)};
@@ -1043,6 +1086,8 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
         return state.compression_block_size_index;
     case DropdownId::ExtractOverwrite:
         return state.overwrite ? 1 : 0;
+    case DropdownId::ExtractNameEncoding:
+        return state.extract_name_encoding_index;
     case DropdownId::HistoryOperation:
         return state.history_operation_filter_index;
     case DropdownId::HistoryStatus:

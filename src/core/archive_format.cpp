@@ -46,9 +46,9 @@ constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::Zstd, "zst", "Zstandard (.zst)", ".zst,.zstd", true, true, false, true},
     {ArchiveFormat::Cab, "cab", "CAB (.cab)", ".cab", false, true, false, true},
     {ArchiveFormat::Iso, "iso", "ISO image (.iso)", ".iso", false, true, false, true},
-    {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true},
-    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO.GZ (.cpio.gz)", ".cpio.gz,.cpgz", true, true, false, true},
-    {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true},
+    {ArchiveFormat::Cpio, "cpio", "CPIO (.cpio)", ".cpio", true, true, false, true, true},
+    {ArchiveFormat::CpioGzip, "cpio.gz", "CPIO.GZ (.cpio.gz)", ".cpio.gz,.cpgz", true, true, false, true, true},
+    {ArchiveFormat::Ar, "ar", "Unix AR (.ar)", ".ar", true, true, false, true, true},
     {ArchiveFormat::Arj, "arj", "ARJ (.arj)", ".arj", false, true, false, true},
     {ArchiveFormat::Arc, "arc", "SEA ARC/ARK (.arc)", ".arc,.ark", false, true, false, true},
     {ArchiveFormat::Hqx, "hqx", "BinHex 4.0 (.hqx)", ".hqx", false, true, false, true},
@@ -59,8 +59,8 @@ constexpr std::array<ArchiveFormatInfo, 38> kFormatRegistry{{
     {ArchiveFormat::Wim, "wim", "Windows Imaging (.wim)", ".wim", false, true, false, true},
     {ArchiveFormat::SplitWim, "swm", "Split WIM (.swm)", ".swm", false, false, false, false},
     {ArchiveFormat::Xar, "xar", "XAR (.xar)", ".xar", false, true, false, true},
-    {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true},
-    {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true},
+    {ArchiveFormat::Deb, "deb", "Debian package (.deb)", ".deb", false, true, false, true, true},
+    {ArchiveFormat::Rpm, "rpm", "RPM package (.rpm)", ".rpm", false, true, false, true, true},
 }};
 
 constexpr ArchiveFormatExtensionInfo kUnknownExtensionInfo{};

@@ -4,6 +4,7 @@
 #include "app/window_layout.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
+#include "core/archive_name_encoding.hpp"
 #include "core/defender_scan.hpp"
 #include "core/integrity.hpp"
 #include "core/progress.hpp"
@@ -149,14 +150,24 @@ bool compression_format_uses_level(ArchiveFormat format);
 std::wstring compression_output_filename_for(const UiState& state);
 std::filesystem::path compression_output_path_for(const UiState& state);
 std::filesystem::path extraction_output_path_for(const UiState& state);
+// Purpose: Enable unmarked-name selection only when the queue includes an applicable archive.
+// Inputs: Selected archive paths from a synchronized queue snapshot.
+// Outputs: Returns true for CPIO, AR, or their supported package wrappers.
+bool extract_name_encoding_available(std::span<const std::filesystem::path> archives);
+// Purpose: Resolve the selected name encoding from shared product choices.
+// Inputs: A synchronized UI state snapshot.
+// Outputs: Returns the chosen policy, bounding a stale index to a valid option.
+const ArchiveNameEncodingChoice& selected_name_encoding(const UiState& state);
 OperationStats extract_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
                                         const std::filesystem::path& output, bool gpu_required, bool overwrite,
-                                        const ProgressCallback& progress_callback);
+                                        const ProgressCallback& progress_callback,
+                                        ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8);
 // Purpose: Fully validate one detected archive without retaining extracted output.
 // Inputs: `archive_format`, identity-pinned `archive`, GPU policy, and optional progress callback describe the run.
 // Outputs: Returns validation telemetry or throws on format, path, decode, checksum, or resource-limit failure.
 OperationStats validate_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
-                                         bool gpu_required, const ProgressCallback& progress_callback);
+                                         bool gpu_required, const ProgressCallback& progress_callback,
+                                         ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8);
 std::wstring compression_level_text(int index);
 int normalize_performance_update_seconds(int seconds);
 int performance_update_index_for_seconds(int seconds);

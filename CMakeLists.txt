@@ -354,6 +354,7 @@ add_library(
   src/core/file_publish.cpp
   src/core/integrity.cpp
   src/core/path_safety.cpp
+  src/core/archive_name_encoding.cpp
   src/core/progress.cpp
   src/core/resource_usage.cpp
   src/core/trusted_runtime.cpp
@@ -664,6 +665,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_integrity.cpp
     tests/cpp/test_archive_format.cpp
     tests/cpp/test_ar_compat.cpp
+    tests/cpp/test_archive_name_encoding.cpp
     tests/cpp/test_arc_compat.cpp
     tests/cpp/test_arj_compat.cpp
     tests/cpp/test_base64_compat.cpp

@@ -1093,7 +1093,7 @@ class MainWindow {
     // Inputs: `sources` are selected archives and booleans describe requested security and GPU policies.
     // Outputs: Publishes progress/history/result state or throws after recording the failed/incomplete stage.
     void run_security_review(const std::vector<std::filesystem::path>& sources, bool integrity, bool defender,
-                             bool gpu_required);
+                             bool gpu_required, ArchivePathEncoding name_encoding);
 
     // Purpose: Request cancellation of the active background operation.
     // Inputs: None; reads synchronized UI progress state.

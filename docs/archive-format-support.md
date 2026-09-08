@@ -369,6 +369,25 @@ and GNU `//` string-table references. Symbol-table metadata is skipped rather
 than extracted. The adapter supports regular-file members only because AR has no
 portable directory entry model.
 
+CPIO, CPIO.GZ, AR, and the DEB/RPM wrapper routes default to strict UTF-8
+member names, matching SuperZip's CPIO and AR writers. These containers do not
+provide a per-member encoding declaration in the supported layouts. For legacy
+archives, select **Windows ANSI** in Extract's **Member name encoding** field,
+or pass `extract --name-encoding system`; this explicitly uses the current
+Windows ANSI code page. `--name-encoding utf8` selects the default explicitly.
+The option is not accepted by the CLI for unrelated formats; the GUI enables
+it only for eligible queue selections and applies it only to eligible members
+of mixed-format jobs. The selected policy is captured for extraction and archive
+verification, including quarantine extraction. It is not automatic detection:
+archives from a different legacy code page need a matching system configuration
+or conversion using their known original encoding.
+
+Names are decoded before path/collision validation, with raw and decoded byte
+limits. Invalid UTF-8 fails explicitly instead of creating replacement or
+ANSI-misinterpreted filenames. AR byte offsets and CPIO padding use original
+encoded lengths; both CPIO.GZ passes use the same selected decoder. Portable
+test builds support UTF-8; Windows ANSI mode is unavailable off Windows.
+
 DEB support is intentionally extract-only. Debian package files are AR
 containers, so SuperZip extracts the outer package members through the same
 bounded AR adapter. It does not install packages, execute maintainer scripts, or

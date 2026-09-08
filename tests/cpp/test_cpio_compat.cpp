@@ -1,4 +1,6 @@
 #include "test_util.hpp"
+#include "test_legacy_name.hpp"
+#include "test_compat_fixture.hpp"
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
@@ -146,6 +148,68 @@ void write_one_entry_cpio(const std::filesystem::path& archive, std::string_view
 }
 
 }  // namespace
+
+// Purpose: Use the same explicit legacy decoder in seekable CPIO and both CPIO.GZ passes.
+// Inputs: Independently encoded ANSI names with padding and a following ASCII entry.
+// Outputs: Requires exact native names and contents from both extraction routes.
+TEST_CASE(cpio_legacy_member_names_both_passes) {
+    const auto root = test_temp_dir("cpio-legacy-members");
+    const auto [raw, expected] = test_legacy_archive_name();
+    const auto archive = root / "fixture.cpio";
+    {
+        std::ofstream stream(archive, std::ios::binary);
+        write_cpio_entry(stream, "070701", raw, kTestCpioRegularMode, 1, "legacy", 0);
+        write_cpio_entry(stream, "070701", "sibling.txt", kTestCpioRegularMode, 1, "next payload", 0);
+        write_cpio_trailer(stream);
+    }
+    const auto gzip = root / "fixture.cpio.gz";
+    (void)superzip::compress_gzip_file({archive}, gzip);
+    for (const bool compressed : {false, true}) {
+        const auto output = root / (compressed ? "gzip" : "plain");
+        const auto stats =
+            compressed
+                ? superzip::extract_cpio_gzip(gzip, output, false, {}, superzip::ArchivePathEncoding::HostCodePage)
+                : superzip::extract_cpio(archive, output, false, {}, superzip::ArchivePathEncoding::HostCodePage);
+        REQUIRE_EQ(stats.entries, 2U);
+        REQUIRE_EQ(read_text_file(output / expected), "legacy");
+        REQUIRE_EQ(read_text_file(output / "sibling.txt"), "next payload");
+        REQUIRE_EQ(count_regular_files(output), 2U);
+        if (!compressed) {
+            superzip_test::export_compat_fixture(archive, output);
+        }
+    }
+}
+
+// Purpose: Reject invalid UTF-8 in the validation pass before any CPIO entry is published.
+// Inputs: Plain and Gzip CPIO containing a valid member followed by malformed name bytes.
+// Outputs: Requires ArchiveError and no destination creation in either route.
+TEST_CASE(cpio_invalid_member_encoding_prevents_all_output) {
+    const auto root = test_temp_dir("cpio-invalid-name-encoding");
+    const auto archive = root / "fixture.cpio";
+    {
+        std::ofstream stream(archive, std::ios::binary);
+        write_cpio_entry(stream, "070701", "valid.txt", kTestCpioRegularMode, 1, "valid", 0);
+        write_cpio_entry(stream, "070701", "\xed\xa0\x80.txt", kTestCpioRegularMode, 1, "invalid", 0);
+        write_cpio_trailer(stream);
+    }
+    const auto gzip = root / "fixture.cpio.gz";
+    (void)superzip::compress_gzip_file({archive}, gzip);
+    for (const bool compressed : {false, true}) {
+        const auto output = root / (compressed ? "gzip" : "plain");
+        bool rejected = false;
+        try {
+            if (compressed) {
+                (void)superzip::extract_cpio_gzip(gzip, output, false);
+            } else {
+                (void)superzip::extract_cpio(archive, output, false);
+            }
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(!std::filesystem::exists(output));
+    }
+}
 
 // Purpose: Verify native `.cpio` compatibility roundtrip for files and directories.
 // Inputs: A temporary source tree compressed through the CPIO adapter.
@@ -336,6 +400,33 @@ TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
         REQUIRE_EQ(count_regular_files(output), 1U);
         REQUIRE_EQ(extract(true).output_bytes, 3U);
         REQUIRE_EQ(read_text_file(target), "new");
+        REQUIRE_EQ(count_regular_files(output), 1U);
+    }
+}
+
+// Purpose: Preserve Unicode member names through both plain and compressed CPIO creation/extraction.
+// Inputs: A nested Unicode file and empty directory serialized by the production writers.
+// Outputs: Requires exact paths and payloads without additional files or garbled directory names.
+TEST_CASE(cpio_unicode_member_names_roundtrip) {
+    const auto root = test_temp_dir("cpio-unicode-members");
+    const auto source = root / "source";
+    const auto relative = std::filesystem::path(L"\u65e5\u672c") / L"\U0001f680.txt";
+    const auto empty = std::filesystem::path(L"\u03b1-empty");
+    std::filesystem::create_directories(source / relative.parent_path());
+    std::filesystem::create_directories(source / empty);
+    std::ofstream(source / relative, std::ios::binary) << "unicode payload";
+    for (const bool gzip : {false, true}) {
+        const auto archive = root / (gzip ? "fixture.cpio.gz" : "fixture.cpio");
+        const auto output = root / (gzip ? "gzip" : "plain");
+        if (gzip) {
+            (void)superzip::compress_cpio_gzip({source}, archive);
+            (void)superzip::extract_cpio_gzip(archive, output, false);
+        } else {
+            (void)superzip::compress_cpio({source}, archive);
+            (void)superzip::extract_cpio(archive, output, false);
+        }
+        REQUIRE_EQ(read_text_file(output / "source" / relative), "unicode payload");
+        REQUIRE_TRUE(std::filesystem::is_empty(output / "source" / empty));
         REQUIRE_EQ(count_regular_files(output), 1U);
     }
 }

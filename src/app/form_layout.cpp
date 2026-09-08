@@ -96,6 +96,7 @@ ExtractLayout make_extract_layout(const RECT& rect, UINT dpi) {
     layout.destination = RECT{mid, layout.area.top + scale(54), mid + field_w, layout.area.top + scale(104)};
     layout.path_mode = RECT{left, layout.area.top + scale(124), left + field_w, layout.area.top + scale(174)};
     layout.overwrite_policy = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
+    layout.name_encoding = RECT{left, layout.area.top + scale(352), left + field_w, layout.area.top + scale(402)};
     layout.checks =
         RECT{layout.area.left, layout.area.top + scale(200), layout.area.right, layout.area.top + scale(332)};
     layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48),

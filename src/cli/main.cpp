@@ -116,7 +116,7 @@ void usage() {
            "auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|"
            "lz|lzip|zst|zstd|z|compress|b64|base64|hqx|binhex|xxe|xxencode|uue|uu|macbinary|macbin|cab|iso|cpio|cpio."
            "gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] "
-           "[--defender-scan] <archive>\n"
+           "[--defender-scan] [--name-encoding utf8|system] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
            "[--defender-scan] <archive.suzip>\n";
 }
@@ -370,6 +370,8 @@ struct CliCompressCommand {
 
 struct CliExtractCommand {
     std::string format = "auto";
+    superzip::ArchivePathEncoding name_encoding = superzip::ArchivePathEncoding::Utf8;
+    bool name_encoding_requested = false;
     bool require_gpu = false;
     bool force_cpu = false;
     std::uint32_t workers = 0;
@@ -557,6 +559,9 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--format") {
             command.format = require_arg(args, i, "--format");
+        } else if (args[i] == "--name-encoding") {
+            command.name_encoding = superzip::parse_archive_name_encoding(require_arg(args, i, "--name-encoding"));
+            command.name_encoding_requested = true;
         } else if (args[i] == "--output") {
             command.output = cli_path_argument(require_arg(args, i, "--output"));
         } else if (args[i] == "--require-gpu") {
@@ -688,14 +693,15 @@ std::optional<superzip::OperationStats> extract_container_format(superzip::Archi
         return superzip::extract_iso(command.archive, command.output, command.overwrite);
     case superzip::ArchiveFormat::Cpio:
         reject_extract_tuning("CPIO", command);
-        return superzip::extract_cpio(command.archive, command.output, command.overwrite);
+        return superzip::extract_cpio(command.archive, command.output, command.overwrite, {}, command.name_encoding);
     case superzip::ArchiveFormat::CpioGzip:
         reject_extract_tuning("CPIO.GZ", command);
-        return superzip::extract_cpio_gzip(command.archive, command.output, command.overwrite);
+        return superzip::extract_cpio_gzip(command.archive, command.output, command.overwrite, {},
+                                           command.name_encoding);
     case superzip::ArchiveFormat::Ar:
     case superzip::ArchiveFormat::Deb:
         reject_extract_tuning("AR/DEB", command);
-        return superzip::extract_ar(command.archive, command.output, command.overwrite);
+        return superzip::extract_ar(command.archive, command.output, command.overwrite, {}, command.name_encoding);
     case superzip::ArchiveFormat::Arj:
         reject_extract_tuning("ARJ", command);
         return superzip::extract_arj(command.archive, command.output, command.overwrite);
@@ -704,7 +710,7 @@ std::optional<superzip::OperationStats> extract_container_format(superzip::Archi
         return superzip::extract_arc(command.archive, command.output, command.overwrite);
     case superzip::ArchiveFormat::Rpm:
         reject_extract_tuning("RPM", command);
-        return superzip::extract_rpm(command.archive, command.output, command.overwrite);
+        return superzip::extract_rpm(command.archive, command.output, command.overwrite, {}, command.name_encoding);
     case superzip::ArchiveFormat::Lha:
         reject_extract_tuning("LHA", command);
         return superzip::extract_lha(command.archive, command.output, command.overwrite);
@@ -758,6 +764,9 @@ int run_extract_command(const std::vector<std::string>& args) {
     }
     const auto archive_format = resolve_cli_archive_format(command.format, archive_source.path(), true);
     reject_unsupported_cli_format(archive_format, "extract");
+    if (command.name_encoding_requested && !superzip::archive_format_info(archive_format).supports_name_encoding) {
+        throw superzip::ArchiveError("--name-encoding is supported only for CPIO, CPIO.GZ, AR, DEB, and RPM");
+    }
     if (command.defender_scan) {
         superzip::DirectoryPublishTransaction quarantine(command.output);
         const auto final_output = command.output;

@@ -404,7 +404,7 @@ bool classify_cpio_entry(const CpioHeader& header, const std::string& name) {
 // Inputs: `input` is positioned at the CPIO start and `seekable` indicates whether payload offsets can be recorded.
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
 // entries.
-CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
+CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathEncoding encoding) {
     CpioScanResult result;
     std::vector<ArchivePathValidationEntry> validation_entries;
     while (true) {
@@ -434,6 +434,7 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
         if (result.entries.size() >= kMaxArchiveEntries) {
             throw ArchiveError("CPIO archive contains too many entries");
         }
+        raw_name = decode_archive_name(raw_name, encoding);
         result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
             result.path_metadata_bytes, static_cast<std::uint64_t>(raw_name.size()) * 2U,
             "CPIO retained path metadata");
@@ -483,12 +484,12 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
 // Inputs: `archive_path` is the CPIO file to parse.
 // Outputs: Returns trusted extraction metadata; throws on malformed headers, unsafe paths, duplicates, or unsupported
 // entries.
-CpioScanResult scan_cpio(const std::filesystem::path& archive_path) {
+CpioScanResult scan_cpio(const std::filesystem::path& archive_path, ArchivePathEncoding encoding) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
         throw ArchiveError("cannot open CPIO archive: " + path_diagnostic_utf8(archive_path));
     }
-    return scan_cpio_stream(input, true);
+    return scan_cpio_stream(input, true, encoding);
 }
 
 // Purpose: Write a CPIO stream to any output stream using shared compatibility semantics.
@@ -530,7 +531,7 @@ CpioWriteStats write_cpio_stream(const std::vector<std::filesystem::path>& sourc
 // Purpose: Read one CPIO stream record during second-pass extraction.
 // Inputs: `input` is positioned at a CPIO header.
 // Outputs: Returns entry metadata or a trailer marker; throws on malformed metadata or unsupported entry types.
-CpioStreamRecord read_cpio_stream_record(std::istream& input) {
+CpioStreamRecord read_cpio_stream_record(std::istream& input, ArchivePathEncoding encoding) {
     std::array<char, kCpioHeaderBytes> raw_header{};
     read_exact(input, raw_header.data(), raw_header.size(), "CPIO header");
     const auto header = parse_cpio_header(raw_header);
@@ -553,6 +554,7 @@ CpioStreamRecord read_cpio_stream_record(std::istream& input) {
         return CpioStreamRecord{.trailer = true};
     }
 
+    raw_name = decode_archive_name(raw_name, encoding);
     const bool directory = classify_cpio_entry(header, raw_name);
     return CpioStreamRecord{
         .entry =
@@ -584,12 +586,12 @@ void require_matching_scanned_cpio_entry(const CpioEntryMetadata& actual, const 
 // metadata against `scanned`.
 void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& scanned,
                                    const std::filesystem::path& destination, bool overwrite,
-                                   const ProgressCallback& progress_callback) {
+                                   const ProgressCallback& progress_callback, ArchivePathEncoding encoding) {
     ProgressState progress;
     progress.start(OperationKind::Extract, scanned.total_file_bytes, scanned.entries.size());
     std::size_t entry_index = 0;
     for (;;) {
-        const auto record = read_cpio_stream_record(input);
+        const auto record = read_cpio_stream_record(input, encoding);
         if (record.trailer) {
             break;
         }
@@ -600,7 +602,7 @@ void extract_validated_cpio_stream(std::istream& input, const CpioScanResult& sc
         require_matching_scanned_cpio_entry(record.entry, expected);
         progress.set_current(expected.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, expected.path);
+        const auto target = safe_join_archive_path(destination, expected.path, ArchivePathEncoding::Utf8);
         if (expected.directory) {
             create_verified_directories(target);
             discard_stream_bytes(input, cpio_padding(expected.size), "CPIO file padding");
@@ -677,9 +679,18 @@ OperationStats compress_cpio_gzip(const std::vector<std::filesystem::path>& sour
 // unsafe, malformed, checksum-invalid, or refused-overwrite entries.
 OperationStats extract_cpio(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                             bool overwrite, const ProgressCallback& progress_callback) {
+    return extract_cpio(archive_path, destination, overwrite, progress_callback, ArchivePathEncoding::Utf8);
+}
+
+// Purpose: Extract validated CPIO entries after normalizing unmarked names to UTF-8.
+// Inputs: Archive, output root, overwrite policy, synchronous progress callback, and explicit name encoding.
+// Outputs: Returns operation statistics or throws on invalid metadata, encoding, or publication failure.
+OperationStats extract_cpio(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                            bool overwrite, const ProgressCallback& progress_callback, ArchivePathEncoding encoding) {
+    validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    const auto scanned = scan_cpio(archive_source.path());
+    const auto scanned = scan_cpio(archive_source.path(), encoding);
     create_verified_directories(destination);
 
     std::ifstream input(archive_source.path(), std::ios::binary);
@@ -692,7 +703,7 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
     for (const auto& entry : scanned.entries) {
         progress.set_current(entry.path);
         publish_progress(progress, progress_callback);
-        const auto target = safe_join_archive_path(destination, entry.path);
+        const auto target = safe_join_archive_path(destination, entry.path, ArchivePathEncoding::Utf8);
         if (entry.directory) {
             create_verified_directories(target);
             progress.finish_entry();
@@ -718,15 +729,25 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
 // publishing unsafe, malformed, checksum-invalid, or refused-overwrite entries.
 OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
+    return extract_cpio_gzip(archive_path, destination, overwrite, progress_callback, ArchivePathEncoding::Utf8);
+}
+
+// Purpose: Extract CPIO.GZ with identical explicit name decoding in validation and publication passes.
+// Inputs: Archive, output root, overwrite policy, synchronous progress callback, and explicit name encoding.
+// Outputs: Returns operation statistics or throws on invalid or changed metadata, payload, or publication failure.
+OperationStats extract_cpio_gzip(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
+                                 bool overwrite, const ProgressCallback& progress_callback,
+                                 ArchivePathEncoding encoding) {
+    validate_archive_name_encoding(encoding);
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
     GzipInputStream scan_input(archive_source.path());
-    const auto scanned = scan_cpio_stream(scan_input, false);
+    const auto scanned = scan_cpio_stream(scan_input, false, encoding);
     scan_input.finish();
     create_verified_directories(destination);
 
     GzipInputStream extract_input(archive_source.path());
-    extract_validated_cpio_stream(extract_input, scanned, destination, overwrite, progress_callback);
+    extract_validated_cpio_stream(extract_input, scanned, destination, overwrite, progress_callback, encoding);
     extract_input.finish();
 
     OperationStats stats;

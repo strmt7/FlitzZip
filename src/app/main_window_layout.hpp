@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/archive_name_encoding.hpp"
+
 #include <array>
 #include <filesystem>
 #include <vector>
@@ -43,6 +45,7 @@ struct ExtractJobRequest {
     bool overwrite = false;
     bool integrity = false;
     bool defender = false;
+    ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8;
 };
 
 struct ProcessIoRates {
@@ -87,6 +90,7 @@ struct ExtractLayout {
     RECT destination{};
     RECT path_mode{};
     RECT overwrite_policy{};
+    RECT name_encoding{};
     RECT checks{};
     RECT verify_metadata{};
     RECT open_destination_after_extract{};

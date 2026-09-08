@@ -271,6 +271,8 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
         return compress_layout(content).block_size;
     case DropdownId::ExtractOverwrite:
         return extract_layout(content).overwrite_policy;
+    case DropdownId::ExtractNameEncoding:
+        return extract_layout(content).name_encoding;
     case DropdownId::HistoryOperation: {
         return history_layout(content).operation_filter;
     }

@@ -40,7 +40,10 @@ Security tab or a published release.
    declared encodings; ZIP also decodes unmarked names as CP437. CLI process
    arguments and format detection no longer narrow Unicode paths through the
    host ANSI code page. Process-level Unicode checks cover the native, ZIP,
-   and writable TAR containers; CPIO/CPIO.GZ and AR name handling remains open.
+   and writable TAR containers. CPIO/CPIO.GZ and AR now default to strict UTF-8
+   member decoding with an explicit Windows ANSI legacy option shared by CLI
+   and GUI. DEB/RPM wrappers forward the same policy; archive verification and
+   quarantine extraction capture the selection with the job.
    The 7z, WIM, and XAR readers now also preserve their Unicode metadata at
    filesystem joins. WIM staging lookup uses the same explicit UTF-8 contract.
    Shared publication diagnostics no longer lose the original overwrite error
@@ -58,7 +61,10 @@ Security tab or a published release.
    CPIO diagnostics now preserve Unicode destination paths rather than masking
    overwrite refusal with an ANSI conversion failure. A plain/compressed CPIO
    regression checks exact diagnostic text, unchanged refused output, and
-   successful explicit overwrite; archive-name encoding policy remains open.
+   successful explicit overwrite. Unmarked-name regressions cover Unicode
+   roundtrips, ANSI names under the actual host code page, malformed UTF-8,
+   AR raw-byte offsets, and both CPIO stream passes. Broader legacy-format
+   encoding review and production release validation remain open.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

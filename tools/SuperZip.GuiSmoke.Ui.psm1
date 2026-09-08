@@ -277,7 +277,7 @@ function Invoke-ClientWheel {
 
 # Purpose: Send one keyboard activation to the SuperZip window.
 # Inputs: `Handle` is the HWND and `VirtualKey` is a Win32 VK_* code.
-# Outputs: Posts key-down and key-up messages for keyboard-accessibility smoke checks.
+# Outputs: Sends key-down and key-up messages synchronously for keyboard-accessibility smoke checks.
 function Invoke-ClientKey {
     param(
         [IntPtr]$Handle,
@@ -752,13 +752,13 @@ function Invoke-DropdownExercise {
         [string]$BasePath,
         [string]$Extension
     )
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $OpenX -DesignY $OpenY
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $OpenX -DesignY $OpenY -Synchronous
     Start-Sleep -Milliseconds 180
     $path = "${BasePath}-Dropdown-$Name$Extension"
     $capture = Save-SuperZipScreenshot -Handle $Handle -Path $path
     $offset = Get-ClientCaptureOffset -Handle $Handle
     Assert-DesignRectHasDetail -Path $path -Dpi $Dpi -Left $MenuLeft -Top $MenuTop -Right $MenuRight -Bottom $MenuBottom -ClientOffsetX $offset.X -ClientOffsetY $offset.Y -MinUniqueColors 5
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $SelectX -DesignY $SelectY
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX $SelectX -DesignY $SelectY -Synchronous
     Start-Sleep -Milliseconds 180
     return $capture
 }

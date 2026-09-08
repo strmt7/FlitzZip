@@ -298,7 +298,7 @@ function Select-CompressFormatIndex {
         [int]$Dpi,
         [int]$Index
     )
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 224
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 224 -Synchronous
     Start-Sleep -Milliseconds 120
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
     for ($i = 0; $i -lt $Index; ++$i) {
@@ -651,6 +651,42 @@ function Assert-CompactOverwritePrompt {
     }
 }
 
+# Purpose: Exercise the native legacy-name selector and verify real extraction paths and payloads.
+# Inputs: The smoke window, native-test-exported CPIO fixture, shared output root, and capture naming.
+# Outputs: Returns normal/compact captures; throws on missing menu, lost selection, or wrong extracted bytes.
+function Assert-LegacyNameExtraction {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$FixtureRoot, [string]$OutputRoot, [string]$BasePath, [string]$Extension)
+
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 0 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1134 -DesignY 91 -Synchronous
+    $archives = @(Get-ChildItem -LiteralPath (Join-Path $FixtureRoot 'archive') -File)
+    if ($archives.Count -ne 1) { throw 'Expected one legacy CPIO fixture.' }
+    Invoke-FileDrop -Handle $Handle -Dpi $Dpi -Paths @($archives[0].FullName)
+    Start-Sleep -Milliseconds 250
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 2 -Synchronous
+    Invoke-DropdownExercise -Handle $Handle -Dpi $Dpi -Name 'Extract-NameEncoding-System' -OpenX 300 -OpenY 451 -SelectX 300 -SelectY 528 -MenuLeft 116 -MenuTop 478 -MenuRight 617 -MenuBottom 546 -BasePath $BasePath -Extension $Extension
+    $old = Invoke-SmokeClientResize -Handle $Handle -Dpi $Dpi -Width 960 -Height 600
+    try {
+        Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Compact-NameEncoding$Extension" -ExpectedDesignWidth 960 -ExpectedDesignHeight 600
+    } finally {
+        if (-not [SuperZipNativeUi]::SetWindowPos($Handle, [IntPtr]::Zero, 0, 0, $old.Width, $old.Height, 0x0016)) {
+            throw 'Cannot restore the smoke window after the encoding test.'
+        }
+    }
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+    $expected = @(Get-ChildItem -LiteralPath (Join-Path $FixtureRoot 'expected') -File)
+    foreach ($file in $expected) {
+        $target = Join-Path $OutputRoot $file.Name
+        $deadline = (Get-Date).AddSeconds(10)
+        while (-not (Test-Path -LiteralPath $target) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        if (-not (Test-Path -LiteralPath $target) -or
+            (Get-FileHash -LiteralPath $target).Hash -ne (Get-FileHash -LiteralPath $file.FullName).Hash) {
+            throw "GUI legacy-name extraction failed for $($file.Name)."
+        }
+    }
+    Invoke-DropdownExercise -Handle $Handle -Dpi $Dpi -Name 'Extract-NameEncoding-UTF8' -OpenX 300 -OpenY 451 -SelectX 300 -SelectY 494 -MenuLeft 116 -MenuTop 478 -MenuRight 617 -MenuBottom 546 -BasePath $BasePath -Extension $Extension
+}
+
 # Purpose: Verify compact popup scrolling through real selection and persistence.
 # Inputs: Handle/Dpi identify a 960x600-DIP smoke window; SettingsPath is isolated storage; BasePath names screenshots.
 # Outputs: Returns menu captures and fails when wheel, scroll arrows, or keyboard cannot select the last format.
@@ -794,6 +830,15 @@ if (-not (Test-Path -LiteralPath $smokeArchive)) {
 }
 if (-not (Test-Path -LiteralPath $smokeArchiveTwo)) {
     throw "Could not create second valid SUZIP archive for GUI multi-extract smoke."
+}
+$legacyFixture = Join-Path $smokeRoot ('legacy-names-' + [guid]::NewGuid().ToString('N'))
+$previousFixtureExport = $env:SUPERZIP_TEST_FIXTURE_EXPORT
+try {
+    $env:SUPERZIP_TEST_FIXTURE_EXPORT = $legacyFixture
+    $fixtureOutput = & (Join-Path $repo "build\$Configuration\superzip_tests.exe") cpio_legacy_member_names_both_passes
+    if ($LASTEXITCODE -ne 0) { throw "Could not export the verified legacy-name GUI fixture: $($fixtureOutput -join '`n')" }
+} finally {
+    $env:SUPERZIP_TEST_FIXTURE_EXPORT = $previousFixtureExport
 }
 $previousSmokeDestination = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", "Process")
 $previousSmokeFiles = [Environment]::GetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", "Process")
@@ -1042,17 +1087,19 @@ try {
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 520 -DesignY 227
     Start-Sleep -Milliseconds 120
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 300 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 417
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 337
     Start-Sleep -Milliseconds 80
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 449
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 368
     Start-Sleep -Milliseconds 80
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 417
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 368
+    Start-Sleep -Milliseconds 80
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 338
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 417
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 338
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 453
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 374
     Start-Sleep -Milliseconds 120
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 453
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 650 -DesignY 374
     Start-Sleep -Milliseconds 120
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1090 -DesignY 666
     $singleExtracted = Join-Path $extractOutput "drag-drop-input.txt"
@@ -1092,6 +1139,8 @@ try {
     if (-not (Test-Path -LiteralPath $multiFirst) -or -not (Test-Path -LiteralPath $multiSecond)) {
         throw "GUI multi-archive extraction did not restore both expected files under $extractOutput."
     }
+
+    $captures += Assert-LegacyNameExtraction -Handle $windowHandle -Dpi $windowDpi -FixtureRoot $legacyFixture -OutputRoot $extractOutput -BasePath $basePath -Extension $extension
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
     Start-Sleep -Milliseconds 150
