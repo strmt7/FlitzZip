@@ -55,6 +55,10 @@ Security tab or a published release.
    packing eligible blocks, without repeating match search. Independent checks
    across 300 native/ZIP/Gzip/TAR.GZ/CPIO.GZ archives found 57 size reductions
    and no growth; throughput and broader release validation remain separate.
+   CPIO diagnostics now preserve Unicode destination paths rather than masking
+   overwrite refusal with an ANSI conversion failure. A plain/compressed CPIO
+   regression checks exact diagnostic text, unchanged refused output, and
+   successful explicit overwrite; archive-name encoding policy remains open.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

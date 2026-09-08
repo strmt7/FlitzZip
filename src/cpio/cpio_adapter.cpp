@@ -3,6 +3,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -246,7 +247,7 @@ void write_cpio_entry_header(std::ostream& output, std::string_view path, std::u
 void copy_file_to_cpio(const std::filesystem::path& source, std::ostream& output, std::uint64_t expected_size) {
     std::ifstream input(source, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open file for CPIO archive: " + source.string());
+        throw ArchiveError("cannot open file for CPIO archive: " + path_diagnostic_utf8(source));
     }
     std::array<char, kCpioIoBufferBytes> buffer{};
     std::uint64_t remaining = expected_size;
@@ -254,7 +255,7 @@ void copy_file_to_cpio(const std::filesystem::path& source, std::ostream& output
         const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, buffer.size()));
         input.read(buffer.data(), static_cast<std::streamsize>(chunk));
         if (input.gcount() != static_cast<std::streamsize>(chunk)) {
-            throw ArchiveError("failed to read file for CPIO archive: " + source.string());
+            throw ArchiveError("failed to read file for CPIO archive: " + path_diagnostic_utf8(source));
         }
         write_cpio_bytes(output, buffer.data(), chunk);
         remaining -= chunk;
@@ -279,7 +280,7 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary extracted file: " + target.string());
+            throw ArchiveError("failed to create temporary extracted file: " + path_diagnostic_utf8(target));
         }
         std::array<char, kCpioIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
@@ -294,7 +295,7 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
             }
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
-                throw ArchiveError("failed to write temporary extracted file: " + target.string());
+                throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
         }
@@ -303,7 +304,7 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
         }
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
+            throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -320,14 +321,14 @@ void extract_cpio_seekable_file_payload(std::ifstream& input, const CpioEntryMet
 void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetadata& entry,
                                       const std::filesystem::path& target, bool overwrite) {
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing CPIO extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing CPIO extraction target: " + path_diagnostic_utf8(target));
     }
     auto temporary_target = reserve_file_publish_target(target);
     std::uint32_t sum = 0;
     try {
         std::ofstream output(temporary_target.file, std::ios::binary);
         if (!output) {
-            throw ArchiveError("failed to create temporary extracted file: " + target.string());
+            throw ArchiveError("failed to create temporary extracted file: " + path_diagnostic_utf8(target));
         }
         std::array<char, kCpioIoBufferBytes> buffer{};
         std::uint64_t remaining = entry.size;
@@ -341,7 +342,7 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
             }
             output.write(buffer.data(), static_cast<std::streamsize>(chunk));
             if (!output) {
-                throw ArchiveError("failed to write temporary extracted file: " + target.string());
+                throw ArchiveError("failed to write temporary extracted file: " + path_diagnostic_utf8(target));
             }
             remaining -= chunk;
         }
@@ -351,7 +352,7 @@ void extract_cpio_stream_file_payload(std::istream& input, const CpioEntryMetada
         discard_stream_bytes(input, cpio_padding(entry.size), "CPIO file padding");
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize temporary extracted file: " + target.string());
+            throw ArchiveError("failed to finalize temporary extracted file: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary_target, target, overwrite);
         cleanup_file_publish_target(temporary_target);
@@ -485,7 +486,7 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable) {
 CpioScanResult scan_cpio(const std::filesystem::path& archive_path) {
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open CPIO archive: " + archive_path.string());
+        throw ArchiveError("cannot open CPIO archive: " + path_diagnostic_utf8(archive_path));
     }
     return scan_cpio_stream(input, true);
 }
@@ -628,12 +629,12 @@ OperationStats compress_cpio(const std::vector<std::filesystem::path>& sources,
     FilePublishTransaction publication(output_archive);
     std::ofstream output(publication.staging_path(), std::ios::binary);
     if (!output) {
-        throw ArchiveError("cannot create CPIO archive: " + output_archive.string());
+        throw ArchiveError("cannot create CPIO archive: " + path_diagnostic_utf8(output_archive));
     }
     const auto write_stats = write_cpio_stream(sources, output, progress_callback);
     output.close();
     if (!output) {
-        throw ArchiveError("failed to finalize CPIO archive: " + output_archive.string());
+        throw ArchiveError("failed to finalize CPIO archive: " + path_diagnostic_utf8(output_archive));
     }
     publication.commit(true);
 
@@ -683,7 +684,7 @@ OperationStats extract_cpio(const std::filesystem::path& archive_path, const std
 
     std::ifstream input(archive_source.path(), std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open CPIO archive: " + archive_path.string());
+        throw ArchiveError("cannot open CPIO archive: " + path_diagnostic_utf8(archive_path));
     }
 
     ProgressState progress;

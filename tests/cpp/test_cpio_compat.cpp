@@ -98,14 +98,8 @@ std::uint32_t cpio_payload_sum(std::string_view payload) {
 // Purpose: Write one CPIO header/name/payload entry for handcrafted parser tests.
 // Inputs: `output` is the archive stream and the remaining values define one CPIO entry.
 // Outputs: Appends a complete aligned CPIO entry.
-void write_cpio_entry(
-    std::ofstream& output,
-    std::string_view magic,
-    std::string_view path,
-    std::uint32_t mode,
-    std::uint32_t nlink,
-    std::string_view payload,
-    std::uint32_t check) {
+void write_cpio_entry(std::ofstream& output, std::string_view magic, std::string_view path, std::uint32_t mode,
+                      std::uint32_t nlink, std::string_view payload, std::uint32_t check) {
     std::string header;
     header.reserve(110U);
     header.append(magic);
@@ -144,14 +138,8 @@ void write_cpio_trailer(std::ofstream& output) {
 // Purpose: Write a one-entry CPIO archive fixture.
 // Inputs: `archive` is the output path and the remaining values define the sole non-trailer entry.
 // Outputs: Creates a complete CPIO file.
-void write_one_entry_cpio(
-    const std::filesystem::path& archive,
-    std::string_view magic,
-    std::string_view path,
-    std::uint32_t mode,
-    std::uint32_t nlink,
-    std::string_view payload,
-    std::uint32_t check) {
+void write_one_entry_cpio(const std::filesystem::path& archive, std::string_view magic, std::string_view path,
+                          std::uint32_t mode, std::uint32_t nlink, std::string_view payload, std::uint32_t check) {
     std::ofstream output(archive, std::ios::binary);
     write_cpio_entry(output, magic, path, mode, nlink, payload, check);
     write_cpio_trailer(output);
@@ -311,6 +299,44 @@ TEST_CASE(cpio_gzip_extraction_refuses_overwrite_by_default) {
     REQUIRE_EQ(read_text_file(output / "file.txt"), "old");
 }
 
+// Purpose: Preserve overwrite diagnostics when a CPIO destination cannot use the host ANSI code page.
+// Inputs: Plain and Gzip CPIO fixtures, an ASCII member, and a supplementary Unicode destination.
+// Outputs: Requires exact UTF-8 diagnostics, unchanged refused output, and successful explicit replacement.
+TEST_CASE(cpio_unicode_destination_preserves_overwrite_diagnostic) {
+    const auto root = test_temp_dir("cpio-unicode-diagnostic");
+    const auto plain = root / "fixture.cpio";
+    const auto compressed = root / "fixture.cpio.gz";
+    write_one_entry_cpio(plain, "070701", "file.txt", kTestCpioRegularMode, 1, "new", 0);
+    (void)superzip::compress_gzip_file(plain, compressed);
+    for (const bool gzip : {false, true}) {
+        const auto output = root / (gzip ? "gzip" : "plain") / L"\u65e5\u672c-\U0001f680";
+        const auto target = output / "file.txt";
+        std::filesystem::create_directories(output);
+        std::ofstream(target, std::ios::binary) << "old";
+        const auto expected_path = target.u8string();
+        const std::string expected(reinterpret_cast<const char*>(expected_path.data()), expected_path.size());
+        const auto extract = [&](bool overwrite) {
+            return gzip ? superzip::extract_cpio_gzip(compressed, output, overwrite)
+                        : superzip::extract_cpio(plain, output, overwrite);
+        };
+        bool rejected = false;
+        try {
+            (void)extract(false);
+        } catch (const superzip::SecurityError& error) {
+            const std::string message = error.what();
+            REQUIRE_TRUE(message.find("refusing to overwrite") != std::string::npos);
+            REQUIRE_TRUE(message.find(expected) != std::string::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_text_file(target), "old");
+        REQUIRE_EQ(count_regular_files(output), 1U);
+        REQUIRE_EQ(extract(true).output_bytes, 3U);
+        REQUIRE_EQ(read_text_file(target), "new");
+        REQUIRE_EQ(count_regular_files(output), 1U);
+    }
+}
+
 // Purpose: Verify CRC-format CPIO archives extract when their payload checksum is correct.
 // Inputs: A handcrafted `070702` CPIO entry with a valid checksum.
 // Outputs: Throws if extraction fails or restored contents differ.
@@ -333,7 +359,8 @@ TEST_CASE(cpio_crc_format_rejects_checksum_mismatch_before_output) {
     const auto root = test_temp_dir("cpio-crc");
     const auto archive = root / "bad-crc.cpio";
     const std::string payload = "payload";
-    write_one_entry_cpio(archive, "070702", "payload.txt", kTestCpioRegularMode, 1, payload, cpio_payload_sum(payload) + 1U);
+    write_one_entry_cpio(archive, "070702", "payload.txt", kTestCpioRegularMode, 1, payload,
+                         cpio_payload_sum(payload) + 1U);
 
     bool rejected = false;
     try {
@@ -353,7 +380,8 @@ TEST_CASE(cpio_gzip_crc_format_rejects_checksum_mismatch_before_output) {
     const auto plain = root / "bad-crc.cpio";
     const auto archive = root / "bad-crc.cpgz";
     const std::string payload = "payload";
-    write_one_entry_cpio(plain, "070702", "payload.txt", kTestCpioRegularMode, 1, payload, cpio_payload_sum(payload) + 1U);
+    write_one_entry_cpio(plain, "070702", "payload.txt", kTestCpioRegularMode, 1, payload,
+                         cpio_payload_sum(payload) + 1U);
     (void)superzip::compress_gzip_file(plain, archive);
 
     bool rejected = false;
