@@ -117,6 +117,36 @@ attempt merges, and operation-total aggregation. Benchmark readers retain it
 as unavailable and reject it as HIP timing evidence. This does not identify
 the cause of an invalid device clock or establish performance improvements.
 
+### Dispatch-Bound Timing (2026-09-08)
+
+Production codec and diagnostic launches now attach their start/stop events
+directly through HIP's `hipExtLaunchKernel` API. A shared helper derives the
+argument storage types from the kernel signature, checks the dispatch result,
+preserves the existing per-thread stream and ordered-launch flags, and retains
+stop-event synchronization before reading results or releasing device memory.
+This changes instrumentation, not kernel algorithms or archive bytes.
+
+A standalone HIP 7.1 probe on the available gfx1201 device compared identical
+deterministic kernels with separate event markers versus dispatch-bound events.
+Four runs alternated the two methods on per-thread and explicit nonblocking
+streams, with 16,384 and 1,048,576 output words. All API calls and independent
+CPU output checks passed. Of 1,600 marker measurements, 128 were negative;
+all 1,600 dispatch-bound measurements were finite and positive. This isolates
+the marker-timing failure outside SuperZip but does not establish whether the
+underlying fault belongs to the installed runtime or driver.
+
+Production regression coverage adds four concurrent HIP callers, fill,
+pattern, static/adaptive prefix and raw data, short tails, independent-block
+CRCs, decoded CRCs, CPU/HIP roundtrips, and diagnostic compute/checksum kernels.
+All 385 native tests passed on the available device. Other release GPU targets
+are compile-validated, not hardware-tested. The experimental dictionary
+pipeline's multi-kernel timing intervals are not changed by this checkpoint.
+
+Invalid-duration propagation and benchmark rejection remain unchanged. Do not
+compare these dispatch durations directly with historical marker intervals,
+which can include different scheduling overhead. This is not a speedup claim;
+the standard timing sweep still needs a representative shared-host window.
+
 Record these fields for every block size:
 
 | Field | Reason |

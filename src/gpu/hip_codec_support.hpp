@@ -5,6 +5,7 @@
 #include "core/result.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -12,10 +13,12 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <hip/hip_runtime.h>
+#include <hip/hip_ext.h>
 
 namespace superzip::hip_detail {
 
@@ -138,6 +141,19 @@ inline void finish_measured_kernel(GpuTelemetry* telemetry, const HipEventPair& 
     float milliseconds = 0.0F;
     check_hip(hipEventElapsedTime(&milliseconds, events.start, events.stop), action);
     record_gpu_kernel_launch(telemetry, static_cast<double>(milliseconds));
+}
+
+// Purpose: Bind timing events to the kernel dispatch instead of separate stream markers.
+// Inputs: Kernel signature determines argument storage types; dimensions, shared bytes, stream, and owned events
+// describe one ordered launch. Outputs: Submits asynchronously or throws GpuError; caller synchronizes before cleanup.
+template <typename... Args>
+inline void launch_measured_kernel(void (*kernel)(Args...), dim3 grid, dim3 block, std::size_t shared_bytes,
+                                   hipStream_t stream, const HipEventPair& events, const char* action,
+                                   std::type_identity_t<Args>... args) {
+    std::array<void*, sizeof...(Args)> arguments{static_cast<void*>(&args)...};
+    check_hip(hipExtLaunchKernel(reinterpret_cast<const void*>(kernel), grid, block, arguments.data(), shared_bytes,
+                                 stream, events.start, events.stop, 0),
+              action);
 }
 
 // Purpose: Add two allocation byte counts with overflow detection.
