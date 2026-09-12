@@ -32,6 +32,125 @@ BY_HANDLE_FILE_INFORMATION publication_file_identity(const std::filesystem::path
 
 }  // namespace
 
+// Purpose: Keep Win32 path conversion independent of long-path registry settings and locale.
+// Inputs: Normal drive, UNC, already-extended, relative-component, and device-namespace paths.
+// Outputs: Preserves filesystem meaning with extended syntax and rejects non-filesystem namespaces.
+TEST_CASE(windows_api_path_normalizes_filesystem_roots) {
+    REQUIRE_EQ(superzip::windows_api_path(L"C:/root/one/../file.txt"), L"\\\\?\\C:\\root\\file.txt");
+    REQUIRE_EQ(superzip::windows_api_path(L"\\\\server\\share\\file.txt"), L"\\\\?\\UNC\\server\\share\\file.txt");
+    REQUIRE_EQ(superzip::windows_api_path(L"\\\\?\\C:\\root\\file.txt"), L"\\\\?\\C:\\root\\file.txt");
+    REQUIRE_EQ(superzip::windows_api_path(L"\\\\?\\C:\\root\\nested/file.txt"), L"\\\\?\\C:\\root\\nested\\file.txt");
+    REQUIRE_EQ(superzip::windows_api_path(L"\\\\?\\UNC\\server\\share\\file.txt"),
+               L"\\\\?\\UNC\\server\\share\\file.txt");
+    REQUIRE_EQ(superzip::windows_regular_path(L"\\\\?\\C:\\root\\file.txt"), L"C:\\root\\file.txt");
+    REQUIRE_EQ(superzip::windows_regular_path(L"\\\\?\\UNC\\server\\share\\file.txt"), L"\\\\server\\share\\file.txt");
+    REQUIRE_EQ(superzip::windows_regular_path(L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1"),
+               L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1");
+    for (const auto* path : {L"\\\\.\\PhysicalDrive0", L"\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1"}) {
+        bool rejected = false;
+        try {
+            static_cast<void>(superzip::windows_api_path(path));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Reject path representations that Win32 cannot consume as one complete filesystem pathname.
+// Inputs: Embedded-NUL and oversized absolute paths without any filesystem writes.
+// Outputs: Requires explicit rejection rather than truncation or reliance on host long-path configuration.
+TEST_CASE(windows_api_path_rejects_unrepresentable_paths) {
+    auto embedded_nul = std::wstring(L"C:\\root\\file");
+    embedded_nul.push_back(L'\0');
+    embedded_nul += L"hidden.txt";
+    for (const auto& path : {embedded_nul, L"C:\\" + std::wstring(32764U, L'a')}) {
+        bool refused = false;
+        try {
+            static_cast<void>(superzip::windows_api_path(std::filesystem::path(path)));
+        } catch (const std::invalid_argument&) {
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+    }
+}
+
+// Purpose: Reject embedded NUL before publication reserves anything at the truncated prefix pathname.
+// Inputs: A missing target followed by embedded NUL and suffix text in the native path value.
+// Outputs: Rejects file and directory transactions while leaving the selected parent empty.
+TEST_CASE(file_publish_rejects_nul_before_path_resolution) {
+    const auto root = test_temp_dir("publish-nul");
+    auto name = (root / "target").native();
+    name.push_back(L'\0');
+    name += L"suffix";
+    for (const bool directory : {false, true}) {
+        bool refused = false;
+        try {
+            if (directory) {
+                const superzip::DirectoryPublishTransaction transaction{std::filesystem::path(name)};
+            } else {
+                const superzip::FilePublishTransaction transaction{std::filesystem::path(name)};
+            }
+        } catch (const std::invalid_argument&) {
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+        REQUIRE_TRUE(std::filesystem::is_empty(root));
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve exact payload identity and reservation cleanup beyond the legacy Windows path limit.
+// Inputs: Long Unicode destinations and normal, overwritten, refused, and abandoned private file transactions.
+// Outputs: Publishes the original file identity with exact bytes and leaves no temporary publication directories.
+TEST_CASE(file_publish_long_paths_preserve_identity_and_cleanup) {
+    const auto root = test_temp_dir("publish-long-path");
+    auto parent = root;
+    while (parent.native().size() < 320U)
+        parent /= std::wstring(60U, L'p');
+    const auto target = parent / L"\u65e5\u672c-\U0001f680.txt";
+    const auto target_io = std::filesystem::path(superzip::windows_api_path(target));
+    for (const bool overwrite : {false, true}) {
+        superzip::FilePublishTransaction transaction(target);
+        const auto stage = transaction.staging_path();
+        REQUIRE_TRUE(stage.native().size() > 320U);
+        std::ofstream(stage, std::ios::binary) << (overwrite ? "replacement" : "original");
+        const auto before = publication_file_identity(stage);
+        transaction.commit(overwrite);
+        const auto after = publication_file_identity(target_io);
+        REQUIRE_EQ(before.dwVolumeSerialNumber, after.dwVolumeSerialNumber);
+        REQUIRE_EQ(before.nFileIndexHigh, after.nFileIndexHigh);
+        REQUIRE_EQ(before.nFileIndexLow, after.nFileIndexLow);
+        REQUIRE_TRUE(!std::filesystem::exists(stage.parent_path()));
+        std::ifstream input(target_io, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), overwrite ? "replacement" : "original");
+    }
+    for (const bool commit : {false, true}) {
+        std::filesystem::path stage;
+        bool refused = false;
+        {
+            superzip::FilePublishTransaction transaction(target);
+            stage = transaction.staging_path();
+            std::ofstream(stage, std::ios::binary) << "unpublished";
+            if (commit) {
+                try {
+                    transaction.commit(false);
+                } catch (const superzip::SecurityError&) {
+                    refused = true;
+                }
+            }
+        }
+        REQUIRE_EQ(refused, commit);
+        REQUIRE_TRUE(!std::filesystem::exists(stage.parent_path()));
+        std::ifstream input(target_io, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "replacement");
+    }
+    REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(target_io.parent_path()),
+                             std::filesystem::directory_iterator{}),
+               1);
+    std::filesystem::remove_all(std::filesystem::path(superzip::windows_api_path(root)));
+}
+
 // Purpose: Prove private publication moves the original file rather than rewriting its payload.
 // Inputs: Nested nonempty and empty Unicode staged files, existing destinations, and a fixed write timestamp.
 // Outputs: Requires exact file identity, timestamp, and contents after publication, with private staging removed.
@@ -41,7 +160,7 @@ TEST_CASE(directory_publish_moves_payload_without_copying) {
         const auto destination = root / (overwrite ? "replace" : "new");
         superzip::DirectoryPublishTransaction transaction(destination);
         const auto stage = transaction.staging_directory();
-        const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9.txt");
+        const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9.txt").lexically_normal();
         std::filesystem::create_directories((stage / relative).parent_path());
         std::ofstream(stage / relative, std::ios::binary) << "exact published bytes";
         std::ofstream(stage / "empty.txt", std::ios::binary).close();
@@ -423,7 +542,7 @@ TEST_CASE(path_safety_utf8_filename_roundtrip) {
 TEST_CASE(directory_publish_preserves_unicode_names) {
     const auto root = test_temp_dir("unicode-publication");
     const auto destination = root / "output";
-    const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9-\U0001f4c1.txt");
+    const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9-\U0001f4c1.txt").lexically_normal();
     superzip::DirectoryPublishTransaction transaction(destination);
     std::filesystem::create_directories((transaction.staging_directory() / relative).parent_path());
     std::ofstream(transaction.staging_directory() / relative, std::ios::binary) << "Unicode payload";

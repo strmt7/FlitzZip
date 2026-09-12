@@ -1,4 +1,5 @@
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
@@ -76,7 +77,7 @@ void validate_existing_parent_containment(const std::filesystem::path& target, c
         throw SecurityError("archive entry parent path cannot be canonicalized: " + ec.message());
     }
     if (!starts_with_path(parent, root)) {
-        throw SecurityError("archive entry parent resolves outside destination root: " + target.string());
+        throw SecurityError("archive entry parent resolves outside destination root: " + path_diagnostic_utf8(target));
     }
 }
 

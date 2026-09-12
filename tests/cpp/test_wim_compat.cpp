@@ -2,6 +2,8 @@
 #include "test_util.hpp"
 
 #include "core/archive_format.hpp"
+#include "core/file_publish.hpp"
+#include "core/path_text.hpp"
 #include "core/result.hpp"
 #include "wim/wim_adapter.hpp"
 
@@ -40,7 +42,7 @@ std::filesystem::path wim_fixture_path(const std::string& name) {
 std::string read_text(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("failed to open text file: " + path.string());
+        throw std::runtime_error("failed to open text file: " + superzip::path_diagnostic_utf8(path));
     }
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
@@ -147,6 +149,71 @@ TEST_CASE(wim_unicode_names_extract_and_overwrite) {
         }
     }
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise nested WIM staging beyond legacy Win32 limits without machine-wide long-path opt-in.
+// Inputs: A two-image Unicode fixture, long archive/destination paths, and both publication policies.
+// Outputs: Checks exact names/bytes, empty entries, overwrite refusal/replacement, and complete staging cleanup.
+TEST_CASE(wim_unicode_long_paths_preserve_publication_policy) {
+    const auto root = test_temp_dir("wim-long-path");
+    (void)superzip::extract_wim(wim_fixture_path("basic.wim"), root / "initialize", false);
+    const auto source = root / "source";
+    const auto relative = std::filesystem::path(L"caf\u00e9") / L"\u65e5\u672c-\U0001f680.txt";
+    std::filesystem::create_directories((source / relative).parent_path());
+    std::filesystem::create_directories(source / L"empty-\u03a9");
+    std::ofstream(source / relative, std::ios::binary) << "long path payload";
+    std::ofstream(source / L"empty-\u00e9.txt", std::ios::binary);
+    auto long_root = root;
+    while (long_root.native().size() < 320U)
+        long_root /= std::wstring(60U, L'p');
+    const auto long_io = std::filesystem::path(superzip::windows_api_path(long_root));
+    std::filesystem::create_directories(long_io);
+    write_unicode_wim_fixture(source, long_io / L"archive-\u03a9.wim", 2);
+    for (const bool validate : {false, true}) {
+        const auto output = long_root / (validate ? "validated" : "direct");
+        const auto output_io = std::filesystem::path(superzip::windows_api_path(output));
+        int calls = 0;
+        std::filesystem::path stage;
+        const auto extract = [&](bool overwrite) {
+            superzip::extract_with_publication(
+                {.destination = output, .overwrite = overwrite, .validate_before_publish = validate},
+                [&](const auto& destination, bool replace) {
+                    ++calls;
+                    stage = destination;
+                    const auto stats = superzip::extract_wim(long_root / L"archive-\u03a9.wim", destination, replace);
+                    REQUIRE_EQ(stats.output_bytes, 2U * std::string_view("long path payload").size());
+                });
+        };
+        extract(false);
+        REQUIRE_EQ(calls, 1);
+        if (validate)
+            REQUIRE_TRUE(!std::filesystem::exists(stage));
+        for (const auto* image : {"image-1", "image-2"}) {
+            REQUIRE_EQ(read_text(output_io / image / relative), "long path payload");
+            REQUIRE_TRUE(std::filesystem::is_directory(output_io / image / L"empty-\u03a9"));
+            REQUIRE_EQ(std::filesystem::file_size(output_io / image / L"empty-\u00e9.txt"), 0U);
+            std::ofstream(output_io / image / relative, std::ios::binary | std::ios::trunc) << "old";
+        }
+        bool refused = false;
+        try {
+            extract(false);
+        } catch (const superzip::SecurityError&) {
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+        REQUIRE_EQ(calls, 2);
+        if (validate)
+            REQUIRE_TRUE(!std::filesystem::exists(stage));
+        for (const auto* image : {"image-1", "image-2"})
+            REQUIRE_EQ(read_text(output_io / image / relative), "old");
+        extract(true);
+        REQUIRE_EQ(calls, 3);
+        for (const auto* image : {"image-1", "image-2"})
+            REQUIRE_EQ(read_text(output_io / image / relative), "long path payload");
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(output_io))
+            REQUIRE_TRUE(!entry.path().filename().wstring().starts_with(L".superzip"));
+    }
+    std::filesystem::remove_all(std::filesystem::path(superzip::windows_api_path(root)));
 }
 
 TEST_CASE(wim_extraction_refuses_to_overwrite_existing_files) {

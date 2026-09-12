@@ -13,6 +13,7 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/integrity.hpp"
+#include "core/path_text.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_adapter.hpp"
 #include "gpu/gpu_codec.hpp"
@@ -190,7 +191,8 @@ superzip::ArchiveFormat resolve_cli_archive_format(const std::string& format_tok
     }
     const auto detected = superzip::detect_archive_format(archive_path);
     if (detected == superzip::ArchiveFormat::Unknown) {
-        throw superzip::ArchiveError("unable to detect archive format: " + archive_path.string());
+        throw superzip::ArchiveError("unable to detect archive format: " +
+                                     superzip::path_diagnostic_utf8(archive_path));
     }
     return detected;
 }

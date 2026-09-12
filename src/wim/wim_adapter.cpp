@@ -493,10 +493,11 @@ WimMetadata scan_wim_metadata(const WimRuntime& runtime, const std::filesystem::
 
 // Purpose: Join a normalized UTF-8 archive key under a trusted staging root.
 // Inputs: `root` is a SuperZip-created staging directory and UTF-8 `normalized_path` has already passed
-// `normalize_archive_path_key`. Outputs: Returns a filesystem path below `root`; this function does not validate
+// `normalize_archive_path_key`. Outputs: Returns a native-separated path below `root`; this function does not validate
 // untrusted input.
 std::filesystem::path join_normalized_path(const std::filesystem::path& root, const std::string& normalized_path) {
-    return root / std::filesystem::path(std::u8string(normalized_path.begin(), normalized_path.end()));
+    return (root / std::filesystem::path(std::u8string(normalized_path.begin(), normalized_path.end())))
+        .lexically_normal();
 }
 
 // Purpose: Reserve a private staging directory for a wimlib image apply operation.

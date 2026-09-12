@@ -1,4 +1,5 @@
 #include "core/file_manifest.hpp"
+#include "core/path_text.hpp"
 
 #include "core/path_safety.hpp"
 #include "core/resource_limits.hpp"
@@ -44,7 +45,7 @@ namespace {
 // Outputs: Returns normally while the manifest stays inside SuperZip resource limits; throws `ArchiveError` otherwise.
 void reject_manifest_entry_overflow(const Manifest& manifest, const std::filesystem::path& path) {
     if (manifest.entries.size() >= kMaxArchiveEntries) {
-        throw ArchiveError("too many input entries for one archive: " + path.string());
+        throw ArchiveError("too many input entries for one archive: " + path_diagnostic_utf8(path));
     }
 }
 
@@ -73,9 +74,9 @@ void add_manifest_path_bytes(Manifest& manifest, std::string_view archive_path) 
 // Inputs: `path` is an existing source path supplied to the archive manifest builder.
 // Outputs: Returns true for symlinks, junctions, mount points, and other reparse entries; throws on inspection failure.
 bool is_reparse_point(const std::filesystem::path& path) {
-    const DWORD attributes = GetFileAttributesW(path.wstring().c_str());
+    const DWORD attributes = GetFileAttributesW(windows_api_path(path).c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-        throw ArchiveError("cannot inspect source path attributes: " + path.string());
+        throw ArchiveError("cannot inspect source path attributes: " + path_diagnostic_utf8(path));
     }
     return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U;
 }
@@ -84,19 +85,21 @@ bool is_reparse_point(const std::filesystem::path& path) {
 // Inputs: `directory` is an absolute source-parent path.
 // Outputs: Returns an owned non-delete-sharing handle or throws.
 HANDLE open_source_directory(const std::filesystem::path& directory) {
-    const auto text = directory.wstring();
+    const auto text = windows_api_path(directory);
     const auto handle = CreateFileW(text.c_str(), FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
                                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
                                     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
-        throw SecurityError("cannot pin source directory: " + directory.string());
+        const auto error = GetLastError();
+        throw SecurityError("cannot pin source directory: " + path_diagnostic_utf8(directory) + " (Windows error " +
+                            std::to_string(error) + ")");
     }
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &attributes, sizeof(attributes)) == 0 ||
         (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0U ||
         (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
         CloseHandle(handle);
-        throw SecurityError("source parent chain contains an unsafe object: " + directory.string());
+        throw SecurityError("source parent chain contains an unsafe object: " + path_diagnostic_utf8(directory));
     }
     return handle;
 }
@@ -107,11 +110,12 @@ HANDLE open_source_directory(const std::filesystem::path& directory) {
 std::vector<HANDLE> pin_source_parent_chain(const std::filesystem::path& parent) {
     std::vector<HANDLE> handles;
     try {
-        auto current = parent.root_path();
+        const auto regular = windows_regular_path(parent);
+        auto current = regular.root_path();
         if (current.empty())
             throw SecurityError("source path has no absolute root");
         handles.push_back(open_source_directory(current));
-        for (const auto& component : parent.relative_path()) {
+        for (const auto& component : regular.relative_path()) {
             if (component.empty() || component == L".")
                 continue;
             if (component == L"..")
@@ -157,11 +161,13 @@ SourceFileIdentity source_identity_from_handle(HANDLE handle) {
 // Outputs: Returns the file identity and appends its handle, or throws after cleaning state through RAII.
 SourceFileIdentity open_locked_source(const std::filesystem::path& path, ManifestSourceLockState& state) {
     state.handles = pin_source_parent_chain(path.parent_path());
-    const auto text = path.wstring();
+    const auto text = windows_api_path(path);
     const auto handle = CreateFileW(text.c_str(), GENERIC_READ | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, nullptr,
                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
-        throw SecurityError("cannot lock source file: " + path.string());
+        const auto error = GetLastError();
+        throw SecurityError("cannot lock source file: " + path_diagnostic_utf8(path) + " (Windows error " +
+                            std::to_string(error) + ")");
     }
     state.handles.push_back(handle);
     return source_identity_from_handle(handle);
@@ -184,25 +190,25 @@ bool source_identity_matches(const SourceFileIdentity& expected, const SourceFil
 void add_path(Manifest& manifest, const std::filesystem::path& root_parent, const std::filesystem::path& path,
               std::uint32_t depth) {
     if (depth > kMaxSourceDirectoryDepth) {
-        throw ArchiveError("source directory depth exceeds SuperZip resource limits: " + path.string());
+        throw ArchiveError("source directory depth exceeds SuperZip resource limits: " + path_diagnostic_utf8(path));
     }
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(path, ec);
     if (ec) {
-        throw ArchiveError("cannot inspect source path: " + path.string() + ": " + ec.message());
+        throw ArchiveError("cannot inspect source path: " + path_diagnostic_utf8(path) + ": " + ec.message());
     }
     if (std::filesystem::is_symlink(status)) {
-        throw SecurityError("refusing to archive symbolic link: " + path.string());
+        throw SecurityError("refusing to archive symbolic link: " + path_diagnostic_utf8(path));
     }
 #ifdef _WIN32
     if (is_reparse_point(path)) {
-        throw SecurityError("refusing to archive reparse point: " + path.string());
+        throw SecurityError("refusing to archive reparse point: " + path_diagnostic_utf8(path));
     }
 #endif
 
     const auto relative = std::filesystem::relative(path, root_parent, ec);
     if (ec) {
-        throw ArchiveError("cannot create relative archive path: " + path.string());
+        throw ArchiveError("cannot create relative archive path: " + path_diagnostic_utf8(path));
     }
 
     if (std::filesystem::is_directory(status)) {
@@ -218,7 +224,7 @@ void add_path(Manifest& manifest, const std::filesystem::path& root_parent, cons
         std::vector<std::filesystem::path> children;
         for (const auto& child : std::filesystem::directory_iterator(path)) {
             if (children.size() >= kMaxArchiveEntries) {
-                throw ArchiveError("directory fanout exceeds SuperZip resource limits: " + path.string());
+                throw ArchiveError("directory fanout exceeds SuperZip resource limits: " + path_diagnostic_utf8(path));
             }
             children.push_back(child.path());
         }
@@ -230,7 +236,7 @@ void add_path(Manifest& manifest, const std::filesystem::path& root_parent, cons
     }
 
     if (!std::filesystem::is_regular_file(status)) {
-        throw SecurityError("refusing to archive non-regular file: " + path.string());
+        throw SecurityError("refusing to archive non-regular file: " + path_diagnostic_utf8(path));
     }
 
     SourceFileIdentity identity;
@@ -242,7 +248,7 @@ void add_path(Manifest& manifest, const std::filesystem::path& root_parent, cons
     identity.available = !ec;
 #endif
     if (!identity.available)
-        throw ArchiveError("cannot capture source file identity: " + path.string());
+        throw ArchiveError("cannot capture source file identity: " + path_diagnostic_utf8(path));
     reject_manifest_entry_overflow(manifest, path);
     const auto archive_path = normalize_entry_name(relative);
     add_manifest_path_bytes(manifest, archive_path);
@@ -268,13 +274,17 @@ Manifest build_manifest(const std::vector<std::filesystem::path>& sources) {
     }
     Manifest manifest;
     for (const auto& source : sources) {
+#ifdef _WIN32
+        const auto absolute = std::filesystem::path(windows_api_path(source));
+#else
         std::error_code ec;
         const auto absolute = std::filesystem::absolute(source, ec);
         if (ec) {
-            throw ArchiveError("cannot resolve source path: " + source.string());
+            throw ArchiveError("cannot resolve source path: " + path_diagnostic_utf8(source));
         }
+#endif
         if (!std::filesystem::exists(absolute)) {
-            throw ArchiveError("source path does not exist: " + source.string());
+            throw ArchiveError("source path does not exist: " + path_diagnostic_utf8(source));
         }
         const auto parent = absolute.parent_path();
         add_path(manifest, parent, absolute, 0U);
@@ -296,12 +306,14 @@ ManifestSourceLock lock_manifest_source(const ManifestEntry& entry) {
 #ifdef _WIN32
     const auto actual = open_locked_source(entry.source_path, *state);
     if (!source_identity_matches(entry.identity, actual)) {
-        throw SecurityError("source file changed after manifest validation: " + entry.source_path.string());
+        throw SecurityError("source file changed after manifest validation: " +
+                            path_diagnostic_utf8(entry.source_path));
     }
 #else
     std::error_code error;
     if (std::filesystem::file_size(entry.source_path, error) != entry.identity.size || error) {
-        throw SecurityError("source file changed after manifest validation: " + entry.source_path.string());
+        throw SecurityError("source file changed after manifest validation: " +
+                            path_diagnostic_utf8(entry.source_path));
     }
 #endif
     return ManifestSourceLock(std::move(state));
@@ -313,7 +325,7 @@ ManifestSourceLock lock_manifest_source(const ManifestEntry& entry) {
 PinnedSourceFile pin_source_file(const std::filesystem::path& path) {
     const auto manifest = build_manifest({path});
     if (manifest.entries.size() != 1U || manifest.entries.front().directory) {
-        throw SecurityError("source session requires exactly one regular file: " + path.string());
+        throw SecurityError("source session requires exactly one regular file: " + path_diagnostic_utf8(path));
     }
     const auto& entry = manifest.entries.front();
     return PinnedSourceFile(entry.source_path, entry.size, lock_manifest_source(entry));

@@ -83,12 +83,16 @@ namespace {
 // Inputs: `path` is a caller-selected output or staging path.
 // Outputs: Returns an absolute lexical path or throws when resolution fails.
 std::filesystem::path normalized_absolute_path(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return std::filesystem::path(windows_api_path(path));
+#else
     std::error_code error;
     const auto absolute = std::filesystem::absolute(path, error);
     if (error) {
         throw ArchiveError("unable to resolve output path: " + error.message());
     }
     return absolute.lexically_normal();
+#endif
 }
 
 struct QuarantineTreeEntry {
@@ -155,7 +159,7 @@ std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem
                 throw SecurityError("extraction quarantine contains an unsafe object");
             }
 #ifdef _WIN32
-            const auto attributes = GetFileAttributesW(iterator->c_str());
+            const auto attributes = GetFileAttributesW(windows_api_path(*iterator).c_str());
             if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U) {
                 throw SecurityError("extraction quarantine contains a reparse point");
             }
@@ -288,7 +292,7 @@ std::unique_ptr<void, decltype(&LocalFree)> make_private_directory_security_desc
 // Inputs: `directory` is one absolute path component chain.
 // Outputs: Returns an owned non-delete-sharing handle or throws for missing, non-directory, or reparse objects.
 HANDLE open_pinned_directory(const std::filesystem::path& directory, bool publication_parent = false) {
-    const auto text = directory.wstring();
+    const auto text = windows_api_path(directory);
     auto access = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
     if (publication_parent) {
         access |= FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
@@ -313,7 +317,8 @@ HANDLE open_pinned_directory(const std::filesystem::path& directory, bool public
 // Inputs: `directory` is normalized and absolute; `create_missing` permits creation and final-parent write access.
 // Outputs: Returns owned handles ordered root to leaf, or closes partial state and throws without following reparses.
 std::vector<HANDLE> pin_directory_chain(const std::filesystem::path& directory, bool create_missing) {
-    const auto root = directory.root_path();
+    const auto regular = windows_regular_path(directory);
+    const auto root = regular.root_path();
     if (root.empty()) {
         throw SecurityError("output directory does not have an absolute root");
     }
@@ -321,13 +326,13 @@ std::vector<HANDLE> pin_directory_chain(const std::filesystem::path& directory, 
     try {
         auto current = root;
         handles.push_back(open_pinned_directory(current));
-        for (const auto& component : directory.relative_path()) {
+        for (const auto& component : regular.relative_path()) {
             if (component.empty() || component == L".")
                 continue;
             if (component == L"..")
                 throw SecurityError("output directory contains parent traversal");
             current /= component;
-            const auto text = current.wstring();
+            const auto text = windows_api_path(current);
             if (create_missing && CreateDirectoryW(text.c_str(), nullptr) == 0 &&
                 GetLastError() != ERROR_ALREADY_EXISTS) {
                 throw ArchiveError("unable to create output directory: " + path_diagnostic_utf8(current));
@@ -397,7 +402,7 @@ void create_private_staging_directory(const std::filesystem::path& target, FileP
     for (std::uint32_t attempt = 0; attempt < 128U; ++attempt) {
         auto directory = target;
         directory += L".sztmp-" + random_publication_suffix();
-        const auto text = directory.wstring();
+        const auto text = windows_api_path(directory);
         if (CreateDirectoryW(text.c_str(), &security) == 0) {
             if (GetLastError() == ERROR_ALREADY_EXISTS)
                 continue;
@@ -420,7 +425,7 @@ void create_private_staging_directory(const std::filesystem::path& target, FileP
 // Inputs: `path` is a private staging file beneath pinned, reparse-free parents.
 // Outputs: Returns an owned read/delete handle or throws for reparse, directory, or open failures.
 HANDLE open_verified_payload(const std::filesystem::path& path) {
-    const auto text = path.wstring();
+    const auto text = windows_api_path(path);
     ScopedHandle handle(CreateFileW(
         text.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
@@ -439,12 +444,13 @@ HANDLE open_verified_payload(const std::filesystem::path& path) {
 // Inputs: `path` is inside the owned quarantine beneath pinned parents; no caller-owned file is permitted.
 // Outputs: Clears only the read-only bit on an ordinary singly-linked staged file, or throws without modifying aliases.
 void prepare_quarantine_payload(const std::filesystem::path& path) {
-    const auto attributes = GetFileAttributesW(path.c_str());
+    const auto text = windows_api_path(path);
+    const auto attributes = GetFileAttributesW(text.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES)
         throw ArchiveError("unable to inspect quarantine payload attributes");
     if ((attributes & FILE_ATTRIBUTE_READONLY) == 0U)
         return;
-    ScopedHandle payload(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+    ScopedHandle payload(CreateFileW(text.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                                      FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     FILE_BASIC_INFO basic{};
@@ -471,7 +477,7 @@ void rename_payload_to_pinned_path(HANDLE payload, const std::filesystem::path& 
     if (filename.empty() || filename == L"." || filename == L".." || filename.find(L':') != std::wstring::npos) {
         throw SecurityError("final output filename is unsafe");
     }
-    const auto target_text = target.wstring();
+    const auto target_text = windows_api_path(target);
     const auto filename_bytes = target_text.size() * sizeof(wchar_t);
     std::vector<std::byte> storage(offsetof(FILE_RENAME_INFO, FileName) + filename_bytes + sizeof(wchar_t));
     auto* rename = reinterpret_cast<FILE_RENAME_INFO*>(storage.data());

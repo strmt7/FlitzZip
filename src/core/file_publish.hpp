@@ -21,7 +21,7 @@ void create_verified_directories(const std::filesystem::path& directory);
 
 // Purpose: Reserve a private temporary file target beside a final output file.
 // Inputs: `target` is the final file path that will later receive verified bytes.
-// Outputs: Returns a same-directory temporary directory and payload file path, or throws on reservation failure.
+// Outputs: Returns normalized native I/O paths (extended-length on Windows), or throws on reservation failure.
 ReservedFilePublishTarget reserve_file_publish_target(const std::filesystem::path& target);
 
 // Purpose: Remove a reserved private publication tree after success or failure.
@@ -74,7 +74,8 @@ class DirectoryPublishTransaction {
 
     // Purpose: Return the private directory that archive adapters may populate.
     // Inputs: None.
-    // Outputs: Returns a stable protected path valid until publish or destruction.
+    // Outputs: Returns a stable protected native I/O path valid until publish or destruction. Child paths must use
+    // native separators; archive members must still go through `safe_join_archive_path` before I/O.
     [[nodiscard]] const std::filesystem::path& staging_directory() const noexcept;
 
     // Purpose: Merge every verified staged directory and file into the final destination.
