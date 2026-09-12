@@ -18,6 +18,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
 . (Join-Path $PSScriptRoot "version.ps1")
 . (Join-Path $PSScriptRoot "hip_architecture.ps1")
+. (Join-Path $PSScriptRoot "build_parallelism.ps1")
 
 # Purpose: Find a usable CMake executable on a Windows development or CI host.
 # Inputs: None; probes known install paths and PATH.
@@ -137,6 +138,7 @@ Invoke-NativeTool -FilePath $cmake -Arguments $configureArgs -Operation "CMake c
 
 if (-not $ConfigureOnly) {
     Assert-BuildOutputNotRunning -Configuration $Configuration
-    $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel")
+    $jobs = Resolve-BuildParallelism
+    $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel", [string]$jobs)
     Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
 }

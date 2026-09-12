@@ -84,7 +84,7 @@ function Assert-ReleaseReplacementSafeguard {
 }
 
 # Purpose: Verify Greenbone/OpenVAS workflow-dispatch input cannot bypass broker target authorization.
-# Inputs: Reads the live Greenbone workflow from the repository.
+# Inputs: Reads the live Greenbone workflow and its broker resolver from the repository.
 # Outputs: Throws when the effective scan target can come directly from workflow input.
 function Assert-GreenboneTargetBrokerAuthorization {
     $workflow = Join-Path $repo ".github\workflows\greenbone-openvas-live.yml"
@@ -92,14 +92,21 @@ function Assert-GreenboneTargetBrokerAuthorization {
         return
     }
     $text = Get-Content -LiteralPath $workflow -Raw
-    if ($text -notmatch [regex]::Escape('"target_input": os.environ.get("GREENBONE_TARGET_INPUT", "")')) {
-        throw "Greenbone workflow must pass manual target text only as a broker authorization request."
+    $resolver = Get-Content -LiteralPath (Join-Path $repo ".github/openvas/resolve_config.cjs") -Raw
+    foreach ($snippet in @("require('./.github/openvas/resolve_config.cjs')", "await resolveConfig(core);",
+            'GREENBONE_EFFECTIVE_TARGET: ${{ steps.config.outputs.target }}')) {
+        if (-not $text.Contains($snippet)) {
+            throw "Greenbone workflow must resolve and use broker-authorized configuration."
+        }
     }
-    if ($text -notmatch [regex]::Escape('"target": get("greenbone_target")')) {
-        throw "Greenbone workflow must use the broker-returned greenbone_target as the effective scan target."
+    foreach ($snippet in @('target_input: targetRequest,', 'target: get("greenbone_target"),',
+            'const targetRequest = environment.GREENBONE_TARGET_INPUT || "";')) {
+        if (-not $resolver.Contains($snippet)) {
+            throw "Greenbone target input must remain a request; only broker-returned targets may be used."
+        }
     }
-    if ($text -match '"target"\s*:\s*os\.environ\.get\("GREENBONE_TARGET_INPUT"') {
-        throw "Greenbone workflow must not let workflow_dispatch target input bypass broker authorization."
+    if ($resolver -match '\btarget\s*:\s*(environment\.|targetRequest)') {
+        throw "Greenbone workflow input must not bypass broker target authorization."
     }
 }
 
@@ -367,7 +374,7 @@ function Test-ExternalComparisonNamePolicy {
     )
     $textExtensions = @(
         ".md", ".txt", ".ps1", ".psm1", ".yml", ".yaml", ".json", ".cmake",
-        ".cpp", ".hpp", ".h", ".c", ".rc", ".wxs", ".xml", ".svg"
+        ".cpp", ".hpp", ".h", ".c", ".rc", ".wxs", ".xml", ".svg", ".py", ".js", ".cjs", ".mjs"
     )
     $policyFiles = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
         $path = $_.FullName

@@ -256,6 +256,9 @@ function Get-SuperZipVerificationScope {
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
+        '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
+        '^tools/scan_trufflehog\.sh$',
+        '^tools/(build_parallelism|test_build_parallelism)\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
@@ -368,12 +371,17 @@ function Get-SuperZipVerificationPlan {
         }
         if ($scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "build-parallelism-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_build_parallelism.ps1") -Reason "build scheduling must honor explicit job counts and bound default shared-host load")
         }
         if ($scope.touchesPerformance -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-reporting-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_benchmark_reporting.ps1") -Reason "benchmark reporting must preserve typed results and unavailable counter values without running a timed workload")
         }
         if ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "security-scan" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/security_scan.ps1") -Reason "security boundaries, workflows, packaging, or verifier changes require repository policy checks")
+        }
+        if ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "greenbone-config-tests" -Stage "local" -Executable "node" -Arguments @("--test", ".github/openvas/resolve_config.test.cjs") -Reason "broker configuration must remain bounded, masked, and authorized before publishing step outputs")
         }
         if ($scope.touchesGui -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "gui-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/gui_smoke.ps1", "-Configuration", "Release") -Reason "GUI or broad changes require all tabs, buttons, toggles, dropdowns, drag/drop, and screenshots")

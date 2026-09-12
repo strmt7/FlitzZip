@@ -23,7 +23,7 @@ function Test-TextScanCandidate {
     return @(
         ".c", ".cc", ".cpp", ".h", ".hpp", ".inl", ".rc", ".cmake",
         ".md", ".txt", ".ps1", ".psm1", ".py", ".json", ".yml", ".yaml",
-        ".xml", ".wxs", ".svg", ".toml", ".ini", ".sh"
+        ".xml", ".wxs", ".svg", ".toml", ".ini", ".sh", ".js", ".cjs", ".mjs"
     ) -contains $extension -or [System.IO.Path]::GetFileName($Path) -eq "CMakeLists.txt"
 }
 
@@ -67,15 +67,23 @@ function Test-ChangedFileTextPolicy {
     }
 
     $normalizedPath = $Path -replace "\\", "/"
-    if ($normalizedPath -eq ".github/workflows/greenbone-openvas-live.yml") {
-        if ($text -notmatch [regex]::Escape('"target_input": os.environ.get("GREENBONE_TARGET_INPUT", "")')) {
-            throw "Greenbone workflow must pass manual target text only as a broker authorization request: $Path"
+    if ($normalizedPath -in @(".github/workflows/greenbone-openvas-live.yml", ".github/openvas/resolve_config.cjs")) {
+        $workflow = Get-Content -LiteralPath (Join-Path $repo ".github/workflows/greenbone-openvas-live.yml") -Raw
+        $resolver = Get-Content -LiteralPath (Join-Path $repo ".github/openvas/resolve_config.cjs") -Raw
+        foreach ($snippet in @("require('./.github/openvas/resolve_config.cjs')", "await resolveConfig(core);",
+                'GREENBONE_EFFECTIVE_TARGET: ${{ steps.config.outputs.target }}')) {
+            if (-not $workflow.Contains($snippet)) {
+                throw "Greenbone workflow must resolve and use broker-authorized configuration: $Path"
+            }
         }
-        if ($text -notmatch [regex]::Escape('"target": get("greenbone_target")')) {
-            throw "Greenbone workflow must use the broker-returned greenbone_target as the effective scan target: $Path"
+        foreach ($snippet in @('target_input: targetRequest,', 'target: get("greenbone_target"),',
+                'const targetRequest = environment.GREENBONE_TARGET_INPUT || "";')) {
+            if (-not $resolver.Contains($snippet)) {
+                throw "Greenbone target input must remain a request; only broker-returned targets may be used: $Path"
+            }
         }
-        if ($text -match '"target"\s*:\s*os\.environ\.get\("GREENBONE_TARGET_INPUT"') {
-            throw "Greenbone workflow must not let workflow_dispatch target input bypass broker authorization: $Path"
+        if ($resolver -match '\btarget\s*:\s*(environment\.|targetRequest)') {
+            throw "Greenbone workflow input must not bypass broker target authorization: $Path"
         }
     }
 }

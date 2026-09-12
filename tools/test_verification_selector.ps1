@@ -133,11 +133,12 @@ foreach ($path in @("src/core/archive_name_encoding.cpp", "src/core/archive_name
     Assert-Selector (Test-LongRunningWorkflow -Plan $encodingPlan -Name "fuzzing") "name decoding changes must observe fuzzing: $path"
 }
 
-foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1")) {
+foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1", "tools/build_parallelism.ps1", "tools/test_build_parallelism.ps1")) {
     $buildGraphPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector $buildGraphPlan.scope.touchesVerification "independent build graph and verifier tests must be classified as verification tooling: $path"
     Assert-Selector $buildGraphPlan.scope.fullEscalationRequired "verification build inputs must escalate: $path"
     Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "verification-selector-self-test") "verification build inputs must test the selector: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "build-parallelism-test") "verification build inputs must test bounded scheduling: $path"
     Assert-Selector (Test-LongRunningWorkflow -Plan $buildGraphPlan -Name "fuzzing") "verification build inputs must observe Linux build and fuzzing: $path"
     Assert-Selector $buildGraphPlan.workflowWaitPolicy.immediateRequired "verification build inputs must require final workflow waiting: $path"
 }
@@ -148,6 +149,15 @@ Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "lint") "workflow chang
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "security") "workflow changes must wait for security"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "scorecard") "workflow changes must wait for scorecard"
 Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must require post-push audit"
+Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tests") "workflow changes must test secret artifact redaction"
+Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests") "workflow changes must test broker authorization and masking"
+
+foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh")) {
+    $redactionPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector $redactionPlan.scope.fullEscalationRequired "secret report publication changes must escalate: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $redactionPlan -Id "secret-report-tests") "redaction changes must execute their regressions: $path"
+    Assert-Selector (Test-Workflow -Plan $redactionPlan -Name "security") "redaction changes must require hosted scanner validation: $path"
+}
 
 $packagingPlan = Get-SuperZipVerificationPlan -ChangedPath @("CMakeLists.txt")
 Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "msi-identity-smoke") "packaging changes must run MSI identity smoke"

@@ -17,6 +17,11 @@ jobs:
   codeql-cpp:
     name: CodeQL C++
     runs-on: windows-2022
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      UseMultiToolTask: "true"
+      EnforceProcessCountAcrossBuilds: "true"
+      MultiProcMaxCount: "4"
     # Keep C++ analysis whole-repository. Do not split SuperZip into
     # subdirectory CodeQL databases because archive/parser data flow crosses
     # folders and partial databases can miss cross-component vulnerabilities.
@@ -331,7 +336,12 @@ jobs:
       - name: Prepare secret scan reports
         shell: bash
         run: mkdir -p reports/secrets
+      - name: Verify secret report redaction
+        id: report-safety
+        shell: bash
+        run: python -m unittest tools.test_redact_trufflehog
       - name: Run Gitleaks against git history
+        if: ${{ !cancelled() && steps.report-safety.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -341,6 +351,7 @@ jobs:
             ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
             git . --redact --verbose --exit-code 1 --report-format json --report-path reports/secrets/gitleaks-git.json
       - name: Run Gitleaks against working tree
+        if: ${{ !cancelled() && steps.report-safety.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -350,13 +361,9 @@ jobs:
             ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
             dir . --redact --verbose --exit-code 1 --report-format json --report-path reports/secrets/gitleaks-dir.json
       - name: Run TruffleHog against git history
+        if: ${{ !cancelled() && steps.report-safety.outcome == 'success' }}
         shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            trufflesecurity/trufflehog:3.97.4@sha256:562bc231afa9de3d04de44cfe624252b08207de1fc3cebc5e7ed92bed7f279e4 \
-            git file:///repo --results=verified,unknown --fail --json > reports/secrets/trufflehog-git.jsonl
+        run: bash tools/scan_trufflehog.sh
       - name: Upload secret scan reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -28,6 +28,10 @@ jobs:
             generator: Visual Studio 18 2026
     env:
       SUPERZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      UseMultiToolTask: "true"
+      EnforceProcessCountAcrossBuilds: "true"
+      MultiProcMaxCount: "4"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,9 +46,6 @@ jobs:
             -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
             -property installationPath
           Get-Command cmake | Select-Object Source,Version
-      - name: Configure
-        shell: pwsh
-        run: tools/build.ps1 -ConfigureOnly -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
       - name: Build
         shell: pwsh
         run: tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
