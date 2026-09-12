@@ -133,11 +133,12 @@ foreach ($path in @("src/core/archive_name_encoding.cpp", "src/core/archive_name
     Assert-Selector (Test-LongRunningWorkflow -Plan $encodingPlan -Name "fuzzing") "name decoding changes must observe fuzzing: $path"
 }
 
-foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1", "tools/build_parallelism.ps1", "tools/test_build_parallelism.ps1")) {
+foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1", "tools/build_parallelism.ps1", "tools/test_build_parallelism.ps1", "tools/refactor_audit.ps1", "tools/test_refactor_audit.ps1")) {
     $buildGraphPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector $buildGraphPlan.scope.touchesVerification "independent build graph and verifier tests must be classified as verification tooling: $path"
     Assert-Selector $buildGraphPlan.scope.fullEscalationRequired "verification build inputs must escalate: $path"
     Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "verification-selector-self-test") "verification build inputs must test the selector: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "refactor-audit-tests") "verification build inputs must test the source inventory: $path"
     Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "build-parallelism-test") "verification build inputs must test bounded scheduling: $path"
     Assert-Selector (Test-LongRunningWorkflow -Plan $buildGraphPlan -Name "fuzzing") "verification build inputs must observe Linux build and fuzzing: $path"
     Assert-Selector $buildGraphPlan.workflowWaitPolicy.immediateRequired "verification build inputs must require final workflow waiting: $path"

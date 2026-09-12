@@ -32,8 +32,12 @@ void register_test(std::string name, TestFn fn) {
 
 // Purpose: Execute registered tests, optionally filtered by substring.
 // Inputs: `argc`/`argv` may contain one filter string.
-// Outputs: Returns zero when at least one selected test passes without failures; rejects empty selections.
+// Outputs: Returns zero for passing selected tests, one for failures, or two for invalid arguments/selections.
 int main(int argc, char** argv) {
+    if (argc > 2) {
+        std::cerr << "Expected at most one test-name substring filter\n";
+        return 2;
+    }
     const std::string filter = argc > 1 ? argv[1] : "";
     int failed = 0;
     std::size_t selected = 0;

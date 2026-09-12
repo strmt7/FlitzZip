@@ -22,6 +22,7 @@ $skipFragments = @(
     "\resources\design\"
 )
 $changedLineRangesByPath = @{}
+$untrackedGitPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $script:AuditMaxFileLines = $MaxFileLines
 $script:AuditMaxFunctionLines = $MaxFunctionLines
 $script:AuditMaxComplexityMarkers = $MaxComplexityMarkers
@@ -59,7 +60,7 @@ function ConvertTo-GitRelativePath {
 function Test-SkippedPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    $normalized = [IO.Path]::GetFullPath($Path)
+    $normalized = "\" + (ConvertTo-RepoRelativePath -Path $Path).Replace("/", "\")
     foreach ($fragment in $skipFragments) {
         if ($normalized.IndexOf($fragment, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             return $true
@@ -68,14 +69,61 @@ function Test-SkippedPath {
     return $false
 }
 
+# Purpose: Read Git evidence without shell quoting, locale, or native-status ambiguity.
+# Inputs: Arguments contains individual Git arguments; AllowFailure is only for revision probes.
+# Outputs: Returns UTF-8 output and exit status, or throws on timeout or a required Git failure.
+function Invoke-AuditGit {
+    param([string[]]$Arguments, [switch]$AllowFailure)
+
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $start.WorkingDirectory = $repo
+    $start.Arguments = ($Arguments | ForEach-Object {
+        '"' + [regex]::Replace([regex]::Replace($_, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
+    }) -join " "
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = [Text.Encoding]::UTF8
+    $start.StandardErrorEncoding = [Text.Encoding]::UTF8
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            throw "Git exceeded the refactor audit's 30-second command deadline."
+        }
+        $output = $stdout.GetAwaiter().GetResult()
+        $stderr.GetAwaiter().GetResult() | Out-Null
+        if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
+            throw "Git failed during refactor auditing (exit=$($process.ExitCode), command=$($Arguments[0]))."
+        }
+        return [pscustomobject]@{ Output = $output; ExitCode = $process.ExitCode }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+# Purpose: Decode a NUL-delimited Git path inventory without losing Unicode or spaces.
+# Inputs: Arguments selects a Git path-list command with its -z option.
+# Outputs: Returns each exact repository-relative path, failing if Git cannot produce the inventory.
+function Get-AuditGitPath {
+    param([string[]]$Arguments)
+
+    $result = Invoke-AuditGit -Arguments $Arguments
+    return $result.Output.Split([char[]]@([char]0), [StringSplitOptions]::RemoveEmptyEntries)
+}
+
 # Purpose: Verify that a Git revision is available for changed-code auditing.
 # Inputs: `Revision` is a Git revision expression.
 # Outputs: Returns true when Git can resolve the revision to a commit.
 function Test-GitRevisionAvailable {
     param([Parameter(Mandatory = $true)][string]$Revision)
 
-    & git -C $repo rev-parse --verify "$Revision^{commit}" *> $null
-    return $LASTEXITCODE -eq 0
+    $result = Invoke-AuditGit -Arguments @("rev-parse", "--verify", "--quiet", "--end-of-options", "$Revision^{commit}") -AllowFailure
+    return $result.ExitCode -eq 0
 }
 
 # Purpose: Select the comparison base for changed-only audit mode.
@@ -83,10 +131,13 @@ function Test-GitRevisionAvailable {
 # Outputs: Returns a Git base revision, or an empty string when no comparison is possible.
 function Resolve-ChangedAuditBase {
     if (-not [string]::IsNullOrWhiteSpace($script:AuditGitBase)) {
+        if (-not (Test-GitRevisionAvailable -Revision $script:AuditGitBase)) {
+            throw "The requested refactor audit comparison revision is unavailable."
+        }
         return $script:AuditGitBase
     }
-    $status = & git -C $repo status --porcelain --untracked-files=no
-    if ($LASTEXITCODE -eq 0 -and $status) {
+    $status = Invoke-AuditGit -Arguments @("status", "--porcelain", "--untracked-files=normal")
+    if ($status.Output -and (Test-GitRevisionAvailable -Revision "HEAD")) {
         return "HEAD"
     }
     if (Test-GitRevisionAvailable -Revision "HEAD~1") {
@@ -95,19 +146,28 @@ function Resolve-ChangedAuditBase {
     return ""
 }
 
-# Purpose: Return source files changed relative to a Git base.
-# Inputs: `Base` is a resolved Git comparison revision.
-# Outputs: Returns filesystem paths for changed source files still present in the working tree.
-function Get-ChangedSourceFile {
-    param([Parameter(Mandatory = $true)][string]$Base)
+# Purpose: Inventory actual repository source without descending into ignored workspace copies.
+# Inputs: Base selects a changed-only comparison; an empty base audits all tracked and new source.
+# Outputs: Returns existing source files once, retaining tracked files even when ignore rules match.
+function Get-AuditSourceFile {
+    param([string]$Base = "")
 
-    $paths = & git -C $repo diff --name-only --diff-filter=ACMR $Base --
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to enumerate changed files for refactor audit against $Base."
+    $untracked = @(Get-AuditGitPath -Arguments @("ls-files", "--others", "--exclude-standard", "-z", "--"))
+    foreach ($path in $untracked) {
+        $script:untrackedGitPaths.Add($path) | Out-Null
     }
+    if ([string]::IsNullOrEmpty($Base)) {
+        $paths = @(Get-AuditGitPath -Arguments @("ls-files", "--cached", "-z", "--")) + $untracked
+    } else {
+        $paths = @(Get-AuditGitPath -Arguments @("diff", "--no-ext-diff", "--name-only", "--diff-filter=ACMR", "-z", $Base, "--")) + $untracked
+    }
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($path in $paths) {
+        if (-not $seen.Add($path)) {
+            continue
+        }
         $full = Join-Path $repo $path
-        if (-not (Test-Path -LiteralPath $full)) {
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
             continue
         }
         $extension = [IO.Path]::GetExtension($full).ToLowerInvariant()
@@ -122,17 +182,17 @@ function Get-ChangedSourceFile {
 # Outputs: Returns one-based inclusive line ranges in the new file.
 function Get-ChangedLineRange {
     param(
-        [Parameter(Mandatory = $true)][string]$Base,
+        [AllowEmptyString()][string]$Base,
         [Parameter(Mandatory = $true)][string]$Path
     )
 
     $gitPath = ConvertTo-GitRelativePath -Path $Path
-    $diff = & git -C $repo diff --unified=0 --no-ext-diff $Base -- $gitPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to inspect changed line ranges for $gitPath against $Base."
+    if ([string]::IsNullOrEmpty($Base) -or $script:untrackedGitPaths.Contains($gitPath)) {
+        return [pscustomobject]@{ Start = 1; End = [int]::MaxValue }
     }
+    $diff = Invoke-AuditGit -Arguments @("diff", "--unified=0", "--no-ext-diff", $Base, "--", $gitPath)
     $ranges = New-Object System.Collections.Generic.List[object]
-    foreach ($line in $diff) {
+    foreach ($line in ($diff.Output -split "\r?\n")) {
         $match = [regex]::Match($line, "^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
         if (-not $match.Success) {
             continue
@@ -384,19 +444,13 @@ if ($script:AuditChangedOnly) {
         throw "git is required for changed-only refactor auditing."
     }
     $base = Resolve-ChangedAuditBase
-    if ([string]::IsNullOrWhiteSpace($base)) {
-        Write-Output "refactor_audit status=clean mode=changed-only reason=no-comparison-base"
-        return
-    }
-    $files = @(Get-ChangedSourceFile -Base $base)
+    $files = @(Get-AuditSourceFile -Base $base)
     foreach ($file in $files) {
         $relative = ConvertTo-RepoRelativePath -Path $file.FullName
         $script:changedLineRangesByPath[$relative] = @(Get-ChangedLineRange -Base $base -Path $file.FullName)
     }
 } else {
-    $files = Get-ChildItem -LiteralPath $repo -Recurse -File |
-        Where-Object { $sourceExtensions -contains $_.Extension.ToLowerInvariant() } |
-        Where-Object { -not (Test-SkippedPath -Path $_.FullName) }
+    $files = @(Get-AuditSourceFile)
 }
 
 foreach ($file in $files) {

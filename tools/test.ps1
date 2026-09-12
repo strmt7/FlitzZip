@@ -23,29 +23,36 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $testRunner = Join-Path $build "$Configuration/superzip_tests.exe"
-$selectionStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-$selectionStartInfo.FileName = $testRunner
-$selectionStartInfo.Arguments = "__superzip_no_test_must_match_this_filter__"
-$selectionStartInfo.UseShellExecute = $false
-$selectionStartInfo.RedirectStandardOutput = $true
-$selectionStartInfo.RedirectStandardError = $true
-# Keep the expected failure isolated from the calling shell's native exit status.
-$selectionProcess = [System.Diagnostics.Process]::Start($selectionStartInfo)
-try {
-    $selectionOutput = $selectionProcess.StandardOutput.ReadToEndAsync()
-    $selectionError = $selectionProcess.StandardError.ReadToEndAsync()
-    if (-not $selectionProcess.WaitForExit(30000)) {
-        $selectionProcess.Kill()
-        throw "The C++ test runner timed out while checking empty filter selection."
+foreach ($arguments in @(
+    "__superzip_no_test_must_match_this_filter__",
+    "compression_stream_gzip_read_failure_is_terminal compression_stream_zstd_read_failure_is_terminal",
+    '"" __superzip_unexpected_second_argument__'
+)) {
+    $selectionStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $selectionStartInfo.FileName = $testRunner
+    $selectionStartInfo.Arguments = $arguments
+    $selectionStartInfo.UseShellExecute = $false
+    $selectionStartInfo.CreateNoWindow = $true
+    $selectionStartInfo.RedirectStandardOutput = $true
+    $selectionStartInfo.RedirectStandardError = $true
+    # Keep expected failures isolated from the calling shell's native exit status.
+    $selectionProcess = [System.Diagnostics.Process]::Start($selectionStartInfo)
+    try {
+        $selectionOutput = $selectionProcess.StandardOutput.ReadToEndAsync()
+        $selectionError = $selectionProcess.StandardError.ReadToEndAsync()
+        if (-not $selectionProcess.WaitForExit(30000)) {
+            $selectionProcess.Kill()
+            throw "The C++ test runner timed out while checking invalid selection arguments."
+        }
+        $selectionExitCode = $selectionProcess.ExitCode
+        $output = $selectionOutput.GetAwaiter().GetResult()
+        $errorText = $selectionError.GetAwaiter().GetResult()
+    } finally {
+        $selectionProcess.Dispose()
     }
-    $emptySelectionExitCode = $selectionProcess.ExitCode
-    $selectionOutput.GetAwaiter().GetResult() | Out-Null
-    $selectionError.GetAwaiter().GetResult() | Out-Null
-} finally {
-    $selectionProcess.Dispose()
-}
-if ($emptySelectionExitCode -ne 2) {
-    throw "The C++ test runner must reject filters that select no tests."
+    if ($selectionExitCode -ne 2 -or $output -match '\[RUN |\[PASS' -or [string]::IsNullOrWhiteSpace($errorText)) {
+        throw "The C++ test runner must reject invalid arguments without running any tests."
+    }
 }
 
 $configuredPackageVersion = Read-SuperZipCMakeCacheValue -BuildRoot $build -Name "SUPERZIP_PACKAGE_VERSION"
