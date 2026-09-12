@@ -1,4 +1,5 @@
 #include "test_util.hpp"
+#include "test_stream_failure.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
 #include "core/result.hpp"
@@ -180,6 +181,74 @@ void require_consistent_stream_partitioning(const std::string& codec) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Require decoder errors to propagate through ordinary reads and remain terminal after flag resets.
+// Inputs: Matching stream types, a fixed codec label, and the checksum's distance from the end of its frame.
+// Outputs: Valid input still reaches ordinary EOF; damaged checksums and truncated trailers always throw.
+template <typename OutputStream, typename InputStream>
+void require_stream_read_failure(const std::string& codec, std::size_t checksum_offset) {
+    const auto root = test_temp_dir("stream-read-failure-" + codec);
+    const auto archive = root / "input";
+    const std::string payload(257U, 'x');
+    {
+        OutputStream output(archive, 5);
+        output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+        output.close();
+    }
+    const auto original = read_stream_fixture(archive);
+    REQUIRE_TRUE(original.size() > checksum_offset);
+    {
+        InputStream input(archive);
+        std::array<char, 4096> bytes{};
+        input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        REQUIRE_TRUE(input.eof());
+        REQUIRE_TRUE(!input.bad());
+        REQUIRE_EQ(std::string(bytes.data(), static_cast<std::size_t>(input.gcount())), payload);
+        input.finish();
+        input.finish();
+    }
+    for (const bool truncate : {false, true}) {
+        auto damaged = original;
+        if (truncate) {
+            damaged.pop_back();
+        } else {
+            damaged[damaged.size() - checksum_offset] ^= 1;
+        }
+        {
+            std::ofstream output(archive, std::ios::binary | std::ios::trunc);
+            output.exceptions(std::ios::badbit | std::ios::failbit);
+            output.write(damaged.data(), static_cast<std::streamsize>(damaged.size()));
+            output.close();
+        }
+        {
+            InputStream input(archive);
+            std::array<char, 4096> bytes{};
+            bool rejected = false;
+            std::string original_error;
+            try {
+                input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            } catch (const superzip::ArchiveError& error) {
+                rejected = true;
+                original_error = error.what();
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_TRUE(input.bad());
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                input.clear();
+                rejected = false;
+                try {
+                    input.finish();
+                } catch (const superzip::ArchiveError& error) {
+                    rejected = true;
+                    REQUIRE_EQ(std::string(error.what()), original_error);
+                }
+                REQUIRE_TRUE(rejected);
+            }
+        }
+        require_sticky_decoder_failure<InputStream>(archive);
+    }
+    std::filesystem::remove_all(root);
+}
+
 }  // namespace
 
 // Purpose: Prevent dynamic Huffman metadata from overwhelming a short repeated sequence.
@@ -275,6 +344,20 @@ TEST_CASE(compression_stream_bzip2_partition_and_effort_parity) {
 // Outputs: Requires consistent encoding and byte-exact decoding.
 TEST_CASE(compression_stream_zstd_partition_and_effort_parity) {
     require_consistent_stream_partitioning<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd");
+}
+
+// Purpose: Keep malformed Gzip reads distinct from successful end of input.
+// Inputs: A valid tiny member, then a damaged CRC and a truncated trailer.
+// Outputs: Requires immediate decoder errors and repeated rejection after stream-state resets.
+TEST_CASE(compression_stream_gzip_read_failure_is_terminal) {
+    require_stream_read_failure<superzip::GzipOutputStream, superzip::GzipInputStream>("gzip", 8U);
+}
+
+// Purpose: Keep malformed Zstandard reads distinct from successful end of input.
+// Inputs: A valid tiny frame, then a damaged checksum and a truncated trailer.
+// Outputs: Requires immediate decoder errors and repeated rejection after stream-state resets.
+TEST_CASE(compression_stream_zstd_read_failure_is_terminal) {
+    require_stream_read_failure<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd", 4U);
 }
 
 // Purpose: Establish byte-for-byte equivalence between standalone Gzip and the stream used by container wrappers.

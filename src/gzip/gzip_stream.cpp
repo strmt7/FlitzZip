@@ -8,6 +8,7 @@
 #include <cctype>
 #include <climits>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <streambuf>
@@ -400,11 +401,11 @@ class GzipInputStream::Buffer final : public std::streambuf {
     // Inputs: None.
     // Outputs: Throws when the Gzip member is incomplete or invalid.
     void finish() {
-        while (!finished_) {
+        do {
             setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
                  reinterpret_cast<char*>(output_buffer_.data()));
             fill_output();
-        }
+        } while (!finished_);
     }
 
     // Purpose: Report compressed source byte size.
@@ -440,6 +441,22 @@ class GzipInputStream::Buffer final : public std::streambuf {
     // Inputs: None.
     // Outputs: Updates `setg` when bytes are produced; throws on malformed Gzip payloads.
     void fill_output() {
+        if (failure_) {
+            std::rethrow_exception(failure_);
+        }
+        try {
+            decode_output();
+        } catch (...) {
+            failure_ = std::current_exception();
+            setg(nullptr, nullptr, nullptr);
+            throw;
+        }
+    }
+
+    // Purpose: Advance the Gzip decoder only while no previous error has occurred.
+    // Inputs: Buffered untrusted compressed bytes; called exclusively by fill_output.
+    // Outputs: Exposes decoded output or throws; the caller permanently records every failure.
+    void decode_output() {
         if (finished_) {
             return;
         }
@@ -501,6 +518,7 @@ class GzipInputStream::Buffer final : public std::streambuf {
     }
 
     std::ifstream input_;
+    std::exception_ptr failure_;
     ParsedGzipHeader header_{};
     std::uint64_t archive_size_ = 0;
     std::uint64_t compressed_remaining_ = 0;
@@ -542,9 +560,13 @@ std::uint64_t GzipOutputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
 
+// Purpose: Open a Gzip decoder whose read errors always propagate to the caller.
+// Inputs: archive_path names untrusted compressed input.
+// Outputs: Installs the decoder with badbit exceptions; construction or decoding can throw ArchiveError.
 GzipInputStream::GzipInputStream(const std::filesystem::path& archive_path)
     : std::istream(nullptr), buffer_(std::make_unique<Buffer>(archive_path)) {
     rdbuf(buffer_.get());
+    exceptions(std::ios::badbit);
 }
 
 GzipInputStream::~GzipInputStream() = default;

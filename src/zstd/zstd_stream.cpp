@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -282,10 +283,10 @@ class ZstdInputStream::Buffer final : public std::streambuf {
     // Inputs: None.
     // Outputs: Throws when the Zstandard stream is incomplete, corrupt, or has trailing garbage.
     void finish() {
-        while (!finished_) {
+        do {
             setg(output_buffer_.data(), output_buffer_.data(), output_buffer_.data());
             fill_output();
-        }
+        } while (!finished_);
     }
 
     // Purpose: Report compressed source byte size.
@@ -337,6 +338,22 @@ class ZstdInputStream::Buffer final : public std::streambuf {
     // Inputs: None.
     // Outputs: Updates `setg` when bytes are produced; throws on malformed Zstandard payloads.
     void fill_output() {
+        if (failure_) {
+            std::rethrow_exception(failure_);
+        }
+        try {
+            decode_output();
+        } catch (...) {
+            failure_ = std::current_exception();
+            setg(nullptr, nullptr, nullptr);
+            throw;
+        }
+    }
+
+    // Purpose: Advance the Zstandard decoder only while no previous error has occurred.
+    // Inputs: Buffered untrusted compressed bytes; called exclusively by fill_output.
+    // Outputs: Exposes decoded output or throws; the caller permanently records every failure.
+    void decode_output() {
         if (finished_) {
             return;
         }
@@ -367,6 +384,7 @@ class ZstdInputStream::Buffer final : public std::streambuf {
     }
 
     std::ifstream file_;
+    std::exception_ptr failure_;
     const ZstdRuntime& zstd_ = zstd_runtime();
     std::uint64_t archive_size_ = 0;
     std::uint64_t output_bytes_ = 0;
@@ -419,9 +437,13 @@ std::size_t ZstdOutputStream::workspace_bytes() const {
     return buffer_->workspace_bytes();
 }
 
+// Purpose: Open a Zstandard decoder whose read errors always propagate to the caller.
+// Inputs: archive_path names untrusted compressed input.
+// Outputs: Installs the decoder with badbit exceptions; construction or decoding can throw ArchiveError.
 ZstdInputStream::ZstdInputStream(const std::filesystem::path& archive_path)
     : std::istream(nullptr), buffer_(std::make_unique<Buffer>(archive_path)) {
     rdbuf(buffer_.get());
+    exceptions(std::ios::badbit);
 }
 
 ZstdInputStream::~ZstdInputStream() = default;
