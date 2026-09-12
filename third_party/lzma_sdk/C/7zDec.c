@@ -66,40 +66,66 @@
 typedef struct
 {
   IByteIn vt;
-  const Byte *cur;
-  const Byte *end;
   const Byte *begin;
-  UInt64 processed;
+  size_t pos;
+  size_t size;
+  UInt64 remaining;
   BoolInt extra;
   SRes res;
   ILookInStreamPtr inStream;
 } CByteInToLook;
 
+/* Purpose: Read one byte without crossing the declared packed extent or losing an I/O failure.
+   Inputs: pp owns a synchronous look-stream borrow and its remaining packed-byte budget.
+   Outputs: Returns a byte on success; otherwise latches the error/EOF and returns the decoder sentinel. */
 static Byte ReadByte(IByteInPtr pp)
 {
   Z7_CONTAINER_FROM_VTBL_TO_DECL_VAR_pp_vt_p(CByteInToLook)
-  if (p->cur != p->end)
-    return *p->cur++;
+  if (p->extra)
+    return 0;
+  if (p->pos != p->size)
+    return p->begin[p->pos++];
   if (p->res == SZ_OK)
   {
-    size_t size = (size_t)(p->cur - p->begin);
-    p->processed += size;
-    p->res = ILookInStream_Skip(p->inStream, size);
-    size = (1 << 25);
-    p->res = ILookInStream_Look(p->inStream, (const void **)&p->begin, &size);
-    p->cur = p->begin;
-    p->end = p->begin + size;
-    if (size != 0)
-      return *p->cur++;
+    if (p->pos != 0)
+    {
+      p->res = ILookInStream_Skip(p->inStream, p->pos);
+      p->remaining -= p->pos;
+    }
+    p->pos = p->size = 0;
+    p->begin = NULL;
+    if (p->res == SZ_OK && p->remaining != 0)
+    {
+      const void *buffer = NULL;
+      const size_t requested = p->remaining < (1 << 25) ? (size_t)p->remaining : (1 << 25);
+      size_t size = requested;
+      p->res = ILookInStream_Look(p->inStream, &buffer, &size);
+      if (p->res == SZ_OK)
+      {
+        if (size > requested || (size != 0 && buffer == NULL))
+          p->res = SZ_ERROR_FAIL;
+        else if (size != 0)
+        {
+          p->begin = (const Byte *)buffer;
+          p->size = size;
+          p->pos = 1;
+          return p->begin[0];
+        }
+      }
+    }
   }
   p->extra = True;
   return 0;
 }
 
+/* Purpose: Decode one exact PPMd packed span with bounded allocation and synchronous input lifetime.
+   Inputs: Validated properties, declared packed/output sizes, borrowed stream/output, and owning allocator.
+   Outputs: Writes decoded bytes and frees all state; returns the original I/O failure or a format error. */
 static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, ILookInStreamPtr inStream,
     Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain)
 {
   CPpmd7 *ppmd;
+  CByteInToLook s;
   SRes res;
   unsigned order;
   UInt32 memSize;
@@ -119,13 +145,13 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
   res = SZ_ERROR_MEM;
   if (Ppmd7_Alloc(ppmd, memSize, allocMain))
   {
-    CByteInToLook s;
     s.vt.Read = ReadByte;
     s.inStream = inStream;
-    s.begin = s.end = s.cur = NULL;
+    s.begin = NULL;
+    s.pos = s.size = 0;
     s.extra = False;
     s.res = SZ_OK;
-    s.processed = 0;
+    s.remaining = inSize;
 
     Ppmd7_Init(ppmd, order);
     ppmd->rc.dec.Stream = &s.vt;
@@ -142,14 +168,12 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
         *buf = (Byte)sym;
       }
       if (buf == lim)
-        if (Ppmd7z_RangeDec_IsFinishedOK(&ppmd->rc.dec)
-            // || (Ppmd7z_DecodeSymbol(&ppmd) == PPMD7_SYM_END && Ppmd7z_RangeDec_IsFinishedOK(&ppmd.rc.dec))
-            )
+        if (Ppmd7z_RangeDec_IsFinishedOK(&ppmd->rc.dec))
           res = SZ_OK;
     }
     if (s.extra)
       res = (s.res != SZ_OK ? s.res : SZ_ERROR_DATA);
-    else if (s.processed + (size_t)(s.cur - s.begin) != inSize)
+    else if (s.remaining != s.pos)
       res = SZ_ERROR_DATA;
     Ppmd7_Free(ppmd, allocMain);
   }

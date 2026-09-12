@@ -701,6 +701,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_rpm_compat.cpp
     tests/cpp/test_resource_usage.cpp
     tests/cpp/test_sevenzip_compat.cpp
+    tests/cpp/test_sevenzip_ppmd.cpp
     tests/cpp/test_suzip_gpu_prefix.cpp
     tests/cpp/test_dictionary_matcher.cpp
     src/gpu/dictionary_matcher.cpp

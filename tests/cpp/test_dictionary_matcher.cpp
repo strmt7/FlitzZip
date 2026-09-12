@@ -1,15 +1,21 @@
 #include "gpu/dictionary_matcher.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "core/result.hpp"
+#include "core/file_publish.hpp"
 #include "test_util.hpp"
 
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
+#include <string_view>
+#include <thread>
 
 namespace {
 
@@ -139,6 +145,20 @@ std::vector<std::byte> decode_reference_block(const EncodedSegment& segment) {
     throw std::runtime_error("dictionary output has no final literal sequence");
 }
 
+// Purpose: Write one independently verified dictionary fixture without replacing an existing output.
+// Inputs: `path` belongs to the opt-in export root and `bytes` holds the complete bounded fixture.
+// Outputs: Publishes complete bytes atomically without following reparse parents or replacing an existing file.
+void write_dictionary_interop_file(const std::filesystem::path& path, std::span<const std::byte> bytes) {
+    superzip::FilePublishTransaction transaction(path);
+    std::ofstream file(transaction.staging_path(), std::ios::binary);
+    file.exceptions(std::ios::badbit | std::ios::failbit);
+    if (!bytes.empty()) {
+        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    file.close();
+    transaction.commit(false);
+}
+
 // Purpose: Export already verified raw blocks for an independent external LZ4 decoder when explicitly requested.
 // Inputs: A bounded segment, its decoded bytes, and an optional harness-owned environment export directory.
 // Outputs: Ordinary tests write nothing; opt-in runs emit numbered block/raw pairs, capped at 64 MiB per process.
@@ -157,18 +177,9 @@ void export_dictionary_interop_fixture(const EncodedSegment& segment, std::span<
     const auto next_bytes = segment.payload.size() + decoded.size();
     REQUIRE_TRUE(next_bytes <= 64U * 1024U * 1024U - exported_bytes);
     const auto directory = std::filesystem::path(root);
-    std::filesystem::create_directories(directory);
     const auto name = std::to_string(ordinal++);
-    const auto write_bytes = [&](const char* extension, std::span<const std::byte> bytes) {
-        const auto path = directory / (name + extension);
-        REQUIRE_TRUE(!std::filesystem::exists(path));
-        std::ofstream file(path, std::ios::binary);
-        file.exceptions(std::ios::badbit | std::ios::failbit);
-        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        file.close();
-    };
-    write_bytes(".lz4block", segment.payload);
-    write_bytes(".raw", decoded);
+    write_dictionary_interop_file(directory / (name + ".lz4block"), segment.payload);
+    write_dictionary_interop_file(directory / (name + ".raw"), decoded);
     exported_bytes += next_bytes;
 }
 
@@ -249,6 +260,102 @@ std::vector<std::byte> encode_reference_matches(std::span<const std::byte> input
 }
 
 }  // namespace
+
+// Purpose: Reject export roots redirected through a directory junction before creating fixture files.
+// Inputs: A harness-owned export junction targeting a separate harness-owned directory.
+// Outputs: Requires rejection and no file in the redirected directory; removes the junction on every exit.
+TEST_CASE(dictionary_interop_export_rejects_reparse_parent) {
+    const auto root = test_temp_dir("dictionary-export-root");
+    const auto outside = test_temp_dir("dictionary-export-outside");
+    const auto junction = root / "linked";
+    if (!superzip_test::try_create_test_directory_junction(junction, outside)) {
+        std::cout << "[SKIP] directory junction creation is unavailable on this filesystem\n";
+        return;
+    }
+    struct JunctionCleanup {
+        std::filesystem::path path;
+        // Purpose: Remove the owned junction; Inputs: saved junction path; Outputs: never follows its target.
+        ~JunctionCleanup() {
+            superzip_test::remove_test_directory_junction(path);
+        }
+    } cleanup{junction};
+    const std::array<std::byte, 4> bytes{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+    bool rejected = false;
+    try {
+        write_dictionary_interop_file(junction / "nested" / "fixture.raw", bytes);
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(std::filesystem::is_empty(outside));
+}
+
+// Purpose: Preserve complete fixture bytes, reject replacement, and remove private staging after each outcome.
+// Inputs: Binary and empty fixtures in a new nested directory, then a conflicting write to the binary path.
+// Outputs: Requires exact original bytes, an empty fixture, overwrite refusal, and no remaining staging entries.
+TEST_CASE(dictionary_interop_export_preserves_bytes_and_refuses_overwrite) {
+    const auto root = test_temp_dir("dictionary-export-publication");
+    const auto path = root / "nested" / "fixture.raw";
+    constexpr std::string_view contents{"fixture\0bytes", sizeof("fixture\0bytes") - 1U};
+    write_dictionary_interop_file(path, std::as_bytes(std::span(contents.data(), contents.size())));
+    bool rejected = false;
+    try {
+        write_dictionary_interop_file(path, {});
+    } catch (const superzip::SecurityError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::ifstream input(path, std::ios::binary);
+    const std::string actual(std::istreambuf_iterator<char>(input), {});
+    REQUIRE_EQ(actual, contents);
+    write_dictionary_interop_file(path.parent_path() / "empty.raw", {});
+    REQUIRE_EQ(std::filesystem::file_size(path.parent_path() / "empty.raw"), 0U);
+    REQUIRE_EQ(
+        std::distance(std::filesystem::directory_iterator(path.parent_path()), std::filesystem::directory_iterator()),
+        2);
+}
+
+// Purpose: Ensure two exporting callers can never both replace the same numbered fixture.
+// Inputs: Four pairs of concurrent writes with distinct complete payloads and one shared final target per pair.
+// Outputs: Requires exactly one winner per target, one explicit refusal, intact winner bytes, and staging cleanup.
+TEST_CASE(dictionary_interop_export_concurrent_writers_do_not_overwrite) {
+    const auto root = test_temp_dir("dictionary-export-concurrent");
+    constexpr std::array<std::string_view, 2> payloads{"first verified fixture", "second verified fixture"};
+    for (unsigned int iteration = 0; iteration < 4U; ++iteration) {
+        const auto path = root / std::to_string(iteration) / "fixture.raw";
+        std::atomic<unsigned int> committed{0};
+        std::atomic<unsigned int> refused{0};
+        std::array<std::exception_ptr, 2> unexpected{};
+        const auto attempt = [&](std::size_t index) {
+            try {
+                const auto payload = payloads[index];
+                write_dictionary_interop_file(path, std::as_bytes(std::span(payload.data(), payload.size())));
+                ++committed;
+            } catch (const superzip::SecurityError&) {
+                ++refused;
+            } catch (...) {
+                unexpected[index] = std::current_exception();
+            }
+        };
+        std::jthread first(attempt, 0U);
+        std::jthread second(attempt, 1U);
+        first.join();
+        second.join();
+        for (const auto& error : unexpected) {
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        }
+        REQUIRE_EQ(committed.load(), 1U);
+        REQUIRE_EQ(refused.load(), 1U);
+        std::ifstream input(path, std::ios::binary);
+        const std::string actual(std::istreambuf_iterator<char>(input), {});
+        REQUIRE_TRUE(actual == payloads[0] || actual == payloads[1]);
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(path.parent_path()),
+                                 std::filesystem::directory_iterator()),
+                   1);
+    }
+}
 
 // Purpose: Preserve dense-search encoding semantics while removing the global match table from encoding.
 // Inputs: All nine efforts and seeded mixed data across cache and segment boundaries, plus the depth fixture.
