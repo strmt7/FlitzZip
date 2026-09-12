@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 
 namespace superzip {
@@ -77,14 +78,33 @@ class DirectoryPublishTransaction {
     [[nodiscard]] const std::filesystem::path& staging_directory() const noexcept;
 
     // Purpose: Merge every verified staged directory and file into the final destination.
-    // Inputs: `overwrite` controls replacement of existing final files.
-    // Outputs: Publishes only ordinary non-reparse files through per-file transactions and removes quarantine state.
-    void publish(bool overwrite);
+    // Inputs: `overwrite` controls replacement; optional `checkpoint` may throw to cancel bounded publication work.
+    // Outputs: Publishes ordinary non-reparse files and removes quarantine. Failure can leave already-published files;
+    // this is per-file atomic publication, not an atomic directory merge.
+    void publish(bool overwrite, const std::function<void()>& checkpoint = {});
 
   private:
     std::filesystem::path destination_;
     ReservedFilePublishTarget quarantine_;
     bool published_ = false;
 };
+
+struct ExtractionPublicationOptions {
+    std::filesystem::path destination;
+    bool overwrite = false;
+    bool validate_before_publish = false;
+};
+
+// Purpose: Run one adapter extraction, optionally withholding final files until all decoding and inspection succeed.
+// Inputs: `options` selects destination and publication policy; `extract` validates and writes into the supplied path
+// using the supplied overwrite policy. Optional `inspect` examines fully extracted private files; `checkpoint` may
+// throw to cancel before extraction or during publication. Callbacks run synchronously and are never retained.
+// Outputs: Calls `extract` once, stages when validation or inspection is requested, and removes private files on
+// failure. Final publication is atomic per file, not per archive; disabling staging never disables the adapter's
+// required checks.
+void extract_with_publication(const ExtractionPublicationOptions& options,
+                              const std::function<void(const std::filesystem::path&, bool)>& extract,
+                              const std::function<void(const std::filesystem::path&)>& inspect = {},
+                              const std::function<void()>& checkpoint = {});
 
 }  // namespace superzip

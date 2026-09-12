@@ -1,6 +1,7 @@
 #include "core/archive_index.hpp"
 #include "core/archive.hpp"
 #include "core/checksum.hpp"
+#include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
 #include "miniz.h"
@@ -54,6 +55,53 @@ void write_raw_test_archive(const std::filesystem::path& path, const std::vector
 }
 
 }  // namespace
+
+// Purpose: Distinguish direct extraction from archive-wide validation before final publication.
+// Inputs: A real two-entry SUZIP whose second payload is corrupted, plus existing first-file output.
+// Outputs: Both modes reject the CRC error; staging retains the old first file and cleans all private output after one
+// decode.
+TEST_CASE(suzip_late_crc_failure_respects_publication_policy) {
+    const auto root = test_temp_dir("suzip-publication-late-crc");
+    const auto archive = root / "late-crc.suzip";
+    write_raw_test_archive(archive, {{"a.txt", "valid first payload"}, {"b.txt", "invalid second payload"}});
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_EQ(index.entries.size(), 2U);
+    {
+        std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
+        file.seekp(static_cast<std::streamoff>(index.entries[1].payload_offset));
+        file.put('X');
+        REQUIRE_TRUE(static_cast<bool>(file));
+    }
+    for (const bool validate : {false, true}) {
+        const auto output = root / (validate ? "private" : "direct");
+        std::filesystem::create_directories(output);
+        std::ofstream(output / "a.txt", std::ios::binary) << "existing bytes";
+        int extractions = 0;
+        bool rejected = false;
+        try {
+            superzip::extract_with_publication(
+                {.destination = output, .overwrite = true, .validate_before_publish = validate},
+                [&](const auto& destination, bool overwrite) {
+                    ++extractions;
+                    superzip::ExtractOptions options;
+                    options.gpu_required = false;
+                    options.force_cpu = true;
+                    options.overwrite = overwrite;
+                    static_cast<void>(superzip::extract_suzip(archive, destination, options));
+                });
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(extractions, 1);
+        std::ifstream first(output / "a.txt", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(first), {}),
+                   validate ? "existing bytes" : "valid first payload");
+        REQUIRE_TRUE(!std::filesystem::exists(output / "b.txt"));
+        REQUIRE_EQ(std::distance(std::filesystem::directory_iterator(output), std::filesystem::directory_iterator{}),
+                   1);
+    }
+}
 
 // Purpose: Compare native CPU blocks with actual codec sizes instead of a size heuristic.
 // Inputs: Non-uniform periodic and random payloads around the framing and old 512-byte cutoffs at every effort.

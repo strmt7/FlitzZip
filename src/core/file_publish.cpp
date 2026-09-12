@@ -114,9 +114,10 @@ std::string quarantine_relative_path(const std::filesystem::path& root, const st
 }
 
 // Purpose: Inventory one protected extraction tree under archive entry, depth, and path-metadata limits.
-// Inputs: `root` is the private quarantine directory populated by an archive adapter.
+// Inputs: `root` is the private quarantine directory; optional `checkpoint` may throw to cancel inventory work.
 // Outputs: Returns deterministic directory/file entries and rejects reparses, unsupported objects, or excess work.
-std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem::path& root) {
+std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem::path& root,
+                                                           const std::function<void()>& checkpoint) {
     struct PendingDirectory {
         std::filesystem::path path;
         std::uint32_t depth = 0;
@@ -134,6 +135,8 @@ std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem
         std::vector<std::filesystem::path> children;
         for (std::filesystem::directory_iterator iterator(current.path, error), end; !error && iterator != end;
              iterator.increment(error)) {
+            if (checkpoint)
+                checkpoint();
             if (children.size() >= kMaxArchiveEntries) {
                 throw ArchiveError("quarantine directory fanout exceeds SuperZip resource limits");
             }
@@ -183,37 +186,6 @@ std::vector<QuarantineTreeEntry> inventory_quarantine_tree(const std::filesystem
         return left.relative_path < right.relative_path;
     });
     return entries;
-}
-
-// Purpose: Copy one locked quarantine file into a verified per-file publication transaction.
-// Inputs: `source` is a protected ordinary file, `target` is its validated final path, and `overwrite` is policy.
-// Outputs: Publishes the exact source bytes atomically or throws without exposing a partial target.
-void publish_quarantine_file(const std::filesystem::path& source, const std::filesystem::path& target, bool overwrite) {
-    const auto pinned_source = pin_source_file(source);
-    FilePublishTransaction transaction(target);
-    std::ifstream input(pinned_source.path(), std::ios::binary);
-    std::ofstream output(transaction.staging_path(), std::ios::binary);
-    if (!input || !output) {
-        throw ArchiveError("cannot open extraction quarantine publication streams");
-    }
-    std::vector<char> buffer(1024U * 1024U);
-    std::uint64_t copied = 0;
-    while (input) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto count = input.gcount();
-        if (count > 0) {
-            output.write(buffer.data(), count);
-            copied += static_cast<std::uint64_t>(count);
-        }
-    }
-    if (input.bad() || !output || copied != pinned_source.size()) {
-        throw ArchiveError("extraction quarantine file changed or could not be copied completely");
-    }
-    output.close();
-    if (!output) {
-        throw ArchiveError("cannot finalize extraction quarantine publication");
-    }
-    transaction.commit(overwrite);
 }
 
 #ifdef _WIN32
@@ -337,10 +309,10 @@ HANDLE open_pinned_directory(const std::filesystem::path& directory, bool public
     return handle.release();
 }
 
-// Purpose: Create missing components and pin a complete directory chain.
-// Inputs: `directory` is a normalized absolute directory path.
-// Outputs: Returns handles for every component, ordered root to leaf, or throws without following reparses.
-std::vector<HANDLE> create_and_pin_directory_chain(const std::filesystem::path& directory) {
+// Purpose: Pin a complete directory chain, optionally creating missing output components.
+// Inputs: `directory` is normalized and absolute; `create_missing` permits creation and final-parent write access.
+// Outputs: Returns owned handles ordered root to leaf, or closes partial state and throws without following reparses.
+std::vector<HANDLE> pin_directory_chain(const std::filesystem::path& directory, bool create_missing) {
     const auto root = directory.root_path();
     if (root.empty()) {
         throw SecurityError("output directory does not have an absolute root");
@@ -356,13 +328,17 @@ std::vector<HANDLE> create_and_pin_directory_chain(const std::filesystem::path& 
                 throw SecurityError("output directory contains parent traversal");
             current /= component;
             const auto text = current.wstring();
-            if (CreateDirectoryW(text.c_str(), nullptr) == 0 && GetLastError() != ERROR_ALREADY_EXISTS) {
+            if (create_missing && CreateDirectoryW(text.c_str(), nullptr) == 0 &&
+                GetLastError() != ERROR_ALREADY_EXISTS) {
                 throw ArchiveError("unable to create output directory: " + path_diagnostic_utf8(current));
             }
             handles.push_back(open_pinned_directory(current));
         }
-        CloseHandle(handles.back());
-        handles.back() = open_pinned_directory(directory, true);
+        if (create_missing) {
+            ScopedHandle writable_parent(open_pinned_directory(directory, true));
+            CloseHandle(handles.back());
+            handles.back() = writable_parent.release();
+        }
         return handles;
     } catch (...) {
         for (auto it = handles.rbegin(); it != handles.rend(); ++it)
@@ -370,6 +346,28 @@ std::vector<HANDLE> create_and_pin_directory_chain(const std::filesystem::path& 
         throw;
     }
 }
+
+class ScopedDirectoryChain {
+  public:
+    // Purpose: Pin existing source parents for a handle-bound move without creating missing directories.
+    // Inputs: `directory` is the normalized absolute parent of a private staged file.
+    // Outputs: Owns all parent locks or throws before the source file is opened.
+    explicit ScopedDirectoryChain(const std::filesystem::path& directory)
+        : handles_(pin_directory_chain(directory, false)) {}
+    ScopedDirectoryChain(const ScopedDirectoryChain&) = delete;
+    ScopedDirectoryChain& operator=(const ScopedDirectoryChain&) = delete;
+
+    // Purpose: Release source-parent locks after publication or failure.
+    // Inputs: The handles owned by this chain.
+    // Outputs: Closes every owned handle once without throwing.
+    ~ScopedDirectoryChain() {
+        for (auto it = handles_.rbegin(); it != handles_.rend(); ++it)
+            CloseHandle(*it);
+    }
+
+  private:
+    std::vector<HANDLE> handles_;
+};
 
 // Purpose: Return a cryptographically unpredictable publication-directory suffix.
 // Inputs: None.
@@ -419,10 +417,10 @@ void create_private_staging_directory(const std::filesystem::path& target, FileP
 }
 
 // Purpose: Validate a staged payload and open the exact file for handle-relative rename.
-// Inputs: `temporary` is the state-bound staging file path.
+// Inputs: `path` is a private staging file beneath pinned, reparse-free parents.
 // Outputs: Returns an owned read/delete handle or throws for reparse, directory, or open failures.
-HANDLE open_verified_payload(const ReservedFilePublishTarget& temporary) {
-    const auto text = temporary.file.wstring();
+HANDLE open_verified_payload(const std::filesystem::path& path) {
+    const auto text = path.wstring();
     ScopedHandle handle(CreateFileW(
         text.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_SHARE_READ,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
@@ -435,6 +433,34 @@ HANDLE open_verified_payload(const ReservedFilePublishTarget& temporary) {
         throw SecurityError("publication payload is not an ordinary file");
     }
     return handle.release();
+}
+
+// Purpose: Normalize a private read-only payload for the existing writable publication/flush contract.
+// Inputs: `path` is inside the owned quarantine beneath pinned parents; no caller-owned file is permitted.
+// Outputs: Clears only the read-only bit on an ordinary singly-linked staged file, or throws without modifying aliases.
+void prepare_quarantine_payload(const std::filesystem::path& path) {
+    const auto attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        throw ArchiveError("unable to inspect quarantine payload attributes");
+    if ((attributes & FILE_ATTRIBUTE_READONLY) == 0U)
+        return;
+    ScopedHandle payload(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                     FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    FILE_BASIC_INFO basic{};
+    FILE_STANDARD_INFO standard{};
+    if (payload.get() == INVALID_HANDLE_VALUE ||
+        GetFileInformationByHandleEx(payload.get(), FileBasicInfo, &basic, sizeof(basic)) == 0 ||
+        GetFileInformationByHandleEx(payload.get(), FileStandardInfo, &standard, sizeof(standard)) == 0 ||
+        (basic.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0U ||
+        standard.NumberOfLinks != 1U) {
+        throw SecurityError("quarantine attribute normalization requires an unlinked ordinary file");
+    }
+    const auto writable_attributes = basic.FileAttributes & ~FILE_ATTRIBUTE_READONLY;
+    basic = {};
+    basic.FileAttributes = writable_attributes == 0U ? FILE_ATTRIBUTE_NORMAL : writable_attributes;
+    if (SetFileInformationByHandle(payload.get(), FileBasicInfo, &basic, sizeof(basic)) == 0)
+        throw ArchiveError("unable to normalize private quarantine payload attributes");
 }
 
 // Purpose: Rename an open payload through a path whose complete parent chain remains pinned.
@@ -466,6 +492,52 @@ void rename_payload_to_pinned_path(HANDLE payload, const std::filesystem::path& 
 
 #endif
 
+// Purpose: Transfer one private quarantine file into a verified per-file publication transaction.
+// Inputs: `source` is a protected ordinary file, `target` is its validated final path, and `overwrite` is policy.
+// Outputs: Windows moves the exact file without copying payload bytes; other validation hosts copy boundedly.
+// Throws without exposing a partial target; Windows rejects linked files and holds both parent chains during moves.
+void publish_quarantine_file(const std::filesystem::path& source, const std::filesystem::path& target, bool overwrite) {
+    FilePublishTransaction transaction(target);
+#ifdef _WIN32
+    {
+        const ScopedDirectoryChain source_parents(normalized_absolute_path(source).parent_path());
+        prepare_quarantine_payload(source);
+        ScopedHandle payload(open_verified_payload(source));
+        FILE_STANDARD_INFO standard{};
+        if (GetFileInformationByHandleEx(payload.get(), FileStandardInfo, &standard, sizeof(standard)) == 0 ||
+            standard.NumberOfLinks != 1U) {
+            throw SecurityError("quarantine publication requires an unlinked ordinary file");
+        }
+        rename_payload_to_pinned_path(payload.get(), transaction.staging_path(), false);
+    }
+#else
+    const auto pinned_source = pin_source_file(source);
+    std::ifstream input(pinned_source.path(), std::ios::binary);
+    std::ofstream output(transaction.staging_path(), std::ios::binary);
+    if (!input || !output) {
+        throw ArchiveError("cannot open extraction quarantine publication streams");
+    }
+    std::vector<char> buffer(1024U * 1024U);
+    std::uint64_t copied = 0;
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        if (count > 0) {
+            output.write(buffer.data(), count);
+            copied += static_cast<std::uint64_t>(count);
+        }
+    }
+    if (input.bad() || !output || copied != pinned_source.size()) {
+        throw ArchiveError("extraction quarantine file changed or could not be copied completely");
+    }
+    output.close();
+    if (!output) {
+        throw ArchiveError("cannot finalize extraction quarantine publication");
+    }
+#endif
+    transaction.commit(overwrite);
+}
+
 }  // namespace
 
 // Purpose: Create and validate a directory chain without traversing Windows reparse points.
@@ -474,7 +546,7 @@ void rename_payload_to_pinned_path(HANDLE payload, const std::filesystem::path& 
 void create_verified_directories(const std::filesystem::path& directory) {
     const auto absolute = normalized_absolute_path(directory);
 #ifdef _WIN32
-    auto handles = create_and_pin_directory_chain(absolute);
+    auto handles = pin_directory_chain(absolute, true);
     for (auto it = handles.rbegin(); it != handles.rend(); ++it)
         CloseHandle(*it);
 #else
@@ -493,7 +565,7 @@ ReservedFilePublishTarget reserve_file_publish_target(const std::filesystem::pat
     auto state = std::make_shared<FilePublishReservationState>();
     state->target = absolute_target;
 #ifdef _WIN32
-    state->directory_handles = create_and_pin_directory_chain(absolute_target.parent_path());
+    state->directory_handles = pin_directory_chain(absolute_target.parent_path(), true);
     create_private_staging_directory(absolute_target, *state);
 #else
     std::filesystem::create_directories(absolute_target.parent_path());
@@ -539,7 +611,7 @@ void commit_verified_file(const ReservedFilePublishTarget& temporary, const std:
         throw SecurityError("publication target does not match its reservation");
     }
 #ifdef _WIN32
-    ScopedHandle payload(open_verified_payload(temporary));
+    ScopedHandle payload(open_verified_payload(temporary.file));
     if (FlushFileBuffers(payload.get()) == 0) {
         throw ArchiveError("failed to flush verified publication payload");
     }
@@ -616,14 +688,19 @@ const std::filesystem::path& DirectoryPublishTransaction::staging_directory() co
 }
 
 // Purpose: Merge every verified staged directory and file into the final destination.
-// Inputs: `overwrite` controls replacement of existing final files.
-// Outputs: Publishes only ordinary non-reparse files through per-file transactions and removes quarantine state.
-void DirectoryPublishTransaction::publish(bool overwrite) {
+// Inputs: `overwrite` controls replacement; optional `checkpoint` may throw to cancel bounded publication work.
+// Outputs: Publishes ordinary files atomically per file and removes staging. A failed merge may leave prior final
+// files.
+void DirectoryPublishTransaction::publish(bool overwrite, const std::function<void()>& checkpoint) {
     if (published_) {
         throw ArchiveError("extraction quarantine transaction was already published");
     }
-    const auto entries = inventory_quarantine_tree(quarantine_.directory);
+    if (checkpoint)
+        checkpoint();
+    const auto entries = inventory_quarantine_tree(quarantine_.directory, checkpoint);
     for (const auto& entry : entries) {
+        if (checkpoint)
+            checkpoint();
         const auto target = safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8);
         std::error_code error;
         if (!overwrite && !entry.directory && std::filesystem::exists(target, error)) {
@@ -634,12 +711,16 @@ void DirectoryPublishTransaction::publish(bool overwrite) {
         }
     }
     for (const auto& entry : entries) {
+        if (checkpoint)
+            checkpoint();
         if (entry.directory) {
             create_verified_directories(
                 safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8));
         }
     }
     for (const auto& entry : entries) {
+        if (checkpoint)
+            checkpoint();
         if (!entry.directory) {
             const auto target = safe_join_archive_path(destination_, entry.relative_path, ArchivePathEncoding::Utf8);
             publish_quarantine_file(entry.source, target, overwrite);
@@ -647,6 +728,33 @@ void DirectoryPublishTransaction::publish(bool overwrite) {
     }
     cleanup_file_publish_target(quarantine_);
     published_ = true;
+}
+
+// Purpose: Extract once with shared CLI/GUI private-publication and post-decode inspection semantics.
+// Inputs: `options` selects output policy; `extract` performs required adapter checks; optional `inspect` runs only on
+// private complete output and `checkpoint` may throw to cancel. Callbacks run synchronously and propagate exceptions.
+// Outputs: Calls the adapter once; failed decoding/inspection exposes no final files, while publication is per-file
+// atomic.
+void extract_with_publication(const ExtractionPublicationOptions& options,
+                              const std::function<void(const std::filesystem::path&, bool)>& extract,
+                              const std::function<void(const std::filesystem::path&)>& inspect,
+                              const std::function<void()>& checkpoint) {
+    if (!extract) {
+        throw ArchiveError("extraction publication requires an archive adapter");
+    }
+    if (checkpoint)
+        checkpoint();
+    if (!options.validate_before_publish && !inspect) {
+        extract(options.destination, options.overwrite);
+        return;
+    }
+    DirectoryPublishTransaction transaction(options.destination);
+    extract(transaction.staging_directory(), false);
+    if (checkpoint)
+        checkpoint();
+    if (inspect)
+        inspect(transaction.staging_directory());
+    transaction.publish(options.overwrite, checkpoint);
 }
 
 }  // namespace superzip

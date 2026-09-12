@@ -4,6 +4,7 @@
 #include "core/result.hpp"
 #include "test_util.hpp"
 
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -11,6 +12,225 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+
+namespace {
+
+// Purpose: Snapshot Windows file identity without retaining a handle that could prevent publication.
+// Inputs: `path` names an ordinary test payload on the local test volume.
+// Outputs: Returns its volume and file identifier; fails the test if the snapshot cannot be read.
+BY_HANDLE_FILE_INFORMATION publication_file_identity(const std::filesystem::path& path) {
+    const auto handle =
+        CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION identity{};
+    const auto queried = GetFileInformationByHandle(handle, &identity);
+    CloseHandle(handle);
+    REQUIRE_TRUE(queried != 0);
+    return identity;
+}
+
+}  // namespace
+
+// Purpose: Prove private publication moves the original file rather than rewriting its payload.
+// Inputs: Nested nonempty and empty Unicode staged files, existing destinations, and a fixed write timestamp.
+// Outputs: Requires exact file identity, timestamp, and contents after publication, with private staging removed.
+TEST_CASE(directory_publish_moves_payload_without_copying) {
+    const auto root = test_temp_dir("publish-identity");
+    for (const bool overwrite : {false, true}) {
+        const auto destination = root / (overwrite ? "replace" : "new");
+        superzip::DirectoryPublishTransaction transaction(destination);
+        const auto stage = transaction.staging_directory();
+        const auto relative = std::filesystem::path(u8"\u65e5\u672c/caf\u00e9.txt");
+        std::filesystem::create_directories((stage / relative).parent_path());
+        std::ofstream(stage / relative, std::ios::binary) << "exact published bytes";
+        std::ofstream(stage / "empty.txt", std::ios::binary).close();
+        const auto timestamp = std::filesystem::file_time_type::clock::now() - std::chrono::hours(48);
+        std::filesystem::last_write_time(stage / relative, timestamp);
+        const auto before = publication_file_identity(stage / relative);
+        const auto empty_before = publication_file_identity(stage / "empty.txt");
+        const auto written_time = std::filesystem::last_write_time(stage / relative);
+        if (overwrite) {
+            std::filesystem::create_directories((destination / relative).parent_path());
+            std::ofstream(destination / relative, std::ios::binary) << "old bytes";
+        }
+        transaction.publish(overwrite);
+        const auto after = publication_file_identity(destination / relative);
+        const auto empty_after = publication_file_identity(destination / "empty.txt");
+        REQUIRE_EQ(before.dwVolumeSerialNumber, after.dwVolumeSerialNumber);
+        REQUIRE_EQ(before.nFileIndexHigh, after.nFileIndexHigh);
+        REQUIRE_EQ(before.nFileIndexLow, after.nFileIndexLow);
+        REQUIRE_EQ(empty_before.nFileIndexHigh, empty_after.nFileIndexHigh);
+        REQUIRE_EQ(empty_before.nFileIndexLow, empty_after.nFileIndexLow);
+        REQUIRE_EQ(std::filesystem::last_write_time(destination / relative), written_time);
+        std::ifstream input(destination / relative, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "exact published bytes");
+        REQUIRE_TRUE(!std::filesystem::exists(stage));
+    }
+}
+
+// Purpose: Preserve publication of read-only staged files when moving instead of copying payloads.
+// Inputs: One complete private file marked read-only before directory publication.
+// Outputs: Publishes exact bytes and removes private staging without requiring writable source attributes.
+TEST_CASE(directory_publish_accepts_read_only_payload) {
+    const auto root = test_temp_dir("publish-readonly");
+    const auto destination = root / "output";
+    superzip::DirectoryPublishTransaction transaction(destination);
+    const auto stage = transaction.staging_directory();
+    const auto source = stage / "readonly.txt";
+    std::ofstream(source, std::ios::binary) << "read-only payload";
+    REQUIRE_TRUE(SetFileAttributesW(source.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
+    const auto before = publication_file_identity(source);
+    transaction.publish(false);
+    const auto target = destination / "readonly.txt";
+    const auto after = publication_file_identity(target);
+    REQUIRE_EQ(before.dwVolumeSerialNumber, after.dwVolumeSerialNumber);
+    REQUIRE_EQ(before.nFileIndexHigh, after.nFileIndexHigh);
+    REQUIRE_EQ(before.nFileIndexLow, after.nFileIndexLow);
+    std::ifstream input(target, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "read-only payload");
+    REQUIRE_TRUE(!std::filesystem::exists(stage));
+    input.close();
+    REQUIRE_TRUE((GetFileAttributesW(target.c_str()) & FILE_ATTRIBUTE_READONLY) == 0U);
+}
+
+// Purpose: Prevent private read-only normalization from changing a file outside the publication transaction.
+// Inputs: A read-only caller-owned file hard-linked into the private staging directory.
+// Outputs: Rejects the alias without changing outside attributes or publishing any final file.
+TEST_CASE(directory_publish_read_only_alias_keeps_attributes) {
+    const auto root = test_temp_dir("publish-readonly-alias");
+    const auto outside = root / "outside.txt";
+    std::ofstream(outside, std::ios::binary) << "outside payload";
+    REQUIRE_TRUE(SetFileAttributesW(outside.c_str(), FILE_ATTRIBUTE_READONLY) != 0);
+    bool rejected = false;
+    {
+        superzip::DirectoryPublishTransaction transaction(root / "output");
+        std::filesystem::create_hard_link(outside, transaction.staging_directory() / "alias.txt");
+        try {
+            transaction.publish(false);
+        } catch (const superzip::SecurityError&) {
+            rejected = true;
+        }
+        const auto attributes = GetFileAttributesW(outside.c_str());
+        REQUIRE_TRUE(SetFileAttributesW(outside.c_str(), FILE_ATTRIBUTE_NORMAL) != 0);
+        REQUIRE_TRUE((attributes & FILE_ATTRIBUTE_READONLY) != 0U);
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(std::filesystem::hard_link_count(outside), 1U);
+    REQUIRE_TRUE(!std::filesystem::exists(root / "output/alias.txt"));
+}
+
+// Purpose: Keep quarantine ownership exclusive when publication stops copying the payload.
+// Inputs: A staged hard link to an existing caller-owned file.
+// Outputs: Rejects publication and preserves the outside file without a final destination alias.
+TEST_CASE(directory_publish_rejects_shared_file_identity) {
+    const auto root = test_temp_dir("publish-linked");
+    const auto outside = root / "original.txt";
+    std::ofstream(outside, std::ios::binary) << "original bytes";
+    const auto destination = root / "output";
+    bool rejected = false;
+    {
+        superzip::DirectoryPublishTransaction transaction(destination);
+        std::filesystem::create_hard_link(outside, transaction.staging_directory() / "alias.txt");
+        try {
+            transaction.publish(false);
+        } catch (const superzip::SecurityError&) {
+            rejected = true;
+        }
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(destination / "alias.txt"));
+    REQUIRE_EQ(std::filesystem::hard_link_count(outside), 1U);
+    std::ifstream input(outside, std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "original bytes");
+}
+
+// Purpose: Exercise one-decode publication policy independently of any archive adapter or GUI state.
+// Inputs: Both validation settings, optional inspection, and overwrite enabled on the final destination.
+// Outputs: Decodes once, never overwrites inside quarantine, inspects before final visibility, and publishes exact
+// bytes.
+TEST_CASE(extraction_publication_decodes_once_with_captured_policy) {
+    const auto root = test_temp_dir("extract-publication-policy");
+    for (const bool validate : {false, true}) {
+        for (const bool inspect : {false, true}) {
+            const auto destination = root / (std::to_string(validate) + std::to_string(inspect));
+            int decodes = 0;
+            int inspections = 0;
+            std::filesystem::path decoded_path;
+            std::function<void(const std::filesystem::path&)> inspector;
+            if (inspect) {
+                inspector = [&](const auto& path) {
+                    ++inspections;
+                    REQUIRE_EQ(path, decoded_path);
+                    REQUIRE_TRUE(!std::filesystem::exists(destination / "file.txt"));
+                    REQUIRE_EQ(std::filesystem::file_size(path / "file.txt"), 7U);
+                };
+            }
+            superzip::extract_with_publication(
+                {.destination = destination, .overwrite = true, .validate_before_publish = validate},
+                [&](const auto& path, bool overwrite) {
+                    ++decodes;
+                    decoded_path = path;
+                    REQUIRE_EQ(overwrite, !validate && !inspect);
+                    REQUIRE_EQ(path == destination, !validate && !inspect);
+                    std::filesystem::create_directories(path);
+                    std::ofstream(path / "file.txt", std::ios::binary) << "payload";
+                },
+                inspector);
+            REQUIRE_EQ(decodes, 1);
+            REQUIRE_EQ(inspections, inspect ? 1 : 0);
+            REQUIRE_EQ(std::filesystem::file_size(destination / "file.txt"), 7U);
+            if (validate || inspect)
+                REQUIRE_TRUE(!std::filesystem::exists(decoded_path));
+        }
+    }
+}
+
+// Purpose: Prevent late decode, inspection, or cancellation failures from exposing final extracted files.
+// Inputs: A simulated two-file adapter, existing output, and exceptions at each pre-publication boundary.
+// Outputs: Preserves existing bytes, withholds new files, invokes decoding once, and cleans private staging.
+TEST_CASE(extraction_publication_failure_keeps_final_files_unchanged) {
+    const auto root = test_temp_dir("extract-publication-failure");
+    for (const int failure : {0, 1, 2}) {
+        const auto destination = root / std::to_string(failure);
+        std::filesystem::create_directories(destination);
+        std::ofstream(destination / "existing.txt", std::ios::binary) << "old";
+        std::filesystem::path stage;
+        int decodes = 0;
+        bool cancelled = false;
+        bool rejected = false;
+        try {
+            superzip::extract_with_publication(
+                {.destination = destination, .overwrite = true, .validate_before_publish = true},
+                [&](const auto& path, bool overwrite) {
+                    REQUIRE_TRUE(!overwrite);
+                    ++decodes;
+                    stage = path;
+                    std::ofstream(path / "existing.txt", std::ios::binary) << "new";
+                    std::ofstream(path / "added.txt", std::ios::binary) << "added";
+                    if (failure == 0)
+                        throw superzip::ArchiveError("late decode failure");
+                },
+                [&](const auto&) {
+                    if (failure == 1)
+                        throw superzip::ArchiveError("inspection failure");
+                    cancelled = true;
+                },
+                [&] {
+                    if (cancelled)
+                        throw superzip::ArchiveError("operation cancelled");
+                });
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(decodes, 1);
+        REQUIRE_TRUE(!std::filesystem::exists(stage));
+        REQUIRE_TRUE(!std::filesystem::exists(destination / "added.txt"));
+        std::ifstream input(destination / "existing.txt", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), {}), "old");
+    }
+}
 
 // Purpose: Keep Unicode overwrite diagnostics and transaction cleanup equivalent to ASCII paths.
 // Inputs: Existing Unicode files and new payloads in per-file and directory publication transactions.

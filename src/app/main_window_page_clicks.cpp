@@ -235,8 +235,8 @@ bool MainWindow::handle_extract_click(const RECT& content, int x, int y) {
         }
         return true;
     }
-    if (contains_point(layout.verify_metadata, x, y)) {
-        return toggle_bool_setting(&UiState::verify_metadata_before_extract, ToggleId::VerifyMetadata);
+    if (contains_point(layout.validate_before_publish, x, y)) {
+        return toggle_bool_setting(&UiState::validate_before_publish, ToggleId::ValidateBeforePublish);
     }
     if (contains_point(layout.open_destination_after_extract, x, y)) {
         return toggle_bool_setting(&UiState::open_destination_after_extract, ToggleId::OpenDestinationAfterExtract);

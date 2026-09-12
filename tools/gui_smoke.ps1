@@ -362,6 +362,60 @@ function Wait-GuiLogEvent {
     throw "GUI command did not report '$Message' within five seconds."
 }
 
+# Purpose: Verify legacy preference migration and current-key precedence through actual GUI loads and Apply.
+# Inputs: Exe is the built GUI; SettingsPath is the fixed redirected smoke-only settings file.
+# Outputs: Checks four independent launches, cleans only owned processes/settings, and throws on incorrect persistence.
+function Assert-PublicationSettingsMigration {
+    param([string]$Exe, [string]$SettingsPath)
+
+    $cases = @(
+        @{ Values = @{ verifyMetadataBeforeExtract = $false }; Expected = $false },
+        @{ Values = @{ verifyMetadataBeforeExtract = $true }; Expected = $true },
+        @{ Values = @{ verifyMetadataBeforeExtract = $true; validateBeforePublish = $false }; Expected = $false },
+        @{ Values = @{ verifyMetadataBeforeExtract = $false; validateBeforePublish = $true }; Expected = $true }
+    )
+    foreach ($case in $cases) {
+        $document = $case.Values.Clone()
+        $document.schema = 'superzip.settings.v2'
+        [IO.File]::WriteAllText($SettingsPath, ($document | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $owned = Start-Process -FilePath $Exe -PassThru
+        try {
+            $deadline = (Get-Date).AddSeconds(15)
+            do {
+                Start-Sleep -Milliseconds 150
+                $owned.Refresh()
+                if ($owned.HasExited) { throw 'Settings migration GUI exited before loading.' }
+            } while ($owned.MainWindowHandle -eq 0 -and (Get-Date) -lt $deadline)
+            $handle = [IntPtr]$owned.MainWindowHandle
+            if ($handle -eq [IntPtr]::Zero) { throw 'Settings migration GUI did not show a window.' }
+            $dpi = [int][SuperZipNativeUi]::GetDpiForWindow($handle)
+            if ($dpi -le 0) { throw 'Settings migration GUI DPI is unavailable.' }
+            [void](Invoke-SmokeClientResize -Handle $handle -Dpi $dpi -Width 1200 -Height 760)
+            Invoke-SidebarClick -Handle $handle -Dpi $dpi -PageIndex 6 -Synchronous
+            $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+            $length = (Get-Item -LiteralPath $logPath).Length
+            Invoke-ClientClick -Handle $handle -Dpi $dpi -DesignX 1110 -DesignY 666 -Synchronous
+            Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
+            Assert-SettingsValue -Path $SettingsPath -Name 'validateBeforePublish' -Expected $case.Expected
+            $saved = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
+            if ($saved.PSObject.Properties.Name -contains 'verifyMetadataBeforeExtract') {
+                throw 'Applied settings retained the obsolete extraction metadata key.'
+            }
+        } finally {
+            if (-not $owned.HasExited) {
+                [void]$owned.CloseMainWindow()
+                if (-not $owned.WaitForExit(10000)) {
+                    $owned.Kill()
+                    if (-not $owned.WaitForExit(5000)) { throw 'Owned settings migration GUI did not exit.' }
+                }
+            }
+            $owned.Dispose()
+        }
+    }
+    Remove-Item -LiteralPath $SettingsPath -Force
+    Write-Output 'Extraction publication settings migration passed for four legacy/current-key cases.'
+}
+
 # Purpose: Verify the applied summary preference changes completion navigation, including a locked-output failure.
 # Inputs: Handle/Dpi identify the owned window; InputPath and Destination are isolated smoke data; SettingsPath is redirected.
 # Outputs: Captures enabled/disabled/failure results, checks output and navigation, then leaves the queue empty and summary off.
@@ -888,9 +942,13 @@ if ($smokeAutoCloseMs -lt 240000) {
 [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", "1", "Process")
 
 $previousDpiContext = [SuperZipNativeUi]::SetThreadDpiAwarenessContext([IntPtr](-4))
-$process = Start-Process -FilePath $exe -PassThru
+$process = $null
 $windowHandle = [IntPtr]::Zero
 try {
+    if (-not $CompactOnly -and -not $OperationSummaryOnly) {
+        Assert-PublicationSettingsMigration -Exe $exe -SettingsPath $smokeSettingsFile
+    }
+    $process = Start-Process -FilePath $exe -PassThru
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline) {
         if ($process.HasExited) {
@@ -1142,6 +1200,8 @@ try {
     if (-not (Test-Path -LiteralPath $singleExtracted)) {
         throw "GUI single-archive extraction did not restore expected file at $singleExtracted."
     }
+    Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2 -Synchronous
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 337 -Synchronous
 
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 0
     Start-Sleep -Milliseconds 150

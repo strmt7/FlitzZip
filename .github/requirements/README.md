@@ -7,7 +7,7 @@ its parent's declared requirements. Installation remains wheel-only from PyPI.
 
 ## Refresh
 
-The September 2026 refresh used uv 0.12.1. Resolve Linux tools for the Ubuntu
+The September 12, 2026 refresh used uv 0.12.13. Resolve Linux tools for the Ubuntu
 24.04 x64 / CPython 3.14 runner, and Windows linters for the oldest supported
 local interpreter, CPython 3.12. Also validate the Windows lock against CI's
 CPython 3.14. Run from the repository root:
@@ -41,7 +41,7 @@ failure as evidence that the Linux dependency graph is broken.
 
 ## Compatibility Review
 
-On 2026-09-04, Semgrep 1.176.1 requires MCP exactly 1.29.0. This is above the
+On 2026-09-12, Semgrep 1.177.0 requires MCP exactly 1.29.0. This is above the
 patched minimum for the three MCP Dependabot advisories; upgrading to MCP 2.x
 would violate Semgrep's contract. The SDK belongs to scanner tooling, not
 SuperZip's native application runtime.

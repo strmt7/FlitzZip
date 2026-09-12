@@ -190,7 +190,7 @@ void MainWindow::continue_extract_overwrite_prompt() {
 
 // Purpose: Launch a captured extraction job on the background worker.
 // Inputs: `request` contains archive, destination, GPU, security, and overwrite choices.
-// Outputs: Starts the worker, updates progress/history/status, and performs pre/post security scans.
+// Outputs: Starts the worker, captures publication policy, updates progress/history/status, and runs requested scans.
 void MainWindow::launch_extract_job(ExtractJobRequest request) {
     const auto destination_to_open =
         operation_destination_path(OperationKind::Extract, request.output, false, request.open_destination);
@@ -219,23 +219,33 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
                 };
                 const auto archive_format = detect_archive_format(archive_source.path());
                 OperationStats stats;
+                const auto extraction_start = std::chrono::steady_clock::now();
+                std::function<void(const std::filesystem::path&)> inspect_output;
                 if (request.defender) {
-                    DirectoryPublishTransaction quarantine(output);
-                    stats =
-                        extract_detected_archive(archive_format, archive_source.path(), quarantine.staging_directory(),
-                                                 request.gpu_required, false, progress_callback, request.name_encoding);
-                    const auto post_scan =
-                        scan_with_windows_defender(quarantine.staging_directory(), DefenderScanMode::FullPath);
-                    append_history_entry(
-                        "Security", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
-                        defender_history_status("Defender output", post_scan), defender_scan_passed(post_scan));
-                    require_clean_defender_scan(post_scan, output);
-                    quarantine.publish(request.overwrite);
-                } else {
-                    stats =
-                        extract_detected_archive(archive_format, archive_source.path(), output, request.gpu_required,
-                                                 request.overwrite, progress_callback, request.name_encoding);
+                    inspect_output = [this, &output](const auto& directory) {
+                        const auto post_scan = scan_with_windows_defender(directory, DefenderScanMode::FullPath);
+                        append_history_entry(
+                            "Security", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
+                            defender_history_status("Defender output", post_scan), defender_scan_passed(post_scan));
+                        require_clean_defender_scan(post_scan, output);
+                    };
                 }
+                extract_with_publication(
+                    {.destination = output,
+                     .overwrite = request.overwrite,
+                     .validate_before_publish = request.validate_before_publish},
+                    [&](const auto& directory, bool overwrite) {
+                        stats = extract_detected_archive(archive_format, archive_source.path(), directory,
+                                                         request.gpu_required, overwrite, progress_callback,
+                                                         request.name_encoding);
+                    },
+                    inspect_output,
+                    [this] {
+                        if (operation_cancel_requested_.load())
+                            throw ArchiveError("operation cancelled");
+                    });
+                stats.seconds =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - extraction_start).count();
                 std::ostringstream line;
                 line << "Extracted " << archive_format_info(archive_format).key << " to "
                      << path_diagnostic_utf8(output) << " in " << stats.seconds << "s";
@@ -252,7 +262,7 @@ void MainWindow::launch_extract_job(ExtractJobRequest request) {
 }
 
 // Purpose: Start a background extraction job from the current GUI queue.
-// Inputs: None; reads queued archive, destination, security, and GPU options from synchronized UI state.
+// Inputs: None; captures archive, destination, publication, security, and GPU options from synchronized UI state.
 // Outputs: Launches a worker job, updates progress/history/status, blocks unclean pre-scans, or requests repaint when
 // no archive is selected.
 void MainWindow::start_extract() {
@@ -266,6 +276,7 @@ void MainWindow::start_extract() {
         request.name_encoding = selected_name_encoding(state_).encoding;
         request.integrity = state_.integrity_hash_opt_in;
         request.defender = state_.defender_scan_opt_in;
+        request.validate_before_publish = state_.validate_before_publish;
         request.open_destination =
             applied_settings_.open_destination_after_operation || state_.open_destination_after_extract;
         request.output = extraction_output_path_for(state_);

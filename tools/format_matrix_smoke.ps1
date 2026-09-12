@@ -434,7 +434,7 @@ function Get-MatrixExtractOnlyTestName {
 
 # Purpose: Prove an extract-only format through its fixture test and public CLI paths.
 # Inputs: Format is one registry row; Work is the caller-owned temporary matrix directory.
-# Outputs: Throws on missing/failed fixtures, identification, byte/tree mismatch, or overwrite behavior.
+# Outputs: Checks direct and private publication, rejecting missing fixtures, byte/tree mismatches, or wrong overwrite behavior.
 function Test-MatrixExtractOnlyFormat {
     param([Parameter(Mandatory = $true)]$Format, [string]$Work)
 
@@ -460,11 +460,13 @@ function Test-MatrixExtractOnlyFormat {
     foreach ($mode in @('auto', $Format.Key)) {
         $output = Join-Path $export "extract-$mode"
         $arguments = @('extract', '--format', $mode, '--output', $output, $archive)
+        if ($mode -ne 'auto') { $arguments += '--validate-before-publish' }
         Invoke-SuperZipMatrixCommand -Arguments $arguments -Label "fixture extract $($Format.Key) mode=$mode" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
         Invoke-ExpectedMatrixFailure -Arguments $arguments -Label "fixture overwrite refusal $($Format.Key)" -ExpectedText 'refusing to overwrite'
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
         $overwrite = @('extract', '--format', $mode, '--overwrite', '--output', $output, $archive)
+        if ($mode -ne 'auto') { $overwrite += '--validate-before-publish' }
         Invoke-SuperZipMatrixCommand -Arguments $overwrite -Label "fixture overwrite $($Format.Key) mode=$mode" | Out-Null
         Test-MatrixDirectoryMatch -ExpectedRoot $expected -ActualRoot $output
     }
@@ -541,6 +543,12 @@ try {
                 $extractArgs += @("--force-cpu")
             }
             $extractArgs += @($archive)
+            if ($format.Key -eq 'suzip') {
+                Invoke-ExpectedMatrixFailure -Arguments (@('extract', '--not-a-real-option') + $extractArgs[1..($extractArgs.Count - 1)]) `
+                    -Label 'Unknown extraction option' -ExpectedText 'unknown extract argument'
+                Invoke-ExpectedMatrixFailure -Arguments ($extractArgs + $archive) `
+                    -Label 'Multiple extraction inputs' -ExpectedText 'extract accepts exactly one archive'
+            }
             Invoke-SuperZipMatrixCommand -Arguments $extractArgs -Label "extract $($format.Key)" | Out-Null
             if ($single) {
                 Test-MatrixFileMatch -ExpectedFile $source -ActualFile $expectedOutput
@@ -555,12 +563,22 @@ try {
                 -Arguments $extractArgs `
                 -Label "overwrite refusal $($format.Key)" `
                 -ExpectedText "refusing to overwrite"
-            $overwriteArgs = @("extract", "--format", "auto", "--overwrite", "--output", $extractRoot)
+            Invoke-ExpectedMatrixFailure `
+                -Arguments ($extractArgs + '--validate-before-publish') `
+                -Label "private publication overwrite refusal $($format.Key)" `
+                -ExpectedText "refusing to overwrite"
+            $overwriteArgs = @("extract", "--format", "auto", "--overwrite", "--validate-before-publish", "--output", $extractRoot)
             if ($format.Key -eq "suzip") {
                 $overwriteArgs += @("--force-cpu")
             }
             $overwriteArgs += @($archive)
             Invoke-SuperZipMatrixCommand -Arguments $overwriteArgs -Label "overwrite extract $($format.Key)" | Out-Null
+            if ($single) {
+                Test-MatrixFileMatch -ExpectedFile $source -ActualFile $expectedOutput
+            } else {
+                Test-MatrixDirectoryMatch -ExpectedRoot $source -ActualRoot $expectedOutput `
+                    -CompareDirectories (Test-MatrixDirectoryPreservingFormat -Key $format.Key)
+            }
 
             if ($format.Key -eq "suzip") {
                 Invoke-SuperZipMatrixCommand -Arguments @("verify", "--force-cpu", $archive) -Label "verify suzip" | Out-Null

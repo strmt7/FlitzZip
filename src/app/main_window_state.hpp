@@ -40,7 +40,7 @@ enum class ToggleId {
     SolidArchive,
     StoreTimestamps,
     DeleteAfterCompression,
-    VerifyMetadata,
+    ValidateBeforePublish,
     OpenDestinationAfterExtract,
     OpenDestinationAfterOperation,
     ConfirmBeforeDeleting,
@@ -96,7 +96,7 @@ enum class FocusTargetKind {
     ExtractDestination,
     ExtractOverwrite,
     ExtractNameEncoding,
-    ExtractVerifyMetadata,
+    ExtractValidateBeforePublish,
     ExtractOpenDestination,
     ExtractIntegrityHash,
     ExtractDefenderScan,
@@ -177,7 +177,7 @@ struct AppSettings {
     bool solid_archive = true;
     bool store_timestamps = true;
     bool delete_after_compression = false;
-    bool verify_metadata_before_extract = true;
+    bool validate_before_publish = true;
     bool open_destination_after_extract = false;
     bool gpu_required = true;
     bool overwrite = false;
@@ -221,7 +221,7 @@ struct UiState {
     bool solid_archive = true;
     bool store_timestamps = true;
     bool delete_after_compression = false;
-    bool verify_metadata_before_extract = true;
+    bool validate_before_publish = true;
     bool open_destination_after_extract = false;
     bool prefer_suzip = true;
     bool gpu_required = true;

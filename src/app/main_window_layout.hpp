@@ -45,6 +45,7 @@ struct ExtractJobRequest {
     bool overwrite = false;
     bool integrity = false;
     bool defender = false;
+    bool validate_before_publish = true;
     bool open_destination = false;
     ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8;
 };
@@ -93,7 +94,7 @@ struct ExtractLayout {
     RECT overwrite_policy{};
     RECT name_encoding{};
     RECT checks{};
-    RECT verify_metadata{};
+    RECT validate_before_publish{};
     RECT open_destination_after_extract{};
     RECT sha{};
     RECT defender{};

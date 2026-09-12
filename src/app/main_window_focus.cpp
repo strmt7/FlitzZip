@@ -178,7 +178,7 @@ void MainWindow::add_extract_focus_targets(std::vector<FocusTarget>& targets, co
     }
     append_focus_target(targets, FocusTargetKind::ExtractDestination, layout.destination);
     append_focus_target(targets, FocusTargetKind::ExtractOverwrite, layout.overwrite_policy);
-    append_focus_target(targets, FocusTargetKind::ExtractVerifyMetadata, layout.verify_metadata);
+    append_focus_target(targets, FocusTargetKind::ExtractValidateBeforePublish, layout.validate_before_publish);
     append_focus_target(targets, FocusTargetKind::ExtractOpenDestination, layout.open_destination_after_extract);
     append_focus_target(targets, FocusTargetKind::ExtractIntegrityHash, layout.sha);
     append_focus_target(targets, FocusTargetKind::ExtractDefenderScan, layout.defender);

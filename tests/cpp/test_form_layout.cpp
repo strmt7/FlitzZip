@@ -47,12 +47,12 @@ void require_compress(const superzip::app::CompressLayout& layout) {
 void require_extract(const superzip::app::ExtractLayout& layout) {
     require_contained(layout.checks, layout.area);
     for (const auto& rect :
-         {layout.verify_metadata, layout.open_destination_after_extract, layout.sha, layout.defender}) {
+         {layout.validate_before_publish, layout.open_destination_after_extract, layout.sha, layout.defender}) {
         require_contained(rect, layout.checks);
     }
     REQUIRE_TRUE(layout.checks.bottom < layout.start.top);
     require_separate(std::array{layout.archive, layout.destination, layout.path_mode, layout.overwrite_policy,
-                                layout.verify_metadata, layout.open_destination_after_extract, layout.sha,
+                                layout.validate_before_publish, layout.open_destination_after_extract, layout.sha,
                                 layout.defender, layout.name_encoding, layout.stop, layout.start},
                      layout.area);
 }

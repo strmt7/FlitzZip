@@ -701,7 +701,7 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
     state.solid_archive = settings.solid_archive;
     state.store_timestamps = settings.store_timestamps;
     state.delete_after_compression = settings.delete_after_compression;
-    state.verify_metadata_before_extract = settings.verify_metadata_before_extract;
+    state.validate_before_publish = settings.validate_before_publish;
     state.open_destination_after_extract = settings.open_destination_after_extract;
     state.gpu_required = settings.gpu_required;
     state.overwrite = settings.overwrite;
@@ -729,7 +729,7 @@ AppSettings settings_from_state(const UiState& state) {
     settings.solid_archive = state.solid_archive;
     settings.store_timestamps = state.store_timestamps;
     settings.delete_after_compression = state.delete_after_compression;
-    settings.verify_metadata_before_extract = state.verify_metadata_before_extract;
+    settings.validate_before_publish = state.validate_before_publish;
     settings.open_destination_after_extract = state.open_destination_after_extract;
     settings.gpu_required = state.gpu_required;
     settings.overwrite = state.overwrite;
@@ -754,7 +754,7 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
            left.show_operation_summary == right.show_operation_summary && left.solid_archive == right.solid_archive &&
            left.store_timestamps == right.store_timestamps &&
            left.delete_after_compression == right.delete_after_compression &&
-           left.verify_metadata_before_extract == right.verify_metadata_before_extract &&
+           left.validate_before_publish == right.validate_before_publish &&
            left.open_destination_after_extract == right.open_destination_after_extract &&
            left.gpu_required == right.gpu_required && left.overwrite == right.overwrite &&
            left.integrity_hash_opt_in == right.integrity_hash_opt_in &&
@@ -764,7 +764,7 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 
 // Purpose: Parse a settings JSON document into a validated snapshot.
 // Inputs: `json` is the complete UTF-8 settings document.
-// Outputs: Returns settings with missing or malformed values replaced by defaults.
+// Outputs: Returns defaulted settings, migrating the legacy metadata toggle to private publication when needed.
 AppSettings parse_settings_json(std::string_view json) {
     AppSettings settings;
     const bool migrate_format_rows = settings_uses_v1_format_rows(json);
@@ -794,8 +794,9 @@ AppSettings parse_settings_json(std::string_view json) {
     settings.store_timestamps = json_bool_setting(json, "storeTimestamps", settings.store_timestamps);
     settings.delete_after_compression =
         json_bool_setting(json, "deleteAfterCompression", settings.delete_after_compression);
-    settings.verify_metadata_before_extract =
-        json_bool_setting(json, "verifyMetadataBeforeExtract", settings.verify_metadata_before_extract);
+    settings.validate_before_publish =
+        json_bool_setting(json, "validateBeforePublish",
+                          json_bool_setting(json, "verifyMetadataBeforeExtract", settings.validate_before_publish));
     settings.open_destination_after_extract =
         json_bool_setting(json, "openDestinationAfterExtract", settings.open_destination_after_extract);
     settings.gpu_required = json_bool_setting(json, "gpuRequired", settings.gpu_required);
@@ -828,7 +829,7 @@ std::string settings_to_json(const AppSettings& settings) {
         << "  \"solidArchive\": " << bool_text(settings.solid_archive) << ",\n"
         << "  \"storeTimestamps\": " << bool_text(settings.store_timestamps) << ",\n"
         << "  \"deleteAfterCompression\": " << bool_text(settings.delete_after_compression) << ",\n"
-        << "  \"verifyMetadataBeforeExtract\": " << bool_text(settings.verify_metadata_before_extract) << ",\n"
+        << "  \"validateBeforePublish\": " << bool_text(settings.validate_before_publish) << ",\n"
         << "  \"openDestinationAfterExtract\": " << bool_text(settings.open_destination_after_extract) << ",\n"
         << "  \"gpuRequired\": " << bool_text(settings.gpu_required) << ",\n"
         << "  \"overwrite\": " << bool_text(settings.overwrite) << ",\n"

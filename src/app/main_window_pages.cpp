@@ -324,8 +324,8 @@ void MainWindow::draw_extract_page(HDC dc, const RECT& rect, const UiState& stat
     draw_text(dc, RECT{checks.left + scale(16), checks.top + scale(12), checks.right, checks.top + scale(36)},
               L"Integrity and Security", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_toggle(dc, layout.verify_metadata, L"Verify archive metadata before extraction",
-                state.verify_metadata_before_extract, ToggleId::VerifyMetadata);
+    draw_toggle(dc, layout.validate_before_publish, L"Validate before publishing", state.validate_before_publish,
+                ToggleId::ValidateBeforePublish);
     draw_toggle(dc, layout.open_destination_after_extract, L"Open destination folder after extraction",
                 state.open_destination_after_extract, ToggleId::OpenDestinationAfterExtract);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);

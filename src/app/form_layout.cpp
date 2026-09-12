@@ -99,8 +99,8 @@ ExtractLayout make_extract_layout(const RECT& rect, UINT dpi) {
     layout.name_encoding = RECT{left, layout.area.top + scale(352), left + field_w, layout.area.top + scale(402)};
     layout.checks =
         RECT{layout.area.left, layout.area.top + scale(200), layout.area.right, layout.area.top + scale(332)};
-    layout.verify_metadata = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48),
-                                  layout.checks.left + scale(420), layout.checks.top + scale(78)};
+    layout.validate_before_publish = RECT{layout.checks.left + scale(18), layout.checks.top + scale(48),
+                                          layout.checks.left + scale(420), layout.checks.top + scale(78)};
     layout.open_destination_after_extract = RECT{layout.checks.left + scale(18), layout.checks.top + scale(80),
                                                  layout.checks.left + scale(420), layout.checks.top + scale(110)};
     layout.sha = RECT{layout.checks.left + scale(470), layout.checks.top + scale(48), layout.checks.right - scale(20),
@@ -110,7 +110,7 @@ ExtractLayout make_extract_layout(const RECT& rect, UINT dpi) {
 
     if (layout.area.right - layout.area.left < scale(940)) {
         const int split = layout.checks.left + (layout.checks.right - layout.checks.left) / 2;
-        layout.verify_metadata.right = layout.open_destination_after_extract.right = split - scale(10);
+        layout.validate_before_publish.right = layout.open_destination_after_extract.right = split - scale(10);
         layout.sha.left = layout.defender.left = split + scale(10);
     }
     return layout;

@@ -39,6 +39,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -111,12 +112,12 @@ void usage() {
            "cpgz|ar --output <archive> [--compression-level <1-9>] "
            "[--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
-           "[--inflight <n>] [--overwrite] [--sha256] [--defender-scan] <archive.suzip>\n"
+           "[--inflight <n>] [--overwrite] [--validate-before-publish] [--sha256] [--defender-scan] <archive.suzip>\n"
         << "  superzip_cli extract --format "
            "auto|zip|zipx|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.xz|txz|tar.lz|tlz|tar.zst|tzst|gz|gzip|bz2|bzip2|xz|lzma|"
            "lz|lzip|zst|zstd|z|compress|b64|base64|hqx|binhex|xxe|xxencode|uue|uu|macbinary|macbin|cab|iso|cpio|cpio."
            "gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] "
-           "[--defender-scan] [--name-encoding utf8|system] <archive>\n"
+           "[--defender-scan] [--validate-before-publish] [--name-encoding utf8|system] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
            "[--defender-scan] <archive.suzip>\n";
 }
@@ -380,6 +381,7 @@ struct CliExtractCommand {
     bool overwrite = false;
     bool sha256 = false;
     bool defender_scan = false;
+    bool validate_before_publish = false;
     std::filesystem::path output;
     std::filesystem::path archive;
 };
@@ -576,11 +578,19 @@ CliExtractCommand parse_extract_command(const std::vector<std::string>& args) {
             command.suzip_tuning_requested = true;
         } else if (args[i] == "--overwrite") {
             command.overwrite = true;
+        } else if (args[i] == "--validate-before-publish") {
+            command.validate_before_publish = true;
         } else if (args[i] == "--sha256") {
             command.sha256 = true;
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
         } else {
+            if (args[i].starts_with("--")) {
+                throw superzip::ArchiveError("unknown extract argument: " + args[i]);
+            }
+            if (!command.archive.empty()) {
+                throw superzip::ArchiveError("extract accepts exactly one archive");
+            }
             command.archive = cli_path_argument(args[i]);
         }
     }
@@ -744,7 +754,7 @@ superzip::OperationStats extract_by_format(superzip::ArchiveFormat archive_forma
 
 // Purpose: Execute the `extract` CLI command.
 // Inputs: `args` is the full argument vector beginning with `extract`.
-// Outputs: Returns a process exit code and writes operation telemetry to stdout.
+// Outputs: Extracts once with the shared publication policy, writes telemetry, and returns a process exit code.
 int run_extract_command(const std::vector<std::string>& args) {
     auto command = parse_extract_command(args);
     if (command.output.empty() || command.archive.empty()) {
@@ -767,25 +777,26 @@ int run_extract_command(const std::vector<std::string>& args) {
     if (command.name_encoding_requested && !superzip::archive_format_info(archive_format).supports_name_encoding) {
         throw superzip::ArchiveError("--name-encoding is supported only for CPIO, CPIO.GZ, AR, DEB, and RPM");
     }
-    if (command.defender_scan) {
-        superzip::DirectoryPublishTransaction quarantine(command.output);
-        const auto final_output = command.output;
-        const auto overwrite = command.overwrite;
-        command.output = quarantine.staging_directory();
-        command.overwrite = false;
-        const auto stats = extract_by_format(archive_format, command);
-        print_defender_scan(quarantine.staging_directory(), true);
-        quarantine.publish(overwrite);
-        command.output = final_output;
-        print_stats(stats);
-    } else {
-        print_stats(extract_by_format(archive_format, command));
-    }
+    superzip::OperationStats stats;
+    const auto extraction_start = std::chrono::steady_clock::now();
+    std::function<void(const std::filesystem::path&)> inspect_output;
+    if (command.defender_scan)
+        inspect_output = [](const auto& directory) { print_defender_scan(directory, true); };
+    superzip::extract_with_publication(
+        {.destination = command.output,
+         .overwrite = command.overwrite,
+         .validate_before_publish = command.validate_before_publish},
+        [&](const auto& directory, bool overwrite) {
+            auto extraction = command;
+            extraction.output = directory;
+            extraction.overwrite = overwrite;
+            stats = extract_by_format(archive_format, extraction);
+        },
+        inspect_output);
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - extraction_start).count();
+    print_stats(stats);
     if (command.sha256) {
         print_integrity_hash(command.output, "output_integrity");
-    }
-    if (command.defender_scan) {
-        print_defender_scan(command.output, true);
     }
     return 0;
 }
