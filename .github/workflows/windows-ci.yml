@@ -49,6 +49,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
+      - name: Post-push audit regression tests
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_github_post_push_audit.ps1
       - name: Test
         shell: pwsh
         run: tools/test.ps1

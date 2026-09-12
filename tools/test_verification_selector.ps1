@@ -182,6 +182,13 @@ Assert-Selector (Test-LongRunningWorkflow -Plan $verifierPlan -Name "fuzzing") "
 Assert-Selector $verifierPlan.workflowWaitPolicy.immediateRequired "verification changes must require immediate final workflow waiting"
 Assert-Selector (-not $verifierPlan.workflowWaitPolicy.deferAllowed) "verification changes must not allow deferred workflow waiting by default"
 
+foreach ($path in @("tools/github_post_push_audit.ps1", "tools/test_github_post_push_audit.ps1")) {
+    $auditPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
+    Assert-Selector $auditPlan.scope.fullEscalationRequired "post-push audit changes must escalate: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $auditPlan -Id "github-post-push-audit-tests") "post-push audit changes must run their offline regressions: $path"
+}
+
 $unknownPlan = Get-SuperZipVerificationPlan -ChangedPath @("unexpected/new-area.file")
 Assert-Selector $unknownPlan.scope.fullEscalationRequired "unknown paths must escalate"
 Assert-Selector ($unknownPlan.scope.unknownPaths.Count -eq 1) "unknown path must be reported"

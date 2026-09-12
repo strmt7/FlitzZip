@@ -259,6 +259,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism)\.ps1$',
+        '^tools/test_github_post_push_audit\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
@@ -372,6 +373,7 @@ function Get-SuperZipVerificationPlan {
         if ($scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "build-parallelism-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_build_parallelism.ps1") -Reason "build scheduling must honor explicit job counts and bound default shared-host load")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination")
         }
         if ($scope.touchesPerformance -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-reporting-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_benchmark_reporting.ps1") -Reason "benchmark reporting must preserve typed results and unavailable counter values without running a timed workload")
