@@ -735,7 +735,7 @@ TEST_CASE(dictionary_stage_timing_validity) {
     for (const double value : {0.0, 0.125, 1234.5}) {
         const auto valid = validated_stage_milliseconds(value);
         REQUIRE_TRUE(valid.has_value());
-        REQUIRE_EQ(*valid, value);
+        REQUIRE_EQ(std::bit_cast<std::uint64_t>(*valid), std::bit_cast<std::uint64_t>(value));
     }
 }
 
