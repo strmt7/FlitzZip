@@ -340,6 +340,9 @@ OperationStats validate_detected_archive(ArchiveFormat archive_format, const std
         options.gpu_required = gpu_required;
         return verify_suzip(archive, options, progress_callback);
     }
+    if (archive_format == ArchiveFormat::Zip || archive_format == ArchiveFormat::Zipx) {
+        return verify_zip(archive, progress_callback);
+    }
     DirectoryPublishTransaction discard(app_storage_directory() / "security-validation");
     return extract_detected_archive(archive_format, archive, discard.staging_directory(), gpu_required, true,
                                     progress_callback, name_encoding);
@@ -472,12 +475,16 @@ int compression_level_value(int index) {
 }
 
 // Purpose: Run the selected create backend for a GUI compression job.
-// Inputs: `sources`, `output`, `archive_format`, GPU options, `block_size`, `compression_level`, and progress callback.
+// Inputs: `sources`, `output`, `archive_format`, GPU options, `verify_after_write`, `block_size`, `compression_level`,
+// and a synchronous progress callback describe the job. Read-back verification is supported by SUZIP and ZIP.
 // Outputs: Returns backend telemetry or throws when the selected format cannot be created.
 OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
                                     const std::filesystem::path& output, ArchiveFormat archive_format,
                                     bool gpu_required, bool verify_after_write, std::uint32_t block_size,
                                     int compression_level, const ProgressCallback& progress_callback) {
+    if (verify_after_write && archive_format != ArchiveFormat::SuperZip && archive_format != ArchiveFormat::Zip) {
+        throw ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");
+    }
     switch (archive_format) {
     case ArchiveFormat::SuperZip: {
         CompressOptions options;
@@ -488,7 +495,7 @@ OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& so
         return compress_suzip(sources, output, options, progress_callback);
     }
     case ArchiveFormat::Zip:
-        return compress_zip(sources, output, compression_level, progress_callback);
+        return compress_zip(sources, output, compression_level, progress_callback, verify_after_write);
     case ArchiveFormat::Tar:
         return compress_tar(sources, output, progress_callback);
     case ArchiveFormat::TarGzip:

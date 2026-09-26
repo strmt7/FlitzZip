@@ -36,6 +36,11 @@ archive.
   metadata. Parsed records must consume the declared directory, apart from one
   well-formed standard central-directory digital signature.
 - The 3.1.2 central-directory extent check uses subtraction to avoid overflow.
+- ZIP file validation checks empty-file and directory local headers instead of
+  returning success before reading them. Local filenames are compared with the
+  full central-directory name, not the truncated diagnostic stat field, and an
+  index equal to the member count is rejected. Corrupted empty headers and
+  valid names longer than 511 bytes have direct regression coverage.
 - PNG helper dimensions are validated before multiplication, allocation, or
   pixel access, including null arguments and signed intermediate limits.
 - `tdefl_compress` uses stack-local transient call state instead of storing

@@ -1090,6 +1090,9 @@ try {
     Start-Sleep -Milliseconds 140
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 583
     Start-Sleep -Milliseconds 140
+    # Zstandard is outside the formats that support read-back verification.
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 560 -DesignY 438
+    Start-Sleep -Milliseconds 140
     $expectedZstd = Join-Path $smokeDestination "SuperZip-output.zst"
     Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 6

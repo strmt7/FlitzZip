@@ -2361,7 +2361,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         if ((!pZip) || (!pZip->m_pState) || (!pZip->m_pAlloc) || (!pZip->m_pFree) || (!pZip->m_pRead))
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
 
-        if (file_index > pZip->m_total_files)
+        if (file_index >= pZip->m_total_files)
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
 
         pState = pZip->m_pState;
@@ -2370,10 +2370,6 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
 
         if (!mz_zip_file_stat_internal(pZip, file_index, pCentral_dir_header, &file_stat, &found_zip64_ext_data_in_cdir))
             return MZ_FALSE;
-
-        /* A directory or zero length file */
-        if ((file_stat.m_is_directory) || (!file_stat.m_uncomp_size))
-            return MZ_TRUE;
 
         /* Encryption and patch files are not supported. */
         if (file_stat.m_is_encrypted)
@@ -2402,7 +2398,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
         local_header_bit_flags = MZ_READ_LE16(pLocal_header + MZ_ZIP_LDH_BIT_FLAG_OFS);
         has_data_descriptor = (local_header_bit_flags & 8) != 0;
 
-        if (local_header_filename_len != mz_cstr_len_bound(file_stat.m_filename, MZ_ZIP_MAX_ARCHIVE_FILENAME_SIZE))
+        if (local_header_filename_len != MZ_READ_LE16(pCentral_dir_header + MZ_ZIP_CDH_FILENAME_LEN_OFS))
             return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
 
         if ((local_header_ofs + MZ_ZIP_LOCAL_DIR_HEADER_SIZE + local_header_filename_len + local_header_extra_len + file_stat.m_comp_size) > pZip->m_archive_size)
@@ -2423,7 +2419,7 @@ static int mz_stat64(const char *path, struct __stat64 *buffer)
             }
 
             /* I've seen 1 archive that had the same pathname, but used backslashes in the local dir and forward slashes in the central dir. Do we care about this? For now, this case will fail validation. */
-            if (memcmp(file_stat.m_filename, file_data_array.m_p, local_header_filename_len) != 0)
+            if (memcmp(pCentral_dir_header + MZ_ZIP_CENTRAL_DIR_HEADER_SIZE, file_data_array.m_p, local_header_filename_len) != 0)
             {
                 mz_zip_set_error(pZip, MZ_ZIP_VALIDATION_FAILED);
                 goto handle_failure;

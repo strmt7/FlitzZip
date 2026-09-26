@@ -839,7 +839,8 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 // Purpose: Create a native SUZIP archive from validated filesystem sources.
 // Inputs: `sources` are input roots, `output_archive` is replaced, `options` controls CPU/GPU codec policy and resource
 // bounds, and `progress_callback` receives progress snapshots. Outputs: Writes the archive and returns operation
-// telemetry; throws on invalid inputs, resource limits, cancellation, codec failure, or write failure.
+// telemetry; optional read-back verification completes before publication. Throws without replacing the destination
+// on invalid inputs, resource limits, cancellation, codec/verification failure, or write failure.
 OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
                               const std::filesystem::path& output_archive, const CompressOptions& options,
                               const ProgressCallback& progress_callback) {
@@ -917,25 +918,26 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     if (!output) {
         throw ArchiveError("failed to close finalized archive");
     }
-    publication.commit(true);
-    stats.output_bytes = std::filesystem::file_size(output_archive);
+    stats.output_bytes = std::filesystem::file_size(publication.staging_path());
     stats.gpu_runtime = snapshot_gpu_telemetry(*gpu_telemetry);
 
-    // Optional verify-after-write reuses the normal extraction validator so the
-    // just-created archive is checked through the same bounds and CRC path.
+    // Read back private output through the normal bounded decoder before replacing the final archive.
     if (options.verify_after_write) {
-        const auto verified = verify_suzip(output_archive, ExtractOptions{
-                                                               .gpu_required = options.gpu_required,
-                                                               .force_cpu = options.force_cpu,
-                                                               .overwrite = false,
-                                                               .chunk_size = options.chunk_size,
-                                                               .block_size = options.block_size,
-                                                               .worker_count = options.worker_count,
-                                                               .max_inflight_chunks = options.max_inflight_chunks,
-                                                           });
+        const auto verified = verify_suzip(publication.staging_path(),
+                                           ExtractOptions{
+                                               .gpu_required = options.gpu_required,
+                                               .force_cpu = options.force_cpu,
+                                               .overwrite = false,
+                                               .chunk_size = options.chunk_size,
+                                               .block_size = options.block_size,
+                                               .worker_count = options.worker_count,
+                                               .max_inflight_chunks = options.max_inflight_chunks,
+                                           },
+                                           progress_callback);
         stats.gpu_used = stats.gpu_used || verified.gpu_used;
         stats.gpu_runtime = combine_gpu_runtime_stats(stats.gpu_runtime, verified.gpu_runtime);
     }
+    publication.commit(true);
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return stats;
 }
@@ -1048,8 +1050,8 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
 
 // Purpose: Verify a native SUZIP archive without publishing extraction output.
 // Inputs: `archive_path` identifies the archive, `options` controls decode policy, and `progress_callback` observes
-// work. Outputs: Returns verification telemetry; throws on malformed metadata, decode failure, CRC mismatch, or
-// cancellation.
+// initialization, entries, and bounded decode windows; callback exceptions cancel the operation.
+// Outputs: Returns verification telemetry; throws on malformed metadata, decode failure, CRC mismatch, or cancellation.
 OperationStats verify_suzip(const std::filesystem::path& archive_path, const ExtractOptions& options,
                             const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
@@ -1075,12 +1077,15 @@ OperationStats verify_suzip(const std::filesystem::path& archive_path, const Ext
     stats.entries = index.entries.size();
     stats.workers = budget.workers;
     stats.inflight_chunks = budget.inflight_chunks;
+    publish_progress(progress, progress_callback);
     for (const auto& entry : index.entries) {
+        progress.set_current(entry.path);
+        publish_progress(progress, progress_callback);
         if (entry.directory) {
             progress.finish_entry();
+            publish_progress(progress, progress_callback);
             continue;
         }
-        progress.set_current(entry.path);
         const auto entry_windows = count_stream_windows(entry.uncompressed_size, decode_window_bytes);
         const GpuCodecOptions gpu_options{
             .require_gpu = options.gpu_required,
@@ -1090,7 +1095,10 @@ OperationStats verify_suzip(const std::filesystem::path& archive_path, const Ext
             .telemetry = gpu_telemetry,
         };
         const auto decoded = verify_entry_streaming(input, entry, archive_size, decode_window_bytes, gpu_options,
-                                                    budget, [&](std::uint64_t bytes) { progress.add_bytes(bytes); });
+                                                    budget, [&](std::uint64_t bytes) {
+                                                        progress.add_bytes(bytes);
+                                                        publish_progress(progress, progress_callback);
+                                                    });
         if (decoded.crc32 != entry.crc32) {
             throw ArchiveError("CRC mismatch while verifying: " + entry.path);
         }

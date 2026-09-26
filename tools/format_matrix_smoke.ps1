@@ -156,6 +156,8 @@ function Test-MatrixUnicodePath {
         if ($format -eq 'suzip') {
             $create += @('--force-cpu', '--verify-after-write')
             $extract += '--force-cpu'
+        } elseif ($format -eq 'zip') {
+            $create += '--verify-after-write'
         }
         Invoke-SuperZipMatrixCommand -Arguments ($create + $tree) -Label "Unicode create $format" | Out-Null
         if ((Get-MatrixIdentifiedFormat -Archive $archive) -ne $format) {
@@ -172,6 +174,8 @@ function Test-MatrixUnicodePath {
         Invoke-ExpectedMatrixFailure -Arguments ($extract + @('--name-encoding', 'guess', $archive)) -Label "Invalid encoding option $format" -ExpectedText '--name-encoding must be'
         if ($format -eq 'suzip') {
             Invoke-SuperZipMatrixCommand -Arguments @('verify', '--force-cpu', $archive) -Label 'Unicode native verify' | Out-Null
+        } elseif ($format -eq 'zip') {
+            Invoke-SuperZipMatrixCommand -Arguments @('verify', $archive) -Label 'Unicode ZIP verify' | Out-Null
         }
         Write-Output "format_matrix unicode_paths=$format status=passed verification=cli_roundtrip"
     }
@@ -525,6 +529,8 @@ try {
             $createArgs = @("compress", "--format", $format.Key)
             if ($format.Key -eq "suzip") {
                 $createArgs += @("--force-cpu", "--verify-after-write")
+            } elseif ($format.Key -eq 'zip') {
+                $createArgs += '--verify-after-write'
             }
             if (Test-MatrixLevelAwareFormat -Key $format.Key) {
                 $createArgs += @("--compression-level", "5")
@@ -535,6 +541,17 @@ try {
             $detected = Get-MatrixIdentifiedFormat -Archive $archive
             if ($detected -ne $format.Key) {
                 throw "Identify detected $detected for $archive; expected $($format.Key)"
+            }
+            if ($format.Key -in @('suzip', 'zip')) {
+                Invoke-SuperZipMatrixCommand -Arguments @('verify', $archive) -Label "verify $($format.Key)" | Out-Null
+                Invoke-ExpectedMatrixFailure -Arguments @('verify', '--not-a-real-option', $archive) `
+                    -Label "unknown verify option $($format.Key)" -ExpectedText 'unknown verify argument'
+                Invoke-ExpectedMatrixFailure -Arguments @('verify', $archive, $archive) `
+                    -Label "multiple verify inputs $($format.Key)" -ExpectedText 'verify accepts exactly one archive'
+            }
+            if ($format.Key -eq 'zip') {
+                Invoke-ExpectedMatrixFailure -Arguments @('verify', '--workers', '0', $archive) `
+                    -Label 'ZIP verify native tuning refusal' -ExpectedText 'does not support SUZIP GPU'
             }
 
             $extractRoot = Split-Path -Parent $expectedOutput

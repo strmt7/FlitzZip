@@ -272,7 +272,7 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     draw_toggle(dc, layout.store_timestamps, L"Store timestamps", state.store_timestamps, ToggleId::StoreTimestamps);
     draw_toggle(dc, layout.delete_after_compression, L"Delete files after compression", state.delete_after_compression,
                 ToggleId::DeleteAfterCompression);
-    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in,
+    draw_toggle(dc, layout.verify, L"Verify SUZIP/ZIP after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
 
     RECT security = layout.security;
@@ -1029,7 +1029,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);
     draw_toggle(dc, layout.defender, L"Microsoft Defender scan", state.defender_scan_opt_in, ToggleId::DefenderScan);
     draw_toggle(dc, layout.gpu, L"Require AMD GPU acceleration", state.gpu_required, ToggleId::GpuRequired);
-    draw_toggle(dc, layout.verify, L"Verify archive after write", state.verify_after_write_opt_in,
+    draw_toggle(dc, layout.verify, L"Verify SUZIP/ZIP after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
     draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);

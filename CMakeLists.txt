@@ -663,6 +663,7 @@ if(SUPERZIP_BUILD_TESTS)
     superzip_tests
     tests/cpp/test_main.cpp
     tests/cpp/test_archive_roundtrip.cpp
+    tests/cpp/test_archive_verification.cpp
     tests/cpp/test_integrity.cpp
     tests/cpp/test_archive_format.cpp
     tests/cpp/test_ar_compat.cpp
@@ -717,7 +718,8 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_xxe_compat.cpp
     tests/cpp/test_xz_compat.cpp
     tests/cpp/test_zstd_compat.cpp
-    tests/cpp/test_zip_compat.cpp)
+    tests/cpp/test_zip_compat.cpp
+    tests/cpp/test_zip_verification.cpp)
   target_link_libraries(superzip_tests PRIVATE superzip_core gdi32 user32)
   # Keep the next dictionary codec's unfinished matcher out of product binaries.
   if(SUPERZIP_ENABLE_HIP)

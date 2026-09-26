@@ -111,7 +111,7 @@ void usage() {
         << "  superzip_cli compress --format "
            "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|cpio.gz|"
            "cpgz|ar --output <archive> [--compression-level <1-9>] "
-           "[--sha256] [--defender-scan] <path>...\n"
+           "[--verify-after-write] [--sha256] [--defender-scan] <path>... (ZIP only)\n"
         << "  superzip_cli extract --format suzip --output <directory> [--require-gpu|--force-cpu] [--workers <n>] "
            "[--inflight <n>] [--overwrite] [--validate-before-publish] [--sha256] [--defender-scan] <archive.suzip>\n"
         << "  superzip_cli extract --format "
@@ -120,7 +120,7 @@ void usage() {
            "gz|cpgz|ar|arj|arc|ark|deb|rpm|7z|lha|lzh|wim|swm|xar --output <directory> [--overwrite] [--sha256] "
            "[--defender-scan] [--validate-before-publish] [--name-encoding utf8|system] <archive>\n"
         << "  superzip_cli verify [--require-gpu|--force-cpu] [--workers <n>] [--inflight <n>] [--sha256] "
-           "[--defender-scan] <archive.suzip>\n";
+           "[--defender-scan] <archive.suzip|archive.zip|archive.zipx> (GPU options: SUZIP only)\n";
 }
 
 // Purpose: Convert byte/second statistics to MiB/s for display.
@@ -393,6 +393,7 @@ struct CliVerifyCommand {
     bool force_cpu = false;
     std::uint32_t workers = 0;
     std::uint32_t inflight = 0;
+    bool suzip_tuning_requested = false;
     bool sha256 = false;
     bool defender_scan = false;
     std::filesystem::path archive;
@@ -405,7 +406,7 @@ void reject_compat_create_tuning(std::string_view label, bool require_gpu, bool 
                                  bool suzip_tuning_requested) {
     if (require_gpu || force_cpu || suzip_tuning_requested) {
         throw superzip::ArchiveError(std::string(label) + " compatibility does not support SUZIP GPU, worker, "
-                                                          "block-size, or verify-after-write flags");
+                                                          "or block-size flags");
     }
 }
 
@@ -458,7 +459,6 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
             command.compression_level_requested = true;
         } else if (args[i] == "--verify-after-write") {
             command.verify_after_write = true;
-            command.suzip_tuning_requested = true;
         } else if (args[i] == "--sha256") {
             command.sha256 = true;
         } else if (args[i] == "--defender-scan") {
@@ -471,9 +471,13 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
 }
 
 // Purpose: Run the selected create backend after command-line validation.
-// Inputs: `archive_format` is concrete and `command` contains parsed compression options.
+// Inputs: `archive_format` is concrete and `command` contains parsed compression options, including optional read-back.
 // Outputs: Returns operation statistics; throws for unsupported formats or backend errors.
 superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_format, const CliCompressCommand& command) {
+    if (command.verify_after_write && archive_format != superzip::ArchiveFormat::SuperZip &&
+        archive_format != superzip::ArchiveFormat::Zip) {
+        throw superzip::ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");
+    }
     switch (archive_format) {
     case superzip::ArchiveFormat::SuperZip: {
         superzip::CompressOptions options;
@@ -488,7 +492,8 @@ superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_form
     }
     case superzip::ArchiveFormat::Zip:
         reject_compat_create_tuning("ZIP", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
-        return superzip::compress_zip(command.sources, command.output, command.compression_level);
+        return superzip::compress_zip(command.sources, command.output, command.compression_level, {},
+                                      command.verify_after_write);
     case superzip::ArchiveFormat::Tar:
         reject_compat_create_tuning("TAR", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
         reject_compat_compression_level("TAR", command.compression_level_requested);
@@ -874,22 +879,29 @@ CliVerifyCommand parse_verify_command(const std::vector<std::string>& args) {
             command.force_cpu = true;
         } else if (args[i] == "--workers") {
             command.workers = require_u32_arg(args, i, "--workers");
+            command.suzip_tuning_requested = true;
         } else if (args[i] == "--inflight") {
             command.inflight = require_u32_arg(args, i, "--inflight");
+            command.suzip_tuning_requested = true;
         } else if (args[i] == "--sha256") {
             command.sha256 = true;
         } else if (args[i] == "--defender-scan") {
             command.defender_scan = true;
+        } else if (args[i].starts_with("--")) {
+            throw superzip::ArchiveError("unknown verify argument: " + args[i]);
         } else {
+            if (!command.archive.empty()) {
+                throw superzip::ArchiveError("verify accepts exactly one archive");
+            }
             command.archive = cli_path_argument(args[i]);
         }
     }
     return command;
 }
 
-// Purpose: Execute the `verify` CLI command for native SUZIP archives.
-// Inputs: `args` is the full argument vector beginning with `verify`.
-// Outputs: Returns a process exit code and writes verification telemetry to stdout.
+// Purpose: Execute read-only verification for native SUZIP and supported ZIP archives.
+// Inputs: `args` is the full argument vector beginning with `verify`; GPU/worker flags apply only to SUZIP.
+// Outputs: Returns an exit code and telemetry, or throws on unsupported formats, flags, or archive validation errors.
 int run_verify_command(const std::vector<std::string>& args) {
     const auto command = parse_verify_command(args);
     if (command.archive.empty()) {
@@ -899,12 +911,20 @@ int run_verify_command(const std::vector<std::string>& args) {
     if (command.require_gpu && command.force_cpu) {
         throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
-    superzip::ExtractOptions options;
-    options.gpu_required = command.require_gpu;
-    options.force_cpu = command.force_cpu;
-    options.worker_count = command.workers;
-    options.max_inflight_chunks = command.inflight;
-    print_stats(superzip::verify_suzip(command.archive, options));
+    const auto format = superzip::detect_archive_format(command.archive);
+    if (format == superzip::ArchiveFormat::Zip || format == superzip::ArchiveFormat::Zipx) {
+        reject_compat_extract_tuning("ZIP", command.require_gpu, command.force_cpu, command.suzip_tuning_requested);
+        print_stats(superzip::verify_zip(command.archive));
+    } else if (format == superzip::ArchiveFormat::SuperZip) {
+        superzip::ExtractOptions options;
+        options.gpu_required = command.require_gpu;
+        options.force_cpu = command.force_cpu;
+        options.worker_count = command.workers;
+        options.max_inflight_chunks = command.inflight;
+        print_stats(superzip::verify_suzip(command.archive, options));
+    } else {
+        throw superzip::ArchiveError("read-only verify is currently supported only for SUZIP and ZIP");
+    }
     if (command.sha256) {
         print_integrity_hash(command.archive);
     }
