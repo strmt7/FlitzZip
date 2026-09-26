@@ -869,7 +869,8 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     stats.workers = budget.workers;
     stats.inflight_chunks = budget.inflight_chunks;
     std::uint64_t archive_block_count = 0;
-    for (std::size_t entry_index = 0; entry_index < manifest.entries.size(); ++entry_index) {
+    std::size_t entry_index = 0;
+    while (entry_index < manifest.entries.size()) {
         if (progress.cancelled()) {
             throw ArchiveError("operation cancelled");
         }
@@ -878,7 +879,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
         if (batch_count != 0) {
             compress_manifest_batch(remaining_entries.first(batch_count), options, output, index, stats,
                                     archive_block_count, progress, progress_callback, gpu_telemetry);
-            entry_index += batch_count - 1U;
+            entry_index += batch_count;
             continue;
         }
         const auto& manifest_entry = manifest.entries[entry_index];
@@ -896,6 +897,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
         if (manifest_entry.directory) {
             index.entries.push_back(std::move(entry));
             progress.finish_entry();
+            ++entry_index;
             continue;
         }
 
@@ -903,6 +905,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
                                      archive_block_count, progress, progress_callback);
         index.entries.push_back(std::move(entry));
         progress.finish_entry();
+        ++entry_index;
     }
 
     publish_progress(progress, progress_callback);

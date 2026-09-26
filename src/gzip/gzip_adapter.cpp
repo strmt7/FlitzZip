@@ -62,16 +62,6 @@ std::uint64_t regular_file_size(const std::filesystem::path& path) {
     return static_cast<std::uint64_t>(size);
 }
 
-// Purpose: Add byte counts while detecting telemetry overflow.
-// Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
-// Outputs: Updates `total`, or throws before unsigned wraparound.
-void checked_add_bytes(std::uint64_t& total, std::uint64_t bytes, const char* context) {
-    if (bytes > std::numeric_limits<std::uint64_t>::max() - total) {
-        throw ArchiveError(std::string(context) + " byte count overflows");
-    }
-    total += bytes;
-}
-
 // Purpose: Write all bytes in a span-like buffer to a binary stream.
 // Inputs: `output` is the destination stream, `data` points to bytes, and `size` is the byte count.
 // Outputs: Appends bytes or throws on stream failure.
