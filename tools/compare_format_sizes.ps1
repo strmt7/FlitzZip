@@ -61,7 +61,7 @@ function Invoke-ComparisonTool {
 
 # Purpose: Fill one at-most-64-MiB source file with a reproducible, explicitly named data shape.
 # Inputs: `Path`, byte `Count`, and `Profile` define the owned fixture.
-# Outputs: Writes exactly `Count` bytes and returns its SHA-256 hash.
+# Outputs: Writes exactly `Count` bytes with fixed file timestamps and returns its SHA-256 hash.
 function Initialize-ComparisonSource {
     param([string]$Path, [int]$Count, [string]$FixtureProfile)
     $bytes = [byte[]]::new($Count)
@@ -83,7 +83,12 @@ function Initialize-ComparisonSource {
         [Random]::new(912817).NextBytes($bytes)
     }
     [IO.File]::WriteAllBytes($Path, $bytes)
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $timestamp = [DateTime]::SpecifyKind([DateTime]::new(2000, 1, 1), [DateTimeKind]::Utc)
+    [IO.File]::SetCreationTimeUtc($Path, $timestamp)
+    [IO.File]::SetLastAccessTimeUtc($Path, $timestamp)
+    [IO.File]::SetLastWriteTimeUtc($Path, $timestamp)
+    return $hash
 }
 
 # Purpose: Verify complete source recovery through SuperZip and an independent reader where one exists.
@@ -279,6 +284,7 @@ try {
                 $filter = switch ($format) { 'tar.gz' { '-z' } 'tar.bz2' { '-j' } 'tar.zst' { '--zstd' } default { '' } }
                 $create = @('-c', '--format=ustar')
                 if ($filter) { $create += $filter }
+                if ($format -eq 'tar.gz') { $create += @('--options', 'gzip:!timestamp') }
                 $create += @('-f', '{archive}', 'source.bin')
                 $extension = ($formatRows | Where-Object Key -eq $format | Select-Object -First 1).Extension
                 $result = Measure-ComparisonCase -Producer 'libarchive bsdtar' -Format $format -Level $null -ToolLevel $null `
@@ -314,7 +320,7 @@ try {
         recorded_utc = (Get-Date).ToUniversalTime().ToString('o')
         source_commit = $commit
         source_dirty = $dirty
-        source_generator = 'compare_format_sizes.ps1/v1; deterministic .NET Random seed 912817'
+        source_generator = 'compare_format_sizes.ps1/v2; deterministic .NET Random seed 912817; file timestamps 2000-01-01T00:00:00Z'
         tools = $tools
         cases = $results
     }
