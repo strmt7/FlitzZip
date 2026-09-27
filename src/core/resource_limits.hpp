@@ -7,7 +7,7 @@ namespace superzip {
 // Archive chunk and block limits bound host allocations and GPU launch sizes.
 constexpr std::uint64_t kMaxArchiveChunkBytes = 128ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kDefaultArchiveChunkBytes = kMaxArchiveChunkBytes;
-constexpr std::uint32_t kDefaultArchiveBlockBytes = 1024U * 1024U;
+constexpr std::uint32_t kDefaultArchiveBlockBytes = 8U * 1024U * 1024U;
 constexpr std::uint32_t kMinArchiveBlockBytes = 4U * 1024U;
 constexpr std::uint32_t kMaxArchiveBlockBytes = 16U * 1024U * 1024U;
 

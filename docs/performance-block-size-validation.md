@@ -24,10 +24,10 @@ The supported user-facing block-size choices are:
 | --- | ---: | ---: | --- |
 | 256 KiB | `--block-size-kib 256` | 262,144 | Smallest latency window and fine-grained metadata validation. |
 | 512 KiB | `--block-size-kib 512` | 524,288 | Low-latency option with less metadata overhead than 256 KiB. |
-| 1 MiB | `--block-size-kib 1024` | 1,048,576 | Default balanced path. |
+| 1 MiB | `--block-size-kib 1024` | 1,048,576 | Lower-latency explicit option; saved GUI selections retain this value. |
 | 2 MiB | `--block-size-kib 2048` | 2,097,152 | Mid-sized transfer window for mixed workloads. |
 | 4 MiB | `--block-size-kib 4096` | 4,194,304 | Larger transfer window for throughput-focused runs. |
-| 8 MiB | `--block-size-kib 8192` | 8,388,608 | High-throughput option below the maximum resource window. |
+| 8 MiB | `--block-size-kib 8192` | 8,388,608 | Default; preserves the option index of older saved selections. |
 | 16 MiB | `--block-size-kib 16384` | 16,777,216 | Maximum supported block size under current resource limits. |
 
 Every option must divide the 128 MiB archive chunk size exactly. Values outside

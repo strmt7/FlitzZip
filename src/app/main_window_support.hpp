@@ -85,10 +85,16 @@ constexpr int kDefaultCompressionFormatIndex = 0;
 constexpr int kCompressionFormatMaxIndex = static_cast<int>(kCompressionCreateFormatExtensions.size()) - 1;
 constexpr std::array<int, 4> kPerformanceUpdateSecondsOptions{1, 3, 5, 10};
 constexpr std::array<std::uint32_t, 7> kCompressionBlockSizeOptions{
-    256U * 1024U,       512U * 1024U,       superzip::kDefaultArchiveBlockBytes, 2U * 1024U * 1024U,
-    4U * 1024U * 1024U, 8U * 1024U * 1024U, superzip::kMaxArchiveBlockBytes,
+    256U * 1024U,
+    512U * 1024U,
+    1024U * 1024U,
+    2U * 1024U * 1024U,
+    4U * 1024U * 1024U,
+    8U * 1024U * 1024U,
+    superzip::kMaxArchiveBlockBytes,
 };
 constexpr int kCompressionBlockSizeMaxIndex = static_cast<int>(kCompressionBlockSizeOptions.size()) - 1;
+static_assert(kCompressionBlockSizeOptions[kDefaultCompressionBlockSizeIndex] == superzip::kDefaultArchiveBlockBytes);
 
 struct SystemMemoryUsage {
     double percent = 0.0;

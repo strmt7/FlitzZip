@@ -12,6 +12,8 @@
 
 namespace superzip::app {
 
+constexpr int kDefaultCompressionBlockSizeIndex = 5;
+
 enum class Page {
     Queue,
     Compress,
@@ -166,7 +168,7 @@ struct LogEntry {
 struct AppSettings {
     int compression_format_index = 0;
     int compression_level_index = 2;
-    int compression_block_size_index = 2;
+    int compression_block_size_index = kDefaultCompressionBlockSizeIndex;
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
@@ -206,7 +208,7 @@ struct UiState {
     int selected_queue_index = -1;
     int compression_format_index = 0;
     int compression_level_index = 2;
-    int compression_block_size_index = 2;
+    int compression_block_size_index = kDefaultCompressionBlockSizeIndex;
     int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;

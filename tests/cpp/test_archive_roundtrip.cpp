@@ -651,8 +651,13 @@ TEST_CASE(suzip_supported_block_sizes_roundtrip_and_bound_metadata) {
     }
 
     constexpr std::array<std::uint32_t, 7> block_sizes{
-        256U * 1024U,       512U * 1024U,       superzip::kDefaultArchiveBlockBytes, 2U * 1024U * 1024U,
-        4U * 1024U * 1024U, 8U * 1024U * 1024U, superzip::kMaxArchiveBlockBytes,
+        256U * 1024U,
+        512U * 1024U,
+        1024U * 1024U,
+        2U * 1024U * 1024U,
+        4U * 1024U * 1024U,
+        8U * 1024U * 1024U,
+        superzip::kMaxArchiveBlockBytes,
     };
     for (const auto block_size : block_sizes) {
         const auto archive = root / ("archive-" + std::to_string(block_size) + ".suzip");
@@ -685,6 +690,41 @@ TEST_CASE(suzip_supported_block_sizes_roundtrip_and_bound_metadata) {
         const auto restored = output / "source" / "payload.bin";
         REQUIRE_TRUE(std::filesystem::exists(restored));
         REQUIRE_EQ(std::filesystem::file_size(restored), std::filesystem::file_size(input));
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep the new default block size observable in archive metadata without changing saved legacy choices.
+// Inputs: A one-byte tail after a full default-sized block, with explicit CPU mode and default block size.
+// Outputs: The archive contains 8 MiB and one-byte blocks and extracts the original bytes exactly.
+TEST_CASE(suzip_default_block_size_roundtrip) {
+    REQUIRE_EQ(superzip::kDefaultArchiveBlockBytes, 8U * 1024U * 1024U);
+    const auto root = test_temp_dir("suzip-default-block-size");
+    const auto source = root / "payload.bin";
+    const auto archive = root / "payload.suzip";
+    const auto output = root / "out";
+    const std::string expected(static_cast<std::size_t>(superzip::kDefaultArchiveBlockBytes) + 1U, 'x');
+    {
+        std::ofstream file(source, std::ios::binary);
+        file.write(expected.data(), static_cast<std::streamsize>(expected.size()));
+    }
+    superzip::CompressOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    REQUIRE_EQ(options.block_size, superzip::kDefaultArchiveBlockBytes);
+    (void)superzip::compress_suzip({source}, archive, options);
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_EQ(index.entries.size(), 1U);
+    REQUIRE_EQ(index.entries.front().blocks.size(), 2U);
+    REQUIRE_EQ(index.entries.front().blocks[0].uncompressed_len, superzip::kDefaultArchiveBlockBytes);
+    REQUIRE_EQ(index.entries.front().blocks[1].uncompressed_len, 1U);
+    superzip::ExtractOptions extract;
+    extract.force_cpu = true;
+    extract.gpu_required = false;
+    (void)superzip::extract_suzip(archive, output, extract);
+    {
+        std::ifstream restored(output / "payload.bin", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), expected);
     }
     std::filesystem::remove_all(root);
 }
