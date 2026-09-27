@@ -188,16 +188,16 @@ TEST_CASE(sparse_pattern_required_hip_encode_roundtrip) {
 }
 
 // Purpose: Cover batched sparse collection when admitted blocks are separated by a noncandidate block.
-// Inputs: Two independently seeded sparse MiB blocks with a zero-filled MiB between them.
-// Outputs: Requires exact candidate-to-block mapping, two HIP sparse blocks, and byte-exact CPU/HIP decode.
+// Inputs: Three sparse MiB blocks with divisible, nondivisible, and short motif periods, separated by a fill block.
+// Outputs: Requires exact candidate-to-block mapping, three HIP sparse blocks, and byte-exact CPU/HIP decode.
 TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
     constexpr std::size_t block_bytes = 1024U * 1024U;
-    std::vector<std::byte> input(3U * block_bytes, std::byte{0});
-    for (std::size_t block_index : {0U, 2U}) {
-        const auto period = block_index == 0U ? 4096U : 8192U;
+    std::vector<std::byte> input(4U * block_bytes, std::byte{0});
+    for (std::size_t block_index : {0U, 2U, 3U}) {
+        const auto period = block_index == 0U ? 4096U : (block_index == 2U ? 8191U : 3U);
         const auto start = block_index * block_bytes;
         std::uint32_t state = block_index == 0U ? 0x8A6754B3U : 0xCA27E6D1U;
         for (std::size_t position = 0U; position < period; ++position) {
@@ -209,8 +209,9 @@ TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
         for (std::size_t position = period; position < block_bytes; ++position) {
             input[start + position] = input[start + position % period];
         }
-        for (std::size_t record = 1U; record < block_bytes / period; ++record) {
-            input[start + record * period + 512U] ^= std::byte{0xFF};
+        const auto patch_stride = block_index == 3U ? 32768U : period;
+        for (std::size_t position = period + 512U; position < block_bytes; position += patch_stride) {
+            input[start + position] ^= std::byte{0xFF};
         }
     }
 
@@ -221,11 +222,12 @@ TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
     options.telemetry = std::make_shared<superzip::GpuTelemetry>();
     const auto encoded = superzip::encode_chunk(input, options);
     REQUIRE_TRUE(encoded.gpu_used);
-    REQUIRE_EQ(encoded.blocks.size(), 3U);
+    REQUIRE_EQ(encoded.blocks.size(), 4U);
     REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuSparsePattern);
     REQUIRE_EQ(encoded.blocks[1].kind, superzip::BlockKind::Fill);
     REQUIRE_EQ(encoded.blocks[2].kind, superzip::BlockKind::GpuSparsePattern);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 2U);
+    REQUIRE_EQ(encoded.blocks[3].kind, superzip::BlockKind::GpuSparsePattern);
+    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 3U);
     std::vector<std::byte> decoded(input.size());
     REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
     REQUIRE_EQ(decoded, input);

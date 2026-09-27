@@ -2,6 +2,7 @@
 
 #include "gpu/hip_codec_support.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -14,19 +15,30 @@ namespace {
 using namespace hip_detail;
 
 constexpr std::uint32_t kThreads = 256U;
+constexpr std::uint32_t kTileBytes = 64U * 1024U;
 
 // Purpose: Count mismatches for every admitted block in one HIP submission.
 // Inputs: Resident input and validated candidate extents; `counts` is zeroed device memory.
 // Outputs: Stores one exact mismatch count per candidate without retaining source-sized buffers.
 __global__ void count_sparse_positions_kernel(const std::byte* input, const SparseCandidate* candidates,
                                               std::uint32_t* counts) {
-    const auto index = static_cast<std::uint32_t>(blockIdx.x);
+    const auto index = static_cast<std::uint32_t>(blockIdx.y);
     const auto candidate = candidates[index];
+    const auto tile_start = static_cast<std::uint32_t>(blockIdx.x) * kTileBytes;
+    if (tile_start >= candidate.input_bytes) {
+        return;
+    }
+    const auto tile_end = min(tile_start + kTileBytes, candidate.input_bytes);
     const auto* block = input + candidate.source_offset;
-    for (std::uint32_t position = candidate.period + threadIdx.x; position < candidate.input_bytes;
-         position += blockDim.x) {
-        if (block[position] != block[position % candidate.period]) {
+    const auto stride = blockDim.x % candidate.period;
+    auto motif_offset = (tile_start + threadIdx.x) % candidate.period;
+    for (std::uint32_t position = tile_start + threadIdx.x; position < tile_end; position += blockDim.x) {
+        if (position >= candidate.period && block[position] != block[motif_offset]) {
             atomicAdd(counts + index, 1U);
+        }
+        motif_offset += stride;
+        if (motif_offset >= candidate.period) {
+            motif_offset -= candidate.period;
         }
     }
 }
@@ -36,20 +48,29 @@ __global__ void count_sparse_positions_kernel(const std::byte* input, const Spar
 // Outputs: Writes at most the admitted patch count per candidate for host canonicalization.
 __global__ void gather_sparse_positions_kernel(const std::byte* input, const SparseCandidate* candidates,
                                                std::uint32_t* cursors, std::uint32_t* positions) {
-    const auto index = static_cast<std::uint32_t>(blockIdx.x);
+    const auto index = static_cast<std::uint32_t>(blockIdx.y);
     const auto candidate = candidates[index];
     if (candidate.patch_count == 0U) {
         return;
     }
+    const auto tile_start = static_cast<std::uint32_t>(blockIdx.x) * kTileBytes;
+    if (tile_start >= candidate.input_bytes) {
+        return;
+    }
+    const auto tile_end = min(tile_start + kTileBytes, candidate.input_bytes);
     const auto* block = input + candidate.source_offset;
-    for (std::uint32_t position = candidate.period + threadIdx.x; position < candidate.input_bytes;
-         position += blockDim.x) {
-        if (block[position] == block[position % candidate.period]) {
-            continue;
+    const auto stride = blockDim.x % candidate.period;
+    auto motif_offset = (tile_start + threadIdx.x) % candidate.period;
+    for (std::uint32_t position = tile_start + threadIdx.x; position < tile_end; position += blockDim.x) {
+        if (position >= candidate.period && block[position] != block[motif_offset]) {
+            const auto slot = atomicAdd(cursors + index, 1U);
+            if (slot < candidate.patch_count) {
+                positions[candidate.positions_offset + slot] = position;
+            }
         }
-        const auto slot = atomicAdd(cursors + index, 1U);
-        if (slot < candidate.patch_count) {
-            positions[candidate.positions_offset + slot] = position;
+        motif_offset += stride;
+        if (motif_offset >= candidate.period) {
+            motif_offset -= candidate.period;
         }
     }
 }
@@ -82,7 +103,7 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
                                                                        std::span<const SparseCandidate> candidates,
                                                                        GpuTelemetry* telemetry) {
     if (device_input == nullptr || input_bytes > kMaxArchiveChunkBytes ||
-        candidates.size() > std::numeric_limits<std::uint32_t>::max()) {
+        candidates.size() > kMaxArchiveChunkBytes / kMinArchiveBlockBytes) {
         throw GpuError("sparse pattern HIP batch input bounds are invalid");
     }
     validate_sparse_candidates(input_bytes, candidates);
@@ -90,6 +111,11 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     if (candidates.empty()) {
         return result;
     }
+    std::uint32_t max_candidate_bytes = 0U;
+    for (const auto& candidate : candidates) {
+        max_candidate_bytes = std::max(max_candidate_bytes, candidate.input_bytes);
+    }
+    const dim3 grid((max_candidate_bytes + kTileBytes - 1U) / kTileBytes, static_cast<unsigned int>(candidates.size()));
 
     const auto candidate_bytes =
         checked_multiply_bytes(candidates.size(), sizeof(SparseCandidate), "sparse candidates");
@@ -104,9 +130,8 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
     check_hip(hipMemset(device_counts.get(), 0, count_bytes), "hipMemset sparse counts");
     auto events = make_hip_event_pair("create sparse count events");
-    launch_measured_kernel(count_sparse_positions_kernel, static_cast<unsigned int>(candidates.size()), kThreads, 0,
-                           hipStreamPerThread, events, "launch sparse count kernel", device_input,
-                           device_candidates.get(), device_counts.get());
+    launch_measured_kernel(count_sparse_positions_kernel, grid, kThreads, 0, hipStreamPerThread, events,
+                           "launch sparse count kernel", device_input, device_candidates.get(), device_counts.get());
     finish_measured_kernel(telemetry, events, "synchronize sparse count kernel");
 
     std::vector<std::uint32_t> counts(candidates.size());
@@ -145,9 +170,9 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
     check_hip(hipMemset(device_cursors.get(), 0, count_bytes), "hipMemset sparse cursors");
     events = make_hip_event_pair("create sparse gather events");
-    launch_measured_kernel(gather_sparse_positions_kernel, static_cast<unsigned int>(candidates.size()), kThreads, 0,
-                           hipStreamPerThread, events, "launch sparse gather kernel", device_input,
-                           device_candidates.get(), device_cursors.get(), device_positions.get());
+    launch_measured_kernel(gather_sparse_positions_kernel, grid, kThreads, 0, hipStreamPerThread, events,
+                           "launch sparse gather kernel", device_input, device_candidates.get(), device_cursors.get(),
+                           device_positions.get());
     finish_measured_kernel(telemetry, events, "synchronize sparse gather kernel");
 
     std::vector<std::uint32_t> cursors(candidates.size());

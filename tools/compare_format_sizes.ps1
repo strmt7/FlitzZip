@@ -3,6 +3,7 @@ param(
     [ValidateSet(4, 1024, 16384, 65536)][int[]]$SizeKiB = @(4, 1024),
     [ValidateSet('Text', 'SparseRecord', 'Incompressible')][string[]]$Profiles = @('Text', 'SparseRecord', 'Incompressible'),
     [ValidateSet(1, 5, 9)][int[]]$Levels = @(5),
+    [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)][int]$NativeBlockSizeKiB = 1024,
     [string[]]$Formats = @(),
     [string]$OutputJson = '',
     [string]$SevenZipPath = ''
@@ -136,11 +137,11 @@ function Get-ComparisonBzip2BlockSize {
 }
 
 # Purpose: Measure one verified archive without treating a filesystem operation as a speed benchmark.
-# Inputs: Producer, format, effort, source, case directory, and a concrete create command.
+# Inputs: Producer, format, product/tool effort, native block size, source, case directory, and create command.
 # Outputs: Returns exact encoded bytes, hashes, and verification provenance.
 function Measure-ComparisonCase {
     param([string]$Producer, [string]$Format, [Nullable[int]]$Level, [Nullable[int]]$ToolLevel,
-          [string]$Source,
+          [Nullable[int]]$NativeBlockSizeKiB, [string]$Source,
           [string]$SourceHash, [string]$Root, [string]$Extension, [string]$ToolPath,
           [string[]]$Arguments)
     $caseRoot = Join-Path $Root ('case-' + [guid]::NewGuid().ToString('N'))
@@ -156,6 +157,7 @@ function Measure-ComparisonCase {
         format = $Format
         product_level = $Level
         tool_level = $ToolLevel
+        native_block_size_kib = $NativeBlockSizeKiB
         effective_arguments = @($resolvedArguments | ForEach-Object {
             if ($_ -eq $archive) { '{archive}' }
             elseif ($_ -eq $Source) { '{source}' }
@@ -239,10 +241,14 @@ try {
                 if (-not $format.LevelAware) { $levelsForFormat = ,$null }
                 foreach ($level in $levelsForFormat) {
                     $create = @('compress', '--format', $format.Key)
-                    if ($format.Key -eq 'suzip') { $create += '--force-cpu' }
+                    if ($format.Key -eq 'suzip') {
+                        $create += @('--force-cpu', '--block-size-kib', "$NativeBlockSizeKiB")
+                    }
                     if ($null -ne $level) { $create += @('--compression-level', "$level") }
                     $create += @('--output', '{archive}', $source)
+                    $blockSize = if ($format.Key -eq 'suzip') { $NativeBlockSizeKiB } else { $null }
                     $result = Measure-ComparisonCase -Producer 'SuperZip' -Format $format.Key -Level $level `
+                        -NativeBlockSizeKiB $blockSize `
                         -Source $source -SourceHash $sourceHash -Root $resolvedWork -Extension $format.Extension `
                         -ToolPath $cli -Arguments $create
                     $result['profile'] = $fixtureProfile
