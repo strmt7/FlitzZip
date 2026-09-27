@@ -115,7 +115,7 @@ void append_segment_offset(std::vector<std::byte>& payload, std::uint32_t offset
 void record_dictionary_batch(const EncodedBatch& encoded, std::size_t input_bytes, GpuTelemetry* telemetry) {
     const auto period_bytes = ((input_bytes + kSegmentBytes - 1U) / kSegmentBytes) * sizeof(std::uint16_t);
     if ((encoded.h2d_bytes != 0U && encoded.h2d_bytes != period_bytes) ||
-        encoded.explicit_kernel_launches != (encoded.h2d_bytes == 0U ? 4U : 3U) ||
+        encoded.explicit_kernel_launches != (encoded.h2d_bytes == 0U ? 4U : 2U) ||
         encoded.device_workspace_bytes < input_bytes) {
         throw GpuError("borrowed dictionary input recorded an invalid transfer or workspace");
     }

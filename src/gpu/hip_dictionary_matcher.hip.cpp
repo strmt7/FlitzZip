@@ -183,28 +183,28 @@ __global__ void link_dictionary_predecessors(const std::uint64_t* keys, std::uin
                              : kNoPrevious;
 }
 
-// Purpose: Link only device-verified four-byte prefixes at a sampled repeated distance.
-// Inputs: Bounded source bytes and one admitted distance for each independent segment.
-// Outputs: Writes backward links or the no-match sentinel for every source position.
-__global__ void link_periodic_predecessors(const std::byte* input, std::uint32_t size, const std::uint16_t* distances,
-                                           std::uint32_t* previous) {
-    const auto position = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
-    if (position >= size) {
-        return;
+// Purpose: Resolve an exact predecessor from either the sorted index or a sampled periodic distance.
+// Inputs: Compile-time index policy, immutable input, valid source position, and its selected index data.
+// Outputs: Returns a verified earlier position or the no-match sentinel without crossing segment bounds.
+template <bool Periodic>
+__device__ std::uint32_t predecessor_at(const std::byte* input, std::uint32_t size, std::uint32_t position,
+                                        const std::uint32_t* previous, const std::uint16_t* distances) {
+    if constexpr (!Periodic) {
+        return previous[position];
+    } else {
+        const auto segment = position / kSegmentBytes;
+        const auto segment_offset = position % kSegmentBytes;
+        const auto distance = distances[segment];
+        const auto end = min(size, (segment + 1U) * kSegmentBytes);
+        if (segment_offset < distance || end - position < kMinMatchBytes) {
+            return kNoPrevious;
+        }
+        std::uint32_t current = 0U;
+        std::uint32_t candidate = 0U;
+        __builtin_memcpy(&current, input + position, sizeof(current));
+        __builtin_memcpy(&candidate, input + position - distance, sizeof(candidate));
+        return current == candidate ? position - distance : kNoPrevious;
     }
-    const auto segment = position / kSegmentBytes;
-    const auto segment_offset = position % kSegmentBytes;
-    const auto distance = distances[segment];
-    const auto end = min(size, (segment + 1U) * kSegmentBytes);
-    if (segment_offset < distance || end - position < kMinMatchBytes) {
-        previous[position] = kNoPrevious;
-        return;
-    }
-    std::uint32_t current = 0U;
-    std::uint32_t candidate = 0U;
-    __builtin_memcpy(&current, input + position, sizeof(current));
-    __builtin_memcpy(&candidate, input + position - distance, sizeof(candidate));
-    previous[position] = current == candidate ? position - distance : kNoPrevious;
 }
 
 // Purpose: Extend a known four-byte match with alignment-safe word reads and a bounded final byte tail.
@@ -242,10 +242,11 @@ __device__ std::uint32_t extend_dictionary_match(const std::byte* input, std::ui
 }
 
 // Purpose: Search one deterministic predecessor chain with explicit per-position work budgets.
-// Inputs: Immutable source, valid position, ordered links, and bounded effort.
+// Inputs: Immutable source, valid position, selected index data, and bounded effort.
 // Outputs: Returns a verified 4..8192-byte match, preserving nearest references on ties and exact work accounting.
+template <bool Periodic>
 __device__ Match search_dictionary_position(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
-                                            Effort effort, std::uint32_t position) {
+                                            const std::uint16_t* distances, Effort effort, std::uint32_t position) {
     Match best{};
     const auto segment_start = (position / kSegmentBytes) * kSegmentBytes;
     const auto end = min(size, segment_start + kSegmentBytes);
@@ -253,7 +254,7 @@ __device__ Match search_dictionary_position(const std::byte* input, std::uint32_
         return best;
     }
     const auto limit = min(kMaxMatchBytes, end - position);
-    auto candidate = previous[position];
+    auto candidate = predecessor_at<Periodic>(input, size, position, previous, distances);
     while (candidate < position && candidate >= segment_start && best.length < limit &&
            best.candidates_examined < effort.max_candidates && best.bytes_compared < effort.max_byte_comparisons) {
         ++best.candidates_examined;
@@ -269,7 +270,7 @@ __device__ Match search_dictionary_position(const std::byte* input, std::uint32_
                 best.length = static_cast<std::uint16_t>(length);
             }
         }
-        candidate = previous[candidate];
+        candidate = predecessor_at<Periodic>(input, size, candidate, previous, distances);
     }
     return best;
 }
@@ -281,7 +282,7 @@ __global__ void search_dictionary_matches(const std::byte* input, std::uint32_t 
                                           Effort effort, Match* matches) {
     const auto position = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
     if (position < size) {
-        matches[position] = search_dictionary_position(input, size, previous, effort, position);
+        matches[position] = search_dictionary_position<false>(input, size, previous, nullptr, effort, position);
     }
 }
 
@@ -318,11 +319,12 @@ __device__ std::uint32_t write_length_extension(std::byte* output, std::uint32_t
 }
 
 // Purpose: Pack LZ4 blocks with eager cached matches or deferred selected-position search.
-// Inputs: Compile-time cache policy, source, predecessor links, effort, output slots, and segment sizes.
+// Inputs: Compile-time cache/index policies, source, index data, effort, output slots, and segment sizes.
 // Outputs: Writes complete blocks, or a zero size if a capacity invariant fails; no output crosses its slot.
-template <bool CacheMatches>
+template <bool CacheMatches, bool Periodic>
 __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
-                                           Effort effort, std::byte* output, std::uint32_t* encoded_sizes) {
+                                           const std::uint16_t* distances, Effort effort, std::byte* output,
+                                           std::uint32_t* encoded_sizes) {
     const auto segment = static_cast<std::uint32_t>(blockIdx.x);
     const auto start = segment * kSegmentBytes;
     const auto end = min(size, start + kSegmentBytes);
@@ -364,15 +366,17 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
                 __syncthreads();
                 const auto position = cache_start + static_cast<std::uint32_t>(threadIdx.x);
                 if constexpr (CacheMatches) {
-                    const auto match = position < end && end - position >= 12U
-                                           ? search_dictionary_position(input, size, previous, effort, position)
-                                           : Match{};
+                    const auto match =
+                        position < end && end - position >= 12U
+                            ? search_dictionary_position<Periodic>(input, size, previous, distances, effort, position)
+                            : Match{};
                     cached_lengths[threadIdx.x] = match.length;
                     cached_distances[threadIdx.x] = match.distance;
                     cached_has_match[threadIdx.x] = match.length >= kMinMatchBytes;
                 } else {
                     cached_has_match[threadIdx.x] =
-                        position < end && end - position >= 12U && previous[position] != kNoPrevious;
+                        position < end && end - position >= 12U &&
+                        predecessor_at<Periodic>(input, size, position, previous, distances) != kNoPrevious;
                 }
                 __syncthreads();
             }
@@ -396,7 +400,7 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
                     match.length = cached_lengths[index];
                     match.distance = cached_distances[index];
                 } else {
-                    match = search_dictionary_position(input, size, previous, effort, next_match);
+                    match = search_dictionary_position<Periodic>(input, size, previous, distances, effort, next_match);
                 }
             }
             match_length = last ? 0U : min(static_cast<std::uint32_t>(match.length), end - next_match - 5U);
@@ -513,8 +517,8 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     result.primitive_version = ROCPRIM_VERSION;
     result.gpu_used = true;
     // The index stage has synchronized; its sorted-key allocation can now hold the consumer's packed output.
-    auto consumed =
-        consume(source_device, previous.get(), reinterpret_cast<std::byte*>(sorted_keys.get()), key_bytes, result);
+    auto consumed = consume(source_device, previous.get(), nullptr, reinterpret_cast<std::byte*>(sorted_keys.get()),
+                            key_bytes, result);
     temporary.reset_checked("free dictionary radix workspace");
     previous.reset_checked("free dictionary links");
     sorted_keys.reset_checked("free sorted dictionary keys");
@@ -523,19 +527,15 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     return consumed;
 }
 
-// Purpose: Build bounded segment-local predecessor links without sorting when sampling found repeated distances.
+// Purpose: Supply sampled distances for demand-verified predecessors without a full link table.
 // Inputs: Borrowed device input, one validated distance per segment, consumer workspace, and a synchronous consumer.
 // Outputs: Runs the same verified encoder contract with smaller bounded workspace or throws before exposing output.
 template <typename Consumer>
 auto with_periodic_index(std::span<const std::byte> input, std::span<const std::uint16_t> distances,
                          std::size_t consumer_bytes, Consumer consume, const std::byte* borrowed_device_input) {
-    const auto size = static_cast<std::uint32_t>(input.size());
-    const auto blocks = (size + kThreads - 1U) / kThreads;
     const auto period_bytes = distances.size() * sizeof(std::uint16_t);
-    const auto previous_bytes =
-        checked_multiply_bytes(input.size(), sizeof(std::uint32_t), "periodic dictionary links");
     const auto packed_bytes = distances.size() * kEncodedSegmentCapacity;
-    auto required_bytes = checked_add_bytes(period_bytes, previous_bytes, "periodic dictionary workspace");
+    auto required_bytes = period_bytes;
     required_bytes = checked_add_bytes(required_bytes, packed_bytes, "periodic dictionary workspace");
     required_bytes = checked_add_bytes(required_bytes, consumer_bytes, "periodic dictionary workspace");
     const auto total_workspace_bytes = checked_add_bytes(input.size(), required_bytes, "periodic dictionary workspace");
@@ -544,24 +544,16 @@ auto with_periodic_index(std::span<const std::byte> input, std::span<const std::
     }
     HipDeviceMemoryReservation reservation(required_bytes, "periodic dictionary match finder");
     HipDeviceBuffer<std::uint16_t> device_distances(period_bytes, "allocate periodic dictionary distances");
-    HipDeviceBuffer<std::uint32_t> previous(previous_bytes, "allocate periodic dictionary links");
     HipDeviceBuffer<std::byte> packed(packed_bytes, "allocate periodic dictionary packed output");
-    auto events = make_hip_event_pair("create periodic dictionary timing events");
-    check_hip(hipEventRecord(events.start, hipStreamPerThread), "start periodic dictionary index");
     check_hip(hipMemcpy(device_distances.get(), distances.data(), period_bytes, hipMemcpyHostToDevice),
               "upload periodic dictionary distances");
-    link_periodic_predecessors<<<blocks, kThreads, 0, hipStreamPerThread>>>(borrowed_device_input, size,
-                                                                            device_distances.get(), previous.get());
-    check_hip(hipGetLastError(), "launch periodic dictionary links");
-    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop periodic dictionary index");
     MatchBatch metadata;
-    metadata.index_ms = finish_dictionary_stage(events);
     metadata.device_workspace_bytes = total_workspace_bytes;
     metadata.h2d_bytes = period_bytes;
     metadata.gpu_used = true;
-    auto consumed = consume(borrowed_device_input, previous.get(), packed.get(), packed_bytes, metadata);
+    auto consumed =
+        consume(borrowed_device_input, nullptr, device_distances.get(), packed.get(), packed_bytes, metadata);
     packed.reset_checked("free periodic dictionary packed output");
-    previous.reset_checked("free periodic dictionary links");
     device_distances.reset_checked("free periodic dictionary distances");
     return consumed;
 }
@@ -587,8 +579,8 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
     const auto match_bytes = checked_multiply_bytes(input.size(), sizeof(Match), "dictionary matches");
     return with_dictionary_index(
         input, match_bytes,
-        [input, effort, match_bytes](const std::byte* device_input, const std::uint32_t* previous, std::byte*,
-                                     std::size_t, MatchBatch metadata) {
+        [input, effort, match_bytes](const std::byte* device_input, const std::uint32_t* previous, const std::uint16_t*,
+                                     std::byte*, std::size_t, MatchBatch metadata) {
             HipDeviceBuffer<Match> matches(match_bytes, "allocate dictionary diagnostic matches");
             const auto size = static_cast<std::uint32_t>(input.size());
             const auto blocks = (size + kThreads - 1U) / kThreads;
@@ -619,22 +611,30 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
     const auto sizes_bytes = segment_count * sizeof(std::uint32_t);
     return with_selected_index(
         input, output_bytes + sizes_bytes,
-        [=](const std::byte* device_input, const std::uint32_t* previous, std::byte* packed_device,
-            std::size_t packed_capacity, const MatchBatch& metadata) {
+        [=](const std::byte* device_input, const std::uint32_t* previous, const std::uint16_t* distances,
+            std::byte* packed_device, std::size_t packed_capacity, const MatchBatch& metadata) {
             HipDeviceBuffer<std::byte> output(output_bytes, "allocate dictionary encoded slots");
             HipDeviceBuffer<std::uint32_t> sizes(sizes_bytes, "allocate dictionary encoded sizes");
             const auto size = static_cast<std::uint32_t>(input.size());
             auto encode_events = make_hip_event_pair("create dictionary encode timing events");
             check_hip(hipEventRecord(encode_events.start, hipStreamPerThread), "start dictionary encoding");
-            // Shallow searches benefit from tile reuse; deeper searches extend only the selected position.
-            if (effort.max_candidates <= 4U) {
-                encode_dictionary_segments<true>
+            // Shallow searches reuse complete matches; periodic searches verify predecessors on demand.
+            if (distances != nullptr && effort.max_candidates <= 4U) {
+                encode_dictionary_segments<true, true>
                     <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, effort, output.get(), sizes.get());
+                        device_input, size, previous, distances, effort, output.get(), sizes.get());
+            } else if (distances != nullptr) {
+                encode_dictionary_segments<false, true>
+                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                        device_input, size, previous, distances, effort, output.get(), sizes.get());
+            } else if (effort.max_candidates <= 4U) {
+                encode_dictionary_segments<true, false>
+                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                        device_input, size, previous, distances, effort, output.get(), sizes.get());
             } else {
-                encode_dictionary_segments<false>
+                encode_dictionary_segments<false, false>
                     <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, effort, output.get(), sizes.get());
+                        device_input, size, previous, distances, effort, output.get(), sizes.get());
             }
             check_hip(hipGetLastError(), "launch dictionary segment encoder");
             check_hip(hipEventRecord(encode_events.stop, hipStreamPerThread), "stop dictionary encoding");
@@ -669,10 +669,10 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
             result.index_ms = metadata.index_ms;
             result.encode_ms = encode_ms;
             result.compact_ms = compact_ms;
-            if (metadata.index_ms && encode_ms && compact_ms) {
-                result.device_ms = *metadata.index_ms + *encode_ms + *compact_ms;
+            if (encode_ms && compact_ms && (periodic_distances.size() != 0U || metadata.index_ms)) {
+                result.device_ms = metadata.index_ms.value_or(0.0) + *encode_ms + *compact_ms;
             }
-            result.explicit_kernel_launches = periodic_distances.empty() ? 4U : 3U;
+            result.explicit_kernel_launches = periodic_distances.empty() ? 4U : 2U;
             result.gpu_used = true;
             std::size_t packed_offset = 0U;
             for (std::size_t index = 0; index < segment_count; ++index) {

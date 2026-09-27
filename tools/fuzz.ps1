@@ -140,6 +140,9 @@ if [ "$fuzzRuns" -gt 0 ]; then
 fi
 "@
 
+# Bash receives this here-string as an argument; fresh Windows checkouts use CRLF for PowerShell files.
+$script = $script.Replace("`r`n", "`n")
+
 docker run --rm `
     -v "${repoMount}:/src:ro" `
     -v "${outMount}:/out" `

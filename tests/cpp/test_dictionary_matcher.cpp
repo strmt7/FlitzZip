@@ -355,9 +355,9 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
 }
 
 // Purpose: Verify production periodic-index output with an independent LZ4 block reader.
-// Inputs: Periodic 8 MiB and non-power-of-two 1 MiB sources with level-five required-HIP compression.
-// Outputs: Requires both index paths to emit independently decodable blocks; optional export supports an external
-// reader.
+// Inputs: Periodic 8 MiB and non-power-of-two 1 MiB sources at low, middle, and high required-HIP efforts.
+// Outputs: Requires both index paths and kernel policies to emit independently decodable blocks; level-five export
+// supports an external reader.
 TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -365,25 +365,33 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
     for (const auto [record_bytes, input_bytes] :
          {std::pair{16U * 1024U, 8U * 1024U * 1024U}, std::pair{12U * 1024U, 1024U * 1024U}}) {
         const auto input = make_segmented_records(input_bytes, record_bytes);
-        superzip::GpuCodecOptions options;
-        options.block_size = static_cast<std::uint32_t>(input.size());
-        options.compression_level = 5;
-        options.require_gpu = true;
-        const auto encoded = superzip::encode_chunk(input, options);
-        REQUIRE_EQ(encoded.blocks.size(), 1U);
-        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
-        REQUIRE_EQ(encoded.blocks.front().encoded_offset, 0U);
-        REQUIRE_EQ(encoded.blocks.front().encoded_len, encoded.payload.size());
-        const auto spans =
-            superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
-        for (const auto& span : spans) {
-            EncodedSegment segment;
-            segment.input_bytes = span.decoded_size;
-            segment.payload.assign(encoded.payload.begin() + span.encoded_offset,
-                                   encoded.payload.begin() + span.encoded_offset + span.encoded_size);
-            const auto decoded = decode_reference_block(segment);
-            REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin() + span.decoded_offset));
-            export_dictionary_interop_fixture(segment, decoded);
+        for (const int level : {1, 5, 9}) {
+            superzip::GpuCodecOptions options;
+            options.block_size = static_cast<std::uint32_t>(input.size());
+            options.compression_level = level;
+            options.require_gpu = true;
+            options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+            const auto encoded = superzip::encode_chunk(input, options);
+            const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+            REQUIRE_TRUE(std::isfinite(telemetry.kernel_ms));
+            REQUIRE_TRUE(telemetry.kernel_ms > 0.0);
+            REQUIRE_EQ(encoded.blocks.size(), 1U);
+            REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+            REQUIRE_EQ(encoded.blocks.front().encoded_offset, 0U);
+            REQUIRE_EQ(encoded.blocks.front().encoded_len, encoded.payload.size());
+            const auto spans =
+                superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
+            for (const auto& span : spans) {
+                EncodedSegment segment;
+                segment.input_bytes = span.decoded_size;
+                segment.payload.assign(encoded.payload.begin() + span.encoded_offset,
+                                       encoded.payload.begin() + span.encoded_offset + span.encoded_size);
+                const auto decoded = decode_reference_block(segment);
+                REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin() + span.decoded_offset));
+                if (level == 5) {
+                    export_dictionary_interop_fixture(segment, decoded);
+                }
+            }
         }
     }
 }
