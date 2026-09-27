@@ -355,15 +355,16 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
 }
 
 // Purpose: Verify production periodic-index output with an independent LZ4 block reader.
-// Inputs: Periodic and non-power-of-two 1 MiB sources with level-five required-HIP compression.
+// Inputs: Periodic 8 MiB and non-power-of-two 1 MiB sources with level-five required-HIP compression.
 // Outputs: Requires both index paths to emit independently decodable blocks; optional export supports an external
 // reader.
 TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
-    for (const auto record_bytes : {16U * 1024U, 12U * 1024U}) {
-        const auto input = make_segmented_records(1024U * 1024U, record_bytes);
+    for (const auto [record_bytes, input_bytes] :
+         {std::pair{16U * 1024U, 8U * 1024U * 1024U}, std::pair{12U * 1024U, 1024U * 1024U}}) {
+        const auto input = make_segmented_records(input_bytes, record_bytes);
         superzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(input.size());
         options.compression_level = 5;

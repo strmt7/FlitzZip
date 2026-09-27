@@ -170,9 +170,20 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
     std::vector<EncodedSegment> segments;
     segments.reserve(segment_count);
     for (std::size_t offset = 0U; offset < input.size();) {
-        const auto bytes = std::min<std::size_t>(kMaxBatchBytes, input.size() - offset);
-        const auto batch = input.subspan(offset, bytes);
-        const auto distances = sampled_batch_distances(batch);
+        auto bytes = std::min<std::size_t>(kMaxBatchBytes, input.size() - offset);
+        auto batch = input.subspan(offset, bytes);
+        std::vector<std::uint16_t> distances;
+        if (input.size() - offset >= kMaxPeriodicBatchBytes) {
+            auto periodic = sampled_batch_distances(input.subspan(offset, kMaxPeriodicBatchBytes));
+            if (!periodic.empty()) {
+                bytes = kMaxPeriodicBatchBytes;
+                batch = input.subspan(offset, bytes);
+                distances = std::move(periodic);
+            }
+        }
+        if (distances.empty()) {
+            distances = sampled_batch_distances(batch);
+        }
         auto encoded = encode_segments_from_device_hip(batch, device_input + offset, effort, distances);
         record_dictionary_batch(encoded, bytes, telemetry);
         for (auto& segment : encoded.segments) {

@@ -679,7 +679,8 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
 // Outputs: Returns independent LZ4 blocks without another source upload.
 EncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
                                              const Effort& effort, std::span<const std::uint16_t> periodic_distances) {
-    if (input.empty() || input.size() > kMaxBatchBytes || device_input == nullptr) {
+    const auto maximum_bytes = periodic_distances.empty() ? kMaxBatchBytes : kMaxPeriodicBatchBytes;
+    if (input.empty() || input.size() > maximum_bytes || device_input == nullptr) {
         throw GpuError("dictionary device encoding request is invalid");
     }
     if (!periodic_distances.empty()) {

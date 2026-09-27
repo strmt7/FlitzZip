@@ -14,7 +14,8 @@ struct GpuTelemetry;
 namespace dictionary {
 
 // Purpose: Encode a bounded dictionary batch using source bytes already resident on the HIP device.
-// Inputs: `input` mirrors `device_input`, effort is validated, and optional distances cover every segment.
+// Inputs: `input` mirrors `device_input`, effort is validated, and optional distances cover every segment;
+// distance-admitted batches may be at most 8 MiB, while the general index remains capped at 4 MiB.
 // Outputs: Returns exact independent LZ4 block payloads without another host-to-device source upload.
 EncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
                                              const Effort& effort,
