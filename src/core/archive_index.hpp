@@ -29,6 +29,7 @@ struct ArchiveEntry {
 
 struct ArchiveIndex {
     std::vector<ArchiveEntry> entries;
+    std::uint32_t version = kSuperZipVersion;
     std::uint64_t index_offset = 0;
     std::uint64_t index_size = 0;
 };

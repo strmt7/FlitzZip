@@ -9,8 +9,10 @@
 #include "test_util.hpp"
 
 #include <fstream>
+#include <sstream>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 #include <windows.h>
 
@@ -24,12 +26,13 @@ struct RawArchiveTestEntry {
 };
 
 // Purpose: Write a compact handcrafted SUZIP archive with raw file entries.
-// Inputs: `path` is the archive to create and `entries` supplies normalized or intentionally malformed entry names plus
-// payload bytes. Outputs: Writes payloads, index, and footer so validation tests can exercise archive metadata without
-// relying on production compression.
-void write_raw_test_archive(const std::filesystem::path& path, const std::vector<RawArchiveTestEntry>& entries) {
+// Inputs: `path`, `entries`, and `version` supply archive contents and its declared native version.
+// Outputs: Writes payloads, index, and footer for metadata validation without production compression.
+void write_raw_test_archive(const std::filesystem::path& path, const std::vector<RawArchiveTestEntry>& entries,
+                            std::uint32_t version = superzip::kSuperZipVersion) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     superzip::ArchiveIndex index;
+    index.version = version;
     for (const auto& source : entries) {
         superzip::ArchiveEntry entry;
         entry.path = source.path;
@@ -51,10 +54,82 @@ void write_raw_test_archive(const std::filesystem::path& path, const std::vector
     const auto index_offset = static_cast<std::uint64_t>(file.tellp());
     superzip::write_archive_index(file, index);
     const auto index_size = static_cast<std::uint64_t>(file.tellp()) - index_offset;
-    write_test_footer(file, index_offset, index_size);
+    write_test_footer(file, index_offset, index_size, version);
 }
 
 }  // namespace
+
+// Purpose: Require the native footer and index to declare the same readable format version.
+// Inputs: Raw archives at every readable version, followed by one archive with a changed footer version.
+// Outputs: Valid archives verify and a version mismatch is rejected before payload decoding.
+TEST_CASE(suzip_rejects_footer_index_version_mismatch) {
+    const auto root = test_temp_dir("suzip-version-consistency");
+    superzip::ExtractOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    for (std::uint32_t version = superzip::kSuperZipMinReadableVersion; version <= superzip::kSuperZipVersion;
+         ++version) {
+        const auto archive = root / ("version-" + std::to_string(version) + ".suzip");
+        write_raw_test_archive(archive, {{"data.txt", "test payload"}}, version);
+        REQUIRE_EQ(superzip::verify_suzip(archive, options).entries, 1U);
+    }
+
+    const auto archive = root / ("version-" + std::to_string(superzip::kSuperZipVersion) + ".suzip");
+    const auto footer_version_offset = static_cast<std::streamoff>(std::filesystem::file_size(archive) - 20U);
+    {
+        std::fstream file(archive, std::ios::binary | std::ios::in | std::ios::out);
+        file.seekp(footer_version_offset, std::ios::beg);
+        superzip::write_u32(file, superzip::kSuperZipVersion - 1U);
+        REQUIRE_TRUE(static_cast<bool>(file));
+    }
+    bool rejected = false;
+    try {
+        static_cast<void>(superzip::verify_suzip(archive, options));
+    } catch (const superzip::ArchiveError& error) {
+        rejected = std::string(error.what()).find("footer and index versions differ") != std::string::npos;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prevent older native versions from claiming block encodings they do not define.
+// Inputs: Static-prefix and adaptive-prefix descriptors paired with pre-introduction versions.
+// Outputs: Both the writer and parser reject unsupported version/block combinations.
+TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
+    for (const auto [version, kind] :
+         {std::pair{1U, superzip::BlockKind::GpuPrefix}, std::pair{1U, superzip::BlockKind::GpuAdaptivePrefix},
+          std::pair{2U, superzip::BlockKind::GpuAdaptivePrefix}}) {
+        superzip::ArchiveIndex index;
+        index.version = version;
+        superzip::ArchiveEntry entry;
+        entry.path = "x";
+        entry.blocks.push_back(superzip::BlockDescriptor{.kind = kind});
+        index.entries.push_back(entry);
+
+        bool writer_rejected = false;
+        try {
+            std::ostringstream output(std::ios::out | std::ios::binary);
+            superzip::write_archive_index(output, index);
+        } catch (const superzip::ArchiveError&) {
+            writer_rejected = true;
+        }
+        REQUIRE_TRUE(writer_rejected);
+
+        index.version = superzip::kSuperZipVersion;
+        std::ostringstream output(std::ios::out | std::ios::binary);
+        superzip::write_archive_index(output, index);
+        auto forged = output.str();
+        forged[4] = static_cast<char>(version);
+        std::istringstream input(forged, std::ios::in | std::ios::binary);
+        bool reader_rejected = false;
+        try {
+            static_cast<void>(superzip::read_archive_index(input));
+        } catch (const superzip::ArchiveError&) {
+            reader_rejected = true;
+        }
+        REQUIRE_TRUE(reader_rejected);
+    }
+}
 
 // Purpose: Distinguish direct extraction from archive-wide validation before final publication.
 // Inputs: A real two-entry SUZIP whose second payload is corrupted, plus existing first-file output.

@@ -126,10 +126,38 @@ std::uint64_t read_u64(std::istream& input) {
     return read_le<std::uint64_t>(input);
 }
 
+namespace {
+
+// Purpose: Enforce the block-kind capabilities declared by each native archive version.
+// Inputs: `kind` is a serialized block kind and `version` is a supported native format version.
+// Outputs: Returns whether that version defines the requested block kind.
+bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
+    switch (kind) {
+    case BlockKind::Raw:
+    case BlockKind::Fill:
+    case BlockKind::Deflate:
+    case BlockKind::Pattern:
+        return true;
+    case BlockKind::GpuPrefix:
+        return version >= 2;
+    case BlockKind::GpuAdaptivePrefix:
+        return version >= 3;
+    }
+    return false;
+}
+
+}  // namespace
+
+// Purpose: Serialize a native index using only block kinds defined by its declared format version.
+// Inputs: `output` is an open binary stream and `index` contains bounded archive metadata.
+// Outputs: Writes the index or throws `ArchiveError` for invalid versions, kinds, or stream failures.
 void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
     reject_unbounded_index_shape(index);
+    if (index.version < kSuperZipMinReadableVersion || index.version > kSuperZipVersion) {
+        throw ArchiveError("unsupported SuperZip archive version");
+    }
     write_u32(output, kSuperZipMagic);
-    write_u32(output, kSuperZipVersion);
+    write_u32(output, index.version);
     write_u32(output, static_cast<std::uint32_t>(index.entries.size()));
     for (const auto& entry : index.entries) {
         if (entry.path.size() > std::numeric_limits<std::uint16_t>::max()) {
@@ -144,6 +172,9 @@ void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
         write_u32(output, entry.crc32);
         write_u32(output, static_cast<std::uint32_t>(entry.blocks.size()));
         for (const auto& block : entry.blocks) {
+            if (!block_kind_supported_in_version(block.kind, index.version)) {
+                throw ArchiveError("archive block kind is not supported by its version");
+            }
             output.put(static_cast<char>(block.kind));
             output.put(static_cast<char>(block.fill_value));
             write_u32(output, block.uncompressed_len);
@@ -169,6 +200,7 @@ ArchiveIndex read_archive_index(std::istream& input) {
     if (version < kSuperZipMinReadableVersion || version > kSuperZipVersion) {
         throw ArchiveError("unsupported SuperZip archive version");
     }
+    index.version = version;
     const auto entry_count = read_u32(input);
     if (entry_count > kMaxArchiveEntries) {
         throw ArchiveError("archive entry count is unreasonable");
@@ -224,6 +256,9 @@ ArchiveIndex read_archive_index(std::istream& input) {
                 kind = BlockKind::GpuAdaptivePrefix;
             } else if (kind_raw != static_cast<int>(BlockKind::Raw)) {
                 throw ArchiveError("archive block has unknown encoding kind");
+            }
+            if (!block_kind_supported_in_version(kind, version)) {
+                throw ArchiveError("archive block kind is not supported by its version");
             }
             entry.blocks.push_back(BlockDescriptor{
                 .kind = kind,

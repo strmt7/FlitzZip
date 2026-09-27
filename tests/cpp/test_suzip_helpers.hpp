@@ -28,11 +28,12 @@ inline void write_u64_at(const std::filesystem::path& path, std::streamoff offse
 }
 
 // Purpose: Write the native archive footer for handcrafted validation tests.
-// Inputs: `file` is positioned after the serialized index and `index_offset`/`index_size` describe that index.
+// Inputs: `file` is positioned after the serialized index; offsets and `version` describe the archive.
 // Outputs: Appends a footer matching the production SUZIP footer layout.
-inline void write_test_footer(std::ostream& file, std::uint64_t index_offset, std::uint64_t index_size) {
+inline void write_test_footer(std::ostream& file, std::uint64_t index_offset, std::uint64_t index_size,
+                              std::uint32_t version = superzip::kSuperZipVersion) {
     superzip::write_u32(file, kTestFooterMagic);
-    superzip::write_u32(file, superzip::kSuperZipVersion);
+    superzip::write_u32(file, version);
     superzip::write_u64(file, index_offset);
     superzip::write_u64(file, index_size);
 }

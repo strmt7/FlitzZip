@@ -336,6 +336,9 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
     }
     std::istringstream index_stream(index_bytes, std::ios::binary);
     auto index = read_archive_index(index_stream);
+    if (index.version != version) {
+        throw ArchiveError("archive footer and index versions differ");
+    }
     index.index_offset = index_offset;
     index.index_size = index_size;
     return index;
@@ -714,7 +717,7 @@ std::uint64_t resolve_decode_window_bytes(const ExtractOptions& options, const A
 // Outputs: Writes the footer magic, version, index offset, and index size to `output`.
 void write_suzip_footer(std::ofstream& output, const ArchiveIndex& index) {
     write_u32(output, kSuperZipFooterMagic);
-    write_u32(output, kSuperZipVersion);
+    write_u32(output, index.version);
     write_u64(output, index.index_offset);
     write_u64(output, index.index_size);
 }
