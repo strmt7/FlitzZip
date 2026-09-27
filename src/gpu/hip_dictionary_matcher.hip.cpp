@@ -410,6 +410,25 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
     }
 }
 
+// Purpose: Gather bounded LZ4 segment payloads into one contiguous device transfer.
+// Inputs: Fixed-capacity encoded slots and validated per-segment lengths; `packed` has room for their sum.
+// Outputs: Writes each segment in archive order without changing any encoded bytes.
+__global__ void compact_dictionary_segments(const std::byte* encoded, const std::uint32_t* encoded_sizes,
+                                            std::uint32_t segment_count, std::byte* packed) {
+    const auto segment = static_cast<std::uint32_t>(blockIdx.x);
+    if (segment >= segment_count) {
+        return;
+    }
+    std::uint32_t packed_offset = 0U;
+    for (std::uint32_t prior = 0; prior < segment; ++prior) {
+        packed_offset += encoded_sizes[prior];
+    }
+    const auto slot_offset = static_cast<std::size_t>(segment) * kEncodedSegmentCapacity;
+    for (std::uint32_t index = threadIdx.x; index < encoded_sizes[segment]; index += blockDim.x) {
+        packed[packed_offset + index] = encoded[slot_offset + index];
+    }
+}
+
 // Purpose: Build bounded GPU predecessor links shared by diagnostics and demand-driven encoding.
 // Inputs: Validated input, additional consumer workspace, and a synchronous consumer of borrowed device buffers.
 // Outputs: Returns the consumer's result; owns and releases index allocations, including on failure.
@@ -456,7 +475,9 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     result.h2d_bytes = input.size();
     result.primitive_version = ROCPRIM_VERSION;
     result.gpu_used = true;
-    auto consumed = consume(device_input.get(), previous.get(), result);
+    // The index stage has synchronized; its sorted-key allocation can now hold the consumer's packed output.
+    auto consumed =
+        consume(device_input.get(), previous.get(), reinterpret_cast<std::byte*>(sorted_keys.get()), key_bytes, result);
     temporary.reset_checked("free dictionary radix workspace");
     previous.reset_checked("free dictionary links");
     sorted_keys.reset_checked("free sorted dictionary keys");
@@ -474,8 +495,8 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
     const auto match_bytes = checked_multiply_bytes(input.size(), sizeof(Match), "dictionary matches");
     return with_dictionary_index(
         input, match_bytes,
-        [input, effort, match_bytes](const std::byte* device_input, const std::uint32_t* previous,
-                                     MatchBatch metadata) {
+        [input, effort, match_bytes](const std::byte* device_input, const std::uint32_t* previous, std::byte*,
+                                     std::size_t, MatchBatch metadata) {
             HipDeviceBuffer<Match> matches(match_bytes, "allocate dictionary diagnostic matches");
             const auto size = static_cast<std::uint32_t>(input.size());
             const auto blocks = (size + kThreads - 1U) / kThreads;
@@ -506,7 +527,8 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
     const auto match_bytes = dense ? input.size() * sizeof(Match) : 0U;
     return with_dictionary_index(
         input, output_bytes + sizes_bytes + match_bytes,
-        [=](const std::byte* device_input, const std::uint32_t* previous, const MatchBatch& metadata) {
+        [=](const std::byte* device_input, const std::uint32_t* previous, std::byte* packed_device,
+            std::size_t packed_capacity, const MatchBatch& metadata) {
             HipDeviceBuffer<std::byte> output(output_bytes, "allocate dictionary encoded slots");
             HipDeviceBuffer<std::uint32_t> sizes(sizes_bytes, "allocate dictionary encoded sizes");
             HipDeviceBuffer<Match> matches;
@@ -529,23 +551,35 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
             std::vector<std::uint32_t> host_sizes(segment_count);
             check_hip(hipMemcpy(host_sizes.data(), sizes.get(), sizes_bytes, hipMemcpyDeviceToHost),
                       "download dictionary encoded sizes");
+            std::size_t packed_bytes = 0U;
+            for (const auto encoded_size : host_sizes) {
+                if (encoded_size == 0U || encoded_size > kEncodedSegmentCapacity) {
+                    throw GpuError("dictionary encoder exceeded its segment capacity");
+                }
+                packed_bytes = checked_add_bytes(packed_bytes, encoded_size, "dictionary packed payload");
+            }
+            if (packed_bytes > packed_capacity) {
+                throw GpuError("dictionary packed payload exceeds the reserved key buffer");
+            }
+            compact_dictionary_segments<<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                output.get(), sizes.get(), static_cast<std::uint32_t>(segment_count), packed_device);
+            check_hip(hipGetLastError(), "launch dictionary segment compaction");
+            std::vector<std::byte> packed(packed_bytes);
+            check_hip(hipMemcpy(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
+                      "download packed dictionary blocks");
             EncodedBatch result;
             result.device_workspace_bytes = metadata.device_workspace_bytes;
             result.h2d_bytes = metadata.h2d_bytes;
-            result.d2h_bytes = sizes_bytes;
+            result.d2h_bytes = sizes_bytes + packed_bytes;
             result.gpu_used = true;
+            std::size_t packed_offset = 0U;
             for (std::size_t index = 0; index < segment_count; ++index) {
-                if (host_sizes[index] == 0U || host_sizes[index] > kEncodedSegmentCapacity) {
-                    throw GpuError("dictionary encoder exceeded its segment capacity");
-                }
                 EncodedSegment segment;
                 segment.input_bytes = static_cast<std::uint32_t>(
                     std::min(input.size() - index * kSegmentBytes, std::size_t{kSegmentBytes}));
-                segment.payload.resize(host_sizes[index]);
-                check_hip(hipMemcpy(segment.payload.data(), output.get() + index * kEncodedSegmentCapacity,
-                                    segment.payload.size(), hipMemcpyDeviceToHost),
-                          "download dictionary encoded block");
-                result.d2h_bytes += segment.payload.size();
+                segment.payload.assign(packed.begin() + static_cast<std::ptrdiff_t>(packed_offset),
+                                       packed.begin() + static_cast<std::ptrdiff_t>(packed_offset + host_sizes[index]));
+                packed_offset += host_sizes[index];
                 result.segments.push_back(std::move(segment));
             }
             sizes.reset_checked("free dictionary encoded sizes");
