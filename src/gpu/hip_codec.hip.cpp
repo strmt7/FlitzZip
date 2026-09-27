@@ -80,46 +80,54 @@ __device__ std::uint32_t gpu_prefix_read_u32(const std::byte* bytes) {
            (static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[3])) << 24U);
 }
 
-// Purpose: Read one bit from a GPU prefix segment.
-// Inputs: `stream` is a byte-aligned encoded segment and `bit_pos` is advanced in place.
-// Outputs: Returns the bit, or zero if malformed metadata points past the encoded segment.
-__device__ std::uint32_t gpu_prefix_read_bit(const std::byte* stream, std::uint32_t& bit_pos,
-                                             std::uint32_t limit_bits) {
+// Purpose: Peek a complete GPU prefix codeword with bounded byte loads.
+// Inputs: `stream` is a byte-aligned segment; `bit_pos` and `limit_bits` bound readable bits.
+// Outputs: Returns up to eleven low-order code bits, zero-padding a truncated segment.
+__device__ std::uint32_t gpu_prefix_peek_code(const std::byte* stream, std::uint32_t bit_pos,
+                                              std::uint32_t limit_bits) {
     if (bit_pos >= limit_bits) {
         return 0U;
     }
-    const auto byte_index = bit_pos / 8U;
-    const auto bit_index = bit_pos % 8U;
-    ++bit_pos;
-    return (static_cast<std::uint8_t>(stream[byte_index]) >> bit_index) & 1U;
+    const auto byte_index = bit_pos >> 3U;
+    const auto bit_shift = bit_pos & 7U;
+    const auto byte_count = limit_bits >> 3U;
+    std::uint32_t code = static_cast<std::uint8_t>(stream[byte_index]);
+    if (byte_index + 1U < byte_count) {
+        code |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(stream[byte_index + 1U])) << 8U;
+    }
+    if (bit_shift > 5U && byte_index + 2U < byte_count) {
+        code |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(stream[byte_index + 2U])) << 16U;
+    }
+    return (code >> bit_shift) & 0x7FFU;
 }
 
-// Purpose: Read a small little-bit-order field from a GPU prefix segment.
-// Inputs: `stream`, `bit_pos`, `limit_bits`, and `width` describe the encoded field.
-// Outputs: Returns the decoded field; malformed short segments decode as zero-padded.
-__device__ std::uint32_t gpu_prefix_read_bits(const std::byte* stream, std::uint32_t& bit_pos, std::uint32_t limit_bits,
-                                              std::uint32_t width) {
-    std::uint32_t value = 0;
-    for (std::uint32_t bit = 0; bit < width; ++bit) {
-        value |= gpu_prefix_read_bit(stream, bit_pos, limit_bits) << bit;
-    }
-    return value;
+// Purpose: Advance a prefix cursor without crossing a truncated segment boundary.
+// Inputs: `bit_pos` is within `limit_bits`, and `width` is the decoded codeword width.
+// Outputs: Updates `bit_pos` to the lesser of its next codeword and the segment end.
+__device__ void gpu_prefix_advance(std::uint32_t& bit_pos, std::uint32_t limit_bits, std::uint32_t width) {
+    const auto remaining = limit_bits - bit_pos;
+    bit_pos += width < remaining ? width : remaining;
 }
 
 // Purpose: Decode one byte from the static GPU prefix code.
 // Inputs: `stream`, `bit_pos`, and `limit_bits` describe one encoded segment.
 // Outputs: Returns the decoded byte; invalid high-byte payloads clamp to zero.
 __device__ std::byte gpu_prefix_decode_byte(const std::byte* stream, std::uint32_t& bit_pos, std::uint32_t limit_bits) {
-    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
-        return static_cast<std::byte>(gpu_prefix_read_bits(stream, bit_pos, limit_bits, 2U));
+    const auto code = gpu_prefix_peek_code(stream, bit_pos, limit_bits);
+    if ((code & 1U) == 0U) {
+        gpu_prefix_advance(bit_pos, limit_bits, 3U);
+        return static_cast<std::byte>((code >> 1U) & 3U);
     }
-    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
-        return static_cast<std::byte>(4U + gpu_prefix_read_bits(stream, bit_pos, limit_bits, 4U));
+    if ((code & 3U) == 1U) {
+        gpu_prefix_advance(bit_pos, limit_bits, 6U);
+        return static_cast<std::byte>(4U + ((code >> 2U) & 15U));
     }
-    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
-        return static_cast<std::byte>(20U + gpu_prefix_read_bits(stream, bit_pos, limit_bits, 6U));
+    if ((code & 7U) == 3U) {
+        gpu_prefix_advance(bit_pos, limit_bits, 9U);
+        return static_cast<std::byte>(20U + ((code >> 3U) & 63U));
     }
-    const auto high = gpu_prefix_read_bits(stream, bit_pos, limit_bits, 8U);
+    gpu_prefix_advance(bit_pos, limit_bits, 11U);
+    const auto high = (code >> 3U) & 255U;
     return high <= 171U ? static_cast<std::byte>(84U + high) : std::byte{0};
 }
 
@@ -128,17 +136,21 @@ __device__ std::byte gpu_prefix_decode_byte(const std::byte* stream, std::uint32
 // Outputs: Returns the decoded byte, using literal high-group bytes when the value was not in the codebook.
 __device__ std::byte gpu_adaptive_prefix_decode_byte(const std::byte* codebook, const std::byte* stream,
                                                      std::uint32_t& bit_pos, std::uint32_t limit_bits) {
-    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
-        return codebook[gpu_prefix_read_bits(stream, bit_pos, limit_bits, 2U)];
+    const auto code = gpu_prefix_peek_code(stream, bit_pos, limit_bits);
+    if ((code & 1U) == 0U) {
+        gpu_prefix_advance(bit_pos, limit_bits, 3U);
+        return codebook[(code >> 1U) & 3U];
     }
-    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
-        return codebook[kGpuAdaptivePrefixSmallSymbols + gpu_prefix_read_bits(stream, bit_pos, limit_bits, 4U)];
+    if ((code & 3U) == 1U) {
+        gpu_prefix_advance(bit_pos, limit_bits, 6U);
+        return codebook[kGpuAdaptivePrefixSmallSymbols + ((code >> 2U) & 15U)];
     }
-    if (gpu_prefix_read_bit(stream, bit_pos, limit_bits) == 0U) {
-        return codebook[kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols +
-                        gpu_prefix_read_bits(stream, bit_pos, limit_bits, 6U)];
+    if ((code & 7U) == 3U) {
+        gpu_prefix_advance(bit_pos, limit_bits, 9U);
+        return codebook[kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols + ((code >> 3U) & 63U)];
     }
-    return static_cast<std::byte>(gpu_prefix_read_bits(stream, bit_pos, limit_bits, 8U));
+    gpu_prefix_advance(bit_pos, limit_bits, 11U);
+    return static_cast<std::byte>((code >> 3U) & 255U);
 }
 
 // Purpose: Decode GPU prefix segments into the final device output buffer.
