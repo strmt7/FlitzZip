@@ -44,16 +44,16 @@ bool has_dictionary_sample_repeats(std::span<const std::byte> input) {
 }
 
 // Purpose: Propose a repeated distance only when distributed samples support a segment-local match.
-// Inputs: One independent dictionary segment; proposed distances are powers of two from 256 to 32 KiB.
+// Inputs: One independent dictionary segment; first try powers of two, then bounded exact-anchor offsets.
 // Outputs: Returns a sampled distance or zero; HIP must verify every reference before encoding.
 std::uint16_t sampled_periodic_distance(std::span<const std::byte> segment) {
     constexpr std::array<std::uint16_t, 8> kDistances{256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U};
     constexpr std::size_t kAnchorBytes = 16U;
     constexpr std::size_t kSamples = 128U;
-    for (const auto distance : kDistances) {
+    const auto supports_distance = [&](std::size_t distance) {
         if (segment.size() < static_cast<std::size_t>(distance) * 2U ||
             !std::equal(segment.begin(), segment.begin() + kAnchorBytes, segment.begin() + distance)) {
-            continue;
+            return false;
         }
         const auto remaining = segment.size() - distance;
         std::size_t matches = 0U;
@@ -61,8 +61,23 @@ std::uint16_t sampled_periodic_distance(std::span<const std::byte> segment) {
             const auto offset = static_cast<std::size_t>(distance) + sample * (remaining - 1U) / (kSamples - 1U);
             matches += segment[offset] == segment[offset - distance];
         }
-        if (matches * 16U >= kSamples * 15U) {
+        return matches * 16U >= kSamples * 15U;
+    };
+    for (const auto distance : kDistances) {
+        if (supports_distance(distance)) {
             return distance;
+        }
+    }
+    const auto max_distance = std::min<std::size_t>(32768U, segment.size() / 2U);
+    if (max_distance < 256U) {
+        return 0U;
+    }
+    const auto finish = segment.begin() + static_cast<std::ptrdiff_t>(max_distance + 1U);
+    for (auto candidate = std::find(segment.begin() + 256U, finish, segment.front()); candidate != finish;
+         candidate = std::find(candidate + 1, finish, segment.front())) {
+        const auto distance = static_cast<std::size_t>(candidate - segment.begin());
+        if (supports_distance(distance)) {
+            return static_cast<std::uint16_t>(distance);
         }
     }
     return 0U;

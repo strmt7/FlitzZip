@@ -129,14 +129,16 @@ std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t reco
 }
 
 // Purpose: Prove large-block HIP encoding actually selects dictionary blocks on locally repeated data.
-// Inputs: Independently seeded 64 KiB groups, level-five required HIP, and 1/8/16 MiB production block sizes.
+// Inputs: Independently seeded 64 KiB groups with 12 or 16 KiB records, level-five HIP, and production block sizes.
 // Outputs: Requires one periodic dictionary batch at 8/16 MiB and byte-exact CPU and HIP decoding.
 TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
-    for (const std::size_t block_bytes : {1024U * 1024U, 8U * 1024U * 1024U, 16U * 1024U * 1024U}) {
-        const auto input = make_segmented_records(block_bytes);
+    for (const auto [block_bytes, record_bytes] :
+         {std::pair{1024U * 1024U, 16U * 1024U}, std::pair{8U * 1024U * 1024U, 16U * 1024U},
+          std::pair{16U * 1024U * 1024U, 16U * 1024U}, std::pair{16U * 1024U * 1024U, 12U * 1024U}}) {
+        const auto input = make_segmented_records(block_bytes, record_bytes);
         superzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(block_bytes);
         options.compression_level = 5;
@@ -400,6 +402,49 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
                 }
             }
         }
+    }
+}
+
+// Purpose: Verify that one HIP batch can use different sampled distances in adjacent dictionary segments.
+// Inputs: Alternating 12 and 16 KiB records in independently seeded 64 KiB segments.
+// Outputs: Requires the periodic path and exact independent LZ4, CPU, and HIP decoding.
+TEST_CASE(dictionary_mixed_periodic_distances_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::size_t kInputBytes = 1024U * 1024U;
+    auto input = make_segmented_records(kInputBytes, 16U * 1024U);
+    const auto non_power_input = make_segmented_records(kInputBytes, 12U * 1024U);
+    for (std::size_t segment = 1U; segment < kInputBytes / kSegmentBytes; segment += 2U) {
+        const auto offset = segment * kSegmentBytes;
+        std::copy_n(non_power_input.begin() + static_cast<std::ptrdiff_t>(offset), kSegmentBytes,
+                    input.begin() + static_cast<std::ptrdiff_t>(offset));
+    }
+    superzip::GpuCodecOptions options;
+    options.block_size = static_cast<std::uint32_t>(kInputBytes);
+    options.compression_level = 5;
+    options.require_gpu = true;
+    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    const auto encoded = superzip::encode_chunk(input, options);
+    REQUIRE_EQ(encoded.blocks.size(), 1U);
+    REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 5U);
+    const auto spans = superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
+    for (const auto& span : spans) {
+        EncodedSegment segment;
+        segment.input_bytes = span.decoded_size;
+        segment.payload.assign(encoded.payload.begin() + span.encoded_offset,
+                               encoded.payload.begin() + span.encoded_offset + span.encoded_size);
+        const auto decoded = decode_reference_block(segment);
+        REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin() + span.decoded_offset));
+    }
+    for (const bool hip : {false, true}) {
+        auto decode_options = options;
+        decode_options.require_gpu = hip;
+        decode_options.force_cpu = !hip;
+        std::vector<std::byte> decoded(input.size());
+        REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+        REQUIRE_EQ(decoded, input);
     }
 }
 
