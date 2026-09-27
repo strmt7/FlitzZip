@@ -32,7 +32,7 @@ Effort effort_for_level(int level) {
         throw ArchiveError("dictionary compression level must be between 1 and 9");
     }
     const auto depth = 1U << static_cast<unsigned int>(level - 1);
-    return {.max_candidates = depth, .max_byte_comparisons = 32U * depth};
+    return {.max_candidates = depth, .max_byte_comparisons = 48U * depth};
 }
 
 // Purpose: Reject impossible device-event durations independently of successful codec execution.
