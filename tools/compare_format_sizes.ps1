@@ -3,7 +3,7 @@ param(
     [ValidateSet(4, 1024, 16384, 65536)][int[]]$SizeKiB = @(4, 1024),
     [ValidateSet('Text', 'SparseRecord', 'Incompressible')][string[]]$Profiles = @('Text', 'SparseRecord', 'Incompressible'),
     [ValidateSet(1, 5, 9)][int[]]$Levels = @(5),
-    [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)][int]$NativeBlockSizeKiB = 1024,
+    [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)][int]$NativeBlockSizeKiB = 8192,
     [string[]]$Formats = @(),
     [string]$OutputJson = '',
     [string]$SevenZipPath = ''
@@ -21,7 +21,9 @@ $sevenZip = if ($SevenZipPath) { [IO.Path]::GetFullPath($SevenZipPath) } else {
 $zstd = Join-Path $repo 'out\tools\zstd-v1.5.7-win64\zstd.exe'
 $bsdtar = (Get-Command tar.exe -ErrorAction Stop).Source
 foreach ($tool in @($cli, $sevenZip, $zstd, $bsdtar)) {
-    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Comparison tool is unavailable: $tool" }
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+        throw "Comparison tool is unavailable: $tool. Run tools\bootstrap_comparison_tools.ps1 for pinned 7-Zip and Zstandard tools."
+    }
 }
 $formatRows = @(
     [pscustomobject]@{ Key = 'suzip'; Extension = '.suzip'; LevelAware = $true }
