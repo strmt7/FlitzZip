@@ -1,6 +1,7 @@
 #include "gpu/dictionary_matcher.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "core/checksum.hpp"
+#include "core/dictionary_block.hpp"
 #include "core/result.hpp"
 #include "core/file_publish.hpp"
 #include "test_util.hpp"
@@ -102,11 +103,11 @@ std::vector<std::byte> make_near_identical_records(std::size_t size) {
 }
 
 // Purpose: Exercise dictionary-local repetition without a block-wide periodic sparse pattern.
-// Inputs: A whole number of 64 KiB segments, each with a separately seeded 16 KiB record.
-// Outputs: Returns four near-identical records per segment with no matching bases between adjacent segments.
-std::vector<std::byte> make_segmented_records(std::size_t size) {
-    constexpr std::size_t record_bytes = 16U * 1024U;
-    constexpr std::size_t segment_bytes = 4U * record_bytes;
+// Inputs: A whole number of 64 KiB segments, each with a separately seeded 12 or 16 KiB record.
+// Outputs: Returns near-identical records per segment with no matching bases between adjacent segments.
+std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t record_bytes = 16U * 1024U) {
+    constexpr std::size_t segment_bytes = kSegmentBytes;
+    REQUIRE_TRUE(record_bytes == 12U * 1024U || record_bytes == 16U * 1024U);
     std::vector<std::byte> input(size);
     for (std::size_t segment = 0; segment < size / segment_bytes; ++segment) {
         const auto base = segment * segment_bytes;
@@ -117,10 +118,11 @@ std::vector<std::byte> make_segmented_records(std::size_t size) {
             state ^= state << 5U;
             input[base + index] = static_cast<std::byte>(state >> 24U);
         }
-        for (std::size_t record = 1; record < 4U; ++record) {
-            std::copy_n(input.begin() + static_cast<std::ptrdiff_t>(base), record_bytes,
-                        input.begin() + static_cast<std::ptrdiff_t>(base + record * record_bytes));
-            input[base + record * record_bytes + 1024U] ^= static_cast<std::byte>(1U + (segment + record) % 255U);
+        for (std::size_t index = record_bytes; index < segment_bytes; ++index) {
+            input[base + index] = input[base + index % record_bytes];
+            if (index % record_bytes == 1024U) {
+                input[base + index] ^= static_cast<std::byte>(1U + (segment + index / record_bytes) % 255U);
+            }
         }
     }
     return input;
@@ -350,6 +352,39 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
     REQUIRE_EQ(gpu_decoded.d2h_bytes, input.size() + batch.segments.size() * sizeof(std::uint32_t));
     REQUIRE_TRUE(!gpu_decoded.decode_ms || (std::isfinite(*gpu_decoded.decode_ms) && *gpu_decoded.decode_ms >= 0.0));
     return payload_bytes;
+}
+
+// Purpose: Verify production periodic-index output with an independent LZ4 block reader.
+// Inputs: Periodic and non-power-of-two 1 MiB sources with level-five required-HIP compression.
+// Outputs: Requires both index paths to emit independently decodable blocks; optional export supports an external
+// reader.
+TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    for (const auto record_bytes : {16U * 1024U, 12U * 1024U}) {
+        const auto input = make_segmented_records(1024U * 1024U, record_bytes);
+        superzip::GpuCodecOptions options;
+        options.block_size = static_cast<std::uint32_t>(input.size());
+        options.compression_level = 5;
+        options.require_gpu = true;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_EQ(encoded.blocks.front().encoded_offset, 0U);
+        REQUIRE_EQ(encoded.blocks.front().encoded_len, encoded.payload.size());
+        const auto spans =
+            superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
+        for (const auto& span : spans) {
+            EncodedSegment segment;
+            segment.input_bytes = span.decoded_size;
+            segment.payload.assign(encoded.payload.begin() + span.encoded_offset,
+                                   encoded.payload.begin() + span.encoded_offset + span.encoded_size);
+            const auto decoded = decode_reference_block(segment);
+            REQUIRE_TRUE(std::equal(decoded.begin(), decoded.end(), input.begin() + span.decoded_offset));
+            export_dictionary_interop_fixture(segment, decoded);
+        }
+    }
 }
 
 // Purpose: Pack diagnostic matches with independent serial selection to check cooperative encoder equivalence.
@@ -587,10 +622,13 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
                  : std::vector<std::size_t>{kSegmentBytes, kMaxBatchBytes};
     const std::vector<int> levels = extended ? std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9} : std::vector<int>{1, 5, 9};
     for (const auto size : sizes) {
-        for (const auto profile : {0, 1, 2}) {
+        for (const auto profile : {0, 1, 2, 3}) {
             std::vector<std::byte> input(size);
+            if (profile == 3) {
+                input = make_segmented_records(size);
+            }
             std::uint32_t state = 0x5B913C27U;
-            for (std::size_t index = 0; index < size; ++index) {
+            for (std::size_t index = 0; profile != 3 && index < size; ++index) {
                 state ^= state << 13U;
                 state ^= state >> 17U;
                 state ^= state << 5U;
@@ -600,7 +638,10 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
                     input[index] = input[index % 16384U];
                 }
             }
-            const char* label = profile == 0 ? "Random" : profile == 1 ? "RepeatedRecord" : "Periodic13";
+            const char* label = profile == 0   ? "Random"
+                                : profile == 1 ? "RepeatedRecord"
+                                : profile == 2 ? "Periodic13"
+                                               : "SegmentedRecords";
             for (const int level : levels) {
                 (void)encode_segments(input, level);
                 const auto started = std::chrono::steady_clock::now();
@@ -611,7 +652,12 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
                 std::cout << "dictionary_benchmark profile=" << label << " input_bytes=" << input.size()
                           << " level=" << level << " payload_bytes=" << bytes << " encode_wall_ms=" << milliseconds
                           << " workspace_bytes=" << encoded.device_workspace_bytes << " h2d_bytes=" << encoded.h2d_bytes
-                          << " d2h_bytes=" << encoded.d2h_bytes << " search=tiled"
+                          << " d2h_bytes=" << encoded.d2h_bytes
+                          << " index_ms=" << (encoded.index_ms ? std::to_string(*encoded.index_ms) : "unavailable")
+                          << " encode_ms=" << (encoded.encode_ms ? std::to_string(*encoded.encode_ms) : "unavailable")
+                          << " compact_ms="
+                          << (encoded.compact_ms ? std::to_string(*encoded.compact_ms) : "unavailable")
+                          << " search=tiled"
                           << " gpu_used=true timing_scope=host_encode memory_only=true disk_write_bytes=0\n";
             }
         }

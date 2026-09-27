@@ -5,6 +5,7 @@
 #include "gpu/gpu_codec.hpp"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <string_view>
 #include <unordered_set>
@@ -42,6 +43,48 @@ bool has_dictionary_sample_repeats(std::span<const std::byte> input) {
     return false;
 }
 
+// Purpose: Propose a repeated distance only when distributed samples support a segment-local match.
+// Inputs: One independent dictionary segment; proposed distances are powers of two from 256 to 32 KiB.
+// Outputs: Returns a sampled distance or zero; HIP must verify every reference before encoding.
+std::uint16_t sampled_periodic_distance(std::span<const std::byte> segment) {
+    constexpr std::array<std::uint16_t, 8> kDistances{256U, 512U, 1024U, 2048U, 4096U, 8192U, 16384U, 32768U};
+    constexpr std::size_t kAnchorBytes = 16U;
+    constexpr std::size_t kSamples = 128U;
+    for (const auto distance : kDistances) {
+        if (segment.size() < static_cast<std::size_t>(distance) * 2U ||
+            !std::equal(segment.begin(), segment.begin() + kAnchorBytes, segment.begin() + distance)) {
+            continue;
+        }
+        const auto remaining = segment.size() - distance;
+        std::size_t matches = 0U;
+        for (std::size_t sample = 0U; sample < kSamples; ++sample) {
+            const auto offset = static_cast<std::size_t>(distance) + sample * (remaining - 1U) / (kSamples - 1U);
+            matches += segment[offset] == segment[offset - distance];
+        }
+        if (matches * 16U >= kSamples * 15U) {
+            return distance;
+        }
+    }
+    return 0U;
+}
+
+// Purpose: Admit a periodic-index trial only when every independent segment has a supported distance.
+// Inputs: A bounded dictionary batch; the final segment may be short.
+// Outputs: Returns one distance per segment, or empty to select the ordinary exact-prefix index.
+std::vector<std::uint16_t> sampled_batch_distances(std::span<const std::byte> input) {
+    std::vector<std::uint16_t> distances;
+    distances.reserve((input.size() + kSegmentBytes - 1U) / kSegmentBytes);
+    for (std::size_t offset = 0U; offset < input.size(); offset += kSegmentBytes) {
+        const auto segment = input.subspan(offset, std::min<std::size_t>(kSegmentBytes, input.size() - offset));
+        const auto distance = sampled_periodic_distance(segment);
+        if (distance == 0U) {
+            return {};
+        }
+        distances.push_back(distance);
+    }
+    return distances;
+}
+
 // Purpose: Screen baseline blocks before allocating a dictionary search workspace.
 // Inputs: Source bytes, their current GPU-native descriptor, and requested effort level.
 // Outputs: Returns true when a dictionary candidate can plausibly improve encoded size.
@@ -68,11 +111,15 @@ void append_segment_offset(std::vector<std::byte>& payload, std::uint32_t offset
 
 // Purpose: Account for the measured work of one dictionary batch using an existing device input buffer.
 // Inputs: Validated batch metadata, borrowed input bytes, and optional operation telemetry.
-// Outputs: Adds transfers, allocated workspace, explicit launches, and HIP device time.
+// Outputs: Adds metadata transfers, allocated workspace, explicit launches, and HIP device time.
 void record_dictionary_batch(const EncodedBatch& encoded, std::size_t input_bytes, GpuTelemetry* telemetry) {
-    if (encoded.h2d_bytes != 0U || encoded.device_workspace_bytes < input_bytes) {
+    const auto period_bytes = ((input_bytes + kSegmentBytes - 1U) / kSegmentBytes) * sizeof(std::uint16_t);
+    if ((encoded.h2d_bytes != 0U && encoded.h2d_bytes != period_bytes) ||
+        encoded.explicit_kernel_launches != (encoded.h2d_bytes == 0U ? 4U : 3U) ||
+        encoded.device_workspace_bytes < input_bytes) {
         throw GpuError("borrowed dictionary input recorded an invalid transfer or workspace");
     }
+    record_gpu_h2d_bytes(telemetry, encoded.h2d_bytes);
     record_gpu_d2h_bytes(telemetry, encoded.d2h_bytes);
     record_gpu_device_allocation_bytes(telemetry, encoded.device_workspace_bytes - input_bytes);
     record_gpu_kernel_work(telemetry, encoded.explicit_kernel_launches,
@@ -125,7 +172,8 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
     for (std::size_t offset = 0U; offset < input.size();) {
         const auto bytes = std::min<std::size_t>(kMaxBatchBytes, input.size() - offset);
         const auto batch = input.subspan(offset, bytes);
-        auto encoded = encode_segments_from_device_hip(batch, device_input + offset, effort);
+        const auto distances = sampled_batch_distances(batch);
+        auto encoded = encode_segments_from_device_hip(batch, device_input + offset, effort, distances);
         record_dictionary_batch(encoded, bytes, telemetry);
         for (auto& segment : encoded.segments) {
             segments.push_back(std::move(segment));
@@ -184,8 +232,10 @@ DictionaryReplacements select_dictionary_replacements(std::span<const std::byte>
             batch_bytes += blocks[index].uncompressed_len;
             ++index;
         }
-        const auto encoded = encode_segments_from_device_hip(input.subspan(source_offsets[first], batch_bytes),
-                                                             device_input + source_offsets[first], effort);
+        const auto batch = input.subspan(source_offsets[first], batch_bytes);
+        const auto distances = sampled_batch_distances(batch);
+        const auto encoded =
+            encode_segments_from_device_hip(batch, device_input + source_offsets[first], effort, distances);
         record_dictionary_batch(encoded, batch_bytes, telemetry);
         std::size_t segment_offset = 0U;
         for (std::size_t block = first; block < index; ++block) {

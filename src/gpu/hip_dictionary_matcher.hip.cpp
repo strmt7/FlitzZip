@@ -183,6 +183,30 @@ __global__ void link_dictionary_predecessors(const std::uint64_t* keys, std::uin
                              : kNoPrevious;
 }
 
+// Purpose: Link only device-verified four-byte prefixes at a sampled repeated distance.
+// Inputs: Bounded source bytes and one admitted distance for each independent segment.
+// Outputs: Writes backward links or the no-match sentinel for every source position.
+__global__ void link_periodic_predecessors(const std::byte* input, std::uint32_t size, const std::uint16_t* distances,
+                                           std::uint32_t* previous) {
+    const auto position = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (position >= size) {
+        return;
+    }
+    const auto segment = position / kSegmentBytes;
+    const auto segment_offset = position % kSegmentBytes;
+    const auto distance = distances[segment];
+    const auto end = min(size, (segment + 1U) * kSegmentBytes);
+    if (segment_offset < distance || end - position < kMinMatchBytes) {
+        previous[position] = kNoPrevious;
+        return;
+    }
+    std::uint32_t current = 0U;
+    std::uint32_t candidate = 0U;
+    __builtin_memcpy(&current, input + position, sizeof(current));
+    __builtin_memcpy(&candidate, input + position - distance, sizeof(candidate));
+    previous[position] = current == candidate ? position - distance : kNoPrevious;
+}
+
 // Purpose: Extend a known four-byte match with alignment-safe word reads and a bounded final byte tail.
 // Inputs: Immutable input, source positions, length limit, effort, and mutable comparison accounting.
 // Outputs: Returns only verified equal bytes; charges all bytes loaded for comparisons against the work budget.
@@ -483,6 +507,61 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     return consumed;
 }
 
+// Purpose: Build bounded segment-local predecessor links without sorting when sampling found repeated distances.
+// Inputs: Borrowed device input, one validated distance per segment, consumer workspace, and a synchronous consumer.
+// Outputs: Runs the same verified encoder contract with smaller bounded workspace or throws before exposing output.
+template <typename Consumer>
+auto with_periodic_index(std::span<const std::byte> input, std::span<const std::uint16_t> distances,
+                         std::size_t consumer_bytes, Consumer consume, const std::byte* borrowed_device_input) {
+    const auto size = static_cast<std::uint32_t>(input.size());
+    const auto blocks = (size + kThreads - 1U) / kThreads;
+    const auto period_bytes = distances.size() * sizeof(std::uint16_t);
+    const auto previous_bytes =
+        checked_multiply_bytes(input.size(), sizeof(std::uint32_t), "periodic dictionary links");
+    const auto packed_bytes = distances.size() * kEncodedSegmentCapacity;
+    auto required_bytes = checked_add_bytes(period_bytes, previous_bytes, "periodic dictionary workspace");
+    required_bytes = checked_add_bytes(required_bytes, packed_bytes, "periodic dictionary workspace");
+    required_bytes = checked_add_bytes(required_bytes, consumer_bytes, "periodic dictionary workspace");
+    const auto total_workspace_bytes = checked_add_bytes(input.size(), required_bytes, "periodic dictionary workspace");
+    if (total_workspace_bytes > kMaxWorkspaceBytes) {
+        throw GpuError("periodic dictionary workspace exceeds the per-batch GPU memory limit");
+    }
+    HipDeviceMemoryReservation reservation(required_bytes, "periodic dictionary match finder");
+    HipDeviceBuffer<std::uint16_t> device_distances(period_bytes, "allocate periodic dictionary distances");
+    HipDeviceBuffer<std::uint32_t> previous(previous_bytes, "allocate periodic dictionary links");
+    HipDeviceBuffer<std::byte> packed(packed_bytes, "allocate periodic dictionary packed output");
+    auto events = make_hip_event_pair("create periodic dictionary timing events");
+    check_hip(hipEventRecord(events.start, hipStreamPerThread), "start periodic dictionary index");
+    check_hip(hipMemcpy(device_distances.get(), distances.data(), period_bytes, hipMemcpyHostToDevice),
+              "upload periodic dictionary distances");
+    link_periodic_predecessors<<<blocks, kThreads, 0, hipStreamPerThread>>>(borrowed_device_input, size,
+                                                                            device_distances.get(), previous.get());
+    check_hip(hipGetLastError(), "launch periodic dictionary links");
+    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop periodic dictionary index");
+    MatchBatch metadata;
+    metadata.index_ms = finish_dictionary_stage(events);
+    metadata.device_workspace_bytes = total_workspace_bytes;
+    metadata.h2d_bytes = period_bytes;
+    metadata.gpu_used = true;
+    auto consumed = consume(borrowed_device_input, previous.get(), packed.get(), packed_bytes, metadata);
+    packed.reset_checked("free periodic dictionary packed output");
+    previous.reset_checked("free periodic dictionary links");
+    device_distances.reset_checked("free periodic dictionary distances");
+    return consumed;
+}
+
+// Purpose: Select the periodic or exact-prefix index while sharing the unchanged segment encoder.
+// Inputs: Validated source, consumer workspace, optional sampled distances, and borrowed device input.
+// Outputs: Returns a fully consumed encoded batch or propagates bounded HIP failures.
+template <typename Consumer>
+auto with_selected_index(std::span<const std::byte> input, std::size_t consumer_bytes, Consumer consume,
+                         const std::byte* borrowed_device_input, std::span<const std::uint16_t> periodic_distances) {
+    if (!periodic_distances.empty()) {
+        return with_periodic_index(input, periodic_distances, consumer_bytes, consume, borrowed_device_input);
+    }
+    return with_dictionary_index(input, consumer_bytes, consume, borrowed_device_input);
+}
+
 }  // namespace
 
 // Purpose: Download diagnostic matches from the shared HIP dictionary search.
@@ -514,14 +593,15 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
 }
 
 // Purpose: Encode with demand-filled tiled search and download only used bytes plus bounded sizes.
-// Inputs: Validated source, effort, and optional already uploaded bytes.
+// Inputs: Validated source, effort, optional already uploaded bytes, and optional sampled segment distances.
 // Outputs: Returns encoded segments and transfer/workspace counters, or throws before exposing incomplete output.
 EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Effort& effort,
-                                      const std::byte* borrowed_device_input) {
+                                      const std::byte* borrowed_device_input,
+                                      std::span<const std::uint16_t> periodic_distances) {
     const auto segment_count = (input.size() + kSegmentBytes - 1U) / kSegmentBytes;
     const auto output_bytes = segment_count * kEncodedSegmentCapacity;
     const auto sizes_bytes = segment_count * sizeof(std::uint32_t);
-    return with_dictionary_index(
+    return with_selected_index(
         input, output_bytes + sizes_bytes,
         [=](const std::byte* device_input, const std::uint32_t* previous, std::byte* packed_device,
             std::size_t packed_capacity, const MatchBatch& metadata) {
@@ -546,7 +626,7 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
                 packed_bytes = checked_add_bytes(packed_bytes, encoded_size, "dictionary packed payload");
             }
             if (packed_bytes > packed_capacity) {
-                throw GpuError("dictionary packed payload exceeds the reserved key buffer");
+                throw GpuError("dictionary packed payload exceeds the reserved device buffer");
             }
             auto compact_events = make_hip_event_pair("create dictionary compact timing events");
             check_hip(hipEventRecord(compact_events.start, hipStreamPerThread), "start dictionary compaction");
@@ -568,7 +648,7 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
             if (metadata.index_ms && encode_ms && compact_ms) {
                 result.device_ms = *metadata.index_ms + *encode_ms + *compact_ms;
             }
-            result.explicit_kernel_launches = 4U;
+            result.explicit_kernel_launches = periodic_distances.empty() ? 4U : 3U;
             result.gpu_used = true;
             std::size_t packed_offset = 0U;
             for (std::size_t index = 0; index < segment_count; ++index) {
@@ -584,25 +664,37 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
             output.reset_checked("free dictionary encoded slots");
             return result;
         },
-        borrowed_device_input);
+        borrowed_device_input, periodic_distances);
 }
 
 // Purpose: Preserve the standalone dictionary encoder's owned-upload contract.
 // Inputs: Validated source and effort.
 // Outputs: Returns independent LZ4 blocks with one owned host-to-device source upload.
 EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort) {
-    return encode_segments_hip_impl(input, effort, nullptr);
+    return encode_segments_hip_impl(input, effort, nullptr, {});
 }
 
 // Purpose: Encode a production candidate from bytes already uploaded by the native HIP pipeline.
-// Inputs: Bounded host/device mirrors and validated effort.
+// Inputs: Bounded host/device mirrors, validated effort, and optional admitted segment distances.
 // Outputs: Returns independent LZ4 blocks without another source upload.
 EncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
-                                             const Effort& effort) {
+                                             const Effort& effort, std::span<const std::uint16_t> periodic_distances) {
     if (input.empty() || input.size() > kMaxBatchBytes || device_input == nullptr) {
         throw GpuError("dictionary device encoding request is invalid");
     }
-    return encode_segments_hip_impl(input, effort, device_input);
+    if (!periodic_distances.empty()) {
+        if (periodic_distances.size() != (input.size() + kSegmentBytes - 1U) / kSegmentBytes) {
+            throw GpuError("periodic dictionary distances do not cover every segment");
+        }
+        for (std::size_t segment = 0U; segment < periodic_distances.size(); ++segment) {
+            const auto size = std::min<std::size_t>(kSegmentBytes, input.size() - segment * kSegmentBytes);
+            if (periodic_distances[segment] < kMinMatchBytes ||
+                static_cast<std::size_t>(periodic_distances[segment]) * 2U > size) {
+                throw GpuError("periodic dictionary distance is outside its segment");
+            }
+        }
+    }
+    return encode_segments_hip_impl(input, effort, device_input, periodic_distances);
 }
 
 // Purpose: Decode validated archive segments in existing device buffers with bounded transient workspace.
