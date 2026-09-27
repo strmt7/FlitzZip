@@ -25,25 +25,25 @@ struct ArchiveCodecOptions {
 
 // Purpose: Identify block kinds that carry bytes in the encoded payload stream.
 // Inputs: `kind` is a native SUZIP block kind.
-// Outputs: Returns true for raw, deflate, GPU pattern, static-prefix, and adaptive-prefix payload blocks.
+// Outputs: Returns true for raw, CPU-compressed, and GPU-compressed payload blocks.
 bool block_kind_has_payload(BlockKind kind);
 
 // Purpose: Encode a chunk with the bounded CPU archive codec.
-// Inputs: `input` is uncompressed data and `options` controls block size, workers, and miniz deflate level.
+// Inputs: `input` is uncompressed data and `options` controls block size, workers, and codec effort.
 // Outputs: Returns encoded descriptors and payload; throws `ArchiveError` on invalid limits.
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options);
 
-// Purpose: Detect whether a block table requires CPU deflate inflation after GPU materialization.
+// Purpose: Detect whether a block table contains a CPU-only compression kind.
 // Inputs: `blocks` is a validated or soon-to-be-validated native SUZIP block table.
-// Outputs: Returns true when any block is deflate-compressed.
-bool block_table_contains_deflate(std::span<const BlockDescriptor> blocks);
+// Outputs: Returns true when any block uses Deflate or Zstandard.
+bool block_table_contains_cpu_only(std::span<const BlockDescriptor> blocks);
 
-// Purpose: Inflate only deflate blocks into an already allocated decoded chunk buffer.
+// Purpose: Decode only CPU-compressed blocks into an already allocated decoded chunk buffer.
 // Inputs: `payload` and `blocks` describe encoded archive bytes, `output` is the decoded chunk buffer, and `options`
-// supplies worker count. Outputs: Writes deflated block ranges into `output`; throws `ArchiveError` on malformed
-// metadata or inflate failure.
-void decode_deflate_blocks_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
-                               std::span<std::byte> output, const ArchiveCodecOptions& options);
+// supplies worker count. Outputs: Writes CPU-compressed block ranges into `output`; throws on malformed
+// metadata or codec failure.
+void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                std::span<std::byte> output, const ArchiveCodecOptions& options);
 
 // Purpose: Decode a chunk entirely through the CPU archive codec.
 // Inputs: `payload` and `blocks` describe encoded archive bytes, `output` is the exact decoded buffer, and `options`

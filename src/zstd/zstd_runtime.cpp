@@ -46,6 +46,11 @@ ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName
         load_required_symbol<SetCompressionSourceSizeFn>(module, "ZSTD_CCtx_setPledgedSrcSize");
     compression_workspace_bytes_ = load_required_symbol<CompressionWorkspaceBytesFn>(module, "ZSTD_sizeof_CCtx");
     compress_stream_ = load_required_symbol<CompressStreamFn>(module, "ZSTD_compressStream2");
+    compress_block_ = load_required_symbol<CompressBlockFn>(module, "ZSTD_compress");
+    block_compress_bound_ = load_required_symbol<CompressBoundFn>(module, "ZSTD_compressBound");
+    decompress_block_ = load_required_symbol<DecompressBlockFn>(module, "ZSTD_decompress");
+    first_frame_size_ = load_required_symbol<FirstFrameSizeFn>(module, "ZSTD_findFrameCompressedSize");
+    frame_content_size_ = load_required_symbol<FrameContentSizeFn>(module, "ZSTD_getFrameContentSize");
     create_decompression_stream_ = load_required_symbol<CreateDecompressionStreamFn>(module, "ZSTD_createDStream");
     free_decompression_stream_ = load_required_symbol<FreeDecompressionStreamFn>(module, "ZSTD_freeDStream");
     set_decompression_parameter_ = load_required_symbol<SetDecompressionParameterFn>(module, "ZSTD_DCtx_setParameter");
@@ -102,6 +107,43 @@ std::size_t ZstdRuntime::compression_workspace_bytes(const ZstdCompressionContex
 std::size_t ZstdRuntime::compress_stream(ZstdCompressionContext* context, ZstdOutputBuffer* output,
                                          ZstdInputBuffer* input, ZstdEndDirective directive) const {
     return compress_stream_(context, output, input, directive);
+}
+
+// Purpose: Encode one independent native block with the pinned app-local runtime.
+// Inputs: Caller-owned input/output buffers, their byte lengths, and a bounded effort level.
+// Outputs: Returns the frame size or a runtime error code.
+std::size_t ZstdRuntime::compress_block(void* destination, std::size_t capacity, const void* source,
+                                        std::size_t source_size, int level) const {
+    return compress_block_(destination, capacity, source, source_size, level);
+}
+
+// Purpose: Query the pinned runtime for a safe one-shot output capacity.
+// Inputs: A validated block length.
+// Outputs: Returns the maximum encoded byte count or a runtime error code.
+std::size_t ZstdRuntime::block_compress_bound(std::size_t source_size) const {
+    return block_compress_bound_(source_size);
+}
+
+// Purpose: Decode one complete native block frame with the pinned app-local runtime.
+// Inputs: Caller-owned input/output buffers and their exact byte lengths.
+// Outputs: Returns decoded bytes or a runtime error code.
+std::size_t ZstdRuntime::decompress_block(void* destination, std::size_t capacity, const void* source,
+                                          std::size_t source_size) const {
+    return decompress_block_(destination, capacity, source, source_size);
+}
+
+// Purpose: Find a frame boundary before accepting any untrusted trailing payload bytes.
+// Inputs: A bounded encoded source and its byte length.
+// Outputs: Returns first-frame bytes or a runtime error code.
+std::size_t ZstdRuntime::first_frame_size(const void* source, std::size_t source_size) const {
+    return first_frame_size_(source, source_size);
+}
+
+// Purpose: Read an untrusted frame's declared output size for exact-size admission.
+// Inputs: A bounded encoded source and its byte length.
+// Outputs: Returns declared bytes or the runtime's unknown/error sentinel.
+unsigned long long ZstdRuntime::frame_content_size(const void* source, std::size_t source_size) const {
+    return frame_content_size_(source, source_size);
 }
 
 ZstdDecompressionStream* ZstdRuntime::create_decompression_stream() const {

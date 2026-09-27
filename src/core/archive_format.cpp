@@ -683,6 +683,9 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     if (has_excluded_zip_container_extension(archive_path)) {
         return ArchiveFormat::Unknown;
     }
+    if (has_suzip_footer_signature(archive_path)) {
+        return ArchiveFormat::SuperZip;
+    }
     const auto by_extension = detect_by_extension(archive_path);
     if (by_extension == ArchiveFormat::TarGzip || by_extension == ArchiveFormat::TarBzip2 ||
         by_extension == ArchiveFormat::TarXz || by_extension == ArchiveFormat::TarLzip ||
@@ -692,9 +695,6 @@ ArchiveFormat detect_archive_format(const std::filesystem::path& archive_path) {
     const auto by_magic = detect_by_magic(read_probe_bytes(archive_path), archive_path);
     if (by_magic != ArchiveFormat::Unknown) {
         return by_magic;
-    }
-    if (has_suzip_footer_signature(archive_path)) {
-        return ArchiveFormat::SuperZip;
     }
     return by_extension;
 }

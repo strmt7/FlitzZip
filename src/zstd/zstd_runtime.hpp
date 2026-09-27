@@ -80,6 +80,33 @@ class ZstdRuntime final {
     [[nodiscard]] std::size_t compress_stream(ZstdCompressionContext* context, ZstdOutputBuffer* output,
                                               ZstdInputBuffer* input, ZstdEndDirective directive) const;
 
+    // Purpose: Encode one independent bounded native block using a stable Zstandard frame.
+    // Inputs: Caller-owned `source` and `destination` spans and a backend effort level.
+    // Outputs: Returns bytes written or a Zstandard error code; never owns caller memory.
+    [[nodiscard]] std::size_t compress_block(void* destination, std::size_t capacity, const void* source,
+                                             std::size_t source_size, int level) const;
+
+    // Purpose: Bound one-shot frame output before allocating a caller-owned candidate buffer.
+    // Inputs: Validated source byte length.
+    // Outputs: Returns the maximum encoded byte count or a Zstandard error code.
+    [[nodiscard]] std::size_t block_compress_bound(std::size_t source_size) const;
+
+    // Purpose: Decode one complete Zstandard frame into an exactly sized native block.
+    // Inputs: Caller-owned encoded source and bounded decoded destination.
+    // Outputs: Returns bytes written or a Zstandard error code.
+    [[nodiscard]] std::size_t decompress_block(void* destination, std::size_t capacity, const void* source,
+                                               std::size_t source_size) const;
+
+    // Purpose: Locate the end of the first untrusted Zstandard frame.
+    // Inputs: A bounded encoded block span.
+    // Outputs: Returns the first frame's byte length or an error code for invalid framing.
+    [[nodiscard]] std::size_t first_frame_size(const void* source, std::size_t source_size) const;
+
+    // Purpose: Read the frame-declared decoded size before allocating or decoding a native block.
+    // Inputs: A bounded encoded block span.
+    // Outputs: Returns a size or Zstandard's unknown/error sentinel, which callers must reject.
+    [[nodiscard]] unsigned long long frame_content_size(const void* source, std::size_t source_size) const;
+
     // Purpose: Create a decompression stream owned by the caller.
     // Inputs: None.
     // Outputs: Returns a Zstandard decompression stream pointer or null on runtime allocation failure.
@@ -120,6 +147,11 @@ class ZstdRuntime final {
     using CompressionWorkspaceBytesFn = std::size_t (*)(const ZstdCompressionContext*);
     using CompressStreamFn = std::size_t (*)(ZstdCompressionContext*, ZstdOutputBuffer*, ZstdInputBuffer*,
                                              ZstdEndDirective);
+    using CompressBlockFn = std::size_t (*)(void*, std::size_t, const void*, std::size_t, int);
+    using CompressBoundFn = std::size_t (*)(std::size_t);
+    using DecompressBlockFn = std::size_t (*)(void*, std::size_t, const void*, std::size_t);
+    using FirstFrameSizeFn = std::size_t (*)(const void*, std::size_t);
+    using FrameContentSizeFn = unsigned long long (*)(const void*, std::size_t);
     using CreateDecompressionStreamFn = ZstdDecompressionStream* (*)();
     using FreeDecompressionStreamFn = std::size_t (*)(ZstdDecompressionStream*);
     using SetDecompressionParameterFn = std::size_t (*)(ZstdDecompressionStream*, int, int);
@@ -135,6 +167,11 @@ class ZstdRuntime final {
     SetCompressionSourceSizeFn set_compression_source_size_ = nullptr;
     CompressionWorkspaceBytesFn compression_workspace_bytes_ = nullptr;
     CompressStreamFn compress_stream_ = nullptr;
+    CompressBlockFn compress_block_ = nullptr;
+    CompressBoundFn block_compress_bound_ = nullptr;
+    DecompressBlockFn decompress_block_ = nullptr;
+    FirstFrameSizeFn first_frame_size_ = nullptr;
+    FrameContentSizeFn frame_content_size_ = nullptr;
     CreateDecompressionStreamFn create_decompression_stream_ = nullptr;
     FreeDecompressionStreamFn free_decompression_stream_ = nullptr;
     SetDecompressionParameterFn set_decompression_parameter_ = nullptr;

@@ -22,7 +22,17 @@ explicit:
 - Version 1 block descriptors distinguish raw, deflate, fill, and GPU-pattern
   materialized blocks. Version 2 adds GPU static-prefix blocks for low-entropy
   byte streams. Version 3 adds adaptive GPU-prefix blocks with bounded
-  per-block codebooks for stronger required-HIP compression levels.
+  per-block codebooks for stronger required-HIP compression levels. Version 4
+  adds GPU dictionary blocks and longer pattern motifs. Version 5 adds GPU
+  sparse-pattern blocks. Version 6 adds CPU-only Zstandard frames as block kind
+  8. Earlier versions remain readable, but readers predating version 6 cannot
+  open archives containing that new block kind.
+- CPU compression tries one independently framed Zstandard block for non-fill
+  blocks of at least 4 KiB, retaining Deflate for shorter blocks. It records
+  Zstandard only when the result is smaller than raw. The reader requires one
+  complete frame with an exact declared decoded size and rejects trailing
+  frames or bytes. Required-HIP decode and verification reject both CPU-only
+  compression kinds.
 - Required-GPU operations fail when the archive requires CPU-only block
   handling.
 - Extraction and verification validate metadata, payload windows, decoded sizes,
@@ -35,8 +45,11 @@ Small-file GPU submission batching preserves these version-three records and
 independent file boundaries. See [the batching contract](small-file-gpu-batching.md)
 for its resource limits, byte-identity tests, and measurement scope.
 
-Format detection now treats `.suzip` as an extension hint and the footer/index
-magic as the native signature. A renamed native archive can be identified by:
+Format detection treats `.suzip` as an extension hint and the footer/index
+magic as the stronger native structural signature. Native payload bytes can
+begin with another codec's magic, including a version-six Zstandard frame;
+the native footer/index signature takes precedence over leading magic and
+extension hints. A renamed native archive can be identified by:
 
 1. Reading the final 24-byte footer.
 2. Verifying `SUZF` and the current format version.
@@ -49,15 +62,14 @@ side-effect free.
 
 ```mermaid
 flowchart TD
-    A["Candidate file"] --> B{"Compound extension?"}
-    B -- "Yes" --> C["Use compound compatibility format"]
-    B -- "No" --> D["Probe leading magic bytes"]
-    D --> E{"Known compatibility magic?"}
-    E -- "Yes" --> F["Return compatibility format"]
-    E -- "No" --> G["Probe SUZIP footer"]
-    G --> H{"SUZF footer and SUZP index magic valid?"}
-    H -- "Yes" --> I["Return native SUZIP"]
-    H -- "No" --> J["Fall back to extension or unknown"]
+    A["Candidate file"] --> B{"Native footer/index signature?"}
+    B -- "Yes" --> C["Use native SUZIP"]
+    B -- "No" --> D{"Compound extension?"}
+    D -- "Yes" --> E["Use compound compatibility format"]
+    D -- "No" --> F["Probe leading magic bytes"]
+    F --> G{"Known compatibility magic?"}
+    G -- "Yes" --> H["Return compatibility format"]
+    G -- "No" --> I["Fall back to extension or unknown"]
 ```
 
 ## Security Rules
@@ -68,8 +80,8 @@ flowchart TD
   operation options.
 - Do not accept CPU-only fallback in required-GPU mode.
 - Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, GPU
-  static-prefix, and GPU adaptive-prefix blocks. It must not emit CPU-deflate
-  blocks.
+  static-prefix, GPU adaptive-prefix, GPU dictionary, and GPU sparse-pattern
+  blocks. It must not emit CPU Deflate or Zstandard blocks.
 - GPU static-prefix and adaptive-prefix blocks are native SUZIP blocks. They are
   not ZIP, Deflate, Zstandard, or a compatibility-format wrapper.
 - Keep native-format benchmark claims separate from compatibility-format claims.

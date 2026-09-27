@@ -44,7 +44,7 @@ constexpr std::uint32_t kGpuAdaptivePrefixLargeSymbols = 64U;
 constexpr std::uint32_t kGpuAdaptivePrefixCodebookBytes =
     kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols + kGpuAdaptivePrefixLargeSymbols;
 
-// SUZIP deflate levels mirror zlib/miniz levels while avoiding store-only mode.
+// SUZIP CPU codec levels map to bounded Deflate or Zstandard effort without a store-only mode.
 constexpr int kMinCompressionLevel = 1;
 constexpr int kDefaultCompressionLevel = 5;
 constexpr int kMaxCompressionLevel = 9;

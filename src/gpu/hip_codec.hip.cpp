@@ -1229,7 +1229,7 @@ EncodedBlockBatch encode_owned_block_batch_hip(std::vector<std::byte>& input, st
 
 // Purpose: Decode GPU-supported block kinds into a caller-provided host buffer through AMD HIP.
 // Inputs: `payload` and `blocks` are validated archive metadata, `output` is exact decoded storage, and `options`
-// supplies telemetry. Outputs: Writes decoded bytes into `output`; throws `GpuError` when CPU-deflate blocks require
+// supplies telemetry. Outputs: Writes decoded bytes into `output`; throws `GpuError` when CPU-only blocks require
 // the CPU codec.
 void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                       std::span<std::byte> output, const GpuCodecOptions& options) {
@@ -1237,8 +1237,8 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
         return;
     }
     for (const auto& block : blocks) {
-        if (block.kind == BlockKind::Deflate) {
-            throw GpuError("AMD HIP decode does not support CPU-deflate blocks");
+        if (block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) {
+            throw GpuError("AMD HIP decode does not support CPU-compressed blocks");
         }
     }
     auto* telemetry = options.telemetry.get();
@@ -1296,8 +1296,8 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
         throw ArchiveError("decode output exceeds SuperZip resource limit");
     }
     for (const auto& block : blocks) {
-        if (block.kind == BlockKind::Deflate) {
-            throw GpuError("AMD HIP CRC verification does not support CPU-deflate blocks");
+        if (block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) {
+            throw GpuError("AMD HIP CRC verification does not support CPU-compressed blocks");
         }
     }
     auto* telemetry = options.telemetry.get();

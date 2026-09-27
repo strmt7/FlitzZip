@@ -31,11 +31,14 @@ void write_text_fixture(const std::filesystem::path& path, const std::string& te
 }
 
 // Purpose: Write a minimal native archive shell for format-detection tests.
-// Inputs: `path` is the fixture location and `version` is a readable native version.
+// Inputs: `path` is the fixture location, `version` is readable, and `prefix` mimics encoded payload bytes.
 // Outputs: Creates a zero-entry SUZIP-shaped file with valid index/footer magic.
-void write_minimal_suzip_fixture(const std::filesystem::path& path,
-                                 std::uint32_t version = superzip::kSuperZipVersion) {
+void write_minimal_suzip_fixture(const std::filesystem::path& path, std::uint32_t version = superzip::kSuperZipVersion,
+                                 std::span<const unsigned char> prefix = {}) {
     std::ofstream output(path, std::ios::binary);
+    if (!prefix.empty()) {
+        output.write(reinterpret_cast<const char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()));
+    }
     const auto index_offset = static_cast<std::uint64_t>(output.tellp());
     superzip::write_u32(output, superzip::kSuperZipMagic);
     superzip::write_u32(output, version);
@@ -188,6 +191,10 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     write_minimal_suzip_fixture(root / "renamed-native.bin");
     write_minimal_suzip_fixture(root / "renamed-native-v4.bin", 4U);
     write_minimal_suzip_fixture(root / "renamed-native-v5.bin", 5U);
+    const std::array<unsigned char, 4> zstd_magic{0x28, 0xB5, 0x2F, 0xFD};
+    write_minimal_suzip_fixture(root / "native-zstd.suzip", 6U, zstd_magic);
+    write_minimal_suzip_fixture(root / "renamed-native-zstd.bin", 6U, zstd_magic);
+    write_minimal_suzip_fixture(root / "renamed-native-zstd.zst", 6U, zstd_magic);
     const auto uue_begin = std::array<unsigned char, 24>{'b', 'e', 'g', 'i', 'n', ' ', '6', '4', '4', ' ',  'p', 'a',
                                                          'y', 'l', 'o', 'a', 'd', '.', 't', 'x', 't', '\n', '`', '\n'};
     write_fixture(root / "uue.bin", uue_begin);
@@ -220,6 +227,9 @@ TEST_CASE(archive_format_detects_real_archive_magic_bytes) {
     REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native.bin"), superzip::ArchiveFormat::SuperZip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-v4.bin"), superzip::ArchiveFormat::SuperZip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-v5.bin"), superzip::ArchiveFormat::SuperZip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "native-zstd.suzip"), superzip::ArchiveFormat::SuperZip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-zstd.bin"), superzip::ArchiveFormat::SuperZip);
+    REQUIRE_EQ(superzip::detect_archive_format(root / "renamed-native-zstd.zst"), superzip::ArchiveFormat::SuperZip);
     REQUIRE_EQ(superzip::detect_archive_format(root / "xxe.bin"), superzip::ArchiveFormat::Xxe);
     REQUIRE_EQ(superzip::detect_archive_format(root / "uue.bin"), superzip::ArchiveFormat::Uue);
 

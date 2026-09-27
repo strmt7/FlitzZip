@@ -135,13 +135,13 @@ TEST_CASE(suzip_rejects_footer_index_version_mismatch) {
 }
 
 // Purpose: Prevent older native versions from claiming block encodings they do not define.
-// Inputs: Prefix, dictionary, and sparse descriptors paired with pre-introduction versions.
+// Inputs: Prefix, dictionary, sparse, and Zstandard descriptors paired with pre-introduction versions.
 // Outputs: Both the writer and parser reject unsupported version/block combinations.
 TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
     for (const auto [version, kind] :
          {std::pair{1U, superzip::BlockKind::GpuPrefix}, std::pair{1U, superzip::BlockKind::GpuAdaptivePrefix},
           std::pair{2U, superzip::BlockKind::GpuAdaptivePrefix}, std::pair{3U, superzip::BlockKind::GpuDictionary},
-          std::pair{4U, superzip::BlockKind::GpuSparsePattern}}) {
+          std::pair{4U, superzip::BlockKind::GpuSparsePattern}, std::pair{5U, superzip::BlockKind::CpuZstd}}) {
         superzip::ArchiveIndex index;
         index.version = version;
         superzip::ArchiveEntry entry;
@@ -561,6 +561,171 @@ TEST_CASE(suzip_cpu_short_blocks_use_smaller_deflate) {
             }
         }
     }
+}
+
+// Purpose: Require a bounded native CPU Zstandard frame for compressible full blocks at every effort.
+// Inputs: A deterministic periodic block and product levels one through nine.
+// Outputs: Requires version-six block kind, smaller payload, and byte-exact CPU decode.
+TEST_CASE(suzip_cpu_zstd_blocks_all_levels_roundtrip) {
+    std::vector<std::byte> input(256U * 1024U);
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        input[i] = static_cast<std::byte>('a' + ((i / 31U) % 17U));
+    }
+    for (int level = 1; level <= 9; ++level) {
+        superzip::GpuCodecOptions options;
+        options.force_cpu = true;
+        options.require_gpu = false;
+        options.compression_level = level;
+        options.block_size = static_cast<std::uint32_t>(input.size());
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::CpuZstd);
+        REQUIRE_TRUE(encoded.payload.size() < input.size());
+        std::vector<std::byte> decoded(input.size());
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+        REQUIRE_EQ(decoded, input);
+    }
+}
+
+// Purpose: Preserve dense payload assembly when a CPU chunk mixes all native CPU block representations.
+// Inputs: One Zstandard, random raw, fill, and short Deflate block with single/multiple worker budgets.
+// Outputs: Requires stable kinds, contiguous encoded offsets, and byte-exact decode.
+TEST_CASE(suzip_cpu_zstd_mixed_block_layout) {
+    constexpr std::size_t block_size = superzip::kMinArchiveBlockBytes;
+    std::vector<std::byte> input(block_size * 3U + 127U);
+    for (std::size_t i = 0; i < block_size; ++i) {
+        input[i] = static_cast<std::byte>('a' + (i % 7U));
+    }
+    std::uint32_t state = 0xB179E34DU;
+    for (std::size_t i = block_size; i < block_size * 2U; ++i) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        input[i] = static_cast<std::byte>(state & 255U);
+    }
+    std::fill(input.begin() + static_cast<std::ptrdiff_t>(block_size * 2U),
+              input.begin() + static_cast<std::ptrdiff_t>(block_size * 3U), std::byte{'F'});
+    for (std::size_t i = block_size * 3U; i < input.size(); ++i) {
+        input[i] = static_cast<std::byte>('a' + (i % 3U));
+    }
+    for (const auto workers : {1U, 4U}) {
+        superzip::GpuCodecOptions options;
+        options.force_cpu = true;
+        options.require_gpu = false;
+        options.block_size = static_cast<std::uint32_t>(block_size);
+        options.worker_count = workers;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.blocks.size(), 4U);
+        REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::CpuZstd);
+        REQUIRE_EQ(encoded.blocks[1].kind, superzip::BlockKind::Raw);
+        REQUIRE_EQ(encoded.blocks[2].kind, superzip::BlockKind::Fill);
+        REQUIRE_EQ(encoded.blocks[3].kind, superzip::BlockKind::Deflate);
+        REQUIRE_EQ(encoded.blocks[0].encoded_offset, 0U);
+        REQUIRE_EQ(encoded.blocks[1].encoded_offset, encoded.blocks[0].encoded_len);
+        REQUIRE_EQ(encoded.blocks[3].encoded_offset, encoded.blocks[1].encoded_offset + encoded.blocks[1].encoded_len);
+        std::vector<std::byte> decoded(input.size());
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+        REQUIRE_EQ(decoded, input);
+    }
+}
+
+// Purpose: Reject invalid native CPU frame boundaries and protect version-six publication.
+// Inputs: One valid frame, truncated and concatenated frames, trailing bytes, and a lying decoded-size declaration.
+// Outputs: Valid CPU verification/extraction succeeds; invalid archives fail before output publication.
+TEST_CASE(suzip_cpu_zstd_archive_frame_validation) {
+    const auto root = test_temp_dir("suzip-cpu-zstd-frame");
+    std::string decoded(64U * 1024U, 'Z');
+    for (std::size_t i = 0; i < decoded.size(); i += 53U) {
+        decoded[i] = 'Q';
+    }
+    const auto source = std::as_bytes(std::span(decoded.data(), decoded.size()));
+    superzip::GpuCodecOptions codec;
+    codec.force_cpu = true;
+    codec.require_gpu = false;
+    codec.block_size = static_cast<std::uint32_t>(decoded.size());
+    const auto encoded = superzip::encode_chunk(source, codec);
+    REQUIRE_EQ(encoded.blocks.size(), 1U);
+    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::CpuZstd);
+
+    superzip::ExtractOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    const auto valid = root / "valid.suzip";
+    write_encoded_test_archive(valid, encoded.payload, decoded, superzip::BlockKind::CpuZstd, 6U);
+    REQUIRE_EQ(read_test_archive_index(valid).version, 6U);
+    REQUIRE_EQ(superzip::verify_suzip(valid, options).entries, 1U);
+    const auto destination = root / "valid-output";
+    REQUIRE_EQ(superzip::extract_suzip(valid, destination, options).entries, 1U);
+    std::ifstream restored(destination / "data.bin", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), decoded);
+    restored.close();
+
+    auto truncated = encoded.payload;
+    truncated.pop_back();
+    auto trailing = encoded.payload;
+    trailing.push_back(std::byte{0});
+    auto concatenated = encoded.payload;
+    concatenated.insert(concatenated.end(), encoded.payload.begin(), encoded.payload.end());
+    for (const auto& [name, bytes] : {std::pair{"truncated", truncated}, std::pair{"trailing", trailing},
+                                      std::pair{"concatenated", concatenated}}) {
+        const auto archive = root / (std::string(name) + ".suzip");
+        write_encoded_test_archive(archive, bytes, decoded, superzip::BlockKind::CpuZstd, 6U);
+        bool rejected = false;
+        try {
+            (void)superzip::verify_suzip(archive, options);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        const auto invalid_destination = root / (std::string(name) + "-output");
+        rejected = false;
+        try {
+            (void)superzip::extract_suzip(archive, invalid_destination, options);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(!std::filesystem::exists(invalid_destination / "data.bin"));
+    }
+    const auto wrong_size = root / "wrong-size.suzip";
+    write_encoded_test_archive(wrong_size, encoded.payload, decoded + "Q", superzip::BlockKind::CpuZstd, 6U);
+    bool rejected = false;
+    try {
+        (void)superzip::verify_suzip(wrong_size, options);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve public reading of short legacy Deflate blocks after adding native Zstandard blocks.
+// Inputs: A version-three archive containing a product-generated short Deflate payload.
+// Outputs: Requires exact verification and extraction through the unchanged legacy CPU decoder.
+TEST_CASE(suzip_legacy_deflate_archive_remains_readable) {
+    const auto root = test_temp_dir("suzip-legacy-deflate");
+    std::string decoded(127U, 'a');
+    for (std::size_t i = 0; i < decoded.size(); i += 3U) {
+        decoded[i] = 'b';
+    }
+    superzip::GpuCodecOptions codec;
+    codec.force_cpu = true;
+    codec.require_gpu = false;
+    const auto encoded = superzip::encode_chunk(std::as_bytes(std::span(decoded.data(), decoded.size())), codec);
+    REQUIRE_EQ(encoded.blocks.size(), 1U);
+    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::Deflate);
+    const auto archive = root / "legacy.suzip";
+    write_encoded_test_archive(archive, encoded.payload, decoded, superzip::BlockKind::Deflate, 3U);
+    superzip::ExtractOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    REQUIRE_EQ(superzip::verify_suzip(archive, options).entries, 1U);
+    const auto destination = root / "output";
+    REQUIRE_EQ(superzip::extract_suzip(archive, destination, options).entries, 1U);
+    std::ifstream restored(destination / "data.bin", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), {}), decoded);
+    restored.close();
+    std::filesystem::remove_all(root);
 }
 
 // Purpose: Retain compression of a short final block after full-sized raw data in parallel CPU work.
@@ -1296,20 +1461,20 @@ TEST_CASE(suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks) {
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Verify required-HIP verification refuses archives that need CPU deflate.
-// Inputs: A force-CPU text archive that intentionally contains miniz deflate blocks.
-// Outputs: Throws if `gpu_required` silently invokes the CPU deflate codec.
-TEST_CASE(suzip_required_gpu_rejects_cpu_deflate_archive) {
+// Purpose: Verify required-HIP verification refuses archives that need CPU Zstandard.
+// Inputs: A force-CPU text archive that intentionally contains Zstandard blocks.
+// Outputs: Throws if `gpu_required` silently invokes the CPU Zstandard codec.
+TEST_CASE(suzip_required_gpu_rejects_cpu_zstd_archive) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
 
-    const auto root = test_temp_dir("suzip-required-gpu-rejects-deflate");
-    const auto input = root / "cpu-deflate.txt";
+    const auto root = test_temp_dir("suzip-required-gpu-rejects-zstd");
+    const auto input = root / "cpu-zstd.txt";
     {
         std::ofstream out(input, std::ios::binary);
         for (int i = 0; i < 32768; ++i) {
-            out << "CPU deflate archive block for required HIP rejection.\n";
+            out << "CPU Zstandard archive block for required HIP rejection.\n";
         }
     }
     const auto archive = root / "archive.suzip";
@@ -1324,7 +1489,8 @@ TEST_CASE(suzip_required_gpu_rejects_cpu_deflate_archive) {
     REQUIRE_TRUE(compressed.output_bytes < std::filesystem::file_size(input) / 4U);
 
     const auto index = read_test_archive_index(archive);
-    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::Deflate));
+    REQUIRE_EQ(index.version, 6U);
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::CpuZstd));
 
     superzip::ExtractOptions verify;
     verify.gpu_required = true;
@@ -1348,7 +1514,7 @@ TEST_CASE(suzip_required_gpu_rejects_cpu_deflate_archive) {
         rejected = true;
     }
     REQUIRE_TRUE(rejected);
-    REQUIRE_TRUE(!std::filesystem::exists(output / "cpu-deflate.txt"));
+    REQUIRE_TRUE(!std::filesystem::exists(output / "cpu-zstd.txt"));
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
     std::filesystem::remove_all(root);
 }

@@ -95,9 +95,9 @@ struct ArchiveValidationSummary {
 // Inputs: `kind` is a native SUZIP block encoding kind.
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
 bool block_has_payload(BlockKind kind) {
-    return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
-           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix || kind == BlockKind::GpuDictionary ||
-           kind == BlockKind::GpuSparsePattern;
+    return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
+           kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
+           kind == BlockKind::GpuDictionary || kind == BlockKind::GpuSparsePattern;
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -255,9 +255,9 @@ void validate_archive_options(std::uint64_t chunk_size, std::uint32_t block_size
     }
 }
 
-// Purpose: Validate the miniz deflate compression level used for native SUZIP blocks.
-// Inputs: `compression_level` is the caller-selected miniz level.
-// Outputs: Returns normally for levels accepted by miniz; throws `ArchiveError` otherwise.
+// Purpose: Validate the shared native CPU codec effort before any block work.
+// Inputs: `compression_level` is the caller-selected product level.
+// Outputs: Returns for supported levels one through nine; throws `ArchiveError` otherwise.
 void validate_compression_level(int compression_level) {
     if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
         throw ArchiveError("compression level must be between 1 and 9");
@@ -599,7 +599,7 @@ std::uint64_t gpu_dictionary_table_bytes(std::uint32_t decoded_len) {
 // Outputs: Returns normally for a supported non-empty bounded block; throws `ArchiveError` otherwise.
 void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescriptor& block) {
     if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
-        block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
+        block.kind != BlockKind::CpuZstd && block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
         block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuDictionary &&
         block.kind != BlockKind::GpuSparsePattern) {
         throw ArchiveError("archive block has unknown encoding kind");
@@ -645,6 +645,12 @@ std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const B
         }
         require_dense_payload_offset(entry, block, payload_cursor, "deflate");
         return checked_add_u64(payload_cursor, block.encoded_len, "deflate block payload size overflows");
+    case BlockKind::CpuZstd:
+        if (block.encoded_len == 0 || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("Zstandard block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "Zstandard");
+        return checked_add_u64(payload_cursor, block.encoded_len, "Zstandard block payload size overflows");
     case BlockKind::Pattern:
         if (block.encoded_len < 2 || block.encoded_len > kMaxGpuPatternBytes ||
             block.encoded_len >= block.uncompressed_len) {
@@ -870,17 +876,18 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 
 // Purpose: Select the smallest native version that defines every encoded block.
 // Inputs: A completed archive index with all file block descriptors.
-// Outputs: Returns version three, four, or five without downgrading a new block kind.
+// Outputs: Returns version three through six without downgrading a new block kind.
 std::uint32_t required_archive_version(const ArchiveIndex& index) {
     std::uint32_t version = kSuperZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == BlockKind::GpuSparsePattern) {
-                return 5U;
-            }
-            if (block.kind == BlockKind::GpuDictionary ||
-                (block.kind == BlockKind::Pattern && block.encoded_len > kLegacyGpuPatternBytes)) {
-                version = 4U;
+            if (block.kind == BlockKind::CpuZstd) {
+                version = 6U;
+            } else if (block.kind == BlockKind::GpuSparsePattern) {
+                version = std::max(version, 5U);
+            } else if (block.kind == BlockKind::GpuDictionary ||
+                       (block.kind == BlockKind::Pattern && block.encoded_len > kLegacyGpuPatternBytes)) {
+                version = std::max(version, 4U);
             }
         }
     }

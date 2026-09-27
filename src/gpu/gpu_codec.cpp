@@ -110,14 +110,14 @@ EncodedBlockBatch encode_block_batch_cpu(std::span<const std::byte> input, std::
 }
 
 #if SUPERZIP_ENABLE_HIP
-// Purpose: Reject CPU-deflate block tables before entering the AMD HIP-only decode path.
+// Purpose: Reject CPU-only block tables before entering the AMD HIP-only decode path.
 // Inputs: `blocks` is the archive chunk block table and `action` labels the failing operation.
-// Outputs: Returns for HIP-supported block kinds; throws `GpuError` for CPU-deflate data.
-void reject_deflate_blocks_for_hip(std::span<const BlockDescriptor> blocks, const char* action) {
-    if (block_table_contains_deflate(blocks)) {
-        throw GpuError(
-            std::string("AMD HIP ") + action +
-            " cannot process CPU-deflate SUZIP blocks; use the CPU codec or recreate the archive with the HIP codec");
+// Outputs: Returns for HIP-supported block kinds; throws `GpuError` for CPU-compressed data.
+void reject_cpu_only_blocks_for_hip(std::span<const BlockDescriptor> blocks, const char* action) {
+    if (block_table_contains_cpu_only(blocks)) {
+        throw GpuError(std::string("AMD HIP ") + action +
+                       " cannot process CPU-compressed SUZIP blocks; use the CPU codec or recreate the archive with "
+                       "the HIP codec");
     }
 }
 
@@ -469,7 +469,7 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
-            reject_deflate_blocks_for_hip(blocks, "decode");
+            reject_cpu_only_blocks_for_hip(blocks, "decode");
             decode_chunk_hip(payload, blocks, output, hip_options);
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return true;
@@ -510,7 +510,7 @@ DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
-            reject_deflate_blocks_for_hip(blocks, "CRC verification");
+            reject_cpu_only_blocks_for_hip(blocks, "CRC verification");
             auto decoded = DecodedChunkCrc{
                 .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
                 .gpu_used = true,

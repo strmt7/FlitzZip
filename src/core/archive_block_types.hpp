@@ -13,6 +13,7 @@ enum class BlockKind : std::uint8_t {
     GpuAdaptivePrefix = 5,
     GpuDictionary = 6,
     GpuSparsePattern = 7,
+    CpuZstd = 8,
 };
 
 inline constexpr std::uint32_t kGpuDictionarySegmentBytes = 65536U;

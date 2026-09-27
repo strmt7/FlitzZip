@@ -3,6 +3,7 @@
 #include "core/sparse_pattern_block.hpp"
 
 #include "core/result.hpp"
+#include "zstd/zstd_runtime.hpp"
 
 #include "miniz.h"
 #include "lz4.h"
@@ -22,7 +23,7 @@ struct EncodedBlockWork {
 };
 
 // Purpose: Validate CPU archive codec options before block work begins.
-// Inputs: `options` contains block size, worker count, and deflate level.
+// Inputs: `options` contains block size, worker count, and CPU codec effort.
 // Outputs: Returns normally for bounded settings; throws `ArchiveError` otherwise.
 void validate_encode_options(const ArchiveCodecOptions& options) {
     if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
@@ -110,6 +111,29 @@ std::vector<std::byte> try_deflate_block(std::span<const std::byte> block, int c
     return compressed;
 }
 
+// Purpose: Encode a bounded native CPU block with the pinned Zstandard runtime only when it saves bytes.
+// Inputs: One non-fill source block and a validated product effort level 1-9.
+// Outputs: Returns one complete frame smaller than raw, or empty; throws on runtime failure.
+std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int compression_level) {
+    const auto& zstd = zstd_runtime();
+    const auto bound = zstd.block_compress_bound(block.size());
+    if (zstd.is_error(bound) || bound < block.size() ||
+        bound > kMaxArchiveBlockBytes + kMaxArchiveBlockBytes / 128U + 128U) {
+        throw ArchiveError("Zstandard native block capacity is invalid");
+    }
+    std::vector<std::byte> compressed(bound);
+    const auto written =
+        zstd.compress_block(compressed.data(), compressed.size(), block.data(), block.size(), compression_level);
+    if (zstd.is_error(written)) {
+        throw ArchiveError("Zstandard native block compression failed: " + zstd.error_name(written));
+    }
+    if (written >= block.size()) {
+        return {};
+    }
+    compressed.resize(written);
+    return compressed;
+}
+
 // Purpose: Inflate one miniz deflate payload into the caller-owned output span.
 // Inputs: `payload`, `encoded_offset`, `encoded_len`, and `output` describe one block.
 // Outputs: Writes exactly `output.size()` bytes or throws `ArchiveError`.
@@ -122,6 +146,22 @@ void inflate_deflate_block(std::span<const std::byte> payload, std::uint64_t enc
                    static_cast<mz_ulong>(encoded_len));
     if (status != MZ_OK || output_len != output.size()) {
         throw ArchiveError("deflate block failed to decompress");
+    }
+}
+
+// Purpose: Decode exactly one bounded version-six CPU frame without accepting trailing or size-lying input.
+// Inputs: An untrusted encoded block payload and its already bounded exact output span.
+// Outputs: Restores all bytes or throws `ArchiveError` before output publication.
+void materialize_zstd_block_cpu(std::span<const std::byte> encoded, std::span<std::byte> output) {
+    const auto& zstd = zstd_runtime();
+    const auto first_frame = zstd.first_frame_size(encoded.data(), encoded.size());
+    if (zstd.is_error(first_frame) || first_frame != encoded.size() ||
+        zstd.frame_content_size(encoded.data(), encoded.size()) != output.size()) {
+        throw ArchiveError("Zstandard native block frame metadata is invalid");
+    }
+    const auto written = zstd.decompress_block(output.data(), output.size(), encoded.data(), encoded.size());
+    if (zstd.is_error(written) || written != output.size()) {
+        throw ArchiveError("Zstandard native block failed to decompress");
     }
 }
 
@@ -346,6 +386,9 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
             if (block.kind == BlockKind::Raw && encoded_len != len) {
                 throw ArchiveError("raw block length does not match decoded length");
             }
+            if ((block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) && encoded_len >= len) {
+                throw ArchiveError("CPU-compressed block length is invalid");
+            }
             if (block.kind == BlockKind::Pattern &&
                 (encoded_len < 2 || encoded_len > kMaxGpuPatternBytes || encoded_len >= len)) {
                 throw ArchiveError("GPU pattern block metadata is invalid");
@@ -410,6 +453,10 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                             output.data() + out_pos);
             } else if (block.kind == BlockKind::Deflate) {
                 inflate_deflate_block(payload, block.encoded_offset, block.encoded_len, output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::CpuZstd) {
+                materialize_zstd_block_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                           static_cast<std::size_t>(block.encoded_len)),
+                                           output.subspan(out_pos, len));
             } else if (block.kind == BlockKind::Pattern) {
                 materialize_pattern_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                         static_cast<std::size_t>(block.encoded_len)),
@@ -441,11 +488,11 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 
 // Purpose: Report whether a SUZIP block kind reserves bytes in the encoded payload window.
 // Inputs: `kind` is a native archive block encoding tag.
-// Outputs: Returns true for raw, deflate, GPU-pattern, and GPU-prefix block payloads.
+// Outputs: Returns true for raw, CPU-compressed, and GPU-compressed payload blocks.
 bool block_kind_has_payload(BlockKind kind) {
-    return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
-           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix || kind == BlockKind::GpuDictionary ||
-           kind == BlockKind::GpuSparsePattern;
+    return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
+           kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
+           kind == BlockKind::GpuDictionary || kind == BlockKind::GpuSparsePattern;
 }
 
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {
@@ -457,43 +504,48 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     const auto block_count = (input.size() + block_size - 1U) / block_size;
     std::vector<EncodedBlockWork> block_work(block_count);
 
-    run_parallel_ranges(block_count, options.worker_count, [&](std::size_t begin, std::size_t end) {
-        for (std::size_t i = begin; i < end; ++i) {
-            const auto pos = i * static_cast<std::size_t>(block_size);
-            const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
-            const auto block = input.subspan(pos, len);
-            std::uint8_t fill = 0;
-            if (block_is_fill(block, fill)) {
-                block_work[i].descriptor = BlockDescriptor{
-                    .kind = BlockKind::Fill,
-                    .fill_value = fill,
-                    .uncompressed_len = len,
-                    .encoded_offset = 0,
-                    .encoded_len = 0,
-                };
-            } else {
-                auto compressed = try_deflate_block(block, options.compression_level);
-                if (!compressed.empty()) {
+    // One-shot Zstandard contexts are bounded individually; cap concurrent candidates on smaller hosts.
+    constexpr std::uint32_t kMaxConcurrentZstdBlocks = 4U;
+    run_parallel_ranges(
+        block_count, std::min(options.worker_count, kMaxConcurrentZstdBlocks), [&](std::size_t begin, std::size_t end) {
+            for (std::size_t i = begin; i < end; ++i) {
+                const auto pos = i * static_cast<std::size_t>(block_size);
+                const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
+                const auto block = input.subspan(pos, len);
+                std::uint8_t fill = 0;
+                if (block_is_fill(block, fill)) {
                     block_work[i].descriptor = BlockDescriptor{
-                        .kind = BlockKind::Deflate,
-                        .fill_value = 0,
+                        .kind = BlockKind::Fill,
+                        .fill_value = fill,
                         .uncompressed_len = len,
                         .encoded_offset = 0,
-                        .encoded_len = static_cast<std::uint32_t>(compressed.size()),
+                        .encoded_len = 0,
                     };
-                    block_work[i].payload = std::move(compressed);
                 } else {
-                    block_work[i].descriptor = BlockDescriptor{
-                        .kind = BlockKind::Raw,
-                        .fill_value = 0,
-                        .uncompressed_len = len,
-                        .encoded_offset = 0,
-                        .encoded_len = len,
-                    };
+                    const bool use_zstd = block.size() >= kMinArchiveBlockBytes;
+                    auto compressed = use_zstd ? try_zstd_block(block, options.compression_level)
+                                               : try_deflate_block(block, options.compression_level);
+                    if (!compressed.empty()) {
+                        block_work[i].descriptor = BlockDescriptor{
+                            .kind = use_zstd ? BlockKind::CpuZstd : BlockKind::Deflate,
+                            .fill_value = 0,
+                            .uncompressed_len = len,
+                            .encoded_offset = 0,
+                            .encoded_len = static_cast<std::uint32_t>(compressed.size()),
+                        };
+                        block_work[i].payload = std::move(compressed);
+                    } else {
+                        block_work[i].descriptor = BlockDescriptor{
+                            .kind = BlockKind::Raw,
+                            .fill_value = 0,
+                            .uncompressed_len = len,
+                            .encoded_offset = 0,
+                            .encoded_len = len,
+                        };
+                    }
                 }
             }
-        }
-    });
+        });
 
     out.blocks.resize(block_count);
     std::uint64_t encoded_offset = 0;
@@ -530,7 +582,7 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
             if (descriptor.kind == BlockKind::Fill) {
                 continue;
             }
-            if (descriptor.kind == BlockKind::Deflate) {
+            if (descriptor.kind == BlockKind::Deflate || descriptor.kind == BlockKind::CpuZstd) {
                 std::copy(block_work[i].payload.begin(), block_work[i].payload.end(),
                           out.payload.begin() + static_cast<std::ptrdiff_t>(descriptor.encoded_offset));
                 continue;
@@ -544,18 +596,20 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     return out;
 }
 
-// Purpose: Report whether a decoded SUZIP block table needs CPU Deflate handling.
+// Purpose: Report whether a decoded SUZIP block table needs CPU-only codec handling.
 // Inputs: `blocks` is a validated or soon-to-be-validated block descriptor table.
-// Outputs: Returns true when any block is encoded with Deflate.
-bool block_table_contains_deflate(std::span<const BlockDescriptor> blocks) {
-    return std::ranges::any_of(blocks, [](const BlockDescriptor& block) { return block.kind == BlockKind::Deflate; });
+// Outputs: Returns true when any block uses Deflate or Zstandard.
+bool block_table_contains_cpu_only(std::span<const BlockDescriptor> blocks) {
+    return std::ranges::any_of(blocks, [](const BlockDescriptor& block) {
+        return block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd;
+    });
 }
 
-// Purpose: Decode only the Deflate blocks in a SUZIP chunk into an existing output buffer.
+// Purpose: Decode only CPU-compressed blocks in a SUZIP chunk into an existing output buffer.
 // Inputs: `payload`, `blocks`, `output`, and `options` describe one archive chunk and CPU decode settings.
-// Outputs: Mutates `output` for Deflate blocks; throws on malformed metadata or miniz failures.
-void decode_deflate_blocks_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
-                               std::span<std::byte> output, const ArchiveCodecOptions& options) {
+// Outputs: Mutates `output` for Deflate/Zstandard blocks; throws on malformed metadata or codec failures.
+void decode_cpu_only_blocks_cpu(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                std::span<std::byte> output, const ArchiveCodecOptions& options) {
     validate_decode_options(options);
     reject_oversized_codec_span(payload.size(), "codec payload");
     reject_oversized_codec_span(output.size(), "codec output");
@@ -569,6 +623,11 @@ void decode_deflate_blocks_cpu(std::span<const std::byte> payload, std::span<con
             if (block.kind == BlockKind::Deflate) {
                 inflate_deflate_block(payload, block.encoded_offset, block.encoded_len,
                                       output.subspan(offsets[i], static_cast<std::size_t>(block.uncompressed_len)));
+            } else if (block.kind == BlockKind::CpuZstd) {
+                materialize_zstd_block_cpu(
+                    payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                    static_cast<std::size_t>(block.encoded_len)),
+                    output.subspan(offsets[i], static_cast<std::size_t>(block.uncompressed_len)));
             }
         }
     });

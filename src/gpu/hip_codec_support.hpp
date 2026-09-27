@@ -542,7 +542,7 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
             if (encoded_len > payload.size() - offset) {
                 throw ArchiveError("raw decode block exceeds payload buffer");
             }
-        } else if (block.kind == BlockKind::Deflate) {
+        } else if (block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd) {
             if (block.encoded_len == 0 || block.encoded_offset > payload.size()) {
                 throw ArchiveError("deflate decode block metadata is invalid");
             }
