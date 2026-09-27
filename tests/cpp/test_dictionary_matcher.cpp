@@ -101,6 +101,60 @@ std::vector<std::byte> make_near_identical_records(std::size_t size) {
     return input;
 }
 
+// Purpose: Exercise dictionary-local repetition without a block-wide periodic sparse pattern.
+// Inputs: A whole number of 64 KiB segments, each with a separately seeded 16 KiB record.
+// Outputs: Returns four near-identical records per segment with no matching bases between adjacent segments.
+std::vector<std::byte> make_segmented_records(std::size_t size) {
+    constexpr std::size_t record_bytes = 16U * 1024U;
+    constexpr std::size_t segment_bytes = 4U * record_bytes;
+    std::vector<std::byte> input(size);
+    for (std::size_t segment = 0; segment < size / segment_bytes; ++segment) {
+        const auto base = segment * segment_bytes;
+        std::uint32_t state = static_cast<std::uint32_t>(0x31674325U + segment * 0x9E3779B9U);
+        for (std::size_t index = 0; index < record_bytes; ++index) {
+            state ^= state << 13U;
+            state ^= state >> 17U;
+            state ^= state << 5U;
+            input[base + index] = static_cast<std::byte>(state >> 24U);
+        }
+        for (std::size_t record = 1; record < 4U; ++record) {
+            std::copy_n(input.begin() + static_cast<std::ptrdiff_t>(base), record_bytes,
+                        input.begin() + static_cast<std::ptrdiff_t>(base + record * record_bytes));
+            input[base + record * record_bytes + 1024U] ^= static_cast<std::byte>(1U + (segment + record) % 255U);
+        }
+    }
+    return input;
+}
+
+// Purpose: Prove large-block HIP encoding actually selects dictionary blocks on locally repeated data.
+// Inputs: Independently seeded 64 KiB groups, level-five required HIP, and 1/8 MiB production block sizes.
+// Outputs: Requires dictionary selection and byte-exact CPU and HIP decoding at both block sizes.
+TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    for (const std::size_t block_bytes : {1024U * 1024U, 8U * 1024U * 1024U}) {
+        const auto input = make_segmented_records(block_bytes);
+        superzip::GpuCodecOptions options;
+        options.block_size = static_cast<std::uint32_t>(block_bytes);
+        options.compression_level = 5;
+        options.require_gpu = true;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_TRUE(encoded.gpu_used);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_TRUE(encoded.payload.size() < input.size());
+        for (const bool hip : {false, true}) {
+            auto decode_options = options;
+            decode_options.require_gpu = hip;
+            decode_options.force_cpu = !hip;
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(decoded, input);
+        }
+    }
+}
+
 // Purpose: Bound a fixed-width sparse-pattern candidate and prove its reconstruction byte for byte.
 // Inputs: One block and a repeated motif length; every mismatch needs a 32-bit position and one literal byte.
 // Outputs: Returns complete header/motif/patch bytes only if smaller than raw, otherwise no candidate.

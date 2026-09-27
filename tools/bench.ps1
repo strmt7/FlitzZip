@@ -4,7 +4,7 @@ param(
     [int]$Iterations = 3,
     [ValidateSet("Memory", "Filesystem")] [string]$Mode = "Memory",
     [Alias("Profile")]
-    [ValidateSet("Mixed", "Compressible", "Incompressible", "RepeatedRecord", "SparseRecord")] [string]$WorkloadProfile = "Mixed",
+    [ValidateSet("Mixed", "Compressible", "Incompressible", "RepeatedRecord", "SparseRecord", "SegmentedRecords")] [string]$WorkloadProfile = "Mixed",
     [ValidateRange(1, 9)] [int]$CompressionLevel = 5,
     [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)] [int[]]$BlockSizeKiB = @(256, 512, 1024, 2048, 4096, 8192, 16384),
     [ValidateRange(50, 5000)] [int]$SampleIntervalMs = 100,
@@ -50,7 +50,7 @@ if ($Mode -eq "Memory" -and $SizeMiB -lt 10240) {
 if ($Mode -eq "Filesystem" -and $SizeMiB -gt $MaxFilesystemSmokeMiB) {
     throw "Filesystem mode is limited to $MaxFilesystemSmokeMiB MiB and exists only as a bounded I/O smoke. Use the default -Mode Memory for CPU/GPU benchmarking."
 }
-if ($Mode -eq "Filesystem" -and $WorkloadProfile -in @("RepeatedRecord", "SparseRecord")) {
+if ($Mode -eq "Filesystem" -and $WorkloadProfile -in @("RepeatedRecord", "SparseRecord", "SegmentedRecords")) {
     throw "$WorkloadProfile is a RAM-only performance profile; use -Mode Memory."
 }
 if ($Mode -ne "Memory" -and $JsonOutput) {

@@ -227,12 +227,49 @@ std::uint8_t low_entropy_benchmark_byte(std::uint64_t index) {
     return static_cast<std::uint8_t>(84U + (bucket % 172U));
 }
 
+// Purpose: Fill independent 64 KiB groups whose four near-identical records require local dictionary matches.
+// Inputs: `buffer` is the output and `global_offset` is its virtual file offset; neither needs group alignment.
+// Outputs: Writes deterministic bytes without filesystem access or cross-group repetition.
+void fill_segmented_record_chunk(std::vector<std::byte>& buffer, std::uint64_t global_offset) {
+    constexpr std::size_t record_bytes = 16U * 1024U;
+    constexpr std::size_t segment_bytes = 4U * record_bytes;
+    constexpr std::size_t patch_offset = 1024U;
+    std::array<std::byte, record_bytes> record{};
+    for (std::size_t offset = 0; offset < buffer.size();) {
+        const auto absolute_offset = global_offset + offset;
+        const auto segment_index = absolute_offset / segment_bytes;
+        const auto segment_offset = static_cast<std::size_t>(absolute_offset % segment_bytes);
+        for (std::size_t index = 0; index < record_bytes; ++index) {
+            record[index] = static_cast<std::byte>(randomish_benchmark_byte(segment_index * record_bytes + index));
+        }
+        const auto segment_count = std::min(segment_bytes - segment_offset, buffer.size() - offset);
+        for (std::size_t copied = 0; copied < segment_count;) {
+            const auto position = segment_offset + copied;
+            const auto record_index = position / record_bytes;
+            const auto record_offset = position % record_bytes;
+            const auto count = std::min(record_bytes - record_offset, segment_count - copied);
+            std::copy_n(record.begin() + static_cast<std::ptrdiff_t>(record_offset), count,
+                        buffer.begin() + static_cast<std::ptrdiff_t>(offset + copied));
+            if (record_index != 0U && record_offset <= patch_offset && patch_offset - record_offset < count) {
+                buffer[offset + copied + patch_offset - record_offset] ^=
+                    static_cast<std::byte>(1U + (segment_index + record_index) % 255U);
+            }
+            copied += count;
+        }
+        offset += segment_count;
+    }
+}
+
 // Purpose: Fill a benchmark chunk with deterministic compressed-pattern or incompressible data.
 // Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,
 // and `profile` selects data shape.
 // Outputs: Writes benchmark bytes into `buffer` without filesystem access.
 void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t global_offset, std::uint64_t total_bytes,
                                  const std::string& profile) {
+    if (profile == "SegmentedRecords") {
+        fill_segmented_record_chunk(buffer, global_offset);
+        return;
+    }
     if (profile == "RepeatedRecord" || profile == "SparseRecord") {
         static const auto record = [] {
             std::array<std::byte, 16U * 1024U> bytes{};
