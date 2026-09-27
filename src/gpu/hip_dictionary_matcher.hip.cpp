@@ -317,9 +317,10 @@ __device__ std::uint32_t write_length_extension(std::byte* output, std::uint32_t
     return position;
 }
 
-// Purpose: Pack LZ4 blocks from a cooperative demand-filled match cache.
-// Inputs: Source, predecessor links, effort, output slots, and segment sizes.
+// Purpose: Pack LZ4 blocks with eager cached matches or deferred selected-position search.
+// Inputs: Compile-time cache policy, source, predecessor links, effort, output slots, and segment sizes.
 // Outputs: Writes complete blocks, or a zero size if a capacity invariant fails; no output crosses its slot.
+template <bool CacheMatches>
 __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
                                            Effort effort, std::byte* output, std::uint32_t* encoded_sizes) {
     const auto segment = static_cast<std::uint32_t>(blockIdx.x);
@@ -331,8 +332,10 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
     __shared__ std::uint32_t written;
     __shared__ std::uint32_t literal_output;
     __shared__ std::uint32_t match_length;
+    __shared__ std::uint16_t match_distance;
     __shared__ std::uint32_t cache_start;
     __shared__ std::uint32_t cache_end;
+    __shared__ bool cached_has_match[kThreads];
     __shared__ std::uint16_t cached_lengths[kThreads];
     __shared__ std::uint16_t cached_distances[kThreads];
     __shared__ bool failed;
@@ -349,7 +352,7 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
             next_match = end;
         }
         __syncthreads();
-        // Reuse a tile across short matches; long matches skip tiles whose records would never be consumed.
+        // Low efforts reuse complete matches; high efforts defer extension until the selected position.
         for (auto tile = cursor; tile < end && end - tile >= 12U; tile = cache_end) {
             const bool refill = tile >= cache_end;
             __syncthreads();
@@ -360,16 +363,21 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
                 }
                 __syncthreads();
                 const auto position = cache_start + static_cast<std::uint32_t>(threadIdx.x);
-                const auto match = position < end && end - position >= 12U
-                                       ? search_dictionary_position(input, size, previous, effort, position)
-                                       : Match{};
-                cached_lengths[threadIdx.x] = match.length;
-                cached_distances[threadIdx.x] = match.distance;
+                if constexpr (CacheMatches) {
+                    const auto match = position < end && end - position >= 12U
+                                           ? search_dictionary_position(input, size, previous, effort, position)
+                                           : Match{};
+                    cached_lengths[threadIdx.x] = match.length;
+                    cached_distances[threadIdx.x] = match.distance;
+                    cached_has_match[threadIdx.x] = match.length >= kMinMatchBytes;
+                } else {
+                    cached_has_match[threadIdx.x] =
+                        position < end && end - position >= 12U && previous[position] != kNoPrevious;
+                }
                 __syncthreads();
             }
             const auto position = cache_start + static_cast<std::uint32_t>(threadIdx.x);
-            if (position >= cursor && position < end && end - position >= 12U &&
-                cached_lengths[threadIdx.x] >= kMinMatchBytes) {
+            if (position >= cursor && cached_has_match[threadIdx.x]) {
                 atomicMin(&next_match, position);
             }
             __syncthreads();
@@ -381,9 +389,18 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
         const auto literal_bytes = next_match - cursor;
         const bool last = next_match == end;
         if (threadIdx.x == 0U) {
-            match_length =
-                last ? 0U
-                     : min(static_cast<std::uint32_t>(cached_lengths[next_match - cache_start]), end - next_match - 5U);
+            Match match{};
+            if (!last) {
+                if constexpr (CacheMatches) {
+                    const auto index = next_match - cache_start;
+                    match.length = cached_lengths[index];
+                    match.distance = cached_distances[index];
+                } else {
+                    match = search_dictionary_position(input, size, previous, effort, next_match);
+                }
+            }
+            match_length = last ? 0U : min(static_cast<std::uint32_t>(match.length), end - next_match - 5U);
+            match_distance = match.distance;
             const auto match_code = last ? 0U : match_length - kMinMatchBytes;
             const auto needed = 1U + length_extension_bytes(literal_bytes) + literal_bytes +
                                 (last ? 0U : 2U + length_extension_bytes(match_code));
@@ -393,9 +410,8 @@ __global__ void encode_dictionary_segments(const std::byte* input, std::uint32_t
                 literal_output = write_length_extension(destination, written, literal_bytes);
                 written = literal_output + literal_bytes;
                 if (!last) {
-                    const auto distance = cached_distances[next_match - cache_start];
-                    destination[written++] = static_cast<std::byte>(distance & 0xFFU);
-                    destination[written++] = static_cast<std::byte>(distance >> 8U);
+                    destination[written++] = static_cast<std::byte>(match_distance & 0xFFU);
+                    destination[written++] = static_cast<std::byte>(match_distance >> 8U);
                     written = write_length_extension(destination, written, match_code);
                 }
             }
@@ -610,8 +626,16 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
             const auto size = static_cast<std::uint32_t>(input.size());
             auto encode_events = make_hip_event_pair("create dictionary encode timing events");
             check_hip(hipEventRecord(encode_events.start, hipStreamPerThread), "start dictionary encoding");
-            encode_dictionary_segments<<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                device_input, size, previous, effort, output.get(), sizes.get());
+            // Shallow searches benefit from tile reuse; deeper searches extend only the selected position.
+            if (effort.max_candidates <= 4U) {
+                encode_dictionary_segments<true>
+                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                        device_input, size, previous, effort, output.get(), sizes.get());
+            } else {
+                encode_dictionary_segments<false>
+                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
+                        device_input, size, previous, effort, output.get(), sizes.get());
+            }
             check_hip(hipGetLastError(), "launch dictionary segment encoder");
             check_hip(hipEventRecord(encode_events.stop, hipStreamPerThread), "stop dictionary encoding");
             const auto encode_ms = finish_dictionary_stage(encode_events);
