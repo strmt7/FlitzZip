@@ -35,6 +35,8 @@ struct GpuRuntimeStats {
     std::uint64_t device_allocation_bytes = 0;
     std::uint64_t pattern_blocks = 0;
     std::uint64_t prefix_blocks = 0;
+    std::uint64_t dictionary_blocks = 0;
+    std::uint64_t sparse_pattern_blocks = 0;
     double kernel_ms = 0.0;  // NaN means at least one event time or its accumulated total was invalid.
 };
 
@@ -47,6 +49,8 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> device_allocation_bytes{0};
     std::atomic<std::uint64_t> pattern_blocks{0};
     std::atomic<std::uint64_t> prefix_blocks{0};
+    std::atomic<std::uint64_t> dictionary_blocks{0};
+    std::atomic<std::uint64_t> sparse_pattern_blocks{0};
     std::atomic<std::uint64_t> kernel_microseconds{0};  // UINT64_MAX permanently marks unavailable timing.
 };
 
@@ -122,11 +126,26 @@ void record_gpu_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count);
 // Outputs: Atomically adds the block count when telemetry is present.
 void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count);
 
+// Purpose: Record version-four dictionary blocks actually selected by the AMD HIP encoder.
+// Inputs: Optional operation telemetry and the number of emitted dictionary blocks.
+// Outputs: Atomically adds the selected block count when telemetry is present.
+void record_gpu_dictionary_blocks(GpuTelemetry* telemetry, std::uint64_t count);
+
+// Purpose: Record version-five sparse blocks selected by the AMD HIP encoder.
+// Inputs: Optional operation telemetry and the number of emitted sparse blocks.
+// Outputs: Atomically adds the selected block count when telemetry is present.
+void record_gpu_sparse_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count);
+
 // Purpose: Record one AMD HIP kernel launch and its device-event elapsed time.
 // Inputs: `telemetry` is optional operation-owned telemetry and `milliseconds` is measured with HIP events.
 // Outputs: Counts the launch even if timing is invalid; negative/non-finite/overflowing times mark the total
 // unavailable.
 void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds);
+
+// Purpose: Account for a measured multi-kernel HIP stage without inventing timings for each launch.
+// Inputs: Optional operation telemetry, explicit SuperZip launch count, and complete device-stage milliseconds.
+// Outputs: Adds the known launches and stage time; invalid timing marks the aggregate unavailable.
+void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, double milliseconds);
 
 // Purpose: Inspect the compiled GPU backend and available AMD HIP device.
 // Inputs: None.

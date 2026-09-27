@@ -142,8 +142,25 @@ bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
         return version >= 2;
     case BlockKind::GpuAdaptivePrefix:
         return version >= 3;
+    case BlockKind::GpuDictionary:
+        return version >= 4;
+    case BlockKind::GpuSparsePattern:
+        return version >= 5;
     }
     return false;
+}
+
+// Purpose: Enforce the pattern payload bound declared by each native archive version.
+// Inputs: `block` is a serialized descriptor and `version` is a supported native format version.
+// Outputs: Throws when a pattern is too short, too long, or not smaller than its decoded block.
+void validate_pattern_version_bound(const BlockDescriptor& block, std::uint32_t version) {
+    if (block.kind != BlockKind::Pattern) {
+        return;
+    }
+    const auto limit = version >= 4U ? kMaxGpuPatternBytes : kLegacyGpuPatternBytes;
+    if (block.encoded_len < 2U || block.encoded_len > limit || block.encoded_len >= block.uncompressed_len) {
+        throw ArchiveError("archive pattern length is invalid for its version");
+    }
 }
 
 }  // namespace
@@ -153,7 +170,7 @@ bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
 // Outputs: Writes the index or throws `ArchiveError` for invalid versions, kinds, or stream failures.
 void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
     reject_unbounded_index_shape(index);
-    if (index.version < kSuperZipMinReadableVersion || index.version > kSuperZipVersion) {
+    if (index.version < kSuperZipMinReadableVersion || index.version > kSuperZipMaxReadableVersion) {
         throw ArchiveError("unsupported SuperZip archive version");
     }
     write_u32(output, kSuperZipMagic);
@@ -175,6 +192,7 @@ void write_archive_index(std::ostream& output, const ArchiveIndex& index) {
             if (!block_kind_supported_in_version(block.kind, index.version)) {
                 throw ArchiveError("archive block kind is not supported by its version");
             }
+            validate_pattern_version_bound(block, index.version);
             output.put(static_cast<char>(block.kind));
             output.put(static_cast<char>(block.fill_value));
             write_u32(output, block.uncompressed_len);
@@ -197,7 +215,7 @@ ArchiveIndex read_archive_index(std::istream& input) {
         throw ArchiveError("not a SuperZip archive");
     }
     const auto version = read_u32(input);
-    if (version < kSuperZipMinReadableVersion || version > kSuperZipVersion) {
+    if (version < kSuperZipMinReadableVersion || version > kSuperZipMaxReadableVersion) {
         throw ArchiveError("unsupported SuperZip archive version");
     }
     index.version = version;
@@ -254,19 +272,25 @@ ArchiveIndex read_archive_index(std::istream& input) {
                 kind = BlockKind::GpuPrefix;
             } else if (kind_raw == static_cast<int>(BlockKind::GpuAdaptivePrefix)) {
                 kind = BlockKind::GpuAdaptivePrefix;
+            } else if (kind_raw == static_cast<int>(BlockKind::GpuDictionary)) {
+                kind = BlockKind::GpuDictionary;
+            } else if (kind_raw == static_cast<int>(BlockKind::GpuSparsePattern)) {
+                kind = BlockKind::GpuSparsePattern;
             } else if (kind_raw != static_cast<int>(BlockKind::Raw)) {
                 throw ArchiveError("archive block has unknown encoding kind");
             }
             if (!block_kind_supported_in_version(kind, version)) {
                 throw ArchiveError("archive block kind is not supported by its version");
             }
-            entry.blocks.push_back(BlockDescriptor{
+            auto block = BlockDescriptor{
                 .kind = kind,
                 .fill_value = static_cast<std::uint8_t>(fill_raw),
                 .uncompressed_len = read_u32(input),
                 .encoded_offset = read_u64(input),
                 .encoded_len = read_u32(input),
-            });
+            };
+            validate_pattern_version_bound(block, version);
+            entry.blocks.push_back(block);
         }
         index.entries.push_back(std::move(entry));
     }

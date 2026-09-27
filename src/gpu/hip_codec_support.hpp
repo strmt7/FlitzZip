@@ -3,6 +3,8 @@
 #include "gpu/gpu_codec.hpp"
 
 #include "core/result.hpp"
+#include "core/dictionary_block.hpp"
+#include "core/sparse_pattern_block.hpp"
 
 #include <algorithm>
 #include <array>
@@ -22,9 +24,11 @@
 
 namespace superzip::hip_detail {
 
-constexpr std::uint32_t kPatternSampleBytes = 4096U;
+constexpr std::uint32_t kPatternSampleBytes = 2U * kMaxGpuPatternBytes;
 constexpr std::uint32_t kAnalyzeSegmentBytes = 64U * 1024U;
-constexpr std::uint32_t kCrcSegmentBytes = 64U * 1024U;
+constexpr std::uint32_t kSmallCrcSegmentBytes = 8U * 1024U;
+constexpr std::uint32_t kLargeCrcSegmentBytes = 32U * 1024U;
+constexpr std::uint64_t kSmallCrcInputLimitBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr std::uint32_t kMaterializeSegmentBytes = 64U * 1024U;
 constexpr unsigned int kGpuPrefixSegmentThreads = 256U;
 constexpr unsigned int kGpuPrefixBytesPerThread = kGpuPrefixSegmentBytes / kGpuPrefixSegmentThreads;
@@ -47,15 +51,6 @@ struct DeviceCrcSegment {
     std::uint32_t length;
 };
 
-// Purpose: Count emitted GPU-native prefix-coded blocks in a selected encoded chunk.
-// Inputs: `chunk` is the encoded candidate that will be published to the archive.
-// Outputs: Returns static plus adaptive prefix block count for user-facing telemetry.
-inline std::uint64_t count_emitted_prefix_blocks(const EncodedChunk& chunk) {
-    return static_cast<std::uint64_t>(std::ranges::count_if(chunk.blocks, [](const BlockDescriptor& block) {
-        return block.kind == BlockKind::GpuPrefix || block.kind == BlockKind::GpuAdaptivePrefix;
-    }));
-}
-
 // Purpose: Identify native GPU prefix blocks in a decoded block table.
 // Inputs: `block` is one parsed SUZIP block descriptor.
 // Outputs: Returns true when the descriptor uses static or adaptive GPU-prefix encoding.
@@ -63,14 +58,15 @@ inline bool is_gpu_prefix_block(const BlockDescriptor& block) {
     return block.kind == BlockKind::GpuPrefix || block.kind == BlockKind::GpuAdaptivePrefix;
 }
 
-// Purpose: Detect whether the standard materializer has any raw/fill/pattern work to do.
+// Purpose: Detect whether the standard materializer has any raw/fill/pattern/sparse work to do.
 // Inputs: `host_blocks` is a device-ready decoded block table.
 // Outputs: Returns false for prefix-only chunks so an empty materializer launch can be skipped.
 inline bool has_non_prefix_materialization_blocks(std::span<const DeviceBlock> host_blocks) {
     return std::ranges::any_of(host_blocks, [](const DeviceBlock& block) {
         return block.kind == static_cast<std::uint8_t>(BlockKind::Raw) ||
                block.kind == static_cast<std::uint8_t>(BlockKind::Fill) ||
-               block.kind == static_cast<std::uint8_t>(BlockKind::Pattern);
+               block.kind == static_cast<std::uint8_t>(BlockKind::Pattern) ||
+               block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern);
     });
 }
 
@@ -474,6 +470,43 @@ inline void validate_gpu_adaptive_prefix_payload_table(std::span<const std::byte
     }
 }
 
+// Purpose: Admit a complete dictionary block before HIP parses or copies table-directed segments.
+// Inputs: Bounded archive payload and a dictionary descriptor with exact decoded length.
+// Outputs: Returns normally for valid framing or throws before any GPU read on malformed extents.
+inline void validate_gpu_dictionary_payload(std::span<const std::byte> payload, const BlockDescriptor& block) {
+    if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
+        throw ArchiveError("GPU dictionary decode block exceeds payload buffer");
+    }
+    static_cast<void>(parse_dictionary_segments(
+        payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block.uncompressed_len));
+}
+
+// Purpose: Admit a repeated-pattern block before a HIP kernel reads its motif.
+// Inputs: Bounded archive payload and one descriptor with exact decoded length.
+// Outputs: Returns for valid extents or throws before a GPU read can cross the payload.
+inline void validate_gpu_pattern_payload(std::span<const std::byte> payload, const BlockDescriptor& block) {
+    if (block.encoded_len < 2 || block.encoded_len > kMaxGpuPatternBytes ||
+        block.encoded_len >= block.uncompressed_len || block.encoded_offset > payload.size()) {
+        throw ArchiveError("GPU pattern decode block metadata is invalid");
+    }
+    const auto offset = static_cast<std::size_t>(block.encoded_offset);
+    const auto encoded_len = static_cast<std::size_t>(block.encoded_len);
+    if (encoded_len > payload.size() - offset) {
+        throw ArchiveError("GPU pattern decode block exceeds payload buffer");
+    }
+}
+
+// Purpose: Admit a canonical sparse block before a HIP kernel reads its motif or patches.
+// Inputs: Bounded archive payload and one descriptor with exact decoded length.
+// Outputs: Returns for valid framing or throws before a GPU read can cross the payload.
+inline void validate_gpu_sparse_pattern_payload(std::span<const std::byte> payload, const BlockDescriptor& block) {
+    if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
+        throw ArchiveError("GPU sparse pattern decode block exceeds payload buffer");
+    }
+    (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len),
+                                     block.uncompressed_len);
+}
+
 // Purpose: Validate block layout before launching the HIP decode kernel.
 // Inputs: `payload`, `blocks`, `output`, and `block_size` are caller-provided decode spans.
 // Outputs: Returns normally for a dense fill/raw layout; throws `ArchiveError` before any kernel can read out of
@@ -519,15 +552,7 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
                 throw ArchiveError("deflate decode block exceeds payload buffer");
             }
         } else if (block.kind == BlockKind::Pattern) {
-            if (block.encoded_len < 2 || block.encoded_len > kMaxGpuPatternBytes ||
-                block.encoded_len >= block.uncompressed_len || block.encoded_offset > payload.size()) {
-                throw ArchiveError("GPU pattern decode block metadata is invalid");
-            }
-            const auto offset = static_cast<std::size_t>(block.encoded_offset);
-            const auto encoded_len = static_cast<std::size_t>(block.encoded_len);
-            if (encoded_len > payload.size() - offset) {
-                throw ArchiveError("GPU pattern decode block exceeds payload buffer");
-            }
+            validate_gpu_pattern_payload(payload, block);
         } else if (block.kind == BlockKind::GpuPrefix) {
             const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
             const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
@@ -554,6 +579,10 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
                 throw ArchiveError("GPU adaptive prefix decode block exceeds payload buffer");
             }
             validate_gpu_adaptive_prefix_payload_table(payload, block, len);
+        } else if (block.kind == BlockKind::GpuDictionary) {
+            validate_gpu_dictionary_payload(payload, block);
+        } else if (block.kind == BlockKind::GpuSparsePattern) {
+            validate_gpu_sparse_pattern_payload(payload, block);
         } else {
             throw ArchiveError("decode block has unknown encoding kind");
         }

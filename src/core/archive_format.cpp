@@ -213,7 +213,7 @@ bool has_suzip_footer_signature(const std::filesystem::path& path) {
         const auto footer_magic = read_u32(input);
         const auto footer_version = read_u32(input);
         if (footer_magic != kSuperZipFooterMagic || footer_version < kSuperZipMinReadableVersion ||
-            footer_version > kSuperZipVersion) {
+            footer_version > kSuperZipMaxReadableVersion) {
             return false;
         }
         const auto index_offset = read_u64(input);

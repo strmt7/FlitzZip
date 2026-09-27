@@ -11,7 +11,13 @@ enum class BlockKind : std::uint8_t {
     Pattern = 3,
     GpuPrefix = 4,
     GpuAdaptivePrefix = 5,
+    GpuDictionary = 6,
+    GpuSparsePattern = 7,
 };
+
+inline constexpr std::uint32_t kGpuDictionarySegmentBytes = 65536U;
+inline constexpr std::uint32_t kGpuDictionaryEncodedSegmentCapacity =
+    kGpuDictionarySegmentBytes + kGpuDictionarySegmentBytes / 255U + 16U;
 
 struct BlockDescriptor {
     BlockKind kind = BlockKind::Raw;

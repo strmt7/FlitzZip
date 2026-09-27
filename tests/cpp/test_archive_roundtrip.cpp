@@ -4,14 +4,22 @@
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
+#include "gpu/gpu_codec.hpp"
+#include "lz4.h"
 #include "miniz.h"
 #include "test_suzip_helpers.hpp"
 #include "test_util.hpp"
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <fstream>
+#include <iostream>
+#include <iterator>
 #include <sstream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <windows.h>
@@ -57,6 +65,40 @@ void write_raw_test_archive(const std::filesystem::path& path, const std::vector
     write_test_footer(file, index_offset, index_size, version);
 }
 
+// Purpose: Wrap one pre-encoded block in a native archive with an explicit format version.
+// Inputs: `path` is the output file, `payload` contains one block, and `decoded` supplies its expected CRC data.
+// Outputs: Writes a complete one-file archive for public read-path validation.
+void write_encoded_test_archive(const std::filesystem::path& path, std::span<const std::byte> payload,
+                                std::string_view decoded, superzip::BlockKind kind, std::uint32_t version) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+    superzip::ArchiveIndex index;
+    index.version = version;
+    superzip::ArchiveEntry entry;
+    entry.path = "data.bin";
+    entry.uncompressed_size = decoded.size();
+    entry.payload_size = payload.size();
+    entry.crc32 = superzip::crc32(std::as_bytes(std::span(decoded.data(), decoded.size())));
+    entry.blocks.push_back(superzip::BlockDescriptor{
+        .kind = kind,
+        .uncompressed_len = static_cast<std::uint32_t>(decoded.size()),
+        .encoded_len = static_cast<std::uint32_t>(payload.size()),
+    });
+    index.entries.push_back(std::move(entry));
+    const auto index_offset = static_cast<std::uint64_t>(file.tellp());
+    superzip::write_archive_index(file, index);
+    const auto index_size = static_cast<std::uint64_t>(file.tellp()) - index_offset;
+    write_test_footer(file, index_offset, index_size, index.version);
+}
+
+// Purpose: Wrap one pre-encoded dictionary payload in a version-four native archive.
+// Inputs: `path` is the output file, `payload` includes its segment table, and `decoded` supplies expected CRC data.
+// Outputs: Writes a complete one-file archive for public read-path validation.
+void write_dictionary_test_archive(const std::filesystem::path& path, std::span<const std::byte> payload,
+                                   std::string_view decoded) {
+    write_encoded_test_archive(path, payload, decoded, superzip::BlockKind::GpuDictionary, 4U);
+}
+
 }  // namespace
 
 // Purpose: Require the native footer and index to declare the same readable format version.
@@ -67,8 +109,8 @@ TEST_CASE(suzip_rejects_footer_index_version_mismatch) {
     superzip::ExtractOptions options;
     options.force_cpu = true;
     options.gpu_required = false;
-    for (std::uint32_t version = superzip::kSuperZipMinReadableVersion; version <= superzip::kSuperZipVersion;
-         ++version) {
+    for (std::uint32_t version = superzip::kSuperZipMinReadableVersion;
+         version <= superzip::kSuperZipMaxReadableVersion; ++version) {
         const auto archive = root / ("version-" + std::to_string(version) + ".suzip");
         write_raw_test_archive(archive, {{"data.txt", "test payload"}}, version);
         REQUIRE_EQ(superzip::verify_suzip(archive, options).entries, 1U);
@@ -93,12 +135,13 @@ TEST_CASE(suzip_rejects_footer_index_version_mismatch) {
 }
 
 // Purpose: Prevent older native versions from claiming block encodings they do not define.
-// Inputs: Static-prefix and adaptive-prefix descriptors paired with pre-introduction versions.
+// Inputs: Prefix, dictionary, and sparse descriptors paired with pre-introduction versions.
 // Outputs: Both the writer and parser reject unsupported version/block combinations.
 TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
     for (const auto [version, kind] :
          {std::pair{1U, superzip::BlockKind::GpuPrefix}, std::pair{1U, superzip::BlockKind::GpuAdaptivePrefix},
-          std::pair{2U, superzip::BlockKind::GpuAdaptivePrefix}}) {
+          std::pair{2U, superzip::BlockKind::GpuAdaptivePrefix}, std::pair{3U, superzip::BlockKind::GpuDictionary},
+          std::pair{4U, superzip::BlockKind::GpuSparsePattern}}) {
         superzip::ArchiveIndex index;
         index.version = version;
         superzip::ArchiveEntry entry;
@@ -115,7 +158,7 @@ TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
         }
         REQUIRE_TRUE(writer_rejected);
 
-        index.version = superzip::kSuperZipVersion;
+        index.version = superzip::kSuperZipMaxReadableVersion;
         std::ostringstream output(std::ios::out | std::ios::binary);
         superzip::write_archive_index(output, index);
         auto forged = output.str();
@@ -129,6 +172,306 @@ TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
         }
         REQUIRE_TRUE(reader_rejected);
     }
+}
+
+// Purpose: Exercise version-five sparse blocks through public CPU/HIP verification and extraction.
+// Inputs: A four-byte motif, two sorted corrections, and a malformed redundant-correction variant.
+// Outputs: Exact output roundtrips; noncanonical payload fails before publication.
+TEST_CASE(suzip_sparse_pattern_cpu_reader_roundtrip) {
+    std::string decoded(64U, '\0');
+    for (std::size_t index = 0U; index < decoded.size(); ++index) {
+        decoded[index] = "ABCD"[index % 4U];
+    }
+    decoded[5U] = 'X';
+    decoded[11U] = 'Y';
+    const std::vector<std::byte> payload{
+        std::byte{4}, std::byte{0}, std::byte{0},   std::byte{0},   std::byte{2},   std::byte{0},
+        std::byte{0}, std::byte{0}, std::byte{'A'}, std::byte{'B'}, std::byte{'C'}, std::byte{'D'},
+        std::byte{5}, std::byte{0}, std::byte{0},   std::byte{0},   std::byte{'X'}, std::byte{11},
+        std::byte{0}, std::byte{0}, std::byte{0},   std::byte{'Y'},
+    };
+    const auto root = test_temp_dir("suzip-sparse-pattern-v5");
+    const auto archive = root / "sparse.suzip";
+    write_encoded_test_archive(archive, payload, decoded, superzip::BlockKind::GpuSparsePattern, 5U);
+    REQUIRE_EQ(read_test_archive_index(archive).version, 5U);
+    for (const bool hip : {false, true}) {
+        if (hip && !superzip::query_gpu_info().available) {
+            continue;
+        }
+        superzip::ExtractOptions options;
+        options.force_cpu = !hip;
+        options.gpu_required = hip;
+        REQUIRE_EQ(superzip::verify_suzip(archive, options).gpu_used, hip);
+        const auto destination = root / (hip ? "gpu" : "cpu");
+        REQUIRE_EQ(superzip::extract_suzip(archive, destination, options).gpu_used, hip);
+        std::ifstream restored(destination / "data.bin", std::ios::binary);
+        REQUIRE_TRUE(restored.is_open());
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()), decoded);
+    }
+
+    auto invalid = payload;
+    invalid[16U] = std::byte{'B'};
+    const auto corrupt = root / "invalid.suzip";
+    write_encoded_test_archive(corrupt, invalid, decoded, superzip::BlockKind::GpuSparsePattern, 5U);
+    superzip::ExtractOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_suzip(corrupt, options);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    const auto invalid_destination = root / "invalid-output";
+    rejected = false;
+    try {
+        (void)superzip::extract_suzip(corrupt, invalid_destination, options);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(invalid_destination / "data.bin"));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Keep legacy pattern bounds intact while allowing bounded version-four motifs.
+// Inputs: Pattern descriptors at the 256-byte, 257-byte, and 16 KiB boundaries.
+// Outputs: The index writer and reader reject only version-incompatible or oversized descriptors.
+TEST_CASE(suzip_pattern_length_version_boundaries) {
+    for (const auto length : {256U, 257U, superzip::kMaxGpuPatternBytes, superzip::kMaxGpuPatternBytes + 1U}) {
+        superzip::ArchiveIndex index;
+        index.version = superzip::kSuperZipMaxReadableVersion;
+        superzip::ArchiveEntry entry;
+        entry.path = "pattern.bin";
+        entry.uncompressed_size = length * 2U;
+        entry.blocks.push_back(superzip::BlockDescriptor{
+            .kind = superzip::BlockKind::Pattern, .uncompressed_len = length * 2U, .encoded_len = length});
+        index.entries.push_back(entry);
+        const bool valid_v4 = length <= superzip::kMaxGpuPatternBytes;
+        const bool valid_v3 = length <= superzip::kLegacyGpuPatternBytes;
+        for (const auto [version, expected_valid] : {std::pair{3U, valid_v3}, std::pair{4U, valid_v4}}) {
+            index.version = version;
+            std::ostringstream output(std::ios::out | std::ios::binary);
+            bool accepted = true;
+            try {
+                superzip::write_archive_index(output, index);
+            } catch (const superzip::ArchiveError&) {
+                accepted = false;
+            }
+            REQUIRE_EQ(accepted, expected_valid);
+            if (expected_valid) {
+                std::istringstream input(output.str(), std::ios::in | std::ios::binary);
+                REQUIRE_EQ(superzip::read_archive_index(input).entries.front().blocks.front().encoded_len, length);
+            }
+        }
+        if (valid_v4 && !valid_v3) {
+            index.version = 4U;
+            std::ostringstream output(std::ios::out | std::ios::binary);
+            superzip::write_archive_index(output, index);
+            auto forged = output.str();
+            forged[4] = static_cast<char>(3);
+            std::istringstream input(forged, std::ios::in | std::ios::binary);
+            bool rejected = false;
+            try {
+                static_cast<void>(superzip::read_archive_index(input));
+            } catch (const superzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+}
+
+// Purpose: Validate version-four dictionary decoding and reject corrupt block framing or LZ4 matches.
+// Inputs: An independently encoded 32-byte LZ4 block plus four table/payload mutations.
+// Outputs: CPU and available HIP readers restore exact bytes; both reject every malformed mutation.
+TEST_CASE(suzip_dictionary_reader_validates_segments) {
+    constexpr std::array<unsigned char, 19> fixture{0U, 0U, 0U, 0U,    11U, 0U,  0U,  0U,  0x1FU, 'A',
+                                                    1U, 0U, 7U, 0x50U, 'A', 'A', 'A', 'A', 'A'};
+    const auto fixture_bytes = std::as_bytes(std::span(fixture));
+    const std::vector<std::byte> valid(fixture_bytes.begin(), fixture_bytes.end());
+    const std::string expected(32U, 'A');
+    const auto root = test_temp_dir("suzip-dictionary-reader");
+    const auto archive = root / "valid.suzip";
+    write_dictionary_test_archive(archive, valid, expected);
+
+    superzip::ExtractOptions cpu;
+    cpu.force_cpu = true;
+    cpu.gpu_required = false;
+    REQUIRE_EQ(superzip::verify_suzip(archive, cpu).entries, 1U);
+    const auto destination = root / "decoded";
+    static_cast<void>(superzip::extract_suzip(archive, destination, cpu));
+    std::ifstream extracted(destination / "data.bin", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(extracted), {}), expected);
+    extracted.close();
+
+    superzip::ExtractOptions required_hip;
+    required_hip.gpu_required = true;
+    const bool hip_available = superzip::query_gpu_info().available;
+    if (hip_available) {
+        REQUIRE_TRUE(superzip::verify_suzip(archive, required_hip).gpu_used);
+        const auto gpu_destination = root / "gpu-decoded";
+        REQUIRE_TRUE(superzip::extract_suzip(archive, gpu_destination, required_hip).gpu_used);
+        std::ifstream gpu_file(gpu_destination / "data.bin", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(gpu_file), {}), expected);
+        gpu_file.close();
+    } else {
+        bool rejected = false;
+        try {
+            static_cast<void>(superzip::verify_suzip(archive, required_hip));
+        } catch (const superzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+
+    for (int mutation = 0; mutation < 4; ++mutation) {
+        auto corrupt = valid;
+        switch (mutation) {
+        case 0:
+            corrupt[0] = std::byte{1};
+            break;
+        case 1:
+            corrupt[4] = std::byte{12};
+            break;
+        case 2:
+            corrupt[10] = std::byte{0};
+            break;
+        default:
+            corrupt.push_back(std::byte{0x42});
+            break;
+        }
+        const auto invalid_archive = root / ("corrupt-" + std::to_string(mutation) + ".suzip");
+        write_dictionary_test_archive(invalid_archive, corrupt, expected);
+        bool rejected = false;
+        try {
+            static_cast<void>(superzip::verify_suzip(invalid_archive, cpu));
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        if (hip_available) {
+            bool gpu_rejected = false;
+            try {
+                static_cast<void>(superzip::verify_suzip(invalid_archive, required_hip));
+            } catch (const superzip::ArchiveError&) {
+                gpu_rejected = true;
+            }
+            REQUIRE_TRUE(gpu_rejected);
+        }
+    }
+    if (hip_available) {
+        REQUIRE_TRUE(superzip::verify_suzip(archive, required_hip).gpu_used);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify that dictionary block tables preserve exact output across a full segment and short tail.
+// Inputs: Two independent LZ4 blocks for 64 KiB of one byte followed by 32 bytes of another.
+// Outputs: The version-four reader verifies and extracts the exact concatenated bytes.
+TEST_CASE(suzip_dictionary_reader_crosses_segment_boundary) {
+    std::string expected(superzip::kGpuDictionarySegmentBytes, 'A');
+    expected.append(32U, 'B');
+    const std::array<std::string_view, 2> segments{
+        std::string_view(expected).substr(0U, superzip::kGpuDictionarySegmentBytes),
+        std::string_view(expected).substr(superzip::kGpuDictionarySegmentBytes)};
+    std::ostringstream table(std::ios::out | std::ios::binary);
+    superzip::write_u32(table, 0U);
+    std::string compressed;
+    for (const auto segment : segments) {
+        std::string block(static_cast<std::size_t>(LZ4_compressBound(static_cast<int>(segment.size()))), '\0');
+        const auto size = LZ4_compress_default(segment.data(), block.data(), static_cast<int>(segment.size()),
+                                               static_cast<int>(block.size()));
+        REQUIRE_TRUE(size > 0);
+        block.resize(static_cast<std::size_t>(size));
+        compressed.append(block);
+        superzip::write_u32(table, static_cast<std::uint32_t>(compressed.size()));
+    }
+    const auto encoded = table.str() + compressed;
+    const auto payload = std::as_bytes(std::span(encoded.data(), encoded.size()));
+    const auto root = test_temp_dir("suzip-dictionary-segments");
+    const auto archive = root / "segments.suzip";
+    write_dictionary_test_archive(archive, payload, expected);
+    superzip::ExtractOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    REQUIRE_EQ(superzip::verify_suzip(archive, options).entries, 1U);
+    const auto destination = root / "decoded";
+    static_cast<void>(superzip::extract_suzip(archive, destination, options));
+    std::ifstream file(destination / "data.bin", std::ios::binary);
+    REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(file), {}), expected);
+    file.close();
+    if (superzip::query_gpu_info().available) {
+        superzip::ExtractOptions required_hip;
+        required_hip.gpu_required = true;
+        REQUIRE_TRUE(superzip::verify_suzip(archive, required_hip).gpu_used);
+        const auto gpu_destination = root / "gpu-decoded";
+        REQUIRE_TRUE(superzip::extract_suzip(archive, gpu_destination, required_hip).gpu_used);
+        std::ifstream gpu_file(gpu_destination / "data.bin", std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(gpu_file), {}), expected);
+        gpu_file.close();
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Check native CPU/HIP readers against independently encoded LZ4 blocks across bounded data shapes.
+// Inputs: Deterministic fill, periodic, repeated-record, and low-alphabet sources at short and full-segment lengths.
+// Outputs: Every smaller LZ4 block decodes byte-exactly with matching CRC; at least twelve cases must be admitted.
+TEST_CASE(suzip_dictionary_reader_matches_independent_lz4_corpus) {
+    const bool hip_available = superzip::query_gpu_info().available;
+    std::size_t admitted = 0U;
+    for (const std::size_t size : {32U, 255U, 4096U, 16384U, 65536U}) {
+        for (unsigned int profile = 0U; profile < 4U; ++profile) {
+            std::vector<std::byte> expected(size);
+            std::uint32_t random = 0x45C728D1U;
+            for (std::size_t index = 0U; index < size; ++index) {
+                random ^= random << 13U;
+                random ^= random >> 17U;
+                random ^= random << 5U;
+                expected[index] = profile == 0U   ? std::byte{0xA5}
+                                  : profile == 1U ? static_cast<std::byte>(index % 17U)
+                                  : profile == 2U
+                                      ? index < 1024U ? static_cast<std::byte>(random >> 24U) : expected[index % 1024U]
+                                      : static_cast<std::byte>((random >> 16U) & 3U);
+            }
+            std::vector<std::byte> encoded(LZ4_compressBound(static_cast<int>(size)));
+            const auto written = LZ4_compress_default(reinterpret_cast<const char*>(expected.data()),
+                                                      reinterpret_cast<char*>(encoded.data()), static_cast<int>(size),
+                                                      static_cast<int>(encoded.size()));
+            REQUIRE_TRUE(written > 0);
+            encoded.resize(static_cast<std::size_t>(written));
+            if (encoded.size() + 8U >= size) {
+                continue;
+            }
+            ++admitted;
+            std::vector<std::byte> payload(8U + encoded.size());
+            const auto length = static_cast<std::uint32_t>(encoded.size());
+            for (std::size_t byte = 0U; byte < 4U; ++byte) {
+                payload[4U + byte] = static_cast<std::byte>(length >> (byte * 8U));
+            }
+            std::copy(encoded.begin(), encoded.end(), payload.begin() + 8U);
+            const std::array blocks{superzip::BlockDescriptor{
+                .kind = superzip::BlockKind::GpuDictionary,
+                .uncompressed_len = static_cast<std::uint32_t>(size),
+                .encoded_len = static_cast<std::uint32_t>(payload.size()),
+            }};
+            for (const bool hip : {false, true}) {
+                if (hip && !hip_available) {
+                    continue;
+                }
+                superzip::GpuCodecOptions options;
+                options.force_cpu = !hip;
+                options.require_gpu = hip;
+                std::vector<std::byte> decoded(size);
+                REQUIRE_EQ(superzip::decode_chunk(payload, blocks, decoded, options), hip);
+                REQUIRE_EQ(decoded, expected);
+                REQUIRE_EQ(superzip::crc_decoded_chunk(payload, blocks, size, options).crc32,
+                           superzip::crc32(expected));
+            }
+        }
+    }
+    REQUIRE_TRUE(admitted >= 12U);
 }
 
 // Purpose: Distinguish direct extraction from archive-wide validation before final publication.
@@ -375,6 +718,268 @@ TEST_CASE(suzip_default_compression_level_is_balanced) {
     REQUIRE_TRUE(balanced.compression_level == superzip::kDefaultCompressionLevel);
     REQUIRE_TRUE(balanced_stats.output_bytes <= fastest_stats.output_bytes);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise production HIP dictionary selection across efforts and both native readers.
+// Inputs: Four seeded 16 KiB records with changing first bytes, plus one required-HIP archive at level nine.
+// Outputs: All efforts produce smaller distinct payloads; the emitted version-four archive roundtrips on CPU/HIP.
+TEST_CASE(suzip_gpu_dictionary_writer_levels_and_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(65536U);
+    std::uint32_t state = 0x31674325U;
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        input[index] = index < 16384U ? static_cast<std::byte>(state >> 24U) : input[index % 16384U];
+    }
+    for (std::size_t record = 1U; record < 4U; ++record) {
+        input[record * 16384U] = static_cast<std::byte>(record);
+    }
+
+    std::size_t previous = input.size();
+    for (int level = 1; level <= 9; ++level) {
+        superzip::GpuCodecOptions options;
+        options.require_gpu = true;
+        options.compression_level = level;
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_TRUE(encoded.gpu_used);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_TRUE(encoded.payload.size() < previous);
+        const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+        REQUIRE_TRUE(telemetry.kernel_launches >= 5U);
+        REQUIRE_TRUE(telemetry.h2d_bytes >= input.size());
+        REQUIRE_EQ(telemetry.dictionary_blocks, 1U);
+        REQUIRE_EQ(telemetry.prefix_blocks, 0U);
+        std::vector<std::byte> decoded(input.size());
+        superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = false, .force_cpu = true});
+        REQUIRE_EQ(decoded, input);
+        previous = encoded.payload.size();
+    }
+
+    std::vector<std::byte> mixed = input;
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        mixed.push_back(static_cast<std::byte>(state >> 24U));
+    }
+    mixed.insert(mixed.end(), input.size(), std::byte{0xA7});
+    superzip::GpuCodecOptions mixed_options;
+    mixed_options.block_size = static_cast<std::uint32_t>(input.size());
+    mixed_options.compression_level = 9;
+    const auto mixed_encoded = superzip::encode_chunk(mixed, mixed_options);
+    REQUIRE_EQ(mixed_encoded.blocks.size(), 3U);
+    REQUIRE_EQ(mixed_encoded.blocks[0].kind, superzip::BlockKind::GpuDictionary);
+    REQUIRE_EQ(mixed_encoded.blocks[1].kind, superzip::BlockKind::Raw);
+    REQUIRE_EQ(mixed_encoded.blocks[2].kind, superzip::BlockKind::Fill);
+    REQUIRE_EQ(mixed_encoded.blocks[1].encoded_offset, mixed_encoded.blocks[0].encoded_len);
+    REQUIRE_EQ(mixed_encoded.payload.size(), mixed_encoded.blocks[0].encoded_len + mixed_encoded.blocks[1].encoded_len);
+    for (const bool hip : {false, true}) {
+        auto decode_options = mixed_options;
+        decode_options.force_cpu = !hip;
+        decode_options.require_gpu = hip;
+        std::vector<std::byte> decoded(mixed.size());
+        REQUIRE_EQ(superzip::decode_chunk(mixed_encoded.payload, mixed_encoded.blocks, decoded, decode_options), hip);
+        REQUIRE_EQ(decoded, mixed);
+        const auto crc =
+            superzip::crc_decoded_chunk(mixed_encoded.payload, mixed_encoded.blocks, mixed.size(), decode_options);
+        REQUIRE_EQ(crc.crc32, superzip::crc32(mixed));
+    }
+
+    const auto root = test_temp_dir("suzip-dictionary-writer");
+    const auto source = root / "record.bin";
+    {
+        std::ofstream file(source, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(input.data()), static_cast<std::streamsize>(input.size()));
+    }
+    const auto archive = root / "record.suzip";
+    superzip::CompressOptions compression;
+    compression.compression_level = 9;
+    compression.block_size = static_cast<std::uint32_t>(input.size());
+    compression.verify_after_write = true;
+    const auto compressed = superzip::compress_suzip({source}, archive, compression);
+    REQUIRE_TRUE(compressed.gpu_used);
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_EQ(index.version, 4U);
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::GpuDictionary));
+    for (const bool hip : {false, true}) {
+        superzip::ExtractOptions options;
+        options.force_cpu = !hip;
+        options.gpu_required = hip;
+        REQUIRE_EQ(superzip::verify_suzip(archive, options).gpu_used, hip);
+        const auto destination = root / (hip ? "hip" : "cpu");
+        REQUIRE_EQ(superzip::extract_suzip(archive, destination, options).gpu_used, hip);
+        std::ifstream restored(destination / "record.bin", std::ios::binary);
+        REQUIRE_TRUE(restored.is_open());
+        std::vector<std::byte> bytes(input.size());
+        restored.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        REQUIRE_EQ(restored.gcount(), static_cast<std::streamsize>(bytes.size()));
+        REQUIRE_EQ(restored.peek(), std::char_traits<char>::eof());
+        REQUIRE_EQ(bytes, input);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Verify long periodic blocks are selected only after full HIP validation and use native version four.
+// Inputs: Nontrivial motifs at multiple lengths plus one near-periodic block with a late mismatch.
+// Outputs: CPU/HIP decoders reproduce exact bytes, a real archive roundtrips, and mismatches are never mislabeled.
+TEST_CASE(suzip_gpu_long_pattern_version_four_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> archive_input;
+    for (const auto period : {257U, 4096U, 8192U, superzip::kMaxGpuPatternBytes}) {
+        std::vector<std::byte> motif(period);
+        std::uint32_t state = 0x6A09E667U ^ period;
+        for (auto& value : motif) {
+            state ^= state << 13U;
+            state ^= state >> 17U;
+            state ^= state << 5U;
+            value = static_cast<std::byte>(state >> 24U);
+        }
+        std::vector<std::byte> input(period * 4U);
+        for (std::size_t index = 0; index < input.size(); ++index) {
+            input[index] = motif[index % period];
+        }
+        superzip::GpuCodecOptions options;
+        options.require_gpu = true;
+        options.compression_level = 5;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_TRUE(encoded.gpu_used);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::Pattern);
+        REQUIRE_EQ(encoded.blocks.front().encoded_len, period);
+        REQUIRE_EQ(encoded.payload.size(), period);
+        for (const bool hip : {false, true}) {
+            auto decode_options = options;
+            decode_options.force_cpu = !hip;
+            decode_options.require_gpu = hip;
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(decoded, input);
+        }
+        if (period == superzip::kMaxGpuPatternBytes) {
+            archive_input = input;
+            input.back() ^= std::byte{0x01};
+            const auto near_pattern = superzip::encode_chunk(input, options);
+            REQUIRE_TRUE(near_pattern.gpu_used);
+            REQUIRE_EQ(near_pattern.blocks.size(), 1U);
+            REQUIRE_TRUE(near_pattern.blocks.front().kind != superzip::BlockKind::Pattern);
+            std::vector<std::byte> decoded(input.size());
+            superzip::decode_chunk(near_pattern.payload, near_pattern.blocks, decoded,
+                                   {.require_gpu = false, .force_cpu = true});
+            REQUIRE_EQ(decoded, input);
+        }
+    }
+
+    const auto root = test_temp_dir("suzip-long-pattern-v4");
+    const auto source = root / "pattern.bin";
+    {
+        std::ofstream file(source, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(archive_input.data()),
+                   static_cast<std::streamsize>(archive_input.size()));
+    }
+    const auto archive = root / "pattern.suzip";
+    superzip::CompressOptions compression;
+    compression.gpu_required = true;
+    compression.verify_after_write = true;
+    REQUIRE_TRUE(superzip::compress_suzip({source}, archive, compression).gpu_used);
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_EQ(index.version, 4U);
+    REQUIRE_EQ(index.entries.front().blocks.front().kind, superzip::BlockKind::Pattern);
+    REQUIRE_EQ(index.entries.front().blocks.front().encoded_len, superzip::kMaxGpuPatternBytes);
+    for (const bool hip : {false, true}) {
+        superzip::ExtractOptions options;
+        options.force_cpu = !hip;
+        options.gpu_required = hip;
+        REQUIRE_EQ(superzip::verify_suzip(archive, options).gpu_used, hip);
+        const auto destination = root / (hip ? "hip" : "cpu");
+        REQUIRE_EQ(superzip::extract_suzip(archive, destination, options).gpu_used, hip);
+        std::ifstream restored(destination / "pattern.bin", std::ios::binary);
+        std::vector<std::byte> bytes(archive_input.size());
+        restored.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        REQUIRE_EQ(restored.gcount(), static_cast<std::streamsize>(bytes.size()));
+        REQUIRE_EQ(restored.peek(), std::char_traits<char>::eof());
+        REQUIRE_EQ(bytes, archive_input);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Exercise CPU pattern expansion at the smallest valid tail and repeated-copy boundaries.
+// Inputs: Motifs spanning legacy and version-four limits with non-multiple decoded lengths.
+// Outputs: Every decoded byte matches the independent modulo reference, including the final partial copy.
+TEST_CASE(suzip_cpu_pattern_expansion_boundaries) {
+    for (const auto period : {2U, 256U, 257U, superzip::kMaxGpuPatternBytes}) {
+        std::vector<std::byte> motif(period);
+        for (std::size_t index = 0; index < motif.size(); ++index) {
+            motif[index] = static_cast<std::byte>((index * 131U + 17U) & 0xFFU);
+        }
+        for (const auto length : {period + 1U, period * 2U - 1U, period * 3U + 13U}) {
+            const std::array blocks{superzip::BlockDescriptor{
+                .kind = superzip::BlockKind::Pattern,
+                .uncompressed_len = length,
+                .encoded_len = period,
+            }};
+            std::vector<std::byte> decoded(length);
+            REQUIRE_TRUE(!superzip::decode_chunk(motif, blocks, decoded, {.require_gpu = false, .force_cpu = true}));
+            for (std::size_t index = 0; index < decoded.size(); ++index) {
+                REQUIRE_EQ(decoded[index], motif[index % period]);
+            }
+        }
+    }
+}
+
+// Purpose: Measure public CPU decoding of bounded version-four pattern blocks without filesystem writes.
+// Inputs: An explicit environment opt-in and eight deterministic 16 MiB pattern blocks.
+// Outputs: Prints a median decode time only after byte-exact validation; never asserts a timing threshold.
+TEST_CASE(suzip_cpu_pattern_decode_benchmark_opt_in) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_PATTERN_CPU_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
+        return;
+    }
+    constexpr std::size_t block_bytes = superzip::kMaxArchiveBlockBytes;
+    constexpr std::size_t block_count = 8U;
+    constexpr std::size_t pattern_bytes = superzip::kMaxGpuPatternBytes;
+    std::vector<std::byte> payload(block_count * pattern_bytes);
+    std::uint32_t state = 0x243F6A88U;
+    for (std::size_t index = 0; index < pattern_bytes; ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        const auto value = static_cast<std::byte>(state >> 24U);
+        for (std::size_t block = 0; block < block_count; ++block) {
+            payload[block * pattern_bytes + index] = value;
+        }
+    }
+    std::vector<superzip::BlockDescriptor> blocks;
+    for (std::size_t block = 0; block < block_count; ++block) {
+        blocks.push_back(superzip::BlockDescriptor{
+            .kind = superzip::BlockKind::Pattern,
+            .uncompressed_len = static_cast<std::uint32_t>(block_bytes),
+            .encoded_offset = block * pattern_bytes,
+            .encoded_len = static_cast<std::uint32_t>(pattern_bytes),
+        });
+    }
+    std::vector<std::byte> decoded(block_count * block_bytes);
+    const superzip::GpuCodecOptions options{.require_gpu = false, .force_cpu = true};
+    std::vector<double> milliseconds;
+    for (int iteration = 0; iteration < 5; ++iteration) {
+        const auto started = std::chrono::steady_clock::now();
+        REQUIRE_TRUE(!superzip::decode_chunk(payload, blocks, decoded, options));
+        milliseconds.push_back(
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+        for (std::size_t index = 0; index < decoded.size(); ++index) {
+            REQUIRE_EQ(decoded[index], payload[index % pattern_bytes]);
+        }
+    }
+    std::sort(milliseconds.begin(), milliseconds.end());
+    std::cout << "pattern_cpu_decode input_bytes=" << decoded.size() << " payload_bytes=" << payload.size()
+              << " median_ms=" << milliseconds[milliseconds.size() / 2U] << " memory_only=true disk_write_bytes=0\n";
 }
 
 // Purpose: Verify `.suzip` roundtrip behavior for compressible and mixed byte patterns.
@@ -1288,26 +1893,28 @@ TEST_CASE(suzip_verify_rejects_invalid_gpu_pattern_metadata) {
     const auto archive = root / "archive.suzip";
     {
         std::ofstream file(archive, std::ios::binary | std::ios::trunc);
-        const char pattern = 'x';
-        file.write(&pattern, 1);
+        const std::array<char, 2> pattern{'x', 'y'};
+        file.write(pattern.data(), static_cast<std::streamsize>(pattern.size()));
 
         superzip::ArchiveIndex index;
         superzip::ArchiveEntry entry;
         entry.path = "pattern.bin";
         entry.uncompressed_size = 4096;
         entry.payload_offset = 0;
-        entry.payload_size = 1;
+        entry.payload_size = pattern.size();
         entry.blocks.push_back(superzip::BlockDescriptor{
             .kind = superzip::BlockKind::Pattern,
             .fill_value = 0,
             .uncompressed_len = 4096,
             .encoded_offset = 0,
-            .encoded_len = 1,
+            .encoded_len = static_cast<std::uint32_t>(pattern.size()),
         });
         index.entries.push_back(std::move(entry));
         const auto index_offset = static_cast<std::uint64_t>(file.tellp());
         superzip::write_archive_index(file, index);
         const auto index_size = static_cast<std::uint64_t>(file.tellp()) - index_offset;
+        file.seekp(-static_cast<std::streamoff>(sizeof(std::uint32_t)), std::ios::cur);
+        superzip::write_u32(file, 1U);
         write_test_footer(file, index_offset, index_size);
     }
 

@@ -26,6 +26,11 @@
       "source": "third_party/lzma_sdk/LICENSE"
     },
     {
+      "title": "LZ4 1.10.0",
+      "group": "Other",
+      "source": "third_party/lz4/LICENSE"
+    },
+    {
       "title": "Zstandard 1.5.7",
       "group": "Other",
       "source": "third_party/zstd/LICENSE"

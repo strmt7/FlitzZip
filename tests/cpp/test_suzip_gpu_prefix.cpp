@@ -11,6 +11,9 @@
 #include <iostream>
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstdlib>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -213,10 +216,14 @@ TEST_CASE(suzip_gpu_prefix_packing_matches_reference) {
     }
     std::vector<std::byte> fixture;
     std::uint32_t bit_position = 0;
+    std::uint32_t filler_state = 0x6A47D321U;
     for (std::uint32_t value = 0; value < 256U; ++value) {
         for (std::uint32_t alignment = 0; alignment < 32U; ++alignment) {
             while (bit_position % 32U != alignment) {
-                fixture.push_back(std::byte{0});
+                filler_state ^= filler_state << 13U;
+                filler_state ^= filler_state >> 17U;
+                filler_state ^= filler_state << 5U;
+                fixture.push_back(static_cast<std::byte>(filler_state & 3U));
                 bit_position += 3U;
                 if (fixture.size() % superzip::kGpuPrefixSegmentBytes == 0U) {
                     bit_position = 0;
@@ -233,7 +240,12 @@ TEST_CASE(suzip_gpu_prefix_packing_matches_reference) {
     for (const int level : {5, 9}) {
         for (const std::size_t tail : {0U, 1U, 15U, 16U, 17U, 31U, 32U, 4095U}) {
             auto input = fixture;
-            input.resize(aligned_size + tail, std::byte{2});
+            while (input.size() < aligned_size + tail) {
+                filler_state ^= filler_state << 13U;
+                filler_state ^= filler_state >> 17U;
+                filler_state ^= filler_state << 5U;
+                input.push_back(static_cast<std::byte>(filler_state & 3U));
+            }
             if (level == 9) {
                 for (auto& byte : input) {
                     byte = static_cast<std::byte>((static_cast<std::uint32_t>(byte) + 201U) & 255U);
@@ -663,4 +675,83 @@ TEST_CASE(suzip_required_gpu_prefix_table_corruption_is_rejected) {
     }
     REQUIRE_TRUE(rejected);
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Measure required-HIP pattern materialization across short, non-power-of-two, and long periods.
+// Inputs: Opt-in environment flag and three deterministic 16 MiB in-memory pattern blocks.
+// Outputs: Prints median host-wall decode times only after exact-byte validation; has no pass/fail timing threshold.
+TEST_CASE(suzip_gpu_pattern_decode_benchmark_opt_in) {
+    const auto* enabled = std::getenv("SUPERZIP_PATTERN_GPU_BENCHMARK");
+    if (enabled == nullptr || std::string_view(enabled) != "1" || !superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::size_t output_bytes = superzip::kMaxArchiveBlockBytes;
+    superzip::GpuCodecOptions options;
+    options.require_gpu = true;
+    options.force_cpu = false;
+    for (const std::uint32_t period : {3U, 257U, 16384U}) {
+        std::vector<std::byte> pattern(period);
+        for (std::size_t i = 0; i < pattern.size(); ++i) {
+            pattern[i] = static_cast<std::byte>((i * 73U + i / 11U) & 255U);
+        }
+        const superzip::BlockDescriptor block{
+            .kind = superzip::BlockKind::Pattern,
+            .uncompressed_len = static_cast<std::uint32_t>(output_bytes),
+            .encoded_offset = 0U,
+            .encoded_len = period,
+        };
+        std::vector<std::byte> decoded(output_bytes);
+        std::array<double, 5> samples{};
+        for (auto& milliseconds : samples) {
+            const auto start = std::chrono::steady_clock::now();
+            REQUIRE_TRUE(superzip::decode_chunk(pattern, std::span(&block, 1), decoded, options));
+            milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            for (std::size_t i = 0; i < decoded.size(); ++i) {
+                REQUIRE_EQ(decoded[i], pattern[i % pattern.size()]);
+            }
+        }
+        std::sort(samples.begin(), samples.end());
+        std::cout << "suzip_gpu_pattern_decode period=" << period << " output_bytes=" << output_bytes
+                  << " median_ms=" << samples[samples.size() / 2U] << '\n';
+    }
+}
+
+// Purpose: Cover GPU pattern phases at 64 KiB segment and independently encoded block boundaries.
+// Inputs: Four consecutive non-aligned pattern blocks with short, odd, and maximum periods.
+// Outputs: Requires byte-identical required-HIP and forced-CPU materialization for every decoded position.
+TEST_CASE(suzip_gpu_pattern_decode_unaligned_boundaries) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const std::array<std::uint32_t, 4> periods{2U, 3U, 257U, 16384U};
+    const std::array<std::uint32_t, 4> lengths{70013U, 131071U, 65539U, 200003U};
+    std::vector<std::byte> payload;
+    std::vector<std::byte> expected;
+    std::vector<superzip::BlockDescriptor> blocks;
+    for (std::size_t index = 0; index < periods.size(); ++index) {
+        const auto period = periods[index];
+        const auto length = lengths[index];
+        const auto encoded_offset = payload.size();
+        for (std::uint32_t i = 0; i < period; ++i) {
+            payload.push_back(static_cast<std::byte>((i * 73U + i / 11U + index * 19U) & 255U));
+        }
+        for (std::uint32_t i = 0; i < length; ++i) {
+            expected.push_back(payload[encoded_offset + i % period]);
+        }
+        blocks.push_back(superzip::BlockDescriptor{
+            .kind = superzip::BlockKind::Pattern,
+            .uncompressed_len = length,
+            .encoded_offset = encoded_offset,
+            .encoded_len = period,
+        });
+    }
+    std::vector<std::byte> decoded(expected.size());
+    superzip::GpuCodecOptions options;
+    REQUIRE_TRUE(superzip::decode_chunk(payload, blocks, decoded, options));
+    REQUIRE_TRUE(decoded == expected);
+    options.require_gpu = false;
+    options.force_cpu = true;
+    std::fill(decoded.begin(), decoded.end(), std::byte{0});
+    REQUIRE_TRUE(!superzip::decode_chunk(payload, blocks, decoded, options));
+    REQUIRE_TRUE(decoded == expected);
 }

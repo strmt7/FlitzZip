@@ -1,5 +1,8 @@
 #include "gpu/gpu_codec.hpp"
 #include "gpu/hip_codec_support.hpp"
+#include "gpu/dictionary_device.hpp"
+#include "gpu/sparse_pattern_candidate.hpp"
+#include "gpu/dictionary_candidate.hpp"
 
 #include "core/checksum.hpp"
 #include "core/result.hpp"
@@ -243,25 +246,34 @@ std::optional<EncodedChunk> encode_native_prefix_chunk_device(const std::byte* d
                                                               int compression_level, GpuTelemetry* telemetry) {
     auto fixed = encode_prefix_chunk_device(device_input, input, block_size, source_blocks, telemetry);
     if (compression_level < 7) {
-        if (fixed) {
-            record_gpu_prefix_blocks(telemetry, count_emitted_prefix_blocks(*fixed));
-        }
         return fixed;
     }
     auto adaptive = encode_adaptive_prefix_chunk_device(device_input, input, block_size, source_blocks,
                                                         fixed ? &*fixed : nullptr, compression_level, telemetry);
     if (!adaptive) {
-        if (fixed) {
-            record_gpu_prefix_blocks(telemetry, count_emitted_prefix_blocks(*fixed));
-        }
         return fixed;
     }
     if (!fixed || adaptive->payload.size() < fixed->payload.size()) {
-        record_gpu_prefix_blocks(telemetry, count_emitted_prefix_blocks(*adaptive));
         return adaptive;
     }
-    record_gpu_prefix_blocks(telemetry, count_emitted_prefix_blocks(*fixed));
     return fixed;
+}
+
+// Purpose: Count only GPU block kinds present after all competing native encoders have been compared.
+// Inputs: A fully selected encoded chunk and operation-owned telemetry.
+// Outputs: Adds emitted prefix, dictionary, and sparse counts without counting discarded trials.
+void record_selected_block_kinds(const EncodedChunk& chunk, GpuTelemetry* telemetry) {
+    std::uint64_t prefixes = 0U;
+    std::uint64_t dictionaries = 0U;
+    std::uint64_t sparse_blocks = 0U;
+    for (const auto& block : chunk.blocks) {
+        prefixes += is_gpu_prefix_block(block);
+        dictionaries += block.kind == BlockKind::GpuDictionary;
+        sparse_blocks += block.kind == BlockKind::GpuSparsePattern;
+    }
+    record_gpu_prefix_blocks(telemetry, prefixes);
+    record_gpu_dictionary_blocks(telemetry, dictionaries);
+    record_gpu_sparse_pattern_blocks(telemetry, sparse_blocks);
 }
 
 // Purpose: Convert verified encode candidates into SUZIP block descriptors.
@@ -383,6 +395,17 @@ __global__ void verify_analysis_candidates_kernel(const std::byte* input, std::s
 __device__ std::uint32_t find_decoded_block(const DeviceBlock* blocks, std::uint32_t block_count,
                                             std::size_t output_offset);
 
+// Purpose: Read a validated little-endian sparse field from device payload bytes.
+// Inputs: `bytes` points to four resident bytes admitted by the host parser.
+// Outputs: Returns the unsigned field without relying on alignment.
+__device__ std::uint32_t read_sparse_u32_device(const std::byte* bytes) {
+    std::uint32_t value = 0U;
+    for (std::uint32_t index = 0U; index < sizeof(value); ++index) {
+        value |= static_cast<std::uint32_t>(bytes[index]) << (index * 8U);
+    }
+    return value;
+}
+
 // Purpose: Decode fill/raw block metadata into output bytes on the AMD GPU.
 // Inputs: `payload`, `blocks`, `block_count`, `output`, and `output_len` are device pointers/counts validated by the
 // host path. Outputs: Writes decoded bytes into `output`.
@@ -418,41 +441,76 @@ __global__ void materialize_segments_kernel(const std::byte* payload, const Devi
         return;
     }
     const auto segment_end = min(segment_start + static_cast<std::size_t>(kMaterializeSegmentBytes), output_len);
-    const auto segment_length = segment_end - segment_start;
-    const auto thread_span = (segment_length + blockDim.x - 1U) / blockDim.x;
-    auto pos = segment_start + static_cast<std::size_t>(threadIdx.x) * thread_span;
-    const auto thread_end = min(pos + thread_span, segment_end);
+    auto pos = segment_start + static_cast<std::size_t>(threadIdx.x);
     auto block_index = find_decoded_block(blocks, block_count, pos);
-    while (pos < thread_end && block_index < block_count) {
+    while (pos < segment_end && block_index < block_count) {
         const auto& block = blocks[block_index];
         const auto block_start = static_cast<std::size_t>(block.output_offset);
-        const auto block_end = min(thread_end, block_start + static_cast<std::size_t>(block.uncompressed_len));
-        while (pos < block_end) {
-            const auto in_block = pos - block_start;
-            if (block.kind == 1) {
-                output[pos] = static_cast<std::byte>(block.fill_value);
-            } else if (block.kind == 0) {
-                output[pos] = payload[block.encoded_offset + in_block];
-            } else if (block.kind == 3 && block.encoded_len != 0U) {
-                output[pos] = payload[block.encoded_offset + (in_block % block.encoded_len)];
+        const auto block_end = block_start + static_cast<std::size_t>(block.uncompressed_len);
+        if (block.kind == static_cast<std::uint8_t>(BlockKind::Pattern) ||
+            block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern)) {
+            const bool sparse = block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern);
+            const auto period = sparse ? read_sparse_u32_device(payload + block.encoded_offset) : block.encoded_len;
+            const auto motif_offset = block.encoded_offset + (sparse ? kSparsePatternHeaderBytes : 0U);
+            const auto stride = static_cast<std::uint32_t>(blockDim.x) % period;
+            auto phase = static_cast<std::uint32_t>((pos - block_start) % period);
+            while (pos < block_end && pos < segment_end) {
+                output[pos] = payload[motif_offset + phase];
+                phase += stride;
+                if (phase >= period) {
+                    phase -= period;
+                }
+                pos += blockDim.x;
             }
-            ++pos;
+        } else {
+            while (pos < block_end && pos < segment_end) {
+                if (block.kind == 1) {
+                    output[pos] = static_cast<std::byte>(block.fill_value);
+                } else if (block.kind == 0) {
+                    output[pos] = payload[block.encoded_offset + (pos - block_start)];
+                }
+                pos += blockDim.x;
+            }
         }
         ++block_index;
     }
 }
 
+// Purpose: Apply admitted sorted corrections after the segmented motif expansion has completed.
+// Inputs: `payload`, `blocks`, and `output` are device buffers whose sparse tables passed host validation.
+// Outputs: Writes only disjoint patch positions inside each sparse block's decoded window.
+__global__ void apply_sparse_patches_kernel(const std::byte* payload, const DeviceBlock* blocks, std::byte* output,
+                                            std::uint32_t block_count) {
+    const auto block_index = static_cast<std::uint32_t>(blockIdx.x);
+    if (block_index >= block_count) {
+        return;
+    }
+    const auto& block = blocks[block_index];
+    if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuSparsePattern)) {
+        return;
+    }
+    const auto* encoded = payload + block.encoded_offset;
+    const auto period = read_sparse_u32_device(encoded);
+    const auto patch_count = read_sparse_u32_device(encoded + sizeof(std::uint32_t));
+    const auto* patches = encoded + kSparsePatternHeaderBytes + period;
+    for (std::uint32_t index = static_cast<std::uint32_t>(threadIdx.x); index < patch_count; index += blockDim.x) {
+        const auto* patch = patches + static_cast<std::size_t>(index) * kSparsePatternPatchBytes;
+        const auto position = read_sparse_u32_device(patch);
+        output[block.output_offset + position] = patch[sizeof(std::uint32_t)];
+    }
+}
+
 // Purpose: Compute one finalized CRC-32 value per fixed-size segment of a device buffer.
 // Inputs: `input`/`input_len` describe device bytes, `segments` is a device output table, and `segment_count` bounds
-// the launch. Outputs: Writes ordered segment CRCs and segment lengths for host-side GF(2) concatenation.
+// `segment_bytes` sets the launch geometry. Outputs: Writes ordered segment CRCs and lengths for GF(2) concatenation.
 __global__ void crc32_segments_kernel(const std::byte* input, std::size_t input_len, DeviceCrcSegment* segments,
-                                      std::uint32_t segment_count) {
+                                      std::uint32_t segment_count, std::uint32_t segment_bytes) {
     const auto segment_index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
     if (segment_index >= segment_count) {
         return;
     }
-    const auto start = static_cast<std::size_t>(segment_index) * kCrcSegmentBytes;
-    const auto end = min(start + static_cast<std::size_t>(kCrcSegmentBytes), input_len);
+    const auto start = static_cast<std::size_t>(segment_index) * segment_bytes;
+    const auto end = min(start + static_cast<std::size_t>(segment_bytes), input_len);
     std::uint32_t crc = 0xFFFFFFFFU;
     for (std::size_t pos = start; pos < end; ++pos) {
         const auto octet = static_cast<std::uint8_t>(input[pos]);
@@ -511,17 +569,18 @@ __device__ std::uint32_t find_decoded_block(const DeviceBlock* blocks, std::uint
 
 // Purpose: Compute finalized CRC-32 values for decoded-stream segments without a decoded temporary buffer.
 // Inputs: `payload`/`blocks` describe HIP-supported encoded data, `output_len` bounds decoded bytes, and `segments`
-// receives one CRC result per fixed-size decoded segment.
+// receives one CRC result per selected-size decoded segment; `segment_bytes` sets that geometry.
 // Outputs: Writes ordered segment CRCs and lengths for host-side CRC concatenation.
 __global__ void decoded_crc32_segments_kernel(const std::byte* payload, const DeviceBlock* blocks,
                                               std::uint32_t block_count, std::size_t output_len,
-                                              DeviceCrcSegment* segments, std::uint32_t segment_count) {
+                                              DeviceCrcSegment* segments, std::uint32_t segment_count,
+                                              std::uint32_t segment_bytes) {
     const auto segment_index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
     if (segment_index >= segment_count) {
         return;
     }
-    const auto start = static_cast<std::size_t>(segment_index) * kCrcSegmentBytes;
-    const auto end = min(start + static_cast<std::size_t>(kCrcSegmentBytes), output_len);
+    const auto start = static_cast<std::size_t>(segment_index) * segment_bytes;
+    const auto end = min(start + static_cast<std::size_t>(segment_bytes), output_len);
     std::uint32_t crc = 0xFFFFFFFFU;
     auto block_index = find_decoded_block(blocks, block_count, start);
     std::size_t pos = start;
@@ -619,14 +678,21 @@ __global__ void diagnostic_checksum_kernel(const std::uint32_t* data, std::size_
     }
 }
 
-// Purpose: Return the number of fixed-size CRC segments needed for a device buffer.
-// Inputs: `bytes` is the buffer length to checksum.
+// Purpose: Select the measured small- or large-chunk CRC geometry without changing checksum semantics.
+// Inputs: `bytes` is the total source or decoded byte count for one operation.
+// Outputs: Returns a bounded 8 KiB or 32 KiB segment size used consistently by host and HIP code.
+std::uint32_t crc_segment_bytes_for_size(std::uint64_t bytes) {
+    return bytes <= kSmallCrcInputLimitBytes ? kSmallCrcSegmentBytes : kLargeCrcSegmentBytes;
+}
+
+// Purpose: Return the number of selected-size CRC segments needed for a device buffer.
+// Inputs: `bytes` is the buffer length and `segment_bytes` is the operation's selected geometry.
 // Outputs: Returns zero for empty buffers or a bounded segment count for nonempty buffers.
-std::uint32_t crc_segment_count(std::uint64_t bytes) {
+std::uint32_t crc_segment_count(std::uint64_t bytes, std::uint32_t segment_bytes) {
     if (bytes == 0) {
         return 0;
     }
-    const auto segments = (bytes + kCrcSegmentBytes - 1U) / kCrcSegmentBytes;
+    const auto segments = (bytes + segment_bytes - 1U) / segment_bytes;
     if (segments > std::numeric_limits<std::uint32_t>::max()) {
         throw GpuError("CRC segment count exceeds HIP launch limits");
     }
@@ -652,7 +718,8 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
     if (input_len == 0) {
         return 0;
     }
-    const auto segments = crc_segment_count(input_len);
+    const auto crc_segment_bytes = crc_segment_bytes_for_size(input_len);
+    const auto segments = crc_segment_count(input_len, crc_segment_bytes);
     const auto segment_bytes = checked_multiply_bytes(segments, sizeof(DeviceCrcSegment), action);
     HipDeviceMemoryReservation reservation(segment_bytes, action);
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc CRC segments");
@@ -662,7 +729,7 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
     auto events = make_hip_event_pair("create crc32_segments_kernel events");
     launch_measured_kernel(crc32_segments_kernel, grid, threads, 0, hipStreamPerThread, events,
                            "launch crc32_segments_kernel", device_input, static_cast<std::size_t>(input_len),
-                           device_segments.get(), segments);
+                           device_segments.get(), segments, crc_segment_bytes);
     finish_measured_kernel(telemetry, events, "synchronize crc32_segments_kernel");
 
     std::vector<DeviceCrcSegment> host_segments(segments);
@@ -680,9 +747,11 @@ std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_in
                                                       std::span<const std::uint32_t> lengths, GpuTelemetry* telemetry) {
     std::vector<CrcInputRange> ranges;
     std::size_t offset = 0;
+    const auto total_input_bytes = std::accumulate(lengths.begin(), lengths.end(), std::uint64_t{0});
+    const auto crc_segment_bytes = crc_segment_bytes_for_size(total_input_bytes);
     for (const auto length : lengths) {
         for (std::uint32_t pos = 0; pos < length;) {
-            const auto count = std::min(kCrcSegmentBytes, length - pos);
+            const auto count = std::min(crc_segment_bytes, length - pos);
             ranges.push_back(CrcInputRange{.offset = offset + pos, .length = count});
             pos += count;
         }
@@ -719,7 +788,7 @@ std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_in
     checksums.reserve(lengths.size());
     std::size_t first = 0;
     for (const auto length : lengths) {
-        const auto segment_count = crc_segment_count(length);
+        const auto segment_count = crc_segment_count(length, crc_segment_bytes);
         checksums.push_back(
             combine_crc_segments(std::span<const DeviceCrcSegment>(segments).subspan(first, segment_count)));
         first += segment_count;
@@ -737,7 +806,8 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     if (output_len == 0) {
         return 0;
     }
-    const auto segments = crc_segment_count(output_len);
+    const auto crc_segment_bytes = crc_segment_bytes_for_size(output_len);
+    const auto segments = crc_segment_count(output_len, crc_segment_bytes);
     const auto segment_bytes = checked_multiply_bytes(segments, sizeof(DeviceCrcSegment), action);
     HipDeviceMemoryReservation reservation(segment_bytes, action);
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc decoded CRC segments");
@@ -747,7 +817,7 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     auto events = make_hip_event_pair("create decoded_crc32_segments_kernel events");
     launch_measured_kernel(decoded_crc32_segments_kernel, grid, threads, 0, hipStreamPerThread, events,
                            "launch decoded_crc32_segments_kernel", device_payload, device_blocks, block_count,
-                           static_cast<std::size_t>(output_len), device_segments.get(), segments);
+                           static_cast<std::size_t>(output_len), device_segments.get(), segments, crc_segment_bytes);
     finish_measured_kernel(telemetry, events, "synchronize decoded_crc32_segments_kernel");
 
     std::vector<DeviceCrcSegment> host_segments(segments);
@@ -812,6 +882,26 @@ std::vector<PrefixDecodeSegment> build_prefix_decode_segments(std::span<const De
     return plans;
 }
 
+// Purpose: Translate validated archive dictionary blocks into absolute device-buffer segment spans.
+// Inputs: `payload` is the complete encoded chunk and `blocks` contains decoded output offsets.
+// Outputs: Returns bounded non-overlapping spans for the shared HIP dictionary decoder.
+std::vector<DictionarySegmentSpan> build_dictionary_decode_segments(std::span<const std::byte> payload,
+                                                                    std::span<const DeviceBlock> blocks) {
+    std::vector<DictionarySegmentSpan> plans;
+    for (const auto& block : blocks) {
+        if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuDictionary)) {
+            continue;
+        }
+        const auto block_payload = payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
+        for (auto segment : parse_dictionary_segments(block_payload, block.uncompressed_len)) {
+            segment.encoded_offset += static_cast<std::uint32_t>(block.encoded_offset);
+            segment.decoded_offset += static_cast<std::uint32_t>(block.output_offset);
+            plans.push_back(segment);
+        }
+    }
+    return plans;
+}
+
 // Purpose: Launch the standard raw/fill/pattern materializer only when it has work.
 // Inputs: `device_payload`, `device_blocks`, `host_blocks`, `device_output`, and `output_len` describe the decode job.
 // Outputs: Writes non-prefix decoded bytes or returns without a kernel launch for prefix-only chunks.
@@ -831,6 +921,27 @@ void materialize_non_prefix_segments_device(const std::byte* device_payload, con
                            hipStreamPerThread, events, "launch materialize_segments_kernel", device_payload,
                            device_blocks, static_cast<std::uint32_t>(host_blocks.size()), device_output, output_len);
     finish_measured_kernel(telemetry, events, "synchronize materialize_segments_kernel");
+}
+
+// Purpose: Finish sparse blocks after every independent motif segment has been materialized.
+// Inputs: Device payload/block/output buffers and the validated host block table share the same live allocation.
+// Outputs: Applies canonical corrections on HIP, or skips the launch when no sparse block exists.
+void materialize_sparse_patches_device(const std::byte* device_payload, const DeviceBlock* device_blocks,
+                                       std::span<const DeviceBlock> host_blocks, std::byte* device_output,
+                                       GpuTelemetry* telemetry) {
+    if (!std::ranges::any_of(host_blocks, [](const DeviceBlock& block) {
+            return block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern);
+        })) {
+        return;
+    }
+    if (host_blocks.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw GpuError("sparse decode block count exceeds HIP launch limits");
+    }
+    auto events = make_hip_event_pair("create sparse patch events");
+    launch_measured_kernel(apply_sparse_patches_kernel, static_cast<unsigned int>(host_blocks.size()), 256, 0,
+                           hipStreamPerThread, events, "launch sparse patch kernel", device_payload, device_blocks,
+                           device_output, static_cast<std::uint32_t>(host_blocks.size()));
+    finish_measured_kernel(telemetry, events, "synchronize sparse patch kernel");
 }
 
 // Purpose: Launch GPU prefix materialization for the prefix-coded portions of one decoded chunk.
@@ -859,16 +970,17 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
     device_plans.reset_checked("hipFree prefix decode plans");
 }
 
-// Purpose: Verify decoded bytes for prefix-capable chunks without copying the decoded chunk back to the host.
+// Purpose: Verify decoded bytes for compressed HIP blocks without copying the decoded chunk back to the host.
 // Inputs: `payload`, `blocks`, `output_size`, and `options` describe one validated decoded chunk.
 // Outputs: Returns a finalized CRC-32 computed from a GPU-materialized output buffer.
-std::uint32_t compute_prefix_capable_crc32_device(std::span<const std::byte> payload,
-                                                  std::span<const BlockDescriptor> blocks, std::uint64_t output_size,
-                                                  const GpuCodecOptions& options) {
+std::uint32_t compute_materialized_crc32_device(std::span<const std::byte> payload,
+                                                std::span<const BlockDescriptor> blocks, std::uint64_t output_size,
+                                                const GpuCodecOptions& options) {
     auto* telemetry = options.telemetry.get();
     record_gpu_decode_chunk(telemetry);
     auto host_blocks = build_decode_device_blocks(blocks);
     const auto prefix_plans = build_prefix_decode_segments(host_blocks);
+    const auto dictionary_plans = build_dictionary_decode_segments(payload, host_blocks);
     const auto payload_bytes = std::max<std::size_t>(payload.size(), 1);
     const auto block_table_bytes =
         checked_multiply_bytes(host_blocks.size(), sizeof(DeviceBlock), "prefix CRC decode block table");
@@ -890,7 +1002,10 @@ std::uint32_t compute_prefix_capable_crc32_device(std::span<const std::byte> pay
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
     materialize_non_prefix_segments_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
                                            static_cast<std::size_t>(output_size), telemetry);
+    materialize_sparse_patches_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
+                                      telemetry);
     materialize_prefix_segments_device(device_payload.get(), device_output.get(), prefix_plans, telemetry);
+    dictionary::decode_segments_device(device_payload.get(), dictionary_plans, device_output.get(), telemetry);
     const auto crc = compute_crc32_device(device_output.get(), output_size, telemetry, "prefix decoded CRC");
     device_payload.reset_checked("hipFree prefix CRC payload");
     device_output.reset_checked("hipFree prefix CRC output");
@@ -1027,29 +1142,64 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         const bool all_raw =
             append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
+        std::optional<EncodedChunk> prefix_encoded;
         if (std::ranges::any_of(out.blocks,
                                 [](const BlockDescriptor& block) { return block.kind == BlockKind::Raw; })) {
-            if (auto prefix_encoded = encode_native_prefix_chunk_device(
-                    device_input.get(), input, block_size, out.blocks, options.compression_level, telemetry)) {
-                prefix_encoded->source_crc32 = source_crc32;
-                prefix_encoded->source_crc32_available = true;
-                device_input.reset_checked("hipFree input");
-                return std::move(*prefix_encoded);
+            prefix_encoded = encode_native_prefix_chunk_device(device_input.get(), input, block_size, out.blocks,
+                                                               options.compression_level, telemetry);
+        }
+        auto& baseline_blocks = prefix_encoded ? prefix_encoded->blocks : out.blocks;
+        auto sparse_replacements =
+            sparse_pattern::select_replacements(input, device_input.get(), baseline_blocks, telemetry);
+        auto competitive_blocks = std::vector<BlockDescriptor>(baseline_blocks.begin(), baseline_blocks.end());
+        for (std::size_t index = 0U; index < sparse_replacements.size(); ++index) {
+            if (!sparse_replacements[index].empty()) {
+                competitive_blocks[index].kind = BlockKind::GpuSparsePattern;
+                competitive_blocks[index].encoded_len = static_cast<std::uint32_t>(sparse_replacements[index].size());
             }
+        }
+        const auto dictionary_replacements = dictionary::select_dictionary_replacements(
+            input, device_input.get(), competitive_blocks, options.compression_level, telemetry);
+        const bool has_dictionary = std::ranges::any_of(
+            dictionary_replacements, [](const std::vector<std::byte>& replacement) { return !replacement.empty(); });
+        for (std::size_t index = 0U; index < dictionary_replacements.size(); ++index) {
+            if (!dictionary_replacements[index].empty()) {
+                sparse_replacements[index].clear();
+            }
+        }
+        const bool has_sparse = std::ranges::any_of(
+            sparse_replacements, [](const std::vector<std::byte>& replacement) { return !replacement.empty(); });
+        device_input.reset_checked("hipFree input");
+        if (prefix_encoded) {
+            prefix_encoded->source_crc32 = source_crc32;
+            prefix_encoded->source_crc32_available = true;
+            auto selected = has_dictionary ? dictionary::apply_dictionary_replacements(std::move(*prefix_encoded),
+                                                                                       dictionary_replacements)
+                                           : std::move(*prefix_encoded);
+            if (has_sparse) {
+                selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
+            }
+            record_selected_block_kinds(selected, telemetry);
+            return selected;
         }
         if (all_raw) {
             if (owned_input == nullptr) {
                 out.payload.resize(input.size());
                 std::copy(input.begin(), input.end(), out.payload.begin());
+            } else {
+                out.payload = std::move(*owned_input);
             }
         } else {
             append_verified_encode_payload(out, input, block_size, host_candidates, mismatches);
         }
-        device_input.reset_checked("hipFree input");
-        if (all_raw && owned_input != nullptr) {
-            out.payload = std::move(*owned_input);
+        auto selected = has_dictionary
+                            ? dictionary::apply_dictionary_replacements(std::move(out), dictionary_replacements)
+                            : std::move(out);
+        if (has_sparse) {
+            selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
         }
-        return out;
+        record_selected_block_kinds(selected, telemetry);
+        return selected;
     }
 }
 
@@ -1101,6 +1251,7 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
     validate_decode_layout(payload, blocks, output.size(), block_size);
     auto host_blocks = build_decode_device_blocks(blocks);
     const auto prefix_plans = build_prefix_decode_segments(host_blocks);
+    const auto dictionary_plans = build_dictionary_decode_segments(payload, host_blocks);
 
     const auto payload_bytes = std::max<std::size_t>(payload.size(), 1);
     const auto block_table_bytes =
@@ -1122,7 +1273,10 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
     materialize_non_prefix_segments_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
                                            output.size(), telemetry);
+    materialize_sparse_patches_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
+                                      telemetry);
     materialize_prefix_segments_device(device_payload.get(), device_output.get(), prefix_plans, telemetry);
+    dictionary::decode_segments_device(device_payload.get(), dictionary_plans, device_output.get(), telemetry);
     check_hip(hipMemcpy(output.data(), device_output.get(), output.size(), hipMemcpyDeviceToHost), "hipMemcpy output");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(output.size()));
     device_payload.reset_checked("hipFree payload");
@@ -1154,8 +1308,13 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
 
-    if (std::ranges::any_of(blocks, is_gpu_prefix_block)) {
-        return compute_prefix_capable_crc32_device(payload, blocks, output_size, options);
+    bool needs_materialized_crc = false;
+    for (const auto& block : blocks) {
+        needs_materialized_crc |= is_gpu_prefix_block(block) || block.kind == BlockKind::GpuDictionary ||
+                                  block.kind == BlockKind::GpuSparsePattern;
+    }
+    if (needs_materialized_crc) {
+        return compute_materialized_crc32_device(payload, blocks, output_size, options);
     }
 
     record_gpu_decode_chunk(telemetry);

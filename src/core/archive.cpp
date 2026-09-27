@@ -8,6 +8,7 @@
 #include "core/path_safety.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
+#include "core/sparse_pattern_block.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -95,7 +96,8 @@ struct ArchiveValidationSummary {
 // Outputs: Returns true for block kinds whose `encoded_offset`/`encoded_len` reserve payload bytes.
 bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
-           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix;
+           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix || kind == BlockKind::GpuDictionary ||
+           kind == BlockKind::GpuSparsePattern;
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -317,7 +319,7 @@ ArchiveIndex read_index_from_file(std::ifstream& input) {
         throw ArchiveError("archive footer is missing");
     }
     const auto version = read_u32(input);
-    if (version < kSuperZipMinReadableVersion || version > kSuperZipVersion) {
+    if (version < kSuperZipMinReadableVersion || version > kSuperZipMaxReadableVersion) {
         throw ArchiveError("unsupported archive footer version");
     }
     const auto index_offset = read_u64(input);
@@ -547,6 +549,10 @@ GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuR
         .pattern_blocks =
             checked_add_u64(lhs.pattern_blocks, rhs.pattern_blocks, "GPU pattern block counter overflows"),
         .prefix_blocks = checked_add_u64(lhs.prefix_blocks, rhs.prefix_blocks, "GPU prefix block counter overflows"),
+        .dictionary_blocks =
+            checked_add_u64(lhs.dictionary_blocks, rhs.dictionary_blocks, "GPU dictionary block counter overflows"),
+        .sparse_pattern_blocks = checked_add_u64(lhs.sparse_pattern_blocks, rhs.sparse_pattern_blocks,
+                                                 "GPU sparse pattern block counter overflows"),
         .kernel_ms = lhs.kernel_ms + rhs.kernel_ms,
     };
 }
@@ -579,13 +585,23 @@ std::uint64_t gpu_adaptive_prefix_header_bytes(std::uint32_t decoded_len) {
                            "GPU adaptive prefix header size overflows");
 }
 
+// Purpose: Bound the offset-table bytes required by one dictionary block.
+// Inputs: `decoded_len` is the block's declared uncompressed length.
+// Outputs: Returns the table byte count or throws before arithmetic overflow.
+std::uint64_t gpu_dictionary_table_bytes(std::uint32_t decoded_len) {
+    const auto segment_count =
+        (static_cast<std::uint64_t>(decoded_len) + kGpuDictionarySegmentBytes - 1U) / kGpuDictionarySegmentBytes;
+    return checked_add_u64(segment_count, 1U, "GPU dictionary segment count overflows") * sizeof(std::uint32_t);
+}
+
 // Purpose: Validate the shared archive block kind and decoded-length invariants.
 // Inputs: `entry` supplies the user-facing archive path and `block` is one parsed descriptor.
 // Outputs: Returns normally for a supported non-empty bounded block; throws `ArchiveError` otherwise.
 void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescriptor& block) {
     if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
         block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
-        block.kind != BlockKind::GpuAdaptivePrefix) {
+        block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuDictionary &&
+        block.kind != BlockKind::GpuSparsePattern) {
         throw ArchiveError("archive block has unknown encoding kind");
     }
     if (block.uncompressed_len == 0) {
@@ -652,6 +668,21 @@ std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const B
         require_dense_payload_offset(entry, block, payload_cursor, "GPU adaptive prefix");
         return checked_add_u64(payload_cursor, block.encoded_len, "GPU adaptive prefix block payload size overflows");
     }
+    case BlockKind::GpuDictionary: {
+        const auto table_bytes = gpu_dictionary_table_bytes(block.uncompressed_len);
+        if (block.encoded_len <= table_bytes || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU dictionary block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU dictionary");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU dictionary block payload size overflows");
+    }
+    case BlockKind::GpuSparsePattern:
+        if (block.encoded_len < kSparsePatternHeaderBytes + 2U + kSparsePatternPatchBytes ||
+            block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU sparse pattern block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU sparse pattern");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU sparse pattern block payload size overflows");
     }
     throw ArchiveError("archive block has unknown encoding kind");
 }
@@ -837,6 +868,25 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
     entry.crc32 = crc;
 }
 
+// Purpose: Select the smallest native version that defines every encoded block.
+// Inputs: A completed archive index with all file block descriptors.
+// Outputs: Returns version three, four, or five without downgrading a new block kind.
+std::uint32_t required_archive_version(const ArchiveIndex& index) {
+    std::uint32_t version = kSuperZipVersion;
+    for (const auto& entry : index.entries) {
+        for (const auto& block : entry.blocks) {
+            if (block.kind == BlockKind::GpuSparsePattern) {
+                return 5U;
+            }
+            if (block.kind == BlockKind::GpuDictionary ||
+                (block.kind == BlockKind::Pattern && block.encoded_len > kLegacyGpuPatternBytes)) {
+                version = 4U;
+            }
+        }
+    }
+    return version;
+}
+
 }  // namespace
 
 // Purpose: Create a native SUZIP archive from validated filesystem sources.
@@ -912,6 +962,7 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
     }
 
     publish_progress(progress, progress_callback);
+    index.version = required_archive_version(index);
     index.index_offset = stream_position(output);
     write_archive_index(output, index);
     index.index_size = stream_position(output) - index.index_offset;

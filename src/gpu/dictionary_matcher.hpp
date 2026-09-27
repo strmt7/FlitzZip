@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/archive_block_types.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -9,21 +11,18 @@
 
 namespace superzip::dictionary {
 
-// Internal dictionary-codec building block; not an archive block kind or a production format change.
-inline constexpr std::uint32_t kSegmentBytes = 65536U;
+// Shared HIP dictionary-codec limits for standalone diagnostics and native version-four blocks.
+inline constexpr std::uint32_t kSegmentBytes = kGpuDictionarySegmentBytes;
 inline constexpr std::uint32_t kMinMatchBytes = 4U;
 inline constexpr std::uint32_t kMaxMatchBytes = 8192U;
 inline constexpr std::size_t kMaxBatchBytes = 4U * 1024U * 1024U;
 inline constexpr std::size_t kMaxWorkspaceBytes = 256U * 1024U * 1024U;
-inline constexpr std::uint32_t kEncodedSegmentCapacity = kSegmentBytes + kSegmentBytes / 255U + 16U;
+inline constexpr std::uint32_t kEncodedSegmentCapacity = kGpuDictionaryEncodedSegmentCapacity;
 
 struct Effort {
     std::uint32_t max_candidates;
     std::uint32_t max_byte_comparisons;
 };
-
-// Internal execution strategies; both produce the same bytes and require HIP.
-enum class EncodingSearch { Dense, Tiled, Automatic };
 
 struct Match {
     std::uint16_t distance = 0;
@@ -59,12 +58,17 @@ struct EncodedSegment {
     std::uint32_t input_bytes = 0;
 };
 
-// Bounded experimental output; not yet a public archive representation.
+// Bounded independent LZ4 segments; native archives add per-block offset tables separately.
 struct EncodedBatch {
     std::vector<EncodedSegment> segments;
     std::uint64_t device_workspace_bytes = 0;
     std::uint64_t h2d_bytes = 0;
     std::uint64_t d2h_bytes = 0;
+    std::optional<double> index_ms;
+    std::optional<double> encode_ms;
+    std::optional<double> compact_ms;
+    std::optional<double> device_ms;
+    std::uint32_t explicit_kernel_launches = 0;
     bool gpu_used = false;
 };
 
@@ -95,16 +99,15 @@ std::optional<double> validated_stage_milliseconds(double milliseconds);
 MatchBatch find_matches(std::span<const std::byte> input, int level);
 
 // Purpose: Encode independent dictionary blocks entirely on HIP without downloading the match table.
-// Inputs: At most 4 MiB of source, effort 1..9, and a search strategy; each block covers at most 64 KiB.
+// Inputs: At most 4 MiB of source and effort 1..9; each block covers at most 64 KiB.
 // Outputs: Returns bounded LZ4-format block payloads and resource counts; throws if HIP is unavailable.
 // Empty input produces no blocks and needs no GPU work. No frame or SUZIP metadata is emitted.
-EncodedBatch encode_segments(std::span<const std::byte> input, int level,
-                             EncodingSearch search = EncodingSearch::Automatic);
+EncodedBatch encode_segments(std::span<const std::byte> input, int level);
 
 // Purpose: Decode independent dictionary segments on HIP without CPU materialization or fallback.
 // Inputs: At most 64 blocks, each declaring 1..65536 decoded bytes and a bounded nonempty payload.
 // Outputs: Returns exact concatenated bytes only after every block validates; throws on invalid input or missing HIP.
-// Empty input produces an empty GPU-free result. This is not yet a public archive-format reader.
+// Empty input produces an empty GPU-free result; native archives use the device-span decoder directly.
 DecodedBatch decode_segments(std::span<const EncodedSegment> segments);
 
 }  // namespace superzip::dictionary

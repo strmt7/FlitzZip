@@ -51,7 +51,8 @@ inline superzip::ArchiveIndex read_test_archive_index(const std::filesystem::pat
     REQUIRE_TRUE(size >= 24U);
     file.seekg(static_cast<std::streamoff>(size - 24U), std::ios::beg);
     REQUIRE_EQ(superzip::read_u32(file), kTestFooterMagic);
-    REQUIRE_EQ(superzip::read_u32(file), superzip::kSuperZipVersion);
+    const auto version = superzip::read_u32(file);
+    REQUIRE_TRUE(version >= superzip::kSuperZipMinReadableVersion && version <= superzip::kSuperZipMaxReadableVersion);
     const auto index_offset = superzip::read_u64(file);
     const auto index_size = superzip::read_u64(file);
     REQUIRE_TRUE(index_offset <= size);
@@ -61,7 +62,9 @@ inline superzip::ArchiveIndex read_test_archive_index(const std::filesystem::pat
     file.read(index_bytes.data(), static_cast<std::streamsize>(index_bytes.size()));
     REQUIRE_EQ(static_cast<std::uint64_t>(file.gcount()), index_size);
     std::istringstream index_stream(index_bytes, std::ios::binary);
-    return superzip::read_archive_index(index_stream);
+    auto index = superzip::read_archive_index(index_stream);
+    REQUIRE_EQ(index.version, version);
+    return index;
 }
 
 // Purpose: Detect whether any archive entry contains one block kind.

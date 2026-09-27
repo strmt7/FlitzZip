@@ -315,7 +315,14 @@ class GzipOutputStream::Buffer final : public std::streambuf {
         return count;
     }
 
+    // Purpose: Publish already encoded bytes to the file stream without ending the Gzip member.
+    // Inputs: An active compressor and destination file.
+    // Outputs: Flushes the sink or reports failure, including after close.
     int sync() override {
+        if (closed_) {
+            return -1;
+        }
+        output_.flush();
         return output_ ? 0 : -1;
     }
 

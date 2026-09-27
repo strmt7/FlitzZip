@@ -1,8 +1,11 @@
 #include "core/archive_blocks.hpp"
+#include "core/dictionary_block.hpp"
+#include "core/sparse_pattern_block.hpp"
 
 #include "core/result.hpp"
 
 #include "miniz.h"
+#include "lz4.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -129,17 +132,21 @@ void materialize_pattern_cpu(std::span<const std::byte> pattern, std::span<std::
     if (pattern.size() < 2 || pattern.size() > kMaxGpuPatternBytes || pattern.size() >= output.size()) {
         throw ArchiveError("GPU pattern block metadata is invalid");
     }
-    for (std::size_t i = 0; i < output.size(); ++i) {
-        output[i] = pattern[i % pattern.size()];
+    std::copy(pattern.begin(), pattern.end(), output.begin());
+    std::size_t filled = pattern.size();
+    while (filled < output.size()) {
+        const auto count = std::min(filled, output.size() - filled);
+        std::copy_n(output.begin(), count, output.begin() + static_cast<std::ptrdiff_t>(filled));
+        filled += count;
     }
 }
 
-// Purpose: Read one little-endian GPU prefix table entry.
+// Purpose: Read one little-endian native segment-table entry.
 // Inputs: `payload` is the block payload and `offset` is the table byte offset.
 // Outputs: Returns the decoded unsigned offset; throws when the table is truncated.
-std::uint32_t read_prefix_u32(std::span<const std::byte> payload, std::size_t offset) {
+std::uint32_t read_segment_u32(std::span<const std::byte> payload, std::size_t offset) {
     if (offset > payload.size() || payload.size() - offset < sizeof(std::uint32_t)) {
-        throw ArchiveError("GPU prefix block table is truncated");
+        throw ArchiveError("native block segment table is truncated");
     }
     std::uint32_t value = 0;
     for (std::size_t i = 0; i < sizeof(std::uint32_t); ++i) {
@@ -225,13 +232,13 @@ void materialize_prefix_cpu(std::span<const std::byte> payload, std::span<std::b
         throw ArchiveError("GPU prefix block metadata is invalid");
     }
     const auto bitstream = payload.subspan(table_bytes);
-    std::uint32_t previous = read_prefix_u32(payload, 0);
+    std::uint32_t previous = read_segment_u32(payload, 0);
     if (previous != 0U) {
         throw ArchiveError("GPU prefix block table must start at zero");
     }
     std::size_t decoded_offset = 0;
     for (std::size_t segment = 0; segment < segment_count; ++segment) {
-        const auto next = read_prefix_u32(payload, (segment + 1U) * sizeof(std::uint32_t));
+        const auto next = read_segment_u32(payload, (segment + 1U) * sizeof(std::uint32_t));
         if (next < previous || next > bitstream.size()) {
             throw ArchiveError("GPU prefix block table is not monotonic");
         }
@@ -264,13 +271,13 @@ void materialize_adaptive_prefix_cpu(std::span<const std::byte> payload, std::sp
     const auto codebook = payload.first(kGpuAdaptivePrefixCodebookBytes);
     const auto table = payload.subspan(kGpuAdaptivePrefixCodebookBytes, table_bytes);
     const auto bitstream = payload.subspan(header_bytes);
-    std::uint32_t previous = read_prefix_u32(table, 0);
+    std::uint32_t previous = read_segment_u32(table, 0);
     if (previous != 0U) {
         throw ArchiveError("GPU adaptive prefix block table must start at zero");
     }
     std::size_t decoded_offset = 0;
     for (std::size_t segment = 0; segment < segment_count; ++segment) {
-        const auto next = read_prefix_u32(table, (segment + 1U) * sizeof(std::uint32_t));
+        const auto next = read_segment_u32(table, (segment + 1U) * sizeof(std::uint32_t));
         if (next < previous || next > bitstream.size()) {
             throw ArchiveError("GPU adaptive prefix block table is not monotonic");
         }
@@ -286,6 +293,33 @@ void materialize_adaptive_prefix_cpu(std::span<const std::byte> payload, std::sp
     }
     if (previous != bitstream.size()) {
         throw ArchiveError("GPU adaptive prefix block payload has trailing bytes");
+    }
+}
+
+// Purpose: Decode independent bounded LZ4 segments from a version-four native block.
+// Inputs: `payload` starts with cumulative 32-bit segment offsets and `output` is the exact decoded block span.
+// Outputs: Writes every decoded byte or throws for invalid tables, segment extents, or LZ4 data.
+void materialize_dictionary_cpu(std::span<const std::byte> payload, std::span<std::byte> output) {
+    for (const auto& segment : parse_dictionary_segments(payload, static_cast<std::uint32_t>(output.size()))) {
+        const auto actual =
+            LZ4_decompress_safe(reinterpret_cast<const char*>(payload.data() + segment.encoded_offset),
+                                reinterpret_cast<char*>(output.data() + segment.decoded_offset),
+                                static_cast<int>(segment.encoded_size), static_cast<int>(segment.decoded_size));
+        if (actual != static_cast<int>(segment.decoded_size)) {
+            throw ArchiveError("GPU dictionary block failed to decompress");
+        }
+    }
+}
+
+// Purpose: Expand one admitted version-five motif and its sorted corrections in bounded host memory.
+// Inputs: `payload` is an untrusted sparse block and `output` is its exact decoded destination.
+// Outputs: Writes all decoded bytes or throws `ArchiveError` before writing when metadata is invalid.
+void materialize_sparse_pattern_cpu(std::span<const std::byte> payload, std::span<std::byte> output) {
+    const auto layout = parse_sparse_pattern_block(payload, static_cast<std::uint32_t>(output.size()));
+    materialize_pattern_cpu(layout.motif, output);
+    for (std::size_t index = 0U; index < layout.patch_count; ++index) {
+        const auto offset = index * kSparsePatternPatchBytes;
+        output[read_sparse_u32(layout.patches, offset)] = layout.patches[offset + sizeof(std::uint32_t)];
     }
 }
 
@@ -330,6 +364,18 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
                 if (encoded_len <= header_bytes || encoded_len >= len) {
                     throw ArchiveError("GPU adaptive prefix block metadata is invalid");
                 }
+            }
+            if (block.kind == BlockKind::GpuDictionary) {
+                const auto segment_count = (len + kGpuDictionarySegmentBytes - 1U) / kGpuDictionarySegmentBytes;
+                const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+                if (segment_count == 0U || encoded_len <= table_bytes || encoded_len >= len) {
+                    throw ArchiveError("GPU dictionary block metadata is invalid");
+                }
+            }
+            if (block.kind == BlockKind::GpuSparsePattern) {
+                (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                                 static_cast<std::size_t>(block.encoded_len)),
+                                                 static_cast<std::uint32_t>(len));
             }
         } else if (block.kind == BlockKind::Fill) {
             if (block.encoded_len != 0) {
@@ -376,6 +422,14 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_adaptive_prefix_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                 static_cast<std::size_t>(block.encoded_len)),
                                                 output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::GpuDictionary) {
+                materialize_dictionary_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                           static_cast<std::size_t>(block.encoded_len)),
+                                           output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::GpuSparsePattern) {
+                materialize_sparse_pattern_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                               static_cast<std::size_t>(block.encoded_len)),
+                                               output.subspan(out_pos, len));
             } else {
                 throw ArchiveError("unknown block kind");
             }
@@ -390,7 +444,8 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 // Outputs: Returns true for raw, deflate, GPU-pattern, and GPU-prefix block payloads.
 bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::Pattern ||
-           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix;
+           kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix || kind == BlockKind::GpuDictionary ||
+           kind == BlockKind::GpuSparsePattern;
 }
 
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {

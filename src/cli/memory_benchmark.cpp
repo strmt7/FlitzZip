@@ -227,12 +227,35 @@ std::uint8_t low_entropy_benchmark_byte(std::uint64_t index) {
     return static_cast<std::uint8_t>(84U + (bucket % 172U));
 }
 
-// Purpose: Fill a benchmark chunk with deterministic compressible or incompressible data.
+// Purpose: Fill a benchmark chunk with deterministic compressed-pattern or incompressible data.
 // Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,
 // and `profile` selects data shape.
 // Outputs: Writes benchmark bytes into `buffer` without filesystem access.
 void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t global_offset, std::uint64_t total_bytes,
                                  const std::string& profile) {
+    if (profile == "RepeatedRecord" || profile == "SparseRecord") {
+        static const auto record = [] {
+            std::array<std::byte, 16U * 1024U> bytes{};
+            for (std::size_t index = 0; index < bytes.size(); ++index) {
+                bytes[index] = static_cast<std::byte>(randomish_benchmark_byte(index));
+            }
+            return bytes;
+        }();
+        for (std::size_t offset = 0; offset < buffer.size();) {
+            const auto absolute_offset = global_offset + offset;
+            const auto record_offset = static_cast<std::size_t>(absolute_offset % record.size());
+            const auto count = std::min(record.size() - record_offset, buffer.size() - offset);
+            std::copy_n(record.begin() + static_cast<std::ptrdiff_t>(record_offset), count,
+                        buffer.begin() + static_cast<std::ptrdiff_t>(offset));
+            constexpr std::size_t patch_offset = 1024U;
+            if (profile == "SparseRecord" && record_offset <= patch_offset && patch_offset - record_offset < count) {
+                const auto record_index = absolute_offset / record.size();
+                buffer[offset + patch_offset - record_offset] ^= static_cast<std::byte>(1U + record_index % 255U);
+            }
+            offset += count;
+        }
+        return;
+    }
     std::uint64_t zero_limit = 0;
     std::uint64_t text_limit = 0;
     std::uint64_t low_entropy_limit = 0;
@@ -342,28 +365,89 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t win
     return archive;
 }
 
+// Purpose: Check deterministic HIP output for equal repeated-record chunks before decode can obscure an encode defect.
+// Inputs: A completed RAM-only archive window whose full-size chunks have identical synthetic source bytes.
+// Outputs: Returns for equal payloads; identifies the first differing encoded byte or payload length.
+void verify_repeated_record_payloads(const std::vector<MemoryArchiveChunk>& archive) {
+    if (archive.empty()) {
+        return;
+    }
+    const auto& reference = archive.front();
+    for (std::size_t index = 1; index < archive.size(); ++index) {
+        const auto& candidate = archive[index];
+        if (candidate.uncompressed_size != reference.uncompressed_size) {
+            continue;
+        }
+        if (candidate.encoded.payload.size() != reference.encoded.payload.size()) {
+            throw superzip::ArchiveError("repeated-record encoding differs at chunk " + std::to_string(index) +
+                                         ": reference_bytes=" + std::to_string(reference.encoded.payload.size()) +
+                                         " candidate_bytes=" + std::to_string(candidate.encoded.payload.size()));
+        }
+        const auto mismatch = std::mismatch(reference.encoded.payload.begin(), reference.encoded.payload.end(),
+                                            candidate.encoded.payload.begin());
+        if (mismatch.first != reference.encoded.payload.end()) {
+            const auto offset = static_cast<std::size_t>(mismatch.first - reference.encoded.payload.begin());
+            throw superzip::ArchiveError("repeated-record encoding differs at chunk " + std::to_string(index) +
+                                         " encoded_byte=" + std::to_string(offset) +
+                                         " reference=" + std::to_string(static_cast<std::uint8_t>(*mismatch.first)) +
+                                         " candidate=" + std::to_string(static_cast<std::uint8_t>(*mismatch.second)));
+        }
+    }
+}
+
 // Purpose: Drain one decoded-CRC benchmark task and compare it with the original chunk CRC.
-// Inputs: `pending_crc` owns CRC tasks, `archive` is the encoded chunk table, and `result` accumulates backend
-// telemetry.
+// Inputs: `pending_crc` owns CRC tasks, `archive` is the encoded chunk table, `profile` selects failure diagnostics,
+// and `result` accumulates backend telemetry.
 // Outputs: Removes one task; throws `ArchiveError` if the decoded payload hash differs from the source hash.
 void flush_one_memory_crc(std::deque<PendingMemoryCrc>& pending_crc, const std::vector<MemoryArchiveChunk>& archive,
-                          MemoryBenchmarkResult& result) {
+                          const std::string& profile, MemoryBenchmarkResult& result) {
     auto pending = std::move(pending_crc.front());
     pending_crc.pop_front();
     const auto decoded_crc = pending.result.get();
     const auto& chunk = archive[pending.index];
     result.stats.gpu_used = result.stats.gpu_used || decoded_crc.gpu_used;
     if (decoded_crc.crc32 != chunk.crc32) {
-        throw superzip::ArchiveError("memory benchmark verification CRC mismatch");
+        superzip::GpuCodecOptions cpu_options;
+        cpu_options.require_gpu = false;
+        cpu_options.force_cpu = true;
+        cpu_options.block_size = result.block_size;
+        const auto cpu_crc = superzip::crc_decoded_chunk(chunk.encoded.payload, chunk.encoded.blocks,
+                                                         chunk.uncompressed_size, cpu_options);
+        std::string location;
+        if (profile == "RepeatedRecord" && cpu_crc.crc32 != chunk.crc32) {
+            std::vector<std::byte> decoded(static_cast<std::size_t>(chunk.uncompressed_size));
+            (void)superzip::decode_chunk(chunk.encoded.payload, chunk.encoded.blocks, decoded, cpu_options);
+            std::size_t bad_count = 0;
+            std::size_t last_bad = 0;
+            for (std::size_t offset = 0; offset < decoded.size(); ++offset) {
+                const auto expected = randomish_benchmark_byte(offset % (16U * 1024U));
+                if (decoded[offset] != static_cast<std::byte>(expected)) {
+                    if (bad_count == 0U) {
+                        location = " first_bad_byte=" + std::to_string(offset) +
+                                   " block=" + std::to_string(offset / result.block_size) +
+                                   " expected=" + std::to_string(expected) +
+                                   " actual=" + std::to_string(static_cast<std::uint8_t>(decoded[offset]));
+                    }
+                    ++bad_count;
+                    last_bad = offset;
+                }
+            }
+            location += " bad_bytes=" + std::to_string(bad_count) + " last_bad_byte=" + std::to_string(last_bad);
+        }
+        throw superzip::ArchiveError("memory benchmark verification CRC mismatch at chunk " +
+                                     std::to_string(pending.index) + ": source=" + std::to_string(chunk.crc32) +
+                                     " hip=" + std::to_string(decoded_crc.crc32) +
+                                     " cpu=" + std::to_string(cpu_crc.crc32) + location);
     }
 }
 
 // Purpose: Verify encoded chunks by computing decoded CRCs without retaining full decoded buffers.
-// Inputs: `archive`, `inflight`, and `codec_options` define bounded concurrent verification work; `result` receives GPU
-// usage.
+// Inputs: `archive`, `inflight`, `profile`, and `codec_options` define bounded concurrent verification work; `result`
+// receives GPU usage.
 // Outputs: Returns normally when every chunk CRC matches; throws on decode or integrity failure.
 void verify_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& archive, std::uint32_t inflight,
-                                     const superzip::GpuCodecOptions& codec_options, MemoryBenchmarkResult& result) {
+                                     const std::string& profile, const superzip::GpuCodecOptions& codec_options,
+                                     MemoryBenchmarkResult& result) {
     std::deque<PendingMemoryCrc> pending_crc;
     for (std::size_t index = 0; index < archive.size(); ++index) {
         pending_crc.push_back(PendingMemoryCrc{
@@ -380,11 +464,11 @@ void verify_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& arch
                                  }),
         });
         if (pending_crc.size() >= inflight) {
-            flush_one_memory_crc(pending_crc, archive, result);
+            flush_one_memory_crc(pending_crc, archive, profile, result);
         }
     }
     while (!pending_crc.empty()) {
-        flush_one_memory_crc(pending_crc, archive, result);
+        flush_one_memory_crc(pending_crc, archive, profile, result);
     }
 }
 
@@ -498,7 +582,10 @@ void print_benchmark_suite_case(const BenchmarkSuiteCase& candidate) {
               << " gpu_kernel_launches=" << candidate.gpu.stats.gpu_runtime.kernel_launches
               << " gpu_kernel_ms=" << candidate.gpu.stats.gpu_runtime.kernel_ms
               << " gpu_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << candidate.gpu.stats.gpu_runtime.prefix_blocks << " memory_only=true"
+              << " gpu_prefix_blocks=" << candidate.gpu.stats.gpu_runtime.prefix_blocks
+              << " gpu_dictionary_blocks=" << candidate.gpu.stats.gpu_runtime.dictionary_blocks
+              << " gpu_sparse_pattern_blocks=" << candidate.gpu.stats.gpu_runtime.sparse_pattern_blocks
+              << " memory_only=true"
               << " disk_write_bytes=0"
               << "\n";
 }
@@ -551,7 +638,10 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
               << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
               << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks << " seconds=" << stats.seconds
+              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
+              << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
+              << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
+              << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
               << " extract_seconds=" << result.extract_seconds
@@ -564,6 +654,9 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << "\n";
 }
 
+// Purpose: Execute a bounded, RAM-only archive workload with independent encode, verify, and extract phases.
+// Inputs: Validated benchmark profile, size, backend policy, workers, block size, and compression level.
+// Outputs: Returns exact size, timing, integrity, and GPU telemetry statistics or throws on any failed phase.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
     if (options.size_mib < 10240U) {
         throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
@@ -619,8 +712,12 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         result.compress_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
+        if (options.profile == "RepeatedRecord") {
+            verify_repeated_record_payloads(archive);
+        }
+
         phase_started = std::chrono::steady_clock::now();
-        verify_memory_benchmark_archive(archive, inflight, codec_options, result);
+        verify_memory_benchmark_archive(archive, inflight, options.profile, codec_options, result);
         result.verify_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
@@ -670,7 +767,10 @@ void run_benchmark_suite(const BenchmarkSuiteOptions& options) {
               << " output_bytes=" << recommendation.gpu.stats.output_bytes
               << " compression_ratio=" << recommendation.compression_ratio
               << " gpu_pattern_blocks=" << recommendation.gpu.stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << recommendation.gpu.stats.gpu_runtime.prefix_blocks << " memory_only=true"
+              << " gpu_prefix_blocks=" << recommendation.gpu.stats.gpu_runtime.prefix_blocks
+              << " gpu_dictionary_blocks=" << recommendation.gpu.stats.gpu_runtime.dictionary_blocks
+              << " gpu_sparse_pattern_blocks=" << recommendation.gpu.stats.gpu_runtime.sparse_pattern_blocks
+              << " memory_only=true"
               << " disk_write_bytes=0"
               << "\n";
 }

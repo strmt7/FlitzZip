@@ -1,21 +1,29 @@
 #include "gpu/dictionary_matcher.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "core/checksum.hpp"
 #include "core/result.hpp"
 #include "core/file_publish.hpp"
 #include "test_util.hpp"
+#include "lz4.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <exception>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <string>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -72,6 +80,59 @@ std::vector<std::byte> make_dictionary_depth_fixture() {
         input[256U * 64U + i] = static_cast<std::byte>(i + 1U);
     }
     return input;
+}
+
+// Purpose: Exercise repeated records that require dictionary matches rather than a single periodic pattern.
+// Inputs: A 16 KiB-aligned byte count, seeded full-byte record, and one varying byte per later record.
+// Outputs: Returns deterministic nonperiodic bytes with long repeated substrings and no filesystem work.
+std::vector<std::byte> make_near_identical_records(std::size_t size) {
+    constexpr std::size_t record_bytes = 16384U;
+    std::vector<std::byte> input(size);
+    std::uint32_t state = 0x31674325U;
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        input[index] = index < record_bytes ? static_cast<std::byte>(state >> 24U) : input[index % record_bytes];
+        if (index >= record_bytes && index % record_bytes == 1024U) {
+            input[index] = static_cast<std::byte>((index / record_bytes) & 255U);
+        }
+    }
+    return input;
+}
+
+// Purpose: Bound a fixed-width sparse-pattern candidate and prove its reconstruction byte for byte.
+// Inputs: One block and a repeated motif length; every mismatch needs a 32-bit position and one literal byte.
+// Outputs: Returns complete header/motif/patch bytes only if smaller than raw, otherwise no candidate.
+std::optional<std::size_t> sparse_pattern_reference_bytes(std::span<const std::byte> block, std::size_t period) {
+    if (period == 0U || period >= block.size() || block.size() > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+    }
+    constexpr std::size_t header_bytes = 2U * sizeof(std::uint32_t);
+    constexpr std::size_t patch_bytes = sizeof(std::uint32_t) + sizeof(std::byte);
+    if (header_bytes + period >= block.size()) {
+        return std::nullopt;
+    }
+    const auto max_patches = (block.size() - header_bytes - period - 1U) / patch_bytes;
+    std::vector<std::pair<std::uint32_t, std::byte>> patches;
+    patches.reserve(std::min(max_patches, block.size() / period));
+    for (std::size_t index = period; index < block.size(); ++index) {
+        if (block[index] != block[index % period]) {
+            if (patches.size() == max_patches) {
+                return std::nullopt;
+            }
+            patches.emplace_back(static_cast<std::uint32_t>(index), block[index]);
+        }
+    }
+    std::vector<std::byte> reconstructed(block.size());
+    for (std::size_t index = 0U; index < block.size(); ++index) {
+        reconstructed[index] = block[index % period];
+    }
+    for (const auto& [position, value] : patches) {
+        reconstructed[position] = value;
+    }
+    REQUIRE_TRUE(std::equal(reconstructed.begin(), reconstructed.end(), block.begin()));
+    return header_bytes + period + patches.size() * patch_bytes;
 }
 
 // Purpose: Find a short input's best match independently, without keys, sorting, chains, or GPU search pruning.
@@ -143,6 +204,28 @@ std::vector<std::byte> decode_reference_block(const EncodedSegment& segment) {
         }
     }
     throw std::runtime_error("dictionary output has no final literal sequence");
+}
+
+// Purpose: Inspect the initial LZ4 literal extent without relying on the HIP decoder.
+// Inputs: One nonempty independently encoded dictionary segment.
+// Outputs: Returns its first literal count or throws for an incomplete extension.
+std::size_t first_dictionary_literals(const EncodedSegment& segment) {
+    if (segment.payload.empty()) {
+        throw std::runtime_error("dictionary segment is empty");
+    }
+    auto length = std::to_integer<unsigned int>(segment.payload.front()) >> 4U;
+    std::size_t offset = 1U;
+    if (length == 15U) {
+        unsigned int extension = 255U;
+        while (extension == 255U) {
+            if (offset == segment.payload.size()) {
+                throw std::runtime_error("dictionary literal extension is truncated");
+            }
+            extension = std::to_integer<unsigned int>(segment.payload[offset++]);
+            length += extension;
+        }
+    }
+    return length;
 }
 
 // Purpose: Write one independently verified dictionary fixture without replacing an existing output.
@@ -357,7 +440,7 @@ TEST_CASE(dictionary_interop_export_concurrent_writers_do_not_overwrite) {
     }
 }
 
-// Purpose: Preserve dense-search encoding semantics while removing the global match table from encoding.
+// Purpose: Preserve reference encoding semantics without a global match table in the production encoder.
 // Inputs: All nine efforts and seeded mixed data across cache and segment boundaries, plus the depth fixture.
 // Outputs: Requires byte-exact reference packing, CPU/HIP roundtrips, and exact workspace savings.
 TEST_CASE(dictionary_encoder_agrees_with_dense_reference) {
@@ -376,8 +459,7 @@ TEST_CASE(dictionary_encoder_agrees_with_dense_reference) {
         for (int level = 1; level <= 9; ++level) {
             const auto dense = find_matches(input, level);
             require_valid_matches(input, dense, level);
-            const auto encoded = encode_segments(input, level, EncodingSearch::Tiled);
-            const auto dense_encoded = encode_segments(input, level, EncodingSearch::Dense);
+            const auto encoded = encode_segments(input, level);
             (void)require_valid_encoded_batch(input, encoded);
             for (std::size_t index = 0; index < encoded.segments.size(); ++index) {
                 const auto offset = index * kSegmentBytes;
@@ -385,35 +467,18 @@ TEST_CASE(dictionary_encoder_agrees_with_dense_reference) {
                 const auto expected = encode_reference_matches(std::span{input}.subspan(offset, size),
                                                                std::span{dense.matches}.subspan(offset, size));
                 REQUIRE_TRUE(encoded.segments[index].payload == expected);
-                REQUIRE_TRUE(dense_encoded.segments[index].payload == expected);
             }
             const auto output_workspace = encoded.segments.size() * (kEncodedSegmentCapacity + sizeof(std::uint32_t));
             REQUIRE_EQ(encoded.device_workspace_bytes,
                        dense.device_workspace_bytes - input.size() * sizeof(Match) + output_workspace);
-            REQUIRE_EQ(dense_encoded.device_workspace_bytes, dense.device_workspace_bytes + output_workspace);
         }
     }
 }
 
-// Purpose: Reject unknown encoding strategies before empty-input or hardware shortcuts.
-// Inputs: Invalid search enum values, including empty input that would otherwise skip HIP admission.
-// Outputs: Requires ArchiveError independently of hardware availability.
-TEST_CASE(dictionary_encoder_rejects_unknown_search_strategy) {
-    for (const int value : {-1, 3, std::numeric_limits<int>::max()}) {
-        bool rejected = false;
-        try {
-            (void)encode_segments({}, 5, static_cast<EncodingSearch>(value));
-        } catch (const superzip::ArchiveError&) {
-            rejected = true;
-        }
-        REQUIRE_TRUE(rejected);
-    }
-}
-
-// Purpose: Preserve dense/tiled equivalence at short-tail, cache, and independent-segment boundaries.
+// Purpose: Preserve independent encoding at short-tail, cache, and segment boundaries.
 // Inputs: Deterministic small-alphabet and full-alphabet fixtures at three search efforts, entirely in RAM.
-// Outputs: Requires identical payloads and exact independent CPU/HIP decoding of each tiled result.
-TEST_CASE(dictionary_encoder_strategies_preserve_edge_cases) {
+// Outputs: Requires exact independent CPU/HIP decoding of each result.
+TEST_CASE(dictionary_encoder_preserves_edge_cases) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
@@ -426,22 +491,16 @@ TEST_CASE(dictionary_encoder_strategies_preserve_edge_cases) {
                 byte = static_cast<std::byte>((state >> 24U) % alphabet);
             }
             for (const int level : {1, 5, 9}) {
-                const auto dense = encode_segments(input, level, EncodingSearch::Dense);
-                const auto tiled = encode_segments(input, level, EncodingSearch::Tiled);
-                (void)require_valid_encoded_batch(input, tiled);
-                REQUIRE_EQ(dense.segments.size(), tiled.segments.size());
-                for (std::size_t index = 0; index < tiled.segments.size(); ++index) {
-                    REQUIRE_TRUE(dense.segments[index].payload == tiled.segments[index].payload);
-                }
+                (void)require_valid_encoded_batch(input, encode_segments(input, level));
             }
         }
     }
 }
 
-// Purpose: Lock automatic search transitions without changing encoded bytes or misreporting workspace.
-// Inputs: Each threshold boundary at levels 7, 8, and 9; data stays within the 4 MiB batch limit.
-// Outputs: Requires automatic execution to match the selected explicit strategy in bytes and allocation size.
-TEST_CASE(dictionary_encoder_automatic_search_boundaries) {
+// Purpose: Preserve bounded workspace and byte correctness at former search-size boundaries.
+// Inputs: Former crossover boundaries at levels seven through nine, within the 4 MiB batch limit.
+// Outputs: Every result decodes exactly and stays below the declared GPU workspace cap.
+TEST_CASE(dictionary_encoder_workspace_boundaries) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
@@ -452,14 +511,7 @@ TEST_CASE(dictionary_encoder_automatic_search_boundaries) {
             for (std::size_t index = 0; index < size; ++index) {
                 input[index] = static_cast<std::byte>(index % 13U);
             }
-            const auto automatic = encode_segments(input, level);
-            const auto selected =
-                encode_segments(input, level, size < threshold ? EncodingSearch::Dense : EncodingSearch::Tiled);
-            REQUIRE_EQ(automatic.device_workspace_bytes, selected.device_workspace_bytes);
-            REQUIRE_EQ(automatic.segments.size(), selected.segments.size());
-            for (std::size_t index = 0; index < automatic.segments.size(); ++index) {
-                REQUIRE_TRUE(automatic.segments[index].payload == selected.segments[index].payload);
-            }
+            (void)require_valid_encoded_batch(input, encode_segments(input, level));
         }
     }
 }
@@ -476,10 +528,6 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
     REQUIRE_TRUE(superzip::query_gpu_info().available);
     const bool extended =
         GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_BENCHMARK_EXTENDED", enabled, 2U) == 1U && enabled[0] == L'1';
-    const bool tiled = GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_TILED", enabled, 2U) == 1U && enabled[0] == L'1';
-    const bool automatic =
-        GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_AUTOMATIC", enabled, 2U) == 1U && enabled[0] == L'1';
-    const auto search = automatic ? EncodingSearch::Automatic : tiled ? EncodingSearch::Tiled : EncodingSearch::Dense;
     const std::vector<std::size_t> sizes =
         extended ? std::vector<std::size_t>{65536U, 131072U, 524288U, 1048576U, 2097152U, 4194304U}
                  : std::vector<std::size_t>{kSegmentBytes, kMaxBatchBytes};
@@ -500,22 +548,413 @@ TEST_CASE(dictionary_encoder_benchmark_opt_in) {
             }
             const char* label = profile == 0 ? "Random" : profile == 1 ? "RepeatedRecord" : "Periodic13";
             for (const int level : levels) {
-                (void)encode_segments(input, level, search);
+                (void)encode_segments(input, level);
                 const auto started = std::chrono::steady_clock::now();
-                const auto encoded = encode_segments(input, level, search);
+                const auto encoded = encode_segments(input, level);
                 const auto milliseconds =
                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
                 const auto bytes = require_valid_encoded_batch(input, encoded);
                 std::cout << "dictionary_benchmark profile=" << label << " input_bytes=" << input.size()
                           << " level=" << level << " payload_bytes=" << bytes << " encode_wall_ms=" << milliseconds
                           << " workspace_bytes=" << encoded.device_workspace_bytes << " h2d_bytes=" << encoded.h2d_bytes
-                          << " d2h_bytes=" << encoded.d2h_bytes << " search="
-                          << (automatic ? "automatic"
-                              : tiled   ? "tiled"
-                                        : "dense")
+                          << " d2h_bytes=" << encoded.d2h_bytes << " search=tiled"
                           << " gpu_used=true timing_scope=host_encode memory_only=true disk_write_bytes=0\n";
             }
         }
+    }
+}
+
+// Purpose: Compare production CPU/HIP encoding on the same dictionary-friendly RAM-only source.
+// Inputs: Explicit opt-in, near-identical seeded 16 KiB records, equal effort/block settings, and alternating lanes.
+// Outputs: Prints median host times and exact sizes after byte-exact decode and GPU-native selection.
+TEST_CASE(dictionary_production_benchmark_opt_in) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_PRODUCTION_BENCHMARK", enabled, 2U) != 1U || enabled[0] != L'1') {
+        return;
+    }
+    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    const auto input = make_near_identical_records(kMaxBatchBytes);
+    std::uint32_t state = 0x31674325U;
+    for (const int level : {1, 5, 9}) {
+        std::array<std::array<double, 3>, 2> times{};
+        std::array<std::size_t, 2> sizes{};
+        std::size_t dictionary_blocks = 0U;
+        std::size_t sparse_blocks = 0U;
+        for (int iteration = -1; iteration < 3; ++iteration) {
+            for (int order = 0; order < 2; ++order) {
+                const bool hip = (order + std::max(iteration, 0)) % 2 != 0;
+                superzip::GpuCodecOptions options;
+                options.block_size = 1024U * 1024U;
+                options.compression_level = level;
+                options.force_cpu = !hip;
+                options.require_gpu = hip;
+                const auto started = std::chrono::steady_clock::now();
+                const auto encoded = superzip::encode_chunk(input, options);
+                const auto milliseconds =
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+                std::vector<std::byte> decoded(input.size());
+                REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+                REQUIRE_EQ(decoded, input);
+                if (iteration >= 0) {
+                    times[hip][iteration] = milliseconds;
+                    sizes[hip] = encoded.payload.size();
+                    if (hip) {
+                        dictionary_blocks = static_cast<std::size_t>(
+                            std::ranges::count_if(encoded.blocks, [](const superzip::BlockDescriptor& block) {
+                                return block.kind == superzip::BlockKind::GpuDictionary;
+                            }));
+                        sparse_blocks = static_cast<std::size_t>(
+                            std::ranges::count_if(encoded.blocks, [](const superzip::BlockDescriptor& block) {
+                                return block.kind == superzip::BlockKind::GpuSparsePattern;
+                            }));
+                        REQUIRE_TRUE(dictionary_blocks + sparse_blocks > 0U);
+                    }
+                }
+            }
+        }
+        for (auto& lane : times) {
+            std::sort(lane.begin(), lane.end());
+        }
+        std::cout << "dictionary_production_case level=" << level << " input_bytes=" << input.size()
+                  << " cpu_payload_bytes=" << sizes[0] << " gpu_payload_bytes=" << sizes[1]
+                  << " gpu_dictionary_blocks=" << dictionary_blocks << " gpu_sparse_pattern_blocks=" << sparse_blocks
+                  << " cpu_encode_median_ms=" << times[0][1] << " gpu_encode_median_ms=" << times[1][1]
+                  << " memory_only=true disk_write_bytes=0\n";
+        const auto sample_started = std::chrono::steady_clock::now();
+        const auto sample = encode_segments(input, level);
+        const auto sample_wall_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - sample_started).count();
+        std::cout << "dictionary_stage_case level=" << level << " sample_bytes=" << input.size()
+                  << " wall_ms=" << sample_wall_ms
+                  << " index_ms=" << (sample.index_ms ? std::to_string(*sample.index_ms) : "unavailable")
+                  << " encode_ms=" << (sample.encode_ms ? std::to_string(*sample.encode_ms) : "unavailable")
+                  << " compact_ms=" << (sample.compact_ms ? std::to_string(*sample.compact_ms) : "unavailable")
+                  << " memory_only=true disk_write_bytes=0\n";
+    }
+    std::vector<std::byte> nonrepeating(input.size());
+    for (std::size_t index = 0; index < nonrepeating.size(); ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        nonrepeating[index] = static_cast<std::byte>(state >> 24U);
+    }
+    superzip::GpuCodecOptions baseline_options;
+    baseline_options.compression_level = 5;
+    baseline_options.block_size = 1024U * 1024U;
+    std::array<double, 3> baseline_times{};
+    for (int iteration = -1; iteration < 3; ++iteration) {
+        const auto started = std::chrono::steady_clock::now();
+        const auto encoded = superzip::encode_chunk(nonrepeating, baseline_options);
+        const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started);
+        REQUIRE_EQ(encoded.payload, nonrepeating);
+        if (iteration >= 0) {
+            baseline_times[iteration] = elapsed.count();
+        }
+    }
+    std::sort(baseline_times.begin(), baseline_times.end());
+    std::cout << "dictionary_pipeline_control input_bytes=" << nonrepeating.size()
+              << " gpu_nonrepeating_median_ms=" << baseline_times[1] << " memory_only=true disk_write_bytes=0\n";
+}
+
+// Purpose: Measure the independent-block ratio floor before choosing a future GPU dictionary segment geometry.
+// Inputs: Opt-in 4 MiB near-identical records and pinned LZ4 blocks from 64 KiB through 1 MiB.
+// Outputs: Prints exact payload/table sizes only after independent LZ4 roundtrips; changes no archive behavior.
+TEST_CASE(dictionary_segment_size_reference_opt_in) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_SEGMENT_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
+        return;
+    }
+    constexpr std::size_t block_bytes = 1024U * 1024U;
+    const auto input = make_near_identical_records(kMaxBatchBytes);
+    for (const std::size_t segment_bytes : {65536U, 131072U, 262144U, 524288U, 1048576U}) {
+        const auto segment_size = static_cast<int>(segment_bytes);
+        std::vector<char> compressed(static_cast<std::size_t>(LZ4_compressBound(segment_size)));
+        std::vector<char> decoded(segment_bytes);
+        std::size_t payload_bytes = 0U;
+        for (std::size_t offset = 0; offset < input.size(); offset += segment_bytes) {
+            const auto encoded =
+                LZ4_compress_default(reinterpret_cast<const char*>(input.data() + offset), compressed.data(),
+                                     segment_size, static_cast<int>(compressed.size()));
+            REQUIRE_TRUE(encoded > 0);
+            REQUIRE_EQ(LZ4_decompress_safe(compressed.data(), decoded.data(), encoded, segment_size), segment_size);
+            REQUIRE_EQ(std::memcmp(decoded.data(), input.data() + offset, segment_bytes), 0);
+            payload_bytes += static_cast<std::size_t>(encoded);
+        }
+        const auto table_bytes =
+            (input.size() / block_bytes) * (block_bytes / segment_bytes + 1U) * sizeof(std::uint32_t);
+        std::cout << "dictionary_segment_reference segment_bytes=" << segment_bytes << " input_bytes=" << input.size()
+                  << " payload_bytes=" << payload_bytes << " table_bytes=" << table_bytes
+                  << " total_bytes=" << payload_bytes + table_bytes << " memory_only=true disk_write_bytes=0\n";
+    }
+}
+
+// Purpose: Screen sparse repeated-record and wide-LZ4 layouts against patch density and random controls.
+// Inputs: Explicit opt-in, four 1 MiB blocks of seeded 16 KiB records, and deterministic extra mutations.
+// Outputs: Prints candidate and actual CPU/HIP sizes after byte-exact reconstruction; writes no files.
+TEST_CASE(dictionary_sparse_pattern_reference_opt_in) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_SPARSE_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
+        return;
+    }
+    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    constexpr std::size_t record_bytes = 16384U;
+    constexpr std::size_t block_bytes = 1024U * 1024U;
+    for (const auto extra_patches : {0U, 15U, 255U}) {
+        auto input = make_near_identical_records(kMaxBatchBytes);
+        for (std::size_t record = 1U; record < input.size() / record_bytes; ++record) {
+            for (std::uint32_t patch = 0U; patch < extra_patches; ++patch) {
+                const auto offset = record * record_bytes + 2048U + patch * 31U;
+                input[offset] = static_cast<std::byte>((record + patch) & 255U);
+            }
+        }
+        std::size_t total_bytes = 0U;
+        std::size_t actual_patches = 0U;
+        std::size_t wide_lz4_bytes = 0U;
+        std::vector<char> wide_compressed(static_cast<std::size_t>(LZ4_compressBound(static_cast<int>(block_bytes))));
+        std::vector<char> wide_decoded(block_bytes);
+        for (std::size_t offset = 0U; offset < input.size(); offset += block_bytes) {
+            const auto candidate =
+                sparse_pattern_reference_bytes(std::span(input).subspan(offset, block_bytes), record_bytes);
+            REQUIRE_TRUE(candidate.has_value());
+            total_bytes += *candidate;
+            actual_patches +=
+                (*candidate - 2U * sizeof(std::uint32_t) - record_bytes) / (sizeof(std::uint32_t) + sizeof(std::byte));
+            const auto lz4_size =
+                LZ4_compress_default(reinterpret_cast<const char*>(input.data() + offset), wide_compressed.data(),
+                                     static_cast<int>(block_bytes), static_cast<int>(wide_compressed.size()));
+            REQUIRE_TRUE(lz4_size > 0);
+            REQUIRE_EQ(LZ4_decompress_safe(wide_compressed.data(), wide_decoded.data(), lz4_size,
+                                           static_cast<int>(block_bytes)),
+                       static_cast<int>(block_bytes));
+            REQUIRE_EQ(std::memcmp(wide_decoded.data(), input.data() + offset, block_bytes), 0);
+            wide_lz4_bytes += static_cast<std::size_t>(lz4_size) + 2U * sizeof(std::uint32_t);
+        }
+        std::array<std::size_t, 2> production_bytes{};
+        for (const bool hip : {false, true}) {
+            superzip::GpuCodecOptions options;
+            options.block_size = static_cast<std::uint32_t>(block_bytes);
+            options.compression_level = 5;
+            options.force_cpu = !hip;
+            options.require_gpu = hip;
+            const auto encoded = superzip::encode_chunk(input, options);
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+            REQUIRE_EQ(decoded, input);
+            production_bytes[hip] = encoded.payload.size();
+            if (hip) {
+                REQUIRE_EQ(encoded.blocks.size(), input.size() / block_bytes);
+                for (const auto& block : encoded.blocks) {
+                    REQUIRE_EQ(block.kind, superzip::BlockKind::GpuSparsePattern);
+                }
+                REQUIRE_EQ(production_bytes[hip], total_bytes);
+            }
+        }
+        std::cout << "dictionary_sparse_reference mutation_sites_per_record=" << extra_patches + 1U
+                  << " actual_patches=" << actual_patches << " input_bytes=" << input.size()
+                  << " candidate_bytes=" << total_bytes << " wide_lz4_bytes=" << wide_lz4_bytes
+                  << " cpu_payload_bytes=" << production_bytes[0] << " gpu_payload_bytes=" << production_bytes[1]
+                  << " memory_only=true disk_write_bytes=0\n";
+    }
+    std::vector<std::byte> random(block_bytes);
+    std::uint32_t state = 0x83B71AC9U;
+    for (auto& byte : random) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        byte = static_cast<std::byte>(state >> 24U);
+    }
+    REQUIRE_TRUE(!sparse_pattern_reference_bytes(random, record_bytes).has_value());
+}
+
+// Purpose: Localize native dictionary CRC and decode divergence at real archive-chunk sizes.
+// Inputs: Repeated records across the 8 MiB CRC policy boundary and up to the 128 MiB chunk limit.
+// Outputs: CPU/HIP CRC and decoded bytes match source bytes for every encoded chunk.
+TEST_CASE(dictionary_production_chunk_crc_and_decode) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    for (const std::size_t size : {4U * 1024U * 1024U, 8U * 1024U * 1024U - 1U, 8U * 1024U * 1024U,
+                                   8U * 1024U * 1024U + 1U, 16U * 1024U * 1024U, 128U * 1024U * 1024U}) {
+        for (const bool benchmark_record : {false, true}) {
+            std::vector<std::byte> input(size);
+            std::uint32_t state = 0x31674325U;
+            for (std::size_t index = 0; index < 16384U; ++index) {
+                state ^= state << 13U;
+                state ^= state >> 17U;
+                state ^= state << 5U;
+                std::uint64_t value = index + 0x9E3779B97F4A7C15ULL;
+                value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+                value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+                value ^= value >> 31U;
+                input[index] =
+                    benchmark_record ? static_cast<std::byte>(value >> 56U) : static_cast<std::byte>(state >> 24U);
+            }
+            for (std::size_t index = 16384U; index < input.size(); ++index) {
+                input[index] = input[index % 16384U];
+            }
+            superzip::GpuCodecOptions gpu;
+            gpu.block_size = 1024U * 1024U;
+            gpu.compression_level = 5;
+            gpu.telemetry = std::make_shared<superzip::GpuTelemetry>();
+            const auto expected_crc = superzip::crc32(input);
+            const auto encoded = superzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
+            const auto encode_stats = superzip::snapshot_gpu_telemetry(*gpu.telemetry);
+            REQUIRE_TRUE(encode_stats.kernel_launches > 0U);
+            REQUIRE_TRUE(encoded.gpu_used && encoded.source_crc32_available);
+            REQUIRE_EQ(encoded.source_crc32, expected_crc);
+            superzip::GpuCodecOptions cpu;
+            cpu.require_gpu = false;
+            cpu.force_cpu = true;
+            const auto cpu_crc = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, size, cpu);
+            const auto gpu_crc = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, size, gpu);
+            std::cout << "dictionary_chunk_crc_case size=" << size << " benchmark_record=" << benchmark_record
+                      << " source=" << expected_crc << " cpu=" << cpu_crc.crc32 << " gpu=" << gpu_crc.crc32 << "\n";
+            REQUIRE_EQ(cpu_crc.crc32, expected_crc);
+            REQUIRE_EQ(gpu_crc.crc32, expected_crc);
+            std::vector<std::byte> decoded(size);
+            REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu));
+            REQUIRE_EQ(decoded, input);
+            REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, gpu));
+            REQUIRE_EQ(decoded, input);
+        }
+    }
+}
+
+// Purpose: Detect nondeterministic payloads when independent HIP callers encode equal source chunks.
+// Inputs: Opt-in sixteen concurrent 128 MiB owned-chunk calls at the production effort level.
+// Outputs: Every complete encoded payload is byte-identical to the serial reference.
+TEST_CASE(dictionary_concurrent_equal_input_encoding) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
+        !superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(128U * 1024U * 1024U);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        std::uint64_t value = index % 16384U;
+        value += 0x9E3779B97F4A7C15ULL;
+        value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+        value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+        value ^= value >> 31U;
+        input[index] = static_cast<std::byte>(value >> 56U);
+    }
+    superzip::GpuCodecOptions gpu;
+    gpu.block_size = 1024U * 1024U;
+    gpu.compression_level = 5;
+    const auto reference = superzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
+    std::vector<std::future<superzip::EncodedChunk>> pending;
+    pending.reserve(16U);
+    for (std::size_t index = 0; index < 16U; ++index) {
+        pending.push_back(std::async(std::launch::async, [&input, gpu] {
+            return superzip::encode_owned_chunk(std::vector<std::byte>(input), gpu);
+        }));
+    }
+    for (auto& task : pending) {
+        const auto encoded = task.get();
+        if (encoded.payload != reference.payload) {
+            std::cout << "dictionary_concurrent_diff reference_bytes=" << reference.payload.size()
+                      << " candidate_bytes=" << encoded.payload.size() << "\n";
+            for (std::size_t block = 0; block < reference.blocks.size(); ++block) {
+                if (reference.blocks[block].encoded_len != encoded.blocks[block].encoded_len) {
+                    std::cout << "first_changed_block=" << block
+                              << " reference_len=" << reference.blocks[block].encoded_len
+                              << " candidate_len=" << encoded.blocks[block].encoded_len << "\n";
+                    break;
+                }
+            }
+        }
+        REQUIRE_EQ(encoded.payload, reference.payload);
+    }
+}
+
+// Purpose: Isolate dictionary batch state from native chunk classification under sustained concurrent HIP calls.
+// Inputs: Four callers by default, or thirty-two opt-in callers, encode the same 4 MiB source repeatedly.
+// Outputs: Every independent LZ4 segment matches the serial reference exactly.
+TEST_CASE(dictionary_concurrent_repeated_batch_encoding) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(4U * 1024U * 1024U);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        std::uint64_t value = index % 16384U;
+        value += 0x9E3779B97F4A7C15ULL;
+        value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+        value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+        value ^= value >> 31U;
+        input[index] = static_cast<std::byte>(value >> 56U);
+    }
+    const auto reference = encode_segments(input, 5);
+    wchar_t enabled[2]{};
+    const bool stress = GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_STRESS", enabled, 2U) == 1U && enabled[0] == L'1';
+    const std::size_t workers = stress ? 32U : 4U;
+    const std::size_t repetitions = stress ? 32U : 4U;
+    std::vector<std::future<void>> pending;
+    pending.reserve(workers);
+    for (std::size_t worker = 0; worker < workers; ++worker) {
+        pending.push_back(std::async(std::launch::async, [&input, &reference, worker, repetitions] {
+            for (std::size_t iteration = 0; iteration < repetitions; ++iteration) {
+                const auto candidate = encode_segments(input, 5);
+                for (std::size_t segment = 0; segment < reference.segments.size(); ++segment) {
+                    if (candidate.segments[segment].payload != reference.segments[segment].payload) {
+                        const auto decoded = decode_reference_block(candidate.segments[segment]);
+                        const auto source = std::span<const std::byte>(input).subspan(
+                            segment * kSegmentBytes, candidate.segments[segment].input_bytes);
+                        const auto first_bad = std::mismatch(decoded.begin(), decoded.end(), source.begin());
+                        throw std::runtime_error(
+                            "dictionary batch differs at worker " + std::to_string(worker) + " iteration " +
+                            std::to_string(iteration) + " segment " + std::to_string(segment) + " reference_bytes " +
+                            std::to_string(reference.segments[segment].payload.size()) + " candidate_bytes " +
+                            std::to_string(candidate.segments[segment].payload.size()) + " reference_literals " +
+                            std::to_string(first_dictionary_literals(reference.segments[segment])) +
+                            " candidate_literals " +
+                            std::to_string(first_dictionary_literals(candidate.segments[segment])) + " first_bad " +
+                            std::to_string(first_bad.first - decoded.begin()));
+                    }
+                }
+            }
+        }));
+    }
+    for (auto& task : pending) {
+        task.get();
+    }
+}
+
+// Purpose: Separate dense match-table instability from the dictionary segment encoder.
+// Inputs: Opt-in thirty-two-way concurrent repeated searches over the same repeated 4 MiB source.
+// Outputs: Every dense GPU match record matches the serial reference exactly.
+TEST_CASE(dictionary_concurrent_dense_match_table) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_STRESS", enabled, 2U) != 1U || enabled[0] != L'1' ||
+        !superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(4U * 1024U * 1024U);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        std::uint64_t value = index % 16384U;
+        value += 0x9E3779B97F4A7C15ULL;
+        value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+        value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+        value ^= value >> 31U;
+        input[index] = static_cast<std::byte>(value >> 56U);
+    }
+    const auto reference = find_matches(input, 5);
+    std::vector<std::future<void>> pending;
+    pending.reserve(32U);
+    for (std::size_t worker = 0; worker < 32U; ++worker) {
+        pending.push_back(std::async(std::launch::async, [&input, &reference] {
+            for (std::size_t iteration = 0; iteration < 8U; ++iteration) {
+                const auto candidate = find_matches(input, 5);
+                const auto difference =
+                    std::mismatch(reference.matches.begin(), reference.matches.end(), candidate.matches.begin());
+                if (difference.first != reference.matches.end()) {
+                    throw std::runtime_error("dictionary dense match table differs at position " +
+                                             std::to_string(difference.first - reference.matches.begin()));
+                }
+            }
+        }));
+    }
+    for (auto& task : pending) {
+        task.get();
     }
 }
 

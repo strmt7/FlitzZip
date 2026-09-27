@@ -181,6 +181,38 @@ void require_consistent_stream_partitioning(const std::string& codec) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Require explicit stream flushes to publish produced bytes and reject calls after close.
+// Inputs: A shared output/input codec pair and one bounded binary fixture.
+// Outputs: Checks on-disk byte count before close and full decoding after finalization.
+template <typename OutputStream, typename InputStream> void require_stream_flush_contract(const std::string& codec) {
+    const auto root = test_temp_dir("stream-flush-" + codec);
+    const auto archive = root / "output";
+    auto input = make_stream_partition_fixture();
+    const auto block = input;
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        input += block;
+    }
+    OutputStream output(archive, 5);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    output.write(input.data(), static_cast<std::streamsize>(input.size()));
+    REQUIRE_TRUE(output.output_bytes() > 0U);
+    output.flush();
+    REQUIRE_EQ(std::filesystem::file_size(archive), output.output_bytes());
+    output.close();
+    bool rejected = false;
+    try {
+        output.flush();
+    } catch (const std::ios_base::failure&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    {
+        InputStream decoded(archive);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(decoded), std::istreambuf_iterator<char>()), input);
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Require decoder errors to propagate through ordinary reads and remain terminal after flag resets.
 // Inputs: Matching stream types, a fixed codec label, and the checksum's distance from the end of its frame.
 // Outputs: Valid input still reaches ordinary EOF; damaged checksums and truncated trailers always throw.
@@ -344,6 +376,15 @@ TEST_CASE(compression_stream_bzip2_partition_and_effort_parity) {
 // Outputs: Requires consistent encoding and byte-exact decoding.
 TEST_CASE(compression_stream_zstd_partition_and_effort_parity) {
     require_consistent_stream_partitioning<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd");
+}
+
+// Purpose: Preserve the same observable output-flush contract across all shared CPU codecs.
+// Inputs: Bounded mixed binary payload at product effort five.
+// Outputs: Requires published partial bytes, terminal post-close flush errors, and exact restored content.
+TEST_CASE(compression_stream_flush_contract) {
+    require_stream_flush_contract<superzip::GzipOutputStream, superzip::GzipInputStream>("gzip");
+    require_stream_flush_contract<superzip::Bzip2OutputStream, superzip::Bzip2InputStream>("bzip2");
+    require_stream_flush_contract<superzip::ZstdOutputStream, superzip::ZstdInputStream>("zstd");
 }
 
 // Purpose: Keep malformed Gzip reads distinct from successful end of input.

@@ -105,6 +105,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+add_library(lz4 STATIC third_party/lz4/lz4.c)
+target_include_directories(lz4 PUBLIC third_party/lz4)
+
 add_library(
   miniz STATIC third_party/miniz/miniz.c third_party/miniz/miniz_tdef.c
                third_party/miniz/miniz_tinfl.c third_party/miniz/miniz_zip.c)
@@ -363,6 +366,7 @@ add_library(
   src/gzip/gzip_adapter.cpp
   src/gzip/gzip_stream.cpp
   src/gpu/gpu_codec.cpp
+  src/gpu/dictionary_matcher.cpp
   src/gpu/hip_device.cpp
   src/hqx/hqx_adapter.cpp
   src/iso/iso_adapter.cpp
@@ -392,7 +396,7 @@ target_include_directories(
   PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C
          third_party/lhasa/lib/public third_party/wimlib)
 target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z
-                                           lhasa)
+                                           lz4 lhasa)
 target_compile_definitions(
   superzip_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
                        SUPERZIP_VERSION="${SUPERZIP_PACKAGE_VERSION}")
@@ -456,13 +460,22 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_static_prefix.obj")
   set(SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT
       "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_adaptive_prefix.obj")
+  set(SUPERZIP_HIP_DICTIONARY_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_dictionary_matcher.obj")
+  set(SUPERZIP_HIP_SPARSE_OBJECT
+      "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_sparse_pattern.obj")
   set(SUPERZIP_HIP_COMMON_DEPS
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/dictionary_block.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/sparse_pattern_block.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_device.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_matcher.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/sparse_pattern_device.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1")
@@ -497,9 +510,20 @@ if(SUPERZIP_ENABLE_HIP)
     src/gpu/hip_codec_adaptive_prefix.hip.cpp
     "${SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT}"
     "Compiling AMD HIP adaptive-prefix codec object")
+  file(GLOB_RECURSE SUPERZIP_ROCPRIM_HEADERS CONFIGURE_DEPENDS
+       "${SUPERZIP_HIP_PATH}/include/rocprim/*.hpp")
+  superzip_compile_hip_object(
+    src/gpu/hip_dictionary_matcher.hip.cpp
+    "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
+    "Compiling AMD HIP dictionary codec object" ${SUPERZIP_ROCPRIM_HEADERS})
+  superzip_compile_hip_object(
+    src/gpu/hip_sparse_pattern.hip.cpp
+    "${SUPERZIP_HIP_SPARSE_OBJECT}"
+    "Compiling AMD HIP sparse-pattern codec object")
   set(SUPERZIP_HIP_OBJECTS
       "${SUPERZIP_HIP_CODEC_OBJECT}" "${SUPERZIP_HIP_STATIC_PREFIX_OBJECT}"
-      "${SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT}")
+      "${SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT}"
+      "${SUPERZIP_HIP_DICTIONARY_OBJECT}" "${SUPERZIP_HIP_SPARSE_OBJECT}")
   add_custom_target(
     superzip_hip_object
     DEPENDS ${SUPERZIP_HIP_OBJECTS}
@@ -525,6 +549,8 @@ if(SUPERZIP_ENABLE_HIP)
                         "/DELAYLOAD:${SUPERZIP_HIP_RUNTIME_DLL_NAME}")
   endif()
   target_link_libraries(superzip_core PUBLIC superzip_gpu_hip)
+  target_sources(superzip_core PRIVATE src/gpu/dictionary_candidate.cpp
+                                       src/gpu/sparse_pattern_candidate.cpp)
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=1)
   configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/superzip-runtime-dependencies.json.in"
@@ -583,6 +609,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bzip2/LICENSE"
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xz_embedded/COPYING"
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma_sdk/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/LICENSE"
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/LICENSE"
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lhasa/COPYING.md"
       "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wimlib/COPYING.LGPL.txt"
@@ -705,7 +732,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_sevenzip_ppmd.cpp
     tests/cpp/test_suzip_gpu_prefix.cpp
     tests/cpp/test_dictionary_matcher.cpp
-    src/gpu/dictionary_matcher.cpp
+    tests/cpp/test_sparse_pattern_block.cpp
     tests/cpp/test_tar_bzip2_compat.cpp
     tests/cpp/test_tar_gzip_compat.cpp
     tests/cpp/test_tar_compat.cpp
@@ -721,26 +748,6 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_zip_compat.cpp
     tests/cpp/test_zip_verification.cpp)
   target_link_libraries(superzip_tests PRIVATE superzip_core gdi32 user32)
-  # Keep the next dictionary codec's unfinished matcher out of product binaries.
-  if(SUPERZIP_ENABLE_HIP)
-    set(SUPERZIP_HIP_DICTIONARY_OBJECT
-        "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_dictionary_matcher.obj")
-    file(GLOB_RECURSE SUPERZIP_ROCPRIM_HEADERS CONFIGURE_DEPENDS
-         "${SUPERZIP_HIP_PATH}/include/rocprim/*.hpp")
-    superzip_compile_hip_object(
-      src/gpu/hip_dictionary_matcher.hip.cpp
-      "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
-      "Compiling AMD HIP dictionary match finder"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_matcher.hpp"
-      ${SUPERZIP_ROCPRIM_HEADERS})
-    add_custom_target(superzip_dictionary_matcher_object
-                      DEPENDS "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
-                      COMMENT "Preparing AMD HIP dictionary match finder tests")
-    add_dependencies(superzip_tests superzip_dictionary_matcher_object)
-    set_source_files_properties("${SUPERZIP_HIP_DICTIONARY_OBJECT}"
-                                PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
-    target_sources(superzip_tests PRIVATE "${SUPERZIP_HIP_DICTIONARY_OBJECT}")
-  endif()
   superzip_copy_zstd_runtime(superzip_tests)
   superzip_copy_wimlib_runtime(superzip_tests)
   target_compile_definitions(

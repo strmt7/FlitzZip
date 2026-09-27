@@ -104,7 +104,9 @@ function Assert-GpuProofStat {
     }
     $nativeCompressedBlocks =
         (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_pattern_blocks") +
-        (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_prefix_blocks")
+        (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_prefix_blocks") +
+        (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_dictionary_blocks") +
+        (Get-RequiredStatsNumber -Stats $Stats -Key "gpu_sparse_pattern_blocks")
     if ($RequireNativeCompressedBlocks -and $nativeCompressedBlocks -le 0) {
         throw "$Label reported no GPU-compressed native blocks."
     }

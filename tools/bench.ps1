@@ -4,7 +4,7 @@ param(
     [int]$Iterations = 3,
     [ValidateSet("Memory", "Filesystem")] [string]$Mode = "Memory",
     [Alias("Profile")]
-    [ValidateSet("Mixed", "Compressible", "Incompressible")] [string]$WorkloadProfile = "Mixed",
+    [ValidateSet("Mixed", "Compressible", "Incompressible", "RepeatedRecord", "SparseRecord")] [string]$WorkloadProfile = "Mixed",
     [ValidateRange(1, 9)] [int]$CompressionLevel = 5,
     [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)] [int[]]$BlockSizeKiB = @(256, 512, 1024, 2048, 4096, 8192, 16384),
     [ValidateRange(50, 5000)] [int]$SampleIntervalMs = 100,
@@ -13,12 +13,13 @@ param(
     [switch]$ShowOperationStats,
     [switch]$SkipCpu,
     [switch]$SkipGpu,
+    [string]$JsonOutput,
     [switch]$AllowLargeDiskWrites
 )
 
 # Purpose: Compare forced-CPU and required-AMD-HIP performance on the same generated SUZIP workload.
-# Inputs: `Configuration` selects the built CLI, `SizeMiB` controls generated data size, `Iterations` controls repeated timed runs, `Mode` selects RAM-only performance benchmarking or bounded filesystem smoke, `WorkloadProfile` selects workload shape, `CompressionLevel` selects SUZIP deflate effort, `BlockSizeKiB` selects one or more production block-size choices, `SampleIntervalMs` controls resource counter cadence, `WorkRoot` controls temporary storage for explicit filesystem smoke, `ShowOperationStats` prints raw CLI stats, skip switches disable one lane, and `AllowLargeDiskWrites` is retained only to reject obsolete unsafe invocations.
-# Outputs: Prints per-operation CPU/GPU throughput plus aggregate speedup; throws on correctness, lane-selection, memory-budget, or unsafe-disk-write failures.
+# Inputs: `Configuration` selects the built CLI, `SizeMiB` controls generated data size, `Iterations` controls repeated timed runs, `Mode` selects RAM-only performance benchmarking or bounded filesystem smoke, `WorkloadProfile` selects workload shape, `CompressionLevel` selects SUZIP deflate effort, `BlockSizeKiB` selects one or more production block-size choices, `SampleIntervalMs` controls resource counter cadence, `WorkRoot` controls temporary storage for explicit filesystem smoke, `ShowOperationStats` prints raw CLI stats, skip switches disable one lane, `JsonOutput` writes a new RAM-only evidence record, and `AllowLargeDiskWrites` is retained only to reject obsolete unsafe invocations.
+# Outputs: Prints per-operation CPU/GPU throughput plus aggregate speedup; optionally creates one JSON record; throws on correctness, lane-selection, memory-budget, or unsafe-disk-write failures.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
@@ -48,6 +49,15 @@ if ($Mode -eq "Memory" -and $SizeMiB -lt 10240) {
 }
 if ($Mode -eq "Filesystem" -and $SizeMiB -gt $MaxFilesystemSmokeMiB) {
     throw "Filesystem mode is limited to $MaxFilesystemSmokeMiB MiB and exists only as a bounded I/O smoke. Use the default -Mode Memory for CPU/GPU benchmarking."
+}
+if ($Mode -eq "Filesystem" -and $WorkloadProfile -in @("RepeatedRecord", "SparseRecord")) {
+    throw "$WorkloadProfile is a RAM-only performance profile; use -Mode Memory."
+}
+if ($Mode -ne "Memory" -and $JsonOutput) {
+    throw "-JsonOutput records RAM-only benchmarks; filesystem mode is only a bounded correctness smoke."
+}
+if ($JsonOutput -and (Test-Path -LiteralPath $JsonOutput)) {
+    throw "Benchmark JSON destination already exists; choose a new path to preserve prior evidence."
 }
 
 try {
@@ -344,7 +354,7 @@ function Get-StatsNumber {
 
 # Purpose: Assert that a required-GPU benchmark operation really submitted AMD HIP work.
 # Inputs: `Stats` is a parsed CLI statistics dictionary and `Label` identifies the operation in diagnostics.
-# Outputs: Returns normally when backend HIP telemetry proves execution; throws on possible CPU fallback or missing telemetry.
+# Outputs: Returns for proven HIP execution; reports explicit unavailable event timing without inventing a duration.
 function Assert-GpuBackendStat {
     param(
         [Parameter(Mandatory = $true)]$Stats,
@@ -361,8 +371,14 @@ function Assert-GpuBackendStat {
     if ($null -eq $kernelLaunches -or $kernelLaunches -le 0) {
         throw "$Label reported no AMD HIP kernel launches in the required-GPU lane."
     }
-    if ($null -eq $kernelMs -or $kernelMs -le 0) {
-        throw "$Label reported no AMD HIP event time in the required-GPU lane."
+    if ($null -eq $kernelMs) {
+        if (-not $Stats.ContainsKey("gpu_kernel_ms") -or
+            [string]$Stats["gpu_kernel_ms"] -notmatch '^(?i:nan)$') {
+            throw "$Label reported missing or invalid AMD HIP event time in the required-GPU lane."
+        }
+        Write-Warning "${Label}: HIP event time is unavailable; use wall time, and do not infer a device-time speedup."
+    } elseif ($kernelMs -le 0) {
+        throw "$Label reported non-positive AMD HIP event time in the required-GPU lane."
     }
     if ($null -eq $h2dBytes -or $h2dBytes -le 0) {
         throw "$Label reported no host-to-device transfer bytes in the required-GPU lane."
@@ -372,7 +388,9 @@ function Assert-GpuBackendStat {
     }
     $nativeCompressedBlocks =
         (Get-StatsNumber -Stats $Stats -Key "gpu_pattern_blocks") +
-        (Get-StatsNumber -Stats $Stats -Key "gpu_prefix_blocks")
+        (Get-StatsNumber -Stats $Stats -Key "gpu_prefix_blocks") +
+        (Get-StatsNumber -Stats $Stats -Key "gpu_dictionary_blocks") +
+        (Get-StatsNumber -Stats $Stats -Key "gpu_sparse_pattern_blocks")
     if ($RequireNativeCompressedBlocks -and $nativeCompressedBlocks -le 0) {
         throw "$Label reported no GPU-compressed native blocks in the required-GPU lane."
     }
@@ -708,6 +726,8 @@ function Invoke-BenchmarkLane {
             GpuKernelMs = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_kernel_ms" })
             GpuPatternBlocks = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_pattern_blocks" })
             GpuPrefixBlocks = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_prefix_blocks" })
+            GpuDictionaryBlocks = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_dictionary_blocks" })
+            GpuSparsePatternBlocks = Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_sparse_pattern_blocks" })
             GpuH2DMiB = (Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_h2d_bytes" })) / 1MB
             GpuD2HMiB = (Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_d2h_bytes" })) / 1MB
             GpuAllocMiB = (Get-OptionalSum -Values ($operationStats | ForEach-Object { Get-StatsNumber -Stats $_ -Key "gpu_device_allocation_bytes" })) / 1MB
@@ -788,9 +808,107 @@ function Invoke-MemoryBenchmarkLane {
         GpuKernelMs = Get-StatsNumber -Stats $stats -Key "gpu_kernel_ms"
         GpuPatternBlocks = Get-StatsNumber -Stats $stats -Key "gpu_pattern_blocks"
         GpuPrefixBlocks = Get-StatsNumber -Stats $stats -Key "gpu_prefix_blocks"
+        GpuDictionaryBlocks = Get-StatsNumber -Stats $stats -Key "gpu_dictionary_blocks"
+        GpuSparsePatternBlocks = Get-StatsNumber -Stats $stats -Key "gpu_sparse_pattern_blocks"
         GpuH2DMiB = (Get-StatsNumber -Stats $stats -Key "gpu_h2d_bytes") / 1MB
         GpuD2HMiB = (Get-StatsNumber -Stats $stats -Key "gpu_d2h_bytes") / 1MB
         GpuAllocMiB = (Get-StatsNumber -Stats $stats -Key "gpu_device_allocation_bytes") / 1MB
+    }
+}
+
+# Purpose: Preserve optional telemetry counters as exact JSON integers rather than PowerShell floating-point numbers.
+# Inputs: `Value` is null or a finite nonnegative whole-number counter below 2^53.
+# Outputs: Returns null or an Int64; rejects fractional, non-finite, or overflowing values.
+function ConvertTo-ExactBenchmarkCounter {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    $number = [double]$Value
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt 0 -or
+        $number -ge 9007199254740992 -or [Math]::Floor($number) -ne $number) {
+        throw "Benchmark telemetry counter is not a bounded whole number."
+    }
+    return [int64]$number
+}
+
+# Purpose: Convert ordered RAM-only lane runs into a portable, provenance-bearing evidence record.
+# Inputs: `Runs` are verified lane results; remaining values identify the exact binary, source state, and workload.
+# Outputs: Returns schema-one data without host identity or synthesized missing resource counters.
+function ConvertTo-RamBenchmarkRecord {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Runs,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][bool]$Dirty,
+        [Parameter(Mandatory = $true)][string]$BinarySha256,
+        [Parameter(Mandatory = $true)][string]$Profile,
+        [Parameter(Mandatory = $true)][int64]$SizeMiB,
+        [Parameter(Mandatory = $true)][int]$Level,
+        [Parameter(Mandatory = $true)][int]$SampleIntervalMs,
+        [string]$CpuModel,
+        [string]$GpuModel
+    )
+    $orderedRuns = @($Runs | ForEach-Object {
+            if ($_.MemoryOnly -ne "true" -or $_.DiskWriteBytes -ne 0 -or
+                $_.InputBytes -ne ($SizeMiB * 1MB) -or $_.OutputBytes -lt 0 -or
+                ($_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds) -le 0) {
+                throw "RAM benchmark JSON rejected an inconsistent lane result."
+            }
+            [ordered]@{
+                lane = $_.Lane
+                iteration = [int]$_.Iteration
+                block_size_kib = [int]$_.BlockSizeKiB
+                input_bytes = [int64]$_.InputBytes
+                output_bytes = [int64]$_.OutputBytes
+                compress_seconds = $_.CompressSeconds
+                verify_seconds = $_.VerifySeconds
+                extract_seconds = $_.ExtractSeconds
+                cpu_avg_pct = $_.CpuAvgPct
+                cpu_peak_pct = $_.CpuPeakPct
+                gpu_avg_pct = $_.GpuAvgPct
+                gpu_peak_pct = $_.GpuPeakPct
+                gpu_kernel_launches = ConvertTo-ExactBenchmarkCounter $_.GpuKernelLaunches
+                gpu_kernel_ms = $_.GpuKernelMs
+                gpu_pattern_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPatternBlocks
+                gpu_prefix_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPrefixBlocks
+                gpu_dictionary_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuDictionaryBlocks
+                gpu_sparse_pattern_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuSparsePatternBlocks
+                memory_only = $true
+                disk_write_bytes = 0
+            }
+        })
+    return [ordered]@{
+        schema_version = 1
+        benchmark_kind = "suzip_ram"
+        recorded_utc = (Get-Date).ToUniversalTime().ToString("o")
+        source_commit = $Commit
+        source_dirty = $Dirty
+        binary_sha256 = $BinarySha256.ToLowerInvariant()
+        cpu_model = $CpuModel
+        gpu_model = $GpuModel
+        profile = $Profile
+        size_mib = $SizeMiB
+        compression_level = $Level
+        resource_sample_interval_ms = $SampleIntervalMs
+        runs = $orderedRuns
+    }
+}
+
+# Purpose: Create one evidence file without replacing any existing benchmark record.
+# Inputs: `Record` is a validated RAM-only benchmark dictionary and `Path` is a new JSON destination.
+# Outputs: Writes UTF-8 JSON exactly once or throws on a path collision or I/O failure.
+function Write-BenchmarkJson {
+    param([Parameter(Mandatory = $true)]$Record, [Parameter(Mandatory = $true)][string]$Path)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $parent = [IO.Path]::GetDirectoryName($fullPath)
+    if (-not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    $json = $Record | ConvertTo-Json -Depth 6
+    $stream = [IO.FileStream]::new($fullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false))
+        try { $writer.WriteLine($json) } finally { $writer.Dispose() }
+    } finally {
+        $stream.Dispose()
     }
 }
 
@@ -823,7 +941,7 @@ if ($Mode -eq "Memory") {
         $group = $_.Group
         $totalSeconds = ($group | ForEach-Object { $_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds } | Measure-Object -Average).Average
         $gpuKernelMs = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuKernelMs })
-        $gpuKernelDutyPct = if ($null -ne $gpuKernelMs -and $totalSeconds -gt 0) {
+        $gpuSummedKernelTimeToWallPct = if ($null -ne $gpuKernelMs -and $totalSeconds -gt 0) {
             ($gpuKernelMs / ($totalSeconds * 1000.0)) * 100.0
         } else {
             $null
@@ -860,9 +978,11 @@ if ($Mode -eq "Memory") {
             GpuDecodeChunks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuDecodeChunks })
             GpuKernelLaunches = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuKernelLaunches })
             GpuKernelMs = $gpuKernelMs
-            GpuKernelDutyPct = $gpuKernelDutyPct
+            GpuSummedKernelTimeToWallPct = $gpuSummedKernelTimeToWallPct
             GpuPatternBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPatternBlocks })
             GpuPrefixBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPrefixBlocks })
+            GpuDictionaryBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuDictionaryBlocks })
+            GpuSparsePatternBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuSparsePatternBlocks })
             GpuH2DMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuH2DMiB })
             GpuD2HMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuD2HMiB })
             GpuAllocMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuAllocMiB })
@@ -895,7 +1015,7 @@ if ($Mode -eq "Memory") {
     Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuPrefixBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
+        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuSummedKernelTimeToWallPct, GpuPatternBlocks, GpuPrefixBlocks, GpuDictionaryBlocks, GpuSparsePatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 320 |
         Write-BenchmarkMessage
@@ -911,6 +1031,32 @@ if ($Mode -eq "Memory") {
         if ($speedup -lt 1.0) {
             Write-BenchmarkMessage "Note: required-HIP was slower than forced CPU on this memory workload; treat that as a real optimization finding, not a pass/fail benchmark target."
         }
+    }
+    if ($JsonOutput) {
+        $commit = (& git rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Cannot identify benchmark source commit." }
+        $dirtyPaths = @(& git status --porcelain --untracked-files=normal)
+        if ($LASTEXITCODE -ne 0) { throw "Cannot determine benchmark source state." }
+        $cpuModel = $null
+        try {
+            $cpuModel = (Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name
+        } catch {
+            Write-Verbose 'CPU model query unavailable; benchmark provenance will record null.'
+        }
+        $gpuModel = $null
+        if (-not $SkipGpu) {
+            $gpuInfo = @(& $cli gpu-info)
+            if ($LASTEXITCODE -eq 0) {
+                $deviceLine = $gpuInfo | Where-Object { $_ -match '^device_name=' } | Select-Object -First 1
+                if ($deviceLine) { $gpuModel = $deviceLine.Substring('device_name='.Length) }
+            }
+        }
+        $record = ConvertTo-RamBenchmarkRecord -Runs $results -Commit $commit -Dirty ($dirtyPaths.Count -gt 0) `
+            -BinarySha256 (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash -Profile $WorkloadProfile `
+            -SizeMiB $SizeMiB -Level $CompressionLevel -SampleIntervalMs $SampleIntervalMs `
+            -CpuModel $cpuModel -GpuModel $gpuModel
+        Write-BenchmarkJson -Record $record -Path $JsonOutput
+        Write-BenchmarkMessage "Benchmark JSON created with source_dirty=$($record.source_dirty)."
     }
     return
 }
@@ -955,7 +1101,7 @@ try {
         $group = $_.Group
         $totalSeconds = ($group | ForEach-Object { $_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds } | Measure-Object -Average).Average
         $gpuKernelMs = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuKernelMs })
-        $gpuKernelDutyPct = if ($null -ne $gpuKernelMs -and $totalSeconds -gt 0) {
+        $gpuSummedKernelTimeToWallPct = if ($null -ne $gpuKernelMs -and $totalSeconds -gt 0) {
             ($gpuKernelMs / ($totalSeconds * 1000.0)) * 100.0
         } else {
             $null
@@ -989,9 +1135,11 @@ try {
             GpuDecodeChunks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuDecodeChunks })
             GpuKernelLaunches = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuKernelLaunches })
             GpuKernelMs = $gpuKernelMs
-            GpuKernelDutyPct = $gpuKernelDutyPct
+            GpuSummedKernelTimeToWallPct = $gpuSummedKernelTimeToWallPct
             GpuPatternBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPatternBlocks })
             GpuPrefixBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuPrefixBlocks })
+            GpuDictionaryBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuDictionaryBlocks })
+            GpuSparsePatternBlocks = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuSparsePatternBlocks })
             GpuH2DMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuH2DMiB })
             GpuD2HMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuD2HMiB })
             GpuAllocMiB = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuAllocMiB })
@@ -1025,7 +1173,7 @@ try {
     Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuKernelDutyPct, GpuPatternBlocks, GpuPrefixBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
+        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuSummedKernelTimeToWallPct, GpuPatternBlocks, GpuPrefixBlocks, GpuDictionaryBlocks, GpuSparsePatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 220 |
         Write-BenchmarkMessage

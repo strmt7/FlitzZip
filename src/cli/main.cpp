@@ -97,10 +97,12 @@ void usage() {
         << "  superzip_cli dependency-check\n"
         << "  superzip_cli formats\n"
         << "  superzip_cli identify <archive>\n"
-        << "  superzip_cli memory-benchmark --size-mib <n> --profile Mixed|Compressible|Incompressible "
+        << "  superzip_cli memory-benchmark --size-mib <n> --profile "
+           "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage << ">] [--compression-level <1-9>]\n"
-        << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile Mixed|Compressible|Incompressible] [--workers "
+        << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
+           "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord] [--workers "
            "<n>] [--block-size-kib <"
         << kBlockSizeUsage << ">] [--compression-level <1-9>] [--tune] [--tune-levels]\n"
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] "
@@ -151,7 +153,10 @@ void print_stats(const superzip::OperationStats& stats) {
               << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
               << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
               << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks << " seconds=" << stats.seconds
+              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
+              << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
+              << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
+              << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes) << "\n";
 }

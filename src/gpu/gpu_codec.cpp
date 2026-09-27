@@ -145,6 +145,8 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
     merge_gpu_counter(target->device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->dictionary_blocks, source.dictionary_blocks.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->sparse_pattern_blocks, source.sparse_pattern_blocks.load(std::memory_order_relaxed));
     accumulate_kernel_microseconds(target->kernel_microseconds,
                                    source.kernel_microseconds.load(std::memory_order_relaxed));
 }
@@ -227,6 +229,8 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         .device_allocation_bytes = telemetry.device_allocation_bytes.load(std::memory_order_relaxed),
         .pattern_blocks = telemetry.pattern_blocks.load(std::memory_order_relaxed),
         .prefix_blocks = telemetry.prefix_blocks.load(std::memory_order_relaxed),
+        .dictionary_blocks = telemetry.dictionary_blocks.load(std::memory_order_relaxed),
+        .sparse_pattern_blocks = telemetry.sparse_pattern_blocks.load(std::memory_order_relaxed),
         .kernel_ms = microseconds == kUnavailableKernelTime ? std::numeric_limits<double>::quiet_NaN()
                                                             : static_cast<double>(microseconds) / 1000.0,
     };
@@ -277,12 +281,37 @@ void record_gpu_prefix_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
     }
 }
 
+// Purpose: Add emitted GPU dictionary blocks to one archive operation's telemetry.
+// Inputs: Optional operation counters and exact selected-block count.
+// Outputs: Atomically updates dictionary count when telemetry is present.
+void record_gpu_dictionary_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
+    if (telemetry) {
+        telemetry->dictionary_blocks.fetch_add(count, std::memory_order_relaxed);
+    }
+}
+
+// Purpose: Add emitted GPU sparse blocks to one archive operation's telemetry.
+// Inputs: Optional operation counters and exact selected-block count.
+// Outputs: Atomically updates sparse count when telemetry is present.
+void record_gpu_sparse_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
+    if (telemetry) {
+        telemetry->sparse_pattern_blocks.fetch_add(count, std::memory_order_relaxed);
+    }
+}
+
 // Purpose: Count a completed launch and safely accumulate its device-event duration.
 // Inputs: Optional operation telemetry and an untrusted numeric HIP event time in milliseconds.
 // Outputs: Counts execution and marks invalid or overflowing timing unavailable without failing archive work.
 void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds) {
+    record_gpu_kernel_work(telemetry, 1U, milliseconds);
+}
+
+// Purpose: Accumulate measured multi-kernel work while counting only explicit SuperZip HIP dispatches.
+// Inputs: Optional counters, the known dispatch count, and the aggregate HIP event duration.
+// Outputs: Updates launch/time counters; rocPRIM internal dispatches are intentionally not estimated.
+void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, double milliseconds) {
     if (telemetry) {
-        telemetry->kernel_launches.fetch_add(1, std::memory_order_relaxed);
+        telemetry->kernel_launches.fetch_add(launches, std::memory_order_relaxed);
         const auto rounded = (milliseconds * 1000.0) + 0.5;
         // UINT64_MAX rounds up to 2^64 as a double; use that exclusive bound before converting.
         const auto microseconds = !std::isfinite(milliseconds) || milliseconds < 0.0 || !std::isfinite(rounded) ||

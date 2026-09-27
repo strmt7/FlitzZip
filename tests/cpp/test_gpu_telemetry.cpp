@@ -15,11 +15,15 @@
 TEST_CASE(gpu_telemetry_finite_event_rounding) {
     superzip::GpuTelemetry telemetry;
     REQUIRE_TRUE(std::abs(superzip::snapshot_gpu_telemetry(telemetry).kernel_ms) < 1e-12);
+    superzip::record_gpu_dictionary_blocks(&telemetry, 2U);
+    superzip::record_gpu_sparse_pattern_blocks(&telemetry, 3U);
     for (const auto value : {0.0, -0.0, 0.00049, 0.00050, 1.234}) {
         superzip::record_gpu_kernel_launch(&telemetry, value);
     }
     const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
     REQUIRE_EQ(stats.kernel_launches, 5U);
+    REQUIRE_EQ(stats.dictionary_blocks, 2U);
+    REQUIRE_EQ(stats.sparse_pattern_blocks, 3U);
     REQUIRE_EQ(telemetry.kernel_microseconds.load(), 1235U);
     REQUIRE_TRUE(std::abs(stats.kernel_ms - 1.235) < 1e-12);
     superzip::record_gpu_kernel_launch(nullptr, std::numeric_limits<double>::quiet_NaN());
