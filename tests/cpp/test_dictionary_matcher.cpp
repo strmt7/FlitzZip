@@ -1244,12 +1244,14 @@ TEST_CASE(dictionary_decoder_rejects_incomplete_sequences) {
 // Inputs: Valid levels, invalid signed extremes, short inputs, and one oversized but genuinely allocated batch.
 // Outputs: Requires bounded policies, no search for short inputs, and explicit invalid-argument rejection.
 TEST_CASE(dictionary_effort_and_resource_contracts) {
+    constexpr std::array<std::uint32_t, 9> expected_budgets{192U, 256U, 384U, 512U, 768U, 1536U, 3072U, 6144U, 12288U};
     std::uint32_t last_depth = 0;
     std::uint32_t last_bytes = 0;
     for (int level = 1; level <= 9; ++level) {
         const auto effort = effort_for_level(level);
         REQUIRE_TRUE(effort.max_candidates > last_depth);
         REQUIRE_TRUE(effort.max_byte_comparisons > last_bytes);
+        REQUIRE_EQ(effort.max_byte_comparisons, expected_budgets[static_cast<std::size_t>(level - 1)]);
         last_depth = effort.max_candidates;
         last_bytes = effort.max_byte_comparisons;
     }

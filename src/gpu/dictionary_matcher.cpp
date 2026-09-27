@@ -3,6 +3,7 @@
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
 
+#include <array>
 #include <cmath>
 
 namespace superzip::dictionary {
@@ -32,7 +33,9 @@ Effort effort_for_level(int level) {
         throw ArchiveError("dictionary compression level must be between 1 and 9");
     }
     const auto depth = 1U << static_cast<unsigned int>(level - 1);
-    return {.max_candidates = depth, .max_byte_comparisons = 48U * depth};
+    constexpr std::array<std::uint32_t, 9> comparison_budgets{192U,  256U,  384U,  512U,  768U,
+                                                              1536U, 3072U, 6144U, 12288U};
+    return {.max_candidates = depth, .max_byte_comparisons = comparison_budgets[static_cast<std::size_t>(level - 1)]};
 }
 
 // Purpose: Reject impossible device-event durations independently of successful codec execution.
