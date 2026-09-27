@@ -202,7 +202,7 @@ namespace {
 
 // Purpose: Independently serialize per-file encoding as a byte-level oracle for the batched archive scheduler.
 // Inputs: manifest points to bounded fixture files; options selects the same backend/effort as production.
-// Outputs: Returns a complete version-three archive built without the production batch writer.
+// Outputs: Returns a complete archive with the block-required version, independent of the batch writer.
 std::string separate_archive_bytes(const superzip::Manifest& manifest, const superzip::GpuCodecOptions& options) {
     superzip::ArchiveIndex index;
     std::ostringstream output(std::ios::binary);
@@ -227,10 +227,23 @@ std::string separate_archive_bytes(const superzip::Manifest& manifest, const sup
         }
         index.entries.push_back(std::move(entry));
     }
+    for (const auto& entry : index.entries) {
+        for (const auto& block : entry.blocks) {
+            if (block.kind == superzip::BlockKind::CpuZstd) {
+                index.version = 6U;
+            } else if (block.kind == superzip::BlockKind::GpuSparsePattern) {
+                index.version = std::max(index.version, 5U);
+            } else if (block.kind == superzip::BlockKind::GpuDictionary ||
+                       (block.kind == superzip::BlockKind::Pattern &&
+                        block.encoded_len > superzip::kLegacyGpuPatternBytes)) {
+                index.version = std::max(index.version, 4U);
+            }
+        }
+    }
     const auto offset = static_cast<std::uint64_t>(output.tellp());
     superzip::write_archive_index(output, index);
     const auto size = static_cast<std::uint64_t>(output.tellp()) - offset;
-    superzip_test::write_test_footer(output, offset, size);
+    superzip_test::write_test_footer(output, offset, size, index.version);
     return output.str();
 }
 
