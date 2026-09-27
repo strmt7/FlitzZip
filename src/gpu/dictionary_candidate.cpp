@@ -173,12 +173,16 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
         auto bytes = std::min<std::size_t>(kMaxBatchBytes, input.size() - offset);
         auto batch = input.subspan(offset, bytes);
         std::vector<std::uint16_t> distances;
-        if (input.size() - offset >= kMaxPeriodicBatchBytes) {
-            auto periodic = sampled_batch_distances(input.subspan(offset, kMaxPeriodicBatchBytes));
+        for (const auto candidate_bytes : {kMaxPeriodicBatchBytes, kMaxBatchBytes * 2U}) {
+            if (input.size() - offset < candidate_bytes) {
+                continue;
+            }
+            auto periodic = sampled_batch_distances(input.subspan(offset, candidate_bytes));
             if (!periodic.empty()) {
-                bytes = kMaxPeriodicBatchBytes;
+                bytes = candidate_bytes;
                 batch = input.subspan(offset, bytes);
                 distances = std::move(periodic);
+                break;
             }
         }
         if (distances.empty()) {

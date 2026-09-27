@@ -17,7 +17,7 @@ inline constexpr std::uint32_t kMinMatchBytes = 4U;
 inline constexpr std::uint32_t kMaxMatchBytes = 8192U;
 inline constexpr std::size_t kMaxBatchBytes = 4U * 1024U * 1024U;
 // The verified periodic index uses less workspace and can admit a larger borrowed-input batch.
-inline constexpr std::size_t kMaxPeriodicBatchBytes = 8U * 1024U * 1024U;
+inline constexpr std::size_t kMaxPeriodicBatchBytes = 16U * 1024U * 1024U;
 inline constexpr std::size_t kMaxWorkspaceBytes = 256U * 1024U * 1024U;
 inline constexpr std::uint32_t kEncodedSegmentCapacity = kGpuDictionaryEncodedSegmentCapacity;
 

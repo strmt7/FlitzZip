@@ -129,23 +129,29 @@ std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t reco
 }
 
 // Purpose: Prove large-block HIP encoding actually selects dictionary blocks on locally repeated data.
-// Inputs: Independently seeded 64 KiB groups, level-five required HIP, and 1/8 MiB production block sizes.
-// Outputs: Requires dictionary selection and byte-exact CPU and HIP decoding at both block sizes.
+// Inputs: Independently seeded 64 KiB groups, level-five required HIP, and 1/8/16 MiB production block sizes.
+// Outputs: Requires one periodic dictionary batch at 8/16 MiB and byte-exact CPU and HIP decoding.
 TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
-    for (const std::size_t block_bytes : {1024U * 1024U, 8U * 1024U * 1024U}) {
+    for (const std::size_t block_bytes : {1024U * 1024U, 8U * 1024U * 1024U, 16U * 1024U * 1024U}) {
         const auto input = make_segmented_records(block_bytes);
         superzip::GpuCodecOptions options;
         options.block_size = static_cast<std::uint32_t>(block_bytes);
         options.compression_level = 5;
         options.require_gpu = true;
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
         const auto encoded = superzip::encode_chunk(input, options);
         REQUIRE_TRUE(encoded.gpu_used);
         REQUIRE_EQ(encoded.blocks.size(), 1U);
         REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
         REQUIRE_TRUE(encoded.payload.size() < input.size());
+        if (block_bytes >= 8U * 1024U * 1024U) {
+            const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+            REQUIRE_EQ(telemetry.kernel_launches, 5U);
+            REQUIRE_EQ(telemetry.dictionary_blocks, 1U);
+        }
         for (const bool hip : {false, true}) {
             auto decode_options = options;
             decode_options.require_gpu = hip;
@@ -355,7 +361,7 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
 }
 
 // Purpose: Verify production periodic-index output with an independent LZ4 block reader.
-// Inputs: Periodic 8 MiB and non-power-of-two 1 MiB sources at low, middle, and high required-HIP efforts.
+// Inputs: Periodic 8/16 MiB and non-power-of-two 1 MiB sources at low, middle, and high required-HIP efforts.
 // Outputs: Requires both index paths and kernel policies to emit independently decodable blocks; level-five export
 // supports an external reader.
 TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
@@ -363,7 +369,8 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
         return;
     }
     for (const auto [record_bytes, input_bytes] :
-         {std::pair{16U * 1024U, 8U * 1024U * 1024U}, std::pair{12U * 1024U, 1024U * 1024U}}) {
+         {std::pair{16U * 1024U, 8U * 1024U * 1024U}, std::pair{12U * 1024U, 1024U * 1024U},
+          std::pair{16U * 1024U, 16U * 1024U * 1024U}}) {
         const auto input = make_segmented_records(input_bytes, record_bytes);
         for (const int level : {1, 5, 9}) {
             superzip::GpuCodecOptions options;
