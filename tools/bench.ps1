@@ -774,6 +774,12 @@ function Invoke-MemoryBenchmarkLane {
         [double]$stats["archive_bytes"] -le [double]$stats["output_bytes"]) {
         throw "$Lane memory benchmark did not report a complete serialized archive size."
     }
+    $generationWork = Get-StatsNumber -Stats $stats -Key "source_generation_worker_seconds"
+    $codecWork = Get-StatsNumber -Stats $stats -Key "codec_encode_worker_seconds"
+    if ($null -eq $generationWork -or $generationWork -le 0 -or
+        $null -eq $codecWork -or $codecWork -le 0) {
+        throw "$Lane memory benchmark did not report positive encode-stage worker times."
+    }
     if ($ModeFlag -eq "--require-gpu") {
         Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
     }
@@ -783,6 +789,8 @@ function Invoke-MemoryBenchmarkLane {
         Iteration = $Iteration
         BlockSizeKiB = [int]($stats["block_size_bytes"] / 1KB)
         CompressSeconds = [double]$stats["compress_seconds"]
+        SourceGenerationWorkerSeconds = $generationWork
+        CodecEncodeWorkerSeconds = $codecWork
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
         Workers = [int]$stats["workers"]
@@ -858,6 +866,11 @@ function ConvertTo-RamBenchmarkRecord {
             if ($_.MemoryOnly -ne "true" -or $_.DiskWriteBytes -ne 0 -or
                 $_.InputBytes -ne ($SizeMiB * 1MB) -or $_.OutputBytes -lt 0 -or
                 $_.ArchiveBytes -le $_.OutputBytes -or
+                [double]::IsNaN($_.SourceGenerationWorkerSeconds) -or
+                [double]::IsInfinity($_.SourceGenerationWorkerSeconds) -or
+                [double]::IsNaN($_.CodecEncodeWorkerSeconds) -or
+                [double]::IsInfinity($_.CodecEncodeWorkerSeconds) -or
+                $_.SourceGenerationWorkerSeconds -le 0 -or $_.CodecEncodeWorkerSeconds -le 0 -or
                 ($_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds) -le 0) {
                 throw "RAM benchmark JSON rejected an inconsistent lane result."
             }
@@ -869,6 +882,8 @@ function ConvertTo-RamBenchmarkRecord {
                 output_bytes = [int64]$_.OutputBytes
                 archive_bytes = ConvertTo-ExactBenchmarkCounter $_.ArchiveBytes
                 compress_seconds = $_.CompressSeconds
+                source_generation_worker_seconds = $_.SourceGenerationWorkerSeconds
+                codec_encode_worker_seconds = $_.CodecEncodeWorkerSeconds
                 verify_seconds = $_.VerifySeconds
                 extract_seconds = $_.ExtractSeconds
                 cpu_avg_pct = $_.CpuAvgPct
@@ -969,6 +984,8 @@ if ($Mode -eq "Memory") {
             OutputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.OutputBytes })
             ArchiveBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.ArchiveBytes })
             CompressMiBs = ($group | Measure-Object CompressMiBs -Average).Average
+            SourceGenerationWorkerSeconds = ($group | Measure-Object SourceGenerationWorkerSeconds -Average).Average
+            CodecEncodeWorkerSeconds = ($group | Measure-Object CodecEncodeWorkerSeconds -Average).Average
             VerifyMiBs = ($group | Measure-Object VerifyMiBs -Average).Average
             ExtractMiBs = ($group | Measure-Object ExtractMiBs -Average).Average
             CompressionRatio = ($group | Measure-Object CompressionRatio -Average).Average
@@ -1020,6 +1037,14 @@ if ($Mode -eq "Memory") {
     $summary |
         Sort-Object Lane, BlockSizeKiB |
         Select-Object Lane, BlockSizeKiB, InputBytes, OutputBytes, ArchiveBytes, CompressionRatio, ArchiveCompressionRatio |
+        Format-Table -AutoSize |
+        Out-String -Width 160 |
+        Write-BenchmarkMessage
+
+    Write-BenchmarkMessage "Encode stage worker time (summed across concurrent chunks; not elapsed wall time):"
+    $summary |
+        Sort-Object Lane, BlockSizeKiB |
+        Select-Object Lane, BlockSizeKiB, SourceGenerationWorkerSeconds, CodecEncodeWorkerSeconds |
         Format-Table -AutoSize |
         Out-String -Width 160 |
         Write-BenchmarkMessage

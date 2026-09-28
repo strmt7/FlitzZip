@@ -17,6 +17,7 @@ $fixtureRun = [pscustomobject]@{
     Lane = 'GPU'; Iteration = 1; BlockSizeKiB = 1024
     MemoryOnly = 'true'; DiskWriteBytes = 0; InputBytes = 10GB; OutputBytes = 171079680; ArchiveBytes = 171102811
     CompressSeconds = 1.0; VerifySeconds = 1.0; ExtractSeconds = 1.0
+    SourceGenerationWorkerSeconds = 4.25; CodecEncodeWorkerSeconds = 9.5
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
     GpuKernelLaunches = 720; GpuKernelMs = $null
     GpuPatternBlocks = 0; GpuPrefixBlocks = 0; GpuDictionaryBlocks = 0; GpuSparsePatternBlocks = 10240
@@ -26,7 +27,9 @@ $record = ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -
 if ($record.schema_version -ne 1 -or $record.source_dirty -ne $true -or
     $record.binary_sha256 -ne ('b' * 64) -or $record.runs.Count -ne 1 -or
     $record.runs[0].output_bytes -ne 171079680 -or
-    $record.runs[0].archive_bytes -ne 171102811 -or $null -ne $record.runs[0].gpu_kernel_ms) {
+    $record.runs[0].archive_bytes -ne 171102811 -or $null -ne $record.runs[0].gpu_kernel_ms -or
+    $record.runs[0].source_generation_worker_seconds -ne 4.25 -or
+    $record.runs[0].codec_encode_worker_seconds -ne 9.5) {
     throw 'RAM benchmark JSON lost provenance, exact size, or unavailable counter semantics.'
 }
 $jsonPath = Join-Path $env:TEMP ("superzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
@@ -35,7 +38,9 @@ try {
     $json = Get-Content -LiteralPath $jsonPath -Raw
     $stored = $json | ConvertFrom-Json
     if ($stored.runs[0].output_bytes -ne 171079680 -or
-        $stored.runs[0].archive_bytes -ne 171102811 -or $stored.source_dirty -ne $true) {
+        $stored.runs[0].archive_bytes -ne 171102811 -or $stored.source_dirty -ne $true -or
+        $stored.runs[0].source_generation_worker_seconds -ne 4.25 -or
+        $stored.runs[0].codec_encode_worker_seconds -ne 9.5) {
         throw 'Serialized RAM benchmark JSON differs from the record.'
     }
     if ($record.runs[0].gpu_kernel_launches -isnot [int64] -or
@@ -52,6 +57,16 @@ try {
 } finally {
     Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
 }
+foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
+    $fixtureRun.CodecEncodeWorkerSeconds = $invalid
+    $invalidRejected = $false
+    try {
+        ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+            -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+    } catch { $invalidRejected = $true }
+    if (-not $invalidRejected) { throw 'Invalid codec worker time entered the RAM-only evidence record.' }
+}
+$fixtureRun.CodecEncodeWorkerSeconds = 9.5
 $fixtureRun.MemoryOnly = 'false'
 $invalidRejected = $false
 try {

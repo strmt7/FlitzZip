@@ -46,6 +46,8 @@ struct MemoryArchiveChunk {
     superzip::EncodedChunk encoded;
     std::uint32_t crc32 = 0;
     std::uint64_t uncompressed_size = 0;
+    double source_generation_worker_seconds = 0.0;
+    double codec_encode_worker_seconds = 0.0;
 };
 
 struct PendingMemoryEncode {
@@ -364,7 +366,7 @@ std::uint32_t resolve_memory_benchmark_workers(std::uint32_t requested) {
 // Purpose: Drain one memory benchmark encode task into the archive table.
 // Inputs: `pending_encode` owns completed or running encode tasks, `archive` stores chunks by index, and `result`
 // accumulates stats.
-// Outputs: Moves one completed encode result into `archive` and updates output byte/GPU counters.
+// Outputs: Moves one completed encode result into `archive` and updates output byte/GPU and worker-time counters.
 void flush_one_memory_encode(std::deque<PendingMemoryEncode>& pending_encode, std::vector<MemoryArchiveChunk>& archive,
                              MemoryBenchmarkResult& result) {
     auto pending = std::move(pending_encode.front());
@@ -373,6 +375,8 @@ void flush_one_memory_encode(std::deque<PendingMemoryEncode>& pending_encode, st
     result.stats.gpu_used = result.stats.gpu_used || chunk.encoded.gpu_used;
     result.stats.output_bytes = checked_add_cli_u64(result.stats.output_bytes, chunk.encoded.payload.size(),
                                                     "memory benchmark encoded byte count overflows");
+    result.source_generation_worker_seconds += chunk.source_generation_worker_seconds;
+    result.codec_encode_worker_seconds += chunk.codec_encode_worker_seconds;
     archive[pending.index] = std::move(chunk);
 }
 
@@ -398,7 +402,7 @@ void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, su
 // Purpose: Encode one synthetic memory-workload window without writing benchmark data to storage.
 // Inputs: `window_offset`/`window_bytes` select the bounded window, `total_bytes` preserves deterministic data shape,
 // `inflight`, `options`, and `codec_options` define backend policy, and `result` receives counters.
-// Outputs: Returns an in-memory archive window with per-chunk CRC data for later verification.
+// Outputs: Returns an in-memory archive window with per-chunk CRC and separated worker-stage timings.
 std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t window_offset, std::uint64_t window_bytes,
                                                                std::uint64_t total_bytes, std::uint32_t inflight,
                                                                const MemoryBenchmarkOptions& options,
@@ -416,9 +420,12 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t win
             .index = static_cast<std::size_t>(index),
             .result = std::async(std::launch::async,
                                  [chunk_offset, total_bytes, profile, want, codec_options]() {
+                                     const auto generation_started = std::chrono::steady_clock::now();
                                      std::vector<std::byte> input(static_cast<std::size_t>(want));
                                      fill_memory_benchmark_chunk(input, chunk_offset, total_bytes, profile);
+                                     const auto codec_started = std::chrono::steady_clock::now();
                                      auto encoded = superzip::encode_owned_chunk(std::move(input), codec_options);
+                                     const auto encoded_at = std::chrono::steady_clock::now();
                                      if (!encoded.source_crc32_available) {
                                          throw superzip::ArchiveError(
                                              "owned memory benchmark encode did not return a source CRC");
@@ -428,6 +435,10 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t win
                                          .encoded = std::move(encoded),
                                          .crc32 = chunk_crc,
                                          .uncompressed_size = want,
+                                         .source_generation_worker_seconds =
+                                             std::chrono::duration<double>(codec_started - generation_started).count(),
+                                         .codec_encode_worker_seconds =
+                                             std::chrono::duration<double>(encoded_at - codec_started).count(),
                                      };
                                  }),
         });
@@ -723,6 +734,8 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
               << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
               << " extract_seconds=" << result.extract_seconds
+              << " source_generation_worker_seconds=" << result.source_generation_worker_seconds
+              << " codec_encode_worker_seconds=" << result.codec_encode_worker_seconds
               << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
               << " verify_mib_s=" << mib_per_second(stats.input_bytes, result.verify_seconds)
               << " extract_mib_s=" << mib_per_second(stats.input_bytes, result.extract_seconds)

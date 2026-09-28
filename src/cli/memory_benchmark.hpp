@@ -24,6 +24,9 @@ struct MemoryBenchmarkResult {
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
     double compress_seconds = 0.0;
+    // Summed task time, including overlap; neither field is elapsed wall time.
+    double source_generation_worker_seconds = 0.0;
+    double codec_encode_worker_seconds = 0.0;
     double verify_seconds = 0.0;
     double extract_seconds = 0.0;
 };
