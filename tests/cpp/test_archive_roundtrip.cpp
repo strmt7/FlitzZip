@@ -1062,15 +1062,11 @@ TEST_CASE(suzip_default_compression_level_is_balanced) {
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Exercise production HIP dictionary selection across efforts and both native readers.
-// Inputs: Four seeded 16 KiB records with changing first bytes, plus one required-HIP archive at level nine.
-// Outputs: All efforts produce smaller distinct payloads; the emitted version-four archive roundtrips on CPU/HIP.
-TEST_CASE(suzip_gpu_dictionary_writer_levels_and_roundtrip) {
-    if (!superzip::query_gpu_info().available) {
-        return;
-    }
+// Purpose: Build deterministic near-identical records for dictionary codec regressions.
+// Inputs: `state` is the caller-owned PRNG seed and receives the final state.
+// Outputs: Returns four 16 KiB records with distinct first bytes.
+std::vector<std::byte> make_dictionary_writer_input(std::uint32_t& state) {
     std::vector<std::byte> input(65536U);
-    std::uint32_t state = 0x31674325U;
     for (std::size_t index = 0; index < input.size(); ++index) {
         state ^= state << 13U;
         state ^= state >> 17U;
@@ -1080,6 +1076,18 @@ TEST_CASE(suzip_gpu_dictionary_writer_levels_and_roundtrip) {
     for (std::size_t record = 1U; record < 4U; ++record) {
         input[record * 16384U] = static_cast<std::byte>(record);
     }
+    return input;
+}
+
+// Purpose: Exercise production HIP dictionary selection across every effort level.
+// Inputs: Four seeded 16 KiB records with changing first bytes.
+// Outputs: Every level produces a smaller distinct payload, honest telemetry, and an exact CPU decode.
+TEST_CASE(suzip_gpu_dictionary_writer_levels_and_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::uint32_t state = 0x31674325U;
+    const auto input = make_dictionary_writer_input(state);
 
     std::size_t previous = input.size();
     for (int level = 1; level <= 9; ++level) {
@@ -1102,7 +1110,17 @@ TEST_CASE(suzip_gpu_dictionary_writer_levels_and_roundtrip) {
         REQUIRE_EQ(decoded, input);
         previous = encoded.payload.size();
     }
+}
 
+// Purpose: Verify mixed GPU block offsets and a production dictionary archive on both readers.
+// Inputs: Seeded dictionary, random, and fill records plus one required-HIP version-four archive.
+// Outputs: Requires exact mixed decode/CRC and byte-exact CPU/HIP archive verification and extraction.
+TEST_CASE(suzip_gpu_dictionary_mixed_and_archive_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::uint32_t state = 0x31674325U;
+    const auto input = make_dictionary_writer_input(state);
     std::vector<std::byte> mixed = input;
     for (std::size_t index = 0; index < input.size(); ++index) {
         state ^= state << 13U;
