@@ -98,7 +98,11 @@ ZipScanResult scan_zip_entries(mz_zip_archive& zip) {
         }
         auto name = zip_entry_name(zip_full_entry_name(zip, i), stat.m_bit_flag);
         path_bytes = checked_add_archive_path_metadata_bytes(path_bytes, name.size(), "ZIP decoded filename metadata");
-        result.paths.push_back({.path = std::move(name), .directory = stat.m_is_directory != 0});
+        result.paths.push_back({
+            .path = std::move(name),
+            .directory = stat.m_is_directory != 0,
+            .encoding = ArchivePathEncoding::Utf8,
+        });
     }
     validate_archive_path_set(result.paths);
     return result;

@@ -731,6 +731,7 @@ ArchiveValidationSummary validate_archive_index_metadata(const ArchiveIndex& ind
         path_entries.push_back(ArchivePathValidationEntry{
             .path = entry.path,
             .directory = entry.directory,
+            .encoding = ArchivePathEncoding::Utf8,
         });
         summary.total_uncompressed_bytes = checked_add_extracted_output_bytes(
             summary.total_uncompressed_bytes, entry.uncompressed_size, "archive uncompressed size");

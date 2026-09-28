@@ -674,6 +674,7 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
         validation_entries.push_back(ArchivePathValidationEntry{
             .path = entry.path,
             .directory = entry.directory,
+            .encoding = entry.encoding,
         });
     }
     validate_archive_path_set(validation_entries);

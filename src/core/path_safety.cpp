@@ -9,7 +9,12 @@
 #include <cctype>
 #include <span>
 #include <cwctype>
+#include <string_view>
 #include <vector>
+
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 namespace superzip {
 namespace {
@@ -81,30 +86,57 @@ void validate_existing_parent_containment(const std::filesystem::path& target, c
     }
 }
 
+#ifdef _WIN32
+using ArchiveCollisionKey = std::wstring;
+#else
+using ArchiveCollisionKey = std::string;
+#endif
+using ArchiveCollisionView = std::basic_string_view<ArchiveCollisionKey::value_type>;
+
 struct NormalizedArchivePath {
-    std::string key;
+    ArchiveCollisionKey key;
     std::string original_path;
     bool directory = false;
 };
 
 // Purpose: Normalize an archive entry path into the key used for archive-wide collision checks.
-// Inputs: `path` is untrusted archive metadata.
-// Outputs: Returns a normalized relative key; on Windows the key is ASCII-folded for case-insensitive collision
-// detection.
-std::string normalize_archive_collision_key(const std::string& path) {
+// Inputs: `path` is untrusted archive metadata and `encoding` matches its later filesystem join.
+// Outputs: Returns a normalized key in the host representation used for path comparisons.
+ArchiveCollisionKey normalize_archive_collision_key(const std::string& path, ArchivePathEncoding encoding) {
     auto key = normalize_archive_path_key(path);
 #ifdef _WIN32
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-#endif
+    const auto relative = encoding == ArchivePathEncoding::Utf8
+                              ? std::filesystem::path(std::u8string(key.begin(), key.end()))
+                              : std::filesystem::path(key);
+    return relative.native();
+#else
+    static_cast<void>(encoding);
     return key;
+#endif
+}
+
+// Purpose: Compare normalized archive paths using the destination platform's case policy.
+// Inputs: `left` and `right` are normalized keys in host path encoding.
+// Outputs: Returns negative, zero, or positive ordering; throws if Windows cannot compare them.
+int compare_archive_collision_keys(ArchiveCollisionView left, ArchiveCollisionView right) {
+#ifdef _WIN32
+    const auto result = CompareStringOrdinal(left.data(), static_cast<int>(left.size()), right.data(),
+                                             static_cast<int>(right.size()), TRUE);
+    if (result == 0) {
+        throw SecurityError("archive paths cannot be compared safely on Windows");
+    }
+    return result - CSTR_EQUAL;
+#else
+    return left.compare(right);
+#endif
 }
 
 // Purpose: Detect whether one normalized archive path is below another normalized archive path.
 // Inputs: `child` and `parent` are slash-separated normalized archive path keys.
 // Outputs: Returns true only for strict descendants such as `dir/file` under `dir`.
-bool is_archive_path_descendant(const std::string& child, const std::string& parent) {
-    return child.size() > parent.size() && child.compare(0, parent.size(), parent) == 0 && child[parent.size()] == '/';
+bool is_archive_path_descendant(const ArchiveCollisionKey& child, const ArchiveCollisionKey& parent) {
+    return child.size() > parent.size() && child[parent.size()] == '/' &&
+           compare_archive_collision_keys(ArchiveCollisionView(child).substr(0, parent.size()), parent) == 0;
 }
 
 }  // namespace
@@ -208,23 +240,27 @@ void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entri
     paths.reserve(entries.size());
     for (const auto& entry : entries) {
         paths.push_back(NormalizedArchivePath{
-            .key = normalize_archive_collision_key(entry.path),
+            .key = normalize_archive_collision_key(entry.path, entry.encoding),
             .original_path = entry.path,
             .directory = entry.directory,
         });
     }
-    std::sort(paths.begin(), paths.end(),
-              [](const NormalizedArchivePath& lhs, const NormalizedArchivePath& rhs) { return lhs.key < rhs.key; });
+    std::sort(paths.begin(), paths.end(), [](const NormalizedArchivePath& lhs, const NormalizedArchivePath& rhs) {
+        return compare_archive_collision_keys(lhs.key, rhs.key) < 0;
+    });
     for (std::size_t i = 0; i < paths.size(); ++i) {
-        if (i > 0 && paths[i - 1].key == paths[i].key) {
+        if (i > 0 && compare_archive_collision_keys(paths[i - 1].key, paths[i].key) == 0) {
             throw SecurityError("archive contains duplicate entry path: " + paths[i].original_path);
         }
         if (!paths[i].directory) {
             // Punctuation siblings can sort between a file and its first descendant.
-            const auto prefix = paths[i].key + '/';
-            const auto child = std::lower_bound(
-                paths.begin(), paths.end(), prefix,
-                [](const NormalizedArchivePath& candidate, const std::string& key) { return candidate.key < key; });
+            auto prefix = paths[i].key;
+            prefix.push_back('/');
+            const auto child =
+                std::lower_bound(paths.begin(), paths.end(), prefix,
+                                 [](const NormalizedArchivePath& candidate, const ArchiveCollisionKey& key) {
+                                     return compare_archive_collision_keys(candidate.key, key) < 0;
+                                 });
             if (child != paths.end() && is_archive_path_descendant(child->key, paths[i].key)) {
                 throw SecurityError("archive file entry conflicts with child entry: " + paths[i].original_path);
             }

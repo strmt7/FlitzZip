@@ -383,6 +383,7 @@ ArScanResult scan_ar(const std::filesystem::path& archive_path, ArchivePathEncod
                 validation_entries.push_back(ArchivePathValidationEntry{
                     .path = entry->path,
                     .directory = false,
+                    .encoding = ArchivePathEncoding::Utf8,
                 });
                 result.total_file_bytes =
                     checked_add_extracted_output_bytes(result.total_file_bytes, entry->size, "AR extracted payload");

@@ -12,6 +12,7 @@ enum class ArchivePathEncoding { HostCodePage, Utf8 };
 struct ArchivePathValidationEntry {
     std::string path;
     bool directory = false;
+    ArchivePathEncoding encoding = ArchivePathEncoding::HostCodePage;
 };
 
 // Purpose: Validate and normalize an archive entry name without joining it to the host filesystem.
@@ -21,7 +22,7 @@ struct ArchivePathValidationEntry {
 std::string normalize_archive_path_key(const std::string& archive_path);
 
 // Purpose: Reject archive-wide path collisions before payload decode or extraction can create output.
-// Inputs: `entries` contains all archive paths and their directory/file kind.
+// Inputs: `entries` contains all archive paths, directory/file kinds, and their declared metadata encodings.
 // Outputs: Throws `SecurityError` for duplicate normalized paths or file entries that conflict with descendants.
 void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entries);
 

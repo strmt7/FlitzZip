@@ -430,6 +430,7 @@ void record_wim_entry(WimScanContext& context, const wimlib_dir_entry& entry) {
     context.validation_entries->push_back(ArchivePathValidationEntry{
         .path = output_path,
         .directory = directory,
+        .encoding = ArchivePathEncoding::Utf8,
     });
 }
 

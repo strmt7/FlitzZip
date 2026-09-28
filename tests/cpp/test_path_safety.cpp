@@ -408,6 +408,35 @@ TEST_CASE(file_publication_unicode_overwrite_diagnostics) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Reject non-ASCII case aliases before Windows can map them to the same output path.
+// Inputs: UTF-8 file duplicates and a file/child conflict using upper- and lowercase A-umlaut.
+// Outputs: Requires rejection on Windows and preserves distinct names on case-sensitive hosts.
+TEST_CASE(path_set_rejects_unicode_case_aliases) {
+    const std::string upper = "\xC3\x84";
+    const std::string lower = "\xC3\xA4";
+    const std::array cases{
+        std::array{upper + ".txt", lower + ".txt"},
+        std::array{upper, lower + "/child.txt"},
+    };
+    for (const auto& paths : cases) {
+        const std::array<superzip::ArchivePathValidationEntry, 2> entries{{
+            {.path = paths[0], .directory = false, .encoding = superzip::ArchivePathEncoding::Utf8},
+            {.path = paths[1], .directory = false, .encoding = superzip::ArchivePathEncoding::Utf8},
+        }};
+        bool rejected = false;
+        try {
+            superzip::validate_archive_path_set(entries);
+        } catch (const superzip::SecurityError&) {
+            rejected = true;
+        }
+#ifdef _WIN32
+        REQUIRE_TRUE(rejected);
+#else
+        REQUIRE_TRUE(!rejected);
+#endif
+    }
+}
+
 // Purpose: Reject file/descendant conflicts even when punctuation siblings separate their sorted keys.
 // Inputs: All permutations of a file parent, a valid sibling, and a nested child, plus a directory-parent control.
 // Outputs: Requires rejection of every file-parent set and acceptance of the corresponding directory-parent set.

@@ -461,6 +461,7 @@ CpioScanResult scan_cpio_stream(std::istream& input, bool seekable, ArchivePathE
         validation_entries.push_back(ArchivePathValidationEntry{
             .path = raw_name,
             .directory = directory,
+            .encoding = ArchivePathEncoding::Utf8,
         });
         result.entries.push_back(CpioEntryMetadata{
             .path = raw_name,

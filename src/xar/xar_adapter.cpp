@@ -665,7 +665,11 @@ void validate_xar_toc_paths(XarMetadata& metadata) {
     for (const auto& entry : metadata.entries) {
         metadata.path_metadata_bytes = checked_add_archive_path_metadata_bytes(
             metadata.path_metadata_bytes, entry.path.size(), "XAR path validation metadata");
-        validation_entries.push_back({entry.path, entry.directory});
+        validation_entries.push_back({
+            .path = entry.path,
+            .directory = entry.directory,
+            .encoding = ArchivePathEncoding::Utf8,
+        });
     }
     validate_archive_path_set(validation_entries);
 }

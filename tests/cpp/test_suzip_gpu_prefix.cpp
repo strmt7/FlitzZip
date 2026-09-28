@@ -207,6 +207,57 @@ TEST_CASE(suzip_prefix_reference_known_bytes) {
     REQUIRE_TRUE(reference_prefix_payload(input, {}) == expected);
 }
 
+// Purpose: Reject malformed prefix grammar identically in CPU and required-HIP decode and CRC paths.
+// Inputs: One static/adaptive block with a truncated bitstream or an invalid static high-byte code.
+// Outputs: Requires every decode and CRC route to throw ArchiveError before accepting the block.
+TEST_CASE(suzip_gpu_prefix_malformed_codewords_are_rejected) {
+    const bool gpu_available = superzip::query_gpu_info().available;
+    constexpr std::uint32_t decoded_len = 128U;
+    for (const auto [kind, invalid_high] : {
+             std::pair{superzip::BlockKind::GpuPrefix, false},
+             std::pair{superzip::BlockKind::GpuPrefix, true},
+             std::pair{superzip::BlockKind::GpuAdaptivePrefix, false},
+         }) {
+        const auto codebook_bytes =
+            kind == superzip::BlockKind::GpuAdaptivePrefix ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U;
+        std::vector<std::byte> payload(codebook_bytes + 8U + 4U);
+        payload[codebook_bytes + 4U] = std::byte{4};
+        if (invalid_high) {
+            std::fill(payload.end() - 4, payload.end(), std::byte{0xFF});
+        }
+        const superzip::BlockDescriptor block{
+            .kind = kind,
+            .uncompressed_len = decoded_len,
+            .encoded_offset = 0U,
+            .encoded_len = static_cast<std::uint32_t>(payload.size()),
+        };
+        std::vector<std::byte> output(decoded_len);
+        for (const bool force_cpu : {true, false}) {
+            if (!force_cpu && !gpu_available) {
+                continue;
+            }
+            superzip::GpuCodecOptions options;
+            options.require_gpu = !force_cpu;
+            options.force_cpu = force_cpu;
+            bool decode_rejected = false;
+            try {
+                (void)superzip::decode_chunk(payload, std::span(&block, 1), output, options);
+            } catch (const superzip::ArchiveError&) {
+                decode_rejected = true;
+            }
+            REQUIRE_TRUE(decode_rejected);
+
+            bool crc_rejected = false;
+            try {
+                (void)superzip::crc_decoded_chunk(payload, std::span(&block, 1), decoded_len, options);
+            } catch (const superzip::ArchiveError&) {
+                crc_rejected = true;
+            }
+            REQUIRE_TRUE(crc_rejected);
+        }
+    }
+}
+
 // Purpose: Prove exact HIP packing against independent reference bytes across symbols and word boundaries.
 // Inputs: RAM-only fixtures with every static symbol at all 32 bit alignments, shifted alphabets, and partial tails.
 // Outputs: Requires exact payloads, including offset tables and padding, plus CPU/HIP byte-exact decoding.

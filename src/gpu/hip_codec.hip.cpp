@@ -104,63 +104,68 @@ __device__ std::uint32_t gpu_prefix_peek_code(const std::byte* stream, std::uint
     return (code >> bit_shift) & 0x7FFU;
 }
 
-// Purpose: Advance a prefix cursor without crossing a truncated segment boundary.
+// Purpose: Advance a prefix cursor only when a complete codeword remains.
 // Inputs: `bit_pos` is within `limit_bits`, and `width` is the decoded codeword width.
-// Outputs: Updates `bit_pos` to the lesser of its next codeword and the segment end.
-__device__ void gpu_prefix_advance(std::uint32_t& bit_pos, std::uint32_t limit_bits, std::uint32_t width) {
-    const auto remaining = limit_bits - bit_pos;
-    bit_pos += width < remaining ? width : remaining;
+// Outputs: Advances `bit_pos` and returns true, or leaves it unchanged and returns false for truncation.
+__device__ bool gpu_prefix_advance(std::uint32_t& bit_pos, std::uint32_t limit_bits, std::uint32_t width) {
+    if (width > limit_bits - bit_pos) {
+        return false;
+    }
+    bit_pos += width;
+    return true;
 }
 
 // Purpose: Decode one byte from the static GPU prefix code.
-// Inputs: `stream`, `bit_pos`, and `limit_bits` describe one encoded segment.
-// Outputs: Returns the decoded byte; invalid high-byte payloads clamp to zero.
-__device__ std::byte gpu_prefix_decode_byte(const std::byte* stream, std::uint32_t& bit_pos, std::uint32_t limit_bits) {
+// Inputs: `stream`, `bit_pos`, and `limit_bits` describe one encoded segment; `valid` receives grammar status.
+// Outputs: Returns a decoded byte or clears `valid` for truncation or an invalid high-byte payload.
+__device__ std::byte gpu_prefix_decode_byte(const std::byte* stream, std::uint32_t& bit_pos, std::uint32_t limit_bits,
+                                            bool& valid) {
     const auto code = gpu_prefix_peek_code(stream, bit_pos, limit_bits);
     if ((code & 1U) == 0U) {
-        gpu_prefix_advance(bit_pos, limit_bits, 3U);
+        valid = gpu_prefix_advance(bit_pos, limit_bits, 3U);
         return static_cast<std::byte>((code >> 1U) & 3U);
     }
     if ((code & 3U) == 1U) {
-        gpu_prefix_advance(bit_pos, limit_bits, 6U);
+        valid = gpu_prefix_advance(bit_pos, limit_bits, 6U);
         return static_cast<std::byte>(4U + ((code >> 2U) & 15U));
     }
     if ((code & 7U) == 3U) {
-        gpu_prefix_advance(bit_pos, limit_bits, 9U);
+        valid = gpu_prefix_advance(bit_pos, limit_bits, 9U);
         return static_cast<std::byte>(20U + ((code >> 3U) & 63U));
     }
-    gpu_prefix_advance(bit_pos, limit_bits, 11U);
+    valid = gpu_prefix_advance(bit_pos, limit_bits, 11U);
     const auto high = (code >> 3U) & 255U;
-    return high <= 171U ? static_cast<std::byte>(84U + high) : std::byte{0};
+    valid = valid && high <= 171U;
+    return static_cast<std::byte>(84U + high);
 }
 
 // Purpose: Decode one byte from an adaptive GPU prefix segment.
-// Inputs: `codebook`, `stream`, `bit_pos`, and `limit_bits` describe the encoded byte stream.
-// Outputs: Returns the decoded byte, using literal high-group bytes when the value was not in the codebook.
+// Inputs: `codebook`, `stream`, `bit_pos`, and `limit_bits` describe the encoded byte stream; `valid` receives status.
+// Outputs: Returns a decoded byte and clears `valid` when the codeword is incomplete.
 __device__ std::byte gpu_adaptive_prefix_decode_byte(const std::byte* codebook, const std::byte* stream,
-                                                     std::uint32_t& bit_pos, std::uint32_t limit_bits) {
+                                                     std::uint32_t& bit_pos, std::uint32_t limit_bits, bool& valid) {
     const auto code = gpu_prefix_peek_code(stream, bit_pos, limit_bits);
     if ((code & 1U) == 0U) {
-        gpu_prefix_advance(bit_pos, limit_bits, 3U);
+        valid = gpu_prefix_advance(bit_pos, limit_bits, 3U);
         return codebook[(code >> 1U) & 3U];
     }
     if ((code & 3U) == 1U) {
-        gpu_prefix_advance(bit_pos, limit_bits, 6U);
+        valid = gpu_prefix_advance(bit_pos, limit_bits, 6U);
         return codebook[kGpuAdaptivePrefixSmallSymbols + ((code >> 2U) & 15U)];
     }
     if ((code & 7U) == 3U) {
-        gpu_prefix_advance(bit_pos, limit_bits, 9U);
+        valid = gpu_prefix_advance(bit_pos, limit_bits, 9U);
         return codebook[kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols + ((code >> 3U) & 63U)];
     }
-    gpu_prefix_advance(bit_pos, limit_bits, 11U);
+    valid = gpu_prefix_advance(bit_pos, limit_bits, 11U);
     return static_cast<std::byte>((code >> 3U) & 255U);
 }
 
 // Purpose: Decode GPU prefix segments into the final device output buffer.
-// Inputs: `payload` is the encoded archive payload, `plans` describes each prefix segment, and `output` is decoded
-// storage. Outputs: Writes decoded bytes for every prefix segment.
+// Inputs: `payload` is the encoded archive payload, `plans` describes each prefix segment, `output` is decoded
+// storage, and `errors` receives one grammar result per plan. Outputs: Writes valid bytes and flags malformed plans.
 __global__ void materialize_prefix_segments_kernel(const std::byte* payload, const PrefixDecodeSegment* plans,
-                                                   std::uint32_t plan_count, std::byte* output) {
+                                                   std::uint32_t plan_count, std::byte* output, std::uint32_t* errors) {
     const auto plan_index = static_cast<std::uint32_t>(blockIdx.x);
     if (plan_index >= plan_count) {
         return;
@@ -170,6 +175,7 @@ __global__ void materialize_prefix_segments_kernel(const std::byte* payload, con
     const auto encoded_start = gpu_prefix_read_u32(table + (static_cast<std::size_t>(plan.segment_index) * 4U));
     const auto encoded_end = gpu_prefix_read_u32(table + ((static_cast<std::size_t>(plan.segment_index) + 1U) * 4U));
     if (encoded_end < encoded_start) {
+        errors[plan_index] = 1U;
         return;
     }
     const auto* stream = payload + plan.bitstream_offset + encoded_start;
@@ -177,10 +183,17 @@ __global__ void materialize_prefix_segments_kernel(const std::byte* payload, con
     const auto* codebook = payload + plan.codebook_offset;
     std::uint32_t bit_pos = 0;
     for (std::uint32_t i = 0; i < plan.decoded_len; ++i) {
-        output[plan.output_offset + i] = plan.adaptive != 0U
-                                             ? gpu_adaptive_prefix_decode_byte(codebook, stream, bit_pos, limit_bits)
-                                             : gpu_prefix_decode_byte(stream, bit_pos, limit_bits);
+        bool valid = true;
+        const auto decoded = plan.adaptive != 0U
+                                 ? gpu_adaptive_prefix_decode_byte(codebook, stream, bit_pos, limit_bits, valid)
+                                 : gpu_prefix_decode_byte(stream, bit_pos, limit_bits, valid);
+        if (!valid) {
+            errors[plan_index] = 1U;
+            return;
+        }
+        output[plan.output_offset + i] = decoded;
     }
+    errors[plan_index] = 0U;
 }
 
 // Purpose: Resolve a provisional candidate kind after GPU verification.
@@ -958,17 +971,29 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
         throw GpuError("GPU prefix decode segment count exceeds HIP launch limits");
     }
     const auto plan_bytes = checked_multiply_bytes(plans.size(), sizeof(PrefixDecodeSegment), "prefix decode plans");
-    HipDeviceMemoryReservation reservation(plan_bytes, "prefix decode plans");
+    const auto error_bytes = checked_multiply_bytes(plans.size(), sizeof(std::uint32_t), "prefix decode errors");
+    const auto required_bytes = checked_add_bytes(plan_bytes, error_bytes, "prefix decode metadata");
+    HipDeviceMemoryReservation reservation(required_bytes, "prefix decode metadata");
     HipDeviceBuffer<PrefixDecodeSegment> device_plans(plan_bytes, "hipMalloc prefix decode plans");
-    record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
+    HipDeviceBuffer<std::uint32_t> device_errors(error_bytes, "hipMalloc prefix decode errors");
+    record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
     check_hip(hipMemcpy(device_plans.get(), plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix decode plans");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
     auto events = make_hip_event_pair("create materialize_prefix_segments_kernel events");
     launch_measured_kernel(materialize_prefix_segments_kernel, static_cast<unsigned int>(plans.size()), 1, 0,
                            hipStreamPerThread, events, "launch materialize_prefix_segments_kernel", device_payload,
-                           device_plans.get(), static_cast<std::uint32_t>(plans.size()), device_output);
+                           device_plans.get(), static_cast<std::uint32_t>(plans.size()), device_output,
+                           device_errors.get());
     finish_measured_kernel(telemetry, events, "synchronize materialize_prefix_segments_kernel");
+    std::vector<std::uint32_t> errors(plans.size());
+    check_hip(hipMemcpy(errors.data(), device_errors.get(), error_bytes, hipMemcpyDeviceToHost),
+              "hipMemcpy prefix decode errors");
+    record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(error_bytes));
+    if (std::ranges::any_of(errors, [](std::uint32_t error) { return error != 0U; })) {
+        throw ArchiveError("GPU prefix block contains a truncated or invalid codeword");
+    }
+    device_errors.reset_checked("hipFree prefix decode errors");
     device_plans.reset_checked("hipFree prefix decode plans");
 }
 

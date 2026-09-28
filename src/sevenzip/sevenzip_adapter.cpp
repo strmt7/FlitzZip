@@ -497,6 +497,7 @@ SevenZipMetadata scan_7z_metadata(CSzArEx& database) {
         validation_entries.push_back(ArchivePathValidationEntry{
             .path = normalized,
             .directory = directory,
+            .encoding = ArchivePathEncoding::Utf8,
         });
     }
     validate_archive_path_set(validation_entries);
