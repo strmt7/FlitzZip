@@ -205,4 +205,21 @@ Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "docs/targeted
 Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "src/core/checksum.cpp", "-Mode", "defer")) -eq 0) "waiter must allow defer for ordinary source changes"
 Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "tools/superzip_verification.psm1", "-Mode", "defer")) -ne 0) "waiter must reject defer for verifier changes"
 
+. (Join-Path $PSScriptRoot "wait_relevant_workflows.ps1") -ChangedPath @("docs/targeted-verification.md") -Mode defer
+$olderCancelled = [pscustomobject]@{
+    databaseId = 100; workflowName = "lint"; status = "completed"; conclusion = "cancelled"; url = "https://example.test/100"
+}
+$newerRunning = [pscustomobject]@{
+    databaseId = 101; workflowName = "lint"; status = "in_progress"; conclusion = ""; url = "https://example.test/101"
+}
+$duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($olderCancelled, $newerRunning) -WorkflowName @("lint")
+Assert-Selector ($duplicateStatus.failed.Count -eq 0 -and $duplicateStatus.running.Count -eq 1) "newer active run must supersede older cancelled run"
+$newerRunning.status = "completed"
+$newerRunning.conclusion = "success"
+$duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($olderCancelled, $newerRunning) -WorkflowName @("lint")
+Assert-Selector $duplicateStatus.complete "newer successful run must supersede older cancelled run"
+$newerRunning.conclusion = "failure"
+$duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($newerRunning, $olderCancelled) -WorkflowName @("lint")
+Assert-Selector ($duplicateStatus.failed.Count -eq 1) "newer failed run must not be hidden by response ordering"
+
 Write-Output "Verification selector self-test passed."

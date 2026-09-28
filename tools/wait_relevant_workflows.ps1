@@ -130,7 +130,9 @@ function Test-SelectedWorkflowCompletion {
     $failed = @()
     $running = @()
     foreach ($name in $WorkflowName) {
-        $run = @($Runs | Where-Object { $_.workflowName -eq $name } | Select-Object -First 1)
+        $run = @($Runs | Where-Object { $_.workflowName -eq $name } |
+                Sort-Object -Property @{ Expression = { [long]$_.databaseId }; Descending = $true } |
+                Select-Object -First 1)
         if ($run.Count -eq 0) {
             $missing += $name
             continue
