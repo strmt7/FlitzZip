@@ -38,7 +38,6 @@
 namespace superzip {
 namespace {
 
-constexpr std::uint64_t kArchiveFooterSize = 24;
 constexpr std::size_t kFileStreamBufferBytes = 4U * 1024U * 1024U;
 
 struct PipelineBudget {
@@ -310,10 +309,10 @@ std::uint64_t stream_position(std::istream& stream) {
 ArchiveIndex read_index_from_file(std::ifstream& input) {
     input.seekg(0, std::ios::end);
     const auto size = stream_position(input);
-    if (size < kArchiveFooterSize) {
+    if (size < kSuperZipFooterBytes) {
         throw ArchiveError("archive is too small");
     }
-    input.seekg(static_cast<std::streamoff>(size - kArchiveFooterSize), std::ios::beg);
+    input.seekg(static_cast<std::streamoff>(size - kSuperZipFooterBytes), std::ios::beg);
     const auto footer_magic = read_u32(input);
     if (footer_magic != kSuperZipFooterMagic) {
         throw ArchiveError("archive footer is missing");

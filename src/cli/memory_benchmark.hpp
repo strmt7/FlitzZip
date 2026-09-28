@@ -19,6 +19,7 @@ struct MemoryBenchmarkOptions {
 
 struct MemoryBenchmarkResult {
     superzip::OperationStats stats;
+    std::uint64_t archive_bytes = 0;
     std::uint32_t codec_workers = 1;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;

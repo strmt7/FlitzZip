@@ -15,7 +15,6 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kArchiveProbeBytes = 0x8806U;
-constexpr std::uint64_t kSuperZipFooterBytes = 24U;
 
 struct ExtensionFormatMapping {
     std::string_view extension;

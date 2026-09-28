@@ -1,6 +1,7 @@
 #include "cli/memory_benchmark.hpp"
 
 #include "core/checksum.hpp"
+#include "core/archive_index.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
 
@@ -16,6 +17,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -374,6 +376,25 @@ void flush_one_memory_encode(std::deque<PendingMemoryEncode>& pending_encode, st
     archive[pending.index] = std::move(chunk);
 }
 
+// Purpose: Model one native file's serialized block table while bounded benchmark windows are still resident.
+// Inputs: `archive` owns completed chunks and `entry` tracks the virtual file's preceding payload and CRC.
+// Outputs: Appends offset-adjusted descriptors and combines CRCs, or throws before index/resource overflow.
+void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, superzip::ArchiveEntry& entry) {
+    for (const auto& chunk : archive) {
+        if (chunk.encoded.blocks.size() > superzip::kMaxArchiveBlocks - entry.blocks.size()) {
+            throw superzip::ArchiveError("memory benchmark archive exceeds the native block limit");
+        }
+        for (auto block : chunk.encoded.blocks) {
+            block.encoded_offset = checked_add_cli_u64(block.encoded_offset, entry.payload_size,
+                                                       "memory benchmark block offset overflows");
+            entry.blocks.push_back(block);
+        }
+        entry.payload_size = checked_add_cli_u64(entry.payload_size, chunk.encoded.payload.size(),
+                                                 "memory benchmark archive payload overflows");
+        entry.crc32 = superzip::crc32_combine(entry.crc32, chunk.crc32, chunk.uncompressed_size);
+    }
+}
+
 // Purpose: Encode one synthetic memory-workload window without writing benchmark data to storage.
 // Inputs: `window_offset`/`window_bytes` select the bounded window, `total_bytes` preserves deterministic data shape,
 // `inflight`, `options`, and `codec_options` define backend policy, and `result` receives counters.
@@ -683,9 +704,10 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
     const auto& stats = result.stats;
     std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
-              << " output_bytes=" << stats.output_bytes << " workers=" << stats.workers
-              << " inflight_chunks=" << stats.inflight_chunks << " codec_workers=" << result.codec_workers
-              << " block_size_bytes=" << result.block_size << " compression_level=" << result.compression_level
+              << " output_bytes=" << stats.output_bytes << " archive_bytes=" << result.archive_bytes
+              << " workers=" << stats.workers << " inflight_chunks=" << stats.inflight_chunks
+              << " codec_workers=" << result.codec_workers << " block_size_bytes=" << result.block_size
+              << " compression_level=" << result.compression_level
               << " gpu_used=" << (stats.gpu_used ? "true" : "false")
               << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
               << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
@@ -705,6 +727,7 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
               << " verify_mib_s=" << mib_per_second(stats.input_bytes, result.verify_seconds)
               << " extract_mib_s=" << mib_per_second(stats.input_bytes, result.extract_seconds)
               << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes)
+              << " archive_compression_ratio=" << compression_ratio(stats.input_bytes, result.archive_bytes)
               << " memory_only=true"
               << " disk_write_bytes=0"
               << "\n";
@@ -755,6 +778,12 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.codec_workers = codec_workers;
     result.block_size = options.block_size;
     result.compression_level = options.compression_level;
+    superzip::ArchiveIndex modeled_index;
+    modeled_index.version = superzip::kSuperZipMaxReadableVersion;
+    modeled_index.entries.push_back(superzip::ArchiveEntry{
+        .path = "memory-benchmark.bin",
+        .uncompressed_size = total_bytes,
+    });
 
     const auto total_started = std::chrono::steady_clock::now();
     const auto window_chunks = std::max<std::uint64_t>(1U, inflight);
@@ -765,6 +794,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         auto phase_started = std::chrono::steady_clock::now();
         auto archive = encode_memory_benchmark_window(offset, current_window, total_bytes, inflight, options,
                                                       codec_options, result);
+        append_memory_archive_index(archive, modeled_index.entries.front());
         result.compress_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
@@ -783,7 +813,19 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
         offset += current_window;
     }
-    result.stats.entries = chunk_count;
+    const auto finalize_started = std::chrono::steady_clock::now();
+    if (modeled_index.entries.front().payload_size != result.stats.output_bytes) {
+        throw superzip::ArchiveError("memory benchmark archive payload count differs from encoded chunks");
+    }
+    std::ostringstream serialized_index(std::ios::out | std::ios::binary);
+    superzip::write_archive_index(serialized_index, modeled_index);
+    result.archive_bytes = checked_add_cli_u64(result.stats.output_bytes, serialized_index.view().size(),
+                                               "memory benchmark archive size overflows");
+    result.archive_bytes = checked_add_cli_u64(result.archive_bytes, superzip::kSuperZipFooterBytes,
+                                               "memory benchmark archive footer overflows");
+    result.compress_seconds +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - finalize_started).count();
+    result.stats.entries = modeled_index.entries.size();
     result.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
     result.stats.gpu_runtime = superzip::snapshot_gpu_telemetry(*telemetry);
     return result;

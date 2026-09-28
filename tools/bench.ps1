@@ -704,10 +704,12 @@ function Invoke-BenchmarkLane {
             InflightChunks = [int]$compress["inflight_chunks"]
             InputBytes = [double]$compress["input_bytes"]
             OutputBytes = [double]$compress["output_bytes"]
+            ArchiveBytes = [double]$compress["output_bytes"]
             CompressMiBs = [double]$compress["throughput_mib_s"]
             VerifyMiBs = [double]$verify["throughput_mib_s"]
             ExtractMiBs = [double]$extract["throughput_mib_s"]
             CompressionRatio = [double]$compress["compression_ratio"]
+            ArchiveCompressionRatio = [double]$compress["compression_ratio"]
             CpuAvgPct = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["cpu_avg_pct"] })
             CpuPeakPct = Get-OptionalMaximum -Values ($operationStats | ForEach-Object { $_["cpu_peak_pct"] })
             GpuAvgPct = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["gpu_avg_pct"] })
@@ -768,6 +770,10 @@ function Invoke-MemoryBenchmarkLane {
     if ([double]$stats["disk_write_bytes"] -ne 0) {
         throw "$Lane memory benchmark reported disk_write_bytes=$($stats["disk_write_bytes"])."
     }
+    if (-not $stats.ContainsKey("archive_bytes") -or
+        [double]$stats["archive_bytes"] -le [double]$stats["output_bytes"]) {
+        throw "$Lane memory benchmark did not report a complete serialized archive size."
+    }
     if ($ModeFlag -eq "--require-gpu") {
         Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
     }
@@ -786,10 +792,12 @@ function Invoke-MemoryBenchmarkLane {
         DiskWriteBytes = [double]$stats["disk_write_bytes"]
         InputBytes = [double]$stats["input_bytes"]
         OutputBytes = [double]$stats["output_bytes"]
+        ArchiveBytes = [double]$stats["archive_bytes"]
         CompressMiBs = [double]$stats["compress_mib_s"]
         VerifyMiBs = [double]$stats["verify_mib_s"]
         ExtractMiBs = [double]$stats["extract_mib_s"]
         CompressionRatio = [double]$stats["compression_ratio"]
+        ArchiveCompressionRatio = [double]$stats["archive_compression_ratio"]
         CpuAvgPct = $stats["cpu_avg_pct"]
         CpuPeakPct = $stats["cpu_peak_pct"]
         GpuAvgPct = $stats["gpu_avg_pct"]
@@ -849,6 +857,7 @@ function ConvertTo-RamBenchmarkRecord {
     $orderedRuns = @($Runs | ForEach-Object {
             if ($_.MemoryOnly -ne "true" -or $_.DiskWriteBytes -ne 0 -or
                 $_.InputBytes -ne ($SizeMiB * 1MB) -or $_.OutputBytes -lt 0 -or
+                $_.ArchiveBytes -le $_.OutputBytes -or
                 ($_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds) -le 0) {
                 throw "RAM benchmark JSON rejected an inconsistent lane result."
             }
@@ -858,6 +867,7 @@ function ConvertTo-RamBenchmarkRecord {
                 block_size_kib = [int]$_.BlockSizeKiB
                 input_bytes = [int64]$_.InputBytes
                 output_bytes = [int64]$_.OutputBytes
+                archive_bytes = ConvertTo-ExactBenchmarkCounter $_.ArchiveBytes
                 compress_seconds = $_.CompressSeconds
                 verify_seconds = $_.VerifySeconds
                 extract_seconds = $_.ExtractSeconds
@@ -957,10 +967,12 @@ if ($Mode -eq "Memory") {
             DiskWriteBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.DiskWriteBytes })
             InputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.InputBytes })
             OutputBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.OutputBytes })
+            ArchiveBytes = Get-OptionalAverage -Values ($group | ForEach-Object { $_.ArchiveBytes })
             CompressMiBs = ($group | Measure-Object CompressMiBs -Average).Average
             VerifyMiBs = ($group | Measure-Object VerifyMiBs -Average).Average
             ExtractMiBs = ($group | Measure-Object ExtractMiBs -Average).Average
             CompressionRatio = ($group | Measure-Object CompressionRatio -Average).Average
+            ArchiveCompressionRatio = ($group | Measure-Object ArchiveCompressionRatio -Average).Average
             TotalSeconds = $totalSeconds
             CpuAvgPct = Get-OptionalAverage -Values ($group | ForEach-Object { $_.CpuAvgPct })
             CpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.CpuPeakPct })
@@ -1007,7 +1019,7 @@ if ($Mode -eq "Memory") {
     Write-BenchmarkMessage "Size and ratio:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, InputBytes, OutputBytes, CompressionRatio |
+        Select-Object Lane, BlockSizeKiB, InputBytes, OutputBytes, ArchiveBytes, CompressionRatio, ArchiveCompressionRatio |
         Format-Table -AutoSize |
         Out-String -Width 160 |
         Write-BenchmarkMessage

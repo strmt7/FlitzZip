@@ -15,7 +15,7 @@ foreach ($definition in $definitions) {
 
 $fixtureRun = [pscustomobject]@{
     Lane = 'GPU'; Iteration = 1; BlockSizeKiB = 1024
-    MemoryOnly = 'true'; DiskWriteBytes = 0; InputBytes = 10GB; OutputBytes = 171079680
+    MemoryOnly = 'true'; DiskWriteBytes = 0; InputBytes = 10GB; OutputBytes = 171079680; ArchiveBytes = 171102811
     CompressSeconds = 1.0; VerifySeconds = 1.0; ExtractSeconds = 1.0
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
     GpuKernelLaunches = 720; GpuKernelMs = $null
@@ -25,7 +25,8 @@ $record = ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -
     -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100
 if ($record.schema_version -ne 1 -or $record.source_dirty -ne $true -or
     $record.binary_sha256 -ne ('b' * 64) -or $record.runs.Count -ne 1 -or
-    $record.runs[0].output_bytes -ne 171079680 -or $null -ne $record.runs[0].gpu_kernel_ms) {
+    $record.runs[0].output_bytes -ne 171079680 -or
+    $record.runs[0].archive_bytes -ne 171102811 -or $null -ne $record.runs[0].gpu_kernel_ms) {
     throw 'RAM benchmark JSON lost provenance, exact size, or unavailable counter semantics.'
 }
 $jsonPath = Join-Path $env:TEMP ("superzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
@@ -33,7 +34,8 @@ try {
     Write-BenchmarkJson -Record $record -Path $jsonPath
     $json = Get-Content -LiteralPath $jsonPath -Raw
     $stored = $json | ConvertFrom-Json
-    if ($stored.runs[0].output_bytes -ne 171079680 -or $stored.source_dirty -ne $true) {
+    if ($stored.runs[0].output_bytes -ne 171079680 -or
+        $stored.runs[0].archive_bytes -ne 171102811 -or $stored.source_dirty -ne $true) {
         throw 'Serialized RAM benchmark JSON differs from the record.'
     }
     if ($record.runs[0].gpu_kernel_launches -isnot [int64] -or
@@ -57,6 +59,14 @@ try {
         -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
 } catch { $invalidRejected = $true }
 if (-not $invalidRejected) { throw 'Filesystem benchmark data entered the RAM-only evidence record.' }
+$fixtureRun.MemoryOnly = 'true'
+$fixtureRun.ArchiveBytes = $fixtureRun.OutputBytes
+$invalidRejected = $false
+try {
+    ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+        -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+} catch { $invalidRejected = $true }
+if (-not $invalidRejected) { throw 'Payload-only bytes were accepted as complete archive bytes.' }
 foreach ($invalid in @([double]::NaN, 1.5, -1, 9007199254740992)) {
     $counterRejected = $false
     try { ConvertTo-ExactBenchmarkCounter $invalid | Out-Null } catch { $counterRejected = $true }

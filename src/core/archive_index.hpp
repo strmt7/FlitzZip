@@ -14,6 +14,7 @@ namespace superzip {
 
 constexpr std::uint32_t kSuperZipMagic = 0x505A5553;        // SUZP
 constexpr std::uint32_t kSuperZipFooterMagic = 0x465A5553;  // SUZF
+constexpr std::uint64_t kSuperZipFooterBytes = 2U * sizeof(std::uint32_t) + 2U * sizeof(std::uint64_t);
 constexpr std::uint32_t kSuperZipMinReadableVersion = 1;
 constexpr std::uint32_t kSuperZipVersion = 3;
 constexpr std::uint32_t kSuperZipMaxReadableVersion = 7;
