@@ -216,6 +216,33 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
     return frame_dictionary_candidate(segments, baseline_bytes);
 }
 
+// Purpose: Encode adjacent independent blocks in one bounded HIP batch without merging their archive payloads.
+// Inputs: Contiguous source/device bytes, aligned block descriptors, effort, optional verified periodic distances,
+// telemetry, and disjoint replacement slots. Outputs: Writes only winning per-block payloads or throws on mismatch.
+void encode_dictionary_group(std::span<const std::byte> input, const std::byte* device_input,
+                             std::span<const BlockDescriptor> blocks, const Effort& effort,
+                             std::span<const std::uint16_t> distances, GpuTelemetry* telemetry,
+                             std::span<std::vector<std::byte>> replacements) {
+    if (blocks.size() != replacements.size()) {
+        throw GpuError("dictionary group descriptor count differs from replacement slots");
+    }
+    const auto encoded = encode_segments_from_device_hip(input, device_input, effort, distances);
+    record_dictionary_batch(encoded, input.size(), telemetry);
+    std::size_t segment_offset = 0U;
+    for (std::size_t block = 0U; block < blocks.size(); ++block) {
+        const auto segment_count = blocks[block].uncompressed_len / kSegmentBytes;
+        if (segment_count > encoded.segments.size() - segment_offset) {
+            throw GpuError("dictionary group has fewer segments than its block descriptors");
+        }
+        replacements[block] = frame_dictionary_candidate(
+            std::span(encoded.segments).subspan(segment_offset, segment_count), blocks[block].encoded_len);
+        segment_offset += segment_count;
+    }
+    if (segment_offset != encoded.segments.size()) {
+        throw GpuError("dictionary batch segments do not match grouped source blocks");
+    }
+}
+
 }  // namespace
 
 // Purpose: Select only dictionary blocks whose complete version-four payload beats the existing GPU block.
@@ -248,6 +275,27 @@ DictionaryReplacements select_dictionary_replacements(std::span<const std::byte>
             continue;
         }
         const auto length = static_cast<std::size_t>(blocks[index].uncompressed_len);
+        if (length % kSegmentBytes == 0U && length <= kMaxPeriodicBatchBytes) {
+            std::size_t periodic_end = index;
+            std::size_t periodic_bytes = 0U;
+            while (periodic_end < blocks.size() && eligible[periodic_end] &&
+                   blocks[periodic_end].uncompressed_len % kSegmentBytes == 0U &&
+                   blocks[periodic_end].uncompressed_len <= kMaxPeriodicBatchBytes - periodic_bytes) {
+                periodic_bytes += blocks[periodic_end].uncompressed_len;
+                ++periodic_end;
+            }
+            if (periodic_end > index + 1U && periodic_bytes > kMaxBatchBytes) {
+                const auto batch = input.subspan(source_offsets[index], periodic_bytes);
+                const auto distances = sampled_batch_distances(batch);
+                if (!distances.empty()) {
+                    encode_dictionary_group(batch, device_input + source_offsets[index],
+                                            blocks.subspan(index, periodic_end - index), effort, distances, telemetry,
+                                            std::span(replacements).subspan(index, periodic_end - index));
+                    index = periodic_end;
+                    continue;
+                }
+            }
+        }
         if (length % kSegmentBytes != 0U || length > kMaxBatchBytes) {
             replacements[index] = encode_dictionary_candidate(input.subspan(source_offsets[index], length),
                                                               device_input + source_offsets[index],
@@ -264,19 +312,8 @@ DictionaryReplacements select_dictionary_replacements(std::span<const std::byte>
         }
         const auto batch = input.subspan(source_offsets[first], batch_bytes);
         const auto distances = sampled_batch_distances(batch);
-        const auto encoded =
-            encode_segments_from_device_hip(batch, device_input + source_offsets[first], effort, distances);
-        record_dictionary_batch(encoded, batch_bytes, telemetry);
-        std::size_t segment_offset = 0U;
-        for (std::size_t block = first; block < index; ++block) {
-            const auto segment_count = blocks[block].uncompressed_len / kSegmentBytes;
-            replacements[block] = frame_dictionary_candidate(
-                std::span(encoded.segments).subspan(segment_offset, segment_count), blocks[block].encoded_len);
-            segment_offset += segment_count;
-        }
-        if (segment_offset != encoded.segments.size()) {
-            throw GpuError("dictionary batch segments do not match grouped source blocks");
-        }
+        encode_dictionary_group(batch, device_input + source_offsets[first], blocks.subspan(first, index - first),
+                                effort, distances, telemetry, std::span(replacements).subspan(first, index - first));
     }
     return replacements;
 }

@@ -165,6 +165,78 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
     }
 }
 
+// Purpose: Keep periodic HIP grouping transparent to independently framed native blocks.
+// Inputs: Two adjacent 8 MiB segmented-record blocks at balanced and maximum effort.
+// Outputs: Grouped payload bytes equal separate encodes, and both decoders restore the source exactly.
+TEST_CASE(dictionary_adjacent_periodic_blocks_preserve_encoded_bytes) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::size_t block_bytes = 8U * 1024U * 1024U;
+    const auto input = make_segmented_records(2U * block_bytes);
+    for (const int level : {5, 9}) {
+        superzip::GpuCodecOptions options;
+        options.block_size = static_cast<std::uint32_t>(block_bytes);
+        options.compression_level = level;
+        options.require_gpu = true;
+        const auto grouped = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(grouped.blocks.size(), 2U);
+        std::vector<std::byte> separately_encoded;
+        for (std::size_t block = 0U; block < 2U; ++block) {
+            const auto source = std::span(input).subspan(block * block_bytes, block_bytes);
+            const auto separate = superzip::encode_chunk(source, options);
+            REQUIRE_EQ(separate.blocks.size(), 1U);
+            REQUIRE_EQ(grouped.blocks[block].kind, separate.blocks.front().kind);
+            REQUIRE_EQ(grouped.blocks[block].encoded_len, separate.blocks.front().encoded_len);
+            separately_encoded.insert(separately_encoded.end(), separate.payload.begin(), separate.payload.end());
+        }
+        REQUIRE_EQ(grouped.payload, separately_encoded);
+        for (const bool hip : {false, true}) {
+            auto decode_options = options;
+            decode_options.require_gpu = hip;
+            decode_options.force_cpu = !hip;
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(superzip::decode_chunk(grouped.payload, grouped.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(decoded, input);
+        }
+    }
+}
+
+// Purpose: Preserve independent encoding when one adjacent block fails the periodic admission probe.
+// Inputs: Two 8 MiB dictionary-friendly blocks with a disrupted record in the second block.
+// Outputs: Group-attempt fallback leaves complete per-block payload bytes unchanged and decodes exactly.
+TEST_CASE(dictionary_periodic_group_probe_falls_back_without_byte_changes) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::size_t block_bytes = 8U * 1024U * 1024U;
+    constexpr std::size_t segment_bytes = kSegmentBytes;
+    auto input = make_segmented_records(2U * block_bytes);
+    const auto disrupted = block_bytes + segment_bytes + 3U * 16384U;
+    for (std::size_t offset = 0U; offset < 16384U; ++offset) {
+        input[disrupted + offset] ^= static_cast<std::byte>((offset * 29U + 17U) & 0xFFU);
+    }
+    superzip::GpuCodecOptions options;
+    options.block_size = static_cast<std::uint32_t>(block_bytes);
+    options.compression_level = 5;
+    options.require_gpu = true;
+    const auto grouped = superzip::encode_chunk(input, options);
+    REQUIRE_EQ(grouped.blocks.size(), 2U);
+    std::vector<std::byte> separately_encoded;
+    for (std::size_t block = 0U; block < 2U; ++block) {
+        const auto source = std::span(input).subspan(block * block_bytes, block_bytes);
+        const auto separate = superzip::encode_chunk(source, options);
+        REQUIRE_EQ(separate.blocks.size(), 1U);
+        REQUIRE_EQ(grouped.blocks[block].kind, separate.blocks.front().kind);
+        REQUIRE_EQ(grouped.blocks[block].encoded_len, separate.blocks.front().encoded_len);
+        separately_encoded.insert(separately_encoded.end(), separate.payload.begin(), separate.payload.end());
+    }
+    REQUIRE_EQ(grouped.payload, separately_encoded);
+    std::vector<std::byte> decoded(input.size());
+    REQUIRE_TRUE(superzip::decode_chunk(grouped.payload, grouped.blocks, decoded, options));
+    REQUIRE_EQ(decoded, input);
+}
+
 // Purpose: Check that longer periodic matches preserve effort ordering on a realistic independent-segment block.
 // Inputs: One deterministic 16 MiB block with a changing 16 KiB record in each segment.
 // Outputs: Requires byte-exact CPU read-back and six distinct low/mid-effort sizes without high-effort growth.
