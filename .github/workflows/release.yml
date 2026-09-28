@@ -56,7 +56,7 @@ jobs:
           persist-credentials: false
 
       - name: Run release pipeline
-        uses: $/.github/actions/windows-release
+        uses: ./.github/actions/windows-release
         env:
           GH_TOKEN: ${{ github.token }}
           HIP_SDK_INSTALLER_URL: ${{ vars.HIP_SDK_INSTALLER_URL }}
