@@ -200,6 +200,13 @@ Assert-Selector (Test-RequiredCommand -Plan $forcedPlan -Id "security-scan") "fo
 Assert-Selector (Test-RequiredCommand -Plan $forcedPlan -Id "benchmark-reporting-test") "full verification must cover typed benchmark reporting"
 $benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/bench.ps1")
 Assert-Selector (Test-RequiredCommand -Plan $benchmarkPlan -Id "benchmark-reporting-test") "benchmark changes must test reporting without running timing workloads"
+$benchmarkCommand = @($benchmarkPlan.manualLocalCommands | Where-Object { $_.id -eq 'ram-benchmark-sweep' })
+Assert-Selector ($benchmarkCommand.Count -eq 1 -and $benchmarkCommand[0].arguments[3] -eq '-Command' -and
+    $benchmarkCommand[0].arguments[4] -match '-BlockSizeKiB 256,512,1024,2048,4096,8192,16384$') `
+    'benchmark sweep must use PowerShell expression binding for its integer array'
+$arrayProbe = '& { param([int[]]$BlockSizeKiB) $expected = @(256,512,1024,2048,4096,8192,16384); if ($BlockSizeKiB.Count -ne $expected.Count) { exit 7 }; for ($i = 0; $i -lt $expected.Count; $i++) { if ($BlockSizeKiB[$i] -ne $expected[$i]) { exit 7 } } } -BlockSizeKiB 256,512,1024,2048,4096,8192,16384'
+& powershell -NoProfile -Command $arrayProbe | Out-Null
+Assert-Selector ($LASTEXITCODE -eq 0) 'benchmark sweep integer array must bind as seven values under powershell -Command'
 
 Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "docs/targeted-verification.md", "-Mode", "defer")) -eq 0) "waiter must allow docs-only lint workflow deferral without GitHub"
 Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "src/core/checksum.cpp", "-Mode", "defer")) -eq 0) "waiter must allow defer for ordinary source changes"

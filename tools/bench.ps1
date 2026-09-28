@@ -224,29 +224,98 @@ function Get-DiskResourceSample {
     }
 }
 
+# Purpose: Open a reusable Windows GPU-engine counter category before starting a timed CLI process.
+# Inputs: None; Windows may not expose the GPU Engine performance-counter category.
+# Outputs: Returns an empty per-process counter cache, or null when GPU counters are unavailable.
+function Get-GpuResourceSampler {
+    try {
+        $category = [System.Diagnostics.PerformanceCounterCategory]::new('GPU Engine')
+        $null = $category.GetInstanceNames()
+        return @{ Category = $category; Counters = @{} }
+    } catch {
+        return $null
+    }
+}
+
+# Purpose: Sample only the current CLI process's GPU engines without repeatedly expanding a PDH wildcard.
+# Inputs: `Sampler` owns persistent counters and `ProcessId` identifies the launched CLI process.
+# Outputs: Returns summed engine utilization after counters are primed, or null when no valid sample exists.
+function Get-ProcessGpuSample {
+    param(
+        [AllowNull()]$Sampler,
+        [Parameter(Mandatory = $true)][int]$ProcessId
+    )
+    if ($null -eq $Sampler) { return $null }
+    try {
+        $prefix = "pid_$ProcessId`_"
+        $active = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $gpu = 0.0
+        $valid = 0
+        foreach ($name in $Sampler.Category.GetInstanceNames()) {
+            if (-not $name.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $null = $active.Add($name)
+            if (-not $Sampler.Counters.ContainsKey($name)) {
+                $counter = $null
+                try {
+                    $counter = [System.Diagnostics.PerformanceCounter]::new('GPU Engine', 'Utilization Percentage', $name, $true)
+                    $null = $counter.NextValue()
+                    $Sampler.Counters[$name] = $counter
+                } catch {
+                    if ($null -ne $counter) { $counter.Dispose() }
+                }
+                continue
+            }
+            try {
+                $value = [double]$Sampler.Counters[$name].NextValue()
+                if (-not [double]::IsNaN($value) -and -not [double]::IsInfinity($value) -and $value -ge 0.0) {
+                    $gpu += $value
+                    $valid++
+                }
+            } catch {
+                $Sampler.Counters[$name].Dispose()
+                $Sampler.Counters.Remove($name)
+            }
+        }
+        foreach ($name in @($Sampler.Counters.Keys)) {
+            if (-not $active.Contains($name)) {
+                $Sampler.Counters[$name].Dispose()
+                $Sampler.Counters.Remove($name)
+            }
+        }
+        if ($valid -gt 0) { return $gpu }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+# Purpose: Release every persistent GPU-engine counter after a CLI process exits or sampling fails.
+# Inputs: `Sampler` owns counters for one process, or is null when initialization failed.
+# Outputs: Disposes counters and clears the cache without changing measured data.
+function Close-GpuResourceSampler {
+    param([AllowNull()]$Sampler)
+    if ($null -eq $Sampler) { return }
+    foreach ($counter in $Sampler.Counters.Values) { $counter.Dispose() }
+    $Sampler.Counters.Clear()
+}
+
 # Purpose: Read one short-interval resource sample for a running CLI process.
-# Inputs: `ProcessId` is the superzip_cli process id to match against GPU engine counters and `CpuPct` is the caller-computed process CPU percentage.
-# Outputs: Returns CPU, per-process aggregate GPU engine percent, and benchmark-volume disk counters; unavailable counters return `$null`.
+# Inputs: `ProcessId` selects GPU engines, `CpuPct` is process CPU use, `GpuSampler` owns counter state, and
+# `ElapsedIntervalMs` is the actual time since the previous sample.
+# Outputs: Returns CPU/GPU/disk values and measured cadence; unavailable counters remain null.
 function Get-ResourceSample {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [AllowNull()][Nullable[double]]$CpuPct
+        [AllowNull()][Nullable[double]]$CpuPct,
+        [AllowNull()]$GpuSampler,
+        [Parameter(Mandatory = $true)][double]$ElapsedIntervalMs
     )
-    $gpu = $null
-    try {
-        $pidPattern = "pid_$ProcessId`_"
-        $gpuSamples = (Get-Counter '\GPU Engine(*)\Utilization Percentage').CounterSamples |
-            Where-Object { $_.Path.IndexOf($pidPattern, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
-        if ($gpuSamples) {
-            $gpu = [double](($gpuSamples | Measure-Object CookedValue -Sum).Sum)
-        }
-    } catch {
-        $gpu = $null
-    }
+    $gpu = Get-ProcessGpuSample -Sampler $GpuSampler -ProcessId $ProcessId
     $disk = Get-DiskResourceSample
     return [pscustomobject]@{
         Cpu = $CpuPct
         Gpu = $gpu
+        ElapsedIntervalMs = $ElapsedIntervalMs
         DiskActive = $disk.DiskActive
         DiskReadBytesPerSec = $disk.DiskReadBytesPerSec
         DiskWriteBytesPerSec = $disk.DiskWriteBytesPerSec
@@ -271,6 +340,7 @@ function Measure-ResourceSample {
     param([Parameter(Mandatory = $true)]$Samples)
     $cpuSamples = @($Samples | Where-Object { $null -ne $_.Cpu } | ForEach-Object { $_.Cpu })
     $gpuSamples = @($Samples | Where-Object { $null -ne $_.Gpu } | ForEach-Object { $_.Gpu })
+    $intervalSamples = @($Samples | Where-Object { $_.ElapsedIntervalMs -gt 0 } | ForEach-Object { $_.ElapsedIntervalMs })
     $diskActiveSamples = @($Samples | Where-Object { $null -ne $_.DiskActive } | ForEach-Object { $_.DiskActive })
     $diskReadSamples = @($Samples | Where-Object { $null -ne $_.DiskReadBytesPerSec } | ForEach-Object { ConvertTo-MiBPerSecond -Value $_.DiskReadBytesPerSec })
     $diskWriteSamples = @($Samples | Where-Object { $null -ne $_.DiskWriteBytesPerSec } | ForEach-Object { ConvertTo-MiBPerSecond -Value $_.DiskWriteBytesPerSec })
@@ -278,6 +348,7 @@ function Measure-ResourceSample {
     $cpuPeak = if ($cpuSamples.Count -gt 0) { ($cpuSamples | Measure-Object -Maximum).Maximum } else { $null }
     $gpuAverage = if ($gpuSamples.Count -gt 0) { ($gpuSamples | Measure-Object -Average).Average } else { $null }
     $gpuPeak = if ($gpuSamples.Count -gt 0) { ($gpuSamples | Measure-Object -Maximum).Maximum } else { $null }
+    $intervalAverage = if ($intervalSamples.Count -gt 0) { ($intervalSamples | Measure-Object -Average).Average } else { $null }
     $diskActiveAverage = if ($diskActiveSamples.Count -gt 0) { ($diskActiveSamples | Measure-Object -Average).Average } else { $null }
     $diskActivePeak = if ($diskActiveSamples.Count -gt 0) { ($diskActiveSamples | Measure-Object -Maximum).Maximum } else { $null }
     $diskReadAverage = if ($diskReadSamples.Count -gt 0) { ($diskReadSamples | Measure-Object -Average).Average } else { $null }
@@ -289,6 +360,9 @@ function Measure-ResourceSample {
         cpu_peak_pct = $cpuPeak
         gpu_avg_pct = $gpuAverage
         gpu_peak_pct = $gpuPeak
+        resource_sample_count = $Samples.Count
+        gpu_sample_count = $gpuSamples.Count
+        resource_sample_mean_interval_ms = $intervalAverage
         disk_active_avg_pct = $diskActiveAverage
         disk_active_peak_pct = $diskActivePeak
         disk_read_avg_mib_s = $diskReadAverage
@@ -416,6 +490,9 @@ function Invoke-SuperZipStat {
             "cpu_peak_pct",
             "gpu_avg_pct",
             "gpu_peak_pct",
+            "resource_sample_count",
+            "gpu_sample_count",
+            "resource_sample_mean_interval_ms",
             "disk_active_avg_pct",
             "disk_active_peak_pct",
             "disk_read_avg_mib_s",
@@ -436,6 +513,7 @@ function Invoke-SuperZipStat {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    $gpuSampler = Get-GpuResourceSampler
     $process = [Diagnostics.Process]::Start($psi)
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
@@ -445,19 +523,23 @@ function Invoke-SuperZipStat {
     $logicalProcessors = [Math]::Max(1, [Environment]::ProcessorCount)
     $lastCpuMs = $process.TotalProcessorTime.TotalMilliseconds
     $lastWallMs = $clock.Elapsed.TotalMilliseconds
-    while (-not $process.HasExited) {
-        Start-Sleep -Milliseconds $SampleIntervalMs
-        $process.Refresh()
-        $nowCpuMs = $process.TotalProcessorTime.TotalMilliseconds
-        $nowWallMs = $clock.Elapsed.TotalMilliseconds
-        $cpuPct = $null
-        $deltaWallMs = $nowWallMs - $lastWallMs
-        if ($deltaWallMs -gt 0) {
-            $cpuPct = (($nowCpuMs - $lastCpuMs) / $deltaWallMs / $logicalProcessors) * 100.0
+    try {
+        while (-not $process.HasExited) {
+            Start-Sleep -Milliseconds $SampleIntervalMs
+            $process.Refresh()
+            $nowCpuMs = $process.TotalProcessorTime.TotalMilliseconds
+            $nowWallMs = $clock.Elapsed.TotalMilliseconds
+            $cpuPct = $null
+            $deltaWallMs = $nowWallMs - $lastWallMs
+            if ($deltaWallMs -gt 0) {
+                $cpuPct = (($nowCpuMs - $lastCpuMs) / $deltaWallMs / $logicalProcessors) * 100.0
+            }
+            $lastCpuMs = $nowCpuMs
+            $lastWallMs = $nowWallMs
+            $samples.Add((Get-ResourceSample -ProcessId $process.Id -CpuPct $cpuPct -GpuSampler $gpuSampler -ElapsedIntervalMs $deltaWallMs))
         }
-        $lastCpuMs = $nowCpuMs
-        $lastWallMs = $nowWallMs
-        $samples.Add((Get-ResourceSample -ProcessId $process.Id -CpuPct $cpuPct))
+    } finally {
+        Close-GpuResourceSampler -Sampler $gpuSampler
     }
     $finalIo = Get-ProcessIoTransfer -Process $process
     $stdout = $stdoutTask.GetAwaiter().GetResult()
@@ -714,6 +796,9 @@ function Invoke-BenchmarkLane {
             CpuPeakPct = Get-OptionalMaximum -Values ($operationStats | ForEach-Object { $_["cpu_peak_pct"] })
             GpuAvgPct = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["gpu_avg_pct"] })
             GpuPeakPct = Get-OptionalMaximum -Values ($operationStats | ForEach-Object { $_["gpu_peak_pct"] })
+            ResourceSampleCount = Get-OptionalSum -Values ($operationStats | ForEach-Object { $_["resource_sample_count"] })
+            GpuSampleCount = Get-OptionalSum -Values ($operationStats | ForEach-Object { $_["gpu_sample_count"] })
+            ResourceSampleMeanIntervalMs = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["resource_sample_mean_interval_ms"] })
             DiskActiveAvgPct = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["disk_active_avg_pct"] })
             DiskActivePeakPct = Get-OptionalMaximum -Values ($operationStats | ForEach-Object { $_["disk_active_peak_pct"] })
             DiskReadAvgMiBs = Get-OptionalAverage -Values ($operationStats | ForEach-Object { $_["disk_read_avg_mib_s"] })
@@ -822,6 +907,9 @@ function Invoke-MemoryBenchmarkLane {
         CpuPeakPct = $stats["cpu_peak_pct"]
         GpuAvgPct = $stats["gpu_avg_pct"]
         GpuPeakPct = $stats["gpu_peak_pct"]
+        ResourceSampleCount = $stats["resource_sample_count"]
+        GpuSampleCount = $stats["gpu_sample_count"]
+        ResourceSampleMeanIntervalMs = $stats["resource_sample_mean_interval_ms"]
         DiskActiveAvgPct = $null
         DiskActivePeakPct = $null
         DiskReadAvgMiBs = $null
@@ -900,6 +988,18 @@ function ConvertTo-RamBenchmarkRecord {
             if ($_.Lane -eq 'GPU' -and ($stageTimes['readiness'] -le 0 -or $stageTimes['classification'] -le 0)) {
                 throw "RAM benchmark JSON rejected missing required HIP encode stage work."
             }
+            if (($null -ne $_.ResourceSampleCount -and ($_.ResourceSampleCount -lt 0 -or
+                    $_.ResourceSampleCount -ne [math]::Floor($_.ResourceSampleCount))) -or
+                ($null -ne $_.GpuSampleCount -and ($_.GpuSampleCount -lt 0 -or
+                    $_.GpuSampleCount -ne [math]::Floor($_.GpuSampleCount))) -or
+                ($null -ne $_.ResourceSampleCount -and $null -ne $_.GpuSampleCount -and
+                    $_.GpuSampleCount -gt $_.ResourceSampleCount) -or
+                ($null -ne $_.ResourceSampleMeanIntervalMs -and
+                    ($_.ResourceSampleMeanIntervalMs -le 0 -or
+                        [double]::IsNaN([double]$_.ResourceSampleMeanIntervalMs) -or
+                        [double]::IsInfinity([double]$_.ResourceSampleMeanIntervalMs)))) {
+                throw "RAM benchmark JSON rejected invalid resource sampling evidence."
+            }
             [ordered]@{
                 lane = $_.Lane
                 iteration = [int]$_.Iteration
@@ -917,6 +1017,9 @@ function ConvertTo-RamBenchmarkRecord {
                 cpu_peak_pct = $_.CpuPeakPct
                 gpu_avg_pct = $_.GpuAvgPct
                 gpu_peak_pct = $_.GpuPeakPct
+                resource_sample_count = $_.ResourceSampleCount
+                gpu_sample_count = $_.GpuSampleCount
+                resource_sample_mean_interval_ms = $_.ResourceSampleMeanIntervalMs
                 gpu_kernel_launches = ConvertTo-ExactBenchmarkCounter $_.GpuKernelLaunches
                 gpu_kernel_ms = $_.GpuKernelMs
                 gpu_pattern_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPatternBlocks
@@ -1022,6 +1125,9 @@ if ($Mode -eq "Memory") {
             CpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.CpuPeakPct })
             GpuAvgPct = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuAvgPct })
             GpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.GpuPeakPct })
+            ResourceSampleCount = Get-OptionalAverage -Values ($group | ForEach-Object { $_.ResourceSampleCount })
+            GpuSampleCount = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuSampleCount })
+            ResourceSampleMeanIntervalMs = Get-OptionalAverage -Values ($group | ForEach-Object { $_.ResourceSampleMeanIntervalMs })
             DiskActiveAvgPct = $null
             DiskActivePeakPct = $null
             DiskReadAvgMiBs = $null
@@ -1050,7 +1156,7 @@ if ($Mode -eq "Memory") {
     if ($NoResourceCounters) {
         Write-BenchmarkMessage "Resource sampling: disabled"
     } else {
-        Write-BenchmarkMessage "Resource sampling: ${SampleIntervalMs} ms interval; logical-disk counters disabled in memory-only mode"
+        Write-BenchmarkMessage "Resource sampling: requested ${SampleIntervalMs} ms interval; logical-disk counters disabled in memory-only mode"
     }
     Write-BenchmarkMessage "Performance:"
     $summary |
@@ -1079,7 +1185,7 @@ if ($Mode -eq "Memory") {
     Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuSummedKernelTimeToWallPct, GpuPatternBlocks, GpuPrefixBlocks, GpuDictionaryBlocks, GpuSparsePatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
+        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, ResourceSampleCount, GpuSampleCount, ResourceSampleMeanIntervalMs, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuSummedKernelTimeToWallPct, GpuPatternBlocks, GpuPrefixBlocks, GpuDictionaryBlocks, GpuSparsePatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 320 |
         Write-BenchmarkMessage
@@ -1187,6 +1293,9 @@ try {
             CpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.CpuPeakPct })
             GpuAvgPct = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuAvgPct })
             GpuPeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.GpuPeakPct })
+            ResourceSampleCount = Get-OptionalAverage -Values ($group | ForEach-Object { $_.ResourceSampleCount })
+            GpuSampleCount = Get-OptionalAverage -Values ($group | ForEach-Object { $_.GpuSampleCount })
+            ResourceSampleMeanIntervalMs = Get-OptionalAverage -Values ($group | ForEach-Object { $_.ResourceSampleMeanIntervalMs })
             DiskActiveAvgPct = Get-OptionalAverage -Values ($group | ForEach-Object { $_.DiskActiveAvgPct })
             DiskActivePeakPct = Get-OptionalMaximum -Values ($group | ForEach-Object { $_.DiskActivePeakPct })
             DiskReadAvgMiBs = Get-OptionalAverage -Values ($group | ForEach-Object { $_.DiskReadAvgMiBs })
@@ -1216,7 +1325,7 @@ try {
         Write-BenchmarkMessage "Resource sampling: disabled"
     } else {
         $diskLabel = if ($script:BenchmarkDiskInstance) { $script:BenchmarkDiskInstance } else { "unavailable" }
-        Write-BenchmarkMessage "Resource sampling: ${SampleIntervalMs} ms interval; disk counter instance: $diskLabel"
+        Write-BenchmarkMessage "Resource sampling: requested ${SampleIntervalMs} ms interval; disk counter instance: $diskLabel"
     }
     Write-BenchmarkMessage "Performance:"
     $summary |
@@ -1237,7 +1346,7 @@ try {
     Write-BenchmarkMessage "Resource telemetry:"
     $summary |
         Sort-Object Lane, BlockSizeKiB |
-        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuSummedKernelTimeToWallPct, GpuPatternBlocks, GpuPrefixBlocks, GpuDictionaryBlocks, GpuSparsePatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
+        Select-Object Lane, BlockSizeKiB, CpuAvgPct, CpuPeakPct, GpuAvgPct, GpuPeakPct, ResourceSampleCount, GpuSampleCount, ResourceSampleMeanIntervalMs, DiskActiveAvgPct, DiskActivePeakPct, DiskReadAvgMiBs, DiskReadPeakMiBs, DiskWriteAvgMiBs, DiskWritePeakMiBs, ProcessReadMiB, ProcessWriteMiB, GpuEncodeChunks, GpuDecodeChunks, GpuKernelLaunches, GpuKernelMs, GpuSummedKernelTimeToWallPct, GpuPatternBlocks, GpuPrefixBlocks, GpuDictionaryBlocks, GpuSparsePatternBlocks, GpuH2DMiB, GpuD2HMiB, GpuAllocMiB |
         Format-List |
         Out-String -Width 220 |
         Write-BenchmarkMessage

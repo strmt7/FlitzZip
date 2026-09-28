@@ -23,6 +23,7 @@ $fixtureRun = [pscustomobject]@{
         sparse = 0.2; dictionary = 5.5; publication = 0.3
     }
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
+    ResourceSampleCount = 25; GpuSampleCount = 23; ResourceSampleMeanIntervalMs = 102.5
     GpuKernelLaunches = 720; GpuKernelMs = $null
     GpuPatternBlocks = 0; GpuPrefixBlocks = 0; GpuDictionaryBlocks = 0; GpuSparsePatternBlocks = 10240
 }
@@ -34,6 +35,8 @@ if ($record.schema_version -ne 1 -or $record.source_dirty -ne $true -or
     $record.runs[0].archive_bytes -ne 171102811 -or $null -ne $record.runs[0].gpu_kernel_ms -or
     $record.runs[0].source_generation_worker_seconds -ne 4.25 -or
     $record.runs[0].codec_encode_worker_seconds -ne 9.5 -or
+    $record.runs[0].gpu_sample_count -ne 23 -or
+    $record.runs[0].resource_sample_mean_interval_ms -ne 102.5 -or
     $record.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5) {
     throw 'RAM benchmark JSON lost provenance, exact size, or unavailable counter semantics.'
 }
@@ -46,6 +49,8 @@ try {
         $stored.runs[0].archive_bytes -ne 171102811 -or $stored.source_dirty -ne $true -or
         $stored.runs[0].source_generation_worker_seconds -ne 4.25 -or
         $stored.runs[0].codec_encode_worker_seconds -ne 9.5 -or
+        $stored.runs[0].resource_sample_count -ne 25 -or
+        $stored.runs[0].gpu_sample_count -ne 23 -or
         $stored.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5) {
         throw 'Serialized RAM benchmark JSON differs from the record.'
     }
@@ -83,6 +88,14 @@ foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
     if (-not $invalidRejected) { throw 'Invalid GPU encode stage time entered the RAM-only evidence record.' }
 }
 $fixtureRun.GpuEncodeStages['dictionary'] = 5.5
+$fixtureRun.GpuSampleCount = 26
+$invalidRejected = $false
+try {
+    ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+        -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+} catch { $invalidRejected = $true }
+if (-not $invalidRejected) { throw 'GPU sample count exceeded total resource samples.' }
+$fixtureRun.GpuSampleCount = 23
 $fixtureRun.MemoryOnly = 'false'
 $invalidRejected = $false
 try {
@@ -111,6 +124,53 @@ if ((ConvertTo-MiBPerSecond -Value 1MB) -ne 1) {
     throw "MiB/s conversion is incorrect."
 }
 
+class FakeGpuCategory {
+    [string[]]$Instances
+    [string[]] GetInstanceNames() { return $this.Instances }
+}
+class FakeGpuCounter {
+    [single]$Value
+    [bool]$Disposed
+    [bool]$Fail
+    [single] NextValue() {
+        if ($this.Fail) { throw 'disappearing test counter' }
+        return $this.Value
+    }
+    [void] Dispose() { $this.Disposed = $true }
+}
+$ownedCounter = [FakeGpuCounter]::new()
+$ownedCounter.Value = 12.5
+$otherCounter = [FakeGpuCounter]::new()
+$otherCounter.Value = 99.0
+$category = [FakeGpuCategory]::new()
+$category.Instances = @('pid_42_engine', 'pid_420_engine')
+$sampler = @{ Category = $category; Counters = @{ pid_42_engine = $ownedCounter; pid_420_engine = $otherCounter } }
+if ((Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -ne 12.5 -or
+    -not $otherCounter.Disposed -or $sampler.Counters.ContainsKey('pid_420_engine')) {
+    throw 'Persistent GPU sampler included another process or retained a stale engine.'
+}
+$failingCounter = [FakeGpuCounter]::new()
+$failingCounter.Fail = $true
+$sampler.Counters['pid_42_failed'] = $failingCounter
+$category.Instances = @('pid_42_engine', 'pid_42_failed')
+if ((Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -ne 12.5 -or
+    -not $failingCounter.Disposed -or $sampler.Counters.ContainsKey('pid_42_failed')) {
+    throw 'A disappearing GPU engine suppressed valid samples.'
+}
+$category.Instances = @()
+if ($null -ne (Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -or -not $ownedCounter.Disposed) {
+    throw 'Persistent GPU sampler fabricated a value after engines disappeared.'
+}
+Close-GpuResourceSampler -Sampler $sampler
+$resource = Measure-ResourceSample -Samples @(
+    [pscustomobject]@{ Cpu = 20.0; Gpu = $null; ElapsedIntervalMs = 100.0; DiskActive = $null; DiskReadBytesPerSec = $null; DiskWriteBytesPerSec = $null },
+    [pscustomobject]@{ Cpu = 40.0; Gpu = 12.5; ElapsedIntervalMs = 120.0; DiskActive = $null; DiskReadBytesPerSec = $null; DiskWriteBytesPerSec = $null }
+)
+if ($resource.resource_sample_count -ne 2 -or $resource.gpu_sample_count -ne 1 -or
+    $resource.resource_sample_mean_interval_ms -ne 110.0) {
+    throw 'Resource sampler lost actual cadence or valid GPU sample count.'
+}
+
 # Purpose: Substitute deterministic CLI output without launching a benchmark.
 # Inputs: Remaining arguments are deliberately ignored; the fixture is one valid stats row.
 # Outputs: Emits one stats row and sets a successful native exit status.
@@ -127,7 +187,8 @@ foreach ($showStats in @($false, $true)) {
     if ($records.Count -ne 1 -or $records[0] -isnot [hashtable]) {
         throw "Operation diagnostics corrupted the statistics return stream."
     }
-    if ($records[0].seconds -ne "1" -or $null -ne $records[0].cpu_avg_pct) {
+    if ($records[0].seconds -ne "1" -or $null -ne $records[0].cpu_avg_pct -or
+        $null -ne $records[0].resource_sample_count) {
         throw "Statistics or unavailable counter semantics changed."
     }
 }
