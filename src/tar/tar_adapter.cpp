@@ -599,6 +599,7 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
         const auto size = parse_tar_number(header, 124, 12, "size");
         const auto typeflag = header[156] == '\0' ? '0' : header[156];
         std::uint64_t payload_offset = 0;
+        // Check the padded extent before a seek can skip malformed trailing payloads.
         if (seekable) {
             const auto position = input.tellg();
             if (position < 0) {
@@ -615,6 +616,7 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
             }
         }
 
+        // Extension records consume bounded metadata, but never become extractable entries.
         if (typeflag == 'x') {
             result.path_metadata_bytes = checked_add_archive_path_metadata_bytes(result.path_metadata_bytes, size,
                                                                                  "TAR extended metadata payloads");
@@ -666,6 +668,7 @@ TarScanResult scan_tar_stream(std::istream& input, bool seekable,
         throw ArchiveError("unsupported TAR entry type");
     }
 
+    // Compare all retained paths together before any extraction can publish output.
     std::vector<ArchivePathValidationEntry> validation_entries;
     validation_entries.reserve(result.entries.size());
     for (const auto& entry : result.entries) {
