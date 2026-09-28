@@ -12,8 +12,11 @@ namespace {
 
 using namespace hip_detail;
 constexpr std::uint32_t kThreads = 256U;
+constexpr std::uint32_t kMaxPeriodicMatchBytes = 32768U;
+constexpr std::uint32_t kPeriodicComparisonScale = 16U;
 constexpr std::uint32_t kNoPrevious = 0xFFFFFFFFU;
 constexpr std::uint64_t kInvalidKey = 0xFFFFFFFFFFFFFFFFULL;
+static_assert(kMaxPeriodicMatchBytes <= std::numeric_limits<std::uint16_t>::max());
 
 using DecodeSpan = DictionarySegmentSpan;
 static_assert(sizeof(DecodeSpan) == 16U);
@@ -243,7 +246,7 @@ __device__ std::uint32_t extend_dictionary_match(const std::byte* input, std::ui
 
 // Purpose: Search one deterministic predecessor chain with explicit per-position work budgets.
 // Inputs: Immutable source, valid position, selected index data, and bounded effort.
-// Outputs: Returns a verified 4..8192-byte match, preserving nearest references on ties and exact work accounting.
+// Outputs: Returns a verified match up to 8 KiB normally or 32 KiB for periodic input, preserving nearest ties.
 template <bool Periodic>
 __device__ Match search_dictionary_position(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
                                             const std::uint16_t* distances, Effort effort, std::uint32_t position) {
@@ -253,7 +256,7 @@ __device__ Match search_dictionary_position(const std::byte* input, std::uint32_
     if (end - position < kMinMatchBytes) {
         return best;
     }
-    const auto limit = min(kMaxMatchBytes, end - position);
+    const auto limit = min(Periodic ? kMaxPeriodicMatchBytes : kMaxMatchBytes, end - position);
     auto candidate = predecessor_at<Periodic>(input, size, position, previous, distances);
     while (candidate < position && candidate >= segment_start && best.length < limit &&
            best.candidates_examined < effort.max_candidates && best.bytes_compared < effort.max_byte_comparisons) {
@@ -618,15 +621,16 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
             const auto size = static_cast<std::uint32_t>(input.size());
             auto encode_events = make_hip_event_pair("create dictionary encode timing events");
             check_hip(hipEventRecord(encode_events.start, hipStreamPerThread), "start dictionary encoding");
-            // Shallow searches reuse complete matches; periodic searches verify predecessors on demand.
-            if (distances != nullptr && effort.max_candidates <= 4U) {
-                encode_dictionary_segments<true, true>
-                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, distances, effort, output.get(), sizes.get());
-            } else if (distances != nullptr) {
+            // Longer periodic searches run only at selected positions, not at every tile byte.
+            if (distances != nullptr) {
+                auto periodic_effort = effort;
+                periodic_effort.max_byte_comparisons =
+                    effort.max_byte_comparisons >= kMaxPeriodicMatchBytes / kPeriodicComparisonScale
+                        ? kMaxPeriodicMatchBytes
+                        : effort.max_byte_comparisons * kPeriodicComparisonScale;
                 encode_dictionary_segments<false, true>
                     <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, distances, effort, output.get(), sizes.get());
+                        device_input, size, previous, distances, periodic_effort, output.get(), sizes.get());
             } else if (effort.max_candidates <= 4U) {
                 encode_dictionary_segments<true, false>
                     <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(

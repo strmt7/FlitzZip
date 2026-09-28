@@ -165,6 +165,36 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
     }
 }
 
+// Purpose: Check that longer periodic matches preserve effort ordering on a realistic independent-segment block.
+// Inputs: One deterministic 16 MiB block with a changing 16 KiB record in each segment.
+// Outputs: Requires byte-exact CPU read-back and six distinct low/mid-effort sizes without high-effort growth.
+TEST_CASE(dictionary_periodic_efforts_preserve_size_order) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const auto input = make_segmented_records(16U * 1024U * 1024U);
+    std::size_t previous = input.size();
+    for (int level = 1; level <= 9; ++level) {
+        superzip::GpuCodecOptions options;
+        options.block_size = static_cast<std::uint32_t>(input.size());
+        options.compression_level = level;
+        options.require_gpu = true;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        std::vector<std::byte> decoded(input.size());
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded,
+                                             {.require_gpu = false, .force_cpu = true}));
+        REQUIRE_EQ(decoded, input);
+        if (level <= 6) {
+            REQUIRE_TRUE(encoded.payload.size() < previous);
+        } else {
+            REQUIRE_TRUE(encoded.payload.size() <= previous);
+        }
+        previous = encoded.payload.size();
+    }
+}
+
 // Purpose: Bound a fixed-width sparse-pattern candidate and prove its reconstruction byte for byte.
 // Inputs: One block and a repeated motif length; every mismatch needs a 32-bit position and one literal byte.
 // Outputs: Returns complete header/motif/patch bytes only if smaller than raw, otherwise no candidate.
