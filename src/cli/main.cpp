@@ -547,7 +547,8 @@ superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_form
 
 // Purpose: Execute the `compress` CLI command.
 // Inputs: `args` is the full argument vector beginning with `compress`.
-// Outputs: Returns a process exit code and writes operation telemetry to stdout.
+// Outputs: Returns a process exit code, fails closed on an enabled Defender scan, and writes successful operation
+// telemetry to stdout.
 int run_compress_command(const std::vector<std::string>& args) {
     const auto command = parse_compress_command(args);
     if (command.output.empty() || command.sources.empty()) {
@@ -559,7 +560,11 @@ int run_compress_command(const std::vector<std::string>& args) {
     }
     const auto archive_format = resolve_cli_archive_format(command.format, command.output, false);
     reject_unsupported_cli_format(archive_format, "create");
-    print_stats(compress_by_format(archive_format, command));
+    const auto stats = compress_by_format(archive_format, command);
+    if (command.defender_scan) {
+        print_defender_scan(command.output, true);
+    }
+    print_stats(stats);
     if (command.sha256) {
         print_integrity_hash(command.output);
     }
