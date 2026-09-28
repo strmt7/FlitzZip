@@ -217,6 +217,21 @@ __device__ std::uint32_t extend_dictionary_match(const std::byte* input, std::ui
                                                  std::uint32_t candidate, std::uint32_t limit, Effort effort,
                                                  Match& accounting) {
     std::uint32_t length = kMinMatchBytes;
+    if (effort.max_candidates == 1U) {
+        while (limit - length >= 8U && effort.max_byte_comparisons - accounting.bytes_compared >= 8U) {
+            std::uint64_t left = 0;
+            std::uint64_t right = 0;
+            __builtin_memcpy(&left, input + position + length, sizeof(left));
+            __builtin_memcpy(&right, input + candidate + length, sizeof(right));
+            accounting.bytes_compared += 8U;
+            const auto difference = left ^ right;
+            if (difference != 0U) {
+                // AMD HIP's little-endian word order puts the earliest mismatching byte first.
+                return length + static_cast<std::uint32_t>(__builtin_ctzll(difference) / 8U);
+            }
+            length += 8U;
+        }
+    }
     while (limit - length >= 4U && effort.max_byte_comparisons - accounting.bytes_compared >= 4U) {
         std::uint32_t left = 0;
         std::uint32_t right = 0;
