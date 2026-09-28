@@ -187,8 +187,8 @@ try {
 
     $pythonFiles = Get-LintTargetFile `
         -ChangedPath $changedFiles `
-        -AllPathspec @("mcp/*.py", "tools/*.py") `
-        -FilePattern @("^(mcp|tools)/.*\.py$") `
+        -AllPathspec @(".github/openvas/*.py", "mcp/*.py", "tools/*.py") `
+        -FilePattern @("^(\.github/openvas|mcp|tools)/.*\.py$") `
         -ConfigPattern @("^\.ruff\.toml$") `
         -ForceAll:($CppMode -eq "All")
     if ($pythonFiles.Count -gt 0) {

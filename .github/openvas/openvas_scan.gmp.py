@@ -13,7 +13,6 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_SCAN_CONFIG_ID = "daba56c8-73ec-11df-a475-002264764cea"
 DEFAULT_SCANNER_ID = "08b69003-5fc2-4037-a479-93b440211c73"
 TARGET_RE = re.compile(r"^[A-Za-z0-9._:/,-]+$")
@@ -175,6 +174,15 @@ def wait_for_task(gmp: Any, task_id: str, max_minutes: int) -> dict[str, Any]:
         time.sleep(30)
 
 
+def require_completed_task(task_state: dict[str, Any]) -> None:
+    """Purpose: Reject terminal scanner states that cannot certify a complete report.
+    Inputs: `task_state` is the terminal result returned by `wait_for_task`.
+    Outputs: Raises RuntimeError unless the Greenbone task finished as Done.
+    """
+    if task_state.get("status") != "Done":
+        raise RuntimeError(f"Greenbone scan did not complete: {task_state.get('status', 'Unknown')}.")
+
+
 def cleanup_greenbone_resources(
     gmp: Any,
     task_id: str | None,
@@ -269,6 +277,7 @@ def main(gmp: Any, args: Any) -> int:
         report_id = start_task(gmp, task_id)
         task_state = wait_for_task(gmp, task_id, parsed.max_minutes)
         task_finished = True
+        require_completed_task(task_state)
         report = gmp.get_report(report_id=report_id, details=True)
         xml_path = output_dir / "openvas-report.xml"
         serialize_xml(report, xml_path)

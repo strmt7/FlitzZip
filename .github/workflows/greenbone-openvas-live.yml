@@ -83,24 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          summary_path = Path("reports/openvas/openvas-summary.json")
-          summary = json.loads(summary_path.read_text(encoding="utf-8"))
-          counts = summary.get("severity_counts", {})
-          blocking = {
-              key: int(counts.get(key, 0) or 0)
-              for key in ("critical", "high", "medium", "low")
-          }
-          total = sum(blocking.values())
-          if total:
-              print(f"::error::Greenbone/OpenVAS found blocking vulnerabilities: {blocking}")
-              sys.exit(1)
-          print("Greenbone/OpenVAS reported zero critical, high, medium, or low vulnerabilities.")
-          PY
+          python .github/openvas/enforce_gate.py reports/openvas/openvas-summary.json
       - name: Vulnetix health check
         uses: Vulnetix/cli@de9e4ee9b2432a29f297f50c5f9bb7d0d6da6d32 # v3.107.3
         with:

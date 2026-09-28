@@ -150,6 +150,7 @@ jobs:
           if set(fake.calls) != expected_unfinished_cleanup:
               raise SystemExit(f"OpenVAS unfinished-task cleanup calls were wrong: {fake.calls!r}")
           PY
+          python -m unittest discover -s .github/openvas -p 'test_*.py'
       - name: Write integration audit report
         shell: bash
         run: |
