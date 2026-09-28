@@ -55,6 +55,18 @@ std::uint32_t sampled_sparse_period(std::span<const std::byte> block) {
         }
         search = found + 1U;
     }
+    if (best_period != 0U) {
+        constexpr std::size_t kDistributedSamples = 256U;
+        std::size_t mismatches = 0U;
+        const auto remaining = block.size() - best_period;
+        for (std::size_t sample = 0U; sample < kDistributedSamples; ++sample) {
+            const auto position = best_period + sample * (remaining - 1U) / (kDistributedSamples - 1U);
+            mismatches += block[position] != block[position % best_period];
+        }
+        if (mismatches * 3U > kDistributedSamples) {
+            return 0U;
+        }
+    }
     return best_period;
 }
 

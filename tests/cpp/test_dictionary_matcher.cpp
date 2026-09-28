@@ -151,7 +151,7 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
         REQUIRE_TRUE(encoded.payload.size() < input.size());
         if (block_bytes >= 8U * 1024U * 1024U) {
             const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
-            REQUIRE_EQ(telemetry.kernel_launches, 5U);
+            REQUIRE_EQ(telemetry.kernel_launches, 4U);
             REQUIRE_EQ(telemetry.dictionary_blocks, 1U);
         }
         for (const bool hip : {false, true}) {
@@ -364,7 +364,7 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
 
 // Purpose: Verify production periodic-index output with an independent LZ4 block reader.
 // Inputs: Periodic 8/16 MiB and non-power-of-two 1 MiB sources at low, middle, and high required-HIP efforts.
-// Outputs: Requires both index paths and kernel policies to emit independently decodable blocks; level-five export
+// Outputs: Requires periodic index and kernel policies to emit independently decodable blocks; level-five export
 // supports an external reader.
 TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
     if (!superzip::query_gpu_info().available) {
@@ -382,8 +382,7 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
             options.telemetry = std::make_shared<superzip::GpuTelemetry>();
             const auto encoded = superzip::encode_chunk(input, options);
             const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
-            REQUIRE_TRUE(std::isfinite(telemetry.kernel_ms));
-            REQUIRE_TRUE(telemetry.kernel_ms > 0.0);
+            REQUIRE_EQ(telemetry.kernel_launches, level == 9 ? 5U : 4U);
             REQUIRE_EQ(encoded.blocks.size(), 1U);
             REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
             REQUIRE_EQ(encoded.blocks.front().encoded_offset, 0U);
@@ -428,7 +427,7 @@ TEST_CASE(dictionary_mixed_periodic_distances_roundtrip) {
     const auto encoded = superzip::encode_chunk(input, options);
     REQUIRE_EQ(encoded.blocks.size(), 1U);
     REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
-    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 5U);
+    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches, 4U);
     const auto spans = superzip::parse_dictionary_segments(encoded.payload, static_cast<std::uint32_t>(input.size()));
     for (const auto& span : spans) {
         EncodedSegment segment;
