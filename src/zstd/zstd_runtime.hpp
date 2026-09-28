@@ -86,6 +86,13 @@ class ZstdRuntime final {
     [[nodiscard]] std::size_t compress_block(void* destination, std::size_t capacity, const void* source,
                                              std::size_t source_size, int level) const;
 
+    // Purpose: Compress one independent frame while reusing a caller-owned context.
+    // Inputs: `context` is exclusively owned by the calling worker; buffers and level match `compress_block`.
+    // Outputs: Returns frame bytes or a Zstandard error code with the same wire format as `compress_block`.
+    [[nodiscard]] std::size_t compress_block_with_context(ZstdCompressionContext* context, void* destination,
+                                                          std::size_t capacity, const void* source,
+                                                          std::size_t source_size, int level) const;
+
     // Purpose: Bound one-shot frame output before allocating a caller-owned candidate buffer.
     // Inputs: Validated source byte length.
     // Outputs: Returns the maximum encoded byte count or a Zstandard error code.
@@ -148,6 +155,8 @@ class ZstdRuntime final {
     using CompressStreamFn = std::size_t (*)(ZstdCompressionContext*, ZstdOutputBuffer*, ZstdInputBuffer*,
                                              ZstdEndDirective);
     using CompressBlockFn = std::size_t (*)(void*, std::size_t, const void*, std::size_t, int);
+    using CompressBlockWithContextFn = std::size_t (*)(ZstdCompressionContext*, void*, std::size_t, const void*,
+                                                       std::size_t, int);
     using CompressBoundFn = std::size_t (*)(std::size_t);
     using DecompressBlockFn = std::size_t (*)(void*, std::size_t, const void*, std::size_t);
     using FirstFrameSizeFn = std::size_t (*)(const void*, std::size_t);
@@ -168,6 +177,7 @@ class ZstdRuntime final {
     CompressionWorkspaceBytesFn compression_workspace_bytes_ = nullptr;
     CompressStreamFn compress_stream_ = nullptr;
     CompressBlockFn compress_block_ = nullptr;
+    CompressBlockWithContextFn compress_block_with_context_ = nullptr;
     CompressBoundFn block_compress_bound_ = nullptr;
     DecompressBlockFn decompress_block_ = nullptr;
     FirstFrameSizeFn first_frame_size_ = nullptr;

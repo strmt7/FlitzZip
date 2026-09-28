@@ -47,6 +47,7 @@ ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName
     compression_workspace_bytes_ = load_required_symbol<CompressionWorkspaceBytesFn>(module, "ZSTD_sizeof_CCtx");
     compress_stream_ = load_required_symbol<CompressStreamFn>(module, "ZSTD_compressStream2");
     compress_block_ = load_required_symbol<CompressBlockFn>(module, "ZSTD_compress");
+    compress_block_with_context_ = load_required_symbol<CompressBlockWithContextFn>(module, "ZSTD_compressCCtx");
     block_compress_bound_ = load_required_symbol<CompressBoundFn>(module, "ZSTD_compressBound");
     decompress_block_ = load_required_symbol<DecompressBlockFn>(module, "ZSTD_decompress");
     first_frame_size_ = load_required_symbol<FirstFrameSizeFn>(module, "ZSTD_findFrameCompressedSize");
@@ -115,6 +116,15 @@ std::size_t ZstdRuntime::compress_stream(ZstdCompressionContext* context, ZstdOu
 std::size_t ZstdRuntime::compress_block(void* destination, std::size_t capacity, const void* source,
                                         std::size_t source_size, int level) const {
     return compress_block_(destination, capacity, source, source_size, level);
+}
+
+// Purpose: Encode one native frame through a reusable Zstandard context without retaining input state.
+// Inputs: One exclusively owned context, bounded caller buffers, and the requested effort level.
+// Outputs: Returns the frame size or a runtime error code.
+std::size_t ZstdRuntime::compress_block_with_context(ZstdCompressionContext* context, void* destination,
+                                                     std::size_t capacity, const void* source, std::size_t source_size,
+                                                     int level) const {
+    return compress_block_with_context_(context, destination, capacity, source, source_size, level);
 }
 
 // Purpose: Query the pinned runtime for a safe one-shot output capacity.

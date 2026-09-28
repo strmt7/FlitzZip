@@ -8,6 +8,7 @@
 #include "miniz.h"
 #include "zstd/zstd_stream.hpp"
 #include "zstd/zstd_adapter.hpp"
+#include "zstd/zstd_runtime.hpp"
 
 #include <array>
 #include <fstream>
@@ -355,6 +356,53 @@ TEST_CASE(compression_stream_bzip2_invalid_effort_preserves_output) {
 // Outputs: Requires no destination changes.
 TEST_CASE(compression_stream_zstd_invalid_effort_preserves_output) {
     require_non_destructive_stream_admission<superzip::ZstdOutputStream>("zstd");
+}
+
+// Purpose: Prove worker-scoped Zstandard context reuse leaves independent native frame bytes unchanged.
+// Inputs: Three deterministic binary shapes and all product effort levels, encoded repeatedly through one context.
+// Outputs: Requires exact one-shot frame parity and independent byte-exact decoding for every case.
+TEST_CASE(compression_stream_zstd_reused_context_matches_one_shot) {
+    const auto& zstd = superzip::zstd_runtime();
+    const auto release_context = [&zstd](superzip::ZstdCompressionContext* context) {
+        zstd.free_compression_context(context);
+    };
+    std::unique_ptr<superzip::ZstdCompressionContext, decltype(release_context)> context(
+        zstd.create_compression_context(), release_context);
+    REQUIRE_TRUE(context != nullptr);
+
+    std::array<std::vector<std::byte>, 3> inputs;
+    for (auto& input : inputs) {
+        input.resize(65536U + 17U);
+    }
+    std::uint32_t random_state = 0xA31B2C49U;
+    for (std::size_t index = 0U; index < inputs.front().size(); ++index) {
+        random_state ^= random_state << 13U;
+        random_state ^= random_state >> 17U;
+        random_state ^= random_state << 5U;
+        inputs[0][index] = static_cast<std::byte>(random_state & 0xFFU);
+        inputs[1][index] = static_cast<std::byte>(index % 251U);
+        inputs[2][index] = static_cast<std::byte>((index / 1024U) % 7U == 0U ? random_state & 0xFFU : index % 97U);
+    }
+    for (int level = 1; level <= 9; ++level) {
+        for (const auto& input : inputs) {
+            const auto capacity = zstd.block_compress_bound(input.size());
+            REQUIRE_TRUE(!zstd.is_error(capacity));
+            std::vector<std::byte> one_shot(capacity);
+            std::vector<std::byte> reused(capacity);
+            const auto one_shot_bytes =
+                zstd.compress_block(one_shot.data(), one_shot.size(), input.data(), input.size(), level);
+            const auto reused_bytes = zstd.compress_block_with_context(context.get(), reused.data(), reused.size(),
+                                                                       input.data(), input.size(), level);
+            REQUIRE_TRUE(!zstd.is_error(one_shot_bytes));
+            REQUIRE_EQ(reused_bytes, one_shot_bytes);
+            REQUIRE_TRUE(std::equal(one_shot.begin(), one_shot.begin() + static_cast<std::ptrdiff_t>(one_shot_bytes),
+                                    reused.begin()));
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(zstd.decompress_block(decoded.data(), decoded.size(), reused.data(), reused_bytes),
+                       input.size());
+            REQUIRE_EQ(decoded, input);
+        }
+    }
 }
 
 // Purpose: Verify Gzip stream partitioning, effort, framing, and close behavior together.

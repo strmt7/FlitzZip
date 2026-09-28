@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <future>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -112,9 +113,10 @@ std::vector<std::byte> try_deflate_block(std::span<const std::byte> block, int c
 }
 
 // Purpose: Encode a bounded native CPU block with the pinned Zstandard runtime only when it saves bytes.
-// Inputs: One non-fill source block and a validated product effort level 1-9.
+// Inputs: One non-fill source block, a validated product effort level 1-9, and an exclusive worker context.
 // Outputs: Returns one complete frame smaller than raw, or empty; throws on runtime failure.
-std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int compression_level) {
+std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int compression_level,
+                                      ZstdCompressionContext* context) {
     const auto& zstd = zstd_runtime();
     const auto bound = zstd.block_compress_bound(block.size());
     if (zstd.is_error(bound) || bound < block.size() ||
@@ -122,8 +124,8 @@ std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int comp
         throw ArchiveError("Zstandard native block capacity is invalid");
     }
     std::vector<std::byte> compressed(bound);
-    const auto written =
-        zstd.compress_block(compressed.data(), compressed.size(), block.data(), block.size(), compression_level);
+    const auto written = zstd.compress_block_with_context(context, compressed.data(), compressed.size(), block.data(),
+                                                          block.size(), compression_level);
     if (zstd.is_error(written)) {
         throw ArchiveError("Zstandard native block compression failed: " + zstd.error_name(written));
     }
@@ -516,6 +518,10 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     constexpr std::uint32_t kMaxConcurrentZstdBlocks = 4U;
     run_parallel_ranges(
         block_count, std::min(options.worker_count, kMaxConcurrentZstdBlocks), [&](std::size_t begin, std::size_t end) {
+            const auto release_context = [](ZstdCompressionContext* context) {
+                zstd_runtime().free_compression_context(context);
+            };
+            std::unique_ptr<ZstdCompressionContext, decltype(release_context)> context(nullptr, release_context);
             for (std::size_t i = begin; i < end; ++i) {
                 const auto pos = i * static_cast<std::size_t>(block_size);
                 const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
@@ -531,7 +537,13 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
                     };
                 } else {
                     const bool use_zstd = block.size() >= kMinArchiveBlockBytes;
-                    auto compressed = use_zstd ? try_zstd_block(block, options.compression_level)
+                    if (use_zstd && !context) {
+                        context.reset(zstd_runtime().create_compression_context());
+                        if (!context) {
+                            throw ArchiveError("Zstandard native compression context allocation failed");
+                        }
+                    }
+                    auto compressed = use_zstd ? try_zstd_block(block, options.compression_level, context.get())
                                                : try_deflate_block(block, options.compression_level);
                     if (!compressed.empty()) {
                         block_work[i].descriptor = BlockDescriptor{
