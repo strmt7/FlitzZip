@@ -780,8 +780,19 @@ function Invoke-MemoryBenchmarkLane {
         $null -eq $codecWork -or $codecWork -le 0) {
         throw "$Lane memory benchmark did not report positive encode-stage worker times."
     }
+    $gpuEncodeStages = [ordered]@{}
+    foreach ($stage in @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')) {
+        $value = Get-StatsNumber -Stats $stats -Key "gpu_${stage}_worker_seconds"
+        if ($null -eq $value -or $value -lt 0) {
+            throw "$Lane memory benchmark did not report a finite nonnegative $stage GPU encode worker time."
+        }
+        $gpuEncodeStages[$stage] = $value
+    }
     if ($ModeFlag -eq "--require-gpu") {
         Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
+        if ($gpuEncodeStages['readiness'] -le 0 -or $gpuEncodeStages['classification'] -le 0) {
+            throw "$Lane memory benchmark did not report the required HIP encode work stages."
+        }
     }
 
     return [pscustomobject]@{
@@ -791,6 +802,7 @@ function Invoke-MemoryBenchmarkLane {
         CompressSeconds = [double]$stats["compress_seconds"]
         SourceGenerationWorkerSeconds = $generationWork
         CodecEncodeWorkerSeconds = $codecWork
+        GpuEncodeStages = $gpuEncodeStages
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
         Workers = [int]$stats["workers"]
@@ -874,6 +886,20 @@ function ConvertTo-RamBenchmarkRecord {
                 ($_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds) -le 0) {
                 throw "RAM benchmark JSON rejected an inconsistent lane result."
             }
+            $stageTimes = $_.GpuEncodeStages
+            if ($null -eq $stageTimes -or $stageTimes.Count -ne 7) {
+                throw "RAM benchmark JSON rejected incomplete GPU encode stage times."
+            }
+            foreach ($stage in @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')) {
+                if (-not $stageTimes.Contains($stage) -or $null -eq $stageTimes[$stage] -or
+                    [double]::IsNaN([double]$stageTimes[$stage]) -or
+                    [double]::IsInfinity([double]$stageTimes[$stage]) -or $stageTimes[$stage] -lt 0) {
+                    throw "RAM benchmark JSON rejected invalid $stage GPU encode worker time."
+                }
+            }
+            if ($_.Lane -eq 'GPU' -and ($stageTimes['readiness'] -le 0 -or $stageTimes['classification'] -le 0)) {
+                throw "RAM benchmark JSON rejected missing required HIP encode stage work."
+            }
             [ordered]@{
                 lane = $_.Lane
                 iteration = [int]$_.Iteration
@@ -884,6 +910,7 @@ function ConvertTo-RamBenchmarkRecord {
                 compress_seconds = $_.CompressSeconds
                 source_generation_worker_seconds = $_.SourceGenerationWorkerSeconds
                 codec_encode_worker_seconds = $_.CodecEncodeWorkerSeconds
+                gpu_encode_stage_worker_seconds = $stageTimes
                 verify_seconds = $_.VerifySeconds
                 extract_seconds = $_.ExtractSeconds
                 cpu_avg_pct = $_.CpuAvgPct

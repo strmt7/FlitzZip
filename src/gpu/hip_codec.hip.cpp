@@ -329,12 +329,20 @@ bool append_verified_encode_descriptors(EncodedChunk& out, std::span<const Devic
     return all_raw;
 }
 
-// Purpose: Append compact verified GPU payload bytes for non-fill SUZIP blocks.
-// Inputs: `input`, `block_size`, `candidates`, and `mismatches` describe verified encode output.
-// Outputs: Mutates `out.payload` with raw or compact pattern bytes in descriptor order.
+// Purpose: Publish verified baseline payload bytes while retaining the owned all-raw move fast path.
+// Inputs: `input` and optional `owned_input` share storage; block settings and verification data describe output.
+// Outputs: Moves owned all-raw bytes when available, or appends raw/compact pattern bytes in descriptor order.
 void append_verified_encode_payload(EncodedChunk& out, std::span<const std::byte> input, std::uint32_t block_size,
-                                    std::span<const DeviceBlock> candidates,
-                                    std::span<const std::uint32_t> mismatches) {
+                                    std::span<const DeviceBlock> candidates, std::span<const std::uint32_t> mismatches,
+                                    bool all_raw, std::vector<std::byte>* owned_input) {
+    if (all_raw) {
+        if (owned_input != nullptr) {
+            out.payload = std::move(*owned_input);
+        } else {
+            out.payload.assign(input.begin(), input.end());
+        }
+        return;
+    }
     out.payload.reserve(input.size());
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         const auto effective_kind = verified_candidate_kind(candidates[i], mismatches[i]);
@@ -1040,6 +1048,16 @@ std::uint32_t compute_materialized_crc32_device(std::span<const std::byte> paylo
     return crc;
 }
 
+// Purpose: Mark a sequential HIP encode phase boundary using host steady-clock time.
+// Inputs: Optional telemetry, the completed phase, and its mutable start point.
+// Outputs: Accumulates worker time and advances the start point to the next phase.
+void record_encode_phase(GpuTelemetry* telemetry, GpuEncodeStage stage,
+                         std::chrono::steady_clock::time_point& started) {
+    const auto finished = std::chrono::steady_clock::now();
+    record_gpu_encode_stage_time(telemetry, stage, finished - started);
+    started = finished;
+}
+
 }  // namespace
 
 // Purpose: Run a HIP-only workload that proves the AMD GPU can execute sustained kernels.
@@ -1127,11 +1145,13 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         return empty;
     }
     auto* telemetry = options.telemetry.get();
+    auto phase_started = std::chrono::steady_clock::now();
     record_gpu_encode_chunk(telemetry);
     const auto info = query_hip_gpu_info();
     if (!info.available) {
         throw GpuError(info.status);
     }
+    record_encode_phase(telemetry, GpuEncodeStage::Readiness, phase_started);
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     const auto computed_block_count =
         block_lengths.empty() ? (input.size() + block_size - 1U) / block_size : block_lengths.size();
@@ -1140,6 +1160,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     }
     const auto block_count = static_cast<std::uint32_t>(computed_block_count);
     auto host_candidates = build_encode_analysis_candidates(input, block_size, block_count, block_lengths);
+    record_encode_phase(telemetry, GpuEncodeStage::HostAnalysis, phase_started);
     HipDeviceMemoryReservation reservation(input.size(), "encode input");
     HipDeviceBuffer<std::byte> device_input(input.size(), "hipMalloc input");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
@@ -1169,15 +1190,18 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         const bool all_raw =
             append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
+        record_encode_phase(telemetry, GpuEncodeStage::DeviceClassification, phase_started);
         std::optional<EncodedChunk> prefix_encoded;
         if (std::ranges::any_of(out.blocks,
                                 [](const BlockDescriptor& block) { return block.kind == BlockKind::Raw; })) {
             prefix_encoded = encode_native_prefix_chunk_device(device_input.get(), input, block_size, out.blocks,
                                                                options.compression_level, telemetry);
         }
+        record_encode_phase(telemetry, GpuEncodeStage::Prefix, phase_started);
         auto& baseline_blocks = prefix_encoded ? prefix_encoded->blocks : out.blocks;
         auto sparse_replacements =
             sparse_pattern::select_replacements(input, device_input.get(), baseline_blocks, telemetry);
+        record_encode_phase(telemetry, GpuEncodeStage::Sparse, phase_started);
         auto competitive_blocks = std::vector<BlockDescriptor>(baseline_blocks.begin(), baseline_blocks.end());
         for (std::size_t index = 0U; index < sparse_replacements.size(); ++index) {
             if (!sparse_replacements[index].empty()) {
@@ -1189,6 +1213,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         }
         const auto dictionary_replacements = dictionary::select_dictionary_replacements(
             input, device_input.get(), competitive_blocks, options.compression_level, telemetry);
+        record_encode_phase(telemetry, GpuEncodeStage::Dictionary, phase_started);
         const bool has_dictionary = std::ranges::any_of(
             dictionary_replacements, [](const std::vector<std::byte>& replacement) { return !replacement.empty(); });
         for (std::size_t index = 0U; index < dictionary_replacements.size(); ++index) {
@@ -1209,18 +1234,10 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
                 selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
             }
             record_selected_block_kinds(selected, telemetry);
+            record_encode_phase(telemetry, GpuEncodeStage::Publication, phase_started);
             return selected;
         }
-        if (all_raw) {
-            if (owned_input == nullptr) {
-                out.payload.resize(input.size());
-                std::copy(input.begin(), input.end(), out.payload.begin());
-            } else {
-                out.payload = std::move(*owned_input);
-            }
-        } else {
-            append_verified_encode_payload(out, input, block_size, host_candidates, mismatches);
-        }
+        append_verified_encode_payload(out, input, block_size, host_candidates, mismatches, all_raw, owned_input);
         auto selected = has_dictionary
                             ? dictionary::apply_dictionary_replacements(std::move(out), dictionary_replacements)
                             : std::move(out);
@@ -1228,6 +1245,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
         }
         record_selected_block_kinds(selected, telemetry);
+        record_encode_phase(telemetry, GpuEncodeStage::Publication, phase_started);
         return selected;
     }
 }

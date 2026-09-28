@@ -18,6 +18,10 @@ $fixtureRun = [pscustomobject]@{
     MemoryOnly = 'true'; DiskWriteBytes = 0; InputBytes = 10GB; OutputBytes = 171079680; ArchiveBytes = 171102811
     CompressSeconds = 1.0; VerifySeconds = 1.0; ExtractSeconds = 1.0
     SourceGenerationWorkerSeconds = 4.25; CodecEncodeWorkerSeconds = 9.5
+    GpuEncodeStages = [ordered]@{
+        readiness = 0.5; analysis = 0.1; classification = 1.25; prefix = 0.75
+        sparse = 0.2; dictionary = 5.5; publication = 0.3
+    }
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
     GpuKernelLaunches = 720; GpuKernelMs = $null
     GpuPatternBlocks = 0; GpuPrefixBlocks = 0; GpuDictionaryBlocks = 0; GpuSparsePatternBlocks = 10240
@@ -29,7 +33,8 @@ if ($record.schema_version -ne 1 -or $record.source_dirty -ne $true -or
     $record.runs[0].output_bytes -ne 171079680 -or
     $record.runs[0].archive_bytes -ne 171102811 -or $null -ne $record.runs[0].gpu_kernel_ms -or
     $record.runs[0].source_generation_worker_seconds -ne 4.25 -or
-    $record.runs[0].codec_encode_worker_seconds -ne 9.5) {
+    $record.runs[0].codec_encode_worker_seconds -ne 9.5 -or
+    $record.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5) {
     throw 'RAM benchmark JSON lost provenance, exact size, or unavailable counter semantics.'
 }
 $jsonPath = Join-Path $env:TEMP ("superzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
@@ -40,7 +45,8 @@ try {
     if ($stored.runs[0].output_bytes -ne 171079680 -or
         $stored.runs[0].archive_bytes -ne 171102811 -or $stored.source_dirty -ne $true -or
         $stored.runs[0].source_generation_worker_seconds -ne 4.25 -or
-        $stored.runs[0].codec_encode_worker_seconds -ne 9.5) {
+        $stored.runs[0].codec_encode_worker_seconds -ne 9.5 -or
+        $stored.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5) {
         throw 'Serialized RAM benchmark JSON differs from the record.'
     }
     if ($record.runs[0].gpu_kernel_launches -isnot [int64] -or
@@ -67,6 +73,16 @@ foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
     if (-not $invalidRejected) { throw 'Invalid codec worker time entered the RAM-only evidence record.' }
 }
 $fixtureRun.CodecEncodeWorkerSeconds = 9.5
+foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
+    $fixtureRun.GpuEncodeStages['dictionary'] = $invalid
+    $invalidRejected = $false
+    try {
+        ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+            -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+    } catch { $invalidRejected = $true }
+    if (-not $invalidRejected) { throw 'Invalid GPU encode stage time entered the RAM-only evidence record.' }
+}
+$fixtureRun.GpuEncodeStages['dictionary'] = 5.5
 $fixtureRun.MemoryOnly = 'false'
 $invalidRejected = $false
 try {

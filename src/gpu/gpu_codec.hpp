@@ -2,7 +2,9 @@
 
 #include "core/archive_blocks.hpp"
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -11,6 +13,19 @@
 #include <vector>
 
 namespace superzip {
+
+enum class GpuEncodeStage : std::size_t {
+    Readiness,
+    HostAnalysis,
+    DeviceClassification,
+    Prefix,
+    Sparse,
+    Dictionary,
+    Publication,
+    Count,
+};
+
+inline constexpr std::size_t kGpuEncodeStageCount = static_cast<std::size_t>(GpuEncodeStage::Count);
 
 struct GpuInfo {
     bool hip_compiled = false;
@@ -38,6 +53,8 @@ struct GpuRuntimeStats {
     std::uint64_t dictionary_blocks = 0;
     std::uint64_t sparse_pattern_blocks = 0;
     double kernel_ms = 0.0;  // NaN means at least one event time or its accumulated total was invalid.
+    // Summed concurrent worker time, not elapsed wall time or HIP device time.
+    std::array<double, kGpuEncodeStageCount> encode_stage_worker_seconds{};
 };
 
 struct GpuTelemetry {
@@ -52,6 +69,7 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> dictionary_blocks{0};
     std::atomic<std::uint64_t> sparse_pattern_blocks{0};
     std::atomic<std::uint64_t> kernel_microseconds{0};  // UINT64_MAX permanently marks unavailable timing.
+    std::array<std::atomic<std::uint64_t>, kGpuEncodeStageCount> encode_stage_worker_microseconds{};
 };
 
 struct GpuCodecOptions {
@@ -146,6 +164,12 @@ void record_gpu_kernel_launch(GpuTelemetry* telemetry, double milliseconds);
 // Inputs: Optional operation telemetry, explicit SuperZip launch count, and complete device-stage milliseconds.
 // Outputs: Adds the known launches and stage time; invalid timing marks the aggregate unavailable.
 void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, double milliseconds);
+
+// Purpose: Accumulate one HIP encode phase's host-observed worker time.
+// Inputs: Optional operation telemetry, a named phase, and a nonnegative steady-clock duration.
+// Outputs: Adds worker microseconds; concurrent phases may overlap and do not represent device time.
+void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
+                                  std::chrono::steady_clock::duration elapsed);
 
 // Purpose: Inspect the compiled GPU backend and available AMD HIP device.
 // Inputs: None.

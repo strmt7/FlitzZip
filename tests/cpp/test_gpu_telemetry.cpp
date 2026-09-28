@@ -29,6 +29,37 @@ TEST_CASE(gpu_telemetry_finite_event_rounding) {
     superzip::record_gpu_kernel_launch(nullptr, std::numeric_limits<double>::quiet_NaN());
 }
 
+// Purpose: Preserve independently named HIP encode worker-stage totals under concurrent accumulation.
+// Inputs: Four joined writers record synthetic durations; null, zero, negative, and sentinel stages are ignored.
+// Outputs: Requires exact summed seconds for populated stages and zero for untouched stages.
+TEST_CASE(gpu_encode_worker_stage_accumulation) {
+    superzip::GpuTelemetry telemetry;
+    {
+        std::vector<std::jthread> workers;
+        for (int worker = 0; worker < 4; ++worker) {
+            workers.emplace_back([&telemetry] {
+                for (int event = 0; event < 1000; ++event) {
+                    superzip::record_gpu_encode_stage_time(&telemetry, superzip::GpuEncodeStage::Readiness,
+                                                           std::chrono::milliseconds(1));
+                    superzip::record_gpu_encode_stage_time(&telemetry, superzip::GpuEncodeStage::Dictionary,
+                                                           std::chrono::milliseconds(2));
+                }
+            });
+        }
+    }
+    superzip::record_gpu_encode_stage_time(nullptr, superzip::GpuEncodeStage::Prefix, std::chrono::milliseconds(1));
+    superzip::record_gpu_encode_stage_time(&telemetry, superzip::GpuEncodeStage::Prefix, std::chrono::milliseconds(-1));
+    superzip::record_gpu_encode_stage_time(&telemetry, superzip::GpuEncodeStage::Count, std::chrono::milliseconds(1));
+    const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
+    REQUIRE_TRUE(
+        std::abs(stats.encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::Readiness)] -
+                 4.0) < 1e-12);
+    REQUIRE_TRUE(
+        std::abs(stats.encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::Dictionary)] -
+                 8.0) < 1e-12);
+    REQUIRE_EQ(stats.encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::Prefix)], 0.0);
+}
+
 // Purpose: Keep invalid HIP event values out of integer conversion and preserve unavailable timing thereafter.
 // Inputs: Negative, non-finite, and out-of-range synthetic durations followed by a valid duration.
 // Outputs: Requires NaN timing, intact execution counters, and a sticky unavailable marker without throwing.

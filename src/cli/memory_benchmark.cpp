@@ -711,39 +711,47 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 
 // Purpose: Print one machine-readable memory benchmark result line.
 // Inputs: `result` contains operation statistics, benchmark settings, and RAM-only proof fields.
-// Outputs: Writes the result fields to stdout without mutating benchmark state.
+// Outputs: Writes result fields and overlapping GPU worker-stage times to stdout without mutating benchmark state.
 void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
     const auto& stats = result.stats;
-    std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
-              << " output_bytes=" << stats.output_bytes << " archive_bytes=" << result.archive_bytes
-              << " workers=" << stats.workers << " inflight_chunks=" << stats.inflight_chunks
-              << " codec_workers=" << result.codec_workers << " block_size_bytes=" << result.block_size
-              << " compression_level=" << result.compression_level
-              << " gpu_used=" << (stats.gpu_used ? "true" : "false")
-              << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
-              << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
-              << " gpu_kernel_launches=" << stats.gpu_runtime.kernel_launches
-              << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
-              << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
-              << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
-              << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
-              << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
-              << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
-              << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
-              << " seconds=" << stats.seconds
-              << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
-              << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
-              << " extract_seconds=" << result.extract_seconds
-              << " source_generation_worker_seconds=" << result.source_generation_worker_seconds
-              << " codec_encode_worker_seconds=" << result.codec_encode_worker_seconds
-              << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
-              << " verify_mib_s=" << mib_per_second(stats.input_bytes, result.verify_seconds)
-              << " extract_mib_s=" << mib_per_second(stats.input_bytes, result.extract_seconds)
-              << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes)
-              << " archive_compression_ratio=" << compression_ratio(stats.input_bytes, result.archive_bytes)
-              << " memory_only=true"
-              << " disk_write_bytes=0"
-              << "\n";
+    const auto& stages = stats.gpu_runtime.encode_stage_worker_seconds;
+    std::cout
+        << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes << " output_bytes=" << stats.output_bytes
+        << " archive_bytes=" << result.archive_bytes << " workers=" << stats.workers
+        << " inflight_chunks=" << stats.inflight_chunks << " codec_workers=" << result.codec_workers
+        << " block_size_bytes=" << result.block_size << " compression_level=" << result.compression_level
+        << " gpu_used=" << (stats.gpu_used ? "true" : "false")
+        << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
+        << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
+        << " gpu_kernel_launches=" << stats.gpu_runtime.kernel_launches
+        << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
+        << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
+        << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
+        << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
+        << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
+        << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
+        << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
+        << " gpu_readiness_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Readiness)]
+        << " gpu_analysis_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::HostAnalysis)]
+        << " gpu_classification_worker_seconds="
+        << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::DeviceClassification)]
+        << " gpu_prefix_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Prefix)]
+        << " gpu_sparse_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Sparse)]
+        << " gpu_dictionary_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Dictionary)]
+        << " gpu_publication_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Publication)]
+        << " seconds=" << stats.seconds << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
+        << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
+        << " extract_seconds=" << result.extract_seconds
+        << " source_generation_worker_seconds=" << result.source_generation_worker_seconds
+        << " codec_encode_worker_seconds=" << result.codec_encode_worker_seconds
+        << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
+        << " verify_mib_s=" << mib_per_second(stats.input_bytes, result.verify_seconds)
+        << " extract_mib_s=" << mib_per_second(stats.input_bytes, result.extract_seconds)
+        << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes)
+        << " archive_compression_ratio=" << compression_ratio(stats.input_bytes, result.archive_bytes)
+        << " memory_only=true"
+        << " disk_write_bytes=0"
+        << "\n";
 }
 
 // Purpose: Execute a bounded, RAM-only archive workload with independent encode, verify, and extract phases.

@@ -147,6 +147,10 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
     merge_gpu_counter(target->prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->dictionary_blocks, source.dictionary_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->sparse_pattern_blocks, source.sparse_pattern_blocks.load(std::memory_order_relaxed));
+    for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
+        merge_gpu_counter(target->encode_stage_worker_microseconds[index],
+                          source.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
+    }
     accumulate_kernel_microseconds(target->kernel_microseconds,
                                    source.kernel_microseconds.load(std::memory_order_relaxed));
 }
@@ -220,7 +224,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
 // Outputs: Returns counters with NaN kernel_ms for invalid events or timing-total overflow.
 GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
     const auto microseconds = telemetry.kernel_microseconds.load(std::memory_order_relaxed);
-    return GpuRuntimeStats{
+    auto stats = GpuRuntimeStats{
         .encode_chunks = telemetry.encode_chunks.load(std::memory_order_relaxed),
         .decode_chunks = telemetry.decode_chunks.load(std::memory_order_relaxed),
         .kernel_launches = telemetry.kernel_launches.load(std::memory_order_relaxed),
@@ -234,6 +238,12 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         .kernel_ms = microseconds == kUnavailableKernelTime ? std::numeric_limits<double>::quiet_NaN()
                                                             : static_cast<double>(microseconds) / 1000.0,
     };
+    for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
+        stats.encode_stage_worker_seconds[index] =
+            static_cast<double>(telemetry.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed)) /
+            1'000'000.0;
+    }
+    return stats;
 }
 
 void record_gpu_encode_chunk(GpuTelemetry* telemetry) {
@@ -319,6 +329,22 @@ void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, dou
                                       ? kUnavailableKernelTime
                                       : static_cast<std::uint64_t>(rounded);
         accumulate_kernel_microseconds(telemetry->kernel_microseconds, microseconds);
+    }
+}
+
+// Purpose: Record host-observed work for one named HIP encode stage.
+// Inputs: Optional operation telemetry, the phase identifier, and its measured steady-clock interval.
+// Outputs: Atomically adds positive whole microseconds for a valid stage.
+void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
+                                  std::chrono::steady_clock::duration elapsed) {
+    const auto index = static_cast<std::size_t>(stage);
+    if (!telemetry || index >= kGpuEncodeStageCount || elapsed <= std::chrono::steady_clock::duration::zero()) {
+        return;
+    }
+    const auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    if (microseconds > 0) {
+        telemetry->encode_stage_worker_microseconds[index].fetch_add(static_cast<std::uint64_t>(microseconds),
+                                                                     std::memory_order_relaxed);
     }
 }
 
