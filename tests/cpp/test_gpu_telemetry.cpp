@@ -57,7 +57,9 @@ TEST_CASE(gpu_encode_worker_stage_accumulation) {
     REQUIRE_TRUE(
         std::abs(stats.encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::Dictionary)] -
                  8.0) < 1e-12);
-    REQUIRE_EQ(stats.encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::Prefix)], 0.0);
+    REQUIRE_TRUE(
+        std::abs(stats.encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::Prefix)]) <
+        1e-12);
 }
 
 // Purpose: Keep invalid HIP event values out of integer conversion and preserve unavailable timing thereafter.
