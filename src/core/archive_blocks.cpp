@@ -505,6 +505,63 @@ bool block_kind_has_payload(BlockKind kind) {
            kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
 }
 
+// Purpose: Encode a contiguous native CPU block range with one bounded worker-owned Zstandard context.
+// Inputs: Source bytes, fixed block size/level, disjoint result slots, and the selected index range.
+// Outputs: Fills each slot with a complete descriptor and optional compressed payload, or throws on codec failure.
+static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32_t block_size, int compression_level,
+                                   std::span<EncodedBlockWork> block_work, std::size_t begin, std::size_t end) {
+    const auto release_context = [](ZstdCompressionContext* context) {
+        zstd_runtime().free_compression_context(context);
+    };
+    std::unique_ptr<ZstdCompressionContext, decltype(release_context)> context(nullptr, release_context);
+    for (std::size_t i = begin; i < end; ++i) {
+        const auto pos = i * static_cast<std::size_t>(block_size);
+        const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
+        const auto block = input.subspan(pos, len);
+        std::uint8_t fill = 0;
+        if (block_is_fill(block, fill)) {
+            block_work[i].descriptor = BlockDescriptor{
+                .kind = BlockKind::Fill,
+                .fill_value = fill,
+                .uncompressed_len = len,
+                .encoded_offset = 0,
+                .encoded_len = 0,
+            };
+            continue;
+        }
+        const bool use_zstd = block.size() >= kMinArchiveBlockBytes;
+        if (use_zstd && !context) {
+            context.reset(zstd_runtime().create_compression_context());
+            if (!context) {
+                throw ArchiveError("Zstandard native compression context allocation failed");
+            }
+        }
+        auto compressed = use_zstd ? try_zstd_block(block, compression_level, context.get())
+                                   : try_deflate_block(block, compression_level);
+        if (!compressed.empty()) {
+            block_work[i].descriptor = BlockDescriptor{
+                .kind = use_zstd ? BlockKind::CpuZstd : BlockKind::Deflate,
+                .fill_value = 0,
+                .uncompressed_len = len,
+                .encoded_offset = 0,
+                .encoded_len = static_cast<std::uint32_t>(compressed.size()),
+            };
+            block_work[i].payload = std::move(compressed);
+        } else {
+            block_work[i].descriptor = BlockDescriptor{
+                .kind = BlockKind::Raw,
+                .fill_value = 0,
+                .uncompressed_len = len,
+                .encoded_offset = 0,
+                .encoded_len = len,
+            };
+        }
+    }
+}
+
+// Purpose: Compress one bounded native chunk into independently decodable CPU block descriptors and payload.
+// Inputs: Source bytes and validated block size, worker count, and effort options.
+// Outputs: Returns a dense encoded chunk or throws before exposing incomplete codec output.
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {
     validate_encode_options(options);
     reject_oversized_codec_span(input.size(), "codec input");
@@ -514,57 +571,11 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     const auto block_count = (input.size() + block_size - 1U) / block_size;
     std::vector<EncodedBlockWork> block_work(block_count);
 
-    // One-shot Zstandard contexts are bounded individually; cap concurrent candidates on smaller hosts.
+    // Bound concurrently retained Zstandard workspaces on smaller hosts.
     constexpr std::uint32_t kMaxConcurrentZstdBlocks = 4U;
     run_parallel_ranges(
         block_count, std::min(options.worker_count, kMaxConcurrentZstdBlocks), [&](std::size_t begin, std::size_t end) {
-            const auto release_context = [](ZstdCompressionContext* context) {
-                zstd_runtime().free_compression_context(context);
-            };
-            std::unique_ptr<ZstdCompressionContext, decltype(release_context)> context(nullptr, release_context);
-            for (std::size_t i = begin; i < end; ++i) {
-                const auto pos = i * static_cast<std::size_t>(block_size);
-                const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
-                const auto block = input.subspan(pos, len);
-                std::uint8_t fill = 0;
-                if (block_is_fill(block, fill)) {
-                    block_work[i].descriptor = BlockDescriptor{
-                        .kind = BlockKind::Fill,
-                        .fill_value = fill,
-                        .uncompressed_len = len,
-                        .encoded_offset = 0,
-                        .encoded_len = 0,
-                    };
-                } else {
-                    const bool use_zstd = block.size() >= kMinArchiveBlockBytes;
-                    if (use_zstd && !context) {
-                        context.reset(zstd_runtime().create_compression_context());
-                        if (!context) {
-                            throw ArchiveError("Zstandard native compression context allocation failed");
-                        }
-                    }
-                    auto compressed = use_zstd ? try_zstd_block(block, options.compression_level, context.get())
-                                               : try_deflate_block(block, options.compression_level);
-                    if (!compressed.empty()) {
-                        block_work[i].descriptor = BlockDescriptor{
-                            .kind = use_zstd ? BlockKind::CpuZstd : BlockKind::Deflate,
-                            .fill_value = 0,
-                            .uncompressed_len = len,
-                            .encoded_offset = 0,
-                            .encoded_len = static_cast<std::uint32_t>(compressed.size()),
-                        };
-                        block_work[i].payload = std::move(compressed);
-                    } else {
-                        block_work[i].descriptor = BlockDescriptor{
-                            .kind = BlockKind::Raw,
-                            .fill_value = 0,
-                            .uncompressed_len = len,
-                            .encoded_offset = 0,
-                            .encoded_len = len,
-                        };
-                    }
-                }
-            }
+            encode_cpu_block_range(input, block_size, options.compression_level, block_work, begin, end);
         });
 
     out.blocks.resize(block_count);
