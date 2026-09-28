@@ -66,7 +66,7 @@ inline bool has_non_prefix_materialization_blocks(std::span<const DeviceBlock> h
         return block.kind == static_cast<std::uint8_t>(BlockKind::Raw) ||
                block.kind == static_cast<std::uint8_t>(BlockKind::Fill) ||
                block.kind == static_cast<std::uint8_t>(BlockKind::Pattern) ||
-               block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern);
+               is_gpu_sparse_pattern_kind(static_cast<BlockKind>(block.kind));
     });
 }
 
@@ -503,8 +503,9 @@ inline void validate_gpu_sparse_pattern_payload(std::span<const std::byte> paylo
     if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
         throw ArchiveError("GPU sparse pattern decode block exceeds payload buffer");
     }
-    (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len),
-                                     block.uncompressed_len);
+    (void)parse_sparse_pattern_block(
+        payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block.uncompressed_len,
+        block.kind == BlockKind::GpuLongSparsePattern ? kMaxGpuLongSparsePatternBytes : kMaxGpuPatternBytes);
 }
 
 // Purpose: Validate block layout before launching the HIP decode kernel.
@@ -581,7 +582,7 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
             validate_gpu_adaptive_prefix_payload_table(payload, block, len);
         } else if (block.kind == BlockKind::GpuDictionary) {
             validate_gpu_dictionary_payload(payload, block);
-        } else if (block.kind == BlockKind::GpuSparsePattern) {
+        } else if (is_gpu_sparse_pattern_kind(block.kind)) {
             validate_gpu_sparse_pattern_payload(payload, block);
         } else {
             throw ArchiveError("decode block has unknown encoding kind");

@@ -148,6 +148,8 @@ bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
         return version >= 5;
     case BlockKind::CpuZstd:
         return version >= 6;
+    case BlockKind::GpuLongSparsePattern:
+        return version >= 7;
     }
     return false;
 }
@@ -280,6 +282,8 @@ ArchiveIndex read_archive_index(std::istream& input) {
                 kind = BlockKind::GpuSparsePattern;
             } else if (kind_raw == static_cast<int>(BlockKind::CpuZstd)) {
                 kind = BlockKind::CpuZstd;
+            } else if (kind_raw == static_cast<int>(BlockKind::GpuLongSparsePattern)) {
+                kind = BlockKind::GpuLongSparsePattern;
             } else if (kind_raw != static_cast<int>(BlockKind::Raw)) {
                 throw ArchiveError("archive block has unknown encoding kind");
             }

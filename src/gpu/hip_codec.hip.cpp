@@ -269,7 +269,7 @@ void record_selected_block_kinds(const EncodedChunk& chunk, GpuTelemetry* teleme
     for (const auto& block : chunk.blocks) {
         prefixes += is_gpu_prefix_block(block);
         dictionaries += block.kind == BlockKind::GpuDictionary;
-        sparse_blocks += block.kind == BlockKind::GpuSparsePattern;
+        sparse_blocks += is_gpu_sparse_pattern_kind(block.kind);
     }
     record_gpu_prefix_blocks(telemetry, prefixes);
     record_gpu_dictionary_blocks(telemetry, dictionaries);
@@ -448,8 +448,9 @@ __global__ void materialize_segments_kernel(const std::byte* payload, const Devi
         const auto block_start = static_cast<std::size_t>(block.output_offset);
         const auto block_end = block_start + static_cast<std::size_t>(block.uncompressed_len);
         if (block.kind == static_cast<std::uint8_t>(BlockKind::Pattern) ||
-            block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern)) {
-            const bool sparse = block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern);
+            block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern) ||
+            block.kind == static_cast<std::uint8_t>(BlockKind::GpuLongSparsePattern)) {
+            const bool sparse = block.kind != static_cast<std::uint8_t>(BlockKind::Pattern);
             const auto period = sparse ? read_sparse_u32_device(payload + block.encoded_offset) : block.encoded_len;
             const auto motif_offset = block.encoded_offset + (sparse ? kSparsePatternHeaderBytes : 0U);
             const auto stride = static_cast<std::uint32_t>(blockDim.x) % period;
@@ -486,7 +487,8 @@ __global__ void apply_sparse_patches_kernel(const std::byte* payload, const Devi
         return;
     }
     const auto& block = blocks[block_index];
-    if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuSparsePattern)) {
+    if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuSparsePattern) &&
+        block.kind != static_cast<std::uint8_t>(BlockKind::GpuLongSparsePattern)) {
         return;
     }
     const auto* encoded = payload + block.encoded_offset;
@@ -930,7 +932,7 @@ void materialize_sparse_patches_device(const std::byte* device_payload, const De
                                        std::span<const DeviceBlock> host_blocks, std::byte* device_output,
                                        GpuTelemetry* telemetry) {
     if (!std::ranges::any_of(host_blocks, [](const DeviceBlock& block) {
-            return block.kind == static_cast<std::uint8_t>(BlockKind::GpuSparsePattern);
+            return is_gpu_sparse_pattern_kind(static_cast<BlockKind>(block.kind));
         })) {
         return;
     }
@@ -1154,7 +1156,9 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         auto competitive_blocks = std::vector<BlockDescriptor>(baseline_blocks.begin(), baseline_blocks.end());
         for (std::size_t index = 0U; index < sparse_replacements.size(); ++index) {
             if (!sparse_replacements[index].empty()) {
-                competitive_blocks[index].kind = BlockKind::GpuSparsePattern;
+                competitive_blocks[index].kind = read_sparse_u32(sparse_replacements[index], 0U) > kMaxGpuPatternBytes
+                                                     ? BlockKind::GpuLongSparsePattern
+                                                     : BlockKind::GpuSparsePattern;
                 competitive_blocks[index].encoded_len = static_cast<std::uint32_t>(sparse_replacements[index].size());
             }
         }
@@ -1311,7 +1315,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     bool needs_materialized_crc = false;
     for (const auto& block : blocks) {
         needs_materialized_crc |= is_gpu_prefix_block(block) || block.kind == BlockKind::GpuDictionary ||
-                                  block.kind == BlockKind::GpuSparsePattern;
+                                  is_gpu_sparse_pattern_kind(block.kind);
     }
     if (needs_materialized_crc) {
         return compute_materialized_crc32_device(payload, blocks, output_size, options);

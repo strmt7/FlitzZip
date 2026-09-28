@@ -166,10 +166,11 @@ void materialize_zstd_block_cpu(std::span<const std::byte> encoded, std::span<st
 }
 
 // Purpose: Materialize one repeated pattern into an output block.
-// Inputs: `pattern` is the compact pattern payload and `output` is the expanded destination span.
+// Inputs: `pattern` is the compact payload, `output` is the destination, and `max_period` is the versioned bound.
 // Outputs: Writes `output.size()` bytes by repeating the compact pattern.
-void materialize_pattern_cpu(std::span<const std::byte> pattern, std::span<std::byte> output) {
-    if (pattern.size() < 2 || pattern.size() > kMaxGpuPatternBytes || pattern.size() >= output.size()) {
+void materialize_pattern_cpu(std::span<const std::byte> pattern, std::span<std::byte> output,
+                             std::uint32_t max_period = kMaxGpuPatternBytes) {
+    if (pattern.size() < 2 || pattern.size() > max_period || pattern.size() >= output.size()) {
         throw ArchiveError("GPU pattern block metadata is invalid");
     }
     std::copy(pattern.begin(), pattern.end(), output.begin());
@@ -352,11 +353,12 @@ void materialize_dictionary_cpu(std::span<const std::byte> payload, std::span<st
 }
 
 // Purpose: Expand one admitted version-five motif and its sorted corrections in bounded host memory.
-// Inputs: `payload` is an untrusted sparse block and `output` is its exact decoded destination.
+// Inputs: `payload` is an untrusted sparse block, `output` is exact, and `max_period` is versioned.
 // Outputs: Writes all decoded bytes or throws `ArchiveError` before writing when metadata is invalid.
-void materialize_sparse_pattern_cpu(std::span<const std::byte> payload, std::span<std::byte> output) {
-    const auto layout = parse_sparse_pattern_block(payload, static_cast<std::uint32_t>(output.size()));
-    materialize_pattern_cpu(layout.motif, output);
+void materialize_sparse_pattern_cpu(std::span<const std::byte> payload, std::span<std::byte> output,
+                                    std::uint32_t max_period) {
+    const auto layout = parse_sparse_pattern_block(payload, static_cast<std::uint32_t>(output.size()), max_period);
+    materialize_pattern_cpu(layout.motif, output, max_period);
     for (std::size_t index = 0U; index < layout.patch_count; ++index) {
         const auto offset = index * kSparsePatternPatchBytes;
         output[read_sparse_u32(layout.patches, offset)] = layout.patches[offset + sizeof(std::uint32_t)];
@@ -415,10 +417,13 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
                     throw ArchiveError("GPU dictionary block metadata is invalid");
                 }
             }
-            if (block.kind == BlockKind::GpuSparsePattern) {
+            if (is_gpu_sparse_pattern_kind(block.kind)) {
                 (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                  static_cast<std::size_t>(block.encoded_len)),
-                                                 static_cast<std::uint32_t>(len));
+                                                 static_cast<std::uint32_t>(len),
+                                                 block.kind == BlockKind::GpuLongSparsePattern
+                                                     ? kMaxGpuLongSparsePatternBytes
+                                                     : kMaxGpuPatternBytes);
             }
         } else if (block.kind == BlockKind::Fill) {
             if (block.encoded_len != 0) {
@@ -473,10 +478,13 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_dictionary_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                            static_cast<std::size_t>(block.encoded_len)),
                                            output.subspan(out_pos, len));
-            } else if (block.kind == BlockKind::GpuSparsePattern) {
+            } else if (is_gpu_sparse_pattern_kind(block.kind)) {
                 materialize_sparse_pattern_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                static_cast<std::size_t>(block.encoded_len)),
-                                               output.subspan(out_pos, len));
+                                               output.subspan(out_pos, len),
+                                               block.kind == BlockKind::GpuLongSparsePattern
+                                                   ? kMaxGpuLongSparsePatternBytes
+                                                   : kMaxGpuPatternBytes);
             } else {
                 throw ArchiveError("unknown block kind");
             }
@@ -492,7 +500,7 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuDictionary || kind == BlockKind::GpuSparsePattern;
+           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
 }
 
 EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCodecOptions& options) {

@@ -97,7 +97,7 @@ struct ArchiveValidationSummary {
 bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuDictionary || kind == BlockKind::GpuSparsePattern;
+           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -601,7 +601,7 @@ void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescri
     if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
         block.kind != BlockKind::CpuZstd && block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
         block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuDictionary &&
-        block.kind != BlockKind::GpuSparsePattern) {
+        !is_gpu_sparse_pattern_kind(block.kind)) {
         throw ArchiveError("archive block has unknown encoding kind");
     }
     if (block.uncompressed_len == 0) {
@@ -683,6 +683,7 @@ std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const B
         return checked_add_u64(payload_cursor, block.encoded_len, "GPU dictionary block payload size overflows");
     }
     case BlockKind::GpuSparsePattern:
+    case BlockKind::GpuLongSparsePattern:
         if (block.encoded_len < kSparsePatternHeaderBytes + 2U + kSparsePatternPatchBytes ||
             block.encoded_len >= block.uncompressed_len) {
             throw ArchiveError("GPU sparse pattern block metadata is invalid");
@@ -876,13 +877,15 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 
 // Purpose: Select the smallest native version that defines every encoded block.
 // Inputs: A completed archive index with all file block descriptors.
-// Outputs: Returns version three through six without downgrading a new block kind.
+// Outputs: Returns version three through seven without downgrading a new block kind.
 std::uint32_t required_archive_version(const ArchiveIndex& index) {
     std::uint32_t version = kSuperZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == BlockKind::CpuZstd) {
-                version = 6U;
+            if (block.kind == BlockKind::GpuLongSparsePattern) {
+                version = std::max(version, 7U);
+            } else if (block.kind == BlockKind::CpuZstd) {
+                version = std::max(version, 6U);
             } else if (block.kind == BlockKind::GpuSparsePattern) {
                 version = std::max(version, 5U);
             } else if (block.kind == BlockKind::GpuDictionary ||

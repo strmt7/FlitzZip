@@ -106,7 +106,7 @@ std::vector<std::uint16_t> sampled_batch_distances(std::span<const std::byte> in
 bool should_try_dictionary(std::span<const std::byte> input, const BlockDescriptor& baseline, int level) {
     if (input.size() < 4096U || baseline.encoded_len == 0U ||
         (baseline.kind != BlockKind::Raw && baseline.kind != BlockKind::GpuPrefix &&
-         baseline.kind != BlockKind::GpuAdaptivePrefix && baseline.kind != BlockKind::GpuSparsePattern)) {
+         baseline.kind != BlockKind::GpuAdaptivePrefix && !is_gpu_sparse_pattern_kind(baseline.kind))) {
         return false;
     }
     if (level < 7 && baseline.encoded_len <= input.size() / 2U) {

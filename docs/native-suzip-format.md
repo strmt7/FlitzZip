@@ -25,8 +25,9 @@ explicit:
   per-block codebooks for stronger required-HIP compression levels. Version 4
   adds GPU dictionary blocks and longer pattern motifs. Version 5 adds GPU
   sparse-pattern blocks. Version 6 adds CPU-only Zstandard frames as block kind
-  8. Earlier versions remain readable, but readers predating version 6 cannot
-  open archives containing that new block kind.
+  8. Version 7 adds GPU long-sparse-pattern blocks as kind 9, with motifs
+  longer than 16 KiB and at most 1 MiB. Earlier versions remain
+  readable; readers predating each new version reject its new block kind.
 - CPU compression tries one independently framed Zstandard block for non-fill
   blocks of at least 4 KiB, retaining Deflate for shorter blocks. It records
   Zstandard only when the result is smaller than raw. The reader requires one
@@ -52,7 +53,7 @@ the native footer/index signature takes precedence over leading magic and
 extension hints. A renamed native archive can be identified by:
 
 1. Reading the final 24-byte footer.
-2. Verifying `SUZF` and the current format version.
+2. Verifying `SUZF` and a supported format version.
 3. Verifying that the declared index offset and size stay inside the file.
 4. Reading the index start and verifying `SUZP`.
 
@@ -80,8 +81,9 @@ flowchart TD
   operation options.
 - Do not accept CPU-only fallback in required-GPU mode.
 - Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, GPU
-  static-prefix, GPU adaptive-prefix, GPU dictionary, and GPU sparse-pattern
-  blocks. It must not emit CPU Deflate or Zstandard blocks.
+  static-prefix, GPU adaptive-prefix, GPU dictionary, GPU sparse-pattern, and
+  GPU long-sparse-pattern blocks. It must not emit CPU Deflate or Zstandard
+  blocks.
 - GPU static-prefix and adaptive-prefix blocks are native SUZIP blocks. They are
   not ZIP, Deflate, Zstandard, or a compatibility-format wrapper.
 - Keep native-format benchmark claims separate from compatibility-format claims.

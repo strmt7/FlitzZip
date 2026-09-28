@@ -34,16 +34,20 @@ inline std::uint32_t read_sparse_u32(std::span<const std::byte> bytes, std::size
 }
 
 // Purpose: Admit a canonical sparse repeated-pattern block before CPU or HIP materialization.
-// Inputs: `payload` is untrusted encoded data that must outlive the returned spans; `decoded_size` is exact.
+// Inputs: `payload` is untrusted encoded data that must outlive the returned spans; `decoded_size` and
+// `max_period` are exact versioned bounds.
 // Outputs: Returns bounded motif/patch spans or throws `ArchiveError` on size, order, range, or canonicality failure.
-inline SparsePatternLayout parse_sparse_pattern_block(std::span<const std::byte> payload, std::uint32_t decoded_size) {
-    if (decoded_size == 0U || decoded_size > kMaxArchiveBlockBytes || payload.size() < kSparsePatternHeaderBytes ||
+inline SparsePatternLayout parse_sparse_pattern_block(std::span<const std::byte> payload, std::uint32_t decoded_size,
+                                                      std::uint32_t max_period = kMaxGpuPatternBytes) {
+    if ((max_period != kMaxGpuPatternBytes && max_period != kMaxGpuLongSparsePatternBytes) || decoded_size == 0U ||
+        decoded_size > kMaxArchiveBlockBytes || payload.size() < kSparsePatternHeaderBytes ||
         payload.size() >= decoded_size) {
         throw ArchiveError("sparse pattern block size is invalid");
     }
     const auto period = read_sparse_u32(payload, 0U);
     const auto patch_count = read_sparse_u32(payload, sizeof(std::uint32_t));
-    if (period < 2U || period > kMaxGpuPatternBytes || period >= decoded_size || patch_count == 0U ||
+    const auto min_period = max_period == kMaxGpuLongSparsePatternBytes ? kMaxGpuPatternBytes + 1U : 2U;
+    if (period < min_period || period > max_period || period >= decoded_size || patch_count == 0U ||
         period > payload.size() - kSparsePatternHeaderBytes) {
         throw ArchiveError("sparse pattern block header is invalid");
     }

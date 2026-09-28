@@ -956,6 +956,58 @@ TEST_CASE(dictionary_sparse_pattern_reference_opt_in) {
     REQUIRE_TRUE(!sparse_pattern_reference_bytes(random, record_bytes).has_value());
 }
 
+// Purpose: Quantify the ratio ceiling for periodic records beyond the current GPU motif bound.
+// Inputs: Explicit opt-in, deterministic 256 KiB or 1 MiB records, and one mutation per later record.
+// Outputs: Prints a byte-exact sparse reference and verified production CPU/HIP payload sizes in RAM.
+TEST_CASE(dictionary_long_period_reference_opt_in) {
+    wchar_t enabled[2]{};
+    if (GetEnvironmentVariableW(L"SUPERZIP_DICTIONARY_LONG_PERIOD_RESEARCH", enabled, 2U) != 1U || enabled[0] != L'1') {
+        return;
+    }
+    REQUIRE_TRUE(superzip::query_gpu_info().available);
+    constexpr std::size_t block_bytes = 4U * 1024U * 1024U;
+    for (const auto record_bytes : {256U * 1024U, 1024U * 1024U}) {
+        std::vector<std::byte> input(block_bytes);
+        std::uint32_t state = 0xC67A349DU;
+        for (std::size_t index = 0U; index < record_bytes; ++index) {
+            state ^= state << 13U;
+            state ^= state >> 17U;
+            state ^= state << 5U;
+            input[index] = static_cast<std::byte>(state >> 24U);
+        }
+        for (std::size_t index = record_bytes; index < input.size(); ++index) {
+            input[index] = input[index % record_bytes];
+        }
+        for (std::size_t record = 1U; record < input.size() / record_bytes; ++record) {
+            const auto position = record * record_bytes + 1024U;
+            input[position] = static_cast<std::byte>(static_cast<unsigned char>(input[position]) ^ 0xFFU);
+        }
+        const auto reference_bytes = sparse_pattern_reference_bytes(input, record_bytes);
+        REQUIRE_TRUE(reference_bytes.has_value());
+        std::array<std::size_t, 2> production_bytes{};
+        for (const bool hip : {false, true}) {
+            superzip::GpuCodecOptions options;
+            options.block_size = static_cast<std::uint32_t>(block_bytes);
+            options.compression_level = 5;
+            options.force_cpu = !hip;
+            options.require_gpu = hip;
+            const auto encoded = superzip::encode_chunk(input, options);
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options), hip);
+            REQUIRE_EQ(decoded, input);
+            production_bytes[hip] = encoded.payload.size();
+            if (hip) {
+                REQUIRE_EQ(encoded.blocks.size(), 1U);
+                REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuLongSparsePattern);
+                REQUIRE_EQ(production_bytes[hip], *reference_bytes);
+            }
+        }
+        std::cout << "dictionary_long_period_reference period_bytes=" << record_bytes << " input_bytes=" << input.size()
+                  << " candidate_bytes=" << *reference_bytes << " cpu_payload_bytes=" << production_bytes[0]
+                  << " gpu_payload_bytes=" << production_bytes[1] << " memory_only=true disk_write_bytes=0\n";
+    }
+}
+
 // Purpose: Localize native dictionary CRC and decode divergence at real archive-chunk sizes.
 // Inputs: Repeated records across the 8 MiB CRC policy boundary and up to the 128 MiB chunk limit.
 // Outputs: CPU/HIP CRC and decoded bytes match source bytes for every encoded chunk.

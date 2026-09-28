@@ -229,8 +229,10 @@ std::string separate_archive_bytes(const superzip::Manifest& manifest, const sup
     }
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == superzip::BlockKind::CpuZstd) {
-                index.version = 6U;
+            if (block.kind == superzip::BlockKind::GpuLongSparsePattern) {
+                index.version = std::max(index.version, 7U);
+            } else if (block.kind == superzip::BlockKind::CpuZstd) {
+                index.version = std::max(index.version, 6U);
             } else if (block.kind == superzip::BlockKind::GpuSparsePattern) {
                 index.version = std::max(index.version, 5U);
             } else if (block.kind == superzip::BlockKind::GpuDictionary ||

@@ -260,6 +260,20 @@ void fill_segmented_record_chunk(std::vector<std::byte>& buffer, std::uint64_t g
     }
 }
 
+// Purpose: Retain one seeded 1 MiB long-record motif without allocating it for other benchmark profiles.
+// Inputs: None.
+// Outputs: Returns a process-owned immutable motif for the long-sparse RAM workload.
+const std::vector<std::byte>& long_sparse_record_motif() {
+    static const auto record = [] {
+        std::vector<std::byte> bytes(1024U * 1024U);
+        for (std::size_t index = 0U; index < bytes.size(); ++index) {
+            bytes[index] = static_cast<std::byte>(randomish_benchmark_byte(index));
+        }
+        return bytes;
+    }();
+    return record;
+}
+
 // Purpose: Fill a benchmark chunk with deterministic compressed-pattern or incompressible data.
 // Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,
 // and `profile` selects data shape.
@@ -270,7 +284,7 @@ void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t g
         fill_segmented_record_chunk(buffer, global_offset);
         return;
     }
-    if (profile == "RepeatedRecord" || profile == "SparseRecord") {
+    if (profile == "RepeatedRecord" || profile == "SparseRecord" || profile == "LongSparseRecord") {
         static const auto record = [] {
             std::array<std::byte, 16U * 1024U> bytes{};
             for (std::size_t index = 0; index < bytes.size(); ++index) {
@@ -278,16 +292,21 @@ void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t g
             }
             return bytes;
         }();
+        const std::span<const std::byte> motif =
+            profile == "LongSparseRecord" ? std::span(long_sparse_record_motif()) : std::span(record);
         for (std::size_t offset = 0; offset < buffer.size();) {
             const auto absolute_offset = global_offset + offset;
-            const auto record_offset = static_cast<std::size_t>(absolute_offset % record.size());
-            const auto count = std::min(record.size() - record_offset, buffer.size() - offset);
-            std::copy_n(record.begin() + static_cast<std::ptrdiff_t>(record_offset), count,
+            const auto record_offset = static_cast<std::size_t>(absolute_offset % motif.size());
+            const auto count = std::min(motif.size() - record_offset, buffer.size() - offset);
+            std::copy_n(motif.begin() + static_cast<std::ptrdiff_t>(record_offset), count,
                         buffer.begin() + static_cast<std::ptrdiff_t>(offset));
             constexpr std::size_t patch_offset = 1024U;
-            if (profile == "SparseRecord" && record_offset <= patch_offset && patch_offset - record_offset < count) {
-                const auto record_index = absolute_offset / record.size();
-                buffer[offset + patch_offset - record_offset] ^= static_cast<std::byte>(1U + record_index % 255U);
+            if ((profile == "SparseRecord" || profile == "LongSparseRecord") && record_offset <= patch_offset &&
+                patch_offset - record_offset < count) {
+                const auto record_index = absolute_offset / motif.size();
+                if (profile == "SparseRecord" || record_index != 0U) {
+                    buffer[offset + patch_offset - record_offset] ^= static_cast<std::byte>(1U + record_index % 255U);
+                }
             }
             offset += count;
         }

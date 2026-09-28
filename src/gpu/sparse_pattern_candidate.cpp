@@ -16,9 +16,10 @@ namespace superzip::sparse_pattern {
 namespace {
 
 // Purpose: Find one likely repeated motif using bounded exact anchors and a sparse host sample.
-// Inputs: `block` is an immutable archive block whose sampled fill/exact-pattern path did not win.
-// Outputs: Returns the lowest estimated-cost 2..16 KiB period, or zero without a low-mismatch anchor.
-std::uint32_t sampled_sparse_period(std::span<const std::byte> block) {
+// Inputs: `block` is immutable and `minimum_period`/`period_limit` bound the versioned search interval.
+// Outputs: Returns the lowest estimated-cost sampled period, or zero without a low-mismatch anchor.
+std::uint32_t sampled_sparse_period(std::span<const std::byte> block, std::size_t minimum_period,
+                                    std::size_t period_limit) {
     constexpr std::size_t kAnchorBytes = 16U;
     constexpr std::size_t kMaxAnchorTrials = 32U;
     constexpr std::size_t kSampleBytes = 64U * 1024U;
@@ -26,9 +27,13 @@ std::uint32_t sampled_sparse_period(std::span<const std::byte> block) {
     if (block.size() < 4096U) {
         return 0U;
     }
-    const auto max_period = std::min<std::size_t>(kMaxGpuPatternBytes, block.size() / 2U);
-    const auto sample_end = std::min<std::size_t>(block.size(), kSampleBytes);
-    auto search = block.begin() + 2U;
+    const auto max_period = std::min<std::size_t>(period_limit, block.size() / 2U);
+    if (minimum_period > max_period) {
+        return 0U;
+    }
+    const auto sample_end = std::min<std::size_t>(
+        block.size(), period_limit > kMaxGpuPatternBytes ? max_period + kSampleBytes : kSampleBytes);
+    auto search = block.begin() + static_cast<std::ptrdiff_t>(minimum_period);
     const auto search_end = block.begin() + static_cast<std::ptrdiff_t>(max_period + kAnchorBytes);
     std::uint32_t best_period = 0U;
     std::size_t best_estimated_bytes = std::numeric_limits<std::size_t>::max();
@@ -106,7 +111,9 @@ std::vector<std::byte> frame_sparse_candidate(std::span<const std::byte> block, 
         payload.push_back(block[position]);
         previous = position;
     }
-    (void)parse_sparse_pattern_block(payload, static_cast<std::uint32_t>(block.size()));
+    (void)parse_sparse_pattern_block(payload, static_cast<std::uint32_t>(block.size()),
+                                     period > kMaxGpuPatternBytes ? kMaxGpuLongSparsePatternBytes
+                                                                  : kMaxGpuPatternBytes);
     return payload;
 }
 
@@ -133,10 +140,13 @@ SparseReplacements select_replacements(std::span<const std::byte> input, const s
         const auto block_offset = source_offset;
         source_offset += length;
         if (blocks[index].kind == BlockKind::Fill || blocks[index].kind == BlockKind::Pattern ||
-            blocks[index].kind == BlockKind::GpuSparsePattern) {
+            is_gpu_sparse_pattern_kind(blocks[index].kind)) {
             continue;
         }
-        const auto period = sampled_sparse_period(block);
+        auto period = sampled_sparse_period(block, 2U, kMaxGpuPatternBytes);
+        if (period == 0U && block.size() > 2U * kMaxGpuPatternBytes) {
+            period = sampled_sparse_period(block, kMaxGpuPatternBytes + 1U, kMaxGpuLongSparsePatternBytes);
+        }
         const auto baseline_bytes = std::min<std::size_t>(blocks[index].encoded_len, block.size());
         if (period == 0U || baseline_bytes <= kSparsePatternHeaderBytes + period + kSparsePatternPatchBytes) {
             continue;
@@ -198,7 +208,8 @@ EncodedChunk apply_replacements(EncodedChunk baseline, const SparseReplacements&
             if (replacement.size() >= descriptor.uncompressed_len) {
                 throw GpuError("sparse replacement does not improve the source block");
             }
-            descriptor.kind = BlockKind::GpuSparsePattern;
+            descriptor.kind = read_sparse_u32(replacement, 0U) > kMaxGpuPatternBytes ? BlockKind::GpuLongSparsePattern
+                                                                                     : BlockKind::GpuSparsePattern;
             descriptor.encoded_len = static_cast<std::uint32_t>(replacement.size());
             result.payload.insert(result.payload.end(), replacement.begin(), replacement.end());
         } else {

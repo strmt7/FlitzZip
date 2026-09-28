@@ -84,7 +84,7 @@ void validate_sparse_candidates(std::uint32_t input_bytes, std::span<const Spars
         if (candidate.source_offset < previous_end || candidate.source_offset > input_bytes ||
             candidate.input_bytes > input_bytes - candidate.source_offset ||
             candidate.input_bytes > kMaxArchiveBlockBytes || candidate.period < 2U ||
-            candidate.period > kMaxGpuPatternBytes || candidate.period >= candidate.input_bytes ||
+            candidate.period > kMaxGpuLongSparsePatternBytes || candidate.period >= candidate.input_bytes ||
             candidate.max_patches == 0U || candidate.max_patches > candidate.input_bytes - candidate.period ||
             candidate.positions_offset != 0U || candidate.patch_count != 0U) {
             throw GpuError("sparse pattern HIP batch candidate bounds are invalid");

@@ -52,12 +52,13 @@ std::vector<std::byte> make_sparse_test_payload() {
 }
 
 // Purpose: Require untrusted sparse metadata to fail closed.
-// Inputs: `payload` is an invalid block and `decoded_size` is its declared output extent.
+// Inputs: `payload` is invalid, `decoded_size` is its output extent, and `max_period` is the versioned bound.
 // Outputs: Requires `ArchiveError` rather than acceptance or another exception type.
-void require_sparse_rejected(std::span<const std::byte> payload, std::uint32_t decoded_size) {
+void require_sparse_rejected(std::span<const std::byte> payload, std::uint32_t decoded_size,
+                             std::uint32_t max_period = superzip::kMaxGpuPatternBytes) {
     bool rejected = false;
     try {
-        (void)superzip::parse_sparse_pattern_block(payload, decoded_size);
+        (void)superzip::parse_sparse_pattern_block(payload, decoded_size, max_period);
     } catch (const superzip::ArchiveError&) {
         rejected = true;
     }
@@ -117,6 +118,86 @@ TEST_CASE(sparse_pattern_block_rejects_malformed_payload) {
     invalid = valid;
     invalid.push_back(std::byte{0});
     require_sparse_rejected(invalid, 64U);
+}
+
+// Purpose: Keep v5 sparse bounds unchanged while admitting only bounded v7 long motifs.
+// Inputs: Canonical single-patch payloads at 16 KiB and 1 MiB period boundaries.
+// Outputs: Each parser admits only its distinct versioned period range.
+TEST_CASE(sparse_pattern_long_period_boundaries) {
+    for (const auto period : {superzip::kMaxGpuPatternBytes, superzip::kMaxGpuPatternBytes + 1U,
+                              superzip::kMaxGpuLongSparsePatternBytes, superzip::kMaxGpuLongSparsePatternBytes + 1U}) {
+        std::vector<std::byte> payload;
+        append_sparse_test_u32(payload, period);
+        append_sparse_test_u32(payload, 1U);
+        payload.resize(superzip::kSparsePatternHeaderBytes + period, std::byte{0});
+        append_sparse_test_u32(payload, period);
+        payload.push_back(std::byte{1});
+        const auto decoded_size = 2U * period + 1U;
+        if (period <= superzip::kMaxGpuPatternBytes) {
+            REQUIRE_EQ(superzip::parse_sparse_pattern_block(payload, decoded_size).motif.size(), period);
+        } else {
+            require_sparse_rejected(payload, decoded_size);
+        }
+        if (period > superzip::kMaxGpuPatternBytes && period <= superzip::kMaxGpuLongSparsePatternBytes) {
+            REQUIRE_EQ(
+                superzip::parse_sparse_pattern_block(payload, decoded_size, superzip::kMaxGpuLongSparsePatternBytes)
+                    .motif.size(),
+                period);
+        } else {
+            require_sparse_rejected(payload, decoded_size, superzip::kMaxGpuLongSparsePatternBytes);
+        }
+    }
+}
+
+// Purpose: Exercise the new GPU-native long-sparse kind through independent CPU and HIP decoding.
+// Inputs: A seeded 128 KiB motif repeated twice with one changed byte in a 256 KiB block.
+// Outputs: Requires exact payload size, v7 block kind, GPU telemetry, and byte-exact CPU/HIP roundtrips.
+TEST_CASE(long_sparse_pattern_required_hip_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::size_t period = 128U * 1024U;
+    std::vector<std::byte> input(2U * period);
+    std::uint32_t state = 0xC67A349DU;
+    for (std::size_t index = 0U; index < period; ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        input[index] = static_cast<std::byte>(state >> 24U);
+        input[index + period] = input[index];
+    }
+    input[period + 1024U] ^= std::byte{0xFF};
+
+    superzip::GpuCodecOptions options;
+    options.block_size = static_cast<std::uint32_t>(input.size());
+    options.compression_level = 5;
+    options.require_gpu = true;
+    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    const auto encoded = superzip::encode_chunk(input, options);
+    REQUIRE_TRUE(encoded.gpu_used);
+    REQUIRE_EQ(encoded.blocks.size(), 1U);
+    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuLongSparsePattern);
+    REQUIRE_EQ(encoded.payload.size(),
+               superzip::kSparsePatternHeaderBytes + period + superzip::kSparsePatternPatchBytes);
+    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).sparse_pattern_blocks, 1U);
+    std::vector<std::byte> decoded(input.size());
+    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_EQ(decoded, input);
+    options.require_gpu = false;
+    options.force_cpu = true;
+    std::fill(decoded.begin(), decoded.end(), std::byte{0});
+    REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+    REQUIRE_EQ(decoded, input);
+
+    auto corrupt = encoded.payload;
+    corrupt[superzip::kSparsePatternHeaderBytes + period + sizeof(std::uint32_t)] = input[1024U];
+    bool rejected = false;
+    try {
+        (void)superzip::decode_chunk(corrupt, encoded.blocks, decoded, options);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }
 
 // Purpose: Verify required-HIP sparse selection, telemetry, and both independent decode paths.

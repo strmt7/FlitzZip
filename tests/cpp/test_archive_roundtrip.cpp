@@ -4,6 +4,7 @@
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
+#include "core/sparse_pattern_block.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "lz4.h"
 #include "miniz.h"
@@ -135,13 +136,14 @@ TEST_CASE(suzip_rejects_footer_index_version_mismatch) {
 }
 
 // Purpose: Prevent older native versions from claiming block encodings they do not define.
-// Inputs: Prefix, dictionary, sparse, and Zstandard descriptors paired with pre-introduction versions.
+// Inputs: Prefix, dictionary, sparse, Zstandard, and long-sparse descriptors before their introduction.
 // Outputs: Both the writer and parser reject unsupported version/block combinations.
 TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
     for (const auto [version, kind] :
          {std::pair{1U, superzip::BlockKind::GpuPrefix}, std::pair{1U, superzip::BlockKind::GpuAdaptivePrefix},
           std::pair{2U, superzip::BlockKind::GpuAdaptivePrefix}, std::pair{3U, superzip::BlockKind::GpuDictionary},
-          std::pair{4U, superzip::BlockKind::GpuSparsePattern}, std::pair{5U, superzip::BlockKind::CpuZstd}}) {
+          std::pair{4U, superzip::BlockKind::GpuSparsePattern}, std::pair{5U, superzip::BlockKind::CpuZstd},
+          std::pair{6U, superzip::BlockKind::GpuLongSparsePattern}}) {
         superzip::ArchiveIndex index;
         index.version = version;
         superzip::ArchiveEntry entry;
@@ -232,6 +234,141 @@ TEST_CASE(suzip_sparse_pattern_cpu_reader_roundtrip) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_TRUE(!std::filesystem::exists(invalid_destination / "data.bin"));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Prove v7 long-sparse archives remain independently readable without a GPU.
+// Inputs: A 16 KiB-plus-one motif, one canonical patch, and explicit v7 metadata.
+// Outputs: Public verify/extract preserve bytes on CPU and available HIP; corrupt patches fail before publication.
+TEST_CASE(suzip_long_sparse_pattern_v7_reader_roundtrip) {
+    constexpr std::uint32_t period = superzip::kMaxGpuPatternBytes + 1U;
+    std::string decoded(2U * period, '\0');
+    std::uint32_t state = 0xC67A349DU;
+    for (std::size_t index = 0U; index < period; ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        decoded[index] = static_cast<char>(state >> 24U);
+        decoded[index + period] = decoded[index];
+    }
+    decoded[period + 512U] = static_cast<char>(static_cast<unsigned char>(decoded[512U]) ^ 0xFFU);
+    std::vector<std::byte> payload;
+    const auto append_u32 = [&payload](std::uint32_t value) {
+        for (std::uint32_t index = 0U; index < sizeof(value); ++index) {
+            payload.push_back(static_cast<std::byte>((value >> (index * 8U)) & 0xFFU));
+        }
+    };
+    append_u32(period);
+    append_u32(1U);
+    for (std::size_t index = 0U; index < period; ++index) {
+        payload.push_back(static_cast<std::byte>(static_cast<unsigned char>(decoded[index])));
+    }
+    append_u32(period + 512U);
+    payload.push_back(static_cast<std::byte>(static_cast<unsigned char>(decoded[period + 512U])));
+
+    const auto root = test_temp_dir("suzip-long-sparse-v7");
+    const auto archive = root / "long.suzip";
+    write_encoded_test_archive(archive, payload, decoded, superzip::BlockKind::GpuLongSparsePattern, 7U);
+    REQUIRE_EQ(read_test_archive_index(archive).version, 7U);
+    for (const bool hip : {false, true}) {
+        if (hip && !superzip::query_gpu_info().available) {
+            continue;
+        }
+        superzip::ExtractOptions options;
+        options.force_cpu = !hip;
+        options.gpu_required = hip;
+        REQUIRE_EQ(superzip::verify_suzip(archive, options).gpu_used, hip);
+        const auto destination = root / (hip ? "gpu" : "cpu");
+        REQUIRE_EQ(superzip::extract_suzip(archive, destination, options).gpu_used, hip);
+        std::ifstream restored(destination / "data.bin", std::ios::binary);
+        REQUIRE_TRUE(restored.is_open());
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()), decoded);
+    }
+    auto invalid = payload;
+    invalid.back() = payload[superzip::kSparsePatternHeaderBytes + 512U];
+    const auto corrupt = root / "invalid.suzip";
+    write_encoded_test_archive(corrupt, invalid, decoded, superzip::BlockKind::GpuLongSparsePattern, 7U);
+    superzip::ExtractOptions options;
+    options.force_cpu = true;
+    options.gpu_required = false;
+    bool rejected = false;
+    try {
+        (void)superzip::verify_suzip(corrupt, options);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    const auto invalid_destination = root / "invalid-output";
+    rejected = false;
+    try {
+        (void)superzip::extract_suzip(corrupt, invalid_destination, options);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(invalid_destination / "data.bin"));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Ensure the production writer promotes a long-sparse HIP archive to v7 and publishes verified bytes.
+// Inputs: A 4 MiB file with a seeded 256 KiB motif and one mutation in each later record.
+// Outputs: The archive has a v7 long-sparse block and CPU/HIP verification and CPU extraction preserve the file.
+TEST_CASE(suzip_long_sparse_pattern_writer_selects_v7) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::size_t period = 256U * 1024U;
+    constexpr std::size_t block_bytes = 4U * 1024U * 1024U;
+    std::vector<std::byte> source(block_bytes);
+    std::uint32_t state = 0xC67A349DU;
+    for (std::size_t index = 0U; index < period; ++index) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        source[index] = static_cast<std::byte>(state >> 24U);
+    }
+    for (std::size_t index = period; index < source.size(); ++index) {
+        source[index] = source[index % period];
+    }
+    for (std::size_t record = 1U; record < source.size() / period; ++record) {
+        source[record * period + 1024U] ^= std::byte{0xFF};
+    }
+    const auto root = test_temp_dir("suzip-long-sparse-writer-v7");
+    const auto input = root / "source.bin";
+    {
+        std::ofstream file(input, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(source.data()), static_cast<std::streamsize>(source.size()));
+        REQUIRE_TRUE(static_cast<bool>(file));
+    }
+    const auto archive = root / "archive.suzip";
+    superzip::CompressOptions compress;
+    compress.gpu_required = true;
+    compress.chunk_size = static_cast<std::uint32_t>(block_bytes);
+    compress.block_size = static_cast<std::uint32_t>(block_bytes);
+    compress.verify_after_write = true;
+    REQUIRE_TRUE(superzip::compress_suzip({input}, archive, compress).gpu_used);
+    const auto index = read_test_archive_index(archive);
+    REQUIRE_EQ(index.version, 7U);
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::GpuLongSparsePattern));
+    for (const bool hip : {false, true}) {
+        superzip::ExtractOptions verify;
+        verify.force_cpu = !hip;
+        verify.gpu_required = hip;
+        REQUIRE_EQ(superzip::verify_suzip(archive, verify).gpu_used, hip);
+    }
+    superzip::ExtractOptions extract;
+    extract.force_cpu = true;
+    extract.gpu_required = false;
+    const auto output = root / "output";
+    REQUIRE_TRUE(!superzip::extract_suzip(archive, output, extract).gpu_used);
+    std::ifstream restored(output / "source.bin", std::ios::binary);
+    REQUIRE_TRUE(restored.is_open());
+    const std::vector<char> actual{std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()};
+    REQUIRE_EQ(actual.size(), source.size());
+    REQUIRE_TRUE(std::equal(actual.begin(), actual.end(), source.begin(), [](char left, std::byte right) {
+        return static_cast<unsigned char>(left) == static_cast<unsigned char>(right);
+    }));
+    restored.close();
     std::filesystem::remove_all(root);
 }
 

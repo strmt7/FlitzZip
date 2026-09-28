@@ -35,6 +35,7 @@ constexpr std::uint64_t kDeviceMemoryReserveFloorBytes = 64ULL * 1024ULL * 1024U
 // Version four extends the bounded GPU pattern motif; older archives retain their original limit.
 constexpr std::uint32_t kLegacyGpuPatternBytes = 256U;
 constexpr std::uint32_t kMaxGpuPatternBytes = 16U * 1024U;
+constexpr std::uint32_t kMaxGpuLongSparsePatternBytes = 1024U * 1024U;
 
 // GPU prefix blocks encode fixed-size segments with static or adaptive HIP prefix codecs.
 constexpr std::uint32_t kGpuPrefixSegmentBytes = 4U * 1024U;
