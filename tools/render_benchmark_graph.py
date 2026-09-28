@@ -253,7 +253,7 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
         12,
         fill="#53656d",
     )
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n"
+    return (ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n").replace(b"\n", b"\r\n")
 
 
 # Purpose: Validate input records and either create or byte-check the committed chart.

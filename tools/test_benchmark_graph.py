@@ -56,6 +56,8 @@ class BenchmarkGraphTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["metrics"]["GPU"]["throughput_gib_s"], 10 / 4.6)
         first = graph.render_svg(identity, rows)
         self.assertEqual(first, graph.render_svg(identity, rows))
+        self.assertTrue(first.endswith(b"\r\n"))
+        self.assertEqual(first.count(b"\n"), first.count(b"\r\n"))
         root = ET.fromstring(first)
         self.assertEqual(root.attrib["role"], "img")
         self.assertIn(b"Synthetic workloads only", first)
