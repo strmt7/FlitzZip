@@ -103,11 +103,11 @@ std::vector<std::byte> make_near_identical_records(std::size_t size) {
 }
 
 // Purpose: Exercise dictionary-local repetition without a block-wide periodic sparse pattern.
-// Inputs: A whole number of 64 KiB segments, each with a separately seeded 12 or 16 KiB record.
+// Inputs: A whole number of 64 KiB segments, each with a separately seeded 12 KiB, 13,003-byte, or 16 KiB record.
 // Outputs: Returns near-identical records per segment with no matching bases between adjacent segments.
 std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t record_bytes = 16U * 1024U) {
     constexpr std::size_t segment_bytes = kSegmentBytes;
-    REQUIRE_TRUE(record_bytes == 12U * 1024U || record_bytes == 16U * 1024U);
+    REQUIRE_TRUE(record_bytes == 12U * 1024U || record_bytes == 13003U || record_bytes == 16U * 1024U);
     std::vector<std::byte> input(size);
     for (std::size_t segment = 0; segment < size / segment_bytes; ++segment) {
         const auto base = segment * segment_bytes;
@@ -154,6 +154,36 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
             REQUIRE_EQ(telemetry.kernel_launches, 4U);
             REQUIRE_EQ(telemetry.dictionary_blocks, 1U);
         }
+        for (const bool hip : {false, true}) {
+            auto decode_options = options;
+            decode_options.require_gpu = hip;
+            decode_options.force_cpu = !hip;
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_EQ(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, decode_options), hip);
+            REQUIRE_EQ(decoded, input);
+        }
+    }
+}
+
+// Purpose: Catch dictionary screening that misses useful repeats when the record period is off the sampling grid.
+// Inputs: Independently seeded 13,003-byte records within 64 KiB segments of a 1 MiB required-HIP block.
+// Outputs: Requires a materially smaller dictionary block at low/default/high effort and exact CPU/HIP read-back.
+TEST_CASE(dictionary_off_grid_segmented_records_roundtrip) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const auto input = make_segmented_records(1024U * 1024U, 13003U);
+    for (const int level : {1, 5, 9}) {
+        superzip::GpuCodecOptions options;
+        options.block_size = static_cast<std::uint32_t>(input.size());
+        options.compression_level = level;
+        options.require_gpu = true;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_TRUE(encoded.payload.size() < input.size() / 2U);
+        std::cout << "dictionary_off_grid_case level=" << level << " input_bytes=" << input.size()
+                  << " payload_bytes=" << encoded.payload.size() << " memory_only=true disk_write_bytes=0\n";
         for (const bool hip : {false, true}) {
             auto decode_options = options;
             decode_options.require_gpu = hip;

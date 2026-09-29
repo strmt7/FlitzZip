@@ -102,7 +102,7 @@ std::vector<std::uint16_t> sampled_batch_distances(std::span<const std::byte> in
 
 // Purpose: Screen baseline blocks before allocating a dictionary search workspace.
 // Inputs: Source bytes, their current GPU-native descriptor, and requested effort level.
-// Outputs: Returns true when a dictionary candidate can plausibly improve encoded size.
+// Outputs: Returns true when sampled repeats or an off-grid periodic segment can plausibly improve encoded size.
 bool should_try_dictionary(std::span<const std::byte> input, const BlockDescriptor& baseline, int level) {
     if (input.size() < 4096U || baseline.encoded_len == 0U ||
         (baseline.kind != BlockKind::Raw && baseline.kind != BlockKind::GpuPrefix &&
@@ -113,7 +113,10 @@ bool should_try_dictionary(std::span<const std::byte> input, const BlockDescript
     if (level < 7 && baseline.encoded_len <= input.size() / 2U) {
         return false;
     }
-    return has_dictionary_sample_repeats(input);
+    if (has_dictionary_sample_repeats(input)) {
+        return true;
+    }
+    return sampled_periodic_distance(input.first(std::min<std::size_t>(input.size(), kSegmentBytes))) != 0U;
 }
 
 // Purpose: Append a bounded little-endian segment offset to a native dictionary block payload.
