@@ -166,7 +166,7 @@ __device__ std::byte gpu_adaptive_prefix_decode_byte(const std::byte* codebook, 
 // storage, and `errors` receives one grammar result per plan. Outputs: Writes valid bytes and flags malformed plans.
 __global__ void materialize_prefix_segments_kernel(const std::byte* payload, const PrefixDecodeSegment* plans,
                                                    std::uint32_t plan_count, std::byte* output, std::uint32_t* errors) {
-    const auto plan_index = static_cast<std::uint32_t>(blockIdx.x);
+    const auto plan_index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
     if (plan_index >= plan_count) {
         return;
     }
@@ -989,8 +989,11 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
               "hipMemcpy prefix decode plans");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
     auto events = make_hip_event_pair("create materialize_prefix_segments_kernel events");
-    launch_measured_kernel(materialize_prefix_segments_kernel, static_cast<unsigned int>(plans.size()), 1, 0,
-                           hipStreamPerThread, events, "launch materialize_prefix_segments_kernel", device_payload,
+    // Two lanes reduced gfx1201 decode time; 32- and 64-lane launches regressed on the measured workload.
+    constexpr unsigned int kDecodeThreads = 2U;
+    const auto decode_blocks = (plans.size() + kDecodeThreads - 1U) / kDecodeThreads;
+    launch_measured_kernel(materialize_prefix_segments_kernel, static_cast<unsigned int>(decode_blocks), kDecodeThreads,
+                           0, hipStreamPerThread, events, "launch materialize_prefix_segments_kernel", device_payload,
                            device_plans.get(), static_cast<std::uint32_t>(plans.size()), device_output,
                            device_errors.get());
     finish_measured_kernel(telemetry, events, "synchronize materialize_prefix_segments_kernel");
