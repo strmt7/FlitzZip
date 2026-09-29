@@ -126,6 +126,21 @@ class ComparisonGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "recorded command"):
             graph.summarize(record)
 
+    # Purpose: Ensure effort-specific records cannot be silently labeled as a different setting.
+    # Inputs: One level-9 fixture with exact commands and one deliberately mismatched expectation.
+    # Outputs: Level 9 validates; default level 5 rejects it.
+    def test_explicit_effort_contract(self) -> None:
+        record = fixture()
+        record["settings"]["level"] = 9
+        for case in record["cases"]:
+            for result in case["results"]:
+                result["create_argv"], result["extract_argv"] = command_templates(
+                    result["tool"], case["format"], tuple(case["files"]), 9
+                )
+        graph.summarize(record, expected_level=9)
+        with self.assertRaisesRegex(ValueError, "settings differ"):
+            graph.summarize(record)
+
     # Purpose: Prove exact sizes, medians, accessibility text, and byte-stable SVG output.
     # Inputs: One complete synthetic record.
     # Outputs: Three rows and one deterministic parsed SVG.

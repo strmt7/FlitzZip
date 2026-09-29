@@ -48,9 +48,11 @@ def matching_command(recorded: object, expected: list[str]) -> bool:
 
 
 # Purpose: Reject unreviewed, incomplete, or scientifically incomparable records.
-# Inputs: Parsed comparison record with an immutable source and full Silesia manifest.
+# Inputs: Parsed comparison record, expected effort, immutable source, and full Silesia manifest.
 # Outputs: Returns ordered case rows with medians/ranges and exact archive bytes.
-def summarize(record: dict) -> tuple[str, list[dict]]:
+def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
+    if expected_level not in (1, 3, 5, 7, 9):
+        raise ValueError("unsupported comparison effort")
     if record.get("schema_version") != 1 or record.get("benchmark_kind") != "archive_application_comparison":
         raise ValueError("unsupported comparison schema")
     if (
@@ -152,7 +154,7 @@ def summarize(record: dict) -> tuple[str, list[dict]]:
     settings = record.get("settings")
     if (
         not isinstance(settings, dict)
-        or settings.get("level") != 5
+        or settings.get("level") != expected_level
         or settings.get("warmups_per_command") != 1
         or settings.get("order") != "alternating AB/BA"
         or settings.get("cache") != "warm"
@@ -160,6 +162,9 @@ def summarize(record: dict) -> tuple[str, list[dict]]:
         raise ValueError("comparison settings differ from declared method")
     if type(settings.get("runs")) is not int or not 5 <= settings["runs"] <= 10:
         raise ValueError("comparison run count is missing or too small")
+    pause = settings.get("round_pause_ms", 0)
+    if type(pause) is not int or not 0 <= pause <= 1000:
+        raise ValueError("invalid inter-round pause")
     cases = record.get("cases")
     if not isinstance(cases, list) or len(cases) != len(CASES):
         raise ValueError("comparison case set is incomplete")
@@ -201,7 +206,7 @@ def summarize(record: dict) -> tuple[str, list[dict]]:
         metrics = []
         for item in results:
             tool = item["tool"]
-            create, extract = command_templates(tool, fmt, file_names)
+            create, extract = command_templates(tool, fmt, file_names, expected_level)
             if not matching_command(item.get("create_argv"), create) or not matching_command(
                 item.get("extract_argv"), extract
             ):

@@ -25,6 +25,20 @@ published performance measurements.
 - [Hyperfine's documentation](https://github.com/sharkdp/hyperfine#readme)
   explains warmups, cache effects, per-run JSON, and outlier diagnostics.
   These are useful practices regardless of which timing harness runs a case.
+- [Phoronix/OpenBenchmarking's 7-Zip profile](https://openbenchmarking.org/test/pts/compress-7zip-1.8.0)
+  uses 7-Zip's built-in benchmark, at least three runs, and additional runs
+  when variability warrants it. Its MIPS rating is a hardware/codec workload,
+  not measured archive size or whole-application creation time.
+  [The Zstd profile](https://openbenchmarking.org/test/pts/compress-zstd)
+  likewise measures in-memory codec throughput. The
+  [Phoronix Windows instructions](https://github.com/phoronix-test-suite/phoronix-test-suite/blob/master/documentation/phoronix-test-suite.md)
+  require PHP and Cygwin for profile setup, so this Windows-native project
+  does not make that stack part of its production benchmark harness.
+- [lzbench](https://github.com/inikep/lzbench) is an in-memory multi-codec
+  comparator with timed loops and round-trip verification. It requires codecs
+  to be integrated into its binary; it cannot measure SuperZip's application,
+  archive container, or required-HIP path without a maintained integration.
+  Its results are contextual, not a substitute for archive measurements.
 - The [Silesia corpus author](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia)
   publishes file descriptions, exact byte counts, and original MD5 digests.
   [Canterbury](https://corpus.canterbury.ac.nz/descriptions/) explains why
@@ -76,6 +90,16 @@ Equal numeric levels across tools do **not** mean equal algorithmic effort or
 equal compression strength. Compare time against achieved bytes, not speed at
 an allegedly equivalent level. A tool's built-in benchmark is contextual
 hardware data only and must not be plotted as product archive throughput.
+
+The effort study uses levels 1, 3, 5, 7, and 9 for each supported writer.
+Each setting is a **tool-local control**, not equivalent work across tools:
+SuperZip's `.zst` levels map to Zstandard backend efforts differently from
+the official CLI, and `.suzip` has its own two-tier HIP effort policy. The
+graph uses achieved whole-archive bytes and whole-command time, not numeric
+level as a proxy for quality. It may show same-size plateaus; no result is
+altered to make every control produce a distinct size. Native `.suzip`
+forced-CPU versus required-HIP effort sweeps are separately labeled and
+RAM-only, never pooled with compatibility-format sizes.
 
 ## Execution And Correctness
 
@@ -143,6 +167,28 @@ energy efficiency. The reference archive may favor one decoder's optimized
 bitstream; a broad decoder-ranking claim needs a second crossed reference.
 No overall score may conceal a worse size or extraction result.
 
+For the multi-effort chart, increase to **at least ten** timed runs per point
+and direction. Report the observed range alongside the median. A short
+single invocation is not itself an accuracy failure when timer resolution is
+fine, but few samples or substantial run-to-run spread are. Recheck one
+representative level-5 case with official Hyperfine using a warmup, automatic
+duration-based repetitions (at least ten), and exported individual timings.
+State its version, binary SHA-256, timer boundary, setup command, and any
+differences in run ordering. Hyperfine timing is a cross-check; the primary
+hash-checked AB/BA harness remains authoritative for archive bytes and
+correctness. Do not combine samples from the two timing harnesses or silently
+replace noisy values. If their distributions disagree materially, investigate
+host load, cache state, output cleanup, shell startup, and process behavior
+before publishing a speed conclusion.
+
+The effort sweep waits 250 ms after each paired filesystem round, outside the
+timer, including after its warmup round. This small fixed rest limits
+back-to-back write bursts and gives caches a brief recovery opportunity; it
+does not prove a cold cache or that SSD write caching never saturates. The
+source/input cache remains deliberately warm. Resource snapshots and repeated
+timings are still needed to detect sustained contention. The separate native
+10 GiB RAM-only CPU/GPU suite does not insert a disk-oriented cooldown.
+
 ## Graph And Publication Contract
 
 The comparison graph must separate format and corpus, show both compression
@@ -152,6 +198,15 @@ compression-time scatter is appropriate for multiple effort points, with each
 point labeled by tool and setting and non-dominated points identified only
 within the same format/corpus. Use accessible color plus labels, not color
 alone. Do not crop axes to exaggerate narrow differences.
+
+The effort graph places exact archive size on a zero-origin horizontal axis
+and whole-command compression seconds on an explicitly labeled logarithmic
+vertical axis because maximum Zstandard effort can be orders of magnitude
+slower than low effort. Per-point observed min/max whiskers show timing
+dispersion. Dark outlines mark **measured** Pareto points (no other tested
+point is both smaller and faster); they are not statistical significance
+claims, and the frontier is recalculated per input/format only. Exact bytes
+and median/range seconds remain visible as a table next to each panel.
 
 Raw JSON records contain the full commands, file manifest, tool and source
 hashes, all individual timings, correctness outcomes, host context, and

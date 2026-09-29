@@ -11,9 +11,11 @@ on:
       - resources/benchmarks/**
       - tools/run_archive_comparison.py
       - tools/render_comparison_graph.py
+      - tools/render_tradeoff_graph.py
       - tools/render_benchmark_graph.py
       - tools/test_archive_comparison.py
       - tools/test_comparison_graph.py
+      - tools/test_tradeoff_graph.py
       - tools/test_benchmark_graph.py
   pull_request:
     paths:
@@ -24,9 +26,11 @@ on:
       - resources/benchmarks/**
       - tools/run_archive_comparison.py
       - tools/render_comparison_graph.py
+      - tools/render_tradeoff_graph.py
       - tools/render_benchmark_graph.py
       - tools/test_archive_comparison.py
       - tools/test_comparison_graph.py
+      - tools/test_tradeoff_graph.py
       - tools/test_benchmark_graph.py
   workflow_dispatch:
 
@@ -51,7 +55,9 @@ jobs:
         with:
           python-version: "3.14.7"
       - name: Test graph validation
-        run: python -m unittest tools.test_benchmark_graph tools.test_archive_comparison tools.test_comparison_graph
+        run: >-
+          python -m unittest tools.test_benchmark_graph tools.test_archive_comparison
+          tools.test_comparison_graph tools.test_tradeoff_graph
       - name: Generate and verify README graph
         shell: bash
         run: |
@@ -80,3 +86,24 @@ jobs:
           cmp "$RUNNER_TEMP/comparison.svg" resources/benchmarks/application-comparison.svg
           grep -Fq 'resources/benchmarks/application-comparison.svg' README.md
           grep -Fq 'docs/comparative-benchmark-methodology.md' README.md
+      - name: Regenerate reviewed effort tradeoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t records < <(find docs/benchmarks/data -maxdepth 1 -type f \
+            -name 'comparison-silesia-effort-L*.json' -print | LC_ALL=C sort)
+          if [[ ${#records[@]} -eq 0 ]]; then
+            echo 'No reviewed effort sweep yet; renderer unit tests passed.'
+            exit 0
+          fi
+          if [[ ${#records[@]} -ne 5 ]]; then
+            echo 'Incomplete reviewed effort sweep.' >&2
+            exit 1
+          fi
+          arguments=()
+          for record in "${records[@]}"; do
+            arguments+=(--input "$record")
+          done
+          python -m tools.render_tradeoff_graph "${arguments[@]}" --output "$RUNNER_TEMP/tradeoff.svg"
+          cmp "$RUNNER_TEMP/tradeoff.svg" resources/benchmarks/effort-tradeoff.svg
+          grep -Fq 'resources/benchmarks/effort-tradeoff.svg' README.md

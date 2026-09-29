@@ -106,11 +106,13 @@ def run(args: list[str], cwd: Path, timed: bool = True) -> float:
 
 
 # Purpose: Construct explicit production commands without invoking a shell.
-# Inputs: Product names, case format/files, archive path, and output directory.
+# Inputs: Product names, case format/files, archive path, output directory, and explicit effort.
 # Outputs: Returns the create and extract argument vectors.
 def commands(
-    tool: str, fmt: str, files: tuple[str, ...], archive: Path, target: Path, binaries: dict
+    tool: str, fmt: str, files: tuple[str, ...], archive: Path, target: Path, binaries: dict, level: int = 5
 ) -> tuple[list[str], list[str]]:
+    if level not in (1, 3, 5, 7, 9):
+        raise ValueError(f"unsupported comparison effort: {level}")
     if tool == "SuperZip":
         create = [
             str(binaries[tool]),
@@ -120,15 +122,25 @@ def commands(
             "--output",
             str(archive),
             "--compression-level",
-            "5",
+            str(level),
             *files,
         ]
         extract = [str(binaries[tool]), "extract", "--format", fmt, "--output", str(target), str(archive)]
     elif tool == "7-Zip" and fmt == "zip":
-        create = [str(binaries[tool]), "a", "-tzip", "-mm=Deflate", "-mx=5", "-mmt=on", "-y", str(archive), *files]
+        create = [
+            str(binaries[tool]),
+            "a",
+            "-tzip",
+            "-mm=Deflate",
+            f"-mx={level}",
+            "-mmt=on",
+            "-y",
+            str(archive),
+            *files,
+        ]
         extract = [str(binaries[tool]), "x", str(archive), f"-o{target}", "-y"]
     elif tool == "Zstd" and fmt == "zst" and len(files) == 1:
-        create = [str(binaries[tool]), "-5", "-q", "-f", "-o", str(archive), files[0]]
+        create = [str(binaries[tool]), f"-{level}", "-q", "-f", "-o", str(archive), files[0]]
         extract = [str(binaries[tool]), "-d", "-q", "-f", "-o", str(target / files[0]), str(archive)]
     else:
         raise ValueError(f"unsupported tool/format pairing: {tool}/{fmt}")
@@ -136,11 +148,11 @@ def commands(
 
 
 # Purpose: Preserve exact switches while omitting machine-specific absolute paths.
-# Inputs: One supported tool/format case and its source filenames.
+# Inputs: One supported tool/format case, its source filenames, and explicit effort.
 # Outputs: Returns portable create/extract argument vectors with path placeholders.
-def command_templates(tool: str, fmt: str, files: tuple[str, ...]) -> tuple[list[str], list[str]]:
+def command_templates(tool: str, fmt: str, files: tuple[str, ...], level: int = 5) -> tuple[list[str], list[str]]:
     binaries = {name: Path(f"{{{name}}}") for name in SOURCES}
-    create, extract = commands(tool, fmt, files, Path("{archive}"), Path("{output}"), binaries)
+    create, extract = commands(tool, fmt, files, Path("{archive}"), Path("{output}"), binaries, level)
     return create, extract
 
 
@@ -265,9 +277,18 @@ def discard(path: Path, owned_root: Path) -> None:
 
 
 # Purpose: Time one alternating, independently decoded application case.
-# Inputs: Case contract, binaries, source directory, five-run count, and verified hashes.
+# Inputs: Case contract, binaries, source directory, run count, hashes, effort, and inter-round pause.
 # Outputs: Returns all size, timing, and round-trip evidence for one case.
-def measure_case(case: tuple, binaries: dict, corpus: Path, runs: int, manifest: dict, work_root: Path) -> dict:
+def measure_case(
+    case: tuple,
+    binaries: dict,
+    corpus: Path,
+    runs: int,
+    manifest: dict,
+    work_root: Path,
+    level: int = 5,
+    round_pause_ms: int = 250,
+) -> dict:
     name, fmt, files, tools = case
     input_bytes = sum(manifest[file]["bytes"] for file in files)
     if input_bytes > 64 * 1024 * 1024:
@@ -284,7 +305,7 @@ def measure_case(case: tuple, binaries: dict, corpus: Path, runs: int, manifest:
         for tool in tools
     }
     for tool in tools:
-        create, extract = command_templates(tool, fmt, files)
+        create, extract = command_templates(tool, fmt, files, level)
         results[tool]["create_argv"] = create
         results[tool]["extract_argv"] = extract
     with tempfile.TemporaryDirectory(prefix=f"comparison-{name}-", dir=work_root) as temporary:
@@ -296,14 +317,14 @@ def measure_case(case: tuple, binaries: dict, corpus: Path, runs: int, manifest:
                 round_dir = owned / f"create-{iteration}-{tool}"
                 round_dir.mkdir()
                 archive = round_dir / ("case.zip" if fmt == "zip" else f"{files[0]}.zst")
-                create, _ = commands(tool, fmt, files, archive, round_dir / "unused", binaries)
+                create, _ = commands(tool, fmt, files, archive, round_dir / "unused", binaries, level)
                 elapsed = run(create, corpus, timed=iteration >= 0)
                 if not archive.is_file() or archive.stat().st_size <= 0:
                     raise RuntimeError(f"missing archive: {name}/{tool}")
                 other = next(candidate for candidate in tools if candidate != tool)
                 independent_dir = round_dir / "independent"
                 independent_dir.mkdir()
-                _, independent_extract = commands(other, fmt, files, archive, independent_dir, binaries)
+                _, independent_extract = commands(other, fmt, files, archive, independent_dir, binaries, level)
                 run(independent_extract, corpus, timed=False)
                 verify_tree(independent_dir, files, manifest)
                 discard(independent_dir, owned)
@@ -316,6 +337,8 @@ def measure_case(case: tuple, binaries: dict, corpus: Path, runs: int, manifest:
                     exemplars[tool] = archive
                 else:
                     discard(round_dir, owned)
+            if iteration < runs - 1:
+                time.sleep(round_pause_ms / 1000)
         reference_tool = tools[1]
         reference_archive = exemplars[reference_tool]
         reference_sha = digest(reference_archive)
@@ -325,12 +348,14 @@ def measure_case(case: tuple, binaries: dict, corpus: Path, runs: int, manifest:
             for tool in order:
                 target = owned / f"extract-{iteration}-{tool}"
                 target.mkdir()
-                _, extract = commands(tool, fmt, files, reference_archive, target, binaries)
+                _, extract = commands(tool, fmt, files, reference_archive, target, binaries, level)
                 elapsed = run(extract, corpus, timed=iteration >= 0)
                 verify_tree(target, files, manifest)
                 if iteration >= 0:
                     results[tool]["extract_seconds"].append(elapsed)
                 discard(target, owned)
+            if iteration < runs - 1:
+                time.sleep(round_pause_ms / 1000)
     for tool in tools:
         results[tool]["extract_reference_sha256"] = reference_sha
     return {
@@ -361,6 +386,7 @@ def source_identity(binary: Path) -> tuple[str, str, list[str]]:
         ".github/workflows/benchmark-graph.yml",
         "tools/run_archive_comparison.py",
         "tools/render_comparison_graph.py",
+        "tools/render_tradeoff_graph.py",
         "docs/comparative-benchmark-methodology.md",
     )
     dirty = [line[3:].replace("\\", "/") for line in status]
@@ -381,9 +407,13 @@ def main() -> int:
     parser.add_argument("--zstd", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--level", type=int, choices=(1, 3, 5, 7, 9), default=5)
+    parser.add_argument("--round-pause-ms", type=int, default=250)
     args = parser.parse_args()
     if args.runs < 5 or args.runs > 10:
         parser.error("publication requires 5-10 timed runs per direction")
+    if not 0 <= args.round_pause_ms <= 1000:
+        parser.error("round pause must be between 0 and 1000 ms")
     corpus = args.corpus.resolve(strict=True)
     binaries = {
         "SuperZip": args.superzip.resolve(strict=True),
@@ -415,9 +445,11 @@ def main() -> int:
     host_before = host_snapshot()
     cases = []
     for case in CASES:
-        print(f"measuring {case[0]} ({case[1]})", flush=True)
+        print(f"measuring {case[0]} ({case[1]}), level {args.level}", flush=True)
         resource_before = host_snapshot()
-        measured = measure_case(case, binaries, corpus, args.runs, manifest, output.parent)
+        measured = measure_case(
+            case, binaries, corpus, args.runs, manifest, output.parent, args.level, args.round_pause_ms
+        )
         measured["resource_before"] = resource_before
         measured["resource_after"] = host_snapshot()
         cases.append(measured)
@@ -463,12 +495,13 @@ def main() -> int:
         },
         "tools": tool_data,
         "settings": {
-            "level": 5,
+            "level": args.level,
             "cache": "warm",
             "warmups_per_command": 1,
             "order": "alternating AB/BA",
             "timer": "Python perf_counter around subprocess",
             "runs": args.runs,
+            "round_pause_ms": args.round_pause_ms,
         },
         "cases": cases,
     }
