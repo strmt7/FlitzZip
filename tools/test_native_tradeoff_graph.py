@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
+from tools.render_benchmark_graph import validate_record
 from tools.render_native_tradeoff_graph import LEVELS, collect, render
 from tools.test_benchmark_graph import fixture_record
 
@@ -28,6 +31,33 @@ def sweep_fixture() -> list[dict]:
 
 
 class NativeTradeoffGraphTests(unittest.TestCase):
+    # Purpose: Keep the published all-nine GPU size claim tied to one clean binary and checked evidence.
+    # Inputs: Five paired and four GPU-only reviewed native effort records.
+    # Outputs: Rejects missing, inconsistent, repeated-size, or mislabeled diagnostic evidence.
+    def test_reviewed_nine_level_gpu_sizes(self) -> None:
+        data = Path(__file__).resolve().parents[1] / "docs/benchmarks/data"
+        identity = None
+        sizes = {}
+        for level in range(1, 10):
+            suffix = f"effort-native-L{level}.json" if level in LEVELS else f"effort-native-diagnostic-L{level}.json"
+            record = json.loads((data / suffix).read_text(encoding="utf-8"))
+            current_identity, _ = validate_record(record, allow_dirty=False)
+            self.assertEqual(record["compression_level"], level)
+            self.assertEqual(record["profile"], "Mixed")
+            self.assertEqual(len(record["runs"]), 6 if level in LEVELS else 1)
+            if identity is None:
+                identity = current_identity
+            self.assertEqual(current_identity, identity)
+            gpu_runs = [run for run in record["runs"] if run["lane"] == "GPU"]
+            self.assertEqual(len(gpu_runs), 3 if level in LEVELS else 1)
+            self.assertEqual({run["block_size_kib"] for run in gpu_runs}, {16384})
+            self.assertEqual(len({run["archive_bytes"] for run in gpu_runs}), 1)
+            self.assertIs(type(gpu_runs[0]["archive_bytes"]), int)
+            self.assertGreater(gpu_runs[0]["archive_bytes"], 0)
+            sizes[level] = gpu_runs[0]["archive_bytes"]
+        self.assertEqual(len(set(sizes.values())), 9)
+        self.assertEqual(sizes[6] - sizes[5], 1660)
+
     # Purpose: Prove a complete sweep renders deterministically with accessible exact-size evidence.
     # Inputs: Same-host synthetic paired records at all five levels.
     # Outputs: Ten plotted points and byte-identical CRLF SVG renders.

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "suzip_ram",
+  "recorded_utc": "2026-09-29T15:10:47.7262411Z",
+  "source_commit": "464dbbc4050a88b881053f2e46c304cdce25888a",
+  "source_dirty": false,
+  "binary_sha256": "9f36903c69d7af8d3587f3333c08c04db3a95619902c512321c2def52f0869da",
+  "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor            ",
+  "gpu_model": "AMD Radeon RX 9070 XT",
+  "profile": "Mixed",
+  "size_mib": 10240,
+  "compression_level": 8,
+  "resource_sample_interval_ms": 100,
+  "runs": [
+    {
+      "lane": "GPU",
+      "iteration": 1,
+      "block_size_kib": 16384,
+      "input_bytes": 10737418240,
+      "output_bytes": 4526512440,
+      "archive_bytes": 4526524051,
+      "compress_seconds": 3.69539,
+      "source_generation_worker_seconds": 37.6934,
+      "codec_encode_worker_seconds": 50.0733,
+      "gpu_encode_stage_worker_seconds": {
+        "readiness": 9.21161,
+        "analysis": 0.011043,
+        "classification": 23.4006,
+        "prefix": 16.0869,
+        "sparse": 0.043199,
+        "dictionary": 0.17088,
+        "publication": 0.60581
+      },
+      "verify_seconds": 0.923168,
+      "extract_seconds": 2.16897,
+      "cpu_avg_pct": 63.653951740537146,
+      "cpu_peak_pct": 105.69634590347643,
+      "gpu_avg_pct": 38.59031918870572,
+      "gpu_peak_pct": 129.37294992804527,
+      "resource_sample_count": 54,
+      "gpu_sample_count": 52,
+      "resource_sample_mean_interval_ms": 129.08694074074072,
+      "gpu_kernel_launches": 440,
+      "gpu_kernel_ms": 2856.8,
+      "gpu_pattern_blocks": 160,
+      "gpu_prefix_blocks": 160,
+      "gpu_dictionary_blocks": 0,
+      "gpu_sparse_pattern_blocks": 0,
+      "memory_only": true,
+      "disk_write_bytes": 0
+    }
+  ]
+}
