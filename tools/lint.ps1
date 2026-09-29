@@ -194,6 +194,9 @@ try {
     if ($pythonFiles.Count -gt 0) {
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "ruff" -VenvPath $LintVenvPath) -Arguments (@("check") + $pythonFiles) -Label "python-ruff-check"
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "ruff" -VenvPath $LintVenvPath) -Arguments (@("format", "--check") + $pythonFiles) -Label "python-ruff-format"
+        if (@($pythonFiles | Where-Object { $_ -in @("tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py") }).Count -gt 0) {
+            Invoke-LintCommand -FilePath "py" -Arguments @("-3", "-m", "unittest", "tools.test_cocoindex_agent_search") -Label "cocoindex-wrapper-tests"
+        }
     } else {
         Write-Output "lint step=python-ruff skipped=no-python-files"
     }

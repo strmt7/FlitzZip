@@ -45,6 +45,10 @@ and capability limits in `docs/archive-format-support.md` and
   the existing native rendering system; read the GUI rules before UI changes.
 - Do not launch the GUI for routine automated work. For requested UI work,
   announce the smoke test first and do not build/package while its GUI runs.
+- Apply `.agents/skills/caveman/SKILL.md` to internal AI communication by
+  default. For broad conceptual code navigation, use
+  `.agents/skills/cocoindex-code-search/SKILL.md`; keep exact `rg` and direct
+  source reads authoritative. Neither skill changes product runtime behavior.
 
 ## Required Reading
 
