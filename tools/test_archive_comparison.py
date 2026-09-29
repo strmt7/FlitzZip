@@ -4,15 +4,58 @@ from __future__ import annotations
 
 import bz2
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools import run_archive_comparison as comparison
 
 
 class ComparisonRunnerTests(unittest.TestCase):
+    # Purpose: Require a real total-processor counter rather than a nullable per-CPU CIM field.
+    # Inputs: Simulated Windows performance-counter output, then a missing total-load value.
+    # Outputs: A valid snapshot passes and the missing counter fails closed.
+    def test_host_snapshot_requires_total_processor_load(self) -> None:
+        sample = {
+            "cpu_model": "Test CPU",
+            "cpu_cores": 8,
+            "cpu_threads": 16,
+            "gpu_model": "Test GPU",
+            "gpu_driver": "1",
+            "os_name": "Windows",
+            "os_build": "1",
+            "ram_bytes": 16 * 1024**3,
+            "ram_modules": 2,
+            "ram_configured_mts": 5200,
+            "storage_model": "Test SSD",
+            "cpu_load_percent": 2,
+            "free_ram_bytes": 8 * 1024**3,
+            "paging_pages_per_second": 0,
+            "disk_busy_percent": 0,
+            "gpu_engine_max_percent": 0,
+            "workspace_bus_type": "NVMe",
+        }
+        with patch.object(
+            comparison.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
+        ) as command:
+            self.assertEqual(comparison.host_snapshot()["cpu_load_percent"], 2)
+            self.assertIn("Win32_PerfFormattedData_PerfOS_Processor", command.call_args.args[0][-1])
+        sample["cpu_load_percent"] = None
+        with (
+            patch.object(
+                comparison.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
+            ),
+            self.assertRaisesRegex(RuntimeError, "missing required fields"),
+        ):
+            comparison.host_snapshot()
+
     # Purpose: Accept only an exact corpus payload with the author's hash.
     # Inputs: One temporary file and patched small-file manifest.
     # Outputs: Matching bytes pass; a one-byte edit fails.

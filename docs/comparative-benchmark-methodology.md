@@ -121,7 +121,9 @@ specific command. Do not report GPU memory from the 32-bit Windows
 For every case, retain pre/post CPU load, free RAM, paging rate, disk busy
 time, and GPU engine utilization, sampled outside timed commands. This is
 context for competing host activity, not continuous telemetry or proof of an
-idle machine. Record the measurement date, run order, command flags, corpus
+idle machine. CPU load comes from Windows' `_Total` formatted processor
+counter; a missing value fails the record rather than becoming a fictitious
+zero. Record the measurement date, run order, command flags, corpus
 hashes and bytes, individual timings, archive hashes and bytes, and source
 reference archive identity. Disclose any changed power plan, thermal limit,
 background workload, or observed throttling in the review notes; if unknown,
