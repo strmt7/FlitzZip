@@ -338,14 +338,23 @@ commands, hashes, host load, and limits. SuperZip is not uniformly faster or
 smaller: the official Zstd CLI was faster on both single-file cases. These
 compatibility-format results do not measure native HIP compression.
 
-![Measured native CPU and required-HIP archive size and throughput](resources/benchmarks/native-cpu-hip.svg)
+![Measured archive size versus creation time across five effort settings](resources/benchmarks/effort-tradeoff.svg)
+
+The [size-versus-time effort study](docs/benchmarks/comparison-effort-2026-09-29.md)
+compares SuperZip ZIP and ZST output with 7-Zip and Zstandard on the same
+Silesia inputs. Each point has ten timed runs, exact archive bytes, and
+independently verified extraction. Higher effort sometimes costs far more time
+for a smaller file; equal numeric levels do not imply equal work across tools.
+
+![Measured native CPU and GPU archive size and throughput](resources/benchmarks/native-cpu-hip.svg)
 
 This snapshot uses three paired RAM-only 10 GiB runs per case, 16 MiB blocks,
 an AMD Ryzen 9 9950X, and an AMD Radeon RX 9070 XT. It measures median
 encode, verify, and extract throughput on the synthetic profiles shown, from
 commit `fd92bc5c728443800040c93509c2cf249fb3a0a1`; the
 [reviewed records](docs/benchmarks/data/) include exact byte counts and binary
-hashes. HIP is slower on SegmentedRecords at level 1. Its device-event time
+hashes. GPU mode is slower on SegmentedRecords at level 1. It requires AMD HIP
+but still uses CPU work for orchestration and I/O. Its device-event time
 was unavailable, so that case supports wall-time comparisons only. These
 results do not predict performance on other files or hardware. The
 `benchmark-graph` workflow regenerates and checks the image from those records.

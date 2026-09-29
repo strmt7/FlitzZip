@@ -35,15 +35,16 @@ def collect(records: list[dict]) -> tuple[str, list[dict]]:
     if set(indexed) != set(LEVELS):
         raise ValueError("effort sweep is incomplete")
     first = indexed[LEVELS[0]]
+    stable_host = {
+        key: value for key, value in first.get("host", {}).items() if key not in ("resource_before", "resource_after")
+    }
     identity = (
         first.get("source_commit"),
         first.get("superzip_binary_sha256"),
         first.get("build"),
         first.get("corpus"),
         first.get("tools"),
-        first.get("host", {}).get("cpu"),
-        first.get("host", {}).get("gpu"),
-        first.get("host", {}).get("storage_model"),
+        stable_host,
     )
     panels = []
     for level in LEVELS:
@@ -54,9 +55,11 @@ def collect(records: list[dict]) -> tuple[str, list[dict]]:
             record.get("build"),
             record.get("corpus"),
             record.get("tools"),
-            record.get("host", {}).get("cpu"),
-            record.get("host", {}).get("gpu"),
-            record.get("host", {}).get("storage_model"),
+            {
+                key: value
+                for key, value in record.get("host", {}).items()
+                if key not in ("resource_before", "resource_after")
+            },
         )
         if actual_identity != identity:
             raise ValueError("effort records have different source, corpus, tool, build, or host identity")
@@ -130,6 +133,7 @@ def render(commit: str, panels: list[dict]) -> bytes:
             "viewBox": f"0 0 {width} {height}",
             "role": "img",
             "aria-labelledby": "title description",
+            "font-family": "Segoe UI, Arial, sans-serif",
         },
     )
     ET.SubElement(root, f"{{{SVG}}}title", {"id": "title"}).text = "Archive size versus compression time by effort"

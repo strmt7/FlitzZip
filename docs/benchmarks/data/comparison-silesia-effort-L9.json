@@ -1,0 +1,762 @@
+{
+  "benchmark_kind": "archive_application_comparison",
+  "build": {
+    "cmake_cache_sha256": "d2e58d8e56d7802a629efe6393028509106686c2efc005b6a2abeeba575acc74",
+    "configuration": "Release",
+    "generator": "Visual Studio 17 2022",
+    "hip_arch": "gfx1201",
+    "hip_enabled": true,
+    "platform": "x64"
+  },
+  "cases": [
+    {
+      "extract_reference_bytes": 18177358,
+      "extract_reference_sha256": "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+      "extract_reference_tool": "7-Zip",
+      "files": [
+        "dickens",
+        "ooffice",
+        "samba",
+        "xml",
+        "x-ray"
+      ],
+      "format": "zip",
+      "input_bytes": 51770558,
+      "name": "mixed-files",
+      "resource_after": {
+        "cpu_cores": 16,
+        "cpu_load_percent": 0,
+        "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+        "cpu_threads": 32,
+        "disk_busy_percent": 2,
+        "free_ram_bytes": 37740077056,
+        "gpu_driver": "32.0.31041.1004",
+        "gpu_engine_max_percent": 0.652807168050695,
+        "gpu_model": "AMD Radeon RX 9070 XT",
+        "os_build": "26200",
+        "os_name": "Microsoft Windows 11 Pro",
+        "paging_pages_per_second": 0,
+        "ram_bytes": 68305387520,
+        "ram_configured_mts": 5200,
+        "ram_modules": 2,
+        "storage_model": "Lexar SSD NM790 4TB",
+        "workspace_bus_type": "NVMe"
+      },
+      "resource_before": {
+        "cpu_cores": 16,
+        "cpu_load_percent": 0,
+        "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+        "cpu_threads": 32,
+        "disk_busy_percent": 0,
+        "free_ram_bytes": 37665738752,
+        "gpu_driver": "32.0.31041.1004",
+        "gpu_engine_max_percent": 0.6779710246298352,
+        "gpu_model": "AMD Radeon RX 9070 XT",
+        "os_build": "26200",
+        "os_name": "Microsoft Windows 11 Pro",
+        "paging_pages_per_second": 0,
+        "ram_bytes": 68305387520,
+        "ram_configured_mts": 5200,
+        "ram_modules": 2,
+        "storage_model": "Lexar SSD NM790 4TB",
+        "workspace_bus_type": "NVMe"
+      },
+      "results": [
+        {
+          "archive_bytes": [
+            19030687,
+            19030687,
+            19030687,
+            19030687,
+            19030687,
+            19030687,
+            19030687,
+            19030687,
+            19030687,
+            19030687
+          ],
+          "archive_sha256": [
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814",
+            "5c9394a4519aa2fbb351563fa9ecce8b99073d3ee9b21545ed18296b90ee9814"
+          ],
+          "compress_seconds": [
+            1.9101680999992823,
+            1.923612900001899,
+            1.9113462000022992,
+            1.9314866999993683,
+            1.9038290999997116,
+            1.9072154999994382,
+            1.9107589000013832,
+            1.9222212999993644,
+            1.901115699998627,
+            1.9091551000019535
+          ],
+          "create_argv": [
+            "{SuperZip}",
+            "compress",
+            "--format",
+            "zip",
+            "--output",
+            "{archive}",
+            "--compression-level",
+            "9",
+            "dickens",
+            "ooffice",
+            "samba",
+            "xml",
+            "x-ray"
+          ],
+          "extract_argv": [
+            "{SuperZip}",
+            "extract",
+            "--format",
+            "zip",
+            "--output",
+            "{output}",
+            "{archive}"
+          ],
+          "extract_reference_sha256": "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+          "extract_seconds": [
+            0.3424745999982406,
+            0.31216480000148294,
+            0.3148187999977381,
+            0.3352199000000837,
+            0.30771090000052936,
+            0.3096828999987338,
+            0.30916339999748743,
+            0.3075496999990719,
+            0.3292613999983587,
+            0.3050838000017393
+          ],
+          "independent_verified": true,
+          "tool": "SuperZip"
+        },
+        {
+          "archive_bytes": [
+            18177358,
+            18177358,
+            18177358,
+            18177358,
+            18177358,
+            18177358,
+            18177358,
+            18177358,
+            18177358,
+            18177358
+          ],
+          "archive_sha256": [
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+            "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f"
+          ],
+          "compress_seconds": [
+            6.012787100000423,
+            5.99149369999941,
+            5.970293700000184,
+            6.0057325000016135,
+            6.076712800000678,
+            6.0222608000003675,
+            6.002374400002736,
+            6.094619199997396,
+            5.957653199999186,
+            6.0056785000015225
+          ],
+          "create_argv": [
+            "{7-Zip}",
+            "a",
+            "-tzip",
+            "-mm=Deflate",
+            "-mx=9",
+            "-mmt=on",
+            "-y",
+            "{archive}",
+            "dickens",
+            "ooffice",
+            "samba",
+            "xml",
+            "x-ray"
+          ],
+          "extract_argv": [
+            "{7-Zip}",
+            "x",
+            "{archive}",
+            "-o{output}",
+            "-y"
+          ],
+          "extract_reference_sha256": "df5c788748c789f374b66ae14f4547935501496a24cd0efbe862a195e2734b3f",
+          "extract_seconds": [
+            0.1720577999985835,
+            0.17498350000096252,
+            0.17125820000001113,
+            0.17046970000228612,
+            0.17128520000187564,
+            0.17243790000065928,
+            0.17097460000150022,
+            0.17062959999748273,
+            0.17128880000018398,
+            0.17418560000078287
+          ],
+          "independent_verified": true,
+          "tool": "7-Zip"
+        }
+      ]
+    },
+    {
+      "extract_reference_bytes": 16735963,
+      "extract_reference_sha256": "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+      "extract_reference_tool": "Zstd",
+      "files": [
+        "mozilla"
+      ],
+      "format": "zst",
+      "input_bytes": 51220480,
+      "name": "mozilla",
+      "resource_after": {
+        "cpu_cores": 16,
+        "cpu_load_percent": 7,
+        "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+        "cpu_threads": 32,
+        "disk_busy_percent": 0,
+        "free_ram_bytes": 37690630144,
+        "gpu_driver": "32.0.31041.1004",
+        "gpu_engine_max_percent": 0.6700597539791139,
+        "gpu_model": "AMD Radeon RX 9070 XT",
+        "os_build": "26200",
+        "os_name": "Microsoft Windows 11 Pro",
+        "paging_pages_per_second": 0,
+        "ram_bytes": 68305387520,
+        "ram_configured_mts": 5200,
+        "ram_modules": 2,
+        "storage_model": "Lexar SSD NM790 4TB",
+        "workspace_bus_type": "NVMe"
+      },
+      "resource_before": {
+        "cpu_cores": 16,
+        "cpu_load_percent": 0,
+        "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+        "cpu_threads": 32,
+        "disk_busy_percent": 1,
+        "free_ram_bytes": 37776789504,
+        "gpu_driver": "32.0.31041.1004",
+        "gpu_engine_max_percent": 0.6811168693597184,
+        "gpu_model": "AMD Radeon RX 9070 XT",
+        "os_build": "26200",
+        "os_name": "Microsoft Windows 11 Pro",
+        "paging_pages_per_second": 0,
+        "ram_bytes": 68305387520,
+        "ram_configured_mts": 5200,
+        "ram_modules": 2,
+        "storage_model": "Lexar SSD NM790 4TB",
+        "workspace_bus_type": "NVMe"
+      },
+      "results": [
+        {
+          "archive_bytes": [
+            14950836,
+            14950836,
+            14950836,
+            14950836,
+            14950836,
+            14950836,
+            14950836,
+            14950836,
+            14950836,
+            14950836
+          ],
+          "archive_sha256": [
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8",
+            "68ddcdfb7163e9eea0d9962c73c10c4fdf82dc56b7622052cc4969968981abb8"
+          ],
+          "compress_seconds": [
+            11.528448900000512,
+            11.7634223999994,
+            11.55902960000094,
+            11.568408900002396,
+            11.610086600001523,
+            11.581137099998159,
+            11.505970199999865,
+            11.294624599999224,
+            11.664587799998117,
+            11.361561300000176
+          ],
+          "create_argv": [
+            "{SuperZip}",
+            "compress",
+            "--format",
+            "zst",
+            "--output",
+            "{archive}",
+            "--compression-level",
+            "9",
+            "mozilla"
+          ],
+          "extract_argv": [
+            "{SuperZip}",
+            "extract",
+            "--format",
+            "zst",
+            "--output",
+            "{output}",
+            "{archive}"
+          ],
+          "extract_reference_sha256": "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+          "extract_seconds": [
+            0.09149150000303052,
+            0.12028339999960735,
+            0.09071430000039982,
+            0.10194340000089142,
+            0.1235562999972899,
+            0.10044529999868246,
+            0.12972850000005565,
+            0.08945750000202679,
+            0.10121710000021267,
+            0.08962289999908535
+          ],
+          "independent_verified": true,
+          "tool": "SuperZip"
+        },
+        {
+          "archive_bytes": [
+            16735963,
+            16735963,
+            16735963,
+            16735963,
+            16735963,
+            16735963,
+            16735963,
+            16735963,
+            16735963,
+            16735963
+          ],
+          "archive_sha256": [
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+            "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f"
+          ],
+          "compress_seconds": [
+            0.22551060000114376,
+            0.21920440000030794,
+            0.22047110000130488,
+            0.21903279999969527,
+            0.22285099999862723,
+            0.2320069000015792,
+            0.22985940000216942,
+            0.2189116000008653,
+            0.21905030000198167,
+            0.2222991999988153
+          ],
+          "create_argv": [
+            "{Zstd}",
+            "-9",
+            "-q",
+            "-f",
+            "-o",
+            "{archive}",
+            "mozilla"
+          ],
+          "extract_argv": [
+            "{Zstd}",
+            "-d",
+            "-q",
+            "-f",
+            "-o",
+            "{output}\\mozilla",
+            "{archive}"
+          ],
+          "extract_reference_sha256": "3d09ba0ad269dd0eea86869a4a4a3eb918a24c190e602ec6d2e530bfc767c47f",
+          "extract_seconds": [
+            0.04248540000116918,
+            0.04335500000161119,
+            0.043411399998149136,
+            0.041969300000346266,
+            0.04258760000084294,
+            0.04212139999799547,
+            0.04285879999952158,
+            0.042934500001138076,
+            0.04398670000227867,
+            0.04325300000346033
+          ],
+          "independent_verified": true,
+          "tool": "Zstd"
+        }
+      ]
+    },
+    {
+      "extract_reference_bytes": 2247493,
+      "extract_reference_sha256": "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+      "extract_reference_tool": "Zstd",
+      "files": [
+        "nci"
+      ],
+      "format": "zst",
+      "input_bytes": 33553445,
+      "name": "nci",
+      "resource_after": {
+        "cpu_cores": 16,
+        "cpu_load_percent": 3,
+        "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+        "cpu_threads": 32,
+        "disk_busy_percent": 0,
+        "free_ram_bytes": 36658483200,
+        "gpu_driver": "32.0.31041.1004",
+        "gpu_engine_max_percent": 0.6280173060837243,
+        "gpu_model": "AMD Radeon RX 9070 XT",
+        "os_build": "26200",
+        "os_name": "Microsoft Windows 11 Pro",
+        "paging_pages_per_second": 0,
+        "ram_bytes": 68305387520,
+        "ram_configured_mts": 5200,
+        "ram_modules": 2,
+        "storage_model": "Lexar SSD NM790 4TB",
+        "workspace_bus_type": "NVMe"
+      },
+      "resource_before": {
+        "cpu_cores": 16,
+        "cpu_load_percent": 0,
+        "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+        "cpu_threads": 32,
+        "disk_busy_percent": 0,
+        "free_ram_bytes": 37739765760,
+        "gpu_driver": "32.0.31041.1004",
+        "gpu_engine_max_percent": 0.665930797123717,
+        "gpu_model": "AMD Radeon RX 9070 XT",
+        "os_build": "26200",
+        "os_name": "Microsoft Windows 11 Pro",
+        "paging_pages_per_second": 0,
+        "ram_bytes": 68305387520,
+        "ram_configured_mts": 5200,
+        "ram_modules": 2,
+        "storage_model": "Lexar SSD NM790 4TB",
+        "workspace_bus_type": "NVMe"
+      },
+      "results": [
+        {
+          "archive_bytes": [
+            1586505,
+            1586505,
+            1586505,
+            1586505,
+            1586505,
+            1586505,
+            1586505,
+            1586505,
+            1586505,
+            1586505
+          ],
+          "archive_sha256": [
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69",
+            "b44ddd329da3c07422be1245b6ec7dd4a403dfeba2b6ba0635e362484fce8c69"
+          ],
+          "compress_seconds": [
+            13.407691600001272,
+            13.70889790000001,
+            13.167792100000952,
+            13.660932500002673,
+            13.31708190000063,
+            13.395191600000544,
+            13.589499500001693,
+            13.947105400002329,
+            13.757086500001606,
+            13.791786699999648
+          ],
+          "create_argv": [
+            "{SuperZip}",
+            "compress",
+            "--format",
+            "zst",
+            "--output",
+            "{archive}",
+            "--compression-level",
+            "9",
+            "nci"
+          ],
+          "extract_argv": [
+            "{SuperZip}",
+            "extract",
+            "--format",
+            "zst",
+            "--output",
+            "{output}",
+            "{archive}"
+          ],
+          "extract_reference_sha256": "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+          "extract_seconds": [
+            0.06679889999941224,
+            0.06636109999817563,
+            0.05881310000040685,
+            0.055559299999004,
+            0.05996610000147484,
+            0.05922339999960968,
+            0.06706580000172835,
+            0.05846119999841903,
+            0.060311799999908544,
+            0.06786669999928563
+          ],
+          "independent_verified": true,
+          "tool": "SuperZip"
+        },
+        {
+          "archive_bytes": [
+            2247493,
+            2247493,
+            2247493,
+            2247493,
+            2247493,
+            2247493,
+            2247493,
+            2247493,
+            2247493,
+            2247493
+          ],
+          "archive_sha256": [
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+            "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064"
+          ],
+          "compress_seconds": [
+            0.09892849999960163,
+            0.09946259999924223,
+            0.09820419999959995,
+            0.09971829999994952,
+            0.10023250000085682,
+            0.10046269999656943,
+            0.11047250000046915,
+            0.10317740000027698,
+            0.09811890000128187,
+            0.10280129999955534
+          ],
+          "create_argv": [
+            "{Zstd}",
+            "-9",
+            "-q",
+            "-f",
+            "-o",
+            "{archive}",
+            "nci"
+          ],
+          "extract_argv": [
+            "{Zstd}",
+            "-d",
+            "-q",
+            "-f",
+            "-o",
+            "{output}\\nci",
+            "{archive}"
+          ],
+          "extract_reference_sha256": "97da04a1c6763f2f2ae64ffc651f4d53720ca5153a4784751dd1750cef98c064",
+          "extract_seconds": [
+            0.025915999998687766,
+            0.02510269999766024,
+            0.0264136999976472,
+            0.0245623999981035,
+            0.02352949999840348,
+            0.02945750000071712,
+            0.025016399999003625,
+            0.026933000001008622,
+            0.028173099999548867,
+            0.025969300000724616
+          ],
+          "independent_verified": true,
+          "tool": "Zstd"
+        }
+      ]
+    }
+  ],
+  "corpus": {
+    "files": [
+      {
+        "bytes": 10192446,
+        "download_sha256": "d4ed75f38f2e84e7ee61497cca0eb547937d8cc2991ee22e5775d6ad0b6fc85e",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/dickens.bz2",
+        "md5": "88334708559f6db57d79096bc0aca07e",
+        "name": "dickens",
+        "sha256": "b24c37886142e11d0ee687db6ab06f936207aa7f2ea1fd1d9a36763c7a507e6a"
+      },
+      {
+        "bytes": 51220480,
+        "download_sha256": "3f1375c1f9ec1a3d9cef9e9fe8dbdc3e8872c176590d8e06e14d507a6935b430",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/mozilla.bz2",
+        "md5": "c7789a2097f1ff944b0c737430a339b3",
+        "name": "mozilla",
+        "sha256": "657fc3764b0c75ac9de9623125705831ebbfbe08fed248df73bc2dc66e2a963b"
+      },
+      {
+        "bytes": 33553445,
+        "download_sha256": "5510d13d670be5bbcaf8e1c628a21a4913b3380a0de325cb1cf9010c562d2edb",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/nci.bz2",
+        "md5": "31f85bc8706f3c921104e7c169e2e2e1",
+        "name": "nci",
+        "sha256": "fc63a31770947b8c2062d3b19ca94c00485a232bb91b502021948fee983e1635"
+      },
+      {
+        "bytes": 6152192,
+        "download_sha256": "cc3873fadefb2b0cf64318fa517ef8dd6265808c3f4a602320673754a3ffd176",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/ooffice.bz2",
+        "md5": "573c4ae915e36631d8f2dcffb9b9b66d",
+        "name": "ooffice",
+        "sha256": "e7ee013880d34dd5208283d0d3d91b07f442e067454276095ded14f322a656eb"
+      },
+      {
+        "bytes": 21606400,
+        "download_sha256": "aeb137a6cae5174963dc218498d4fa1adeb8b6081f5eee470dac72cad433edae",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/samba.bz2",
+        "md5": "154eaea7ea70e89f6339ff0abf4112ca",
+        "name": "samba",
+        "sha256": "93ba07bc44d8267789c1d911992f40b089ffa2140b4a160fac11ccae9a40e7b2"
+      },
+      {
+        "bytes": 8474240,
+        "download_sha256": "1233211ff0d01c923f1b2d0b86d883a35b7326f58982a34d399621d85921deb2",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/x-ray.bz2",
+        "md5": "9baec32ad14ec3eff487d254382cb91c",
+        "name": "x-ray",
+        "sha256": "7de9fce1405dc44ae5e6813ed21cd5751e761bd4265655a005d39b9685d1c9ad"
+      },
+      {
+        "bytes": 5345280,
+        "download_sha256": "0aabaf9f4690cba2e8e8bb922cc386fc202e93bb1980747530cd8408a6ee4215",
+        "download_url": "https://sun.aei.polsl.pl/~sdeor/corpus/xml.bz2",
+        "md5": "9b09c0c80104adb8aae910b7d7db003e",
+        "name": "xml",
+        "sha256": "0e82e54e695c1938e4193448022543845b33020c8be6bf3bf3ead2224903e08c"
+      }
+    ],
+    "name": "Silesia selected files",
+    "source_url": "https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia"
+  },
+  "host": {
+    "cpu": "AMD Ryzen 9 9950X 16-Core Processor",
+    "cpu_cores": 16,
+    "cpu_threads": 32,
+    "gpu": "AMD Radeon RX 9070 XT",
+    "gpu_driver": "32.0.31041.1004",
+    "os": "Windows-11-10.0.26200-SP0",
+    "os_build": "26200",
+    "os_name": "Microsoft Windows 11 Pro",
+    "ram_bytes": 68305387520,
+    "ram_configured_mts": 5200,
+    "ram_modules": 2,
+    "resource_after": {
+      "cpu_cores": 16,
+      "cpu_load_percent": 0,
+      "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+      "cpu_threads": 32,
+      "disk_busy_percent": 0,
+      "free_ram_bytes": 36866064384,
+      "gpu_driver": "32.0.31041.1004",
+      "gpu_engine_max_percent": 0.6394497593509701,
+      "gpu_model": "AMD Radeon RX 9070 XT",
+      "os_build": "26200",
+      "os_name": "Microsoft Windows 11 Pro",
+      "paging_pages_per_second": 0,
+      "ram_bytes": 68305387520,
+      "ram_configured_mts": 5200,
+      "ram_modules": 2,
+      "storage_model": "Lexar SSD NM790 4TB",
+      "workspace_bus_type": "NVMe"
+    },
+    "resource_before": {
+      "cpu_cores": 16,
+      "cpu_load_percent": 1,
+      "cpu_model": "AMD Ryzen 9 9950X 16-Core Processor",
+      "cpu_threads": 32,
+      "disk_busy_percent": 3,
+      "free_ram_bytes": 37671665664,
+      "gpu_driver": "32.0.31041.1004",
+      "gpu_engine_max_percent": 0.6520952351225248,
+      "gpu_model": "AMD Radeon RX 9070 XT",
+      "os_build": "26200",
+      "os_name": "Microsoft Windows 11 Pro",
+      "paging_pages_per_second": 0,
+      "ram_bytes": 68305387520,
+      "ram_configured_mts": 5200,
+      "ram_modules": 2,
+      "storage_model": "Lexar SSD NM790 4TB",
+      "workspace_bus_type": "NVMe"
+    },
+    "storage_bus_type": "NVMe",
+    "storage_model": "Lexar SSD NM790 4TB",
+    "workspace_volume": "C:"
+  },
+  "measured_at_utc": "2026-09-29T12:03:46.906856+00:00",
+  "methodology": "docs/comparative-benchmark-methodology.md",
+  "schema_version": 1,
+  "settings": {
+    "cache": "warm",
+    "level": 9,
+    "order": "alternating AB/BA",
+    "round_pause_ms": 250,
+    "runs": 10,
+    "timer": "Python perf_counter around subprocess",
+    "warmups_per_command": 1
+  },
+  "source_commit": "33f71ee38ee3d3c394dcac2d25cb41d3610f1e67",
+  "source_dirty": false,
+  "superzip_binary_sha256": "1fb2432498fef27aad008d2641d4b8e85a88961f4ef210476525326f456d90b6",
+  "tools": [
+    {
+      "binary_sha256": "1fb2432498fef27aad008d2641d4b8e85a88961f4ef210476525326f456d90b6",
+      "name": "SuperZip",
+      "source_url": "https://github.com/strmt7/SuperZip",
+      "version": "SuperZip 0.5.0"
+    },
+    {
+      "binary_sha256": "edbee35370e14030e4c785cf88200f42dc651c1eb4217c1e3963c38a12f099b0",
+      "name": "7-Zip",
+      "source_url": "https://github.com/ip7z/7zip/releases/tag/26.03",
+      "version": "7-Zip (a) 26.03 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03"
+    },
+    {
+      "binary_sha256": "8076aae03feac7c66b319579e82172eed168deed2a3f25e5e2d3c60f55e84111",
+      "name": "Zstd",
+      "source_url": "https://github.com/facebook/zstd/releases/tag/v1.5.7",
+      "version": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***"
+    }
+  ],
+  "unrelated_dirty_count": 1
+}

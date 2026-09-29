@@ -48,13 +48,15 @@ class TradeoffGraphTests(unittest.TestCase):
         self.assertIn(b"logarithmic", image)
         self.assertIn(b"?>\r\n<svg", image)
         self.assertNotIn(b"\n", image.replace(b"\r\n", b""))
-        self.assertEqual(ET.fromstring(image).attrib["role"], "img")
+        root = ET.fromstring(image)
+        self.assertEqual(root.attrib["role"], "img")
+        self.assertIn("Segoe UI", root.attrib["font-family"])
 
     # Purpose: Prevent incomplete, dirty, or method-inconsistent effort evidence from publication.
     # Inputs: Independently corrupted sweep variants.
     # Outputs: Every invalid variant is rejected before rendering.
     def test_incomplete_or_mixed_evidence_is_rejected(self) -> None:
-        for mutation in ("missing", "duplicate", "short", "pause", "source", "command", "decode"):
+        for mutation in ("missing", "duplicate", "short", "pause", "source", "host", "command", "decode"):
             records = copy.deepcopy(sweep_fixture())
             if mutation == "missing":
                 records.pop()
@@ -66,6 +68,8 @@ class TradeoffGraphTests(unittest.TestCase):
                 records[0]["settings"]["round_pause_ms"] = 0
             elif mutation == "source":
                 records[1]["source_commit"] = "f" * 40
+            elif mutation == "host":
+                records[1]["host"]["gpu_driver"] = "other driver"
             elif mutation == "command":
                 records[2]["cases"][0]["results"][0]["create_argv"].append("--extra")
             else:
