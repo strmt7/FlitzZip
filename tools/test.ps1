@@ -58,6 +58,16 @@ foreach ($arguments in @(
 $configuredPackageVersion = Read-SuperZipCMakeCacheValue -BuildRoot $build -Name "SUPERZIP_PACKAGE_VERSION"
 Assert-SuperZipPackageVersionMatchesBuild -BuildRoot $build -PackageVersion $configuredPackageVersion
 
+$cli = Join-Path $build "$Configuration/superzip_cli.exe"
+$cliVersion = & $cli --version
+if ($LASTEXITCODE -ne 0 -or $cliVersion -ne "SuperZip $configuredPackageVersion") {
+    throw "CLI --version must report the configured package version and exit successfully."
+}
+$cliHelp = & $cli --help
+if ($LASTEXITCODE -ne 0 -or -not ($cliHelp -match "superzip_cli --version")) {
+    throw "CLI --help must advertise --version and exit successfully."
+}
+
 foreach ($invalidVersion in @("01.0.0", "0.1.0+build.1", "v0.1.0", "latest")) {
     $acceptedInvalidVersion = $false
     try {

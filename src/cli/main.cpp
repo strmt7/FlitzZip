@@ -92,6 +92,8 @@ void usage() {
     std::cout
         << "SuperZip CLI\n"
         << "Usage:\n"
+        << "  superzip_cli --help\n"
+        << "  superzip_cli --version\n"
         << "  superzip_cli gpu-info\n"
         << "  superzip_cli gpu-diagnostic [--seconds <1-30>] [--buffer-mib <16-512>] [--inner-iterations <1-4096>]\n"
         << "  superzip_cli dependency-check\n"
@@ -949,6 +951,18 @@ int run_verify_command(const std::vector<std::string>& args) {
 // Inputs: `args` is the full argument vector beginning with an informational command.
 // Outputs: Returns the command exit code or `std::nullopt` when `args[0]` is not informational.
 std::optional<int> run_info_command(const std::vector<std::string>& args) {
+    if (args[0] == "--help" || args[0] == "--version") {
+        if (args.size() != 1) {
+            usage();
+            return 2;
+        }
+        if (args[0] == "--help") {
+            usage();
+        } else {
+            std::cout << "SuperZip " << SUPERZIP_VERSION << "\n";
+        }
+        return 0;
+    }
     if (args[0] == "gpu-info") {
         const auto info = superzip::query_gpu_info();
         print_gpu_info(info);

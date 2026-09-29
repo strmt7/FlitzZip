@@ -401,11 +401,7 @@ def main() -> int:
     build = build_identity(binaries["SuperZip"])
     tool_data = []
     for name, path in binaries.items():
-        version_args = (
-            [str(path), "--help"]
-            if name == "SuperZip"
-            else ([str(path), "i"] if name == "7-Zip" else [str(path), "--version"])
-        )
+        version_args = [str(path), "--version"] if name != "7-Zip" else [str(path), "i"]
         version_output = subprocess.run(version_args, capture_output=True, text=True, errors="replace", timeout=20)
         if version_output.returncode:
             raise RuntimeError(f"could not read version of {name}")
