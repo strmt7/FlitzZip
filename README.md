@@ -328,6 +328,16 @@ weekly schedule, and manual dispatch.
 
 ## Benchmarking
 
+![Measured archive application comparison against 7-Zip and Zstandard](resources/benchmarks/application-comparison.svg)
+
+The [Silesia application comparison report](docs/benchmarks/comparison-silesia-2026-09-29.md)
+shows exact test-system specifications and five-run ZIP/Zstandard results.
+The [reviewed raw record](docs/benchmarks/data/comparison-silesia-current.json)
+and [comparison methodology](docs/comparative-benchmark-methodology.md) disclose
+commands, hashes, host load, and limits. SuperZip is not uniformly faster or
+smaller: the official Zstd CLI was faster on both single-file cases. These
+compatibility-format results do not measure native HIP compression.
+
 ![Measured native CPU and required-HIP archive size and throughput](resources/benchmarks/native-cpu-hip.svg)
 
 This snapshot uses three paired RAM-only 10 GiB runs per case, 16 MiB blocks,
