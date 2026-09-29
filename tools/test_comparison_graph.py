@@ -136,6 +136,8 @@ class ComparisonGraphTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["metrics"][0]["compression"][0], 1.02)
         image = graph.render(commit, rows)
         self.assertEqual(image, graph.render(commit, rows))
+        self.assertIn(b"?>\r\n<svg", image)
+        self.assertNotIn(b"\n", image.replace(b"\r\n", b""))
         root = ET.fromstring(image)
         self.assertEqual(root.attrib["role"], "img")
         self.assertIn(b"ranges are observed, not confidence intervals", image)

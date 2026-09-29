@@ -393,7 +393,7 @@ def render(commit: str, rows: list[dict]) -> bytes:
         12,
         color="#53656d",
     )
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n"
+    return (ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n").replace(b"\n", b"\r\n")
 
 
 # Purpose: Generate or byte-check the reviewed comparison chart.

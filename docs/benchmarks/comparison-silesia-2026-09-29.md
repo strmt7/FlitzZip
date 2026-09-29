@@ -27,8 +27,11 @@ The record includes the comparator executable hashes and the CMake cache
 digest. HIP being compiled in does not mean these compatibility-format
 commands used the GPU. No GPU acceleration is claimed for this study.
 SuperZip used its normal CLI thread behavior; 7-Zip was invoked with
-`-mmt=on`; Zstd had no explicit thread-count flag. All tools used a stated
-numeric level 5, which is **not** equal algorithmic effort across products.
+`-mmt=on`; Zstd had no explicit thread-count flag. The Zstd 1.5.7 CLI help
+states that its default is one compression thread, with separate I/O unless
+`--single-thread` is selected. These process pipelines are not identical.
+All tools used a stated numeric level 5, which is **not** equal algorithmic
+effort across products.
 
 ## Results
 
