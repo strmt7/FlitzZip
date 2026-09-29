@@ -136,11 +136,7 @@ def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
         if not isinstance(entry, dict) or entry.get("name") in by_name or entry.get("name") not in EXPECTED:
             raise ValueError("duplicate or unknown corpus file")
         name = entry["name"]
-        if (
-            (entry.get("bytes"), entry.get("md5")) != EXPECTED[name]
-            or not isinstance(entry.get("sha256"), str)
-            or not HEX64.fullmatch(entry["sha256"])
-        ):
+        if (entry.get("bytes"), entry.get("sha256")) != EXPECTED[name]:
             raise ValueError(f"corpus size or hash evidence differs: {name}")
         if (
             entry.get("download_url") != f"https://sun.aei.polsl.pl/~sdeor/corpus/{name}.bz2"

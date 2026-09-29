@@ -1,5 +1,6 @@
 #include "core/archive.hpp"
 #include "core/checksum.hpp"
+#include "core/huffman_lookup.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
 #include "gpu/gpu_codec.hpp"
@@ -420,7 +421,7 @@ TEST_CASE(suzip_gpu_huffman_replaces_static_prefix_when_smaller) {
 
 // Purpose: Demonstrate stronger native compression on data that the static low-byte code cannot compact.
 // Inputs: A deterministic 1 MiB high-byte alphabet encoded at all nine efforts, entirely in RAM.
-// Outputs: Reports exact payload sizes, requires adaptive gains above level one, and checks CPU/HIP roundtrips.
+// Outputs: Reports exact sizes, requires a full-sample Huffman gain, and checks CPU/HIP roundtrips.
 TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -432,7 +433,9 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
         byte = static_cast<std::byte>(201U + ((random >> 16U) & 3U));
     }
     std::size_t previous_bytes = input.size();
-    for (int level = 1; level <= 9; ++level) {
+    std::array<std::size_t, 9> encoded_sizes{};
+    std::size_t level_index = 0U;
+    for (const int level : std::array{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
         superzip::GpuCodecOptions options;
         options.require_gpu = true;
         options.compression_level = level;
@@ -440,9 +443,7 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
         REQUIRE_TRUE(encoded.gpu_used);
         REQUIRE_TRUE(encoded.payload.size() <= previous_bytes);
         previous_bytes = encoded.payload.size();
-        if (level >= 2) {
-            REQUIRE_TRUE(encoded.payload.size() < input.size() / 2U);
-        }
+        encoded_sizes[level_index++] = encoded.payload.size();
         std::vector<std::byte> decoded(input.size());
         REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
         REQUIRE_TRUE(decoded == input);
@@ -454,10 +455,31 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
         std::cout << "prefix_level_case level=" << level << " input_bytes=" << input.size()
                   << " output_bytes=" << encoded.payload.size() << " memory_only=true disk_write_bytes=0\n";
     }
+    REQUIRE_TRUE(std::all_of(encoded_sizes.begin() + 1, encoded_sizes.end(),
+                             [&](const std::size_t bytes) { return bytes < input.size() / 2U; }));
+    REQUIRE_TRUE(encoded_sizes.back() < encoded_sizes[2]);
+    REQUIRE_TRUE(encoded_sizes.back() < 280000U);
+}
+
+// Purpose: Accept complete sparse-alphabet Huffman lookups while rejecting uncovered or conflicting slots.
+// Inputs: A two-symbol 4096-entry lookup with individual malformed-entry mutations.
+// Outputs: Validates the version-eight trust boundary independently of GPU availability.
+TEST_CASE(suzip_gpu_huffman_sparse_lookup_validation) {
+    std::vector<std::byte> lookup(superzip::kGpuHuffmanLookupBytes);
+    for (std::size_t slot = 0U; slot < superzip::kGpuHuffmanLookupEntries; ++slot) {
+        lookup[slot * 2U] = static_cast<std::byte>(201U + (slot & 1U));
+        lookup[slot * 2U + 1U] = std::byte{1};
+    }
+    REQUIRE_TRUE(superzip::huffman_lookup_is_complete(lookup));
+    lookup[1] = std::byte{0};
+    REQUIRE_TRUE(!superzip::huffman_lookup_is_complete(lookup));
+    lookup[1] = std::byte{1};
+    lookup[0] = std::byte{202};
+    REQUIRE_TRUE(!superzip::huffman_lookup_is_complete(lookup));
 }
 
 // Purpose: Reject malformed version-eight Huffman lookup and segment metadata in both decoders.
-// Inputs: A real required-HIP Huffman block with invalid widths, a partial leaf, or an out-of-range offset.
+// Inputs: Fully populated and sparse-alphabet Huffman blocks with invalid widths, leaves, or offsets.
 // Outputs: CPU and GPU decode reject each mutation rather than publishing a partial result.
 TEST_CASE(suzip_gpu_huffman_corruption_is_rejected) {
     if (!superzip::query_gpu_info().available) {
@@ -471,36 +493,40 @@ TEST_CASE(suzip_gpu_huffman_corruption_is_rejected) {
     }
     superzip::GpuCodecOptions options;
     options.require_gpu = true;
-    options.compression_level = 5;
-    const auto encoded = superzip::encode_chunk(input, options);
-    REQUIRE_EQ(encoded.blocks.size(), 1U);
-    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuHuffman);
-    for (const int corruption : {0, 1, 2}) {
-        auto damaged = encoded.payload;
-        if (corruption == 0) {
-            for (std::size_t index = 1U; index < superzip::kGpuHuffmanLookupBytes; index += 2U) {
-                damaged[index] = std::byte{0};
+    for (const int level : {5, 9}) {
+        options.compression_level = level;
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuHuffman);
+        for (const int corruption : {0, 1, 2}) {
+            auto damaged = encoded.payload;
+            if (corruption == 0) {
+                for (std::size_t index = 1U; index < superzip::kGpuHuffmanLookupBytes; index += 2U) {
+                    damaged[index] = std::byte{0};
+                }
+            } else if (corruption == 1) {
+                const auto segment_count =
+                    (input.size() + superzip::kGpuPrefixSegmentBytes - 1U) / superzip::kGpuPrefixSegmentBytes;
+                const auto final_offset = superzip::kGpuHuffmanLookupBytes + segment_count * sizeof(std::uint32_t);
+                std::fill_n(damaged.begin() + static_cast<std::ptrdiff_t>(final_offset), 4U, std::byte{0xFF});
+            } else {
+                damaged[0] ^= std::byte{0x01};
             }
-        } else if (corruption == 1) {
-            const auto segment_count =
-                (input.size() + superzip::kGpuPrefixSegmentBytes - 1U) / superzip::kGpuPrefixSegmentBytes;
-            const auto final_offset = superzip::kGpuHuffmanLookupBytes + segment_count * sizeof(std::uint32_t);
-            std::fill_n(damaged.begin() + static_cast<std::ptrdiff_t>(final_offset), 4U, std::byte{0xFF});
-        } else {
-            damaged[0] ^= std::byte{0x01};
-        }
-        for (const bool force_cpu : {true, false}) {
-            options.force_cpu = force_cpu;
-            options.require_gpu = !force_cpu;
-            std::vector<std::byte> output(input.size());
-            bool rejected = false;
-            try {
-                (void)superzip::decode_chunk(damaged, encoded.blocks, output, options);
-            } catch (const superzip::ArchiveError&) {
-                rejected = true;
+            for (const bool force_cpu : {true, false}) {
+                options.force_cpu = force_cpu;
+                options.require_gpu = !force_cpu;
+                std::vector<std::byte> output(input.size());
+                bool rejected = false;
+                try {
+                    (void)superzip::decode_chunk(damaged, encoded.blocks, output, options);
+                } catch (const superzip::ArchiveError&) {
+                    rejected = true;
+                }
+                REQUIRE_TRUE(rejected);
             }
-            REQUIRE_TRUE(rejected);
         }
+        options.force_cpu = false;
+        options.require_gpu = true;
     }
 }
 

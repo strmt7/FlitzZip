@@ -59,8 +59,10 @@ multi-file ZIP case contains `dickens`, `ooffice`, `samba`, `xml`, and `x-ray`
 (51,770,558 input bytes in total). Single-file Zstandard cases use `mozilla`
 (51,220,480 bytes) and `nci` (33,553,445 bytes) separately. Do not relabel a
 subset as the full 211,938,580-byte Silesia corpus. Fetch from the author's
-links, check the published MD5 and locally recorded SHA-256 for each raw file,
-and retain the source URL and download digest in the run manifest. No corpus
+links and verify each raw file against the repository's pinned SHA-256 and
+exact byte count; the original MD5 values were used to corroborate the
+initial pins but are not the operational integrity gate. Retain the source
+URL and download SHA-256 in the run manifest. No corpus
 payload or generated archive belongs in Git.
 
 Each case stays below the repository's 64 MiB filesystem cap. This bounded

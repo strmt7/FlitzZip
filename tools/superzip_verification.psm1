@@ -413,12 +413,17 @@ function Get-SuperZipVerificationPlan {
         Add-SuperZipVerificationCommand -List $manual -Seen $manualSeen -Command (Get-SuperZipVerificationCommand -Id "ram-benchmark-sweep" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $benchmarkExpression) -Reason "performance-sensitive changes need the RAM-only CPU/GPU benchmark sweep before making speed claims" -Requirement "manual")
     }
 
+    $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^docs/benchmarks/', '^resources/benchmarks/',
+        '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison)\.py$'
+    )
     $workflows = New-Object System.Collections.ArrayList
     $longRunningWorkflows = New-Object System.Collections.ArrayList
     $workflowSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $longRunningSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($pair in @(
         @("lint", ($scope.touchesLintSurface -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
+        @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.touchesPerformance -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("windows-ci", ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.fullEscalationRequired)),
         @("security", ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("greenbone-openvas-vulnetix", ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),

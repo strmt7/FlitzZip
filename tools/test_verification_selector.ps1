@@ -147,9 +147,12 @@ foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", 
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "security-scan") "workflow changes must run security scan"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "lint") "workflow changes must wait for lint"
+Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "benchmark-graph") "workflow changes must wait for benchmark graph validation"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "security") "workflow changes must wait for security"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "scorecard") "workflow changes must wait for scorecard"
 Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must require post-push audit"
+$benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/benchmarks/data/effort-native-L5.json")
+Assert-Selector (Test-Workflow -Plan $benchmarkPlan -Name "benchmark-graph") "benchmark records must wait for graph regeneration"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tests") "workflow changes must test secret artifact redaction"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests") "workflow changes must test broker authorization and masking"
 

@@ -19,13 +19,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
-    "dickens": (10_192_446, "88334708559f6db57d79096bc0aca07e"),
-    "mozilla": (51_220_480, "c7789a2097f1ff944b0c737430a339b3"),
-    "nci": (33_553_445, "31f85bc8706f3c921104e7c169e2e2e1"),
-    "ooffice": (6_152_192, "573c4ae915e36631d8f2dcffb9b9b66d"),
-    "samba": (21_606_400, "154eaea7ea70e89f6339ff0abf4112ca"),
-    "xml": (5_345_280, "9b09c0c80104adb8aae910b7d7db003e"),
-    "x-ray": (8_474_240, "9baec32ad14ec3eff487d254382cb91c"),
+    "dickens": (10_192_446, "b24c37886142e11d0ee687db6ab06f936207aa7f2ea1fd1d9a36763c7a507e6a"),
+    "mozilla": (51_220_480, "657fc3764b0c75ac9de9623125705831ebbfbe08fed248df73bc2dc66e2a963b"),
+    "nci": (33_553_445, "fc63a31770947b8c2062d3b19ca94c00485a232bb91b502021948fee983e1635"),
+    "ooffice": (6_152_192, "e7ee013880d34dd5208283d0d3d91b07f442e067454276095ded14f322a656eb"),
+    "samba": (21_606_400, "93ba07bc44d8267789c1d911992f40b089ffa2140b4a160fac11ccae9a40e7b2"),
+    "xml": (5_345_280, "0e82e54e695c1938e4193448022543845b33020c8be6bf3bf3ead2224903e08c"),
+    "x-ray": (8_474_240, "7de9fce1405dc44ae5e6813ed21cd5751e761bd4265655a005d39b9685d1c9ad"),
 }
 CASES = (
     ("mixed-files", "zip", ("dickens", "ooffice", "samba", "xml", "x-ray"), ("SuperZip", "7-Zip")),
@@ -52,17 +52,18 @@ def digest(path: Path, algorithm: str = "sha256") -> str:
 
 # Purpose: Reject modified, missing, or symlinked Silesia inputs before timing.
 # Inputs: Directories holding the seven raw files and their original downloads.
-# Outputs: Returns a reproducible name/size/hash/source manifest.
+# Outputs: Returns a reproducible name/size/SHA-256/source manifest.
 def verify_corpus(directory: Path, downloads: Path) -> list[dict]:
     if not directory.is_dir() or not downloads.is_dir():
         raise ValueError("corpus or download directory does not exist")
     manifest = []
-    for name, (size, md5) in sorted(EXPECTED.items()):
+    for name, (size, expected_sha256) in sorted(EXPECTED.items()):
         path = directory / name
         if path.is_symlink() or not path.is_file() or path.stat().st_size != size:
             raise ValueError(f"corpus file missing, linked, or wrong size: {name}")
-        if digest(path, "md5") != md5:
-            raise ValueError(f"author MD5 mismatch: {name}")
+        raw_sha = digest(path)
+        if raw_sha != expected_sha256:
+            raise ValueError(f"pinned SHA-256 mismatch: {name}")
         downloaded = downloads / f"{name}.bz2"
         if downloaded.is_symlink() or not downloaded.is_file():
             raise ValueError(f"original corpus download is missing: {name}")
@@ -74,14 +75,12 @@ def verify_corpus(directory: Path, downloads: Path) -> list[dict]:
                 if decoded_bytes > size:
                     raise ValueError(f"corpus download expands beyond expected size: {name}")
                 decompressed.update(chunk)
-        raw_sha = digest(path)
         if decoded_bytes != size or decompressed.hexdigest() != raw_sha:
             raise ValueError(f"corpus download differs from raw file: {name}")
         manifest.append(
             {
                 "name": name,
                 "bytes": size,
-                "md5": md5,
                 "sha256": raw_sha,
                 "download_url": f"https://sun.aei.polsl.pl/~sdeor/corpus/{name}.bz2",
                 "download_sha256": digest(downloaded),

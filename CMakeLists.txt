@@ -468,6 +468,7 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/dictionary_block.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/huffman_lookup.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/sparse_pattern_block.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"

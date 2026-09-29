@@ -7,7 +7,7 @@ import hashlib
 import json
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -38,13 +38,17 @@ class ComparisonRunnerTests(unittest.TestCase):
             "gpu_engine_max_percent": 0,
             "workspace_bus_type": "NVMe",
         }
-        with patch.object(
-            comparison.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
-        ) as command:
+        with (
+            patch.object(
+                comparison.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
+            ) as command,
+            patch.object(comparison, "ROOT", PureWindowsPath("C:/SuperZip")),
+        ):
             self.assertEqual(comparison.host_snapshot()["cpu_load_percent"], 2)
             self.assertIn("Win32_PerfFormattedData_PerfOS_Processor", command.call_args.args[0][-1])
+            self.assertIn("Get-Partition -DriveLetter 'C'", command.call_args.args[0][-1])
         sample["cpu_load_percent"] = None
         with (
             patch.object(
@@ -52,11 +56,12 @@ class ComparisonRunnerTests(unittest.TestCase):
                 "run",
                 return_value=SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr=""),
             ),
+            patch.object(comparison, "ROOT", PureWindowsPath("C:/SuperZip")),
             self.assertRaisesRegex(RuntimeError, "missing required fields"),
         ):
             comparison.host_snapshot()
 
-    # Purpose: Accept only an exact corpus payload with the author's hash.
+    # Purpose: Accept only an exact corpus payload with the pinned SHA-256 digest.
     # Inputs: One temporary file and patched small-file manifest.
     # Outputs: Matching bytes pass; a one-byte edit fails.
     def test_corpus_hash_gate(self) -> None:
@@ -68,11 +73,15 @@ class ComparisonRunnerTests(unittest.TestCase):
             path = raw / "sample"
             path.write_bytes(b"known corpus")
             (downloads / "sample.bz2").write_bytes(bz2.compress(b"known corpus"))
-            expected = {"sample": (path.stat().st_size, hashlib.md5(b"known corpus").hexdigest())}
+            expected = {"sample": (path.stat().st_size, hashlib.sha256(b"known corpus").hexdigest())}
             with patch.dict(comparison.EXPECTED, expected, clear=True):
                 self.assertEqual(comparison.verify_corpus(raw, downloads)[0]["name"], "sample")
+                (downloads / "sample.bz2").write_bytes(bz2.compress(b"wrong corpus"))
+                with self.assertRaisesRegex(ValueError, "download differs"):
+                    comparison.verify_corpus(raw, downloads)
+                (downloads / "sample.bz2").write_bytes(bz2.compress(b"known corpus"))
                 path.write_bytes(b"wrong corpus")
-                with self.assertRaisesRegex(ValueError, "MD5 mismatch"):
+                with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
                     comparison.verify_corpus(raw, downloads)
 
     # Purpose: Keep independent extraction output and cleanup inside owned paths.

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from tools import render_comparison_graph as graph
 from tools.run_archive_comparison import CASES, EXPECTED, command_templates
@@ -18,12 +20,11 @@ def fixture() -> dict:
         {
             "name": name,
             "bytes": size,
-            "md5": md5,
-            "sha256": "a" * 64,
+            "sha256": sha256,
             "download_url": f"https://sun.aei.polsl.pl/~sdeor/corpus/{name}.bz2",
             "download_sha256": "e" * 64,
         }
-        for name, (size, md5) in sorted(EXPECTED.items())
+        for name, (size, sha256) in sorted(EXPECTED.items())
     ]
     cases = []
     for name, fmt, file_names, tools in CASES:
@@ -108,6 +109,14 @@ def fixture() -> dict:
 
 
 class ComparisonGraphTests(unittest.TestCase):
+    # Purpose: Keep the new SHA-256 pins aligned with already reviewed corpus evidence.
+    # Inputs: The committed level-five Silesia comparison record.
+    # Outputs: Its corpus validates without changing historical result files.
+    def test_reviewed_corpus_matches_sha256_pins(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "docs/benchmarks/data/comparison-silesia-current.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        graph.summarize(record)
+
     # Purpose: Validate Windows and POSIX renderers against one recorded command contract.
     # Inputs: The Zstd output placeholder expressed with either path separator.
     # Outputs: Both spellings pass, while a different output filename fails.

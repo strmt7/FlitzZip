@@ -11,7 +11,7 @@ namespace superzip {
 
 // Purpose: Admit only complete, prefix-consistent version-eight Huffman lookup tables.
 // Inputs: Exactly 4096 little-endian symbol/width entries from one encoded block.
-// Outputs: Returns true only when every byte has one leaf and every leaf fills its entire prefix range.
+// Outputs: Returns true only when every lookup slot is covered and each present symbol fills its prefix range.
 inline bool huffman_lookup_is_complete(std::span<const std::byte> lookup) {
     if (lookup.size() != kGpuHuffmanLookupBytes) {
         return false;
@@ -36,7 +36,7 @@ inline bool huffman_lookup_is_complete(std::span<const std::byte> lookup) {
         ++counts[symbol];
     }
     for (std::size_t symbol = 0U; symbol < widths.size(); ++symbol) {
-        if (widths[symbol] == 0U || counts[symbol] != kGpuHuffmanLookupEntries / (1U << widths[symbol])) {
+        if (widths[symbol] != 0U && counts[symbol] != kGpuHuffmanLookupEntries / (1U << widths[symbol])) {
             return false;
         }
     }

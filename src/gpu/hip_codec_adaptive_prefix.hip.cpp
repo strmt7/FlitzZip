@@ -258,11 +258,20 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
         ++sample_count;
     }
     const auto frequency_floor = std::max<std::uint64_t>(1U, sample_count / 4096U);
+    const bool complete_sample = stride == 1U;
 
     std::array<HuffmanNode, 511> nodes{};
+    std::uint16_t active_count = 0U;
     for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        if (complete_sample && histogram[symbol] == 0U) {
+            continue;
+        }
         nodes[symbol].weight = histogram[symbol] + frequency_floor;
         nodes[symbol].smallest_symbol = symbol;
+        ++active_count;
+    }
+    if (active_count < 2U) {
+        return std::nullopt;
     }
     const auto lower_priority = [&](std::uint16_t lhs, std::uint16_t rhs) {
         if (nodes[lhs].weight != nodes[rhs].weight) {
@@ -272,9 +281,11 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
     };
     std::priority_queue<std::uint16_t, std::vector<std::uint16_t>, decltype(lower_priority)> heap(lower_priority);
     for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
-        heap.push(symbol);
+        if (!complete_sample || histogram[symbol] != 0U) {
+            heap.push(symbol);
+        }
     }
-    for (std::uint16_t parent = 256U; parent < 511U; ++parent) {
+    for (std::uint16_t parent = 256U; parent < 256U + active_count - 1U; ++parent) {
         const auto left = heap.top();
         heap.pop();
         const auto right = heap.top();
@@ -288,6 +299,9 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
 
     std::array<std::uint16_t, kGpuHuffmanLookupBits + 1U> width_counts{};
     for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        if (complete_sample && histogram[symbol] == 0U) {
+            continue;
+        }
         std::uint16_t width = 0U;
         for (auto node = symbol; nodes[node].parent != 0xFFFFU; node = nodes[node].parent) {
             ++width;
@@ -307,6 +321,9 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
     AdaptiveCodebookEstimate estimate;
     estimate.codebook.assign(kGpuHuffmanLookupBytes, std::byte{0});
     for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        if (complete_sample && histogram[symbol] == 0U) {
+            continue;
+        }
         const auto width = table.width[symbol];
         const auto canonical = next_code[width]++;
         std::uint16_t reversed = 0U;
@@ -329,6 +346,9 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
         if (estimate.codebook[index] == std::byte{0}) {
             throw GpuError("GPU Huffman code tree is incomplete");
         }
+    }
+    if (!huffman_lookup_is_complete(estimate.codebook)) {
+        throw GpuError("Generated GPU Huffman lookup is invalid");
     }
     return estimate;
 }

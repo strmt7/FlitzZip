@@ -53,6 +53,28 @@ are used, and default to read-only repository permissions.
 | Greenbone/OpenVAS | Always-on scanner integration audit plus scheduled/manual network vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and Vulnetix upload |
 | Vulnetix | External vulnerability-management upload for authorized live OpenVAS results | Vulnetix project |
 
+## Finding Triage
+
+Keep all scanners enabled and retain their raw reports. A green workflow means
+the scanner completed, not that GitHub has zero open alerts. Inspect alerts for
+the exact pushed SHA and record whether each result is actionable, a verified
+false positive, or unresolved. Do not alter application code or remove
+reproducibility data just to reduce an alert count.
+
+DevSkim rule `DS173237` matches quoted hexadecimal strings of at least 30
+characters, including ordinary benchmark SHA-256 digests and commit IDs.
+Before marking an individual result false positive, verify the highlighted
+value and its structured field (`*_sha256` or `source_commit`) against the
+record producer; historical Silesia `md5` metadata and pinned SHA-256 corpus
+constants require the same provenance check. Require the Gitleaks
+history/working-tree and TruffleHog history jobs to pass. An unfamiliar field, token-shaped surrounding
+context, or failed secret scan remains open for investigation. Rule `DS137138`
+can also flag the mandatory `http://www.w3.org/2000/svg` XML namespace;
+validate the exact namespace and its use before triage. Never blanket-disable
+either rule. Dismiss confirmed false positives with a specific GitHub audit
+comment; do not dismiss unresolved findings or change the source to evade a
+pattern.
+
 ## Required GitHub Repository Settings
 
 Enable these in `strmt7/SuperZip`:

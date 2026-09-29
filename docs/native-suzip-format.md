@@ -30,10 +30,12 @@ explicit:
   kind 10. Each Huffman block stores a complete 4096-entry, two-byte-per-entry
   decoder lookup (symbol then code width), followed by the existing 4 KiB
   segment-offset table and packed bitstreams. Codes are read least-significant
-  bit first, are at most 12 bits wide, and each symbol's leaf must cover its
-  entire prefix range. The reader rejects incomplete or conflicting tables and
-  out-of-range offsets before HIP decode. Earlier versions remain
-  readable; readers predating each new version reject its new block kind.
+  bit first and are at most 12 bits wide. Fully sampled blocks may omit symbols
+  absent from the input; every lookup slot must still be covered, and each
+  present symbol's leaf must cover its entire prefix range. The reader rejects
+  incomplete or conflicting tables and out-of-range offsets before HIP decode.
+  Earlier versions remain readable; readers predating each new version reject
+  its new block kind.
 - CPU compression tries one independently framed Zstandard block for non-fill
   blocks of at least 4 KiB, retaining Deflate for shorter blocks. It records
   Zstandard only when the result is smaller than raw. The reader requires one
