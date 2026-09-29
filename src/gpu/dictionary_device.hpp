@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace superzip {
 
@@ -13,13 +14,20 @@ struct GpuTelemetry;
 
 namespace dictionary {
 
+// Production batches keep downloaded segments contiguous until archive block framing.
+struct PackedEncodedBatch {
+    std::vector<std::byte> payload;
+    std::vector<std::uint32_t> segment_sizes;
+    EncodedBatch telemetry;
+};
+
 // Purpose: Encode a bounded dictionary batch using source bytes already resident on the HIP device.
 // Inputs: `input` mirrors `device_input`, effort is validated, and optional distances cover every segment;
-// distance-admitted batches may be at most 8 MiB, while the general index remains capped at 4 MiB.
-// Outputs: Returns exact independent LZ4 block payloads without another host-to-device source upload.
-EncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
-                                             const Effort& effort,
-                                             std::span<const std::uint16_t> periodic_distances = {});
+// distance-admitted batches may be at most 16 MiB, while the general index remains capped at 4 MiB.
+// Outputs: Returns contiguous independent LZ4 block payloads without another source upload.
+PackedEncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
+                                                   const Effort& effort,
+                                                   std::span<const std::uint16_t> periodic_distances = {});
 
 // Purpose: Decode already admitted independent LZ4 segments into caller-owned HIP output memory.
 // Inputs: `encoded` and `decoded` are live device pointers; `spans` are validated absolute device-buffer extents.

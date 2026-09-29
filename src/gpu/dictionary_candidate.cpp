@@ -125,9 +125,10 @@ void append_segment_offset(std::vector<std::byte>& payload, std::uint32_t offset
 }
 
 // Purpose: Account for the measured work of one dictionary batch using an existing device input buffer.
-// Inputs: Validated batch metadata, borrowed input bytes, and optional operation telemetry.
+// Inputs: Validated packed batch metadata, borrowed input bytes, and optional operation telemetry.
 // Outputs: Adds metadata transfers, allocated workspace, explicit launches, and HIP device time.
-void record_dictionary_batch(const EncodedBatch& encoded, std::size_t input_bytes, GpuTelemetry* telemetry) {
+void record_dictionary_batch(const PackedEncodedBatch& batch, std::size_t input_bytes, GpuTelemetry* telemetry) {
+    const auto& encoded = batch.telemetry;
     const auto period_bytes = ((input_bytes + kSegmentBytes - 1U) / kSegmentBytes) * sizeof(std::uint16_t);
     if ((encoded.h2d_bytes != 0U && encoded.h2d_bytes != period_bytes) ||
         encoded.explicit_kernel_launches != (encoded.h2d_bytes == 0U ? 4U : 2U) ||
@@ -141,33 +142,34 @@ void record_dictionary_batch(const EncodedBatch& encoded, std::size_t input_byte
                            encoded.device_ms.value_or(std::numeric_limits<double>::quiet_NaN()));
 }
 
-// Purpose: Frame one block's independent LZ4 segments only when its complete payload wins.
-// Inputs: Contiguous encoded segments and the current GPU-native block payload length.
+// Purpose: Frame one block's contiguous LZ4 segments only when its complete payload wins.
+// Inputs: Validated segment sizes, their concatenated bytes, and the current GPU-native block payload length.
 // Outputs: Returns a dense offset table plus segment bytes, or empty when it cannot improve the block.
-std::vector<std::byte> frame_dictionary_candidate(std::span<const EncodedSegment> segments,
-                                                  std::uint32_t baseline_bytes) {
-    const auto table_bytes = (segments.size() + 1U) * sizeof(std::uint32_t);
+std::vector<std::byte> frame_dictionary_candidate(std::span<const std::uint32_t> sizes,
+                                                  std::span<const std::byte> packed, std::uint32_t baseline_bytes) {
+    const auto table_bytes = (sizes.size() + 1U) * sizeof(std::uint32_t);
     if (table_bytes >= baseline_bytes) {
         return {};
     }
     std::size_t encoded_bytes = 0U;
-    for (const auto& segment : segments) {
-        if (segment.payload.empty() || segment.payload.size() >= baseline_bytes - table_bytes - encoded_bytes) {
+    for (const auto size : sizes) {
+        if (size == 0U || size >= baseline_bytes - table_bytes - encoded_bytes) {
             return {};
         }
-        encoded_bytes += segment.payload.size();
+        encoded_bytes += size;
+    }
+    if (encoded_bytes != packed.size()) {
+        throw GpuError("dictionary packed payload differs from segment sizes");
     }
     std::vector<std::byte> payload;
     payload.reserve(table_bytes + encoded_bytes);
     std::uint32_t cumulative = 0U;
     append_segment_offset(payload, cumulative);
-    for (const auto& segment : segments) {
-        cumulative += static_cast<std::uint32_t>(segment.payload.size());
+    for (const auto size : sizes) {
+        cumulative += size;
         append_segment_offset(payload, cumulative);
     }
-    for (const auto& segment : segments) {
-        payload.insert(payload.end(), segment.payload.begin(), segment.payload.end());
-    }
+    payload.insert(payload.end(), packed.begin(), packed.end());
     return payload;
 }
 
@@ -182,8 +184,10 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
     if (table_bytes >= baseline_bytes) {
         return {};
     }
-    std::vector<EncodedSegment> segments;
-    segments.reserve(segment_count);
+    std::vector<std::uint32_t> segment_sizes;
+    segment_sizes.reserve(segment_count);
+    std::vector<std::byte> packed_payload;
+    packed_payload.reserve(std::min<std::size_t>(input.size(), baseline_bytes));
     for (std::size_t offset = 0U; offset < input.size();) {
         auto bytes = std::min<std::size_t>(kMaxBatchBytes, input.size() - offset);
         auto batch = input.subspan(offset, bytes);
@@ -205,15 +209,14 @@ std::vector<std::byte> encode_dictionary_candidate(std::span<const std::byte> in
         }
         auto encoded = encode_segments_from_device_hip(batch, device_input + offset, effort, distances);
         record_dictionary_batch(encoded, bytes, telemetry);
-        for (auto& segment : encoded.segments) {
-            segments.push_back(std::move(segment));
-        }
+        segment_sizes.insert(segment_sizes.end(), encoded.segment_sizes.begin(), encoded.segment_sizes.end());
+        packed_payload.insert(packed_payload.end(), encoded.payload.begin(), encoded.payload.end());
         offset += bytes;
     }
-    if (segments.size() != segment_count) {
+    if (segment_sizes.size() != segment_count) {
         throw GpuError("dictionary candidate segment count differs from its source block");
     }
-    return frame_dictionary_candidate(segments, baseline_bytes);
+    return frame_dictionary_candidate(segment_sizes, packed_payload, baseline_bytes);
 }
 
 // Purpose: Encode adjacent independent blocks in one bounded HIP batch without merging their archive payloads.
@@ -229,16 +232,26 @@ void encode_dictionary_group(std::span<const std::byte> input, const std::byte* 
     const auto encoded = encode_segments_from_device_hip(input, device_input, effort, distances);
     record_dictionary_batch(encoded, input.size(), telemetry);
     std::size_t segment_offset = 0U;
+    std::size_t payload_offset = 0U;
     for (std::size_t block = 0U; block < blocks.size(); ++block) {
         const auto segment_count = blocks[block].uncompressed_len / kSegmentBytes;
-        if (segment_count > encoded.segments.size() - segment_offset) {
+        if (segment_count > encoded.segment_sizes.size() - segment_offset) {
             throw GpuError("dictionary group has fewer segments than its block descriptors");
         }
+        const auto block_sizes = std::span(encoded.segment_sizes).subspan(segment_offset, segment_count);
+        std::size_t block_bytes = 0U;
+        for (const auto size : block_sizes) {
+            block_bytes += size;
+        }
+        if (block_bytes > encoded.payload.size() - payload_offset) {
+            throw GpuError("dictionary group payload exceeds packed batch");
+        }
         replacements[block] = frame_dictionary_candidate(
-            std::span(encoded.segments).subspan(segment_offset, segment_count), blocks[block].encoded_len);
+            block_sizes, std::span(encoded.payload).subspan(payload_offset, block_bytes), blocks[block].encoded_len);
         segment_offset += segment_count;
+        payload_offset += block_bytes;
     }
-    if (segment_offset != encoded.segments.size()) {
+    if (segment_offset != encoded.segment_sizes.size() || payload_offset != encoded.payload.size()) {
         throw GpuError("dictionary batch segments do not match grouped source blocks");
     }
 }

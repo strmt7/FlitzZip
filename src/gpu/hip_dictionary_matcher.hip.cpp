@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 #include <rocprim/device/device_radix_sort.hpp>
 #include <rocprim/rocprim_version.hpp>
 
@@ -620,10 +621,10 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
 
 // Purpose: Encode with demand-filled tiled search and download only used bytes plus bounded sizes.
 // Inputs: Validated source, effort, optional already uploaded bytes, and optional sampled segment distances.
-// Outputs: Returns encoded segments and transfer/workspace counters, or throws before exposing incomplete output.
-EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Effort& effort,
-                                      const std::byte* borrowed_device_input,
-                                      std::span<const std::uint16_t> periodic_distances) {
+// Outputs: Returns contiguous encoded segments and resource counters, or throws before exposing incomplete output.
+PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Effort& effort,
+                                            const std::byte* borrowed_device_input,
+                                            std::span<const std::uint16_t> periodic_distances) {
     const auto segment_count = (input.size() + kSegmentBytes - 1U) / kSegmentBytes;
     const auto output_bytes = segment_count * kEncodedSegmentCapacity;
     const auto sizes_bytes = segment_count * sizeof(std::uint32_t);
@@ -681,28 +682,20 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
             std::vector<std::byte> packed(packed_bytes);
             check_hip(hipMemcpy(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
                       "download packed dictionary blocks");
-            EncodedBatch result;
-            result.device_workspace_bytes = metadata.device_workspace_bytes;
-            result.h2d_bytes = metadata.h2d_bytes;
-            result.d2h_bytes = sizes_bytes + packed_bytes;
-            result.index_ms = metadata.index_ms;
-            result.encode_ms = encode_ms;
-            result.compact_ms = compact_ms;
+            PackedEncodedBatch result;
+            result.telemetry.device_workspace_bytes = metadata.device_workspace_bytes;
+            result.telemetry.h2d_bytes = metadata.h2d_bytes;
+            result.telemetry.d2h_bytes = sizes_bytes + packed_bytes;
+            result.telemetry.index_ms = metadata.index_ms;
+            result.telemetry.encode_ms = encode_ms;
+            result.telemetry.compact_ms = compact_ms;
             if (encode_ms && compact_ms && (periodic_distances.size() != 0U || metadata.index_ms)) {
-                result.device_ms = metadata.index_ms.value_or(0.0) + *encode_ms + *compact_ms;
+                result.telemetry.device_ms = metadata.index_ms.value_or(0.0) + *encode_ms + *compact_ms;
             }
-            result.explicit_kernel_launches = periodic_distances.empty() ? 4U : 2U;
-            result.gpu_used = true;
-            std::size_t packed_offset = 0U;
-            for (std::size_t index = 0; index < segment_count; ++index) {
-                EncodedSegment segment;
-                segment.input_bytes = static_cast<std::uint32_t>(
-                    std::min(input.size() - index * kSegmentBytes, std::size_t{kSegmentBytes}));
-                segment.payload.assign(packed.begin() + static_cast<std::ptrdiff_t>(packed_offset),
-                                       packed.begin() + static_cast<std::ptrdiff_t>(packed_offset + host_sizes[index]));
-                packed_offset += host_sizes[index];
-                result.segments.push_back(std::move(segment));
-            }
+            result.telemetry.explicit_kernel_launches = periodic_distances.empty() ? 4U : 2U;
+            result.telemetry.gpu_used = true;
+            result.payload = std::move(packed);
+            result.segment_sizes = std::move(host_sizes);
             sizes.reset_checked("free dictionary encoded sizes");
             output.reset_checked("free dictionary encoded slots");
             return result;
@@ -714,14 +707,29 @@ EncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, const Ef
 // Inputs: Validated source and effort.
 // Outputs: Returns independent LZ4 blocks with one owned host-to-device source upload.
 EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort) {
-    return encode_segments_hip_impl(input, effort, nullptr, {});
+    auto packed = encode_segments_hip_impl(input, effort, nullptr, {});
+    auto result = std::move(packed.telemetry);
+    result.segments.reserve(packed.segment_sizes.size());
+    std::size_t offset = 0U;
+    for (std::size_t index = 0U; index < packed.segment_sizes.size(); ++index) {
+        EncodedSegment segment;
+        segment.input_bytes =
+            static_cast<std::uint32_t>(std::min(input.size() - index * kSegmentBytes, std::size_t{kSegmentBytes}));
+        segment.payload.assign(packed.payload.begin() + static_cast<std::ptrdiff_t>(offset),
+                               packed.payload.begin() +
+                                   static_cast<std::ptrdiff_t>(offset + packed.segment_sizes[index]));
+        offset += packed.segment_sizes[index];
+        result.segments.push_back(std::move(segment));
+    }
+    return result;
 }
 
 // Purpose: Encode a production candidate from bytes already uploaded by the native HIP pipeline.
 // Inputs: Bounded host/device mirrors, validated effort, and optional admitted segment distances.
-// Outputs: Returns independent LZ4 blocks without another source upload.
-EncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
-                                             const Effort& effort, std::span<const std::uint16_t> periodic_distances) {
+// Outputs: Returns contiguous independent LZ4 blocks without another source upload.
+PackedEncodedBatch encode_segments_from_device_hip(std::span<const std::byte> input, const std::byte* device_input,
+                                                   const Effort& effort,
+                                                   std::span<const std::uint16_t> periodic_distances) {
     const auto maximum_bytes = periodic_distances.empty() ? kMaxBatchBytes : kMaxPeriodicBatchBytes;
     if (input.empty() || input.size() > maximum_bytes || device_input == nullptr) {
         throw GpuError("dictionary device encoding request is invalid");
