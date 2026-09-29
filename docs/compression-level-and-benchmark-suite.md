@@ -23,7 +23,7 @@ mode, so the product exposes the non-store levels.
 | Fast | `--compression-level 3` | Speed-biased compression. |
 | Balanced | `--compression-level 5` | Default release baseline for benchmarks and normal use. |
 | Strong | `--compression-level 7` | Ratio-biased compression; required-HIP `.suzip` may evaluate adaptive GPU-prefix codebooks. |
-| Maximum | `--compression-level 9` | Highest miniz effort; required-HIP `.suzip` currently uses the same adaptive-prefix effort as Strong. |
+| Maximum | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates a full-sample adaptive-prefix codebook. |
 
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
 GUI, and `tools\bench.ps1`. Benchmarks may sweep all five levels, but release
@@ -33,19 +33,24 @@ pattern, static GPU-prefix, and adaptive GPU-prefix blocks; prefix paths are
 selected by measured block savings rather than by pretending to be Deflate or
 Zstandard.
 
-Balanced level 5 intentionally keeps the fast static GPU-prefix path for normal
-throughput. Levels 7 and 9 may spend extra HIP work evaluating per-block
-adaptive codebooks, and the encoder publishes the adaptive block only when the
-measured encoded byte count beats the existing GPU-native candidate. Required
-GPU mode still must not emit CPU Deflate blocks.
+Level 1 uses the static GPU-prefix code. Levels 2-8 may evaluate an adaptive
+codebook with increasing sample budgets of 4 KiB, 16 KiB, 64 KiB, 256 KiB,
+1 MiB, 4 MiB, and 8 MiB per block; level 9 samples the full block. At levels
+2-6, three bounded 256-byte windows first compare the actual static and
+adaptive code widths and admit only a clear predicted gain. This keeps the
+default Mixed workload on the static fast path when its alphabet is already
+well served. Levels 7-9 always evaluate the candidate. The encoder publishes
+an adaptive block only when its measured payload is smaller than the existing
+GPU-native candidate. Required GPU mode never emits CPU Deflate blocks.
 
-The current native HIP implementation has two effective effort tiers, not nine
-distinct compression searches: levels 1-6 use static prefix evaluation, and
-levels 7-9 add the same full-histogram adaptive evaluation. The shared level
-scale also controls CPU compatibility codecs, whose mappings are different.
-Identical native output sizes can therefore be legitimate, but this limited
-effort policy is not a completed implementation of distinct Fastest/Fast or
-Strong/Maximum GPU strategies.
+The GPU dictionary matcher separately has nine increasing bounded search
+budgets and an archive-writer regression with nine strictly improving payloads
+on a matching record fixture. The shared level scale also controls CPU and
+compatibility codecs, whose mappings and source-dependent outcomes differ.
+Equal output sizes are legitimate when a stronger candidate cannot improve a
+block; SuperZip does not add padding or weaken low levels to manufacture a
+difference. Distinct search budgets do not establish nine distinct sizes on
+every corpus or a universal speedup. Broader ratio strategies remain open.
 
 The Mixed workload's low-byte distribution favors the static code, so equal
 level-5/level-9 sizes there do not demonstrate compression-strength coverage.

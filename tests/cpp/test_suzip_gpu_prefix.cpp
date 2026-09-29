@@ -417,8 +417,8 @@ TEST_CASE(suzip_gpu_prefix_candidate_selection_skips_losing_adaptive_payload) {
 }
 
 // Purpose: Demonstrate stronger native compression on data that the static low-byte code cannot compact.
-// Inputs: A deterministic 1 MiB high-byte alphabet encoded at every user-facing effort choice, entirely in RAM.
-// Outputs: Reports exact payload sizes, requires a real strong-tier size reduction, and checks CPU/HIP roundtrips.
+// Inputs: A deterministic 1 MiB high-byte alphabet encoded at all nine efforts, entirely in RAM.
+// Outputs: Reports exact payload sizes, requires adaptive gains above level one, and checks CPU/HIP roundtrips.
 TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -430,7 +430,7 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
         byte = static_cast<std::byte>(201U + ((random >> 16U) & 3U));
     }
     std::size_t previous_bytes = input.size();
-    for (const int level : {1, 3, 5, 7, 9}) {
+    for (int level = 1; level <= 9; ++level) {
         superzip::GpuCodecOptions options;
         options.require_gpu = true;
         options.compression_level = level;
@@ -438,7 +438,7 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
         REQUIRE_TRUE(encoded.gpu_used);
         REQUIRE_TRUE(encoded.payload.size() <= previous_bytes);
         previous_bytes = encoded.payload.size();
-        if (level >= 7) {
+        if (level >= 2) {
             REQUIRE_TRUE(encoded.payload.size() < input.size() / 2U);
         }
         std::vector<std::byte> decoded(input.size());
@@ -590,9 +590,9 @@ TEST_CASE(suzip_required_gpu_prefix_blocks_compress_raw_blocks_inside_mixed_chun
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Verify required-HIP higher compression levels can emit adaptive GPU-prefix blocks without CPU deflate.
+// Purpose: Verify Balanced and Maximum HIP levels can emit adaptive GPU-prefix blocks without CPU deflate.
 // Inputs: A high-byte low-entropy payload where static low-value prefix coding is intentionally weak.
-// Outputs: Throws if level 9 fails to beat level 1, omits adaptive blocks, emits deflate, or fails HIP roundtrip.
+// Outputs: Throws if either level fails to beat level 1, omits adaptive blocks, emits deflate, or fails read-back.
 TEST_CASE(suzip_required_gpu_adaptive_prefix_blocks_honor_compression_level) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -603,6 +603,7 @@ TEST_CASE(suzip_required_gpu_adaptive_prefix_blocks_honor_compression_level) {
     write_shifted_low_entropy_payload(input, 2U * 1024U * 1024U);
     const auto source_size = std::filesystem::file_size(input);
     const auto fast_archive = root / "fast.suzip";
+    const auto balanced_archive = root / "balanced.suzip";
     const auto strong_archive = root / "strong.suzip";
 
     superzip::CompressOptions fast;
@@ -614,6 +615,20 @@ TEST_CASE(suzip_required_gpu_adaptive_prefix_blocks_honor_compression_level) {
     fast.verify_after_write = true;
     const auto fast_stats = superzip::compress_suzip({input}, fast_archive, fast);
     REQUIRE_TRUE(fast_stats.gpu_used);
+
+    auto balanced = fast;
+    balanced.compression_level = 5;
+    const auto balanced_stats = superzip::compress_suzip({input}, balanced_archive, balanced);
+    REQUIRE_TRUE(balanced_stats.gpu_used);
+    REQUIRE_TRUE(balanced_stats.gpu_runtime.prefix_blocks > 0U);
+    REQUIRE_TRUE(balanced_stats.output_bytes < fast_stats.output_bytes);
+    const auto balanced_index = read_test_archive_index(balanced_archive);
+    REQUIRE_TRUE(archive_contains_block_kind(balanced_index, superzip::BlockKind::GpuAdaptivePrefix));
+    REQUIRE_TRUE(!archive_contains_block_kind(balanced_index, superzip::BlockKind::Deflate));
+    superzip::ExtractOptions cpu_verify;
+    cpu_verify.gpu_required = false;
+    cpu_verify.force_cpu = true;
+    REQUIRE_TRUE(!superzip::verify_suzip(balanced_archive, cpu_verify).gpu_used);
 
     auto strong = fast;
     strong.compression_level = 9;

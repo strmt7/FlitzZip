@@ -16,6 +16,12 @@ struct AdaptiveEncodeTable {
     std::uint8_t width[256];
 };
 
+struct AdaptiveCodebookEstimate {
+    std::array<std::byte, kGpuAdaptivePrefixCodebookBytes> codebook{};
+    std::uint64_t sampled_bits = 0;
+    std::size_t sample_count = 0;
+};
+
 struct AdaptiveEncodeSegmentPlan {
     std::uint64_t block_start;
     std::uint32_t block_len;
@@ -43,6 +49,51 @@ struct AdaptiveBatchSelection {
     std::vector<AdaptiveEncodeSegmentPlan> pack_plans;
     std::vector<std::uint32_t> pack_offsets;
 };
+
+// Purpose: Rank symbols identically for both admission probes and full adaptive codebooks.
+// Inputs: A complete or sampled byte histogram.
+// Outputs: Returns all byte values ordered by descending frequency, with stable numeric tie breaks.
+std::array<std::uint16_t, 256> rank_adaptive_symbols(const std::array<std::uint64_t, 256>& histogram) {
+    std::array<std::uint16_t, 256> order{};
+    std::iota(order.begin(), order.end(), static_cast<std::uint16_t>(0));
+    std::stable_sort(order.begin(), order.end(), [&](std::uint16_t lhs, std::uint16_t rhs) {
+        if (histogram[lhs] != histogram[rhs]) {
+            return histogram[lhs] > histogram[rhs];
+        }
+        return lhs < rhs;
+    });
+    return order;
+}
+
+// Purpose: Admit promising low/mid-effort adaptive candidates without scanning full blocks unnecessarily.
+// Inputs: One eligible source block and validated compression level 2-9.
+// Outputs: Returns true for high efforts or when actual code widths predict a clear sampled size gain.
+bool should_try_sampled_adaptive_prefix(std::span<const std::byte> block, int compression_level) {
+    if (compression_level >= 7) {
+        return true;
+    }
+    std::array<std::uint64_t, 256> histogram{};
+    constexpr std::size_t window_bytes = 256U;
+    for (const auto start : {std::size_t{0}, block.size() / 2U, block.size() - window_bytes}) {
+        for (std::size_t index = start; index < start + window_bytes; ++index) {
+            ++histogram[static_cast<std::uint8_t>(block[index])];
+        }
+    }
+    const auto order = rank_adaptive_symbols(histogram);
+    std::uint64_t static_bits = 0;
+    std::uint64_t adaptive_bits = 0;
+    for (std::size_t rank = 0; rank < order.size(); ++rank) {
+        const auto value = order[rank];
+        const auto static_width = value < 4U ? 3U : value < 20U ? 6U : value < 84U ? 9U : 11U;
+        const auto adaptive_width = rank < kGpuAdaptivePrefixSmallSymbols                                     ? 3U
+                                    : rank < kGpuAdaptivePrefixSmallSymbols + kGpuAdaptivePrefixMediumSymbols ? 6U
+                                    : rank < kGpuAdaptivePrefixCodebookBytes                                  ? 9U
+                                                                                                              : 11U;
+        static_bits += histogram[value] * static_width;
+        adaptive_bits += histogram[value] * adaptive_width;
+    }
+    return adaptive_bits * 100U < static_bits * 95U;
+}
 
 // Purpose: Count encoded bits for one worker range using a per-block adaptive prefix table.
 // Inputs: `input`, `table`, `block_start`, `start`, and `end` describe readable bytes and adaptive widths.
@@ -141,34 +192,29 @@ __global__ void adaptive_prefix_pack_segments_batch_kernel(const std::byte* inpu
 
 // Purpose: Build an adaptive prefix codebook and device encode table for one archive block.
 // Inputs: `block` is the host block sample/full span and `compression_level` controls sampling effort.
-// Outputs: Returns the serialized codebook and fills `table` with device-ready codes and widths.
-std::array<std::byte, kGpuAdaptivePrefixCodebookBytes>
-build_adaptive_prefix_codebook(std::span<const std::byte> block, int compression_level, AdaptiveEncodeTable& table) {
+// Outputs: Returns the serialized codebook and sampled bit estimate; fills `table` with device-ready codes and widths.
+AdaptiveCodebookEstimate build_adaptive_prefix_codebook(std::span<const std::byte> block, int compression_level,
+                                                        AdaptiveEncodeTable& table) {
     std::array<std::uint64_t, 256> histogram{};
-    const auto target_samples = compression_level >= 7 ? block.size() : std::min<std::size_t>(block.size(), 65536U);
+    constexpr std::array<std::size_t, 8> sample_budgets{
+        4096U, 16384U, 65536U, 262144U, 1048576U, 4194304U, 8388608U, std::numeric_limits<std::size_t>::max()};
+    const auto target_samples = std::min(block.size(), sample_budgets[static_cast<std::size_t>(compression_level - 2)]);
     const auto stride = target_samples == 0U ? 1U : std::max<std::size_t>(1U, block.size() / target_samples);
     for (std::size_t i = 0; i < block.size(); i += stride) {
         ++histogram[static_cast<std::uint8_t>(block[i])];
     }
-    std::array<std::uint16_t, 256> order{};
-    std::iota(order.begin(), order.end(), static_cast<std::uint16_t>(0));
-    std::stable_sort(order.begin(), order.end(), [&](std::uint16_t lhs, std::uint16_t rhs) {
-        if (histogram[lhs] != histogram[rhs]) {
-            return histogram[lhs] > histogram[rhs];
-        }
-        return lhs < rhs;
-    });
+    const auto order = rank_adaptive_symbols(histogram);
 
-    std::array<std::byte, kGpuAdaptivePrefixCodebookBytes> codebook{};
-    for (std::size_t i = 0; i < codebook.size(); ++i) {
-        codebook[i] = static_cast<std::byte>(order[i]);
+    AdaptiveCodebookEstimate estimate;
+    for (std::size_t i = 0; i < estimate.codebook.size(); ++i) {
+        estimate.codebook[i] = static_cast<std::byte>(order[i]);
     }
     for (std::uint32_t value = 0; value < 256U; ++value) {
         table.code[value] = static_cast<std::uint16_t>(0x7U | (value << 3U));
         table.width[value] = 11U;
     }
     for (std::uint32_t rank = 0; rank < kGpuAdaptivePrefixCodebookBytes; ++rank) {
-        const auto value = static_cast<std::uint8_t>(codebook[rank]);
+        const auto value = static_cast<std::uint8_t>(estimate.codebook[rank]);
         if (rank < kGpuAdaptivePrefixSmallSymbols) {
             table.code[value] = static_cast<std::uint16_t>(rank << 1U);
             table.width[value] = 3U;
@@ -181,7 +227,11 @@ build_adaptive_prefix_codebook(std::span<const std::byte> block, int compression
             table.width[value] = 9U;
         }
     }
-    return codebook;
+    for (std::uint32_t value = 0; value < histogram.size(); ++value) {
+        estimate.sampled_bits += histogram[value] * table.width[value];
+        estimate.sample_count += histogram[value];
+    }
+    return estimate;
 }
 
 // Purpose: Return the expected block byte range for one verified descriptor.
@@ -272,17 +322,30 @@ std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const
             .segment_count = len >= kGpuPrefixSegmentBytes ? segment_count : 0U,
             .table_index = static_cast<std::uint32_t>(code_tables.size()),
         };
+        if (block_plan.segment_count != 0U &&
+            !should_try_sampled_adaptive_prefix(input.subspan(start, len), compression_level)) {
+            block_plan.segment_count = 0U;
+        }
         if (block_plan.segment_count != 0U) {
             AdaptiveEncodeTable table{};
-            block_plan.codebook = build_adaptive_prefix_codebook(input.subspan(start, len), compression_level, table);
-            code_tables.push_back(table);
-            for (std::uint32_t segment = 0; segment < block_plan.segment_count; ++segment) {
-                segment_plans.push_back(AdaptiveEncodeSegmentPlan{
-                    .block_start = static_cast<std::uint64_t>(start),
-                    .block_len = len,
-                    .segment_index = segment,
-                    .table_index = block_plan.table_index,
-                });
+            auto estimate = build_adaptive_prefix_codebook(input.subspan(start, len), compression_level, table);
+            block_plan.codebook = estimate.codebook;
+            const auto estimated_bits = estimate.sampled_bits * len / estimate.sample_count;
+            const auto estimated_bytes = kGpuAdaptivePrefixCodebookBytes +
+                                         (block_plan.segment_count + 1U) * sizeof(std::uint32_t) +
+                                         (estimated_bits + 7U) / 8U;
+            if (compression_level < 7 && estimated_bytes >= previous.encoded_len) {
+                block_plan.segment_count = 0U;
+            } else {
+                code_tables.push_back(table);
+                for (std::uint32_t segment = 0; segment < block_plan.segment_count; ++segment) {
+                    segment_plans.push_back(AdaptiveEncodeSegmentPlan{
+                        .block_start = static_cast<std::uint64_t>(start),
+                        .block_len = len,
+                        .segment_index = segment,
+                        .table_index = block_plan.table_index,
+                    });
+                }
             }
         }
         block_plans.push_back(std::move(block_plan));

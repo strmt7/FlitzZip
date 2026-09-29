@@ -258,7 +258,7 @@ std::optional<EncodedChunk> encode_native_prefix_chunk_device(const std::byte* d
                                                               std::span<const BlockDescriptor> source_blocks,
                                                               int compression_level, GpuTelemetry* telemetry) {
     auto fixed = encode_prefix_chunk_device(device_input, input, block_size, source_blocks, telemetry);
-    if (compression_level < 7) {
+    if (compression_level == 1) {
         return fixed;
     }
     auto adaptive = encode_adaptive_prefix_chunk_device(device_input, input, block_size, source_blocks,

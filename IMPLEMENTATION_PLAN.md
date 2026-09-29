@@ -106,9 +106,11 @@ Security tab or a published release.
    tested architecture resolver. All four HIP objects contain the requested
    images; native tests and GUI smoke passed on the available gfx1201 device.
    Other target families remain compile-validated, not hardware-tested.
-   Native HIP currently has only two effort tiers (1-6 static, 7-9 adaptive),
-   unlike the richer CPU codec mappings. Replace that limitation with meaningful
-   measured compression strategies, not artificially weakened lower levels.
+   Native HIP dictionary matching has nine bounded effort budgets. The prefix
+   path now evaluates progressively sampled adaptive candidates at levels 2-9
+   when useful, but repeated sizes remain on saturated or static-favored data.
+   Continue developing meaningful measured compression strategies, not
+   artificially weakened lower levels.
    Cover low-byte and shifted-byte entropy, longer repeats, small-file batches,
    and incompressible data. Track compression speed and encoded size together;
    removing redundant candidate work alone is not the requested dramatic joint
