@@ -5,6 +5,7 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <queue>
 #include <vector>
 #include <hip/hip_runtime.h>
 
@@ -17,7 +18,7 @@ struct AdaptiveEncodeTable {
 };
 
 struct AdaptiveCodebookEstimate {
-    std::array<std::byte, kGpuAdaptivePrefixCodebookBytes> codebook{};
+    std::vector<std::byte> codebook = std::vector<std::byte>(kGpuAdaptivePrefixCodebookBytes);
     std::uint64_t sampled_bits = 0;
     std::size_t sample_count = 0;
 };
@@ -39,7 +40,8 @@ struct AdaptiveEncodeBlockPlan {
     bool use_adaptive = false;
     std::uint32_t bitstream_offset = 0;
     std::uint32_t bitstream_bytes = 0;
-    std::array<std::byte, kGpuAdaptivePrefixCodebookBytes> codebook{};
+    BlockKind kind = BlockKind::GpuAdaptivePrefix;
+    std::vector<std::byte> codebook;
     std::vector<std::uint32_t> offsets;
 };
 
@@ -234,6 +236,103 @@ AdaptiveCodebookEstimate build_adaptive_prefix_codebook(std::span<const std::byt
     return estimate;
 }
 
+struct HuffmanNode {
+    std::uint64_t weight = 0U;
+    std::uint16_t parent = 0xFFFFU;
+    std::uint16_t smallest_symbol = 0U;
+};
+
+// Purpose: Construct a deterministic length-bounded canonical Huffman code from a sampled block.
+// Inputs: `block` and `compression_level` select a bounded sample; `table` receives device encoder codes.
+// Outputs: Returns the serialized 12-bit decoder lookup and sample estimate, or empty for overlong trees.
+std::optional<AdaptiveCodebookEstimate>
+build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_level, AdaptiveEncodeTable& table) {
+    std::array<std::uint64_t, 256> histogram{};
+    constexpr std::array<std::size_t, 8> sample_budgets{
+        4096U, 16384U, 65536U, 262144U, 1048576U, 4194304U, 8388608U, std::numeric_limits<std::size_t>::max()};
+    const auto target = std::min(block.size(), sample_budgets[static_cast<std::size_t>(compression_level - 2)]);
+    const auto stride = std::max<std::size_t>(1U, block.size() / target);
+    std::size_t sample_count = 0U;
+    for (std::size_t index = 0U; index < block.size(); index += stride) {
+        ++histogram[static_cast<std::uint8_t>(block[index])];
+        ++sample_count;
+    }
+    const auto frequency_floor = std::max<std::uint64_t>(1U, sample_count / 4096U);
+
+    std::array<HuffmanNode, 511> nodes{};
+    for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        nodes[symbol].weight = histogram[symbol] + frequency_floor;
+        nodes[symbol].smallest_symbol = symbol;
+    }
+    const auto lower_priority = [&](std::uint16_t lhs, std::uint16_t rhs) {
+        if (nodes[lhs].weight != nodes[rhs].weight) {
+            return nodes[lhs].weight > nodes[rhs].weight;
+        }
+        return nodes[lhs].smallest_symbol > nodes[rhs].smallest_symbol;
+    };
+    std::priority_queue<std::uint16_t, std::vector<std::uint16_t>, decltype(lower_priority)> heap(lower_priority);
+    for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        heap.push(symbol);
+    }
+    for (std::uint16_t parent = 256U; parent < 511U; ++parent) {
+        const auto left = heap.top();
+        heap.pop();
+        const auto right = heap.top();
+        heap.pop();
+        nodes[left].parent = parent;
+        nodes[right].parent = parent;
+        nodes[parent].weight = nodes[left].weight + nodes[right].weight;
+        nodes[parent].smallest_symbol = std::min(nodes[left].smallest_symbol, nodes[right].smallest_symbol);
+        heap.push(parent);
+    }
+
+    std::array<std::uint16_t, kGpuHuffmanLookupBits + 1U> width_counts{};
+    for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        std::uint16_t width = 0U;
+        for (auto node = symbol; nodes[node].parent != 0xFFFFU; node = nodes[node].parent) {
+            ++width;
+        }
+        if (width == 0U || width > kGpuHuffmanLookupBits) {
+            return std::nullopt;
+        }
+        table.width[symbol] = static_cast<std::uint8_t>(width);
+        ++width_counts[width];
+    }
+    std::array<std::uint16_t, kGpuHuffmanLookupBits + 1U> next_code{};
+    std::uint32_t code = 0U;
+    for (std::uint32_t width = 1U; width <= kGpuHuffmanLookupBits; ++width) {
+        code = (code + width_counts[width - 1U]) << 1U;
+        next_code[width] = static_cast<std::uint16_t>(code);
+    }
+    AdaptiveCodebookEstimate estimate;
+    estimate.codebook.assign(kGpuHuffmanLookupBytes, std::byte{0});
+    for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
+        const auto width = table.width[symbol];
+        const auto canonical = next_code[width]++;
+        std::uint16_t reversed = 0U;
+        for (std::uint32_t bit = 0U; bit < width; ++bit) {
+            reversed = static_cast<std::uint16_t>((reversed << 1U) | ((canonical >> bit) & 1U));
+        }
+        table.code[symbol] = reversed;
+        for (std::uint32_t slot = reversed; slot < kGpuHuffmanLookupEntries; slot += 1U << width) {
+            const auto offset = slot * sizeof(std::uint16_t);
+            if (estimate.codebook[offset + 1U] != std::byte{0}) {
+                throw GpuError("GPU Huffman code tree has overlapping leaves");
+            }
+            estimate.codebook[offset] = static_cast<std::byte>(symbol);
+            estimate.codebook[offset + 1U] = static_cast<std::byte>(width);
+        }
+        estimate.sampled_bits += histogram[symbol] * width;
+        estimate.sample_count += histogram[symbol];
+    }
+    for (std::size_t index = 1U; index < estimate.codebook.size(); index += sizeof(std::uint16_t)) {
+        if (estimate.codebook[index] == std::byte{0}) {
+            throw GpuError("GPU Huffman code tree is incomplete");
+        }
+    }
+    return estimate;
+}
+
 // Purpose: Return the expected block byte range for one verified descriptor.
 // Inputs: input_size bounds bytes, block_size caps each block, cursor is its offset, and block supplies its length.
 // Outputs: Returns the block start; throws if verified metadata no longer matches the chunk layout.
@@ -292,12 +391,11 @@ void append_fallback_block(EncodedChunk& out, const BlockDescriptor& source_bloc
 // Purpose: Build host adaptive-prefix plans and device code tables for verified raw blocks inside one uploaded chunk.
 // Inputs: Input, block settings, verified source blocks, optional static baseline, level, and mutable plan/table lists.
 // Outputs: Returns bounded plans with each block's existing payload size as its strict improvement threshold.
-std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const std::byte> input,
-                                                                 std::uint32_t block_size,
-                                                                 std::span<const BlockDescriptor> source_blocks,
-                                                                 const EncodedChunk* baseline, int compression_level,
-                                                                 std::vector<AdaptiveEncodeSegmentPlan>& segment_plans,
-                                                                 std::vector<AdaptiveEncodeTable>& code_tables) {
+std::vector<AdaptiveEncodeBlockPlan>
+build_adaptive_encode_plans(std::span<const std::byte> input, std::uint32_t block_size,
+                            std::span<const BlockDescriptor> source_blocks, const EncodedChunk* baseline,
+                            int compression_level, bool huffman, std::vector<AdaptiveEncodeSegmentPlan>& segment_plans,
+                            std::vector<AdaptiveEncodeTable>& code_tables) {
     std::vector<AdaptiveEncodeBlockPlan> block_plans;
     if (baseline && baseline->blocks.size() != source_blocks.size()) {
         throw GpuError("GPU adaptive baseline block count differs from source");
@@ -321,20 +419,31 @@ std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const
             .segment_offset = static_cast<std::uint32_t>(segment_plans.size()),
             .segment_count = len >= kGpuPrefixSegmentBytes ? segment_count : 0U,
             .table_index = static_cast<std::uint32_t>(code_tables.size()),
+            .kind = huffman ? BlockKind::GpuHuffman : BlockKind::GpuAdaptivePrefix,
         };
-        if (block_plan.segment_count != 0U &&
+        if (huffman && compression_level == 2 && previous.kind != BlockKind::GpuPrefix) {
+            block_plan.segment_count = 0U;
+        }
+        if (!huffman && block_plan.segment_count != 0U &&
             !should_try_sampled_adaptive_prefix(input.subspan(start, len), compression_level)) {
             block_plan.segment_count = 0U;
         }
         if (block_plan.segment_count != 0U) {
             AdaptiveEncodeTable table{};
-            auto estimate = build_adaptive_prefix_codebook(input.subspan(start, len), compression_level, table);
-            block_plan.codebook = estimate.codebook;
-            const auto estimated_bits = estimate.sampled_bits * len / estimate.sample_count;
-            const auto estimated_bytes = kGpuAdaptivePrefixCodebookBytes +
+            auto estimate = huffman ? build_huffman_prefix_codebook(input.subspan(start, len), compression_level, table)
+                                    : std::optional(build_adaptive_prefix_codebook(input.subspan(start, len),
+                                                                                   compression_level, table));
+            if (!estimate) {
+                block_plan.segment_count = 0U;
+                block_plans.push_back(std::move(block_plan));
+                continue;
+            }
+            block_plan.codebook = std::move(estimate->codebook);
+            const auto estimated_bits = estimate->sampled_bits * len / estimate->sample_count;
+            const auto estimated_bytes = block_plan.codebook.size() +
                                          (block_plan.segment_count + 1U) * sizeof(std::uint32_t) +
                                          (estimated_bits + 7U) / 8U;
-            if (compression_level < 7 && estimated_bytes >= previous.encoded_len) {
+            if ((huffman || compression_level < 7) && estimated_bytes >= previous.encoded_len) {
                 block_plan.segment_count = 0U;
             } else {
                 code_tables.push_back(table);
@@ -418,8 +527,7 @@ AdaptiveBatchSelection select_adaptive_blocks_for_batch(std::vector<AdaptiveEnco
         }
         const auto table_bytes =
             checked_multiply_bytes(block_plan.offsets.size(), sizeof(std::uint32_t), "GPU adaptive prefix table");
-        auto payload_bytes =
-            checked_add_bytes(kGpuAdaptivePrefixCodebookBytes, table_bytes, "GPU adaptive prefix payload");
+        auto payload_bytes = checked_add_bytes(block_plan.codebook.size(), table_bytes, "GPU adaptive prefix payload");
         payload_bytes = checked_add_bytes(payload_bytes, block_plan.offsets.back(), "GPU adaptive prefix payload");
         if (block_plan.offsets.back() == 0U || payload_bytes >= block_plan.payload_limit) {
             block_plan.offsets.clear();
@@ -534,17 +642,19 @@ void append_baseline_block(EncodedChunk& out, const EncodedChunk& baseline, std:
 
 }  // namespace
 
-// Purpose: Replace only blocks whose adaptive payload improves on their existing GPU-native representation.
-// Inputs: Uploaded and host input, block settings, source descriptors, borrowed static baseline, level, and telemetry.
-// Outputs: Returns a mixed encoded chunk after packing only winning adaptive blocks, or empty when none wins.
-std::optional<EncodedChunk>
-encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
-                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
-                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry) {
+// Purpose: Replace only blocks whose selected entropy payload improves the GPU-native baseline.
+// Inputs: Uploaded and host bytes, verified descriptors, level, candidate kind, and mutable HIP telemetry.
+// Outputs: Returns an encoded chunk with only smaller replacements, or empty when no block improves.
+std::optional<EncodedChunk> encode_entropy_prefix_chunk_device(const std::byte* device_input,
+                                                               std::span<const std::byte> input,
+                                                               std::uint32_t block_size,
+                                                               std::span<const BlockDescriptor> source_blocks,
+                                                               const EncodedChunk* baseline, int compression_level,
+                                                               bool huffman, GpuTelemetry* telemetry) {
     std::vector<AdaptiveEncodeSegmentPlan> length_plans;
     std::vector<AdaptiveEncodeTable> code_tables;
     auto block_plans = build_adaptive_encode_plans(input, block_size, source_blocks, baseline, compression_level,
-                                                   length_plans, code_tables);
+                                                   huffman, length_plans, code_tables);
     if (length_plans.empty()) {
         return std::nullopt;
     }
@@ -567,13 +677,13 @@ encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<con
             const auto table_bytes = checked_multiply_bytes(block_plan.offsets.size(), sizeof(std::uint32_t),
                                                             "GPU adaptive prefix block table");
             auto prefix_payload_size =
-                checked_add_bytes(kGpuAdaptivePrefixCodebookBytes, table_bytes, "GPU adaptive prefix payload");
+                checked_add_bytes(block_plan.codebook.size(), table_bytes, "GPU adaptive prefix payload");
             prefix_payload_size =
                 checked_add_bytes(prefix_payload_size, block_plan.bitstream_bytes, "GPU adaptive prefix payload");
             if (prefix_payload_size > std::numeric_limits<std::uint32_t>::max()) {
                 throw GpuError("GPU adaptive prefix block exceeds block metadata limit");
             }
-            out.blocks.push_back(BlockDescriptor{.kind = BlockKind::GpuAdaptivePrefix,
+            out.blocks.push_back(BlockDescriptor{.kind = block_plan.kind,
                                                  .fill_value = 0,
                                                  .uncompressed_len = static_cast<std::uint32_t>(len),
                                                  .encoded_offset = payload_offset,
@@ -587,6 +697,28 @@ encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<con
         }
     }
     return out;
+}
+
+// Purpose: Try the backward-compatible adaptive prefix candidate without weakening its measured-size rule.
+// Inputs: Uploaded/host bytes, verified source blocks, optional baseline, level, and HIP telemetry.
+// Outputs: Returns a smaller adaptive candidate or empty when it cannot improve the baseline.
+std::optional<EncodedChunk>
+encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
+                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry) {
+    return encode_entropy_prefix_chunk_device(device_input, input, block_size, source_blocks, baseline,
+                                              compression_level, false, telemetry);
+}
+
+// Purpose: Try the version-eight GPU-native Huffman candidate at stronger effort levels.
+// Inputs: Uploaded/host bytes, verified source blocks, optional baseline, level, and HIP telemetry.
+// Outputs: Returns a smaller Huffman candidate or empty when it cannot improve the baseline.
+std::optional<EncodedChunk>
+encode_huffman_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                   std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
+                                   const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry) {
+    return encode_entropy_prefix_chunk_device(device_input, input, block_size, source_blocks, baseline,
+                                              compression_level, true, telemetry);
 }
 
 }  // namespace superzip::hip_detail

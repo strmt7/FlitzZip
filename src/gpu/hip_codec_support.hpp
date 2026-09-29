@@ -4,6 +4,7 @@
 
 #include "core/result.hpp"
 #include "core/dictionary_block.hpp"
+#include "core/huffman_lookup.hpp"
 #include "core/sparse_pattern_block.hpp"
 
 #include <algorithm>
@@ -55,7 +56,8 @@ struct DeviceCrcSegment {
 // Inputs: `block` is one parsed SUZIP block descriptor.
 // Outputs: Returns true when the descriptor uses static or adaptive GPU-prefix encoding.
 inline bool is_gpu_prefix_block(const BlockDescriptor& block) {
-    return block.kind == BlockKind::GpuPrefix || block.kind == BlockKind::GpuAdaptivePrefix;
+    return block.kind == BlockKind::GpuPrefix || block.kind == BlockKind::GpuAdaptivePrefix ||
+           block.kind == BlockKind::GpuHuffman;
 }
 
 // Purpose: Detect whether the standard materializer has any raw/fill/pattern/sparse work to do.
@@ -470,6 +472,41 @@ inline void validate_gpu_adaptive_prefix_payload_table(std::span<const std::byte
     }
 }
 
+// Purpose: Validate the version-eight Huffman lookup and offsets before device decode.
+// Inputs: `payload`, `block`, and `decoded_len` identify a bounds-checked native block.
+// Outputs: Throws unless all lookup widths and encoded segment extents are valid.
+inline void validate_gpu_huffman_payload_table(std::span<const std::byte> payload, const BlockDescriptor& block,
+                                               std::size_t decoded_len) {
+    const auto offset = static_cast<std::size_t>(block.encoded_offset);
+    const auto encoded_len = static_cast<std::size_t>(block.encoded_len);
+    const auto segment_count = (decoded_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+    const auto header_bytes = kGpuHuffmanLookupBytes + table_bytes;
+    if (segment_count == 0U || encoded_len <= header_bytes || encoded_len >= decoded_len) {
+        throw ArchiveError("GPU Huffman decode block metadata is invalid");
+    }
+    const auto encoded = payload.subspan(offset, encoded_len);
+    if (!huffman_lookup_is_complete(encoded.first(kGpuHuffmanLookupBytes))) {
+        throw ArchiveError("GPU Huffman lookup is invalid");
+    }
+    const auto table = encoded.subspan(kGpuHuffmanLookupBytes, table_bytes);
+    const auto bitstream_bytes = encoded_len - header_bytes;
+    auto previous = read_gpu_prefix_table_u32(table, 0U);
+    if (previous != 0U) {
+        throw ArchiveError("GPU Huffman decode table must start at zero");
+    }
+    for (std::size_t segment = 0U; segment < segment_count; ++segment) {
+        const auto next = read_gpu_prefix_table_u32(table, (segment + 1U) * sizeof(std::uint32_t));
+        if (next < previous || next > bitstream_bytes) {
+            throw ArchiveError("GPU Huffman decode table is not monotonic");
+        }
+        previous = next;
+    }
+    if (previous != bitstream_bytes) {
+        throw ArchiveError("GPU Huffman decode payload has trailing bytes");
+    }
+}
+
 // Purpose: Admit a complete dictionary block before HIP parses or copies table-directed segments.
 // Inputs: Bounded archive payload and a dictionary descriptor with exact decoded length.
 // Outputs: Returns normally for valid framing or throws before any GPU read on malformed extents.
@@ -580,6 +617,11 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
                 throw ArchiveError("GPU adaptive prefix decode block exceeds payload buffer");
             }
             validate_gpu_adaptive_prefix_payload_table(payload, block, len);
+        } else if (block.kind == BlockKind::GpuHuffman) {
+            if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
+                throw ArchiveError("GPU Huffman decode block exceeds payload buffer");
+            }
+            validate_gpu_huffman_payload_table(payload, block, len);
         } else if (block.kind == BlockKind::GpuDictionary) {
             validate_gpu_dictionary_payload(payload, block);
         } else if (is_gpu_sparse_pattern_kind(block.kind)) {
@@ -751,5 +793,13 @@ std::optional<EncodedChunk>
 encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
                                     std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
                                     const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry);
+
+// Purpose: Evaluate version-eight Huffman GPU blocks against the current measured-size baseline.
+// Inputs: Uploaded/host bytes, verified source descriptors, borrowed baseline, effort, and telemetry.
+// Outputs: Returns a smaller GPU-native candidate or empty when no block improves.
+std::optional<EncodedChunk>
+encode_huffman_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                   std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
+                                   const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry);
 
 }  // namespace superzip::hip_detail

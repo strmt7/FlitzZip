@@ -12,7 +12,11 @@ Before editing security-sensitive code, identify the boundary:
 - ZIP compatibility extraction.
 - LHA/LZH compatibility extraction.
 - SUZIP block metadata validation.
+- Versioned GPU entropy payload validation, including complete prefix lookup
+  tables and bounded segment offsets before HIP decode.
 - Microsoft Defender opt-in scan.
+- App-local and HIP runtime DLL loading.
+- Local MCP child-process containment.
 - GitHub Actions scanner integration.
 
 Required selection step:
@@ -98,6 +102,43 @@ Add or update tests for:
 - Oversized or malformed archive metadata.
 - Symbolic links and other unsupported special-file entries in compatibility
   formats.
+
+Verified publication and source-identity rules:
+
+- Hold non-delete-sharing handles for every reparse-free parent component from
+  validation through publication. Request only the directory access rights the
+  operation needs; `FILE_DELETE_CHILD` is not required to pin an output parent
+  and can reject ordinary inherited Windows `Modify` ACLs.
+- Stage files in a CSPRNG-named private sibling directory, flush and recheck the
+  exact open payload, and rename that handle while the target parent chain is
+  still pinned. Never reopen a checked payload by pathname for publication.
+- Hold pinned source files and source-directory identities through every create
+  pass. Two-pass extractors must repeat payload integrity checks, and filtered
+  outer streams must reach and validate their final trailer before any output
+  becomes visible.
+- Apply aggregate entry, path-byte, decoded-output, work, depth, and device
+  memory budgets in addition to per-field limits. Shared metadata references
+  still consume budget for every materialized copy.
+
+Runtime, GPU, and process rules:
+
+- Load app-local runtime DLLs only through `core/trusted_runtime`: executable
+  directory resolution, no path-bearing module names, pinned source identity,
+  build-pinned SHA-256, restricted loader search flags, and loaded-object
+  identity verification are all mandatory.
+- Keep HIP allocations in move-only RAII buffers backed by the process-wide
+  reservation budget. Every multi-allocation path must release earlier buffers
+  on later failure, and tiny-block lookup must stay bounded rather than scan all
+  descriptors per block.
+- Defender opt-in extraction is fail closed: extract into a private quarantine,
+  require a successful clean scan, then publish. Scanner failure or detection
+  must leave no user-visible extracted payload.
+- MCP child execution must bound request size, stdout, stderr, wall time, and
+  descendants. On Windows, assign the child to a kill-on-close Job Object and
+  drain both pipes concurrently.
+- Every standalone sanitizer target that links `file_publish.cpp` must also link
+  `file_manifest.cpp`, and `tools/fuzz.ps1` must explicitly fail when Docker
+  returns nonzero. `tools/security_scan.ps1` enforces both invariants.
 
 Do not store credentials, PATs, org IDs, scan targets, or Defender results in
 tracked files.

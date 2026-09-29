@@ -22,14 +22,14 @@ mode, so the product exposes the non-store levels.
 | Fastest | `--compression-level 1` | Lowest effort for quick local transfers. |
 | Fast | `--compression-level 3` | Speed-biased compression. |
 | Balanced | `--compression-level 5` | Default release baseline for benchmarks and normal use. |
-| Strong | `--compression-level 7` | Ratio-biased compression; required-HIP `.suzip` may evaluate adaptive GPU-prefix codebooks. |
-| Maximum | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates a full-sample adaptive-prefix codebook. |
+| Strong | `--compression-level 7` | Ratio-biased compression with a larger GPU entropy sample. |
+| Maximum | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates full-block entropy samples. |
 
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
 GUI, and `tools\bench.ps1`. Benchmarks may sweep all five levels, but release
 throughput claims must identify the selected level, input bytes, output bytes,
 and compression ratio. The required-HIP native codec can emit GPU fill, GPU
-pattern, static GPU-prefix, and adaptive GPU-prefix blocks; prefix paths are
+pattern, static GPU-prefix, adaptive GPU-prefix, and version-eight GPU Huffman blocks; entropy paths are
 selected by measured block savings rather than by pretending to be Deflate or
 Zstandard.
 
@@ -43,6 +43,17 @@ well served. Levels 7-9 always evaluate the candidate. The encoder publishes
 an adaptive block only when its measured payload is smaller than the existing
 GPU-native candidate. Required GPU mode never emits CPU Deflate blocks.
 
+Levels 2-9 also evaluate a bounded GPU-native Huffman candidate. The level
+selects the same progressive sample budget; all 256 byte values receive a
+sample-frequency floor so rare symbols remain decodable within the 12-bit
+lookup bound. The encoder constructs a canonical prefix code on the host,
+measures segment lengths and packs winning candidates on the GPU, and compares
+the complete payload including the 8 KiB lookup and segment offsets against
+the current static/adaptive representation. Level 2 limits this extra search
+to blocks already improved by static prefix coding. Higher levels consider all
+eligible raw blocks. Decoding and CRC in required-GPU mode use HIP; CPU readers
+also decode version-eight blocks for portability and verification.
+
 The GPU dictionary matcher separately has nine increasing bounded search
 budgets and an archive-writer regression with nine strictly improving payloads
 on a matching record fixture. The shared level scale also controls CPU and
@@ -52,18 +63,20 @@ block; SuperZip does not add padding or weaken low levels to manufacture a
 difference. Distinct search budgets do not establish nine distinct sizes on
 every corpus or a universal speedup. Broader ratio strategies remain open.
 
-The Mixed workload's low-byte distribution favors the static code, so equal
-level-5/level-9 sizes there do not demonstrate compression-strength coverage.
-RAM-only shifted-alphabet regressions additionally require a real strong-tier
-size reduction and CPU/HIP roundtrips. Future codec work must cover both kinds
-of distribution and longer repetitions; do not weaken lower levels merely to
-manufacture a size difference.
+The 10 GiB Mixed workload previously saturated the static prefix code at all
+GPU efforts. The version-eight candidate now produces distinct measured GPU
+archive sizes at levels 1-9 on that workload, though level 6 was 1,660 bytes
+larger than level 5 in an uncommitted diagnostic sweep. This is not a guarantee
+of monotonic size on arbitrary files. RAM-only shifted-alphabet regressions
+require a strong-tier size reduction and CPU/HIP roundtrips. Longer-repeat and
+context coding strategies remain separate work; do not weaken lower levels to
+manufacture a difference.
 
-Adaptive selection now compares each block's measured payload size, including
-codebook and offset-table overhead, against its existing representation before
-packing. Losing adaptive candidates are not packed or transferred back. Mixed
-chunks retain smaller static blocks alongside winning adaptive blocks, without
-changing version-3 decoding or required-HIP semantics.
+Entropy selection compares each block's measured payload size, including
+codebook/lookup and offset-table overhead, against its existing representation
+before packing. Losing candidates are not packed or transferred back. Mixed
+chunks can retain static, adaptive, and Huffman blocks side by side; version-3
+adaptive decoding and required-HIP semantics remain unchanged.
 
 ## Native CPU Blocks
 

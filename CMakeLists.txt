@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(
   SuperZip
-  VERSION 0.5.0
+  VERSION 0.8.0
   LANGUAGES C CXX)
 
 if(MSVC)

@@ -29,8 +29,14 @@ Required rules:
   ratio, input bytes, and output bytes. Level 5 is the standard balanced
   release baseline.
 - Native `.suzip` required-GPU ratio work must stay on GPU-native block kinds.
-  Version 3 may emit adaptive GPU-prefix blocks at stronger levels, but agents
-  must not describe this as CPU Deflate/Zstd or as a fallback path.
+  Version 8 may emit a bounded Huffman lookup block at stronger levels; both
+  encoding and required-GPU decode must execute through HIP. Older static and
+  adaptive prefix archives remain readable. Do not count CPU Deflate/Zstd as
+  GPU work or promise that every level changes every input's size.
+- For effort comparisons, record exact archive bytes for all nine levels and
+  graph the published 1/3/5/7/9 subset only from clean-source, identical-host
+  RAM-only runs. Report smaller high-level gains in bytes, not rounded ratios,
+  and identify any non-monotonic pair instead of smoothing it away.
 - Do not run or reintroduce multi-GB filesystem benchmarks during development.
   Use `tools/storage_smoke.ps1` or the 64 MiB-capped filesystem smoke only for
   archive write/read correctness.

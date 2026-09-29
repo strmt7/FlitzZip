@@ -39,6 +39,9 @@ constexpr std::uint32_t kMaxGpuLongSparsePatternBytes = 1024U * 1024U;
 
 // GPU prefix blocks encode fixed-size segments with static or adaptive HIP prefix codecs.
 constexpr std::uint32_t kGpuPrefixSegmentBytes = 4U * 1024U;
+constexpr std::uint32_t kGpuHuffmanLookupBits = 12U;
+constexpr std::uint32_t kGpuHuffmanLookupEntries = 1U << kGpuHuffmanLookupBits;
+constexpr std::uint32_t kGpuHuffmanLookupBytes = kGpuHuffmanLookupEntries * sizeof(std::uint16_t);
 constexpr std::uint32_t kGpuAdaptivePrefixSmallSymbols = 4U;
 constexpr std::uint32_t kGpuAdaptivePrefixMediumSymbols = 16U;
 constexpr std::uint32_t kGpuAdaptivePrefixLargeSymbols = 64U;

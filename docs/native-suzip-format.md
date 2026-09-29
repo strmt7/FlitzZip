@@ -26,7 +26,13 @@ explicit:
   adds GPU dictionary blocks and longer pattern motifs. Version 5 adds GPU
   sparse-pattern blocks. Version 6 adds CPU-only Zstandard frames as block kind
   8. Version 7 adds GPU long-sparse-pattern blocks as kind 9, with motifs
-  longer than 16 KiB and at most 1 MiB. Earlier versions remain
+  longer than 16 KiB and at most 1 MiB. Version 8 adds GPU Huffman blocks as
+  kind 10. Each Huffman block stores a complete 4096-entry, two-byte-per-entry
+  decoder lookup (symbol then code width), followed by the existing 4 KiB
+  segment-offset table and packed bitstreams. Codes are read least-significant
+  bit first, are at most 12 bits wide, and each symbol's leaf must cover its
+  entire prefix range. The reader rejects incomplete or conflicting tables and
+  out-of-range offsets before HIP decode. Earlier versions remain
   readable; readers predating each new version reject its new block kind.
 - CPU compression tries one independently framed Zstandard block for non-fill
   blocks of at least 4 KiB, retaining Deflate for shorter blocks. It records
@@ -81,10 +87,10 @@ flowchart TD
   operation options.
 - Do not accept CPU-only fallback in required-GPU mode.
 - Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, GPU
-  static-prefix, GPU adaptive-prefix, GPU dictionary, GPU sparse-pattern, and
+  static-prefix, GPU adaptive-prefix, GPU Huffman, GPU dictionary, GPU sparse-pattern, and
   GPU long-sparse-pattern blocks. It must not emit CPU Deflate or Zstandard
   blocks.
-- GPU static-prefix and adaptive-prefix blocks are native SUZIP blocks. They are
+- GPU static-prefix, adaptive-prefix, and Huffman blocks are native SUZIP blocks. They are
   not ZIP, Deflate, Zstandard, or a compatibility-format wrapper.
 - Keep native-format benchmark claims separate from compatibility-format claims.
 - Any future format-version change must add tests for backward detection,

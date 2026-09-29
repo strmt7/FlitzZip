@@ -77,9 +77,12 @@ Rules:
 - Block-size changes must validate every product option:
   `-BlockSizeKiB 256,512,1024,2048,4096,8192,16384`.
 - `.suzip` required-GPU compression-level changes must preserve GPU-native
-  semantics: static/adaptive GPU-prefix blocks are allowed, CPU Deflate/Zstd
-  fallback is not. Tests must prove stronger levels can change ratio on a
-  generated file-agnostic workload and still verify/extract with `--require-gpu`.
+  semantics: static/adaptive/Huffman GPU-prefix blocks are allowed, CPU
+  Deflate/Zstd fallback is not. Version-eight Huffman additions must prove
+  version downgrade rejection, malformed lookup/offset rejection, CPU and HIP
+  read-back, and actual measured-size selection. Compare all nine efforts on a
+  generated file-agnostic workload; do not require artificial size differences
+  on every possible input.
 - Run security tests after touching extraction, archive metadata, paths, subprocesses, workflows, or Defender integration.
 - Run `tools/compatibility_interop_smoke.ps1 -Configuration Release` after
   changing ZIP, TAR, compressed TAR, CPIO, CPIO.GZ, AR, or shared

@@ -288,7 +288,7 @@ TEST_CASE(suzip_gpu_prefix_packing_matches_reference) {
         }
     }
     const auto aligned_size = ((fixture.size() + 4095U) / 4096U) * 4096U;
-    for (const int level : {5, 9}) {
+    for (const int level : {1, 2}) {
         for (const std::size_t tail : {0U, 1U, 15U, 16U, 17U, 31U, 32U, 4095U}) {
             auto input = fixture;
             while (input.size() < aligned_size + tail) {
@@ -297,7 +297,7 @@ TEST_CASE(suzip_gpu_prefix_packing_matches_reference) {
                 filler_state ^= filler_state << 5U;
                 input.push_back(static_cast<std::byte>(filler_state & 3U));
             }
-            if (level == 9) {
+            if (level == 2) {
                 for (auto& byte : input) {
                     byte = static_cast<std::byte>((static_cast<std::uint32_t>(byte) + 201U) & 255U);
                 }
@@ -309,10 +309,10 @@ TEST_CASE(suzip_gpu_prefix_packing_matches_reference) {
             REQUIRE_TRUE(encoded.gpu_used);
             REQUIRE_EQ(encoded.blocks.size(), 1U);
             REQUIRE_EQ(encoded.blocks.front().kind,
-                       level == 5 ? superzip::BlockKind::GpuPrefix : superzip::BlockKind::GpuAdaptivePrefix);
-            REQUIRE_TRUE(encoded.payload.size() >= (level == 9 ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U));
+                       level == 1 ? superzip::BlockKind::GpuPrefix : superzip::BlockKind::GpuAdaptivePrefix);
+            REQUIRE_TRUE(encoded.payload.size() >= (level == 2 ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U));
             const auto codebook = std::span<const std::byte>(encoded.payload)
-                                      .first(level == 9 ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U);
+                                      .first(level == 2 ? superzip::kGpuAdaptivePrefixCodebookBytes : 0U);
             REQUIRE_TRUE(encoded.payload == reference_prefix_payload(input, codebook));
             std::vector<std::byte> decoded(input.size());
             REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
@@ -345,14 +345,14 @@ TEST_CASE(suzip_gpu_prefix_candidate_selection_is_per_block) {
                                               : region == 3U ? (i % 3U) + 30U
                                                              : random >> 16U);
         }
-        for (const int level : {7, 9}) {
+        for (const int level : {2}) {
             superzip::GpuCodecOptions options;
             options.require_gpu = true;
             options.compression_level = level;
             options.block_size = block_size;
             const auto encoded = superzip::encode_chunk(input, options);
             REQUIRE_EQ(encoded.blocks.size(), 5U);
-            REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuPrefix);
+            REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuHuffman);
             REQUIRE_EQ(encoded.blocks[1].kind, superzip::BlockKind::GpuAdaptivePrefix);
             REQUIRE_EQ(encoded.blocks[2].kind, superzip::BlockKind::Fill);
             REQUIRE_EQ(encoded.blocks[3].kind, superzip::BlockKind::Pattern);
@@ -386,10 +386,10 @@ TEST_CASE(suzip_gpu_prefix_candidate_selection_is_per_block) {
     }
 }
 
-// Purpose: Do not pack or transfer an adaptive candidate when its measured size cannot improve a static block.
-// Inputs: One deterministic low-byte RAM-only block encoded at levels 5 and 9 with independent telemetry.
-// Outputs: Requires identical selected bytes and only the adaptive length-table D2H cost, not a rejected payload.
-TEST_CASE(suzip_gpu_prefix_candidate_selection_skips_losing_adaptive_payload) {
+// Purpose: Replace a static GPU prefix only when the first stronger effort measures a size gain.
+// Inputs: One deterministic low-byte RAM-only block encoded at levels one and two with independent telemetry.
+// Outputs: Level two emits a smaller Huffman block and still decodes byte-for-byte on the GPU.
+TEST_CASE(suzip_gpu_huffman_replaces_static_prefix_when_smaller) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
@@ -401,19 +401,21 @@ TEST_CASE(suzip_gpu_prefix_candidate_selection_skips_losing_adaptive_payload) {
     }
     superzip::GpuCodecOptions options;
     options.require_gpu = true;
-    options.compression_level = 5;
+    options.compression_level = 1;
     options.telemetry = std::make_shared<superzip::GpuTelemetry>();
     const auto balanced = superzip::encode_chunk(input, options);
     const auto balanced_stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
-    options.compression_level = 9;
+    options.compression_level = 2;
     options.telemetry = std::make_shared<superzip::GpuTelemetry>();
     const auto maximum = superzip::encode_chunk(input, options);
     const auto maximum_stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
-    REQUIRE_TRUE(balanced.payload == maximum.payload);
+    REQUIRE_TRUE(maximum.payload.size() < balanced.payload.size());
     REQUIRE_EQ(maximum.blocks.size(), 1U);
-    REQUIRE_EQ(maximum.blocks[0].kind, superzip::BlockKind::GpuPrefix);
-    const auto lengths_bytes = input.size() / superzip::kGpuPrefixSegmentBytes * sizeof(std::uint32_t);
-    REQUIRE_TRUE(maximum_stats.d2h_bytes <= balanced_stats.d2h_bytes + lengths_bytes);
+    REQUIRE_EQ(maximum.blocks[0].kind, superzip::BlockKind::GpuHuffman);
+    REQUIRE_TRUE(maximum_stats.kernel_launches > balanced_stats.kernel_launches);
+    std::vector<std::byte> decoded(input.size());
+    REQUIRE_TRUE(superzip::decode_chunk(maximum.payload, maximum.blocks, decoded, options));
+    REQUIRE_TRUE(decoded == input);
 }
 
 // Purpose: Demonstrate stronger native compression on data that the static low-byte code cannot compact.
@@ -454,6 +456,54 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
     }
 }
 
+// Purpose: Reject malformed version-eight Huffman lookup and segment metadata in both decoders.
+// Inputs: A real required-HIP Huffman block with invalid widths, a partial leaf, or an out-of-range offset.
+// Outputs: CPU and GPU decode reject each mutation rather than publishing a partial result.
+TEST_CASE(suzip_gpu_huffman_corruption_is_rejected) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(1024U * 1024U);
+    std::uint32_t state = 0xC001D00DU;
+    for (auto& byte : input) {
+        state = state * 1664525U + 1013904223U;
+        byte = static_cast<std::byte>(201U + ((state >> 16U) & 3U));
+    }
+    superzip::GpuCodecOptions options;
+    options.require_gpu = true;
+    options.compression_level = 5;
+    const auto encoded = superzip::encode_chunk(input, options);
+    REQUIRE_EQ(encoded.blocks.size(), 1U);
+    REQUIRE_EQ(encoded.blocks[0].kind, superzip::BlockKind::GpuHuffman);
+    for (const int corruption : {0, 1, 2}) {
+        auto damaged = encoded.payload;
+        if (corruption == 0) {
+            for (std::size_t index = 1U; index < superzip::kGpuHuffmanLookupBytes; index += 2U) {
+                damaged[index] = std::byte{0};
+            }
+        } else if (corruption == 1) {
+            const auto segment_count =
+                (input.size() + superzip::kGpuPrefixSegmentBytes - 1U) / superzip::kGpuPrefixSegmentBytes;
+            const auto final_offset = superzip::kGpuHuffmanLookupBytes + segment_count * sizeof(std::uint32_t);
+            std::fill_n(damaged.begin() + static_cast<std::ptrdiff_t>(final_offset), 4U, std::byte{0xFF});
+        } else {
+            damaged[0] ^= std::byte{0x01};
+        }
+        for (const bool force_cpu : {true, false}) {
+            options.force_cpu = force_cpu;
+            options.require_gpu = !force_cpu;
+            std::vector<std::byte> output(input.size());
+            bool rejected = false;
+            try {
+                (void)superzip::decode_chunk(damaged, encoded.blocks, output, options);
+            } catch (const superzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+    }
+}
+
 // Purpose: Verify HIP prefix decoding covers single segments, uneven segment counts, and partial final segments.
 // Inputs: RAM-only deterministic static/adaptive inputs with one through 129 segments.
 // Outputs: Requires byte-identical CPU/HIP decoding and matching GPU CRC without changing encoded format semantics.
@@ -463,14 +513,14 @@ TEST_CASE(suzip_gpu_prefix_segment_boundaries_roundtrip) {
     }
     constexpr std::array<std::size_t, 5> segment_counts{1U, 31U, 127U, 128U, 129U};
     for (const auto segments : segment_counts) {
-        for (const int level : {5, 9}) {
+        for (const int level : {1, 2}) {
             const auto tail_trim = segments == 1U ? 0U : 13U;
             std::vector<std::byte> input(segments * superzip::kGpuPrefixSegmentBytes - tail_trim);
             std::uint32_t random = 0xC001D00DU;
             for (auto& byte : input) {
                 random = random * 1664525U + 1013904223U;
                 const auto symbol = (random >> 16U) & 3U;
-                byte = static_cast<std::byte>(level == 9 ? symbol + 201U : symbol);
+                byte = static_cast<std::byte>(level == 2 ? symbol + 201U : symbol);
             }
             superzip::GpuCodecOptions options;
             options.require_gpu = true;
@@ -478,7 +528,7 @@ TEST_CASE(suzip_gpu_prefix_segment_boundaries_roundtrip) {
             options.block_size = 1024U * 1024U;
             const auto encoded = superzip::encode_chunk(input, options);
             const auto expected_kind =
-                level == 9 ? superzip::BlockKind::GpuAdaptivePrefix : superzip::BlockKind::GpuPrefix;
+                level == 2 ? superzip::BlockKind::GpuAdaptivePrefix : superzip::BlockKind::GpuPrefix;
             REQUIRE_TRUE(std::ranges::any_of(
                 encoded.blocks, [expected_kind](const auto& block) { return block.kind == expected_kind; }));
             std::vector<std::byte> decoded(input.size(), std::byte{0xAA});
@@ -516,6 +566,7 @@ TEST_CASE(suzip_required_gpu_prefix_blocks_compress_low_entropy_payload) {
     compress.force_cpu = false;
     compress.chunk_size = 2U * 1024U * 1024U;
     compress.block_size = 1024U * 1024U;
+    compress.compression_level = 1;
     compress.verify_after_write = true;
     const auto compressed = superzip::compress_suzip({input}, archive, compress);
     REQUIRE_TRUE(compressed.gpu_used);
@@ -562,6 +613,7 @@ TEST_CASE(suzip_required_gpu_prefix_blocks_compress_raw_blocks_inside_mixed_chun
     compress.force_cpu = false;
     compress.chunk_size = 2U * 1024U * 1024U;
     compress.block_size = 1024U * 1024U;
+    compress.compression_level = 1;
     compress.verify_after_write = true;
     const auto compressed = superzip::compress_suzip({input}, archive, compress);
     REQUIRE_TRUE(compressed.gpu_used);
@@ -590,10 +642,10 @@ TEST_CASE(suzip_required_gpu_prefix_blocks_compress_raw_blocks_inside_mixed_chun
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Verify Balanced and Maximum HIP levels can emit adaptive GPU-prefix blocks without CPU deflate.
+// Purpose: Verify Balanced and Maximum HIP levels can emit GPU Huffman blocks without CPU deflate.
 // Inputs: A high-byte low-entropy payload where static low-value prefix coding is intentionally weak.
-// Outputs: Throws if either level fails to beat level 1, omits adaptive blocks, emits deflate, or fails read-back.
-TEST_CASE(suzip_required_gpu_adaptive_prefix_blocks_honor_compression_level) {
+// Outputs: Throws if either level fails to beat level 1, omits Huffman blocks, emits deflate, or fails read-back.
+TEST_CASE(suzip_required_gpu_huffman_blocks_honor_compression_level) {
     if (!superzip::query_gpu_info().available) {
         return;
     }
@@ -623,7 +675,8 @@ TEST_CASE(suzip_required_gpu_adaptive_prefix_blocks_honor_compression_level) {
     REQUIRE_TRUE(balanced_stats.gpu_runtime.prefix_blocks > 0U);
     REQUIRE_TRUE(balanced_stats.output_bytes < fast_stats.output_bytes);
     const auto balanced_index = read_test_archive_index(balanced_archive);
-    REQUIRE_TRUE(archive_contains_block_kind(balanced_index, superzip::BlockKind::GpuAdaptivePrefix));
+    REQUIRE_TRUE(archive_contains_block_kind(balanced_index, superzip::BlockKind::GpuHuffman));
+    REQUIRE_EQ(balanced_index.version, 8U);
     REQUIRE_TRUE(!archive_contains_block_kind(balanced_index, superzip::BlockKind::Deflate));
     superzip::ExtractOptions cpu_verify;
     cpu_verify.gpu_required = false;
@@ -639,7 +692,7 @@ TEST_CASE(suzip_required_gpu_adaptive_prefix_blocks_honor_compression_level) {
     REQUIRE_TRUE(strong_stats.output_bytes < (source_size * 3U) / 4U);
 
     const auto index = read_test_archive_index(strong_archive);
-    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::GpuAdaptivePrefix));
+    REQUIRE_TRUE(archive_contains_block_kind(index, superzip::BlockKind::GpuHuffman));
     REQUIRE_TRUE(!archive_contains_block_kind(index, superzip::BlockKind::Deflate));
 
     superzip::ExtractOptions verify;
@@ -677,6 +730,7 @@ TEST_CASE(suzip_required_gpu_prefix_payload_corruption_is_rejected) {
     compress.force_cpu = false;
     compress.chunk_size = 1024U * 1024U;
     compress.block_size = 1024U * 1024U;
+    compress.compression_level = 1;
     const auto compressed = superzip::compress_suzip({input}, archive, compress);
     REQUIRE_TRUE(compressed.gpu_used);
     REQUIRE_TRUE(compressed.gpu_runtime.prefix_blocks > 0U);
@@ -719,6 +773,7 @@ TEST_CASE(suzip_required_gpu_prefix_table_corruption_is_rejected) {
     compress.force_cpu = false;
     compress.chunk_size = 1024U * 1024U;
     compress.block_size = 1024U * 1024U;
+    compress.compression_level = 1;
     const auto compressed = superzip::compress_suzip({input}, archive, compress);
     REQUIRE_TRUE(compressed.gpu_used);
     REQUIRE_TRUE(compressed.gpu_runtime.prefix_blocks > 0U);

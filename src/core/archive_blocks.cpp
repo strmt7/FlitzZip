@@ -1,5 +1,6 @@
 #include "core/archive_blocks.hpp"
 #include "core/dictionary_block.hpp"
+#include "core/huffman_lookup.hpp"
 #include "core/sparse_pattern_block.hpp"
 
 #include "core/result.hpp"
@@ -339,6 +340,60 @@ void materialize_adaptive_prefix_cpu(std::span<const std::byte> payload, std::sp
     }
 }
 
+// Purpose: Decode a version-eight GPU Huffman block through its bounded 12-bit lookup table.
+// Inputs: `payload` contains lookup entries, segment offsets, and bitstream; `output` is exact decoded storage.
+// Outputs: Restores every byte or throws on malformed offsets, lookup widths, or truncated codes.
+void materialize_huffman_cpu(std::span<const std::byte> payload, std::span<std::byte> output) {
+    const auto segment_count = (output.size() + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+    const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+    const auto header_bytes = kGpuHuffmanLookupBytes + table_bytes;
+    if (segment_count == 0U || payload.size() <= header_bytes || payload.size() >= output.size()) {
+        throw ArchiveError("GPU Huffman block metadata is invalid");
+    }
+    if (!huffman_lookup_is_complete(payload.first(kGpuHuffmanLookupBytes))) {
+        throw ArchiveError("GPU Huffman lookup is invalid");
+    }
+    const auto offsets = payload.subspan(kGpuHuffmanLookupBytes, table_bytes);
+    const auto bitstream = payload.subspan(header_bytes);
+    auto previous = read_segment_u32(offsets, 0U);
+    if (previous != 0U) {
+        throw ArchiveError("GPU Huffman table must start at zero");
+    }
+    std::size_t decoded_offset = 0U;
+    for (std::size_t segment = 0U; segment < segment_count; ++segment) {
+        const auto next = read_segment_u32(offsets, (segment + 1U) * sizeof(std::uint32_t));
+        if (next < previous || next > bitstream.size()) {
+            throw ArchiveError("GPU Huffman table is not monotonic");
+        }
+        const auto encoded = bitstream.subspan(previous, next - previous);
+        const auto decoded_len = std::min<std::size_t>(kGpuPrefixSegmentBytes, output.size() - decoded_offset);
+        const auto limit_bits = encoded.size() * 8U;
+        std::size_t bit_pos = 0U;
+        for (std::size_t i = 0U; i < decoded_len; ++i) {
+            std::uint32_t code = 0U;
+            for (std::uint32_t bit = 0U; bit < kGpuHuffmanLookupBits && bit_pos + bit < limit_bits; ++bit) {
+                const auto absolute = bit_pos + bit;
+                code |= ((static_cast<std::uint8_t>(encoded[absolute >> 3U]) >> (absolute & 7U)) & 1U) << bit;
+            }
+            const auto entry_offset = code * sizeof(std::uint16_t);
+            const auto entry =
+                static_cast<std::uint8_t>(payload[entry_offset]) |
+                (static_cast<std::uint16_t>(static_cast<std::uint8_t>(payload[entry_offset + 1U])) << 8U);
+            const auto width = entry >> 8U;
+            if (width == 0U || width > kGpuHuffmanLookupBits || width > limit_bits - bit_pos) {
+                throw ArchiveError("GPU Huffman code is invalid or truncated");
+            }
+            output[decoded_offset + i] = static_cast<std::byte>(entry & 0xFFU);
+            bit_pos += width;
+        }
+        decoded_offset += decoded_len;
+        previous = next;
+    }
+    if (previous != bitstream.size()) {
+        throw ArchiveError("GPU Huffman payload has trailing bytes");
+    }
+}
+
 // Purpose: Decode independent bounded LZ4 segments from a version-four native block.
 // Inputs: `payload` starts with cumulative 32-bit segment offsets and `output` is the exact decoded block span.
 // Outputs: Writes every decoded byte or throws for invalid tables, segment extents, or LZ4 data.
@@ -412,6 +467,13 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
                     throw ArchiveError("GPU adaptive prefix block metadata is invalid");
                 }
             }
+            if (block.kind == BlockKind::GpuHuffman) {
+                const auto segment_count = (len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+                const auto header_bytes = kGpuHuffmanLookupBytes + ((segment_count + 1U) * sizeof(std::uint32_t));
+                if (encoded_len <= header_bytes || encoded_len >= len) {
+                    throw ArchiveError("GPU Huffman block metadata is invalid");
+                }
+            }
             if (block.kind == BlockKind::GpuDictionary) {
                 const auto segment_count = (len + kGpuDictionarySegmentBytes - 1U) / kGpuDictionarySegmentBytes;
                 const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
@@ -476,6 +538,10 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_adaptive_prefix_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                 static_cast<std::size_t>(block.encoded_len)),
                                                 output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::GpuHuffman) {
+                materialize_huffman_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
+                                                        static_cast<std::size_t>(block.encoded_len)),
+                                        output.subspan(out_pos, len));
             } else if (block.kind == BlockKind::GpuDictionary) {
                 materialize_dictionary_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                            static_cast<std::size_t>(block.encoded_len)),
@@ -502,7 +568,7 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Encode a contiguous native CPU block range with one bounded worker-owned Zstandard context.

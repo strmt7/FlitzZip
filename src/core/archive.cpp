@@ -96,7 +96,7 @@ struct ArchiveValidationSummary {
 bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -599,8 +599,8 @@ std::uint64_t gpu_dictionary_table_bytes(std::uint32_t decoded_len) {
 void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescriptor& block) {
     if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
         block.kind != BlockKind::CpuZstd && block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
-        block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuDictionary &&
-        !is_gpu_sparse_pattern_kind(block.kind)) {
+        block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuHuffman &&
+        block.kind != BlockKind::GpuDictionary && !is_gpu_sparse_pattern_kind(block.kind)) {
         throw ArchiveError("archive block has unknown encoding kind");
     }
     if (block.uncompressed_len == 0) {
@@ -672,6 +672,16 @@ std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const B
         }
         require_dense_payload_offset(entry, block, payload_cursor, "GPU adaptive prefix");
         return checked_add_u64(payload_cursor, block.encoded_len, "GPU adaptive prefix block payload size overflows");
+    }
+    case BlockKind::GpuHuffman: {
+        const auto header_bytes =
+            checked_add_u64(kGpuHuffmanLookupBytes, gpu_prefix_table_bytes(block.uncompressed_len),
+                            "GPU Huffman header size overflows");
+        if (block.encoded_len <= header_bytes || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU Huffman block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU Huffman");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU Huffman block payload size overflows");
     }
     case BlockKind::GpuDictionary: {
         const auto table_bytes = gpu_dictionary_table_bytes(block.uncompressed_len);
@@ -877,12 +887,14 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 
 // Purpose: Select the smallest native version that defines every encoded block.
 // Inputs: A completed archive index with all file block descriptors.
-// Outputs: Returns version three through seven without downgrading a new block kind.
+// Outputs: Returns version three through eight without downgrading a new block kind.
 std::uint32_t required_archive_version(const ArchiveIndex& index) {
     std::uint32_t version = kSuperZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == BlockKind::GpuLongSparsePattern) {
+            if (block.kind == BlockKind::GpuHuffman) {
+                version = std::max(version, 8U);
+            } else if (block.kind == BlockKind::GpuLongSparsePattern) {
                 version = std::max(version, 7U);
             } else if (block.kind == BlockKind::CpuZstd) {
                 version = std::max(version, 6U);

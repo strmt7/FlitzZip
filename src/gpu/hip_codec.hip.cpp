@@ -85,7 +85,7 @@ __device__ std::uint32_t gpu_prefix_read_u32(const std::byte* bytes) {
 
 // Purpose: Peek a complete GPU prefix codeword with bounded byte loads.
 // Inputs: `stream` is a byte-aligned segment; `bit_pos` and `limit_bits` bound readable bits.
-// Outputs: Returns up to eleven low-order code bits, zero-padding a truncated segment.
+// Outputs: Returns up to twelve low-order code bits, zero-padding a truncated segment.
 __device__ std::uint32_t gpu_prefix_peek_code(const std::byte* stream, std::uint32_t bit_pos,
                                               std::uint32_t limit_bits) {
     if (bit_pos >= limit_bits) {
@@ -98,10 +98,10 @@ __device__ std::uint32_t gpu_prefix_peek_code(const std::byte* stream, std::uint
     if (byte_index + 1U < byte_count) {
         code |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(stream[byte_index + 1U])) << 8U;
     }
-    if (bit_shift > 5U && byte_index + 2U < byte_count) {
+    if (bit_shift > 4U && byte_index + 2U < byte_count) {
         code |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(stream[byte_index + 2U])) << 16U;
     }
-    return (code >> bit_shift) & 0x7FFU;
+    return (code >> bit_shift) & 0xFFFU;
 }
 
 // Purpose: Advance a prefix cursor only when a complete codeword remains.
@@ -161,6 +161,19 @@ __device__ std::byte gpu_adaptive_prefix_decode_byte(const std::byte* codebook, 
     return static_cast<std::byte>((code >> 3U) & 255U);
 }
 
+// Purpose: Decode one byte through a bounded 12-bit version-eight Huffman lookup.
+// Inputs: `lookup`, `stream`, and bit bounds identify one encoded codeword; `valid` receives grammar status.
+// Outputs: Returns the symbol and advances the cursor only for a complete valid codeword.
+__device__ std::byte gpu_huffman_decode_byte(const std::byte* lookup, const std::byte* stream, std::uint32_t& bit_pos,
+                                             std::uint32_t limit_bits, bool& valid) {
+    const auto code = gpu_prefix_peek_code(stream, bit_pos, limit_bits);
+    const auto entry = static_cast<std::uint32_t>(static_cast<std::uint8_t>(lookup[code * 2U])) |
+                       (static_cast<std::uint32_t>(static_cast<std::uint8_t>(lookup[code * 2U + 1U])) << 8U);
+    const auto width = entry >> 8U;
+    valid = width != 0U && width <= kGpuHuffmanLookupBits && gpu_prefix_advance(bit_pos, limit_bits, width);
+    return static_cast<std::byte>(entry & 0xFFU);
+}
+
 // Purpose: Decode GPU prefix segments into the final device output buffer.
 // Inputs: `payload` is the encoded archive payload, `plans` describes each prefix segment, `output` is decoded
 // storage, and `errors` receives one grammar result per plan. Outputs: Writes valid bytes and flags malformed plans.
@@ -184,7 +197,8 @@ __global__ void materialize_prefix_segments_kernel(const std::byte* payload, con
     std::uint32_t bit_pos = 0;
     for (std::uint32_t i = 0; i < plan.decoded_len; ++i) {
         bool valid = true;
-        const auto decoded = plan.adaptive != 0U
+        const auto decoded = plan.adaptive == 2U ? gpu_huffman_decode_byte(codebook, stream, bit_pos, limit_bits, valid)
+                             : plan.adaptive == 1U
                                  ? gpu_adaptive_prefix_decode_byte(codebook, stream, bit_pos, limit_bits, valid)
                                  : gpu_prefix_decode_byte(stream, bit_pos, limit_bits, valid);
         if (!valid) {
@@ -263,13 +277,14 @@ std::optional<EncodedChunk> encode_native_prefix_chunk_device(const std::byte* d
     }
     auto adaptive = encode_adaptive_prefix_chunk_device(device_input, input, block_size, source_blocks,
                                                         fixed ? &*fixed : nullptr, compression_level, telemetry);
-    if (!adaptive) {
-        return fixed;
+    auto best = adaptive && (!fixed || adaptive->payload.size() < fixed->payload.size()) ? std::move(adaptive)
+                                                                                         : std::move(fixed);
+    auto huffman = encode_huffman_prefix_chunk_device(device_input, input, block_size, source_blocks,
+                                                      best ? &*best : nullptr, compression_level, telemetry);
+    if (huffman && (!best || huffman->payload.size() < best->payload.size())) {
+        return huffman;
     }
-    if (!fixed || adaptive->payload.size() < fixed->payload.size()) {
-        return adaptive;
-    }
-    return fixed;
+    return best;
 }
 
 // Purpose: Count only GPU block kinds present after all competing native encoders have been compared.
@@ -880,12 +895,15 @@ std::vector<PrefixDecodeSegment> build_prefix_decode_segments(std::span<const De
     std::vector<PrefixDecodeSegment> plans;
     for (const auto& block : host_blocks) {
         const bool adaptive = block.kind == static_cast<std::uint8_t>(BlockKind::GpuAdaptivePrefix);
-        if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuPrefix) && !adaptive) {
+        const bool huffman = block.kind == static_cast<std::uint8_t>(BlockKind::GpuHuffman);
+        if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuPrefix) && !adaptive && !huffman) {
             continue;
         }
         const auto segment_count = (block.uncompressed_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
         const auto table_offset =
-            block.encoded_offset + (adaptive ? static_cast<std::uint64_t>(kGpuAdaptivePrefixCodebookBytes) : 0U);
+            block.encoded_offset + (huffman    ? static_cast<std::uint64_t>(kGpuHuffmanLookupBytes)
+                                    : adaptive ? static_cast<std::uint64_t>(kGpuAdaptivePrefixCodebookBytes)
+                                               : 0U);
         const auto table_bytes = static_cast<std::uint64_t>(segment_count + 1U) * sizeof(std::uint32_t);
         plans.reserve(plans.size() + segment_count);
         for (std::uint32_t segment = 0; segment < segment_count; ++segment) {
@@ -898,7 +916,9 @@ std::vector<PrefixDecodeSegment> build_prefix_decode_segments(std::span<const De
                 .output_offset = block.output_offset + decoded_offset,
                 .segment_index = segment,
                 .decoded_len = std::min<std::uint32_t>(kGpuPrefixSegmentBytes, remaining),
-                .adaptive = adaptive ? 1U : 0U,
+                .adaptive = huffman    ? 2U
+                            : adaptive ? 1U
+                                       : 0U,
             });
         }
     }

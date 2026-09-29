@@ -143,7 +143,7 @@ TEST_CASE(suzip_rejects_block_kind_version_downgrade) {
          {std::pair{1U, superzip::BlockKind::GpuPrefix}, std::pair{1U, superzip::BlockKind::GpuAdaptivePrefix},
           std::pair{2U, superzip::BlockKind::GpuAdaptivePrefix}, std::pair{3U, superzip::BlockKind::GpuDictionary},
           std::pair{4U, superzip::BlockKind::GpuSparsePattern}, std::pair{5U, superzip::BlockKind::CpuZstd},
-          std::pair{6U, superzip::BlockKind::GpuLongSparsePattern}}) {
+          std::pair{6U, superzip::BlockKind::GpuLongSparsePattern}, std::pair{7U, superzip::BlockKind::GpuHuffman}}) {
         superzip::ArchiveIndex index;
         index.version = version;
         superzip::ArchiveEntry entry;
