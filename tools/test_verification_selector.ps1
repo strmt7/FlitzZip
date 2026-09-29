@@ -231,5 +231,18 @@ Assert-Selector $duplicateStatus.complete "newer successful run must supersede o
 $newerRunning.conclusion = "failure"
 $duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($newerRunning, $olderCancelled) -WorkflowName @("lint")
 Assert-Selector ($duplicateStatus.failed.Count -eq 1) "newer failed run must not be hidden by response ordering"
+$newerCancelled = [pscustomobject]@{
+    databaseId = 102; workflowName = "lint"; status = "completed"; conclusion = "cancelled"; url = "https://example.test/102"
+}
+$newerRunning.status = "in_progress"
+$newerRunning.conclusion = ""
+$duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($newerCancelled, $newerRunning) -WorkflowName @("lint")
+Assert-Selector ($duplicateStatus.failed.Count -eq 0 -and $duplicateStatus.running.Count -eq 1) "newer cancelled duplicate must not hide an active same-commit run"
+$newerRunning.status = "completed"
+$newerRunning.conclusion = "success"
+$duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($newerCancelled, $newerRunning) -WorkflowName @("lint")
+Assert-Selector $duplicateStatus.complete "newer cancelled duplicate must not hide a successful same-commit run"
+$duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($newerCancelled, $olderCancelled) -WorkflowName @("lint")
+Assert-Selector ($duplicateStatus.failed.Count -eq 1) "all-cancelled workflow runs must still fail closed"
 
 Write-Output "Verification selector self-test passed."

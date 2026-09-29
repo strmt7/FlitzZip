@@ -118,8 +118,8 @@ function Get-WorkflowRunForCommit {
 }
 
 # Purpose: Return whether all selected workflow runs have completed successfully.
-# Inputs: `Runs` is the GitHub run list and `WorkflowName` is the selected workflow-name set.
-# Outputs: Returns an object with completion status and a concise status line.
+# Inputs: `Runs` is the exact-commit GitHub run list and `WorkflowName` is the selected workflow-name set.
+# Outputs: Uses the newest non-cancelled duplicate per workflow and returns completion status.
 function Test-SelectedWorkflowCompletion {
     param(
         [object[]]$Runs,
@@ -130,12 +130,15 @@ function Test-SelectedWorkflowCompletion {
     $failed = @()
     $running = @()
     foreach ($name in $WorkflowName) {
-        $run = @($Runs | Where-Object { $_.workflowName -eq $name } |
-                Sort-Object -Property @{ Expression = { [long]$_.databaseId }; Descending = $true } |
-                Select-Object -First 1)
-        if ($run.Count -eq 0) {
+        $candidates = @($Runs | Where-Object { $_.workflowName -eq $name } |
+                Sort-Object -Property @{ Expression = { [long]$_.databaseId }; Descending = $true })
+        if ($candidates.Count -eq 0) {
             $missing += $name
             continue
+        }
+        $run = @($candidates | Where-Object { $_.conclusion -ne "cancelled" } | Select-Object -First 1)
+        if ($run.Count -eq 0) {
+            $run = @($candidates[0])
         }
         if ($run[0].status -ne "completed") {
             $running += ("{0}:{1}" -f $name, $run[0].status)
