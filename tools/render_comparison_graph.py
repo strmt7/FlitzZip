@@ -30,6 +30,23 @@ def timing(samples: object, label: str) -> tuple[float, float, float]:
     return statistics.median(samples), min(samples), max(samples)
 
 
+# Purpose: Compare portable command placeholders without weakening exact CLI flag checks.
+# Inputs: Recorded command vector and expected command vector for one supported tool.
+# Outputs: True only for exact flags and equivalent slash direction in placeholder paths.
+def matching_command(recorded: object, expected: list[str]) -> bool:
+    if not isinstance(recorded, list) or len(recorded) != len(expected):
+        return False
+    for actual, wanted in zip(recorded, expected, strict=True):
+        if not isinstance(actual, str):
+            return False
+        if "{output}" in wanted or "{archive}" in wanted:
+            if actual.replace("\\", "/") != wanted.replace("\\", "/"):
+                return False
+        elif actual != wanted:
+            return False
+    return True
+
+
 # Purpose: Reject unreviewed, incomplete, or scientifically incomparable records.
 # Inputs: Parsed comparison record with an immutable source and full Silesia manifest.
 # Outputs: Returns ordered case rows with medians/ranges and exact archive bytes.
@@ -185,7 +202,9 @@ def summarize(record: dict) -> tuple[str, list[dict]]:
         for item in results:
             tool = item["tool"]
             create, extract = command_templates(tool, fmt, file_names)
-            if item.get("create_argv") != create or item.get("extract_argv") != extract:
+            if not matching_command(item.get("create_argv"), create) or not matching_command(
+                item.get("extract_argv"), extract
+            ):
                 raise ValueError("recorded command does not match the reviewed flags")
             if item.get("independent_verified") is not True:
                 raise ValueError("independent archive decoding did not pass")

@@ -108,6 +108,24 @@ def fixture() -> dict:
 
 
 class ComparisonGraphTests(unittest.TestCase):
+    # Purpose: Validate Windows and POSIX renderers against one recorded command contract.
+    # Inputs: The Zstd output placeholder expressed with either path separator.
+    # Outputs: Both spellings pass, while a different output filename fails.
+    def test_placeholder_path_separators_are_portable(self) -> None:
+        for slash in ("/", "\\"):
+            record = fixture()
+            extract = record["cases"][1]["results"][1]["extract_argv"]
+            output_index = next(index for index, arg in enumerate(extract) if "{output}" in arg)
+            extract[output_index] = f"{{output}}{slash}mozilla"
+            with self.subTest(slash=slash):
+                graph.summarize(record)
+        record = fixture()
+        extract = record["cases"][1]["results"][1]["extract_argv"]
+        output_index = next(index for index, arg in enumerate(extract) if "{output}" in arg)
+        extract[output_index] = "{output}/wrong-file"
+        with self.assertRaisesRegex(ValueError, "recorded command"):
+            graph.summarize(record)
+
     # Purpose: Prove exact sizes, medians, accessibility text, and byte-stable SVG output.
     # Inputs: One complete synthetic record.
     # Outputs: Three rows and one deterministic parsed SVG.
