@@ -7,16 +7,26 @@ on:
       - .github/workflows/benchmark-graph.yml
       - README.md
       - docs/benchmarks/data/**
+      - docs/comparative-benchmark-methodology.md
       - resources/benchmarks/**
+      - tools/run_archive_comparison.py
+      - tools/render_comparison_graph.py
       - tools/render_benchmark_graph.py
+      - tools/test_archive_comparison.py
+      - tools/test_comparison_graph.py
       - tools/test_benchmark_graph.py
   pull_request:
     paths:
       - .github/workflows/benchmark-graph.yml
       - README.md
       - docs/benchmarks/data/**
+      - docs/comparative-benchmark-methodology.md
       - resources/benchmarks/**
+      - tools/run_archive_comparison.py
+      - tools/render_comparison_graph.py
       - tools/render_benchmark_graph.py
+      - tools/test_archive_comparison.py
+      - tools/test_comparison_graph.py
       - tools/test_benchmark_graph.py
   workflow_dispatch:
 
@@ -41,7 +51,7 @@ jobs:
         with:
           python-version: "3.14.7"
       - name: Test graph validation
-        run: python -m unittest tools.test_benchmark_graph
+        run: python -m unittest tools.test_benchmark_graph tools.test_archive_comparison tools.test_comparison_graph
       - name: Generate and verify README graph
         shell: bash
         run: |
@@ -57,3 +67,16 @@ jobs:
           done
           python tools/render_benchmark_graph.py "${arguments[@]}" --output resources/benchmarks/native-cpu-hip.svg --check
           grep -Fq 'resources/benchmarks/native-cpu-hip.svg' README.md
+      - name: Regenerate reviewed application comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          record=docs/benchmarks/data/comparison-silesia-current.json
+          if [[ ! -f "$record" ]]; then
+            echo 'No reviewed application comparison record yet; renderer unit tests passed.'
+            exit 0
+          fi
+          python -m tools.render_comparison_graph --input "$record" --output "$RUNNER_TEMP/comparison.svg"
+          cmp "$RUNNER_TEMP/comparison.svg" resources/benchmarks/application-comparison.svg
+          grep -Fq 'resources/benchmarks/application-comparison.svg' README.md
+          grep -Fq 'docs/comparative-benchmark-methodology.md' README.md
