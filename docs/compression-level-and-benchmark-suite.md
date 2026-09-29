@@ -55,7 +55,7 @@ eligible raw blocks. Decoding and CRC in required-GPU mode use HIP; CPU readers
 also decode version-eight blocks for portability and verification.
 
 The GPU dictionary matcher separately has nine increasing bounded search
-budgets and an archive-writer regression with nine strictly improving payloads
+budgets and a codec regression with nine strictly improving payloads
 on a matching record fixture. The shared level scale also controls CPU and
 compatibility codecs, whose mappings and source-dependent outcomes differ.
 Equal output sizes are legitimate when a stronger candidate cannot improve a
@@ -66,7 +66,9 @@ every corpus or a universal speedup. Broader ratio strategies remain open.
 The 10 GiB Mixed workload previously saturated the static prefix code at all
 GPU efforts. The version-eight candidate now produces distinct measured GPU
 archive sizes at levels 1-9 on that workload, though level 6 was 1,660 bytes
-larger than level 5 in an uncommitted diagnostic sweep. This is not a guarantee
+larger than level 5 in a single-run size diagnostic. The reviewed five-level
+[CPU/GPU report](benchmarks/native-effort-2026-09-29.md) provides repeated,
+clean-source measurements. This is not a guarantee
 of monotonic size on arbitrary files. RAM-only shifted-alphabet regressions
 require a strong-tier size reduction and CPU/HIP roundtrips. Longer-repeat and
 context coding strategies remain separate work; do not weaken lower levels to

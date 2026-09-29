@@ -13,84 +13,29 @@
 
 # SuperZip
 
-SuperZip is a Windows x64 archive application built around AMD HIP acceleration.
-Its native `.suzip` format is the GPU-first path. Standard `.zip` support exists
-for compatibility and is handled by the vendored miniz 3.1.2 codebase. `.zipx`
-files are recognized separately and extracted through the same ZIP
-compatibility reader when they use ZIP records and compression methods that the
-vendored backend supports; unsupported ZIPX methods fail explicitly.
-`.suzip` is a native SuperZip format, not a renamed ZIP file: it has its own
-footer/index magic, versioned metadata, block descriptors, AMD HIP boundary, and
-resource-limited verification path. See `docs/native-suzip-format.md`.
-Uncompressed `.tar` support is implemented by a native bounded adapter with the
-same extraction path-safety checks. `.tar.gz`/`.tgz` archives are implemented
-with a two-pass streaming TAR reader over miniz raw-deflate Gzip, so extraction
-is validated before output without staging a full intermediate TAR on disk.
-`.tar.bz2`/`.tbz`/`.tbz2` archives are implemented with the same TAR stream
-adapter over vendored libbzip2 1.0.8. `.tar.xz`/`.txz` extraction is
-implemented through the same validated TAR stream path over vendored XZ
-Embedded. `.tar.lz`/`.tlz` extraction is implemented through the same validated
-TAR stream path over the vendored LZMA SDK and lzip wrapper checks.
-`.tar.zst`/`.tzst` archives are implemented with the same TAR stream
-adapter over the bundled app-local libzstd 1.5.7 runtime. Single-file `.gz` streams are implemented
-through miniz raw deflate with CRC32/ISIZE verification, single-file `.bz2`
-streams are implemented through libbzip2, single-file `.xz` streams are
-extracted through XZ Embedded, single-file legacy `.lzma` streams are extracted
-through the vendored LZMA SDK with bounded decoder allocation, single-file
-`.lz` streams are extracted through the lzip wrapper with CRC32/data-size/member-size
-verification, and single-file `.zst`/`.zstd` streams are implemented through the
-app-local libzstd DLL with frame checksum creation and bounded-window extraction.
-Single-file `.b64` streams are extracted through a bounded Base64 adapter with
-strict padding validation and optional wrapper-header filename validation.
-BinHex 4.0 `.hqx` streams are extract-only and data-fork-only: SuperZip validates
-the header, data fork, and resource fork CRCs, discards resource-fork metadata
-on Windows, and publishes only the path-safe data fork.
-MacBinary `.macbin` streams and strongly header-identified MacBinary `.bin`
-streams are extract-only and data-fork-only: SuperZip validates fork extents,
-path-safe header filenames, and MacBinary II/III header CRCs when present.
-Common XXEncoded `.xxe` and UUencoded `.uue`/`.uu` files are extracted as
-single-file compatibility streams with strict begin-line parsing, bounded line
-lengths, path-safe header filenames, and verified output publication. Portable `.cpio`
-and Gzip-filtered `.cpio.gz`/`.cpgz` archives are implemented with a native
-SVR4 new ASCII parser/writer for regular files and directories; compressed CPIO
-uses the same two-pass validation model as compressed TAR without staging a full
-decoded archive to disk. Unix `.ar` archives are implemented with a native parser/writer for
-regular-file members. Debian `.deb` package files are extracted as native
-AR-based outer containers. Basic ISO 9660 `.iso` images are extracted by a
-native read-only parser with the same pre-write path validation. RPM `.rpm`
-package files are extracted by a native read-only package parser that decodes
-CPIO payloads with supported `none`, Gzip, Bzip2, XZ, and Zstandard compression
-before using the same CPIO path-safety checks. Microsoft Cabinet `.cab` files
-are extracted through a native metadata scanner plus the Windows Cabinet API,
-with all CAB names and sizes validated before FDI output is published. 7-Zip
-`.7z` archives are extracted with a vendored in-process LZMA SDK 26.03 decoder
-and the same pre-write path validation used by other extraction adapters.
-ARJ `.arj` archives are extracted by a native read-only adapter for stored
-regular-file and directory entries; compressed ARJ methods fail explicitly until
-a vetted decoder path is added.
-SEA ARC `.arc` and `.ark` archives are extracted by a native read-only adapter
-for unpacked method-1 and method-2 regular files; compressed ARC methods and
-unrelated `.arc` formats fail explicitly.
-LHA/LZH `.lha` and `.lzh` archives are extracted with the vendored in-process
-Lhasa 0.6.0 decoder while SuperZip keeps ownership of path validation and
-verified output publication.
-Standalone Windows Imaging `.wim` archives are extracted through the bundled
-app-local wimlib 1.14.5 runtime after SuperZip validates all image paths,
-entry kinds, and decoded-size limits before destination writes.
-XAR `.xar` archives are extracted by a native read-only parser for the current
-safe subset: no TOC checksum mode, zlib-compressed TOCs, regular files,
-directories, and stored or zlib-compressed file payloads.
-Legacy Unix Compress `.Z` streams are implemented with a native bounded LZW
-reader/writer for single files. Other common archive formats are recognized for
-clear diagnostics and are tracked in `docs/archive-format-support.md`.
+SuperZip is a Windows archive app with a native `.suzip` format accelerated by
+AMD HIP. It also creates and extracts common archive formats, offers archive
+verification and guarded extraction, and provides both a graphical app and a CLI.
 
-The product ships as two equivalent Windows packages:
+**Beta:** SuperZip is prerelease software. Keep original files and verify
+archives before relying on them for long-term storage. The latest published
+build may be older than the source on `main`.
 
-- A portable ZIP for controlled environments where users do not want an MSI.
-- An MSI installer for managed installation, uninstall, and enterprise rollout.
+[Download a release](https://github.com/strmt7/SuperZip/releases) as a portable
+ZIP or an MSI installer. Both packages contain the same HIP-enabled binaries;
+the portable edition is not a reduced CPU-only build. Check the requirements
+below before installing.
 
-Both release artifacts are built from the same HIP-enabled binaries. A portable
-package is not a reduced CPU-only build.
+| Task | Formats |
+| --- | --- |
+| Native GPU-accelerated archiving | `.suzip` |
+| Common archive creation and extraction | ZIP, TAR and supported compressed TAR variants, CPIO, AR, Gzip, Bzip2, Zstandard, and other documented formats |
+| Extraction of additional formats | Supported ZIPX methods, 7z, CAB, ISO, RPM, WIM, and other documented subsets |
+
+The [format support matrix](docs/archive-format-support.md) gives exact
+create/extract capabilities and method limits. `.suzip` is a distinct versioned
+format, not a renamed ZIP file; its [format specification](docs/native-suzip-format.md)
+documents compatibility and verification. Unsupported methods fail explicitly.
 
 ## Requirements
 
@@ -358,6 +303,17 @@ but still uses CPU work for orchestration and I/O. Its device-event time
 was unavailable, so that case supports wall-time comparisons only. These
 results do not predict performance on other files or hardware. The
 `benchmark-graph` workflow regenerates and checks the image from those records.
+
+![Native archive size and compression time by CPU and GPU effort](resources/benchmarks/native-effort-tradeoff.svg)
+
+The [native effort report](docs/benchmarks/native-effort-2026-09-29.md) compares
+five settings on the same 10 GiB RAM-only Mixed workload. GPU archives have
+different measured sizes at every plotted setting, and every sample passed
+verification and extraction. The graph prints exact archive bytes; its
+archive-size axis is truncated to make nearby points readable. The
+[methodology](docs/comparative-benchmark-methodology.md) and
+[raw records](docs/benchmarks/data/) contain the source and binary hashes,
+individual timings, and limits of the comparison.
 
 For a direct correctness proof that `--require-gpu` is not falling back to CPU,
 run:

@@ -94,7 +94,8 @@ hardware data only and must not be plotted as product archive throughput.
 The effort study uses levels 1, 3, 5, 7, and 9 for each supported writer.
 Each setting is a **tool-local control**, not equivalent work across tools:
 SuperZip's `.zst` levels map to Zstandard backend efforts differently from
-the official CLI, and `.suzip` has its own two-tier HIP effort policy. The
+the official CLI, and `.suzip` selects among static, adaptive, Huffman, and
+dictionary HIP candidates by complete encoded size. The
 graph uses achieved whole-archive bytes and whole-command time, not numeric
 level as a proxy for quality. It may show same-size plateaus; no result is
 altered to make every control produce a distinct size. Native `.suzip`
@@ -191,6 +192,19 @@ source/input cache remains deliberately warm. Resource snapshots and repeated
 timings are still needed to detect sustained contention. The separate native
 10 GiB RAM-only CPU/GPU suite does not insert a disk-oriented cooldown.
 
+The native effort chart uses the deterministic 10 GiB Mixed generator, 16 MiB
+blocks, and three alternating CPU/GPU pairs at each of product levels 1, 3,
+5, 7, and 9. It records exact complete in-memory archive bytes, median
+compression seconds, and observed min/max per lane. Verification and
+extraction run for every sample but are timed separately. The runner requires
+real HIP launches and zero disk writes; generation and CPU orchestration remain
+part of the operation. Source SHA, dirty state, binary SHA-256, CPU/GPU models,
+workload, and memory mode must match across all five records. Diagnostic
+levels 2/4/6/8 may be run once for size behavior, but their single timings do
+not appear on the reviewed chart. If all three samples in one lane rise and
+the last exceeds the first by more than 5%, reject that timing series, inspect
+host load, and repeat only the affected setting.
+
 ## Graph And Publication Contract
 
 The comparison graph must separate format and corpus, show both compression
@@ -199,7 +213,10 @@ uncertainty whiskers or visible ranges show timing variation. A size-versus-
 compression-time scatter is appropriate for multiple effort points, with each
 point labeled by tool and setting and non-dominated points identified only
 within the same format/corpus. Use accessible color plus labels, not color
-alone. Do not crop axes to exaggerate narrow differences.
+alone. Bars start at zero. A scatterplot may focus its archive-size axis on
+the observed range only when it explicitly labels the truncation, prints exact
+bytes beside every point, and avoids interpreting visual distance as a large
+percentage gain.
 
 The effort graph places exact archive size on a zero-origin horizontal axis
 and whole-command compression seconds on an explicitly labeled logarithmic

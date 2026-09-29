@@ -157,7 +157,9 @@ The workflow performs:
 
 Release notes must list the actual fixes, created assets, validation work, and
 known limitations for that release. Do not publish vague notes that hide what
-changed.
+changed. Add `docs/releases/<version>.md` before dispatch; the workflow requires
+its first line to match `# SuperZip <version>` and includes its curated content
+before build-specific verification facts.
 
 ## Local MSI Tooling
 
