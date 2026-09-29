@@ -423,7 +423,7 @@ function Get-SuperZipVerificationPlan {
     $longRunningSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($pair in @(
         @("lint", ($scope.touchesLintSurface -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
-        @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.touchesPerformance -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
+        @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("windows-ci", ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.fullEscalationRequired)),
         @("security", ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("greenbone-openvas-vulnetix", ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),

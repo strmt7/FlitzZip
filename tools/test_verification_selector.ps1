@@ -109,6 +109,10 @@ Assert-Selector ($sourcePlan.manualLocalCommands.Count -eq 0) "ordinary non-perf
 Assert-Selector $sourcePlan.workflowWaitPolicy.deferAllowed "ordinary source changes may defer workflow waiting during iteration"
 Assert-Selector ($sourcePlan.workflowWaitPolicy.recommendedMode -eq "opportunistic-during-iteration-final-before-handoff") "ordinary source changes must recommend opportunistic iteration and final wait"
 
+$gpuPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/gpu/dictionary_candidate.cpp")
+Assert-Selector $gpuPlan.scope.touchesPerformance "GPU codec changes must retain performance verification"
+Assert-Selector (-not (Test-Workflow -Plan $gpuPlan -Name "benchmark-graph")) "GPU source alone must not wait for a path-filtered graph workflow"
+
 $archivePlan = Get-SuperZipVerificationPlan -ChangedPath @("src/zip/zip_adapter.cpp")
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "security-scan") "archive parser changes must run security scan"
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "compatibility-interop-smoke") "archive parser changes must run external compatibility interop smoke"
