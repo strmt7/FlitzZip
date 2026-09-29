@@ -1067,6 +1067,22 @@ function Write-BenchmarkJson {
     }
 }
 
+# Purpose: Mark native benchmark provenance dirty only when product or measurement inputs changed.
+# Inputs: `RepositoryRoot` is a Git worktree containing the tested Release binary.
+# Outputs: Returns true for relevant staged, unstaged, or untracked changes; throws if Git fails.
+function Get-RamBenchmarkSourceDirty {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    $relevant = @(
+        'src', 'include', 'third_party', 'cmake', 'CMakeLists.txt',
+        'tools/build.ps1', 'tools/bench.ps1', 'tools/render_benchmark_graph.py',
+        'tools/test_benchmark_graph.py', 'tools/test_benchmark_reporting.ps1',
+        'docs/performance-block-size-validation.md', 'docs/compression-level-and-benchmark-suite.md'
+    )
+    $status = @(& git -C $RepositoryRoot status --porcelain --untracked-files=all -- $relevant)
+    if ($LASTEXITCODE -ne 0) { throw "Cannot determine native benchmark source state." }
+    return ($status.Count -gt 0)
+}
+
 $laneCount = 0
 if (-not $SkipCpu) { ++$laneCount }
 if (-not $SkipGpu) { ++$laneCount }
@@ -1205,8 +1221,7 @@ if ($Mode -eq "Memory") {
     if ($JsonOutput) {
         $commit = (& git rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0) { throw "Cannot identify benchmark source commit." }
-        $dirtyPaths = @(& git status --porcelain --untracked-files=normal)
-        if ($LASTEXITCODE -ne 0) { throw "Cannot determine benchmark source state." }
+        $sourceDirty = Get-RamBenchmarkSourceDirty -RepositoryRoot $repo
         $cpuModel = $null
         try {
             $cpuModel = (Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name
@@ -1221,7 +1236,7 @@ if ($Mode -eq "Memory") {
                 if ($deviceLine) { $gpuModel = $deviceLine.Substring('device_name='.Length) }
             }
         }
-        $record = ConvertTo-RamBenchmarkRecord -Runs $results -Commit $commit -Dirty ($dirtyPaths.Count -gt 0) `
+        $record = ConvertTo-RamBenchmarkRecord -Runs $results -Commit $commit -Dirty $sourceDirty `
             -BinarySha256 (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash -Profile $WorkloadProfile `
             -SizeMiB $SizeMiB -Level $CompressionLevel -SampleIntervalMs $SampleIntervalMs `
             -CpuModel $cpuModel -GpuModel $gpuModel

@@ -13,6 +13,32 @@ foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 
+$sourceRoot = Join-Path $env:TEMP ("superzip-benchmark-source-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $sourceRoot | Out-Null
+try {
+    & git -C $sourceRoot init --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'Could not initialize source-state test repository.' }
+    $skill = Join-Path $sourceRoot '.agents/skills/other/SKILL.md'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $skill) -Force | Out-Null
+    Set-Content -LiteralPath $skill -Value 'unrelated skill'
+    if (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot) {
+        throw 'Unrelated skill made native benchmark source dirty.'
+    }
+    $source = Join-Path $sourceRoot 'src/codec.cpp'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+    Set-Content -LiteralPath $source -Value 'relevant source'
+    if (-not (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot)) {
+        throw 'Untracked codec source was missed by native benchmark provenance.'
+    }
+} finally {
+    $resolvedRoot = [IO.Path]::GetFullPath($sourceRoot)
+    $tempPrefix = [IO.Path]::GetFullPath($env:TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedRoot.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Refusing source-state fixture cleanup outside the temporary directory.'
+    }
+    Remove-Item -LiteralPath $resolvedRoot -Recurse -Force
+}
+
 $fixtureRun = [pscustomobject]@{
     Lane = 'GPU'; Iteration = 1; BlockSizeKiB = 1024
     MemoryOnly = 'true'; DiskWriteBytes = 0; InputBytes = 10GB; OutputBytes = 171079680; ArchiveBytes = 171102811
