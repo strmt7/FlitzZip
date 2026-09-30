@@ -513,6 +513,7 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_device.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_device.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_matcher.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/sparse_pattern_device.hpp"

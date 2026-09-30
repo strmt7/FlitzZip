@@ -113,6 +113,42 @@ Deflate blocks are owned by the CPU codec, required-HIP archives avoid them, and
 hipCOMP-core remains a research candidate until its upstream production-readiness
 warning and Windows packaging risk are resolved.
 
+## Reused Host Operators
+
+The September 2026 host-combination refactor retains the ZIP polynomial and
+the existing finalized-CRC API. An immutable 64-entry matrix table represents
+zero-byte advances for every bit of a 64-bit length. Its fixed process-wide
+storage is 8 KiB. Thread-safe initialization replaces repeated matrix squaring;
+there is no per-length mutable cache, allocation, resource-dependent policy,
+or archive-format change. Zero-length calls preserve the previous first-CRC
+behavior, including when the caller supplies an inconsistent second CRC.
+
+Regression tests compare all 64 length bits, a mixed-bit length, and the
+unsigned maximum with golden operators from independently built upstream
+zlib 1.3.2, commit `da607da739fa6047df13e66a2af6b8bec7c2a498`.
+Oracle lengths beyond its signed range are composed from signed-range
+advances. Concurrent callers and real uneven segment boundaries also match
+single-pass and incremental CRC-32. The oracle is development-only; no zlib
+runtime dependency was added.
+
+Codec readiness is now separate from the public device diagnostic query.
+Each nonempty encode, decode, and decoded-CRC operation still validates trusted
+runtime loading, live enumeration, and the calling thread's current device.
+HIP results remain checked. Allocation admission is unchanged and still queries
+memory for its own reservations. Model strings, architecture properties, and
+an unused memory snapshot no longer need to be gathered for every codec chunk.
+No cached availability, device selection change, or CPU fallback was introduced.
+
+AMD warns that Windows HIP free-memory reporting may only account for the
+current process and be optimistic. Neither the diagnostic snapshot nor the
+existing reservation query proves exclusive device capacity or absence of
+other workloads. See the
+[HIP memory API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___memory.html).
+
+The [diagnostic comparison](benchmarks/2026-09-30-crc-readiness.md) separates
+the isolated combination speedup from whole-operation results. Reducing host
+work does not establish faster GPU kernels or a universal application speedup.
+
 ## Future Implementation Gate
 
 Additional GPU integrity algorithms or broader GPU CRC reductions should be

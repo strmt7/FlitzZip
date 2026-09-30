@@ -1,4 +1,6 @@
-#include "gpu/gpu_codec.hpp"
+#include "gpu/hip_device.hpp"
+
+#include "core/result.hpp"
 
 #include <algorithm>
 #include <array>
@@ -215,8 +217,52 @@ bool load_hip_runtime() {
     return loaded;
 }
 
+struct HipDeviceIdentity {
+    int count;
+    int selected;
+};
+
+// Purpose: Validate live device enumeration and the calling thread's selection without querying properties or VRAM.
+// Inputs: The trusted HIP runtime has already been loaded.
+// Outputs: Returns the current device identity or throws GpuError without changing the selected device.
+HipDeviceIdentity checked_hip_device_identity() {
+    int count = 0;
+    const auto count_status = hipGetDeviceCount(&count);
+    if (count_status != hipSuccess) {
+        throw GpuError(std::string("Unable to enumerate AMD HIP devices: ") + hipGetErrorString(count_status));
+    }
+    if (count <= 0) {
+        throw GpuError("No AMD HIP device is available");
+    }
+    int selected = -1;
+    const auto device_status = hipGetDevice(&selected);
+    if (device_status != hipSuccess) {
+        throw GpuError(std::string("Unable to read the current AMD HIP device: ") + hipGetErrorString(device_status));
+    }
+    if (selected < 0 || selected >= count) {
+        throw GpuError("The current AMD HIP device is outside the enumerated device range");
+    }
+    return HipDeviceIdentity{count, selected};
+}
+
 }  // namespace
 #endif
+
+// Purpose: Validate runtime and thread-local device readiness without collecting unused diagnostic metadata.
+// Inputs: None; neither device selection nor allocation admission is changed.
+// Outputs: Returns on readiness or throws GpuError; every subsequent HIP operation still checks its own result.
+void require_hip_device_ready() {
+#if SUPERZIP_ENABLE_HIP
+    if (!load_hip_runtime()) {
+        throw GpuError(
+            std::string("AMD HIP runtime is not loadable. Install or update the AMD GPU driver that provides ") +
+            SUPERZIP_HIP_RUNTIME_DLL_NAME + ".");
+    }
+    (void)checked_hip_device_identity();
+#else
+    throw GpuError("Built without HIP acceleration");
+#endif
+}
 
 // Purpose: Query AMD HIP availability and selected device metadata.
 // Inputs: None.
@@ -232,15 +278,15 @@ GpuInfo query_hip_gpu_info() {
         return info;
     }
     info.hip_runtime_loadable = true;
-    int count = 0;
-    const auto count_status = hipGetDeviceCount(&count);
-    info.device_count = count;
-    if (count_status != hipSuccess || count <= 0) {
-        info.status = "No AMD HIP device is available";
+    HipDeviceIdentity identity{};
+    try {
+        identity = checked_hip_device_identity();
+    } catch (const GpuError& error) {
+        info.status = error.what();
         return info;
     }
-    int selected = 0;
-    (void)hipGetDevice(&selected);
+    info.device_count = identity.count;
+    const auto selected = identity.selected;
     hipDeviceProp_t props{};
     const auto props_status = hipGetDeviceProperties(&props, selected);
     if (props_status != hipSuccess) {

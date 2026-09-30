@@ -83,6 +83,13 @@ Security tab or a published release.
    production regression tests passed. Invalid timing remains unavailable and
    still fails benchmark evidence gates. Full timing sweeps and portability
    beyond the available GPU remain separate requirements.
+   Shared host CRC combination now reuses a fixed 8 KiB immutable operator
+   table, with independent zlib golden checks across the full 64-bit length
+   range. HIP codec readiness no longer gathers unused diagnostic metadata
+   for every chunk; trusted loading, device checks, and allocation admission
+   remain explicit. Paired diagnostic verification gains do not establish
+   faster compression kernels or a general application speedup; see
+   [the measured scope](docs/benchmarks/2026-09-30-crc-readiness.md).
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

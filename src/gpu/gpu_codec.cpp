@@ -1,4 +1,5 @@
 #include "gpu/gpu_codec.hpp"
+#include "gpu/hip_device.hpp"
 
 #include "core/archive_blocks.hpp"
 #include "core/checksum.hpp"
@@ -183,7 +184,6 @@ void publish_successful_gpu_attempt(GpuTelemetry* target, const std::shared_ptr<
 // Purpose: Inspect the AMD HIP runtime/device from the HIP translation unit.
 // Inputs: None.
 // Outputs: Returns runtime and device status without throwing for ordinary absence.
-GpuInfo query_hip_gpu_info();
 
 // Purpose: Run the standalone AMD HIP diagnostic from the HIP translation unit.
 // Inputs: `options` controls duration, buffer size, and arithmetic intensity.

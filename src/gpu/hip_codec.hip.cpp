@@ -1,4 +1,5 @@
 #include "gpu/gpu_codec.hpp"
+#include "gpu/hip_device.hpp"
 #include "gpu/hip_codec_support.hpp"
 #include "gpu/dictionary_device.hpp"
 #include "gpu/sparse_pattern_candidate.hpp"
@@ -18,7 +19,6 @@
 #include <hip/hip_runtime.h>
 
 namespace superzip {
-GpuInfo query_hip_gpu_info();
 
 namespace {
 
@@ -1163,10 +1163,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     auto* telemetry = options.telemetry.get();
     auto phase_started = std::chrono::steady_clock::now();
     record_gpu_encode_chunk(telemetry);
-    const auto info = query_hip_gpu_info();
-    if (!info.available) {
-        throw GpuError(info.status);
-    }
+    require_hip_device_ready();
     record_encode_phase(telemetry, GpuEncodeStage::Readiness, phase_started);
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     const auto computed_block_count =
@@ -1306,10 +1303,7 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
     }
     auto* telemetry = options.telemetry.get();
     record_gpu_decode_chunk(telemetry);
-    const auto info = query_hip_gpu_info();
-    if (!info.available) {
-        throw GpuError(info.status);
-    }
+    require_hip_device_ready();
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, output.size(), block_size);
     auto host_blocks = build_decode_device_blocks(blocks);
@@ -1364,10 +1358,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
         }
     }
     auto* telemetry = options.telemetry.get();
-    const auto info = query_hip_gpu_info();
-    if (!info.available) {
-        throw GpuError(info.status);
-    }
+    require_hip_device_ready();
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
 

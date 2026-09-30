@@ -9,6 +9,8 @@
 #include <array>
 #include <cstddef>
 #include <fstream>
+#include <future>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -129,6 +131,66 @@ TEST_CASE(crc32_combine_matches_single_pass_crc) {
         const auto second = superzip::crc32(std::span<const std::byte>(bytes.data() + split, bytes.size() - split));
         const auto combined = superzip::crc32_combine(first, second, bytes.size() - split);
         REQUIRE_EQ(combined, expected);
+    }
+}
+
+// Purpose: Verify every 64-bit length operator against independently built upstream zlib, including unsigned limits.
+// Inputs: Finalized CRCs 0x12345678/0x9ABCDEF0 and zlib 1.3.2 golden results for 2^0 through 2^63 bytes.
+// Outputs: Requires exact combination values under concurrent calls, mixed length bits, and preserved empty semantics.
+TEST_CASE(crc32_combine_full_length_oracle) {
+    // zlib v1.3.2, commit da607da739fa6047df13e66a2af6b8bec7c2a498, crc32_combine64.
+    // Unsigned lengths beyond INT64_MAX use consecutive signed-range zero-state advances in the oracle.
+    constexpr std::array<std::uint32_t, 64> expected{
+        0xC47013A8U, 0xFF52CBFBU, 0x1495863EU, 0x20C70901U, 0xFC8B1A58U, 0xCC60D264U, 0xA147EF04U, 0xE68FBBADU,
+        0x37290B0EU, 0x733B82FEU, 0x10F6610DU, 0x52DBA75AU, 0x43C8229EU, 0xF3A01BCBU, 0xA517912AU, 0xC88F5BC1U,
+        0x82461466U, 0x4D44EE89U, 0xF82AFF67U, 0x911BB6A5U, 0x88971340U, 0xACE65EBAU, 0x88EF8BC5U, 0xD846B98AU,
+        0xAEB797EFU, 0x90382D8BU, 0xAD669877U, 0x32F3B171U, 0xABDD0E0FU, 0x93A6F5CCU, 0x9E31CB6EU, 0x762718B7U,
+        0xC47013A8U, 0xFF52CBFBU, 0x1495863EU, 0x20C70901U, 0xFC8B1A58U, 0xCC60D264U, 0xA147EF04U, 0xE68FBBADU,
+        0x37290B0EU, 0x733B82FEU, 0x10F6610DU, 0x52DBA75AU, 0x43C8229EU, 0xF3A01BCBU, 0xA517912AU, 0xC88F5BC1U,
+        0x82461466U, 0x4D44EE89U, 0xF82AFF67U, 0x911BB6A5U, 0x88971340U, 0xACE65EBAU, 0x88EF8BC5U, 0xD846B98AU,
+        0xAEB797EFU, 0x90382D8BU, 0xAD669877U, 0x32F3B171U, 0xABDD0E0FU, 0x93A6F5CCU, 0x9E31CB6EU, 0x762718B7U,
+    };
+    std::array<std::future<void>, 4> workers;
+    for (auto& worker : workers) {
+        worker = std::async(std::launch::async, [&expected] {
+            for (std::size_t bit = 0U; bit < expected.size(); ++bit) {
+                REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, std::uint64_t{1} << bit), expected[bit]);
+            }
+        });
+    }
+    for (auto& worker : workers) {
+        worker.get();
+    }
+    REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, 0x123456789ABCDEFULL), 0x8BB98EB9U);
+    REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, std::numeric_limits<std::uint64_t>::max()),
+               0x88888888U);
+    REQUIRE_EQ(superzip::crc32_combine(0x12345678U, 0x9ABCDEF0U, 0U), 0x12345678U);
+    REQUIRE_EQ(superzip::crc32_combine(0U, 0x9ABCDEF0U, std::numeric_limits<std::uint64_t>::max()), 0x9ABCDEF0U);
+}
+
+// Purpose: Verify repeated cached CRC combinations against a direct checksum on uneven and short source segments.
+// Inputs: Deterministic bytes partitioned at small, CRC-kernel, and partial-tail boundaries.
+// Outputs: Requires the same finalized CRC for each chunking scheme and incremental bytewise hashing.
+TEST_CASE(crc32_combine_repeated_segment_boundaries) {
+    std::vector<std::byte> bytes(128U * 1024U + 123U);
+    std::uint32_t seed = 0x76543210U;
+    for (auto& byte : bytes) {
+        seed ^= seed << 13U;
+        seed ^= seed >> 17U;
+        seed ^= seed << 5U;
+        byte = static_cast<std::byte>(seed & 255U);
+    }
+    const auto expected = superzip::crc32(bytes);
+    for (const std::size_t segment_bytes : {1U, 13U, 4096U, 8192U, 32768U, 65536U}) {
+        std::uint32_t combined = 0U;
+        std::uint32_t incremental = 0U;
+        for (std::size_t offset = 0U; offset < bytes.size(); offset += segment_bytes) {
+            const auto segment = std::span(bytes).subspan(offset, std::min(segment_bytes, bytes.size() - offset));
+            combined = superzip::crc32_combine(combined, superzip::crc32(segment), segment.size());
+            incremental = superzip::crc32(segment, incremental);
+        }
+        REQUIRE_EQ(combined, expected);
+        REQUIRE_EQ(combined, incremental);
     }
 }
 

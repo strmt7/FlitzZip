@@ -1,6 +1,7 @@
 #include "core/checksum.hpp"
 
 #include <array>
+#include <limits>
 
 namespace superzip {
 namespace {
@@ -55,6 +56,28 @@ std::array<std::uint32_t, 32> gf2_matrix_square(const std::array<std::uint32_t, 
     return square;
 }
 
+// Purpose: Reuse CRC zero-byte operators for every bit of the supported 64-bit concatenated length.
+// Inputs: None; the fixed ZIP polynomial determines all operators and initialization is thread-safe.
+// Outputs: Returns an immutable 8 KiB table; no per-call allocation or mutable length cache is used.
+const auto& crc_byte_operators() {
+    static const auto operators = [] {
+        std::array<std::array<std::uint32_t, 32>, std::numeric_limits<std::uint64_t>::digits> powers{};
+        std::array<std::uint32_t, 32> bit_operator{};
+        bit_operator[0] = 0xEDB88320U;
+        std::uint32_t row = 1U;
+        for (std::size_t index = 1U; index < bit_operator.size(); ++index) {
+            bit_operator[index] = row;
+            row <<= 1U;
+        }
+        powers[0] = gf2_matrix_square(gf2_matrix_square(gf2_matrix_square(bit_operator)));
+        for (std::size_t index = 1U; index < powers.size(); ++index) {
+            powers[index] = gf2_matrix_square(powers[index - 1U]);
+        }
+        return powers;
+    }();
+    return operators;
+}
+
 }  // namespace
 
 std::uint32_t crc32(std::span<const std::byte> bytes, std::uint32_t seed) {
@@ -67,39 +90,24 @@ std::uint32_t crc32(std::span<const std::byte> bytes, std::uint32_t seed) {
     return crc ^ 0xFFFFFFFFU;
 }
 
+// Purpose: Combine finalized ZIP CRCs using precomputed zero-byte operators rather than rebuilding matrices.
+// Inputs: Ordered CRC values and the full 64-bit byte length of the second range; zero length preserves first_crc.
+// Outputs: Returns the concatenated CRC without allocation, throwing, or changing either caller value.
 std::uint32_t crc32_combine(std::uint32_t first_crc, std::uint32_t second_crc, std::uint64_t second_len) {
     if (second_len == 0) {
         return first_crc;
     }
-
-    std::array<std::uint32_t, 32> odd{};
-    odd[0] = 0xEDB88320U;
-    std::uint32_t row = 1U;
-    for (std::size_t n = 1; n < odd.size(); ++n) {
-        odd[n] = row;
-        row <<= 1U;
+    if (first_crc == 0U) {
+        return second_crc;
     }
-
-    auto even = gf2_matrix_square(odd);
-    odd = gf2_matrix_square(even);
-
+    const auto& operators = crc_byte_operators();
     auto crc = first_crc;
-    do {
-        even = gf2_matrix_square(odd);
+    for (std::size_t index = 0U; second_len != 0U; ++index) {
         if ((second_len & 1U) != 0U) {
-            crc = gf2_matrix_times(even, crc);
+            crc = gf2_matrix_times(operators[index], crc);
         }
         second_len >>= 1U;
-        if (second_len == 0) {
-            break;
-        }
-        odd = gf2_matrix_square(even);
-        if ((second_len & 1U) != 0U) {
-            crc = gf2_matrix_times(odd, crc);
-        }
-        second_len >>= 1U;
-    } while (second_len != 0U);
-
+    }
     return crc ^ second_crc;
 }
 

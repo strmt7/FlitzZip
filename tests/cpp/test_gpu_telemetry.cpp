@@ -1,13 +1,55 @@
 #include "test_util.hpp"
 
 #include "gpu/gpu_codec.hpp"
+#include "gpu/hip_device.hpp"
 #include "core/checksum.hpp"
+#include "core/result.hpp"
 
 #include <array>
 #include <cmath>
 #include <future>
 #include <limits>
 #include <thread>
+
+// Purpose: Preserve thread-local device selection and explicit missing-backend errors in readiness admission.
+// Inputs: The current compiled backend; available HIP is checked concurrently without changing device selection.
+// Outputs: Requires stable diagnostics on HIP, or the precise CPU-only GpuError on hosted validation builds.
+TEST_CASE(gpu_device_readiness_contract) {
+#if SUPERZIP_ENABLE_HIP
+    const auto before = superzip::query_gpu_info();
+    if (!before.available) {
+        return;
+    }
+    std::array<std::future<void>, 4> workers;
+    for (auto& worker : workers) {
+        worker = std::async(std::launch::async, [] {
+            const auto first = superzip::query_gpu_info();
+            REQUIRE_TRUE(first.available);
+            superzip::require_hip_device_ready();
+            superzip::require_hip_device_ready();
+            const auto second = superzip::query_gpu_info();
+            REQUIRE_TRUE(second.available);
+            REQUIRE_EQ(first.selected_device, second.selected_device);
+            REQUIRE_EQ(first.device_count, second.device_count);
+            REQUIRE_EQ(first.gcn_arch, second.gcn_arch);
+        });
+    }
+    for (auto& worker : workers) {
+        worker.get();
+    }
+    superzip::require_hip_device_ready();
+    REQUIRE_EQ(before.selected_device, superzip::query_gpu_info().selected_device);
+#else
+    bool rejected = false;
+    try {
+        superzip::require_hip_device_ready();
+    } catch (const superzip::GpuError& error) {
+        rejected = true;
+        REQUIRE_EQ(std::string(error.what()), "Built without HIP acceleration");
+    }
+    REQUIRE_TRUE(rejected);
+#endif
+}
 
 // Purpose: Preserve finite timing precision and distinguish real zero duration from unavailable data.
 // Inputs: Synthetic event durations; no HIP device or workload is required.
