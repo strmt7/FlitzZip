@@ -226,6 +226,14 @@ variables.
 
   The audit checks that no GitHub deployment records exist and that open
   code-scanning alerts are limited to the approved residual Scorecard findings.
+- For a requested review of current and resolved incidents, run the same audit
+  with `-IncludeHistory -HistoryReportPath out/security/history-review.json`.
+  Use a new filename for each refresh; existing reports are never overwritten.
+  It queries every state once, saves minimal incident evidence and rule/state
+  totals, then applies the unchanged open-alert gate. An unresolved finding still
+  fails the command after its report is saved. Ordinary post-push checks remain
+  open-only to avoid repeatedly downloading the entire history.
+  See [the review and recurrence map](code-scanning-history-review.md).
 - The push and pull-request lane validates the workflow, hash-locked Greenbone
   tools, and GMP script contract without touching a network target.
 - The scheduled/manual live scan lane fails closed with an explicit report when

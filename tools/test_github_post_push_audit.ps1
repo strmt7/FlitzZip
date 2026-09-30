@@ -1,5 +1,20 @@
 $ErrorActionPreference = 'Stop'
 $auditReplies = [System.Collections.Generic.Queue[object]]::new()
+$auditScenarioCount = 0
+$auditGitRemote = 'https://github.com/fixture/repository.git'
+$auditGitExitCode = 0
+
+# Purpose: Exercise repository resolution without reading or altering real Git configuration.
+# Inputs: Only the production remote.origin.url query is accepted; scoped fixture values supply its result.
+# Outputs: Returns mock remote text and status or rejects an unexpected Git command.
+function Invoke-TestGitRemote {
+    if (($args -join ' ') -ne 'config --get remote.origin.url') {
+        throw 'Unexpected Git command during audit tests.'
+    }
+    $global:LASTEXITCODE = $auditGitExitCode
+    return $auditGitRemote
+}
+Set-Alias -Name git -Value Invoke-TestGitRemote -Scope Script
 
 # Purpose: Replace GitHub CLI calls with ordered offline responses for the production audit.
 # Inputs: The implicit command arguments must request the next fixture endpoint.
@@ -26,24 +41,31 @@ function Get-ApiReply {
 }
 
 # Purpose: Run the actual audit with bounded mock responses and assert its pass/fail decision.
-# Inputs: Name labels the scenario; Responses fixes all API output; Failure contains required diagnostic text.
+# Inputs: Scenario label, API fixtures, expected error, optional all-state selection and new report destination.
 # Outputs: Throws on false success, unexpected failure, or unconsumed API responses.
 function Test-AuditCase {
-    param([string]$Name, [object[]]$Responses, [string]$Failure = '')
+    param(
+        [string]$Name, [object[]]$Responses, [string]$Failure = '',
+        [switch]$IncludeHistory, [string]$HistoryReportPath = '',
+        [AllowEmptyString()][string]$Repository = 'fixture/repository'
+    )
     $auditReplies.Clear()
     foreach ($response in $Responses) { $auditReplies.Enqueue($response) }
     $message = ''
     try {
-        & (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') -Repository 'fixture/repository' 6>&1 | Out-Null
+        & (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') -Repository $Repository `
+            -IncludeHistory:$IncludeHistory -HistoryReportPath $HistoryReportPath 6>&1 | Out-Null
     } catch {
         $message = $_.Exception.Message
     }
+    $script:lastAuditMessage = $message
     if (($Failure -eq '' -and $message -ne '') -or ($Failure -ne '' -and -not $message.Contains($Failure))) {
         throw "Post-push audit regression: $Name returned an unexpected decision: $message"
     }
     if ($auditReplies.Count -ne 0) {
         throw "Post-push audit regression: $Name left expected API calls untested."
     }
+    $script:auditScenarioCount += 1
     Write-Output "Post-push audit scenario passed: $Name"
 }
 
@@ -51,13 +73,34 @@ $deployments = 'repos/fixture/repository/deployments'
 $alerts = 'repos/fixture/repository/code-scanning/alerts*'
 $emptyDeployments = Get-ApiReply $deployments 0 '0'
 $emptyAlerts = Get-ApiReply $alerts 0 '[]'
-$approvedAlert = [pscustomobject]@{ number = 1; tool = @{ name = 'Scorecard' }; rule = @{ id = 'CodeReviewID' } }
+$approvedAlert = [pscustomobject]@{ number = 1; state = 'open'; tool = @{ name = 'Scorecard' }; rule = @{ id = 'CodeReviewID' } }
 $approvedJson = ConvertTo-Json -InputObject @($approvedAlert) -Depth 5 -Compress
-$unapprovedJson = '[{"number":2,"tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"}}]'
+$unapprovedJson = '[{"number":2,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"}}]'
 
 Test-AuditCase 'empty successful snapshot' @($emptyDeployments, $emptyAlerts)
+foreach ($remote in @('https://github.com/fixture/repository.git', 'https://github.com/fixture/repository',
+        'git@github.com:fixture/repository.git', 'ssh://git@github.com/fixture/repository.git')) {
+    $auditGitRemote = $remote
+    Test-AuditCase 'credential-free remote resolves expected repository' @($emptyDeployments, $emptyAlerts) -Repository ''
+}
+foreach ($remote in @('https://examplegithub.com/fixture/repository.git', 'https://github.com.bad.invalid/fixture/repository.git',
+        ('https://' + 'fixture-user:fixture-value' + '@github.com/fixture/repository.git'))) {
+    $auditGitRemote = $remote
+    Test-AuditCase 'untrusted or credential-bearing remote rejected' @() 'Cannot parse GitHub repository' -Repository ''
+    if ($lastAuditMessage.Contains($remote)) { throw 'Rejected remote value leaked into audit diagnostics.' }
+}
+$auditGitRemote = 'https://github.com/fixture/repository.git'
+$auditGitExitCode = 1
+Test-AuditCase 'failed remote query cannot use plausible output' @() 'reading remote.origin.url failed' -Repository ''
+$auditGitExitCode = 0
+$auditGitRemote = ''
+Test-AuditCase 'empty remote query rejected' @() 'remote.origin.url is unset' -Repository ''
 Test-AuditCase 'existing approved residual' @($emptyDeployments, (Get-ApiReply $alerts 0 $approvedJson))
 Test-AuditCase 'unapproved finding' @($emptyDeployments, (Get-ApiReply $alerts 0 $unapprovedJson)) 'Unapproved code-scanning'
+$priorityJson = '[{"number":100,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/quality"}},' +
+    '{"number":2,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/critical","security_severity_level":"critical"}},' +
+    '{"number":3,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/high","security_severity_level":"high"}}]'
+Test-AuditCase 'critical examples precede newer quality alerts' @($emptyDeployments, (Get-ApiReply $alerts 0 $priorityJson)) ("First 12 examples (at most):`n2 CodeQL/cpp/critical no file`n3 CodeQL/cpp/high no file`n100 CodeQL/cpp/quality no file")
 Test-AuditCase 'existing deployment' @((Get-ApiReply $deployments 0 '1')) 'deployments are forbidden'
 Test-AuditCase 'failed deployments with zero body' @((Get-ApiReply $deployments 1 '0')) 'deployments API failed'
 Test-AuditCase 'failed alerts with empty array body' @($emptyDeployments, (Get-ApiReply $alerts 1 '[]')) 'code-scanning API failed'
@@ -74,9 +117,74 @@ foreach ($invalid in @('null', '{}', '0')) {
 foreach ($invalid in @('[null]', '[[]]', '[{}]')) {
     Test-AuditCase 'invalid alert record' @($emptyDeployments, (Get-ApiReply $alerts 0 $invalid)) 'invalid code-scanning record'
 }
-$fullPage = ConvertTo-Json -InputObject @((1..100) | ForEach-Object { $approvedAlert }) -Depth 5 -Compress
+$fullPage = ConvertTo-Json -InputObject @((1..100) | ForEach-Object {
+    [pscustomobject]@{ number = $_; state = 'open'; tool = @{ name = 'Scorecard' }; rule = @{ id = 'CodeReviewID' } }
+}) -Depth 5 -Compress
+$secondPageFinding = $unapprovedJson.Replace('"number":2', '"number":101')
 Test-AuditCase 'complete pagination' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), $emptyAlerts)
-Test-AuditCase 'unapproved finding on second page' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 0 $unapprovedJson)) 'Unapproved code-scanning'
+Test-AuditCase 'unapproved finding on second page' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 0 $secondPageFinding)) 'Unapproved code-scanning'
 Test-AuditCase 'failed second page' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 1 '[]')) 'code-scanning API failed'
+Test-AuditCase 'repeated page rejects incomplete evidence' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 0 $fullPage)) 'duplicate alert'
+Test-AuditCase 'duplicate within a page rejected' @($emptyDeployments, (Get-ApiReply $alerts 0 ('[' + ($approvedJson.TrimStart('[').TrimEnd(']')) + ',' + ($approvedJson.TrimStart('[').TrimEnd(']')) + ']'))) 'duplicate alert'
+Test-AuditCase 'missing incident state rejected' @($emptyDeployments, (Get-ApiReply $alerts 0 ($unapprovedJson.Replace('"state":"open",', '')))) 'invalid code-scanning record'
+foreach ($state in @('fixed', 'dismissed')) {
+    $closedJson = $unapprovedJson.Replace('"open"', ('"' + $state + '"'))
+    Test-AuditCase 'closed result in open-only query' @($emptyDeployments, (Get-ApiReply $alerts 0 $closedJson)) 'non-open alert'
+}
+foreach ($state in @('closed', 'unknown', '')) {
+    $invalidJson = $unapprovedJson.Replace('"open"', ('"' + $state + '"'))
+    Test-AuditCase 'invalid incident state' @($emptyDeployments, (Get-ApiReply $alerts 0 $invalidJson)) 'invalid code-scanning record'
+}
+Test-AuditCase 'non-string state rejected' @($emptyDeployments, (Get-ApiReply $alerts 0 ($unapprovedJson.Replace('"state":"open"', '"state":["open"]')))) 'invalid code-scanning record'
+$historyEndpoint = 'repos/fixture/repository/code-scanning/alerts?per_page=*'
+$historyJson = '[{"number":2,"state":"fixed","tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"}},' +
+    '{"number":3,"state":"dismissed","tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"},"dismissed_reason":"false positive",' +
+    '"dismissed_comment":"private reviewer text must not be exported","most_recent_instance":{"location":{"path":"src/sample.cpp","start_line":12},"commit_sha":"fixture-commit","category":"c-cpp"}}]'
+Test-AuditCase 'all-state history preserves closed states' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) -IncludeHistory
+Test-AuditCase 'empty complete history' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 '[]')) -IncludeHistory
+Test-AuditCase 'unapproved history entry still blocks' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $unapprovedJson)) 'Unapproved code-scanning' -IncludeHistory
+Test-AuditCase 'all-state later page retained' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 0 ($historyJson.Replace('"number":2', '"number":101').Replace('"number":3', '"number":102')))) -IncludeHistory
+Test-AuditCase 'all-state partial history fails' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 1 '[]')) 'code-scanning API failed' -IncludeHistory
+Test-AuditCase 'missing history authorization for report' @() 'requires IncludeHistory' -HistoryReportPath 'unused.json'
+
+$reportRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-history-audit-' + [Guid]::NewGuid().ToString('N'))
+$reportPath = Join-Path $reportRoot 'history.json'
+try {
+    Test-AuditCase 'history report export' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) -IncludeHistory -HistoryReportPath $reportPath
+    $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+    if ($report.schema_version -ne 1 -or $report.total -ne 2 -or $report.open -ne 0 -or
+        $report.fixed -ne 1 -or $report.dismissed -ne 1 -or $report.rules.Count -ne 1 -or
+        $report.incidents.Count -ne 2 -or $report.incidents[1].analysis_commit -ne 'fixture-commit' -or
+        $report.incidents[1].path -ne 'src/sample.cpp' -or $report.incidents[1].line -ne 12 -or
+        (Get-Content -LiteralPath $reportPath -Raw).Contains('private reviewer text')) {
+        throw 'History report lost evidence, conflated states, or exported private reviewer text.'
+    }
+    $bytesBefore = [IO.File]::ReadAllBytes($reportPath)
+    Test-AuditCase 'existing report cannot be overwritten' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) 'already exists' -IncludeHistory -HistoryReportPath $reportPath
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($reportPath)) -ne [Convert]::ToBase64String($bytesBefore)) {
+        throw 'An existing history report was changed.'
+    }
+    $blockedPath = Join-Path $reportRoot 'blocked.json'
+    Test-AuditCase 'blocked audit retains history evidence' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $unapprovedJson)) 'Unapproved code-scanning' -IncludeHistory -HistoryReportPath $blockedPath
+    if (-not (Test-Path -LiteralPath $blockedPath -PathType Leaf)) { throw 'Blocked history evidence was lost.' }
+    Test-AuditCase 'non-JSON report rejected' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) '.json extension' -IncludeHistory -HistoryReportPath (Join-Path $reportRoot 'invalid.txt')
+    Push-Location $reportRoot
+    try {
+        Test-AuditCase 'relative report follows PowerShell location' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) -IncludeHistory -HistoryReportPath 'nested-relative/history.json'
+        if (-not (Test-Path -LiteralPath (Join-Path $reportRoot 'nested-relative/history.json') -PathType Leaf)) {
+            throw 'Relative history report was not created under the caller PowerShell location.'
+        }
+    } finally {
+        Pop-Location
+    }
+} finally {
+    # This UUID path was created only by these fixtures; never remove caller-supplied paths.
+    $resolvedRoot = [IO.Path]::GetFullPath($reportRoot)
+    $temporaryParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if ([IO.Path]::GetDirectoryName($resolvedRoot) -ne $temporaryParent) {
+        throw 'History fixture cleanup escaped its temporary parent.'
+    }
+    if (Test-Path -LiteralPath $resolvedRoot) { Remove-Item -LiteralPath $resolvedRoot -Recurse -Force }
+}
 $global:LASTEXITCODE = 0
-Write-Output 'Post-push audit offline regression tests passed (23 scenarios).'
+Write-Output "Post-push audit offline regression tests passed ($auditScenarioCount scenarios)."

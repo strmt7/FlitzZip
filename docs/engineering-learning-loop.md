@@ -83,6 +83,27 @@ the Security tab, released artifacts, or the product UI again.
   local Docker driver must turn native failures into a nonzero PowerShell exit.
   `tools\security_scan.ps1` enforces both rules so sanitizer linker failures
   cannot be reported as a successful verification lane.
+- `tools\github_post_push_audit.ps1 -IncludeHistory` fetches open, fixed, and
+  dismissed incidents only on demand. Its optional new-file JSON report retains
+  every incident ID, rule, state, location, and latest analysis identity without
+  raw reviewer comments. Pagination rejects duplicate IDs, malformed records,
+  partial API failures, and non-open records in open-only queries. Offline tests
+  prove that closed history cannot pass an unapproved current finding, report
+  collisions preserve existing bytes, and blocked audits still save evidence.
+  Relative report paths use the PowerShell location rather than the unrelated
+  .NET process directory; a changed-location regression covers both shells.
+  Remote resolution requires an exact credential-free GitHub HTTPS/SSH host,
+  rejects failed Git queries, and never echoes rejected remote text. Mocked Git
+  and API tests prove that lookalike hosts cannot select a different repository.
+- CMake script checkouts require LF through `.gitattributes`, not only an editor
+  preference. A local LF file passed lint but checked out as CRLF on the hosted
+  Windows runner before the `*.cmake` attribute was added. Validate attribute
+  changes with a fresh Git export under the runner's checkout configuration.
+
+The [incident-history review](code-scanning-history-review.md) maps all retrieved
+scanner families to existing guardrails and records unfinished work. It is an
+evidence index, not a new allowlist or proof that every historical alert was a
+vulnerability. Normative agent rules remain in the operating guide.
 
 ## Adding A New Lesson
 

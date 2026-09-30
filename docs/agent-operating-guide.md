@@ -215,6 +215,22 @@ Guidelines, and SEI CERT C++.
   release notes, and reproducible build inputs.
 - After every pushed remediation, verify workflows, deployments, and open
   code-scanning alerts with `tools\github_post_push_audit.ps1`.
+- For repeated scanner incidents or a requested history review, use that audit
+  with `-IncludeHistory -HistoryReportPath` and a new JSON path under `out/`.
+  Review all rule/state groups once; reuse the saved evidence until the affected
+  source, scanner version, analysis commit/category, or advisory data changes.
+  A historical `fixed` or `dismissed` state is not proof of a current repair.
+  Follow the evidence map in `docs/code-scanning-history-review.md`; do not copy
+  its history into prompts or add broad suppression rules.
+- Moving a dependency from a prebuilt runtime to compiled source expands SAST
+  coverage even without changing its upstream version. Inventory the actual
+  translation units, preserve upstream provenance, inspect new bounds/lifetime
+  traces, and wait for the expanded analysis before calling remediation or a
+  release ready. A local policy scan is not an equivalent CodeQL analysis.
+- Resolve scanner upgrades with their full transitive graph for the actual CI
+  platform. If a patched child conflicts with its parent's published metadata,
+  retain the failed resolution evidence and release blocker; do not force
+  installation, override metadata, or repeatedly test unchanged combinations.
 
 ## Project Map
 
@@ -566,7 +582,8 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   generated workloads to SSDs.
 - Product benchmark claims must compare CPU and GPU at the same compression
   level and report compression ratio. Level 5 is the balanced release baseline;
-  the exposed non-store tuning levels are 1, 3, 5, 7, and 9.
+  all non-store effort levels 1 through 9 are exposed. Historical five-level
+  reports do not establish measurements for the four intervening efforts.
 - Product MSI releases must be per-machine installers that preselect
   `C:\Program Files\SuperZip` and use normal Windows elevation when required.
   Use `tools\build.ps1 -MsiInstallScope perUser` only for local non-admin
