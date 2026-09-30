@@ -485,7 +485,7 @@ TEST_CASE(suzip_gpu_entropy_efforts_preserve_per_block_winners) {
     previous_blocks.fill(block_bytes);
     previous_blocks.back() = 123U;
     auto previous_bytes = input.size();
-    for (int effort = 1; effort <= 9; ++effort) {
+    for (const int effort : {1, 2, 3, 4, 5, 6, 7, 8, 9}) {
         superzip::GpuCodecOptions options;
         options.require_gpu = true;
         options.block_size = block_bytes;

@@ -231,6 +231,12 @@ Guidelines, and SEI CERT C++.
   platform. If a patched child conflicts with its parent's published metadata,
   retain the failed resolution evidence and release blocker; do not force
   installation, override metadata, or repeatedly test unchanged combinations.
+- Express fixed hardware/feature test matrices as explicit case data, retaining
+  their availability guards and required-backend assertions. Review SAST in
+  its actual build configuration: a CPU-only backend that always throws can
+  make a manually incremented GPU-test loop condition appear constant. A local
+  HIP pass does not validate the CPU-only analysis; wait for the exact pushed
+  analysis before calling that diagnostic repaired.
 
 ## Project Map
 
@@ -738,6 +744,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   CLI preflight before polling. If `gh` is unauthenticated, unauthorized, or
   returns an error, stop and fix authentication instead of treating every
   workflow as missing.
+  Inspect event/path filters when a selected workflow has no run. If the
+  maintainer authorized its validation dispatch, dispatch it on the pushed
+  ref and verify the run's head SHA; otherwise report the missing gate. Do not
+  drop the selected workflow or keep waiting as though a nonexistent run were
+  progressing. Release dispatch still requires its separate authorization.
   Fuzzing is a long-running observed workflow: do not block on it during normal
   iteration, but sample it with `-IncludeLongRunning` and wait for it with
   `-FinalCommit` when the current commit is the final handoff or release.

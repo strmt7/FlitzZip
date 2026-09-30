@@ -2,7 +2,7 @@
 
 ## Evidence And Scope
 
-The 2026-09-30 GitHub API inventory retrieved 1,677 distinct alert IDs, covering
+The initial 2026-09-30 GitHub API inventory retrieved 1,677 distinct alert IDs, covering
 IDs 1 through 1,677 without gaps, across 98 rule IDs. These are scanner incident
 records, not 1,677 independently demonstrated vulnerabilities. The inventory
 includes all current and historical states, not only the first page or open
@@ -27,6 +27,10 @@ pointer scaling, boolean conditions, and lifetime boundaries. Existing closed
 records retain their original disposition; no alert was dismissed or reopened
 by this review.
 
+The post-push refresh for `e2fb955` subsequently added alert 1678 in a new
+GPU-only test matrix. Its build-configuration cause and recurrence control are
+listed below; closure requires a fresh hosted analysis, not a local HIP pass.
+
 [GitHub's alert API](https://docs.github.com/en/rest/code-scanning/code-scanning)
 distinguishes open, fixed, and dismissed states. A disappearing alert can also
 reflect changed source coverage, compilation, or scanner behavior. Historical
@@ -43,6 +47,7 @@ current source and exact analysis commit/category.
 | Bounds, allocation sizes, pointer scaling, return paths and parser conditions | Real manual Windows CodeQL build, bounded archive adapters, unit tests and sanitizer/fuzz targets | Read the complete allocation-to-use trace, guards, units, ABI and architecture. Safe typed table layouts are not proved unsafe merely by a cast; a guard is not proved sufficient without its capacity contract. |
 | Borrowed buffers and stack-address lifetime | Scoped stream input reset, caller-buffer reuse tests, RAII and synchronous/asynchronous contracts | Prove every completion, error, cancellation and cleanup path. Asynchronous work must consume, copy or own input before its caller may reuse it. |
 | Function contracts, switch size, unused declarations and commented code | Changed-function documentation/complexity gate, compiler checks and provenance | Improve owned source with behavior-preserving tests. Preserve upstream archives; vendor comment churn does not repair a demonstrated vulnerability. |
+| Feature-gated test comparisons | CPU-only hosted CodeQL and actual HIP test execution | Follow the operating guide's fixed-matrix rule; preserve hardware guards and all backend assertions. Alert 1678 reported the effort counter as constant where required-GPU encoding always throws in the CPU-only build. A HIP test pass alone does not validate that analysis configuration. |
 | Generated or newly compiled upstream source | Checksum-pinned source inputs and full manual build database | Inventory newly visible translation units before relying on previous SAST counts. Keep new findings visible until evidence-backed triage is complete. |
 | Scorecard governance and binary provenance | Post-push residual-rule gate, license/provenance checks, fuzzing and security workflows | Governance residuals remain limited to the existing approved rules. Vulnerabilities or binary artifacts do not become approved because another workflow passes. |
 
