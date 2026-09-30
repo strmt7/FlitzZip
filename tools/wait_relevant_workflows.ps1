@@ -20,28 +20,10 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+. (Join-Path $PSScriptRoot 'github_repository.ps1')
 
 if ($FinalCommit.IsPresent -and $Mode -eq "defer") {
     throw "-FinalCommit cannot be combined with -Mode defer. Final handoff must wait for selected workflows."
-}
-
-# Purpose: Resolve the GitHub owner/repository slug for the current checkout.
-# Inputs: `Repository` may explicitly provide owner/repo; otherwise `remote.origin.url` is parsed.
-# Outputs: Returns owner/repo or throws when the remote is not a GitHub repository.
-function Resolve-GitHubRepository {
-    param([string]$Repository)
-
-    if (-not [string]::IsNullOrWhiteSpace($Repository)) {
-        if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
-            throw "Repository must use owner/repo form."
-        }
-        return $Repository
-    }
-    $remote = (git -C $repoRoot config --get remote.origin.url)
-    if ($remote -match 'github\.com[:/](?<slug>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
-        return $Matches.slug
-    }
-    throw "Cannot parse GitHub repository from remote.origin.url: $remote"
 }
 
 # Purpose: Resolve the commit SHA to inspect in GitHub Actions.
@@ -183,7 +165,7 @@ if ($Mode -eq "defer") {
     return
 }
 
-$repositorySlug = Resolve-GitHubRepository -Repository $Repository
+$repositorySlug = Resolve-GitHubRepository -Repository $Repository -RepositoryRoot $repoRoot
 $commitSha = Resolve-WorkflowCommit -Commit $Commit
 Test-GitHubCliReady -Repository $repositorySlug
 $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)

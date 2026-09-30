@@ -95,6 +95,9 @@ the Security tab, released artifacts, or the product UI again.
   Remote resolution requires an exact credential-free GitHub HTTPS/SSH host,
   rejects failed Git queries, and never echoes rejected remote text. Mocked Git
   and API tests prove that lookalike hosts cannot select a different repository.
+  Both the audit and workflow waiter use `tools/github_repository.ps1`; route
+  regressions reject copied parsers, missing imports, and caller-directory
+  dependence. A repair in only one caller does not close this boundary.
 - CMake script checkouts require LF through `.gitattributes`, not only an editor
   preference. A local LF file passed lint but checked out as CRLF on the hosted
   Windows runner before the `*.cmake` attribute was added. Validate attribute

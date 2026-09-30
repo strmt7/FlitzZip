@@ -5,33 +5,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-# Purpose: Resolve the GitHub `owner/repo` slug for the current checkout.
-# Inputs: `Repository` may explicitly provide `owner/repo`; otherwise the function reads `remote.origin.url`.
-# Outputs: Returns an `owner/repo` string or throws when the remote cannot be parsed.
-function Resolve-GitHubRepository {
-    param([string]$Repository)
-
-    if (-not [string]::IsNullOrWhiteSpace($Repository)) {
-        if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
-            throw "Repository must use owner/repo form."
-        }
-        return $Repository
-    }
-
-    $remote = (git config --get remote.origin.url)
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Cannot resolve GitHub repository because reading remote.origin.url failed.'
-    }
-    if ([string]::IsNullOrWhiteSpace($remote)) {
-        throw "Cannot resolve GitHub repository because remote.origin.url is unset."
-    }
-    if ($remote -is [string] -and
-        $remote -match '^(https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<slug>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(\.git)?$') {
-        return $Matches.slug
-    }
-    throw 'Cannot parse GitHub repository from remote.origin.url; use a credential-free GitHub remote or explicit owner/repo.'
-}
+$repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'github_repository.ps1')
 
 # Purpose: Fetch a complete open-alert or all-state code-scanning inventory.
 # Inputs: Repository slug, validated page size, and whether resolved/dismissed records are required.
@@ -233,7 +208,7 @@ function Assert-CodeScanningAllowList {
 if ($HistoryReportPath -and -not $IncludeHistory) {
     throw 'HistoryReportPath requires IncludeHistory; an open-only snapshot is not a complete incident review.'
 }
-$repo = Resolve-GitHubRepository -Repository $Repository
+$repo = Resolve-GitHubRepository -Repository $Repository -RepositoryRoot $repoRoot
 Assert-NoDeployment -Repository $repo
 $inventory = @(Get-CodeScanningAlert -Repository $repo -IncludeHistory:$IncludeHistory)
 if ($IncludeHistory) {

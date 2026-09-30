@@ -8,7 +8,9 @@ $auditGitExitCode = 0
 # Inputs: Only the production remote.origin.url query is accepted; scoped fixture values supply its result.
 # Outputs: Returns mock remote text and status or rejects an unexpected Git command.
 function Invoke-TestGitRemote {
-    if (($args -join ' ') -ne 'config --get remote.origin.url') {
+    if ($args.Count -ne 5 -or $args[0] -ne '-C' -or
+        $args[1] -ne (Split-Path -Parent $PSScriptRoot) -or
+        ($args[2..4] -join ' ') -ne 'config --get remote.origin.url') {
         throw 'Unexpected Git command during audit tests.'
     }
     $global:LASTEXITCODE = $auditGitExitCode
@@ -76,6 +78,33 @@ $emptyAlerts = Get-ApiReply $alerts 0 '[]'
 $approvedAlert = [pscustomobject]@{ number = 1; state = 'open'; tool = @{ name = 'Scorecard' }; rule = @{ id = 'CodeReviewID' } }
 $approvedJson = ConvertTo-Json -InputObject @($approvedAlert) -Depth 5 -Compress
 $unapprovedJson = '[{"number":2,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"}}]'
+
+# Both entry points must retain the same checkout-bound, non-disclosing resolver.
+foreach ($entryPoint in @('github_post_push_audit.ps1', 'wait_relevant_workflows.ps1')) {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot $entryPoint), [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) { throw 'GitHub entry point failed to parse.' }
+    $definitions = @($ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Resolve-GitHubRepository'
+    }, $true))
+    $calls = @($ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Resolve-GitHubRepository'
+    }, $true))
+    $imports = @($ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot -and
+            $node.Extent.Text.Contains("'github_repository.ps1'")
+    }, $true))
+    if ($definitions.Count -ne 0 -or $imports.Count -ne 1 -or $calls.Count -ne 1 -or
+        $calls[0].Extent.Text -notmatch '-RepositoryRoot\s+\$repoRoot') {
+        throw "GitHub entry point bypassed the shared checkout-bound resolver: $entryPoint"
+    }
+    $script:auditScenarioCount += 1
+}
 
 Test-AuditCase 'empty successful snapshot' @($emptyDeployments, $emptyAlerts)
 foreach ($remote in @('https://github.com/fixture/repository.git', 'https://github.com/fixture/repository',
@@ -170,6 +199,8 @@ try {
     Test-AuditCase 'non-JSON report rejected' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) '.json extension' -IncludeHistory -HistoryReportPath (Join-Path $reportRoot 'invalid.txt')
     Push-Location $reportRoot
     try {
+        $auditGitRemote = 'https://github.com/fixture/repository.git'
+        Test-AuditCase 'auto repository stays checkout-bound from another folder' @($emptyDeployments, $emptyAlerts) -Repository ''
         Test-AuditCase 'relative report follows PowerShell location' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) -IncludeHistory -HistoryReportPath 'nested-relative/history.json'
         if (-not (Test-Path -LiteralPath (Join-Path $reportRoot 'nested-relative/history.json') -PathType Leaf)) {
             throw 'Relative history report was not created under the caller PowerShell location.'
