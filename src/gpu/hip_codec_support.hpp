@@ -785,20 +785,12 @@ std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_i
                                                        std::span<const BlockDescriptor> source_blocks,
                                                        GpuTelemetry* telemetry);
 
-// Purpose: Evaluate adaptive GPU-prefix blocks for verified raw blocks inside one uploaded native chunk.
+// Purpose: Evaluate the nested adaptive/Huffman portfolio for verified raw blocks inside one uploaded native chunk.
 // Inputs: Device/host input, block settings, verified source blocks, optional static `baseline`, level, and telemetry.
-// Outputs: Packs only adaptive blocks smaller than the corresponding baseline block, retaining all other baseline
+// Outputs: Packs only entropy blocks smaller than the corresponding baseline block, retaining all other baseline
 // bytes; returns empty when no block improves. The borrowed baseline remains alive for the whole call.
 std::optional<EncodedChunk>
-encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
-                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
-                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry);
-
-// Purpose: Evaluate version-eight Huffman GPU blocks against the current measured-size baseline.
-// Inputs: Uploaded/host bytes, verified source descriptors, borrowed baseline, effort, and telemetry.
-// Outputs: Returns a smaller GPU-native candidate or empty when no block improves.
-std::optional<EncodedChunk>
-encode_huffman_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry);
 

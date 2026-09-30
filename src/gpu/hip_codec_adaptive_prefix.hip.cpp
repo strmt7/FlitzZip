@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -18,7 +19,7 @@ struct AdaptiveEncodeTable {
 };
 
 struct AdaptiveCodebookEstimate {
-    std::vector<std::byte> codebook = std::vector<std::byte>(kGpuAdaptivePrefixCodebookBytes);
+    std::vector<std::byte> codebook;
     std::uint64_t sampled_bits = 0;
     std::size_t sample_count = 0;
 };
@@ -28,6 +29,23 @@ struct AdaptiveEncodeSegmentPlan {
     std::uint32_t block_len;
     std::uint32_t segment_index;
     std::uint32_t table_index;
+};
+
+constexpr std::uint32_t kMaxEntropyCandidates = 16U;
+
+struct EntropyLengthSegmentPlan {
+    std::uint64_t block_start;
+    std::uint32_t block_len;
+    std::uint32_t segment_index;
+    std::uint32_t table_index;
+    std::uint32_t candidate_count;
+    std::uint32_t length_offset;
+};
+
+struct EntropyEncodeCandidate {
+    BlockKind kind;
+    std::uint32_t table_index;
+    std::vector<std::byte> codebook;
 };
 
 struct AdaptiveEncodeBlockPlan {
@@ -43,6 +61,7 @@ struct AdaptiveEncodeBlockPlan {
     BlockKind kind = BlockKind::GpuAdaptivePrefix;
     std::vector<std::byte> codebook;
     std::vector<std::uint32_t> offsets;
+    std::vector<EntropyEncodeCandidate> candidates;
 };
 
 struct AdaptiveBatchSelection {
@@ -50,6 +69,7 @@ struct AdaptiveBatchSelection {
     std::uint32_t bitstream_bytes = 0;
     std::vector<AdaptiveEncodeSegmentPlan> pack_plans;
     std::vector<std::uint32_t> pack_offsets;
+    std::vector<AdaptiveEncodeTable> pack_tables;
 };
 
 // Purpose: Rank symbols identically for both admission probes and full adaptive codebooks.
@@ -110,38 +130,90 @@ __device__ std::uint32_t gpu_adaptive_prefix_range_bit_count(const std::byte* in
     return bits;
 }
 
-// Purpose: Compute adaptive-prefix encoded byte counts for many segments in one HIP launch.
-// Inputs: `input`, `plans`, and `tables` describe uploaded bytes and per-block adaptive code tables.
-// Outputs: Writes 4-byte-aligned encoded segment byte lengths.
-__global__ void adaptive_prefix_segment_lengths_batch_kernel(const std::byte* input,
-                                                             const AdaptiveEncodeSegmentPlan* plans,
-                                                             const AdaptiveEncodeTable* tables,
-                                                             std::uint32_t* segment_lengths,
-                                                             std::uint32_t segment_count) {
+// Purpose: Measure every admitted entropy table while loading each source segment only once.
+// Inputs: Bounded plans, contiguous candidate tables, output counts, and Capacity (2/4/8/16) bound shared scratch.
+// Outputs: Writes exact, word-aligned segment lengths for every candidate without packing any payload.
+template <std::uint32_t Capacity>
+__global__ void entropy_segment_lengths_batch_kernel(const std::byte* input, const EntropyLengthSegmentPlan* plans,
+                                                     const AdaptiveEncodeTable* tables, std::uint32_t* segment_lengths,
+                                                     std::uint32_t segment_count) {
     const auto segment = static_cast<std::uint32_t>(blockIdx.x);
     if (segment >= segment_count) {
         return;
     }
     const auto& plan = plans[segment];
-    const auto* table = tables + plan.table_index;
-    __shared__ std::uint32_t sums[kGpuPrefixSegmentThreads];
+    __shared__ std::uint8_t widths[Capacity][256];
+    __shared__ std::uint32_t sums[Capacity][kGpuPrefixSegmentThreads];
     const auto thread_id = static_cast<std::uint32_t>(threadIdx.x);
-    std::size_t start = 0;
-    std::size_t end = 0;
-    gpu_prefix_thread_range(plan.block_len, plan.segment_index, thread_id, start, end);
-    sums[thread_id] =
-        gpu_adaptive_prefix_range_bit_count(input, table, static_cast<std::size_t>(plan.block_start), start, end);
+#pragma unroll
+    for (std::uint32_t candidate = 0U; candidate < Capacity; ++candidate) {
+        if (candidate < plan.candidate_count) {
+            for (auto symbol = thread_id; symbol < 256U; symbol += kGpuPrefixSegmentThreads) {
+                widths[candidate][symbol] = tables[plan.table_index + candidate].width[symbol];
+            }
+        }
+    }
+    __syncthreads();
+    std::uint32_t local_bits[Capacity] = {};
+    const auto start = static_cast<std::size_t>(plan.segment_index) * kGpuPrefixSegmentBytes;
+    const auto end = min(static_cast<std::size_t>(plan.block_len), start + kGpuPrefixSegmentBytes);
+    for (auto pos = start + thread_id; pos < end; pos += kGpuPrefixSegmentThreads) {
+        const auto value = static_cast<std::uint8_t>(input[static_cast<std::size_t>(plan.block_start) + pos]);
+#pragma unroll
+        for (std::uint32_t candidate = 0U; candidate < Capacity; ++candidate) {
+            if (candidate < plan.candidate_count) {
+                local_bits[candidate] += widths[candidate][value];
+            }
+        }
+    }
+#pragma unroll
+    for (std::uint32_t candidate = 0U; candidate < Capacity; ++candidate) {
+        if (candidate < plan.candidate_count) {
+            sums[candidate][thread_id] = local_bits[candidate];
+        }
+    }
     __syncthreads();
     for (std::uint32_t offset = kGpuPrefixSegmentThreads / 2U; offset > 0U; offset >>= 1U) {
         if (thread_id < offset) {
-            sums[thread_id] += sums[thread_id + offset];
+#pragma unroll
+            for (std::uint32_t candidate = 0U; candidate < Capacity; ++candidate) {
+                if (candidate < plan.candidate_count) {
+                    sums[candidate][thread_id] += sums[candidate][thread_id + offset];
+                }
+            }
         }
         __syncthreads();
     }
     if (thread_id == 0U) {
-        const auto bytes = (sums[0] + 7U) / 8U;
-        segment_lengths[segment] = (bytes + 3U) & ~3U;
+        for (std::uint32_t candidate = 0U; candidate < plan.candidate_count; ++candidate) {
+            const auto bytes = (sums[candidate][0] + 7U) / 8U;
+            segment_lengths[plan.length_offset + candidate] = (bytes + 3U) & ~3U;
+        }
     }
+}
+
+// Purpose: Share the exact effort sampling policy between adaptive and Huffman table builders.
+// Inputs: Positive block size and validated effort 2-9.
+// Outputs: Returns a positive deterministic sampling stride; equal strides produce identical samples.
+std::size_t entropy_sample_stride(std::size_t block_size, int compression_level) {
+    constexpr std::array<std::size_t, 8> budgets{4096U,    16384U,   65536U,   262144U,
+                                                 1048576U, 4194304U, 8388608U, std::numeric_limits<std::size_t>::max()};
+    const auto target = std::min(block_size, budgets[static_cast<std::size_t>(compression_level - 2)]);
+    return std::max<std::size_t>(1U, block_size / target);
+}
+
+// Purpose: Share one deterministic byte histogram between adaptive and Huffman candidates at an effort.
+// Inputs: A nonempty eligible block and positive sampling stride.
+// Outputs: Returns exact sampled frequencies without retaining input bytes or changing the sampling policy.
+std::array<std::uint64_t, 256> sample_entropy_histogram(std::span<const std::byte> block, std::size_t stride) {
+    if (block.empty() || stride == 0U) {
+        throw GpuError("GPU entropy histogram requires a nonempty block and positive stride");
+    }
+    std::array<std::uint64_t, 256> histogram{};
+    for (std::size_t index = 0U; index < block.size(); index += stride) {
+        ++histogram[static_cast<std::uint8_t>(block[index])];
+    }
+    return histogram;
 }
 
 // Purpose: Pack a batched list of byte segments with adaptive GPU prefix code tables.
@@ -193,21 +265,14 @@ __global__ void adaptive_prefix_pack_segments_batch_kernel(const std::byte* inpu
 }
 
 // Purpose: Build an adaptive prefix codebook and device encode table for one archive block.
-// Inputs: `block` is the host block sample/full span and `compression_level` controls sampling effort.
+// Inputs: Immutable sampled byte frequencies and a mutable device encoder table.
 // Outputs: Returns the serialized codebook and sampled bit estimate; fills `table` with device-ready codes and widths.
-AdaptiveCodebookEstimate build_adaptive_prefix_codebook(std::span<const std::byte> block, int compression_level,
+AdaptiveCodebookEstimate build_adaptive_prefix_codebook(const std::array<std::uint64_t, 256>& histogram,
                                                         AdaptiveEncodeTable& table) {
-    std::array<std::uint64_t, 256> histogram{};
-    constexpr std::array<std::size_t, 8> sample_budgets{
-        4096U, 16384U, 65536U, 262144U, 1048576U, 4194304U, 8388608U, std::numeric_limits<std::size_t>::max()};
-    const auto target_samples = std::min(block.size(), sample_budgets[static_cast<std::size_t>(compression_level - 2)]);
-    const auto stride = target_samples == 0U ? 1U : std::max<std::size_t>(1U, block.size() / target_samples);
-    for (std::size_t i = 0; i < block.size(); i += stride) {
-        ++histogram[static_cast<std::uint8_t>(block[i])];
-    }
     const auto order = rank_adaptive_symbols(histogram);
 
     AdaptiveCodebookEstimate estimate;
+    estimate.codebook.resize(kGpuAdaptivePrefixCodebookBytes);
     for (std::size_t i = 0; i < estimate.codebook.size(); ++i) {
         estimate.codebook[i] = static_cast<std::byte>(order[i]);
     }
@@ -243,22 +308,13 @@ struct HuffmanNode {
 };
 
 // Purpose: Construct a deterministic length-bounded canonical Huffman code from a sampled block.
-// Inputs: `block` and `compression_level` select a bounded sample; `table` receives device encoder codes.
-// Outputs: Returns the serialized 12-bit decoder lookup and sample estimate, or empty for overlong trees.
-std::optional<AdaptiveCodebookEstimate>
-build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_level, AdaptiveEncodeTable& table) {
-    std::array<std::uint64_t, 256> histogram{};
-    constexpr std::array<std::size_t, 8> sample_budgets{
-        4096U, 16384U, 65536U, 262144U, 1048576U, 4194304U, 8388608U, std::numeric_limits<std::size_t>::max()};
-    const auto target = std::min(block.size(), sample_budgets[static_cast<std::size_t>(compression_level - 2)]);
-    const auto stride = std::max<std::size_t>(1U, block.size() / target);
-    std::size_t sample_count = 0U;
-    for (std::size_t index = 0U; index < block.size(); index += stride) {
-        ++histogram[static_cast<std::uint8_t>(block[index])];
-        ++sample_count;
-    }
+// Inputs: Immutable sampled frequencies, whether every source byte was sampled, and a mutable encoder table.
+// Outputs: Returns a sample estimate and device table, or empty for overlong trees; serializes no losing lookup.
+std::optional<AdaptiveCodebookEstimate> build_huffman_prefix_codebook(const std::array<std::uint64_t, 256>& histogram,
+                                                                      bool complete_sample,
+                                                                      AdaptiveEncodeTable& table) {
+    const auto sample_count = std::accumulate(histogram.begin(), histogram.end(), std::uint64_t{0});
     const auto frequency_floor = std::max<std::uint64_t>(1U, sample_count / 4096U);
-    const bool complete_sample = stride == 1U;
 
     std::array<HuffmanNode, 511> nodes{};
     std::uint16_t active_count = 0U;
@@ -279,7 +335,10 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
         }
         return nodes[lhs].smallest_symbol > nodes[rhs].smallest_symbol;
     };
-    std::priority_queue<std::uint16_t, std::vector<std::uint16_t>, decltype(lower_priority)> heap(lower_priority);
+    std::vector<std::uint16_t> heap_storage;
+    heap_storage.reserve(256U);
+    std::priority_queue<std::uint16_t, std::vector<std::uint16_t>, decltype(lower_priority)> heap(
+        lower_priority, std::move(heap_storage));
     for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
         if (!complete_sample || histogram[symbol] != 0U) {
             heap.push(symbol);
@@ -319,7 +378,6 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
         next_code[width] = static_cast<std::uint16_t>(code);
     }
     AdaptiveCodebookEstimate estimate;
-    estimate.codebook.assign(kGpuHuffmanLookupBytes, std::byte{0});
     for (std::uint16_t symbol = 0U; symbol < 256U; ++symbol) {
         if (complete_sample && histogram[symbol] == 0U) {
             continue;
@@ -331,26 +389,38 @@ build_huffman_prefix_codebook(std::span<const std::byte> block, int compression_
             reversed = static_cast<std::uint16_t>((reversed << 1U) | ((canonical >> bit) & 1U));
         }
         table.code[symbol] = reversed;
-        for (std::uint32_t slot = reversed; slot < kGpuHuffmanLookupEntries; slot += 1U << width) {
-            const auto offset = slot * sizeof(std::uint16_t);
-            if (estimate.codebook[offset + 1U] != std::byte{0}) {
-                throw GpuError("GPU Huffman code tree has overlapping leaves");
-            }
-            estimate.codebook[offset] = static_cast<std::byte>(symbol);
-            estimate.codebook[offset + 1U] = static_cast<std::byte>(width);
-        }
         estimate.sampled_bits += histogram[symbol] * width;
         estimate.sample_count += histogram[symbol];
     }
-    for (std::size_t index = 1U; index < estimate.codebook.size(); index += sizeof(std::uint16_t)) {
-        if (estimate.codebook[index] == std::byte{0}) {
-            throw GpuError("GPU Huffman code tree is incomplete");
+    return estimate;
+}
+
+// Purpose: Serialize only a winning Huffman table into the unchanged version-eight lookup layout.
+// Inputs: Internally generated least-significant-bit-first codes and bounded widths (zero denotes absent symbols).
+// Outputs: Returns a complete decoder lookup; throws before packing on overlapping, incomplete, or invalid leaves.
+std::vector<std::byte> serialize_huffman_lookup(const AdaptiveEncodeTable& table) {
+    std::vector<std::byte> lookup(kGpuHuffmanLookupBytes, std::byte{0});
+    for (std::uint32_t symbol = 0U; symbol < 256U; ++symbol) {
+        const auto width = table.width[symbol];
+        if (width == 0U) {
+            continue;
+        }
+        if (width > kGpuHuffmanLookupBits) {
+            throw GpuError("GPU Huffman code width exceeds lookup limits");
+        }
+        for (std::uint32_t slot = table.code[symbol]; slot < kGpuHuffmanLookupEntries; slot += 1U << width) {
+            const auto offset = slot * sizeof(std::uint16_t);
+            if (lookup[offset + 1U] != std::byte{0}) {
+                throw GpuError("GPU Huffman code tree has overlapping leaves");
+            }
+            lookup[offset] = static_cast<std::byte>(symbol);
+            lookup[offset + 1U] = static_cast<std::byte>(width);
         }
     }
-    if (!huffman_lookup_is_complete(estimate.codebook)) {
+    if (!huffman_lookup_is_complete(lookup)) {
         throw GpuError("Generated GPU Huffman lookup is invalid");
     }
-    return estimate;
+    return lookup;
 }
 
 // Purpose: Return the expected block byte range for one verified descriptor.
@@ -408,20 +478,97 @@ void append_fallback_block(EncodedChunk& out, const BlockDescriptor& source_bloc
     payload_offset += len;
 }
 
-// Purpose: Build host adaptive-prefix plans and device code tables for verified raw blocks inside one uploaded chunk.
-// Inputs: Input, block settings, verified source blocks, optional static baseline, level, and mutable plan/table lists.
-// Outputs: Returns bounded plans with each block's existing payload size as its strict improvement threshold.
-std::vector<AdaptiveEncodeBlockPlan>
-build_adaptive_encode_plans(std::span<const std::byte> input, std::uint32_t block_size,
-                            std::span<const BlockDescriptor> source_blocks, const EncodedChunk* baseline,
-                            int compression_level, bool huffman, std::vector<AdaptiveEncodeSegmentPlan>& segment_plans,
-                            std::vector<AdaptiveEncodeTable>& code_tables) {
+// Purpose: Admit one distinct entropy table without serializing a losing Huffman lookup or packing a payload.
+// Inputs: Bounded block, effort 2-9, codec kind, shared sample, mutable plan, and contiguous code tables.
+// Outputs: Appends an admitted unique candidate; leaves the plan unchanged for unhelpful or duplicate tables.
+void append_entropy_candidate(std::span<const std::byte> block, int level, bool huffman, AdaptiveEncodeBlockPlan& plan,
+                              std::vector<AdaptiveEncodeTable>& code_tables,
+                              const std::array<std::uint64_t, 256>& histogram, bool complete_sample) {
+    const auto header_bytes = huffman ? kGpuHuffmanLookupBytes : kGpuAdaptivePrefixCodebookBytes;
+    const auto overhead = header_bytes + (static_cast<std::size_t>(plan.segment_count) + 1U) * sizeof(std::uint32_t);
+    if (overhead >= plan.payload_limit) {
+        return;
+    }
+    AdaptiveEncodeTable table{};
+    auto estimate = huffman ? build_huffman_prefix_codebook(histogram, complete_sample, table)
+                            : std::optional(build_adaptive_prefix_codebook(histogram, table));
+    if (!estimate) {
+        return;
+    }
+    const auto estimated_bits = estimate->sampled_bits * block.size() / estimate->sample_count;
+    if ((huffman || level < 7) && overhead + (estimated_bits + 7U) / 8U >= plan.payload_limit) {
+        return;
+    }
+    const auto kind = huffman ? BlockKind::GpuHuffman : BlockKind::GpuAdaptivePrefix;
+    for (const auto& candidate : plan.candidates) {
+        const auto& previous = code_tables[candidate.table_index];
+        // Equal widths and equal header sizes have identical measured cost; retain the earlier table on ties.
+        if (candidate.kind == kind &&
+            std::equal(std::begin(table.width), std::end(table.width), std::begin(previous.width))) {
+            return;
+        }
+    }
+    if (plan.candidates.size() >= kMaxEntropyCandidates ||
+        code_tables.size() >= std::numeric_limits<std::uint32_t>::max()) {
+        throw GpuError("GPU entropy candidate count exceeds its bounded plan");
+    }
+    plan.candidates.push_back(EntropyEncodeCandidate{.kind = kind,
+                                                     .table_index = static_cast<std::uint32_t>(code_tables.size()),
+                                                     .codebook = std::move(estimate->codebook)});
+    code_tables.push_back(table);
+}
+
+// Purpose: Make compression efforts nested searches rather than replacements of lower-effort tables.
+// Inputs: One eligible block, immutable static-baseline kind, maximum effort, and mutable candidate/table lists.
+// Outputs: Adds at most sixteen unique candidates; both codecs and repeated phases reuse the current histogram.
+void build_entropy_candidates(std::span<const std::byte> block, BlockKind baseline_kind, int level,
+                              AdaptiveEncodeBlockPlan& plan, std::vector<AdaptiveEncodeTable>& code_tables) {
+    const auto try_low_adaptive = should_try_sampled_adaptive_prefix(block, 2);
+    std::array<std::size_t, 3> previous_strides{};
+    std::array<std::uint64_t, 256> histogram{};
+    std::size_t sampled_stride = 0U;
+    const auto offset_bytes = (static_cast<std::size_t>(plan.segment_count) + 1U) * sizeof(std::uint32_t);
+    for (int effort = 2; effort <= level; ++effort) {
+        const auto stride = entropy_sample_stride(block.size(), effort);
+        const auto phase = effort < 7 ? 0U : 1U;
+        const bool adaptive = (try_low_adaptive || effort >= 7) && previous_strides[phase] != stride &&
+                              kGpuAdaptivePrefixCodebookBytes + offset_bytes < plan.payload_limit;
+        const bool huffman = (effort != 2 || baseline_kind == BlockKind::GpuPrefix) && previous_strides[2] != stride &&
+                             kGpuHuffmanLookupBytes + offset_bytes < plan.payload_limit;
+        if (!adaptive && !huffman) {
+            continue;
+        }
+        if (sampled_stride != stride) {
+            histogram = sample_entropy_histogram(block, stride);
+            sampled_stride = stride;
+        }
+        if (adaptive) {
+            append_entropy_candidate(block, effort, false, plan, code_tables, histogram, stride == 1U);
+            previous_strides[phase] = stride;
+        }
+        if (huffman) {
+            append_entropy_candidate(block, effort, true, plan, code_tables, histogram, stride == 1U);
+            previous_strides[2] = stride;
+        }
+    }
+}
+
+// Purpose: Build one length-work item per source segment, sharing all nested entropy candidates.
+// Inputs: Verified source blocks, immutable static baseline, maximum effort, and mutable device-work lists.
+// Outputs: Returns bounded per-block candidates and dense per-segment length-output windows.
+std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const std::byte> input,
+                                                                 std::uint32_t block_size,
+                                                                 std::span<const BlockDescriptor> source_blocks,
+                                                                 const EncodedChunk* baseline, int compression_level,
+                                                                 std::vector<EntropyLengthSegmentPlan>& segment_plans,
+                                                                 std::vector<AdaptiveEncodeTable>& code_tables) {
     std::vector<AdaptiveEncodeBlockPlan> block_plans;
     if (baseline && baseline->blocks.size() != source_blocks.size()) {
         throw GpuError("GPU adaptive baseline block count differs from source");
     }
     block_plans.reserve(source_blocks.size());
     std::size_t cursor = 0;
+    std::uint32_t length_count = 0U;
     for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
         const auto& source_block = source_blocks[block_index];
         const auto start = checked_block_start(input.size(), block_size, cursor, source_block);
@@ -436,75 +583,88 @@ build_adaptive_encode_plans(std::span<const std::byte> input, std::uint32_t bloc
             .block_start = start,
             .block_len = len,
             .payload_limit = previous.encoded_len,
-            .segment_offset = static_cast<std::uint32_t>(segment_plans.size()),
+            .segment_offset = length_count,
             .segment_count = len >= kGpuPrefixSegmentBytes ? segment_count : 0U,
             .table_index = static_cast<std::uint32_t>(code_tables.size()),
-            .kind = huffman ? BlockKind::GpuHuffman : BlockKind::GpuAdaptivePrefix,
         };
-        if (huffman && compression_level == 2 && previous.kind != BlockKind::GpuPrefix) {
-            block_plan.segment_count = 0U;
-        }
-        if (!huffman && block_plan.segment_count != 0U &&
-            !should_try_sampled_adaptive_prefix(input.subspan(start, len), compression_level)) {
-            block_plan.segment_count = 0U;
-        }
         if (block_plan.segment_count != 0U) {
-            AdaptiveEncodeTable table{};
-            auto estimate = huffman ? build_huffman_prefix_codebook(input.subspan(start, len), compression_level, table)
-                                    : std::optional(build_adaptive_prefix_codebook(input.subspan(start, len),
-                                                                                   compression_level, table));
-            if (!estimate) {
-                block_plan.segment_count = 0U;
-                block_plans.push_back(std::move(block_plan));
-                continue;
-            }
-            block_plan.codebook = std::move(estimate->codebook);
-            const auto estimated_bits = estimate->sampled_bits * len / estimate->sample_count;
-            const auto estimated_bytes = block_plan.codebook.size() +
-                                         (block_plan.segment_count + 1U) * sizeof(std::uint32_t) +
-                                         (estimated_bits + 7U) / 8U;
-            if ((huffman || compression_level < 7) && estimated_bytes >= previous.encoded_len) {
+            build_entropy_candidates(input.subspan(start, len), previous.kind, compression_level, block_plan,
+                                     code_tables);
+            const auto count = static_cast<std::uint32_t>(block_plan.candidates.size());
+            if (count == 0U) {
                 block_plan.segment_count = 0U;
             } else {
-                code_tables.push_back(table);
                 for (std::uint32_t segment = 0; segment < block_plan.segment_count; ++segment) {
-                    segment_plans.push_back(AdaptiveEncodeSegmentPlan{
+                    segment_plans.push_back(EntropyLengthSegmentPlan{
                         .block_start = static_cast<std::uint64_t>(start),
                         .block_len = len,
                         .segment_index = segment,
                         .table_index = block_plan.table_index,
+                        .candidate_count = count,
+                        .length_offset = length_count,
                     });
+                    length_count = checked_prefix_offset_add(length_count, count, "GPU entropy length output count");
                 }
             }
         }
         block_plans.push_back(std::move(block_plan));
     }
+    if (cursor != input.size()) {
+        throw GpuError("GPU entropy source blocks do not cover the uploaded chunk");
+    }
     return block_plans;
+}
+
+// Purpose: Select the smallest register/shared-memory specialization for this batch's candidate count.
+// Inputs: Device buffers, segment count, measured event pair, and maximum candidates (1-16).
+// Outputs: Launches exactly one coalesced length kernel on the existing per-thread stream.
+void launch_entropy_length_batch(const std::byte* input, const EntropyLengthSegmentPlan* plans,
+                                 const AdaptiveEncodeTable* tables, std::uint32_t* lengths, std::uint32_t segments,
+                                 std::uint32_t candidates, HipEventPair& events) {
+    if (candidates <= 2U) {
+        launch_measured_kernel(entropy_segment_lengths_batch_kernel<2U>, segments, kGpuPrefixSegmentThreads, 0,
+                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
+                               lengths, segments);
+    } else if (candidates <= 4U) {
+        launch_measured_kernel(entropy_segment_lengths_batch_kernel<4U>, segments, kGpuPrefixSegmentThreads, 0,
+                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
+                               lengths, segments);
+    } else if (candidates <= 8U) {
+        launch_measured_kernel(entropy_segment_lengths_batch_kernel<8U>, segments, kGpuPrefixSegmentThreads, 0,
+                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
+                               lengths, segments);
+    } else {
+        launch_measured_kernel(entropy_segment_lengths_batch_kernel<16U>, segments, kGpuPrefixSegmentThreads, 0,
+                               hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
+                               lengths, segments);
+    }
 }
 
 // Purpose: Compute adaptive-prefix encoded segment byte lengths on the AMD GPU.
 // Inputs: `device_input`, `segment_plans`, `code_tables`, and `telemetry` describe one uploaded chunk.
-// Outputs: Returns one encoded byte length per segment.
+// Outputs: Returns an interleaved encoded byte length for each segment/candidate pair.
 std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
-    const std::byte* device_input, std::span<const AdaptiveEncodeSegmentPlan> segment_plans,
+    const std::byte* device_input, std::span<const EntropyLengthSegmentPlan> segment_plans,
     std::span<const AdaptiveEncodeTable> code_tables, GpuTelemetry* telemetry) {
-    std::vector<std::uint32_t> segment_lengths(segment_plans.size());
     if (segment_plans.empty()) {
-        return segment_lengths;
+        return {};
     }
+    const auto output_count = checked_prefix_offset_add(
+        segment_plans.back().length_offset, segment_plans.back().candidate_count, "GPU entropy length count");
+    std::vector<std::uint32_t> segment_lengths(output_count);
     if (segment_plans.size() > std::numeric_limits<std::uint32_t>::max()) {
         throw GpuError("GPU adaptive prefix segment count exceeds HIP launch limits");
     }
     const auto plan_bytes =
-        checked_multiply_bytes(segment_plans.size(), sizeof(AdaptiveEncodeSegmentPlan), "GPU adaptive prefix plans");
+        checked_multiply_bytes(segment_plans.size(), sizeof(EntropyLengthSegmentPlan), "GPU entropy length plans");
     const auto table_bytes =
         checked_multiply_bytes(code_tables.size(), sizeof(AdaptiveEncodeTable), "GPU adaptive prefix tables");
     const auto length_bytes =
-        checked_multiply_bytes(segment_plans.size(), sizeof(std::uint32_t), "GPU adaptive prefix lengths");
+        checked_multiply_bytes(segment_lengths.size(), sizeof(std::uint32_t), "GPU entropy lengths");
     auto required_bytes = checked_add_bytes(plan_bytes, table_bytes, "GPU adaptive prefix length memory");
     required_bytes = checked_add_bytes(required_bytes, length_bytes, "GPU adaptive prefix length memory");
     HipDeviceMemoryReservation reservation(required_bytes, "GPU adaptive prefix length batch");
-    HipDeviceBuffer<AdaptiveEncodeSegmentPlan> device_plans(plan_bytes, "hipMalloc adaptive prefix length plans");
+    HipDeviceBuffer<EntropyLengthSegmentPlan> device_plans(plan_bytes, "hipMalloc entropy length plans");
     HipDeviceBuffer<AdaptiveEncodeTable> device_tables(table_bytes, "hipMalloc adaptive prefix length tables");
     HipDeviceBuffer<std::uint32_t> device_lengths(length_bytes, "hipMalloc adaptive prefix segment lengths");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
@@ -513,13 +673,17 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     check_hip(hipMemcpy(device_tables.get(), code_tables.data(), table_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix length tables");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + table_bytes));
-    auto events = make_hip_event_pair("create adaptive_prefix_segment_lengths_batch_kernel events");
-    launch_measured_kernel(adaptive_prefix_segment_lengths_batch_kernel,
-                           static_cast<unsigned int>(segment_plans.size()), kGpuPrefixSegmentThreads, 0,
-                           hipStreamPerThread, events, "launch adaptive_prefix_segment_lengths_batch_kernel",
-                           device_input, device_plans.get(), device_tables.get(), device_lengths.get(),
-                           static_cast<std::uint32_t>(segment_plans.size()));
-    finish_measured_kernel(telemetry, events, "synchronize adaptive_prefix_segment_lengths_batch_kernel");
+    std::uint32_t maximum_candidates = 0U;
+    for (const auto& plan : segment_plans) {
+        maximum_candidates = std::max(maximum_candidates, plan.candidate_count);
+    }
+    if (maximum_candidates == 0U || maximum_candidates > kMaxEntropyCandidates) {
+        throw GpuError("GPU entropy length batch exceeds candidate limits");
+    }
+    auto events = make_hip_event_pair("create entropy segment length events");
+    launch_entropy_length_batch(device_input, device_plans.get(), device_tables.get(), device_lengths.get(),
+                                static_cast<std::uint32_t>(segment_plans.size()), maximum_candidates, events);
+    finish_measured_kernel(telemetry, events, "synchronize entropy segment lengths");
     check_hip(hipMemcpy(segment_lengths.data(), device_lengths.get(), length_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy adaptive prefix segment lengths");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(length_bytes));
@@ -529,40 +693,70 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     return segment_lengths;
 }
 
-// Purpose: Select adaptive-prefix blocks and build one combined pack plan.
-// Inputs: `block_plans` are mutable host plans and `segment_lengths` are GPU-measured byte counts.
-// Outputs: Selects only blocks strictly smaller than their existing representation; ties preserve the baseline bytes.
+// Purpose: Choose one measured candidate for a block without losing a smaller lower-effort representation.
+// Inputs: Nested candidates, exact interleaved GPU segment lengths, and matching encode tables.
+// Outputs: Sets the winning kind, offsets, and serialized codebook only for a strict complete-payload saving.
+bool select_entropy_block(AdaptiveEncodeBlockPlan& plan, std::span<const std::uint32_t> lengths,
+                          std::span<const AdaptiveEncodeTable> tables) {
+    auto best_bytes = static_cast<std::uint64_t>(plan.payload_limit);
+    auto winner = plan.candidates.size();
+    std::vector<std::uint32_t> offsets(static_cast<std::size_t>(plan.segment_count) + 1U, 0U);
+    for (std::size_t candidate = 0U; candidate < plan.candidates.size(); ++candidate) {
+        for (std::uint32_t segment = 0U; segment < plan.segment_count; ++segment) {
+            const auto index =
+                static_cast<std::size_t>(plan.segment_offset) + segment * plan.candidates.size() + candidate;
+            if (index >= lengths.size()) {
+                throw GpuError("GPU entropy measured lengths exceed their output table");
+            }
+            offsets[segment + 1U] =
+                checked_prefix_offset_add(offsets[segment], lengths[index], "GPU entropy block size");
+        }
+        const auto header = plan.candidates[candidate].kind == BlockKind::GpuHuffman ? kGpuHuffmanLookupBytes
+                                                                                     : kGpuAdaptivePrefixCodebookBytes;
+        const auto payload_bytes = header + offsets.size() * sizeof(std::uint32_t) + offsets.back();
+        if (offsets.back() != 0U && payload_bytes < best_bytes) {
+            best_bytes = payload_bytes;
+            winner = candidate;
+            plan.offsets = offsets;
+        }
+    }
+    if (winner == plan.candidates.size()) {
+        return false;
+    }
+    auto& selected = plan.candidates[winner];
+    if (selected.table_index >= tables.size()) {
+        throw GpuError("GPU entropy selected table exceeds its bounded table list");
+    }
+    plan.kind = selected.kind;
+    plan.table_index = selected.table_index;
+    plan.codebook = selected.kind == BlockKind::GpuHuffman ? serialize_huffman_lookup(tables[selected.table_index])
+                                                           : std::move(selected.codebook);
+    plan.use_adaptive = true;
+    plan.bitstream_bytes = plan.offsets.back();
+    return true;
+}
+
+// Purpose: Select entropy winners and build one combined pack plan with no losing encode tables.
+// Inputs: Mutable block plans, exact GPU lengths, and internally generated candidate tables.
+// Outputs: Packs only strict complete-payload improvements; ties preserve lower-effort and baseline bytes.
 AdaptiveBatchSelection select_adaptive_blocks_for_batch(std::vector<AdaptiveEncodeBlockPlan>& block_plans,
-                                                        std::span<const std::uint32_t> segment_lengths) {
+                                                        std::span<const std::uint32_t> segment_lengths,
+                                                        std::span<const AdaptiveEncodeTable> code_tables) {
     AdaptiveBatchSelection selection;
     for (auto& block_plan : block_plans) {
-        if (block_plan.segment_count == 0U) {
+        if (block_plan.segment_count == 0U || !select_entropy_block(block_plan, segment_lengths, code_tables)) {
             continue;
         }
-        block_plan.offsets.assign(static_cast<std::size_t>(block_plan.segment_count) + 1U, 0U);
-        for (std::uint32_t segment = 0; segment < block_plan.segment_count; ++segment) {
-            const auto length_index = static_cast<std::size_t>(block_plan.segment_offset) + segment;
-            block_plan.offsets[segment + 1U] = checked_prefix_offset_add(
-                block_plan.offsets[segment], segment_lengths[length_index], "GPU adaptive prefix encoded block size");
-        }
-        const auto table_bytes =
-            checked_multiply_bytes(block_plan.offsets.size(), sizeof(std::uint32_t), "GPU adaptive prefix table");
-        auto payload_bytes = checked_add_bytes(block_plan.codebook.size(), table_bytes, "GPU adaptive prefix payload");
-        payload_bytes = checked_add_bytes(payload_bytes, block_plan.offsets.back(), "GPU adaptive prefix payload");
-        if (block_plan.offsets.back() == 0U || payload_bytes >= block_plan.payload_limit) {
-            block_plan.offsets.clear();
-            continue;
-        }
-        block_plan.use_adaptive = true;
+        const auto pack_table_index = static_cast<std::uint32_t>(selection.pack_tables.size());
+        selection.pack_tables.push_back(code_tables[block_plan.table_index]);
         block_plan.bitstream_offset = selection.bitstream_bytes;
-        block_plan.bitstream_bytes = block_plan.offsets.back();
         ++selection.adaptive_blocks;
         for (std::uint32_t segment = 0; segment < block_plan.segment_count; ++segment) {
             selection.pack_plans.push_back(AdaptiveEncodeSegmentPlan{
                 .block_start = static_cast<std::uint64_t>(block_plan.block_start),
                 .block_len = block_plan.block_len,
                 .segment_index = segment,
-                .table_index = block_plan.table_index,
+                .table_index = pack_table_index,
             });
             selection.pack_offsets.push_back(checked_prefix_offset_add(
                 selection.bitstream_bytes, block_plan.offsets[segment], "GPU adaptive prefix packed payload"));
@@ -574,11 +768,10 @@ AdaptiveBatchSelection select_adaptive_blocks_for_batch(std::vector<AdaptiveEnco
 }
 
 // Purpose: Pack all selected adaptive-prefix segments into one combined device buffer.
-// Inputs: `device_input`, `selection`, `code_tables`, and `telemetry` describe selected adaptive segments.
+// Inputs: Uploaded bytes, selected segments/tables, and operation-owned telemetry.
 // Outputs: Returns the combined encoded bitstream for all selected adaptive-prefix blocks.
 std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byte* device_input,
                                                                   const AdaptiveBatchSelection& selection,
-                                                                  std::span<const AdaptiveEncodeTable> code_tables,
                                                                   GpuTelemetry* telemetry) {
     std::vector<std::byte> bitstream(selection.bitstream_bytes);
     if (selection.pack_plans.empty()) {
@@ -590,7 +783,7 @@ std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byt
     const auto plan_bytes = checked_multiply_bytes(selection.pack_plans.size(), sizeof(AdaptiveEncodeSegmentPlan),
                                                    "GPU adaptive prefix pack plans");
     const auto table_bytes =
-        checked_multiply_bytes(code_tables.size(), sizeof(AdaptiveEncodeTable), "GPU adaptive prefix pack tables");
+        checked_multiply_bytes(selection.pack_tables.size(), sizeof(AdaptiveEncodeTable), "GPU entropy pack tables");
     const auto offset_bytes =
         checked_multiply_bytes(selection.pack_offsets.size(), sizeof(std::uint32_t), "GPU adaptive prefix offsets");
     auto required_bytes = checked_add_bytes(plan_bytes, table_bytes, "GPU adaptive prefix pack memory");
@@ -604,7 +797,7 @@ std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byt
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
     check_hip(hipMemcpy(device_plans.get(), selection.pack_plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix pack plans");
-    check_hip(hipMemcpy(device_tables.get(), code_tables.data(), table_bytes, hipMemcpyHostToDevice),
+    check_hip(hipMemcpy(device_tables.get(), selection.pack_tables.data(), table_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix pack tables");
     check_hip(hipMemcpy(device_offsets.get(), selection.pack_offsets.data(), offset_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix pack offsets");
@@ -663,31 +856,36 @@ void append_baseline_block(EncodedChunk& out, const EncodedChunk& baseline, std:
 }  // namespace
 
 // Purpose: Replace only blocks whose selected entropy payload improves the GPU-native baseline.
-// Inputs: Uploaded and host bytes, verified descriptors, level, candidate kind, and mutable HIP telemetry.
+// Inputs: Uploaded and host bytes, verified descriptors, immutable static baseline, level, and mutable HIP telemetry.
 // Outputs: Returns an encoded chunk with only smaller replacements, or empty when no block improves.
-std::optional<EncodedChunk> encode_entropy_prefix_chunk_device(const std::byte* device_input,
-                                                               std::span<const std::byte> input,
-                                                               std::uint32_t block_size,
-                                                               std::span<const BlockDescriptor> source_blocks,
-                                                               const EncodedChunk* baseline, int compression_level,
-                                                               bool huffman, GpuTelemetry* telemetry) {
-    std::vector<AdaptiveEncodeSegmentPlan> length_plans;
+std::optional<EncodedChunk>
+encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
+                                   std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
+                                   const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry) {
+    std::vector<EntropyLengthSegmentPlan> length_plans;
     std::vector<AdaptiveEncodeTable> code_tables;
     auto block_plans = build_adaptive_encode_plans(input, block_size, source_blocks, baseline, compression_level,
-                                                   huffman, length_plans, code_tables);
+                                                   length_plans, code_tables);
     if (length_plans.empty()) {
         return std::nullopt;
     }
     const auto segment_lengths =
         compute_adaptive_prefix_lengths_batch_device(device_input, length_plans, code_tables, telemetry);
-    auto selection = select_adaptive_blocks_for_batch(block_plans, segment_lengths);
+    auto selection = select_adaptive_blocks_for_batch(block_plans, segment_lengths, code_tables);
     if (selection.adaptive_blocks == 0U) {
         return std::nullopt;
     }
-    auto bitstream = pack_adaptive_prefix_segments_batch_device(device_input, selection, code_tables, telemetry);
+    auto bitstream = pack_adaptive_prefix_segments_batch_device(device_input, selection, telemetry);
     EncodedChunk out;
     out.blocks.reserve(source_blocks.size());
-    out.payload.reserve(input.size());
+    std::size_t payload_bytes = 0U;
+    for (const auto& plan : block_plans) {
+        const auto bytes = plan.use_adaptive ? plan.codebook.size() + plan.offsets.size() * sizeof(std::uint32_t) +
+                                                   plan.bitstream_bytes
+                                             : plan.payload_limit;
+        payload_bytes = checked_add_bytes(payload_bytes, bytes, "GPU entropy selected payload");
+    }
+    out.payload.reserve(payload_bytes);
     std::uint64_t payload_offset = 0;
     for (std::uint32_t block_index = 0; block_index < source_blocks.size(); ++block_index) {
         const auto& block_plan = block_plans[block_index];
@@ -717,28 +915,6 @@ std::optional<EncodedChunk> encode_entropy_prefix_chunk_device(const std::byte* 
         }
     }
     return out;
-}
-
-// Purpose: Try the backward-compatible adaptive prefix candidate without weakening its measured-size rule.
-// Inputs: Uploaded/host bytes, verified source blocks, optional baseline, level, and HIP telemetry.
-// Outputs: Returns a smaller adaptive candidate or empty when it cannot improve the baseline.
-std::optional<EncodedChunk>
-encode_adaptive_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
-                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
-                                    const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry) {
-    return encode_entropy_prefix_chunk_device(device_input, input, block_size, source_blocks, baseline,
-                                              compression_level, false, telemetry);
-}
-
-// Purpose: Try the version-eight GPU-native Huffman candidate at stronger effort levels.
-// Inputs: Uploaded/host bytes, verified source blocks, optional baseline, level, and HIP telemetry.
-// Outputs: Returns a smaller Huffman candidate or empty when it cannot improve the baseline.
-std::optional<EncodedChunk>
-encode_huffman_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
-                                   std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
-                                   const EncodedChunk* baseline, int compression_level, GpuTelemetry* telemetry) {
-    return encode_entropy_prefix_chunk_device(device_input, input, block_size, source_blocks, baseline,
-                                              compression_level, true, telemetry);
 }
 
 }  // namespace superzip::hip_detail

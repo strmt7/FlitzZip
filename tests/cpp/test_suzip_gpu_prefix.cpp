@@ -461,6 +461,59 @@ TEST_CASE(suzip_gpu_prefix_levels_compact_shifted_alphabet) {
     REQUIRE_TRUE(encoded_sizes.back() < 280000U);
 }
 
+// Purpose: Preserve each block's lower-effort entropy winner across mixed alphabets and an uneven raw tail.
+// Inputs: A deterministic non-periodic three-block RAM workload, efforts 1-9, and the available HIP device.
+// Outputs: Requires non-growing block/payload sizes, exact CPU/HIP decoding, and real kernel telemetry at every effort.
+TEST_CASE(suzip_gpu_entropy_efforts_preserve_per_block_winners) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::uint32_t block_bytes = 1024U * 1024U;
+    std::vector<std::byte> input(3U * block_bytes + 123U);
+    std::uint32_t random = 0xBA5ECA5EU;
+    for (std::size_t index = 0U; index < input.size(); ++index) {
+        random = random * 1664525U + 1013904223U;
+        const auto bucket = (random >> 16U) & 255U;
+        const auto value = index < block_bytes        ? bucket & 3U
+                           : index < 2U * block_bytes ? 201U + (bucket & 3U)
+                           : index < 3U * block_bytes
+                               ? (bucket < 160U ? 201U + (index / 16384U) % 3U : 205U + (bucket & 15U))
+                               : bucket;
+        input[index] = static_cast<std::byte>(value);
+    }
+    std::array<std::uint32_t, 4> previous_blocks{};
+    previous_blocks.fill(block_bytes);
+    previous_blocks.back() = 123U;
+    auto previous_bytes = input.size();
+    for (int effort = 1; effort <= 9; ++effort) {
+        superzip::GpuCodecOptions options;
+        options.require_gpu = true;
+        options.block_size = block_bytes;
+        options.compression_level = effort;
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_TRUE(encoded.gpu_used);
+        REQUIRE_EQ(encoded.blocks.size(), previous_blocks.size());
+        REQUIRE_TRUE(encoded.payload.size() <= previous_bytes);
+        previous_bytes = encoded.payload.size();
+        for (std::size_t block = 0U; block < encoded.blocks.size(); ++block) {
+            REQUIRE_TRUE(encoded.blocks[block].encoded_len <= previous_blocks[block]);
+            previous_blocks[block] = encoded.blocks[block].encoded_len;
+        }
+        std::vector<std::byte> decoded(input.size());
+        REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+        REQUIRE_TRUE(decoded == input);
+        REQUIRE_TRUE(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches > 0U);
+        options.require_gpu = false;
+        options.force_cpu = true;
+        std::fill(decoded.begin(), decoded.end(), std::byte{0xBD});
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+        REQUIRE_TRUE(decoded == input);
+        std::cout << "nested_entropy_case level=" << effort << " input_bytes=" << input.size()
+                  << " output_bytes=" << encoded.payload.size() << " memory_only=true disk_write_bytes=0\n";
+    }
+}
+
 // Purpose: Accept complete sparse-alphabet Huffman lookups while rejecting uncovered or conflicting slots.
 // Inputs: A two-symbol 4096-entry lookup with individual malformed-entry mutations.
 // Outputs: Validates the version-eight trust boundary independently of GPU availability.

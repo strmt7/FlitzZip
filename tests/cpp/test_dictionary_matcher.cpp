@@ -130,7 +130,7 @@ std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t reco
 
 // Purpose: Prove large-block HIP encoding actually selects dictionary blocks on locally repeated data.
 // Inputs: Independently seeded 64 KiB groups with 12 or 16 KiB records, level-five HIP, and production block sizes.
-// Outputs: Requires one periodic dictionary batch at 8/16 MiB and byte-exact CPU and HIP decoding.
+// Outputs: Requires one entropy measurement plus the periodic dictionary batch at 8/16 MiB, and exact decoding.
 TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -151,7 +151,9 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
         REQUIRE_TRUE(encoded.payload.size() < input.size());
         if (block_bytes >= 8U * 1024U * 1024U) {
             const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
-            REQUIRE_EQ(telemetry.kernel_launches, 4U);
+            std::cout << "dictionary_segmented_launches block_bytes=" << block_bytes << " record_bytes=" << record_bytes
+                      << " launches=" << telemetry.kernel_launches << '\n';
+            REQUIRE_EQ(telemetry.kernel_launches, 5U);
             REQUIRE_EQ(telemetry.dictionary_blocks, 1U);
         }
         for (const bool hip : {false, true}) {
@@ -496,8 +498,8 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
 
 // Purpose: Verify production periodic-index output with an independent LZ4 block reader.
 // Inputs: Periodic 8/16 MiB and non-power-of-two 1 MiB sources at low, middle, and high required-HIP efforts.
-// Outputs: Requires periodic index and kernel policies to emit independently decodable blocks; level-five export
-// supports an external reader.
+// Outputs: Requires independently decodable dictionary blocks within the four/five-launch effort policy;
+// level-five export supports an external reader.
 TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -514,7 +516,10 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
             options.telemetry = std::make_shared<superzip::GpuTelemetry>();
             const auto encoded = superzip::encode_chunk(input, options);
             const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
-            REQUIRE_EQ(telemetry.kernel_launches, level == 9 ? 5U : 4U);
+            std::cout << "dictionary_periodic_launches input_bytes=" << input_bytes << " record_bytes=" << record_bytes
+                      << " level=" << level << " launches=" << telemetry.kernel_launches << '\n';
+            const bool measures_entropy = level == 9 || (level == 5 && input_bytes >= 8U * 1024U * 1024U);
+            REQUIRE_EQ(telemetry.kernel_launches, measures_entropy ? 5U : 4U);
             REQUIRE_EQ(encoded.blocks.size(), 1U);
             REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
             REQUIRE_EQ(encoded.blocks.front().encoded_offset, 0U);

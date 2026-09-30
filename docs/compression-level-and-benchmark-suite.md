@@ -40,26 +40,38 @@ pattern, static GPU-prefix, adaptive GPU-prefix, and version-eight GPU Huffman b
 selected by measured block savings rather than by pretending to be Deflate or
 Zstandard.
 
-Level 1 uses the static GPU-prefix code. Levels 2-8 may evaluate an adaptive
-codebook with increasing sample budgets of 4 KiB, 16 KiB, 64 KiB, 256 KiB,
-1 MiB, 4 MiB, and 8 MiB per block; level 9 samples the full block. At levels
-2-6, three bounded 256-byte windows first compare the actual static and
-adaptive code widths and admit only a clear predicted gain. This keeps the
-default Mixed workload on the static fast path when its alphabet is already
-well served. Levels 7-9 always evaluate the candidate. The encoder publishes
-an adaptive block only when its measured payload is smaller than the existing
-GPU-native candidate. Required GPU mode never emits CPU Deflate blocks.
+Level 1 uses the static GPU-prefix code. Levels 2-9 retain eligible entropy
+tables from every preceding effort rather than replacing an earlier winner.
+The progressive target sample budgets are 4 KiB, 16 KiB, 64 KiB, 256 KiB, 1 MiB,
+4 MiB, and 8 MiB per block; level 9 samples the full block. At levels 2-6,
+three bounded 256-byte windows first compare static and adaptive code widths
+and admit only a clear predicted gain. Levels 7-9 admit the adaptive search
+without that probe. Equal sampling strides reuse a histogram; adaptive and
+Huffman builders share it. Tables of the same kind with identical code widths
+have equal measured cost and are measured only once, even if their codewords
+differ; ties retain the earlier table.
+Required GPU mode never emits CPU Deflate blocks.
 
 Levels 2-9 also evaluate a bounded GPU-native Huffman candidate. The level
-selects the same progressive sample budget; all 256 byte values receive a
-sample-frequency floor so rare symbols remain decodable within the 12-bit
-lookup bound. The encoder constructs a canonical prefix code on the host,
-measures segment lengths and packs winning candidates on the GPU, and compares
-the complete payload including the 8 KiB lookup and segment offsets against
-the current static/adaptive representation. Level 2 limits this extra search
-to blocks already improved by static prefix coding. Higher levels consider all
+selects the same progressive sample budget. Partial samples give all 256 byte
+values a sample-frequency floor so rare symbols remain decodable within the
+12-bit lookup bound; complete samples may omit absent symbols. The encoder
+constructs canonical codes on the host, measures all admitted tables in one
+coalesced GPU segment pass, and compares complete payloads including the 8 KiB
+lookup and segment offsets. It packs only the winning table per block and
+serializes only winning Huffman lookups. Level 2 limits this extra search to
+blocks already improved by static prefix coding. Higher levels consider all
 eligible raw blocks. Decoding and CRC in required-GPU mode use HIP; CPU readers
 also decode version-eight blocks for portability and verification.
+
+The portfolio is bounded to sixteen candidate tables per block. The length
+kernel selects a 2/4/8/16-candidate specialization; the largest uses 20 KiB of
+shared scratch. Candidate selection includes aligned segment bytes, decoder
+tables, and offsets, retains baseline bytes on ties, and preserves a smaller
+earlier-effort entropy result. This is a size-selection invariant, not a claim
+that every whole-archive codec combination is monotonic or that every effort
+must produce different bytes or take longer. Archive versions and reader
+contracts are unchanged.
 
 The GPU dictionary matcher separately has nine increasing bounded search
 budgets and a codec regression with nine strictly improving payloads
@@ -70,10 +82,9 @@ block; SuperZip does not add padding or weaken low levels to manufacture a
 difference. Distinct search budgets do not establish nine distinct sizes on
 every corpus or a universal speedup. Broader ratio strategies remain open.
 
-The 10 GiB Mixed workload previously saturated the static prefix code at all
-GPU efforts. The version-eight candidate now produces distinct measured GPU
-archive sizes at levels 1-9 on that workload, though level 6 was 1,660 bytes
-larger than level 5 in a single-run size diagnostic. The reviewed five-level
+The earlier 10 GiB Mixed study with 16 MiB blocks produced distinct GPU
+archive sizes at levels 1-9, though level 6 was 1,660 bytes larger than level 5
+in a single-run size diagnostic before nested selection. The reviewed five-level
 [CPU/GPU report](benchmarks/native-effort-2026-09-29.md) provides repeated,
 clean-source measurements. This is not a guarantee
 of monotonic size on arbitrary files. RAM-only shifted-alphabet regressions

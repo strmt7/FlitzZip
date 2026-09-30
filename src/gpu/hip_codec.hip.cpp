@@ -275,16 +275,9 @@ std::optional<EncodedChunk> encode_native_prefix_chunk_device(const std::byte* d
     if (compression_level == 1) {
         return fixed;
     }
-    auto adaptive = encode_adaptive_prefix_chunk_device(device_input, input, block_size, source_blocks,
-                                                        fixed ? &*fixed : nullptr, compression_level, telemetry);
-    auto best = adaptive && (!fixed || adaptive->payload.size() < fixed->payload.size()) ? std::move(adaptive)
-                                                                                         : std::move(fixed);
-    auto huffman = encode_huffman_prefix_chunk_device(device_input, input, block_size, source_blocks,
-                                                      best ? &*best : nullptr, compression_level, telemetry);
-    if (huffman && (!best || huffman->payload.size() < best->payload.size())) {
-        return huffman;
-    }
-    return best;
+    auto entropy = encode_entropy_prefix_chunk_device(device_input, input, block_size, source_blocks,
+                                                      fixed ? &*fixed : nullptr, compression_level, telemetry);
+    return entropy ? std::move(entropy) : std::move(fixed);
 }
 
 // Purpose: Count only GPU block kinds present after all competing native encoders have been compared.

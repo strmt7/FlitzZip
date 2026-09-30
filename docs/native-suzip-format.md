@@ -36,6 +36,11 @@ explicit:
   incomplete or conflicting tables and out-of-range offsets before HIP decode.
   Earlier versions remain readable; readers predating each new version reject
   its new block kind.
+- Entropy encoding compares a bounded nested portfolio of static, adaptive,
+  and Huffman candidates by complete measured block payload. It packs only
+  winning entropy tables and preserves baseline bytes on ties. Candidate
+  search and shared histogram reuse do not change version-three codebooks,
+  version-eight lookup layouts, segment offsets, or decoding rules.
 - CPU compression tries one independently framed Zstandard block for non-fill
   blocks of at least 4 KiB, retaining Deflate for shorter blocks. It records
   Zstandard only when the result is smaller than raw. The reader requires one
