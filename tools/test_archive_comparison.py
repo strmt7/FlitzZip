@@ -15,6 +15,22 @@ from tools import run_archive_comparison as comparison
 
 
 class ComparisonRunnerTests(unittest.TestCase):
+    # Purpose: Preserve all nine efforts and reject malformed values before starting a process.
+    # Inputs: Each supported software/format pairing and valid or invalid effort values.
+    # Outputs: Exact effort switches pass; non-integers and out-of-range efforts fail.
+    def test_all_effort_commands(self) -> None:
+        for level in range(1, 10):
+            for _, fmt, files, tools in comparison.CASES:
+                for tool in tools:
+                    with self.subTest(level=level, tool=tool, fmt=fmt):
+                        create, extract = comparison.command_templates(tool, fmt, files, level)
+                        switch = {"SuperZip": str(level), "7-Zip": f"-mx={level}", "Zstd": f"-{level}"}[tool]
+                        self.assertIn(switch, create)
+                        self.assertTrue(extract)
+        for level in (0, 10, -1, True, False, 5.0, "5", None):
+            with self.subTest(level=level), self.assertRaisesRegex(ValueError, "unsupported comparison effort"):
+                comparison.command_templates("SuperZip", "zip", ("sample",), level)
+
     # Purpose: Require a real total-processor counter rather than a nullable per-CPU CIM field.
     # Inputs: Simulated Windows performance-counter output, then a missing total-load value.
     # Outputs: A valid snapshot passes and the missing counter fails closed.

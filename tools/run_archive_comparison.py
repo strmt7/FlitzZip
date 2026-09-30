@@ -110,7 +110,7 @@ def run(args: list[str], cwd: Path, timed: bool = True) -> float:
 def commands(
     tool: str, fmt: str, files: tuple[str, ...], archive: Path, target: Path, binaries: dict, level: int = 5
 ) -> tuple[list[str], list[str]]:
-    if level not in (1, 3, 5, 7, 9):
+    if type(level) is not int or not 1 <= level <= 9:
         raise ValueError(f"unsupported comparison effort: {level}")
     if tool == "SuperZip":
         create = [
@@ -408,7 +408,7 @@ def main() -> int:
     parser.add_argument("--zstd", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runs", type=int, default=5)
-    parser.add_argument("--level", type=int, choices=(1, 3, 5, 7, 9), default=5)
+    parser.add_argument("--level", type=int, choices=range(1, 10), default=5)
     parser.add_argument("--round-pause-ms", type=int, default=250)
     args = parser.parse_args()
     if args.runs < 5 or args.runs > 10:

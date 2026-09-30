@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 import json
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import render_comparison_graph as graph
 from tools.run_archive_comparison import CASES, EXPECTED, command_templates
@@ -109,6 +111,29 @@ def fixture() -> dict:
 
 
 class ComparisonGraphTests(unittest.TestCase):
+    # Purpose: Verify the published renderer CLI honors explicit effort instead of silently assuming five.
+    # Inputs: A temporary reviewed-record fixture for each effort and its exact command vectors.
+    # Outputs: All nine charts are generated and byte-checked through the same entry point used by CI.
+    def test_cli_all_efforts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "record.json"
+            output = Path(temporary) / "graph.svg"
+            for level in range(1, 10):
+                record = fixture()
+                record["settings"]["level"] = level
+                for case in record["cases"]:
+                    for result in case["results"]:
+                        result["create_argv"], result["extract_argv"] = command_templates(
+                            result["tool"], case["format"], tuple(case["files"]), level
+                        )
+                source.write_text(json.dumps(record), encoding="utf-8")
+                argv = ["render", "--input", str(source), "--output", str(output), "--level", str(level)]
+                with self.subTest(level=level):
+                    with patch.object(graph.sys, "argv", argv):
+                        self.assertEqual(graph.main(), 0)
+                    with patch.object(graph.sys, "argv", [*argv, "--check"]):
+                        self.assertEqual(graph.main(), 0)
+
     # Purpose: Keep the new SHA-256 pins aligned with already reviewed corpus evidence.
     # Inputs: The committed level-five Silesia comparison record.
     # Outputs: Its corpus validates without changing historical result files.
@@ -136,19 +161,29 @@ class ComparisonGraphTests(unittest.TestCase):
             graph.summarize(record)
 
     # Purpose: Ensure effort-specific records cannot be silently labeled as a different setting.
-    # Inputs: One level-9 fixture with exact commands and one deliberately mismatched expectation.
-    # Outputs: Level 9 validates; default level 5 rejects it.
+    # Inputs: All nine effort fixtures with exact commands and deliberately mismatched expectations.
+    # Outputs: Each effort validates; a different label and malformed expectations are rejected.
     def test_explicit_effort_contract(self) -> None:
-        record = fixture()
-        record["settings"]["level"] = 9
-        for case in record["cases"]:
-            for result in case["results"]:
-                result["create_argv"], result["extract_argv"] = command_templates(
-                    result["tool"], case["format"], tuple(case["files"]), 9
-                )
-        graph.summarize(record, expected_level=9)
-        with self.assertRaisesRegex(ValueError, "settings differ"):
-            graph.summarize(record)
+        for level in range(1, 10):
+            record = fixture()
+            record["settings"]["level"] = level
+            for case in record["cases"]:
+                for result in case["results"]:
+                    result["create_argv"], result["extract_argv"] = command_templates(
+                        result["tool"], case["format"], tuple(case["files"]), level
+                    )
+            with self.subTest(level=level):
+                graph.summarize(record, expected_level=level)
+                with self.assertRaisesRegex(ValueError, "settings differ"):
+                    graph.summarize(record, expected_level=level % 9 + 1)
+        for level in (0, 10, True, 5.0, "5", None):
+            with self.subTest(level=level), self.assertRaisesRegex(ValueError, "unsupported comparison effort"):
+                graph.summarize(fixture(), expected_level=level)
+        for level in (True, 5.0, "5", None):
+            record = fixture()
+            record["settings"]["level"] = level
+            with self.subTest(recorded_level=level), self.assertRaisesRegex(ValueError, "settings differ"):
+                graph.summarize(record, expected_level=1 if level is True else 5)
 
     # Purpose: Prove exact sizes, medians, accessibility text, and byte-stable SVG output.
     # Inputs: One complete synthetic record.

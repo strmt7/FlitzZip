@@ -51,7 +51,7 @@ def matching_command(recorded: object, expected: list[str]) -> bool:
 # Inputs: Parsed comparison record, expected effort, immutable source, and full Silesia manifest.
 # Outputs: Returns ordered case rows with medians/ranges and exact archive bytes.
 def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
-    if expected_level not in (1, 3, 5, 7, 9):
+    if type(expected_level) is not int or not 1 <= expected_level <= 9:
         raise ValueError("unsupported comparison effort")
     if record.get("schema_version") != 1 or record.get("benchmark_kind") != "archive_application_comparison":
         raise ValueError("unsupported comparison schema")
@@ -150,6 +150,7 @@ def summarize(record: dict, expected_level: int = 5) -> tuple[str, list[dict]]:
     settings = record.get("settings")
     if (
         not isinstance(settings, dict)
+        or type(settings.get("level")) is not int
         or settings.get("level") != expected_level
         or settings.get("warmups_per_command") != 1
         or settings.get("order") != "alternating AB/BA"
@@ -398,16 +399,17 @@ def render(commit: str, rows: list[dict]) -> bytes:
 
 
 # Purpose: Generate or byte-check the reviewed comparison chart.
-# Inputs: JSON path, SVG path, and optional non-writing check mode.
+# Inputs: JSON path, SVG path, explicit effort 1-9, and optional non-writing check mode.
 # Outputs: Returns zero only when validation and generation/check succeed.
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--level", type=int, choices=range(1, 10), default=5)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     record = json.loads(args.input.read_text(encoding="utf-8"))
-    commit, rows = summarize(record)
+    commit, rows = summarize(record, expected_level=args.level)
     image = render(commit, rows)
     if args.check:
         if not args.output.is_file() or args.output.read_bytes() != image:
