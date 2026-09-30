@@ -41,6 +41,14 @@ failure as evidence that the Linux dependency graph is broken.
 
 ## Compatibility Review
 
+The 2026-09-30 dependency scan identified PyJWT advisories fixed in 2.14.0.
+Semgrep 1.178.0, the latest published release checked that day, requires
+`pyjwt[crypto]~=2.13.0`; the Linux CPython 3.14 resolver rejects a patched
+PyJWT floor. This is an unresolved upstream compatibility blocker, not a
+reason to force installation or suppress scans. The exact remediation gate
+and [upstream issue](https://github.com/semgrep/semgrep/issues/11925) are
+recorded in [the scanning guide](../../docs/security-code-scanning.md#unresolved-scanner-dependency).
+
 On 2026-09-12, Semgrep 1.177.0 requires MCP exactly 1.29.0. This is above the
 patched minimum for the three MCP Dependabot advisories; upgrading to MCP 2.x
 would violate Semgrep's contract. The SDK belongs to scanner tooling, not

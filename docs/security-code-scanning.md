@@ -75,6 +75,24 @@ either rule. Dismiss confirmed false positives with a specific GitHub audit
 comment; do not dismiss unresolved findings or change the source to evade a
 pattern.
 
+## Unresolved Scanner Dependency
+
+On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in
+`.github/requirements/requirements-semgrep-linux.txt`. The affected package is
+CI scanner tooling, not a dependency shipped in the SuperZip application.
+[PyJWT's advisory](https://github.com/advisories/GHSA-ffc3-869f-jxw9) identifies
+2.14.0 as patched, but the latest published Semgrep 1.178.0 requires
+`pyjwt[crypto]~=2.13.0`, excluding that version.
+
+The Linux CPython 3.14 target was checked with uv's dependency resolver:
+`semgrep==1.178.0` together with `pyjwt>=2.14.0` is unsatisfiable. The
+[upstream constraint issue](https://github.com/semgrep/semgrep/issues/11925)
+remains open. Do not force an incompatible lock, patch installed package
+metadata, remove the scanner, dismiss the findings, or describe this as fixed.
+Retain failing dependency gates until an upstream-supported combination
+resolves, installs with hashes, passes `pip check`, and executes the scanner.
+Recheck upstream rather than repeating the same failed resolution unchanged.
+
 ## Required GitHub Repository Settings
 
 Enable these in `strmt7/SuperZip`:

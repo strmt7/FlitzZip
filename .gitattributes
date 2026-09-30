@@ -30,6 +30,7 @@
 *.options text eol=lf
 *.manifest text eol=lf
 *.txt text eol=lf
+*.cmake text eol=lf
 
 third_party/bzip2/CHANGES text eol=lf
 third_party/bzip2/LICENSE text eol=lf
