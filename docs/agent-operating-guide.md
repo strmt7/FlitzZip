@@ -658,10 +658,11 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   do not remove extension labels, and do not add invented qualifiers such as
   compatibility, single-file, encoded-file, stream, or file when the selected
   input may be a folder.
-- The compression level dropdown shows names only: `Fastest`, `Fast`,
-  `Balanced`, `Strong`, and `Maximum`. Do not append numeric parentheticals to
-  GUI labels, and do not reintroduce plural compression-setting wording in GUI
-  source.
+- The compression level dropdown shows all nine numeric product efforts,
+  `1` through `9`, with `5` as the default. Backend mappings remain codec
+  specific. Persist the effort value, not the row index; migrate legacy five-row
+  settings without changing their selected effort. Unsupported tuning remains
+  disabled rather than implying compression in an uncompressed container.
 - Dropdown arrows must be vertically centered in their value boxes and use one
   consistent shape and inset throughout the app.
 - Live graph axis labels must render as plain top-layer text over the graph;

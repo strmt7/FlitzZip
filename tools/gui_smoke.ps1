@@ -321,6 +321,34 @@ foreach ($requiredSmokeExercise in @('About-Licenses-SmoothWheel', 'History-Deta
 
 Import-Module (Join-Path $PSScriptRoot "SuperZip.GuiSmoke.Ui.psm1") -Force
 
+# Purpose: Check sparse-detail detection independently of any product window or host font/DPI.
+# Inputs: None; creates one owned temporary image.
+# Outputs: Requires rejection of a flat image and detection of five colors missed by the coarse sampling grid.
+function Assert-VisualDetailSampler {
+    $path = Join-Path ([IO.Path]::GetTempPath()) ("SuperZip-visual-detail-{0}.png" -f [guid]::NewGuid().ToString('N'))
+    $bitmap = [Drawing.Bitmap]::new(240, 160)
+    try {
+        $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+        $rejected = $false
+        try { Assert-DesignRectHasDetail -Path $path -Dpi 96 -Left 0 -Top 0 -Right 240 -Bottom 160 }
+        catch {
+            if ($_.Exception.Message -notlike 'Expected rendered dropdown/detail region*') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'Visual detail sampler accepted a flat image.' }
+        $colors = @([Drawing.Color]::Red, [Drawing.Color]::Green, [Drawing.Color]::Blue, [Drawing.Color]::White)
+        for ($i = 0; $i -lt $colors.Count; ++$i) { $bitmap.SetPixel($i + 1, 1, $colors[$i]) }
+        $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
+        Assert-DesignRectHasDetail -Path $path -Dpi 96 -Left 0 -Top 0 -Right 240 -Bottom 160
+    } finally {
+        $bitmap.Dispose()
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+    }
+    Write-Output 'Visual detail sampler flat-image and sparse-detail regressions passed.'
+}
+
+Assert-VisualDetailSampler
+
 # Purpose: Assert one persisted GUI setting value in the temporary smoke settings file.
 # Inputs: `Path` is the JSON settings file, `Name` is the property, and `Expected` is the required value.
 # Outputs: Throws when Apply did not persist the expected value.
@@ -362,9 +390,9 @@ function Wait-GuiLogEvent {
     throw "GUI command did not report '$Message' within five seconds."
 }
 
-# Purpose: Verify legacy preference migration and current-key precedence through actual GUI loads and Apply.
+# Purpose: Verify legacy preference/effort migration and current-key precedence through actual GUI loads and Apply.
 # Inputs: Exe is the built GUI; SettingsPath is the fixed redirected smoke-only settings file.
-# Outputs: Checks four independent launches, cleans only owned processes/settings, and throws on incorrect persistence.
+# Outputs: Checks independent launches, cleans only owned processes/settings, and throws on incorrect persistence.
 function Assert-PublicationSettingsMigration {
     param([string]$Exe, [string]$SettingsPath)
 
@@ -374,9 +402,20 @@ function Assert-PublicationSettingsMigration {
         @{ Values = @{ verifyMetadataBeforeExtract = $true; validateBeforePublish = $false }; Expected = $false },
         @{ Values = @{ verifyMetadataBeforeExtract = $false; validateBeforePublish = $true }; Expected = $true }
     )
+    foreach ($legacyIndex in 0..4) {
+        $cases += @{ Values = @{ compressionLevelIndex = $legacyIndex }; Expected = $true; Effort = 2 * $legacyIndex + 1 }
+    }
+    foreach ($effort in 1..9) {
+        $cases += @{ Values = @{ schema = 'superzip.settings.v3'; compressionLevel = $effort; compressionLevelIndex = 4 }; Expected = $true; Effort = $effort }
+    }
+    foreach ($invalid in @($null, 'invalid', 1.5, 2147483648)) {
+        $cases += @{ Values = @{ compressionLevel = $invalid; memoryPolicyIndex = 1 }; Expected = $true; Effort = 5 }
+    }
+    $cases += @{ Values = @{ compressionLevel = 0 }; Expected = $true; Effort = 1 }
+    $cases += @{ Values = @{ compressionLevel = 10 }; Expected = $true; Effort = 9 }
     foreach ($case in $cases) {
         $document = $case.Values.Clone()
-        $document.schema = 'superzip.settings.v2'
+        if (-not $document.ContainsKey('schema')) { $document.schema = 'superzip.settings.v2' }
         [IO.File]::WriteAllText($SettingsPath, ($document | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
         $owned = Start-Process -FilePath $Exe -PassThru
         try {
@@ -398,6 +437,12 @@ function Assert-PublicationSettingsMigration {
             Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
             Assert-SettingsValue -Path $SettingsPath -Name 'validateBeforePublish' -Expected $case.Expected
             $saved = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
+            $expectedEffort = if ($case.ContainsKey('Effort')) { $case.Effort } else { 5 }
+            Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected $expectedEffort
+            Assert-SettingsValue -Path $SettingsPath -Name 'schema' -Expected 'superzip.settings.v3'
+            if ($saved.PSObject.Properties.Name -contains 'compressionLevelIndex') {
+                throw 'Applied settings retained the obsolete effort row index.'
+            }
             if ($saved.PSObject.Properties.Name -contains 'verifyMetadataBeforeExtract') {
                 throw 'Applied settings retained the obsolete extraction metadata key.'
             }
@@ -413,7 +458,30 @@ function Assert-PublicationSettingsMigration {
         }
     }
     Remove-Item -LiteralPath $SettingsPath -Force
-    Write-Output 'Extraction publication settings migration passed for four legacy/current-key cases.'
+    Write-Output "Settings migration passed for $($cases.Count) publication, legacy effort, all-nine effort, and malformed-value cases."
+}
+
+# Purpose: Prove every effort is selectable through production keyboard routing and persists as its numeric value.
+# Inputs: Handle/Dpi identify the owned GUI; SettingsPath is the redirected smoke-only settings file.
+# Outputs: Verifies efforts 1-9, leaves effort 5 selected, and throws if a row is missing or mapped incorrectly.
+function Assert-CompressionEffortSelection {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath)
+
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    foreach ($effort in @(1..9) + @(5)) {
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+        for ($row = 1; $row -lt $effort; ++$row) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
+        Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+        Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+        $length = (Get-Item -LiteralPath $logPath).Length
+        Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
+        Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
+        Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected $effort
+    }
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+    Write-Output 'All nine compression effort selections and persistence passed.'
 }
 
 # Purpose: Verify the applied summary preference changes completion navigation, including a locked-output failure.
@@ -1071,7 +1139,8 @@ try {
     Start-Sleep -Milliseconds 120
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Format" -OpenX 500 -OpenY 224 -SelectX 500 -SelectY 268 -MenuLeft 116 -MenuTop 252 -MenuRight 617 -MenuBottom 622 -BasePath $basePath -Extension $extension
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 0
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 414 -BasePath $basePath -Extension $extension
+    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 542 -BasePath $basePath -Extension $extension
+    Assert-CompressionEffortSelection -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 406

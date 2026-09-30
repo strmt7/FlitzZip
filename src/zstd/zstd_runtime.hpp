@@ -34,6 +34,7 @@ constexpr int kZstdCompressionHashLogParameter = 102;
 constexpr int kZstdCompressionChainLogParameter = 103;
 constexpr int kZstdContentSizeParameter = 200;
 constexpr int kZstdContentChecksumParameter = 201;
+constexpr int kZstdCompressionWorkersParameter = 400;
 constexpr int kZstdWindowLogMaxParameter = 100;
 
 // Purpose: Own the bundled Zstandard DLL handle and expose the small stable C ABI SuperZip uses.

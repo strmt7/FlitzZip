@@ -6,6 +6,7 @@
 #include <string>
 
 #if defined(_WIN32)
+#include "zstd_runtime_identity.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif

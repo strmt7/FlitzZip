@@ -82,7 +82,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.status = "Format changed";
         break;
     case DropdownId::CompressLevel:
-        state.compression_level_index = std::clamp(option_index, 0, 4);
+        state.compression_level_index = std::clamp(option_index, 0, kCompressionLevelOptionCount - 1);
         state.status = "Compression level changed";
         break;
     case DropdownId::CompressMethod:

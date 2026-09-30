@@ -13,6 +13,7 @@
 #include <memory>
 #include <streambuf>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace superzip {
@@ -104,6 +105,19 @@ void write_counted(std::ofstream& output, const char* bytes, std::size_t size, s
 
 }  // namespace
 
+// Purpose: Admit bounded parallelism without multiplying high-effort history or small-stream allocations.
+// Inputs: Optional exact bytes, validated product effort, and logical processor availability (zero means unknown).
+// Outputs: Returns up to four workers, reserving processor capacity for the caller and other host work.
+std::uint32_t zstd_stream_worker_count(std::optional<std::uint64_t> input_bytes, int compression_level,
+                                       unsigned int logical_processors) {
+    (void)zstd_compression_level(compression_level);
+    constexpr std::uint64_t minimum_bytes = 32U * 1024U * 1024U;
+    if (!input_bytes || *input_bytes < minimum_bytes || compression_level >= 7 || logical_processors < 4U) {
+        return 0U;
+    }
+    return std::min(4U, logical_processors / 4U);
+}
+
 class ZstdOutputStream::Buffer final : public std::streambuf {
   public:
     // Purpose: Open a Zstandard output file and initialize the compression context.
@@ -136,6 +150,14 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
         }
         require_zstd_ok(zstd_, zstd_.set_compression_parameter(context_.get(), kZstdContentChecksumParameter, 1),
                         "failed to enable Zstandard content checksum");
+        compression_workers_ =
+            zstd_stream_worker_count(expected_input_bytes_, compression_level, std::thread::hardware_concurrency());
+        if (compression_workers_ != 0U) {
+            require_zstd_ok(zstd_,
+                            zstd_.set_compression_parameter(context_.get(), kZstdCompressionWorkersParameter,
+                                                            static_cast<int>(compression_workers_)),
+                            "bundled Zstandard runtime cannot enable compression workers");
+        }
         if (expected_input_bytes_) {
             require_zstd_ok(zstd_, zstd_.set_compression_source_size(context_.get(), *expected_input_bytes_),
                             "failed to declare Zstandard input size");
@@ -173,6 +195,7 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
             require_zstd_ok(zstd_, remaining, "Zstandard compression finalization failed");
             write_counted(output_, output_buffer_.data(), output.pos, output_bytes_);
         } while (remaining != 0U);
+        completed_workspace_bytes_ = zstd_.compression_workspace_bytes(context_.get());
         context_.reset();
         output_.close();
         if (!output_) {
@@ -195,10 +218,23 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
     }
 
     // Purpose: Expose the compressor's actual bounded allocation for diagnostics and resource regression checks.
-    // Inputs: No concurrent compressor operation.
-    // Outputs: Returns codec-owned memory, or zero after the context has been released.
+    // Inputs: No concurrent compressor operation and no accepted input in asynchronous mode.
+    // Outputs: Returns codec-owned memory or zero after release; rejects incomplete worker-pool accounting.
     [[nodiscard]] std::size_t workspace_bytes() const {
+        if (context_ && compression_workers_ != 0U && input_bytes_ != 0U) {
+            throw ArchiveError("Zstandard workspace is unavailable while compression workers may be active");
+        }
         return context_ ? zstd_.compression_workspace_bytes(context_.get()) : 0U;
+    }
+
+    // Purpose: Return the workspace snapshot taken after finalization; no inputs, zero until completion.
+    [[nodiscard]] std::size_t completed_workspace_bytes() const {
+        return completed_workspace_bytes_;
+    }
+
+    // Purpose: Return the selected compression worker count; no inputs and no runtime mutation.
+    [[nodiscard]] std::uint32_t compression_workers() const {
+        return compression_workers_;
     }
 
   protected:
@@ -232,7 +268,7 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
 
   private:
     // Purpose: Compress one caller-provided uncompressed byte range.
-    // Inputs: Borrowed immutable bytes consumed synchronously; size must fit any declared total.
+    // Inputs: Borrowed immutable bytes consumed or copied before return; size must fit any declared total.
     // Outputs: Writes compressed bytes and updates counters; a size overrun permanently prevents finalization.
     void compress_bytes(const unsigned char* data, std::size_t size) {
         if (closed_) {
@@ -261,6 +297,8 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
     std::array<char, kZstdStreamBufferBytes> output_buffer_{};
     std::uint64_t input_bytes_ = 0;
     std::uint64_t output_bytes_ = 0;
+    std::size_t completed_workspace_bytes_ = 0;
+    std::uint32_t compression_workers_ = 0;
 };
 
 class ZstdInputStream::Buffer final : public std::streambuf {
@@ -442,6 +480,16 @@ std::uint64_t ZstdOutputStream::output_bytes() const {
 // Outputs: Returns runtime-owned workspace bytes, or zero after release.
 std::size_t ZstdOutputStream::workspace_bytes() const {
     return buffer_->workspace_bytes();
+}
+
+// Purpose: Return completed codec allocation; no inputs, zero until successful finalization.
+std::size_t ZstdOutputStream::completed_workspace_bytes() const {
+    return buffer_->completed_workspace_bytes();
+}
+
+// Purpose: Return checked worker selection; no inputs, zero denotes synchronous compression.
+std::uint32_t ZstdOutputStream::compression_workers() const {
+    return buffer_->compression_workers();
 }
 
 // Purpose: Open a Zstandard decoder whose read errors always propagate to the caller.

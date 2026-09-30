@@ -86,6 +86,9 @@ function Invoke-WaiterSmoke {
     return $process.ExitCode
 }
 
+$emptyPaths = @(Select-SuperZipUniquePath -Path @($null, "", " "))
+Assert-Selector ($emptyPaths.Count -eq 0) "clean git output must normalize to an empty path set without binding errors"
+
 $docsPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md")
 Assert-Selector $docsPlan.scope.docsOnly "docs-only changes must be classified as docsOnly"
 Assert-Selector (-not $docsPlan.scope.fullEscalationRequired) "docs-only changes must not escalate"

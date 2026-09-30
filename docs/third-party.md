@@ -67,25 +67,27 @@ for provenance.
 
 ## Zstandard 1.5.7
 
-SuperZip bundles the official Zstandard/libzstd release `v1.5.7` Win64 runtime
-for standards-oriented Zstandard compatibility.
+SuperZip builds an app-local Zstandard/libzstd `v1.5.7` runtime from the pinned
+upstream source archive, with multithreading and legacy decoding enabled.
 
 - Upstream: <https://github.com/facebook/zstd>
 - Release tag: `v1.5.7`
 - Source archive SHA-256: `7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4`
 - Win64 runtime package SHA-256: `acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9`
-- Extracted DLL SHA-256: `8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b`
+- Built DLL SHA-256: calculated at build time and embedded in the executable;
+  a different runtime is rejected before loading.
 - License: BSD, preserved at `third_party/zstd/LICENSE`
 
-SuperZip uses libzstd for two bounded CPU-codec purposes: single-file
+SuperZip uses libzstd for bounded CPU-codec work: single-file
 `.zst`/`.zstd` streams and `.tar.zst`/`.tzst` stream filters over the native
-TAR adapter. It does not provide GPU acceleration and is not an alternate
-SUZIP codec path.
+TAR adapter, and CPU Zstandard block candidates in native SUZIP archives.
+It does not provide GPU acceleration.
 
 The production copy under `third_party/zstd/` contains only license files and
-SuperZip runtime notes. CMake verifies the official Win64 runtime package,
-extracts `libzstd.dll` into the build directory, and copies it beside each
-SuperZip executable. SuperZip loads that DLL only from the executable directory,
+SuperZip runtime notes. CMake verifies the source archive, builds `libzstd.dll`
+in the build directory, and copies it beside each executable. The official
+Win64 package remains pinned for independent CLI comparisons. SuperZip loads
+its built DLL only from the executable directory,
 validates runtime version `10507` (`1.5.7`), and never shells out to `zstd.exe`.
 The original source archive, official Win64 package, and checksums are stored
 under `third_party/upstream/zstd/v1.5.7/` for provenance.

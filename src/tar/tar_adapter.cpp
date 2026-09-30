@@ -1003,6 +1003,7 @@ OperationStats compress_tar_zstd(const std::vector<std::filesystem::path>& sourc
     OperationStats stats;
     stats.input_bytes = write_stats.input_bytes;
     stats.output_bytes = output_bytes;
+    stats.workers = output.compression_workers();
     stats.entries = write_stats.entries;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

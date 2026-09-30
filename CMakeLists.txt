@@ -210,18 +210,16 @@ endif()
 
 set(SUPERZIP_UPSTREAM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/upstream")
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_DIR "${SUPERZIP_UPSTREAM_DIR}/zstd/v1.5.7")
-set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_NAME "zstd-v1.5.7-win64.zip")
+set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_NAME "zstd-v1.5.7.zip")
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE
     "${SUPERZIP_ZSTD_RUNTIME_PACKAGE_DIR}/${SUPERZIP_ZSTD_RUNTIME_PACKAGE_NAME}"
 )
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256
-    "acb4e8111511749dc7a3ebedca9b04190e37a17afeb73f55d4425dbf0b90fad9")
-set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256
-    "8f07e1112ed283e5cd2798833e9a3c32d8961381bc36da04af57a1b0ca9bd40b")
+    "7897bc5d620580d9b7cd3539c44b59d78f3657d33663fe97a145e07b4ebd69a4")
 set(SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR
-    "${CMAKE_CURRENT_BINARY_DIR}/zstd-v1.5.7-win64-runtime")
-set(SUPERZIP_ZSTD_RUNTIME_DLL
-    "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}/zstd-v1.5.7-win64/dll/libzstd.dll")
+    "${CMAKE_CURRENT_BINARY_DIR}/zstd-v1.5.7-source")
+set(SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR
+    "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}/zstd-1.5.7")
 set(SUPERZIP_WIMLIB_RUNTIME_PACKAGE_DIR
     "${SUPERZIP_UPSTREAM_DIR}/wimlib/1.14.5")
 set(SUPERZIP_WIMLIB_RUNTIME_PACKAGE_NAME "wimlib-1.14.5-windows-x86_64-bin.zip")
@@ -248,7 +246,9 @@ if(WIN32)
     message(FATAL_ERROR "Bundled Zstandard runtime package checksum mismatch: "
                         "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
   endif()
-  if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_DLL}")
+  set(SUPERZIP_ZSTD_RUNTIME_CMAKE
+      "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/build/cmake/CMakeLists.txt")
+  if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_CMAKE}")
     file(MAKE_DIRECTORY "${SUPERZIP_ZSTD_RUNTIME_EXTRACT_DIR}")
     execute_process(
       COMMAND "${CMAKE_COMMAND}" -E tar xf "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}"
@@ -260,19 +260,50 @@ if(WIN32)
                     "${SUPERZIP_ZSTD_RUNTIME_PACKAGE}")
     endif()
   endif()
-  if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_DLL}")
+  if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_CMAKE}")
     message(
       FATAL_ERROR
-        "Bundled Zstandard runtime DLL was not found after extraction: "
-        "${SUPERZIP_ZSTD_RUNTIME_DLL}")
+        "Pinned Zstandard source was not found after extraction: "
+        "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
   endif()
-  file(SHA256 "${SUPERZIP_ZSTD_RUNTIME_DLL}"
-       SUPERZIP_ZSTD_RUNTIME_DLL_ACTUAL_SHA256)
-  if(NOT SUPERZIP_ZSTD_RUNTIME_DLL_ACTUAL_SHA256 STREQUAL
-     SUPERZIP_ZSTD_RUNTIME_DLL_SHA256)
-    message(FATAL_ERROR "Bundled Zstandard runtime DLL checksum mismatch: "
-                        "${SUPERZIP_ZSTD_RUNTIME_DLL}")
-  endif()
+  # Build the upstream C library without its CLI/test/assembler project.
+  # MSVC uses the portable decoder; upstream disables its GNU assembly here.
+  set(SUPERZIP_ZSTD_LIBRARY_DIR "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/lib")
+  file(GLOB SUPERZIP_ZSTD_SOURCES CONFIGURE_DEPENDS
+       "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/*.c"
+       "${SUPERZIP_ZSTD_LIBRARY_DIR}/compress/*.c"
+       "${SUPERZIP_ZSTD_LIBRARY_DIR}/decompress/*.c"
+       "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/*.c"
+       "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/*.c")
+  set(SUPERZIP_ZSTD_RESOURCE
+      "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/build/VS2010/libzstd-dll")
+  add_library(libzstd_shared SHARED ${SUPERZIP_ZSTD_SOURCES}
+              "${SUPERZIP_ZSTD_RESOURCE}/libzstd-dll.rc")
+  target_include_directories(libzstd_shared PRIVATE
+                             "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+  target_compile_definitions(
+    libzstd_shared
+    PRIVATE ZSTD_MULTITHREAD ZSTD_DLL_EXPORT=1 ZSTD_DISABLE_ASM
+            ZSTD_HEAPMODE=0 ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_
+            _CRT_SECURE_NO_WARNINGS)
+  set_target_properties(libzstd_shared PROPERTIES OUTPUT_NAME libzstd)
+  set(SUPERZIP_ZSTD_RUNTIME_DLL "$<TARGET_FILE:libzstd_shared>")
+  set(SUPERZIP_ZSTD_RUNTIME_HASH_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
+  set(SUPERZIP_ZSTD_RUNTIME_HASH_HEADER
+      "${SUPERZIP_ZSTD_RUNTIME_HASH_DIR}/zstd_runtime_identity.hpp")
+  add_custom_command(
+    OUTPUT "${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" "-DRUNTIME_DLL=${SUPERZIP_ZSTD_RUNTIME_DLL}"
+            "-DOUTPUT_HEADER=${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteRuntimeIdentity.cmake"
+    DEPENDS libzstd_shared
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteRuntimeIdentity.cmake"
+    COMMENT "Embedding the built Zstandard runtime identity"
+    VERBATIM)
+  add_custom_target(superzip_zstd_runtime_identity
+                    DEPENDS "${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
+                    COMMENT "Preparing Zstandard runtime identity")
   if(NOT EXISTS "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
     message(FATAL_ERROR "Bundled wimlib runtime package is missing: "
                         "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
@@ -309,7 +340,8 @@ if(WIN32)
   endif()
 endif()
 
-# Copy the pinned Zstandard runtime DLL beside a built SuperZip target.
+# Purpose: Copy the pinned runtime; target_name names a built executable.
+# Outputs: Installs its matching DLL beside the executable after linking.
 function(superzip_copy_zstd_runtime target_name)
   if(WIN32)
     add_custom_command(
@@ -403,8 +435,15 @@ target_compile_definitions(
 target_compile_definitions(
   superzip_core
   PRIVATE
-    SUPERZIP_ZSTD_RUNTIME_DLL_SHA256="${SUPERZIP_ZSTD_RUNTIME_DLL_SHA256}"
     SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256="${SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256}")
+if(WIN32)
+  add_dependencies(superzip_core superzip_zstd_runtime_identity)
+  target_include_directories(superzip_core PRIVATE
+                             "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
+else()
+  target_compile_definitions(superzip_core PRIVATE
+                              SUPERZIP_ZSTD_RUNTIME_DLL_SHA256="")
+endif()
 target_compile_definitions(superzip_core PRIVATE XZ_DEC_CONCATENATED
                                                  XZ_USE_CRC64)
 

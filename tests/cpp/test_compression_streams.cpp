@@ -15,6 +15,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <thread>
 
 namespace {
 
@@ -626,5 +627,86 @@ TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
     }
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(read_stream_fixture(sentinel), "unchanged");
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Enforce stream admission bounds across small, unknown, and limited-core host configurations.
+// Inputs: Threshold byte counts, every effort, and representative logical processor availability.
+// Outputs: Requires synchronous small/high-effort operation and bounded workers with caller headroom.
+TEST_CASE(compression_stream_zstd_worker_admission) {
+    constexpr std::uint64_t threshold = 32U * 1024U * 1024U;
+    for (int level = 1; level <= 9; ++level) {
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(std::nullopt, level, 64U), 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold - 1U, level, 64U), 0U);
+        for (unsigned int processors : {0U, 1U, 2U, 3U}) {
+            REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, processors), 0U);
+        }
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 4U), level < 7 ? 1U : 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 64U), level < 7 ? 4U : 0U);
+    }
+}
+
+// Purpose: Validate asynchronous ownership, finalization, wire determinism, and bounded codec allocation.
+// Inputs: A 32 MiB repeated-record fixture written whole and with immediately reused fragment buffers.
+// Outputs: Requires identical archives, exact decode, checked worker telemetry, and complete workspace release.
+TEST_CASE(compression_stream_zstd_threaded_roundtrip) {
+    const auto root = test_temp_dir("zstd-threaded");
+    const auto record = make_stream_partition_fixture();
+    constexpr std::size_t length = 32U * 1024U * 1024U;
+    std::string input;
+    input.reserve(length);
+    while (input.size() < length) {
+        input.append(record, 0U, std::min(record.size(), length - input.size()));
+    }
+    std::string first_encoded;
+    for (const bool fragmented : {false, true}) {
+        const auto path = root / (fragmented ? "fragmented.zst" : "whole.zst");
+        superzip::ZstdOutputStream output(path, 5, input.size());
+        output.exceptions(std::ios::badbit | std::ios::failbit);
+        const auto expected_workers =
+            superzip::zstd_stream_worker_count(input.size(), 5, std::thread::hardware_concurrency());
+        REQUIRE_EQ(output.compression_workers(), expected_workers);
+        REQUIRE_EQ(output.completed_workspace_bytes(), 0U);
+        for (std::size_t offset = 0; offset < input.size();) {
+            const auto count = std::min(input.size() - offset, fragmented ? 8191U : input.size());
+            auto scratch = input.substr(offset, count);
+            output.write(scratch.data(), static_cast<std::streamsize>(scratch.size()));
+            std::fill(scratch.begin(), scratch.end(), static_cast<char>(0xA5));
+            offset += count;
+        }
+        if (expected_workers != 0U) {
+            bool rejected = false;
+            try {
+                (void)output.workspace_bytes();
+            } catch (const superzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+        }
+        output.close();
+        output.close();
+        REQUIRE_EQ(output.workspace_bytes(), 0U);
+        REQUIRE_TRUE(output.completed_workspace_bytes() > 0U);
+        REQUIRE_TRUE(output.completed_workspace_bytes() < 256U * 1024U * 1024U);
+        REQUIRE_EQ(output.input_bytes(), input.size());
+        REQUIRE_EQ(output.output_bytes(), std::filesystem::file_size(path));
+        const auto encoded = read_stream_fixture(path);
+        if (!fragmented) {
+            first_encoded = encoded;
+        } else {
+            REQUIRE_EQ(encoded, first_encoded);
+        }
+        superzip::ZstdInputStream decoded(path);
+        std::array<char, 65536U> buffer{};
+        std::size_t offset = 0U;
+        while (decoded.read(buffer.data(), static_cast<std::streamsize>(buffer.size())) || decoded.gcount() > 0) {
+            const auto count = static_cast<std::size_t>(decoded.gcount());
+            REQUIRE_TRUE(offset <= input.size() && count <= input.size() - offset);
+            REQUIRE_TRUE(std::equal(buffer.begin(), buffer.begin() + count, input.begin() + offset));
+            offset += count;
+        }
+        decoded.finish();
+        REQUIRE_EQ(offset, input.size());
+    }
     std::filesystem::remove_all(root);
 }

@@ -499,7 +499,8 @@ void MainWindow::open_pending_operation_destination() {
 void MainWindow::cycle_compression_level() {
     {
         std::lock_guard lock(mutex_);
-        state_.compression_level_index = (state_.compression_level_index + 1) % 5;
+        state_.compression_level_index =
+            compression_level_value(state_.compression_level_index) % kCompressionLevelOptionCount;
         state_.status = "Compression level changed";
     }
     request_repaint();

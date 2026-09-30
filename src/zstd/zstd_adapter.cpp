@@ -95,10 +95,11 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     if (!input) {
         throw ArchiveError("cannot open Zstandard source file: " + source_file.string());
     }
-    const auto temporary = reserve_file_publish_target(output_archive);
-    bool temporary_active = true;
-    try {
-        ZstdOutputStream output(temporary.file, compression_level, input_size);
+    FilePublishTransaction publication(output_archive);
+    std::uint32_t compression_workers = 0;
+    {
+        ZstdOutputStream output(publication.staging_path(), compression_level, input_size);
+        compression_workers = output.compression_workers();
         std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -111,7 +112,7 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
                 progress.add_bytes(bytes_read);
                 publish_progress(progress, progress_callback);
             }
-            if (input.bad()) {
+            if (input.bad() || (input.fail() && !input.eof())) {
                 throw ArchiveError("failed to read Zstandard source file: " + source_file.string());
             }
             if (input.eof()) {
@@ -119,14 +120,7 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
             }
         }
         output.close();
-        commit_verified_file(temporary, output_archive, true);
-        cleanup_file_publish_target(temporary);
-        temporary_active = false;
-    } catch (...) {
-        if (temporary_active) {
-            cleanup_file_publish_target(temporary);
-        }
-        throw;
+        publication.commit(true);
     }
 
     progress.finish_entry();
@@ -135,6 +129,7 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     OperationStats stats;
     stats.input_bytes = input_size;
     stats.output_bytes = regular_file_size(output_archive);
+    stats.workers = compression_workers;
     stats.entries = 1;
     stats.gpu_used = false;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -160,11 +155,10 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
     progress.set_current(entry_name);
     publish_progress(progress, progress_callback);
 
-    const auto temporary = reserve_file_publish_target(target);
-    bool temporary_active = true;
-    try {
+    FilePublishTransaction publication(target);
+    {
         ZstdInputStream input(archive_path);
-        std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
+        std::ofstream output(publication.staging_path(), std::ios::binary | std::ios::trunc);
         if (!output) {
             throw ArchiveError("cannot create Zstandard extraction target: " + target.string());
         }
@@ -191,9 +185,7 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         if (!output) {
             throw ArchiveError("failed to finalize Zstandard extraction target: " + target.string());
         }
-        commit_verified_file(temporary, target, overwrite);
-        cleanup_file_publish_target(temporary);
-        temporary_active = false;
+        publication.commit(overwrite);
         progress.finish_entry();
         publish_progress(progress, progress_callback);
 
@@ -204,11 +196,6 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         stats.gpu_used = false;
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         return stats;
-    } catch (...) {
-        if (temporary_active) {
-            cleanup_file_publish_target(temporary);
-        }
-        throw;
     }
 }
 

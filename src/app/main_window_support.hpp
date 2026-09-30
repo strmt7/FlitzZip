@@ -174,6 +174,7 @@ OperationStats extract_detected_archive(ArchiveFormat archive_format, const std:
 OperationStats validate_detected_archive(ArchiveFormat archive_format, const std::filesystem::path& archive,
                                          bool gpu_required, const ProgressCallback& progress_callback,
                                          ArchivePathEncoding name_encoding = ArchivePathEncoding::Utf8);
+// Purpose: Label a compression row; inputs: signed UI index; outputs: normalized effort text 1-9.
 std::wstring compression_level_text(int index);
 int normalize_performance_update_seconds(int seconds);
 int performance_update_index_for_seconds(int seconds);
@@ -182,6 +183,7 @@ std::wstring performance_update_option_text(int index);
 std::vector<std::wstring> fixed_io_drive_options();
 int normalize_io_drive_index(int index);
 std::wstring io_drive_option_text(int index);
+// Purpose: Resolve product effort; inputs: signed UI index; outputs: normalized effort 1-9.
 int compression_level_value(int index);
 OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
                                     const std::filesystem::path& output, ArchiveFormat archive_format,

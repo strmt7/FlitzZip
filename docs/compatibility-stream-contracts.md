@@ -2,6 +2,24 @@
 
 ## Shared CPU Writers
 
+Zstandard streams with an exact size of at least 32 MiB use up to four
+compression workers at product efforts 1-6. Worker selection is one per four
+reported logical processors, capped at four; fewer than four reported
+processors, unknown sizes, smaller inputs, and efforts 7-9 use synchronous
+compression. High-effort operation preserves its larger history and avoids
+multiplying job buffers. Both standalone and TAR.ZST creation report the
+selected worker count. This is CPU compression.
+
+The runtime is built with threading enabled from the pinned upstream source.
+Its stable worker parameter is checked before any compression begins. Input
+buffers remain borrowed only until libzstd has consumed or copied them.
+Finalization waits for all jobs and captures the completed codec workspace
+before releasing the context. Querying live workspace after input has been
+accepted in threaded mode throws because upstream pool accounting is incomplete
+while jobs are active. The completion snapshot excludes process and caller
+overhead and is not a peak-memory measurement. Threaded output remains a single
+checksummed standard frame, but job boundaries can change compressed size.
+
 | Stream | Product Writers | Effort Policy |
 | --- | --- | --- |
 | Gzip | Gzip, TAR.GZ, CPIO.GZ | Miniz levels 1-9 |

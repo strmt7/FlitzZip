@@ -11,6 +11,12 @@
 
 namespace superzip {
 
+// Purpose: Bound asynchronous compression workers for sufficiently large, known-size streams.
+// Inputs: Optional exact byte count, product effort 1-9, and the available logical processor count.
+// Outputs: Returns 0-4 workers; unknown/small inputs and high-effort history-sensitive streams stay synchronous.
+[[nodiscard]] std::uint32_t zstd_stream_worker_count(std::optional<std::uint64_t> input_bytes, int compression_level,
+                                                     unsigned int logical_processors);
+
 // Purpose: Stream Zstandard-compressed bytes to a file with libzstd-managed framing.
 // Inputs: Construct with `output_path` and product effort 1-9 (Zstandard 1-22); callers write uncompressed bytes
 // through the `std::ostream` interface. Outputs: Writes a complete `.zst` stream with a content checksum; throws on I/O
@@ -42,9 +48,19 @@ class ZstdOutputStream final : public std::ostream {
     [[nodiscard]] std::uint64_t output_bytes() const;
 
     // Purpose: Report current codec-owned compression memory separately from process or wrapper allocation.
-    // Inputs: No concurrent writes or close calls; query during the synchronous stream's lifetime.
-    // Outputs: Returns libzstd context/workspace bytes, or zero after context release.
+    // Inputs: No concurrent writes or close calls; threaded compression must not have accepted any input yet.
+    // Outputs: Returns context/workspace bytes or zero after release; throws if asynchronous jobs may be active.
     [[nodiscard]] std::size_t workspace_bytes() const;
+
+    // Purpose: Report allocated codec workspace after all compression jobs have completed.
+    // Inputs: Call after successful close; no concurrent stream operation.
+    // Outputs: Returns the completion snapshot, excluding caller buffers and process overhead; zero before close.
+    [[nodiscard]] std::size_t completed_workspace_bytes() const;
+
+    // Purpose: Report the number of libzstd compression workers selected for this stream.
+    // Inputs: No concurrent stream operation.
+    // Outputs: Returns 0 for synchronous compression, or the checked asynchronous worker count.
+    [[nodiscard]] std::uint32_t compression_workers() const;
 
   private:
     class Buffer;

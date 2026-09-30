@@ -34,6 +34,9 @@ function Select-SuperZipUniquePath {
 
     $set = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($item in @($Path)) {
+        if ([string]::IsNullOrWhiteSpace($item)) {
+            continue
+        }
         $relative = ConvertTo-SuperZipRelativePath -Path $item
         if (-not [string]::IsNullOrWhiteSpace($relative)) {
             [void]$set.Add($relative)

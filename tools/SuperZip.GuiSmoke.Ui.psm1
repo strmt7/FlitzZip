@@ -450,7 +450,7 @@ function Assert-VisualStructure {
 
 # Purpose: Assert that a design-space rectangle contains rendered detail.
 # Inputs: `Path` is a PNG screenshot, `Dpi` maps design pixels to physical pixels, and the rectangle is in 96-DPI design coordinates.
-# Outputs: Throws when the region is flat or blank.
+# Outputs: Throws when the region is flat or blank; short glyphs receive an exact scan if the coarse grid misses them.
 function Assert-DesignRectHasDetail {
     param(
         [string]$Path,
@@ -479,6 +479,13 @@ function Assert-DesignRectHasDetail {
         for ($x = $leftPx; $x -lt $rightPx; $x += $stepX) {
             for ($y = $topPx; $y -lt $bottomPx; $y += $stepY) {
                 [void]$unique.Add($bitmap.GetPixel($x, $y).ToArgb())
+            }
+        }
+        if ($unique.Count -lt $MinUniqueColors) {
+            for ($x = $leftPx; $x -lt $rightPx -and $unique.Count -lt $MinUniqueColors; ++$x) {
+                for ($y = $topPx; $y -lt $bottomPx -and $unique.Count -lt $MinUniqueColors; ++$y) {
+                    [void]$unique.Add($bitmap.GetPixel($x, $y).ToArgb())
+                }
             }
         }
         if ($unique.Count -lt $MinUniqueColors) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/progress.hpp"
+#include "core/resource_limits.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -13,6 +14,8 @@
 namespace superzip::app {
 
 constexpr int kDefaultCompressionBlockSizeIndex = 5;
+constexpr int kCompressionLevelOptionCount = kMaxCompressionLevel - kMinCompressionLevel + 1;
+constexpr int kDefaultCompressionLevelIndex = kDefaultCompressionLevel - kMinCompressionLevel;
 
 enum class Page {
     Queue,
@@ -167,7 +170,7 @@ struct LogEntry {
 
 struct AppSettings {
     int compression_format_index = 0;
-    int compression_level_index = 2;
+    int compression_level_index = kDefaultCompressionLevelIndex;
     int compression_block_size_index = kDefaultCompressionBlockSizeIndex;
     int memory_policy_index = 0;
     int log_level_index = 0;
@@ -207,7 +210,7 @@ struct UiState {
     std::filesystem::path destination_directory;
     int selected_queue_index = -1;
     int compression_format_index = 0;
-    int compression_level_index = 2;
+    int compression_level_index = kDefaultCompressionLevelIndex;
     int compression_block_size_index = kDefaultCompressionBlockSizeIndex;
     int memory_policy_index = 0;
     int log_level_index = 0;

@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -371,14 +372,9 @@ const ArchiveNameEncodingChoice& selected_name_encoding(const UiState& state) {
 
 // Purpose: Return the user-facing compression-level label.
 // Inputs: `index` is the mutable compression-level selection in UI state.
-// Outputs: Returns a stable label that maps to a zlib/miniz compression level.
+// Outputs: Returns the numeric product effort, independent of backend codec settings.
 std::wstring compression_level_text(int index) {
-    constexpr std::array<std::wstring_view, 5> labels{
-        L"Fastest", L"Fast", L"Balanced", L"Strong", L"Maximum",
-    };
-    const auto normalized = static_cast<std::size_t>(
-        (index % static_cast<int>(labels.size()) + static_cast<int>(labels.size())) % static_cast<int>(labels.size()));
-    return std::wstring(labels[normalized]);
+    return std::to_wstring(compression_level_value(index));
 }
 
 // Purpose: Normalize a performance-sampling interval to the closest supported GUI option.
@@ -463,15 +459,13 @@ std::wstring io_drive_option_text(int index) {
     return drives[static_cast<std::size_t>(normalize_io_drive_index(index))];
 }
 
-// Purpose: Map the visible compression-level selection to a miniz setting.
+// Purpose: Map the visible compression-level selection to product effort.
 // Inputs: `index` is the mutable compression-level selection in UI state.
-// Outputs: Returns one of the supported non-store compression settings: 1, 3, 5, 7, or 9.
+// Outputs: Returns effort 1-9; normalization handles out-of-range UI indices without signed overflow.
 int compression_level_value(int index) {
-    constexpr std::array<int, 5> options{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
-    const auto normalized =
-        static_cast<std::size_t>((index % static_cast<int>(options.size()) + static_cast<int>(options.size())) %
-                                 static_cast<int>(options.size()));
-    return options[normalized];
+    const int normalized =
+        (index % kCompressionLevelOptionCount + kCompressionLevelOptionCount) % kCompressionLevelOptionCount;
+    return kMinCompressionLevel + normalized;
 }
 
 // Purpose: Run the selected create backend for a GUI compression job.
@@ -635,7 +629,7 @@ std::string json_string(std::string_view value) {
 
 // Purpose: Extract an integer setting from the versioned JSON config.
 // Inputs: `json`, `key`, and fallback/bounds define the accepted value.
-// Outputs: Returns the parsed integer clamped to the supported range.
+// Outputs: Returns a bounded integer or fallback; malformed scalars cannot consume an adjacent field's number.
 int json_int_setting(std::string_view json, std::string_view key, int fallback, int minimum, int maximum) {
     const std::string quoted_key = json_string(key);
     const auto key_pos = json.find(std::string_view(quoted_key));
@@ -646,23 +640,20 @@ int json_int_setting(std::string_view json, std::string_view key, int fallback, 
     if (colon_pos == std::string_view::npos) {
         return fallback;
     }
-    const auto value_pos = json.find_first_of("-0123456789", colon_pos + 1U);
+    const auto value_pos = json.find_first_not_of(" \t\r\n", colon_pos + 1U);
     if (value_pos == std::string_view::npos) {
         return fallback;
     }
-    std::size_t end_pos = value_pos;
-    if (json[end_pos] == '-') {
-        ++end_pos;
-    }
-    while (end_pos < json.size() && std::isdigit(static_cast<unsigned char>(json[end_pos])) != 0) {
-        ++end_pos;
-    }
-    try {
-        const int parsed = std::stoi(std::string(json.substr(value_pos, end_pos - value_pos)));
-        return std::clamp(parsed, minimum, maximum);
-    } catch (...) {
+    int parsed = 0;
+    const auto result = std::from_chars(json.data() + value_pos, json.data() + json.size(), parsed);
+    if (result.ec != std::errc{}) {
         return fallback;
     }
+    const auto end_pos = json.find_first_not_of(" \t\r\n", static_cast<std::size_t>(result.ptr - json.data()));
+    if (end_pos == std::string_view::npos || (json[end_pos] != ',' && json[end_pos] != '}')) {
+        return fallback;
+    }
+    return std::clamp(parsed, minimum, maximum);
 }
 
 // Purpose: Extract a boolean setting from the versioned JSON config.
@@ -723,7 +714,7 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
 AppSettings settings_from_state(const UiState& state) {
     AppSettings settings;
     settings.compression_format_index = std::clamp(state.compression_format_index, 0, kCompressionFormatMaxIndex);
-    settings.compression_level_index = std::clamp(state.compression_level_index, 0, 4);
+    settings.compression_level_index = std::clamp(state.compression_level_index, 0, kCompressionLevelOptionCount - 1);
     settings.compression_block_size_index =
         std::clamp(state.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
     settings.memory_policy_index = std::clamp(state.memory_policy_index, 0, 2);
@@ -771,7 +762,7 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 
 // Purpose: Parse a settings JSON document into a validated snapshot.
 // Inputs: `json` is the complete UTF-8 settings document.
-// Outputs: Returns defaulted settings, migrating the legacy metadata toggle to private publication when needed.
+// Outputs: Returns defaulted settings, preserving legacy effort and publication preferences.
 AppSettings parse_settings_json(std::string_view json) {
     AppSettings settings;
     const bool migrate_format_rows = settings_uses_v1_format_rows(json);
@@ -783,8 +774,10 @@ AppSettings parse_settings_json(std::string_view json) {
         settings.compression_format_index = json_int_setting(
             json, "compressionFormatIndex", settings.compression_format_index, 0, kCompressionFormatMaxIndex);
     }
-    settings.compression_level_index =
-        json_int_setting(json, "compressionLevelIndex", settings.compression_level_index, 0, 4);
+    const int legacy_effort_index = json_int_setting(json, "compressionLevelIndex", 2, 0, 4);
+    const int persisted_effort = json_int_setting(json, "compressionLevel", 2 * legacy_effort_index + 1,
+                                                  kMinCompressionLevel, kMaxCompressionLevel);
+    settings.compression_level_index = persisted_effort - kMinCompressionLevel;
     settings.compression_block_size_index = json_int_setting(
         json, "compressionBlockSizeIndex", settings.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
     settings.memory_policy_index = json_int_setting(json, "memoryPolicyIndex", settings.memory_policy_index, 0, 2);
@@ -822,9 +815,9 @@ std::string settings_to_json(const AppSettings& settings) {
     auto bool_text = [](bool value) { return value ? "true" : "false"; };
     std::ostringstream out;
     out << "{\n"
-        << "  \"schema\": \"superzip.settings.v2\",\n"
+        << "  \"schema\": \"superzip.settings.v3\",\n"
         << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
-        << "  \"compressionLevelIndex\": " << settings.compression_level_index << ",\n"
+        << "  \"compressionLevel\": " << compression_level_value(settings.compression_level_index) << ",\n"
         << "  \"compressionBlockSizeIndex\": " << settings.compression_block_size_index << ",\n"
         << "  \"memoryPolicyIndex\": " << settings.memory_policy_index << ",\n"
         << "  \"logLevelIndex\": " << settings.log_level_index << ",\n"
@@ -1023,11 +1016,14 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
         }
         return formats;
     }
-    case DropdownId::CompressLevel:
-        return {
-            compression_level_text(0), compression_level_text(1), compression_level_text(2),
-            compression_level_text(3), compression_level_text(4),
-        };
+    case DropdownId::CompressLevel: {
+        std::vector<std::wstring> options;
+        options.reserve(kCompressionLevelOptionCount);
+        for (int index = 0; index < kCompressionLevelOptionCount; ++index) {
+            options.push_back(compression_level_text(index));
+        }
+        return options;
+    }
     case DropdownId::CompressMethod:
         return {L"AMD HIP required", L"AMD HIP preferred"};
     case DropdownId::CompressBlockSize:

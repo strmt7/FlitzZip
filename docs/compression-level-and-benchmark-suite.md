@@ -19,14 +19,21 @@ mode, so the product exposes the non-store levels.
 
 | UI label | CLI value | Purpose |
 | --- | ---: | --- |
-| Fastest | `--compression-level 1` | Lowest effort for quick local transfers. |
-| Fast | `--compression-level 3` | Speed-biased compression. |
-| Balanced | `--compression-level 5` | Default release baseline for benchmarks and normal use. |
-| Strong | `--compression-level 7` | Ratio-biased compression with a larger GPU entropy sample. |
-| Maximum | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates full-block entropy samples. |
+| 1 | `--compression-level 1` | Lowest effort for quick local transfers. |
+| 2 | `--compression-level 2` | First additional search tier. |
+| 3 | `--compression-level 3` | Speed-biased compression. |
+| 4 | `--compression-level 4` | Intermediate speed/ratio tier. |
+| 5 | `--compression-level 5` | Default balanced effort for benchmarks and normal use. |
+| 6 | `--compression-level 6` | Intermediate ratio-biased tier. |
+| 7 | `--compression-level 7` | Ratio-biased compression with a larger GPU entropy sample. |
+| 8 | `--compression-level 8` | Additional high-effort search. |
+| 9 | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates full-block entropy samples. |
 
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
-GUI, and `tools\bench.ps1`. Benchmarks may sweep all five levels, but release
+GUI, and `tools\bench.ps1`. The GUI exposes every effort from 1 through 9.
+Settings store the actual effort rather than its dropdown row; legacy
+five-row preferences migrate to their original 1/3/5/7/9 values. Benchmarks may
+sweep all nine efforts, but release
 throughput claims must identify the selected level, input bytes, output bytes,
 and compression ratio. The required-HIP native codec can emit GPU fill, GPU
 pattern, static GPU-prefix, adaptive GPU-prefix, and version-eight GPU Huffman blocks; entropy paths are
