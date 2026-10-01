@@ -119,3 +119,41 @@ permit analysis and automated database generation for an OSI-licensed codebase
 hosted and maintained on GitHub.com. This applies to the current public AGPL
 repository, not blanket future private/commercial use. Do not redistribute the
 CodeQL binary with SuperZip; recheck entitlement if repository licensing changes.
+
+### Completed Baseline Pilot
+
+The local pilot completed on 2026-10-02 (Berlin time), against the immutable
+`ef8a58ce0bb8f0a38a82fab6f37d1f68f7e59380` baseline, not the later tooling push.
+The isolated checkout used VS 2026 and retained GUI, tests and vendored sources.
+Database creation, including fresh tool provisioning, compilation and import,
+took 571.94 seconds. Creation admitted 7975 MiB to CodeQL and three compiler
+jobs within a separate shared RAM planning budget. Analysis resampled available
+RAM, used `--threads=0`, and inherited below-normal priority. These limits do not
+reserve physical memory or impose a hard process-tree operating-system cap.
+
+A query-selection audit caught an initially narrower combination:
+`cpp-code-quality.qls` selects quality-tagged high/very-high-precision queries;
+it is not interchangeable with `cpp-security-and-quality.qls`. The initial
+99-query union took 73.66 seconds and cannot substitute for the hosted scope.
+The corrected union of `cpp-security-extended.qls` and
+`cpp-security-and-quality.qls` resolved 183 queries, including diagnostics and
+metrics, and exported 180 SARIF rules and 201 results. Its 17.53-second analysis
+reused the same finalized database and earlier query work; it is not a cold
+whole-suite timing or a measured general speedup over hosted CI.
+
+Comparison with hosted baseline analysis `1877258447` found no differences in
+the multiset of rule IDs, relative files and primary source ranges across all
+201 results. Normalization follows the
+[SARIF 2.1.0 region defaults](https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/sarif-v2.1.0-os.html):
+an omitted start column is 1 and an omitted end line is the start line. This
+comparison does not establish identical secondary locations or data-flow traces.
+SARIF recorded no analysis-execution errors and zero syntax/compiler errors;
+its file-coverage diagnostic reported 340 of 368 C/C++ files. This is a traced
+CPU-only build, not exhaustive HIP device extraction or a clean security claim.
+
+Keep the database and reports ignored and local. Reuse this immutable baseline
+for rule-family investigation, but rebuild after compiled source changes.
+Resolve the actual query lists before claiming local/hosted parity. The outer
+pilot also required PowerShell 7: Windows PowerShell 5.1 with terminating error
+preferences had promoted informational native stderr to `NativeCommandError`.
+Preserve native exit checking rather than globally suppressing failures.
