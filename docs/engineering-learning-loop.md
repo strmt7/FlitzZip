@@ -21,8 +21,12 @@ the Security tab, released artifacts, or the product UI again.
   are caught before push.
 - GitHub Actions must not use `Install-PackageProvider -Name NuGet` as a CI
   bootstrap. The lint workflow installs PSScriptAnalyzer from a pinned,
-  hash-verified PowerShell Gallery package instead of depending on mutable
-  runner PackageManagement state.
+  hash-verified package from the official PowerShell/PSScriptAnalyzer release
+  instead of depending on mutable runner PackageManagement state. The Gallery
+  download endpoint returned a WAF denial on a hosted runner; the official
+  release serves the identical pinned package. CI and local bootstrap keep
+  the same version and hash, and must never disable the analyzer or weaken
+  verification to bypass a download failure.
 - The README license badge is static for the current AGPL-3.0 license. It must
   not depend on the shields GitHub license endpoint, which can fail from
   upstream token-pool exhaustion even when the repository license is valid.
@@ -112,6 +116,17 @@ the Security tab, released artifacts, or the product UI again.
   must not be described as full byte comparisons. GUI smoke coverage uses the
   current run's returned capture manifest, not stale images accumulated in
   the output directory.
+- Host telemetry recorders compile independently of HIP. A hosted CPU-only
+  build caught new pinned-output recorders calling an attempt-merge helper
+  hidden under the HIP guard; the recorders now use the same direct atomic
+  update pattern as other host counters. The backend-independent counter test
+  runs in both configurations. A passing HIP build is not CPU-only compile
+  evidence; changes crossing that boundary require both configuration checks.
+- Embedded-manifest tests inspect every configured executable, not an optional
+  GUI that was disabled at configure time. CMake supplies the component flag
+  and test-target dependencies; the same test still fails for a missing enabled
+  executable. Both GUI-enabled and headless builds must retain the CLI/test
+  Windows compatibility identity checks.
 - `tools\github_post_push_audit.ps1 -IncludeHistory` fetches open, fixed, and
   dismissed incidents only on demand. Its optional new-file JSON report retains
   every incident ID, rule, state, location, and latest analysis identity without

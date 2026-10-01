@@ -302,7 +302,7 @@ void record_gpu_device_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t b
 // Outputs: Adds cumulative operation bytes; never changes the process-wide live pin reservation budget.
 void record_gpu_host_pinned_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
     if (telemetry) {
-        merge_gpu_counter(telemetry->host_pinned_allocation_bytes, bytes);
+        telemetry->host_pinned_allocation_bytes.fetch_add(bytes, std::memory_order_relaxed);
     }
 }
 
@@ -311,7 +311,7 @@ void record_gpu_host_pinned_allocation_bytes(GpuTelemetry* telemetry, std::uint6
 // Outputs: Adds cumulative output bytes independently of fresh pin allocation accounting.
 void record_gpu_host_pinned_output_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
     if (telemetry) {
-        merge_gpu_counter(telemetry->host_pinned_output_bytes, bytes);
+        telemetry->host_pinned_output_bytes.fetch_add(bytes, std::memory_order_relaxed);
     }
 }
 

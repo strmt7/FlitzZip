@@ -89,7 +89,7 @@ function Install-PinnedPSScriptAnalyzer {
 
     $package = Join-Path ([System.IO.Path]::GetTempPath()) "$moduleName.$version.nupkg"
     Invoke-WebRequest `
-        -Uri "https://www.powershellgallery.com/api/v2/package/$moduleName/$version" `
+        -Uri "https://github.com/PowerShell/PSScriptAnalyzer/releases/download/$version/$moduleName.$version.nupkg" `
         -OutFile $package
     $actualSha256 = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
     if ($actualSha256 -ne $expectedSha256) {

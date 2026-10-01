@@ -34,6 +34,25 @@ TEST_CASE(shared_codec_worker_budget_boundaries) {
                1U);
 }
 
+// Purpose: Keep host-output counters callable without a HIP backend or device initialization.
+// Inputs: Optional telemetry, zero counts, and distinct cumulative allocation/output values.
+// Outputs: Requires exact independent host counters and unchanged device-allocation accounting in every build.
+TEST_CASE(gpu_host_pinned_counters_are_backend_independent) {
+    superzip::GpuTelemetry telemetry;
+    superzip::record_gpu_host_pinned_allocation_bytes(nullptr, 512U);
+    superzip::record_gpu_host_pinned_output_bytes(nullptr, 1024U);
+    superzip::record_gpu_host_pinned_allocation_bytes(&telemetry, 0U);
+    superzip::record_gpu_host_pinned_output_bytes(&telemetry, 0U);
+    superzip::record_gpu_host_pinned_allocation_bytes(&telemetry, 512U);
+    superzip::record_gpu_host_pinned_output_bytes(&telemetry, 1024U);
+    superzip::record_gpu_host_pinned_output_bytes(&telemetry, 1024U);
+    const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
+    REQUIRE_EQ(stats.host_pinned_allocation_bytes, 512U);
+    REQUIRE_EQ(stats.host_pinned_output_bytes, 2048U);
+    REQUIRE_EQ(stats.device_allocation_bytes, 0U);
+    REQUIRE_EQ(stats.kernel_launches, 0U);
+}
+
 // Purpose: Verify actual copied host output is checksummed with the admitted parallel CPU budget after HIP decode.
 // Inputs: Required-HIP raw blocks with an irregular tail and a multi-task checksum extent.
 // Outputs: Requires full byte equality and serial CRC equality; no device-produced CRC substitutes for host validation.

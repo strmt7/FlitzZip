@@ -816,7 +816,12 @@ if(SUPERZIP_BUILD_TESTS)
   target_compile_definitions(
     superzip_tests
     PRIVATE
+      SUPERZIP_TEST_GUI_BUILT=$<TARGET_EXISTS:SuperZip>
       SUPERZIP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+  add_dependencies(superzip_tests superzip_cli)
+  if(TARGET SuperZip)
+    add_dependencies(superzip_tests SuperZip)
+  endif()
   add_test(NAME superzip_tests COMMAND superzip_tests)
 endif()
 

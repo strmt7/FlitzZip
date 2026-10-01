@@ -30,8 +30,8 @@ std::string embedded_manifest(const std::filesystem::path& executable) {
 }  // namespace
 
 // Purpose: Prevent CLI/test compatibility shims from diverging from the shipped graphical application.
-// Inputs: The three actual built executable resources, inspected without launching the GUI.
-// Outputs: Requires exactly one Windows 10/11 compatibility identity in each and preserved GUI DPI metadata.
+// Inputs: The configured executable resources, inspected without launching the optional GUI.
+// Outputs: Requires one Windows 10/11 identity per enabled component and preserved GUI DPI metadata when built.
 TEST_CASE(windows_embedded_compatibility_manifest_parity) {
     std::wstring executable(32768U, L'\0');
     const auto length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
@@ -39,7 +39,14 @@ TEST_CASE(windows_embedded_compatibility_manifest_parity) {
     executable.resize(length);
     const auto directory = std::filesystem::path(executable).parent_path();
     constexpr std::string_view identity = "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}";
-    for (const auto* name : {L"superzip_tests.exe", L"superzip_cli.exe", L"SuperZip.exe"}) {
+    constexpr const wchar_t* names[] = {
+        L"superzip_tests.exe",
+        L"superzip_cli.exe",
+#if SUPERZIP_TEST_GUI_BUILT
+        L"SuperZip.exe",
+#endif
+    };
+    for (const auto* name : names) {
         const auto manifest = embedded_manifest(directory / name);
         const auto position = manifest.find(identity);
         REQUIRE_TRUE(position != std::string::npos);
