@@ -75,9 +75,15 @@ CodeQL. Do not describe the latter as device-kernel analysis.
 
 DevSkim 1.0.100 was checked against the official stable GitHub release and
 NuGet package on 2026-10-01. Its pinned package is downloaded with bounded
-HTTPS-only curl, verified with SHA-256, then installed through a local-only
-NuGet source. The SDK cannot silently install a different network copy of the
-same version. The upstream generic hexadecimal-literal rule remains enabled;
+HTTPS-only curl, verified by exact size and SHA-256, then installed through a
+local-only NuGet source. `.github/requirements/devskim-packaging.json` owns
+the version, measured package size, and digest; `tools/devskim_provenance.py`
+derives curl's byte ceiling from that same record. Offline tests cover invalid
+metadata, truncation, growth, corruption, and streaming chunk boundaries.
+An isolated empty NuGet cache and cleared fallback folders prevent reuse of
+a different same-version package. The configuration follows
+[NuGet's documented lookup order](https://learn.microsoft.com/en-us/nuget/reference/nuget-config-file#fallbackpackagefolders-section).
+The upstream generic hexadecimal-literal rule remains enabled;
 upgrading the CLI does not establish that public-digest matches are secrets
 or that all old findings were fixed. Locally defined scanner jobs have explicit time budgets;
 CodeQL C++ retains 60 minutes, compared with 20 minutes for the observed

@@ -52,11 +52,11 @@ jobs:
       - name: Post-push audit regression tests
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_github_post_push_audit.ps1
-      - name: Scanner coverage regression tests
+      - name: Scanner provenance and coverage regression tests
         shell: pwsh
         run: |
-          python -m unittest tools.test_semgrep_coverage
-          if ($LASTEXITCODE -ne 0) { throw "Scanner coverage regressions failed." }
+          python -m unittest tools.test_semgrep_coverage tools.test_devskim_provenance
+          if ($LASTEXITCODE -ne 0) { throw "Scanner provenance or coverage regressions failed." }
       - name: Refactor inventory regression tests
         shell: pwsh
         run: |

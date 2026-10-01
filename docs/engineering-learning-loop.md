@@ -182,6 +182,13 @@ the Security tab, released artifacts, or the product UI again.
   exact analysis identity. GitHub disposition comments are limited to 280
   characters; preserve full evidence separately and stop on API failure.
 
+- `tools/devskim_provenance.py` derives the download ceiling and exact package
+  identity from one measured, pinned provenance record. The verified NuGet
+  package was 58,204,542 bytes, not within the previously guessed 50 MB ceiling.
+  Offline regressions reject metadata drift, truncation, growth, and digest
+  corruption. A CLI-version probe does not validate the SDK installation path;
+  the hosted job must also install and scan through the verified local feed.
+
 The [incident-history review](code-scanning-history-review.md) maps all retrieved
 scanner families to existing guardrails and records unfinished work. It is an
 evidence index, not a new allowlist or proof that every historical alert was a

@@ -297,11 +297,14 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "10.0.x"
-      - name: Install DevSkim CLI
+      - name: Validate DevSkim provenance
         shell: bash
-        env:
-          DEVSKIM_VERSION: "1.0.100"
-          DEVSKIM_NUPKG_SHA256: "11A08CA73EF1020C4DD8EFAF4E34CE0D59DF75EED4FCEF478724BC6BE28F04FD"
+        run: |
+          set -euo pipefail
+          python -m unittest tools.test_devskim_provenance
+          python -m tools.devskim_provenance --emit-env >> "$GITHUB_ENV"
+      - name: Download and install verified DevSkim package
+        shell: bash
         run: |
           set -euo pipefail
           feed="$RUNNER_TEMP/devskim-feed"
@@ -309,10 +312,10 @@ jobs:
           package="$feed/microsoft.cst.devskim.cli.$DEVSKIM_VERSION.nupkg"
           base="https://api.nuget.org/v3-flatcontainer/microsoft.cst.devskim.cli"
           curl --fail --silent --show-error --proto '=https' \
-            --max-time 60 --max-filesize 50000000 \
+            --max-time 60 --max-filesize "$DEVSKIM_NUPKG_BYTES" \
             "$base/$DEVSKIM_VERSION/microsoft.cst.devskim.cli.$DEVSKIM_VERSION.nupkg" \
             --output "$package"
-          printf '%s *%s\n' "$DEVSKIM_NUPKG_SHA256" "$package" | sha256sum --check --status
+          python -m tools.devskim_provenance --package "$package"
           # NuGet must consume only the verified package, not a second network copy.
           python - "$feed" <<'PY'
           import pathlib
@@ -323,9 +326,13 @@ jobs:
           sources = ET.SubElement(config, "packageSources")
           ET.SubElement(sources, "clear")
           ET.SubElement(sources, "add", key="verified", value=str(feed))
+          ET.SubElement(ET.SubElement(config, "fallbackPackageFolders"), "clear")
           ET.ElementTree(config).write(feed / "NuGet.Config", encoding="utf-8", xml_declaration=True)
           PY
-          dotnet tool install --tool-path "$RUNNER_TEMP/devskim" \
+          # Do not reuse a same-version package from the runner's global cache.
+          cache="$RUNNER_TEMP/devskim-packages"
+          mkdir "$cache"
+          NUGET_PACKAGES="$cache" dotnet tool install --tool-path "$RUNNER_TEMP/devskim" \
             --configfile "$feed/NuGet.Config" \
             Microsoft.CST.DevSkim.CLI --version "$DEVSKIM_VERSION"
       - name: Run DevSkim
