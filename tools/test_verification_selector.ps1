@@ -99,8 +99,8 @@ Assert-Selector ($base64Index -ge 0) "hygiene command must use deterministic Bas
 $decodedPaths = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($docsPlan.requiredLocalCommands[0].arguments[$base64Index + 1])) | ConvertFrom-Json
 Assert-Selector (@($decodedPaths)[0] -eq "docs/targeted-verification.md") "hygiene command must receive the exact planned changed path"
 Assert-Selector (Test-Workflow -Plan $docsPlan -Name "lint") "docs-only changes must select the fast lint workflow"
-Assert-Selector $docsPlan.workflowWaitPolicy.deferAllowed "docs-only changes may defer lint workflow waiting during iteration"
-Assert-Selector ($docsPlan.workflowWaitPolicy.recommendedMode -eq "opportunistic-during-iteration-final-before-handoff") "docs-only changes must recommend opportunistic lint checks during iteration"
+Assert-Selector (-not $docsPlan.workflowWaitPolicy.deferAllowed) "unspecified checkpoint must default to final acceptance"
+Assert-Selector ($docsPlan.workflowWaitPolicy.recommendedMode -eq "final") "final docs acceptance must require relevant lint"
 
 $sourcePlan = Get-SuperZipVerificationPlan -ChangedPath @("src/core/checksum.cpp")
 Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id "language-lint") "C++ source changes must run the language linter"
@@ -109,8 +109,8 @@ Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id "unit-tests") "C++ s
 Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id "changed-refactor-audit") "C++ source changes must run changed refactor audit"
 Assert-Selector (Test-Workflow -Plan $sourcePlan -Name "windows-ci") "C++ source changes must wait for windows-ci"
 Assert-Selector ($sourcePlan.manualLocalCommands.Count -eq 0) "ordinary non-performance source changes must not require manual benchmark sweeps"
-Assert-Selector $sourcePlan.workflowWaitPolicy.deferAllowed "ordinary source changes may defer workflow waiting during iteration"
-Assert-Selector ($sourcePlan.workflowWaitPolicy.recommendedMode -eq "opportunistic-during-iteration-final-before-handoff") "ordinary source changes must recommend opportunistic iteration and final wait"
+Assert-Selector (-not $sourcePlan.workflowWaitPolicy.deferAllowed) "final source acceptance must not defer workflow waiting"
+Assert-Selector ($sourcePlan.workflowWaitPolicy.recommendedMode -eq "final") "source acceptance must recommend final wait"
 
 $gpuPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/gpu/dictionary_candidate.cpp")
 Assert-Selector $gpuPlan.scope.touchesPerformance "GPU codec changes must retain performance verification"
@@ -229,6 +229,24 @@ Assert-Selector (Test-LongRunningWorkflow -Plan $verifierPlan -Name "fuzzing") "
 Assert-Selector $verifierPlan.workflowWaitPolicy.immediateRequired "verification changes must require immediate final workflow waiting"
 Assert-Selector (-not $verifierPlan.workflowWaitPolicy.deferAllowed) "verification changes must not allow deferred workflow waiting by default"
 
+foreach ($path in @('docs/targeted-verification.md', 'src/core/checksum.cpp', '.github/workflows/security-code-scanning.yml',
+        'mcp/superzip_mcp.py', '.agents/skills/superzip-build-test/SKILL.md', 'tools/superzip_verification.psm1', 'unexpected/new-area.file')) {
+    $finalPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint final
+    $intermediatePlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector $intermediatePlan.workflowWaitPolicy.deferAllowed "intermediate checkpoints must permit nonblocking observation: $path"
+    Assert-Selector (-not $intermediatePlan.workflowWaitPolicy.immediateRequired) "intermediate checkpoints must not force final waiting: $path"
+    Assert-Selector $intermediatePlan.workflowWaitPolicy.finalRequired "intermediate checkpoints must retain final acceptance: $path"
+    Assert-Selector ($intermediatePlan.workflowWaitPolicy.recommendedMode -eq 'opportunistic') "intermediate checkpoints must sample once: $path"
+    foreach ($field in @('scope', 'requiredLocalCommands', 'manualLocalCommands', 'allPostPushWorkflows', 'postPushAuditRequired')) {
+        $finalValue = ConvertTo-Json -InputObject $finalPlan.$field -Depth 8 -Compress
+        $intermediateValue = ConvertTo-Json -InputObject $intermediatePlan.$field -Depth 8 -Compress
+        Assert-Selector ($finalValue -eq $intermediateValue) "checkpoint timing must not change $field coverage: $path"
+    }
+}
+$fullIntermediate = Get-SuperZipVerificationPlan -ChangedPath @('README.md') -SuspectGlobalBug -Checkpoint intermediate
+Assert-Selector ($fullIntermediate.scope.fullEscalationRequired -and $fullIntermediate.workflowWaitPolicy.deferAllowed) `
+    'full local escalation must not imply blocking intermediate remote waiting'
+
 foreach ($path in @("tools/github_post_push_audit.ps1", "tools/test_github_post_push_audit.ps1")) {
     $auditPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
@@ -254,11 +272,18 @@ $arrayProbe = '& { param([int[]]$BlockSizeKiB) $expected = @(256,512,1024,2048,4
 & powershell -NoProfile -Command $arrayProbe | Out-Null
 Assert-Selector ($LASTEXITCODE -eq 0) 'benchmark sweep integer array must bind as seven values under powershell -Command'
 
-Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "docs/targeted-verification.md", "-Mode", "defer")) -eq 0) "waiter must allow docs-only lint workflow deferral without GitHub"
-Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "src/core/checksum.cpp", "-Mode", "defer")) -eq 0) "waiter must allow defer for ordinary source changes"
-Assert-Selector ((Invoke-WaiterSmoke -Arguments @("-ChangedPath", "tools/superzip_verification.psm1", "-Mode", "defer")) -ne 0) "waiter must reject defer for verifier changes"
-
-. (Join-Path $PSScriptRoot "wait_relevant_workflows.ps1") -ChangedPath @("docs/targeted-verification.md") -Mode defer
+foreach ($mode in @('defer', 'opportunistic')) {
+    Assert-Selector ((Invoke-WaiterSmoke -Arguments @('-ChangedPath', 'README.md', '-Mode', $mode, '-FinalCommit')) -ne 0) `
+        'final commit must reject every nonblocking mode before accessing GitHub'
+}
+Assert-Selector ((Invoke-WaiterSmoke -Arguments @('-ChangedPath', 'README.md', '-FinalCommit', '-SkipPostPushAudit')) -ne 0) `
+    'final commit must reject the legacy audit-skip switch'
+$parseErrors = $null
+$waiterAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'wait_relevant_workflows.ps1'), [ref]$null, [ref]$parseErrors)
+Assert-Selector ($parseErrors.Count -eq 0) 'waiter functions must parse before isolated tests'
+foreach ($definition in $waiterAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
 $olderCancelled = [pscustomobject]@{
     databaseId = 100; workflowName = "lint"; status = "completed"; conclusion = "cancelled"; url = "https://example.test/100"
 }

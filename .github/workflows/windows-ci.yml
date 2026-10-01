@@ -28,10 +28,7 @@ jobs:
             generator: Visual Studio 18 2026
     env:
       SUPERZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
-      CMAKE_BUILD_PARALLEL_LEVEL: "4"
-      UseMultiToolTask: "true"
-      EnforceProcessCountAcrossBuilds: "true"
-      MultiProcMaxCount: "4"
+      # Shared build scheduling is derived from available RAM and logical CPUs.
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

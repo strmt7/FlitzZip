@@ -19,7 +19,7 @@ import threading
 import time
 from collections.abc import Iterator, Sequence
 from ctypes import wintypes
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import BinaryIO
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +28,7 @@ MAX_CHILD_OUTPUT_BYTES = 16 * 1024 * 1024
 MAX_RESPONSE_TAIL_BYTES = 64 * 1024
 MAX_RESPONSE_CHARACTERS = 12_000
 CHILD_TIMEOUT_SECONDS = 900.0
+COMMAND_TIMEOUT_SECONDS = {"verify_changes": 3600.0, "wait_final_commit_workflows": 4500.0}
 READ_CHUNK_BYTES = 64 * 1024
 PROTOCOL_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
@@ -44,6 +45,8 @@ COMMANDS = {
         "-File",
         "tools/verification_plan.ps1",
         "-IncludeUntracked",
+        "-Checkpoint",
+        "intermediate",
     ],
     "verify_changes": [
         "powershell",
@@ -53,6 +56,8 @@ COMMANDS = {
         "-File",
         "tools/verify_changes.ps1",
         "-IncludeUntracked",
+        "-Checkpoint",
+        "intermediate",
     ],
     "lint": [
         "powershell",
@@ -72,7 +77,7 @@ COMMANDS = {
         "-File",
         "tools/wait_relevant_workflows.ps1",
         "-Mode",
-        "final",
+        "opportunistic",
     ],
     "wait_relevant_workflows_opportunistic": [
         "powershell",
@@ -105,6 +110,7 @@ COMMANDS = {
         "-Mode",
         "final",
         "-FinalCommit",
+        "-Full",
     ],
     "defer_relevant_workflows": [
         "powershell",
@@ -114,7 +120,7 @@ COMMANDS = {
         "-File",
         "tools/wait_relevant_workflows.ps1",
         "-Mode",
-        "defer",
+        "opportunistic",
     ],
     "build": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1"],
     "build_hip": [
@@ -297,6 +303,27 @@ def _drain_stream(stream: BinaryIO, channel: str, output: BoundedOutput) -> None
         pass
 
 
+def child_environment(command: Sequence[str]) -> dict[str, str]:
+    """Purpose: Prevent indirect Windows PowerShell launches from inheriting incompatible PS7 modules.
+    Inputs: command is fixed argv; the caller environment is copied, never changed.
+    Outputs: Returns child-only environment; honors WinPSModulePath or lets Windows PowerShell construct defaults.
+    """
+    environment = dict(os.environ)
+    if (
+        os.name != "nt"
+        or not command
+        or PureWindowsPath(command[0]).name.casefold() not in {"powershell", "powershell.exe"}
+    ):
+        return environment
+    legacy_path = next((value for name, value in environment.items() if name.casefold() == "winpsmodulepath"), "")
+    for name in list(environment):
+        if name.casefold() == "psmodulepath":
+            del environment[name]
+    if legacy_path:
+        environment["PSModulePath"] = legacy_path
+    return environment
+
+
 def run_bounded_command(
     command: Sequence[str],
     *,
@@ -307,14 +334,16 @@ def run_bounded_command(
 ) -> dict[str, object]:
     """Purpose: Run one allowlisted command with process-tree, time, and streaming-output limits.
     Inputs: command is fixed argv; limits bound work; optional cancellation stops only this command's tree.
-    Outputs: Returns exit code, fixed stream tails, truncation state, timeout state, and output-limit state.
+    Outputs: Returns bounded outcome; Windows children use below-normal priority and compatible module discovery.
     """
     if timeout_seconds <= 0 or max_output_bytes <= 0 or response_tail_bytes <= 0:
         raise ValueError("child command limits must be positive")
     creation_options: dict[str, object]
     if os.name == "nt":
         creation_options = {
-            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW
+            | subprocess.BELOW_NORMAL_PRIORITY_CLASS,
         }
     else:
         creation_options = {"start_new_session": True}
@@ -324,6 +353,7 @@ def run_bounded_command(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=child_environment(command),
         **creation_options,
     )
     containment = ChildContainment(process)
@@ -497,7 +527,11 @@ class ProtocolServer:
         """
         try:
             try:
-                output = run_bounded_command(COMMANDS[name], cancellation=self.cancellation)
+                output = run_bounded_command(
+                    COMMANDS[name],
+                    cancellation=self.cancellation,
+                    timeout_seconds=COMMAND_TIMEOUT_SECONDS.get(name, CHILD_TIMEOUT_SECONDS),
+                )
                 failed = output["exit_code"] != 0 or output["timed_out"] or output["output_limit_exceeded"]
                 result = {
                     "content": [{"type": "text", "text": json.dumps(output, separators=(",", ":"))}],

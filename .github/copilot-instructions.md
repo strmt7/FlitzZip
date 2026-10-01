@@ -12,9 +12,10 @@ Then run the selected local checks with `tools\verify_changes.ps1 -IncludeUntrac
 The verifier selects `tools\lint.ps1 -CppMode Changed` when docs, workflows,
 PowerShell, Python helpers, CMake, or C/C++ formatting surfaces changed.
 
-For pushed commits, follow the plan's `workflowWaitPolicy`. Use
-`tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode opportunistic` only while
-iterating on non-critical changes, and always run `-Mode final` before handoff,
-release work, or any workflow/verifier/MCP/skill/full-escalation change.
-Fuzzing is long-running: sample it with `-IncludeLongRunning` during iteration
-and block on it only with `-FinalCommit` for final handoff or release.
+Choose planner/verifier `-Checkpoint intermediate` autonomously when further
+development is planned, including workflow/verifier/MCP/skill and full-escalation
+changes. Sample the exact pushed SHA once with `-Mode opportunistic
+-IncludeLongRunning`, record unfinished gates as pending, and continue independent
+work. Final review/handoff or release requires `-Checkpoint final` and `-Mode final
+-FinalCommit` over the accumulated change range. Follow the operating guide's
+RAM admission and cooperative-priority policy; never change unrelated host work.

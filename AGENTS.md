@@ -118,12 +118,19 @@ verifier or remove scanners to hide them.
   `disk_write_bytes=0`. Filesystem smoke is capped at 64 MiB. Compare equal
   compression levels and report sizes, ratio, block size, CPU/GPU mode, and
   real HIP telemetry. Repeat small/noisy differences before drawing conclusions.
-- Read workflow status for the exact pushed SHA. Use
-  `tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode opportunistic` only
-  when the current plan allows intermediate deferral. Final handoff, releases,
-  workflow/verifier/MCP/skill changes, and full escalation require the relevant
-  final wait. Observe long fuzz runs during iteration; include them for final
-  release/handoff as specified by `workflowWaitPolicy`.
+- Choose checkpoint intent autonomously: when further development is planned,
+  pass `-Checkpoint intermediate` to the planner/verifier and sample the exact
+  pushed SHA once with `tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode
+  opportunistic -IncludeLongRunning`. This also applies to workflow, verifier,
+  MCP, skill, and full-escalation changes; it changes waiting, not test coverage.
+  Record pending checks and continue independent work without repeated unchanged
+  polling. Final review/handoff and release checkpoints use `-Checkpoint final`
+  and `-Mode final -FinalCommit`, including required post-push audits. Never
+  describe an intermediate snapshot as final acceptance.
+- Use the guide's shared-host resource policy for all local work. Preserve RAM
+  headroom, prefer below-normal priority for this task's heavy correctness or
+  analysis processes, and use available CPUs without arbitrary fixed caps.
+  Memory admission, bounded lifetime/output, and benchmark isolation still apply.
 - Follow the guide's post-push audit requirement after remediations. Never
   treat a successful local test, push, PR closure, or unrelated green workflow
   as proof that all hosted checks passed.

@@ -74,6 +74,28 @@ the Security tab, released artifacts, or the product UI again.
   Agents must not wait on completed Greenbone/OpenVAS integration runs,
   unauthenticated GitHub CLI calls, wrong commit refs, unreliable commit-filter
   wrapper results, or unrelated long-running workflows.
+- Remote checkpoint timing follows remaining work, not file type. Intermediate
+  workflow/verifier/MCP/skill edits and full local escalation can be observed
+  once without blocking development. The planner/verifier checkpoint never
+  changes local command coverage or final audit requirements. The waiter records
+  exact-SHA pending evidence, rejects API errors/wrong commits, and cannot turn
+  a nonblocking sample into final acceptance. Selector/checkpoint/MCP regressions
+  enforce this separation. Final scope must cover all accumulated changes.
+- Local compiler admission uses current RAM instead of a fixed four-job cap;
+  explicit overrides cannot bypass RAM admission. The verifier runs correctness
+  children at below-normal priority, restoring its own priority after exceptions.
+  It does not change unrelated processes or timed benchmark priority. Shared
+  resource regressions test low-memory refusal and priority restoration without
+  exhausting the host. Memory planning is not a hard operating-system RAM cap.
+  CMake/MSBuild scheduling shares the same admitted count and restores its local
+  environment on failure. Hosted YAML must not force a stale job count past this
+  admission check; dedicated CI still uses the shared production build helper.
+- A native bridge launched from PowerShell 7 can pass incompatible module paths
+  to Windows PowerShell 5.1. The traced CodeQL pilot and actual MCP launcher both
+  reproduced missing `Get-FileHash`. MCP now normalizes only the child environment,
+  respecting `WinPSModulePath` or allowing Windows PowerShell's defaults, without
+  changing the host. Mixed-case environment tests and a real Windows child test
+  prove built-in command discovery and below-normal priority.
 - CI timing reviews separate queue delay, setup, traced compilation, analysis,
   and timed fuzzing using exact run/job IDs. The October review found short
   queues and already resource-adaptive CodeQL execution, not an idle timeout.

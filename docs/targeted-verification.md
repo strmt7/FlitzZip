@@ -11,6 +11,7 @@ Plan without running:
 ```powershell
 tools\verification_plan.ps1 -IncludeUntracked
 tools\verification_plan.ps1 -ChangedPath src\zip\zip_adapter.cpp -Json
+tools\verification_plan.ps1 -IncludeUntracked -Checkpoint intermediate
 ```
 
 Run the selected local commands:
@@ -38,12 +39,14 @@ instead of idling on every intermediate commit:
 tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode opportunistic
 ```
 
-Use `-Mode defer` only when the plan allows deferral. Final handoff, release
-work, workflow changes, verifier changes, and full-escalation changes must run
-the final wait before they are reported complete:
+Choose `-Checkpoint intermediate` on the planner/verifier when another
+development step remains, even for workflows, skills, MCP, or full escalation.
+Local tests and final audit requirements are unchanged. `-Mode defer` is now a
+compatibility alias for one opportunistic sample, not an unchecked skip.
+Final review/handoff and release checkpoints require:
 
 ```powershell
-tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode final
+tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode final -FinalCommit
 ```
 
 Use `-Full` on either script when the repo state is suspicious. The local runner
@@ -62,8 +65,10 @@ repository-relative paths and produces:
   remain relevant but are checked opportunistically and waited only for final
   handoff or release.
 - `postPushAuditRequired`: whether deployment/code-scanning audit is required.
-- `workflowWaitPolicy`: whether workflow waiting can be deferred while work is
-  still in progress and the recommended wait mode for the current change.
+- `workflowWaitPolicy`: explicit checkpoint intent, whether waiting can be
+  deferred, recommended mode, and the unchanged final-acceptance requirement.
+  `-Checkpoint final` is the safe default; agents choose `intermediate`
+  autonomously when more development is planned.
 - `fullEscalationRequired`: whether the change must use the broad local profile.
 
 ### Normal Targeting
@@ -132,10 +137,19 @@ GitHub Actions waiting must be relevant and time-aware:
 - `opportunistic`: one remote status sample. It fails immediately on completed
   failures, returns without blocking when runs are missing or still active, and
   is suitable while development continues across multiple commits.
-- `defer`: records that waiting is intentionally postponed. It is allowed only
-  when `workflowWaitPolicy.deferAllowed=true`; it is rejected for workflow,
-  verifier, MCP, skill, or full-escalation changes unless a maintainer makes an
-  explicit critical override.
+- `defer`: compatibility alias for `opportunistic`; it must not skip API checks
+  or hide known failures. No critical override is needed for intermediate work.
+
+Every successful API sample saves the commit, timestamp, selected runs, observed
+state and pending/passed/failed audit state under `out/workflow-status/<sha>.json`.
+Intermediate records are never final acceptance, even if the sampled runs are
+green. API errors and invalid/wrong-SHA responses throw rather than replace
+missing evidence with success. Final checks use increasing 30-120-second polling
+intervals while state is unchanged and print only state transitions. Actual
+failures still throw on the next sample. `-FinalCommit` rejects nonblocking modes,
+omitted required workflows, and the audit-skip switch. All final-mode waits include
+relevant long-running workflows unless an explicit narrower selection is supplied;
+such a narrower selection is not final commit acceptance.
 
 `tools\wait_relevant_workflows.ps1` performs a GitHub CLI preflight before it
 polls, resolves local refs or short SHAs to a full commit SHA, and queries the
@@ -148,11 +162,16 @@ wrong commit/ref or an authentication failure. If all selected workflows remain
 missing past the script's missing-workflow grace window, fix the pushed commit
 or workflow selection before retrying.
 
-For iterative feature work, run targeted local checks for each commit, use
-`-Mode opportunistic` after pushes when useful, continue development while runs
-are active, and run `-Mode final` once the feature is ready for handoff. Do not
-call work complete because an opportunistic check returned before the workflows
-finished.
+For iterative work, run selected local checks for each commit, sample after each
+push, and continue independent development while runs are active. Recheck at a
+useful decision boundary, not repeatedly with unchanged inputs. Investigate an
+actual failure before relying on its output; unrelated work can continue.
+Do not start a blocking waiter merely to narrate progress. Run final acceptance
+once the accumulated change is ready for review, handoff or release. Supply
+`-BaseRef <accepted-base>` for multi-commit coverage, or `-Full` when that scope is
+uncertain; the latest commit's diff alone may omit earlier security/GUI changes.
+Superseded intermediate commits need no separate wait. Do not call work complete
+because an opportunistic command returned successfully.
 
 Fuzzing is long-running by design. Do not wait for it during ordinary
 development pushes. Use `-Mode opportunistic -IncludeLongRunning` occasionally
@@ -183,10 +202,10 @@ escalates.
 5. Use `-Full` immediately when behavior is inconsistent, a test failure points
    outside the touched files, broad refactoring occurred, or the classifier
    reports unknown paths.
-6. After push, follow `workflowWaitPolicy`. Use `-Mode opportunistic` during
-   iterative multi-commit work when deferral is allowed, but use `-Mode final`
-   before final handoff. If `postPushAuditRequired` is true, the final waiter
-   runs `tools\github_post_push_audit.ps1` after the relevant workflows pass.
+6. Choose `-Checkpoint intermediate` when more development is planned and use
+   one opportunistic post-push sample. Choose `final` for actual acceptance and
+   use `-Mode final -FinalCommit` over the accumulated change range. Required
+   audits remain pending during iteration and must pass at final acceptance.
 7. If the classifier output looks wrong, fix the classifier and its tests before
    continuing feature work.
 

@@ -17,6 +17,55 @@ import superzip_mcp
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_indirect_powershell_environment_is_child_only(self) -> None:
+        """Purpose: Isolate PS5 discovery from PS7; inputs: mixed-case environment; outputs: no caller mutation."""
+        values = {"PSMODULEPATH": "core-modules", "WinPSModulePath": "desktop-modules", "PATH": "unchanged"}
+        with mock.patch.dict(os.environ, values, clear=True), mock.patch.object(superzip_mcp.os, "name", "nt"):
+            caller = dict(os.environ)
+            child = superzip_mcp.child_environment([r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"])
+            self.assertEqual(child["PSModulePath"], "desktop-modules")
+            self.assertNotIn("PSMODULEPATH", child)
+            self.assertEqual(child["PATH"], "unchanged")
+            self.assertEqual(dict(os.environ), caller)
+            self.assertEqual(superzip_mcp.child_environment(["pwsh"]), caller)
+        with (
+            mock.patch.dict(os.environ, {"PSModulePath": "core-modules"}, clear=True),
+            mock.patch.object(superzip_mcp.os, "name", "nt"),
+        ):
+            self.assertNotIn("PSModulePath", superzip_mcp.child_environment(["powershell"]))
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell module/priority integration")
+    def test_real_windows_powershell_discovers_builtin_hash_command(self) -> None:
+        """Purpose: Regress MCP launch failure; inputs: polluted PS7 path; outputs: PS5 command and low priority."""
+        with mock.patch.dict(os.environ, {"PSModulePath": "invalid-core-module-path", "WinPSModulePath": ""}):
+            result = superzip_mcp.run_bounded_command(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-Command Get-FileHash -ErrorAction Stop | Select-Object -ExpandProperty Name; "
+                    "[Diagnostics.Process]::GetCurrentProcess().PriorityClass.ToString()",
+                ],
+                timeout_seconds=15,
+            )
+        self.assertEqual(result["exit_code"], 0, result["stderr"])
+        self.assertEqual(result["stdout"].splitlines(), ["Get-FileHash", "BelowNormal"])
+
+    def test_workflow_commands_preserve_checkpoint_intent(self) -> None:
+        """Purpose: Prevent blocking intermediate tools; inputs: allowlist; outputs: final gates remain explicit."""
+        for name in ("verification_plan", "verify_changes"):
+            command = superzip_mcp.COMMANDS[name]
+            self.assertEqual(command[command.index("-Checkpoint") + 1], "intermediate")
+        for name in ("wait_relevant_workflows", "wait_relevant_workflows_opportunistic", "defer_relevant_workflows"):
+            command = superzip_mcp.COMMANDS[name]
+            self.assertEqual(command[command.index("-Mode") + 1], "opportunistic")
+        final = superzip_mcp.COMMANDS["wait_final_commit_workflows"]
+        self.assertEqual(final[final.index("-Mode") + 1], "final")
+        self.assertIn("-FinalCommit", final)
+        self.assertIn("-Full", final)
+        self.assertNotIn("-SkipPostPushAudit", final)
+        self.assertGreater(superzip_mcp.COMMAND_TIMEOUT_SECONDS["wait_final_commit_workflows"], 60 * 60)
+
     def setUp(self) -> None:
         """Purpose: Isolate each protocol test; inputs: none; outputs: server and captured transport."""
         self.server = superzip_mcp.ProtocolServer()
@@ -136,8 +185,9 @@ class ProtocolTests(unittest.TestCase):
         """Purpose: Cancel addressed work; inputs: active tool and busy request; outputs: no stale result."""
         started = threading.Event()
 
-        def command(_argv: object, *, cancellation: threading.Event) -> dict:
-            """Purpose: Simulate cancellable work; inputs: cancellation event; outputs: completion when cancelled."""
+        def command(_argv: object, *, cancellation: threading.Event, timeout_seconds: float) -> dict:
+            """Purpose: Simulate bounded work; inputs: cancellation/deadline; outputs: completion when cancelled."""
+            self.assertGreater(timeout_seconds, 0)
             started.set()
             self.assertTrue(cancellation.wait(timeout=3))
             return {"exit_code": 1, "timed_out": False, "output_limit_exceeded": False}

@@ -32,9 +32,11 @@ Required sequence:
 5. Run the selected checks with `tools/verify_changes.ps1 -IncludeUntracked`.
 6. Use `tools/verify_changes.ps1 -IncludeUntracked -Full` when the plan
    escalates, a targeted check fails, or the refactor points to a wider bug.
-7. For pushed refactor commits, use opportunistic workflow checks only while
-   work is still in progress and `workflowWaitPolicy.deferAllowed=true`; run
-   final relevant workflow waiting before handoff.
+7. Choose planner/verifier `-Checkpoint intermediate` when further work remains,
+   including full local escalation. Sample the pushed SHA once opportunistically
+   and continue independent work with pending gates recorded. Final review/handoff
+   uses `-Checkpoint final` and `-Mode final -FinalCommit` over the accumulated
+   change range. Follow the guide's shared-host resource policy.
 
 Rules:
 

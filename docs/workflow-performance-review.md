@@ -78,3 +78,44 @@ describes resource tuning and the coverage consequences of splitting analysis.
 requires treating restored contents as untrusted. Cache only a measured setup
 bottleneck with an explicit trust boundary and revalidated pinned inputs; do not
 cache final vulnerability decisions or assume a same-version executable is valid.
+
+## Local CodeQL Preflight
+
+The follow-up host-resource change removes fixed four-worker CMake/MSBuild
+environment values from Windows CI and C++ CodeQL. The shared build helper now
+uses logical CPUs subject to RAM admission and one aggregate MSBuild budget.
+The table above describes the earlier four-worker runs; it is not a measured
+speed improvement for the new scheduling policy.
+
+Local CodeQL is supplementary feedback, not hosted acceptance. The October
+pilot uses the hosted CLI version (2.27.1) and C++ query pack (1.9.0), an isolated
+CPU-only validation checkout, and the unchanged production build. It never
+replaces the primary HIP build, restores compiled objects into extraction,
+uploads a local report over the hosted category, or skips quality queries.
+Tool archives, databases, logs and source-bearing SARIF stay ignored and local.
+Use the shared RAM planning budget, reserve memory for tracing plus compiler
+workers during creation, and use CodeQL's `--ram` and `--threads=0` for analysis
+at below-normal priority. Native RAM options are planning controls, not a hard
+process-tree operating-system limit. No CPU affinity or arbitrary fixed CPU cap
+is needed. Check available memory again between creation and analysis.
+
+GitHub's [incremental-analysis prerequisites](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/scan-from-the-command-line/incremental-analysis)
+support C++ overlays only with `build-mode: none`, not this repository's manual
+traced build. Do not change build mode to obtain overlays. Reuse cached queries
+on the same immutable database for focused rule-family investigation; changed
+compiled source requires fresh build evidence. Diff-only results cannot establish
+whole-repository remediation. No local speed improvement is claimed until a
+complete equivalent analysis has been measured.
+
+The initial pilot failed before compilation because an intermediate native
+process passed PowerShell 7 module paths into Windows PowerShell 5.1. A traced
+probe reproduced the missing `Get-FileHash` command and restored it by normalizing
+only that child to `$PSHOME/Modules`. No host module configuration changed.
+[Microsoft documents this indirect-launch boundary](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
+Preserve this distinction when automating traced Windows builds.
+
+[GitHub's CodeQL terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md)
+permit analysis and automated database generation for an OSI-licensed codebase
+hosted and maintained on GitHub.com. This applies to the current public AGPL
+repository, not blanket future private/commercial use. Do not redistribute the
+CodeQL binary with SuperZip; recheck entitlement if repository licensing changes.

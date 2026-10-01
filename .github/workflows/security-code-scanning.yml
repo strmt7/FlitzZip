@@ -18,11 +18,8 @@ jobs:
     name: CodeQL C++
     runs-on: windows-2022
     timeout-minutes: 60
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: "4"
-      UseMultiToolTask: "true"
-      EnforceProcessCountAcrossBuilds: "true"
-      MultiProcMaxCount: "4"
+    # The build script derives compiler admission from RAM and logical CPUs,
+    # and applies one shared CMake/MSBuild job budget without a fixed CPU cap.
     # Keep C++ analysis whole-repository. Do not split SuperZip into
     # subdirectory CodeQL databases because archive/parser data flow crosses
     # folders and partial databases can miss cross-component vulnerabilities.

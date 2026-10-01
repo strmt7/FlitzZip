@@ -4,6 +4,7 @@ param(
     [string]$HeadRef = "HEAD",
     [switch]$IncludeUntracked,
     [switch]$Full,
+    [ValidateSet('intermediate', 'final')][string]$Checkpoint = 'final',
     [switch]$IncludeManual,
     [switch]$NoAutoEscalate,
     [switch]$PlanOnly
@@ -50,7 +51,8 @@ $plan = Get-SuperZipVerificationPlan `
     -BaseRef $BaseRef `
     -HeadRef $HeadRef `
     -IncludeUntracked:$IncludeUntracked `
-    -SuspectGlobalBug:$Full
+    -SuspectGlobalBug:$Full `
+    -Checkpoint $Checkpoint
 
 if ($PlanOnly.IsPresent) {
     $plan | ConvertTo-Json -Depth 8
@@ -74,7 +76,8 @@ try {
         -BaseRef $BaseRef `
         -HeadRef $HeadRef `
         -IncludeUntracked:$IncludeUntracked `
-        -SuspectGlobalBug
+        -SuspectGlobalBug `
+        -Checkpoint $Checkpoint
     $remaining = Select-UnexecutedCommand -Commands $fullPlan.requiredLocalCommands -Executed $executed
     Invoke-VerificationCommandList -Commands $remaining -Executed $executed
     if ($IncludeManual.IsPresent) {

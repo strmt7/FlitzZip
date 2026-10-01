@@ -4,6 +4,7 @@ param(
     [string]$HeadRef = "HEAD",
     [switch]$IncludeUntracked,
     [switch]$Full,
+    [ValidateSet('intermediate', 'final')][string]$Checkpoint = 'final',
     [switch]$Json
 )
 
@@ -15,7 +16,8 @@ $plan = Get-SuperZipVerificationPlan `
     -BaseRef $BaseRef `
     -HeadRef $HeadRef `
     -IncludeUntracked:$IncludeUntracked `
-    -SuspectGlobalBug:$Full
+    -SuspectGlobalBug:$Full `
+    -Checkpoint $Checkpoint
 
 if ($Json.IsPresent) {
     $plan | ConvertTo-Json -Depth 8
@@ -78,6 +80,8 @@ if ($plan.longRunningPostPushWorkflows.Count -gt 0) {
 }
 Write-Output "Post-push audit required: $($plan.postPushAuditRequired)"
 Write-Output "Workflow wait policy:"
+Write-Output "  checkpoint=$($plan.workflowWaitPolicy.checkpoint)"
+Write-Output "  finalRequired=$($plan.workflowWaitPolicy.finalRequired)"
 Write-Output "  immediateRequired=$($plan.workflowWaitPolicy.immediateRequired)"
 Write-Output "  deferAllowed=$($plan.workflowWaitPolicy.deferAllowed)"
 Write-Output "  recommendedMode=$($plan.workflowWaitPolicy.recommendedMode)"

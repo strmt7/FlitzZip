@@ -22,12 +22,30 @@ repository tools use it. The existing client launch path is unchanged.
 - Command failures are MCP tool results with `isError: true`; malformed
   requests and unknown tools use JSON-RPC errors. Notifications receive no reply.
 
-The command timeout is 900 seconds. Aggregate child output is limited to 16 MiB;
+The ordinary command timeout is 900 seconds. Full local verification has a
+3600-second deadline; the explicit final workflow waiter has 4500 seconds,
+covering its 60-minute remote deadline plus the audit rather than killing it
+prematurely after 15 minutes. Cancellation and output limits still apply.
+Aggregate child output is limited to 16 MiB;
 only bounded stdout/stderr tails are returned with explicit truncation flags.
 These are development commands, not a remote archive-processing API. A client
 must obtain user approval appropriate to the selected command. `security_scan`
 is the repository's local policy script, not the Codex Security plugin scanner.
 No model workers or automatic scans are launched by connection or discovery.
+Windows children use below-normal priority without CPU affinity/rate limits.
+Indirect Windows PowerShell launches use a child-only compatible module path,
+not the inherited PowerShell 7 paths; neither setting changes the caller or
+unrelated host tasks. Build/check RAM admission follows the shared operating guide.
+
+Verification tools plan intermediate development checkpoints without reducing
+local test coverage. `wait_relevant_workflows`, its opportunistic variant, and
+the legacy defer tool now take one exact-SHA status sample; they do not block
+ongoing development or label pending checks as accepted. Use
+`wait_final_commit_workflows` at a real final checkpoint. Final acceptance must
+cover accumulated changes; the final MCP tool selects `-Full` conservatively.
+Use the PowerShell waiter with an explicit `-BaseRef` for narrower evidence-backed
+accumulated scope. Required
+audits cannot be skipped. See [targeted verification](../docs/targeted-verification.md).
 
 ## Verification
 

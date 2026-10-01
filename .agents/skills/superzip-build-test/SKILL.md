@@ -19,11 +19,13 @@ unknown, verification tooling changed, or a targeted command fails:
 tools/verify_changes.ps1 -IncludeUntracked -Full
 ```
 
-For pushed commits, follow the plan's `workflowWaitPolicy`. During multi-commit
-feature work, use `tools/wait_relevant_workflows.ps1 -Commit <sha> -Mode
-opportunistic` only when deferral is allowed, and keep developing while runs are
-active. Before handoff or release, and always for workflow/verifier/MCP/skill or
-full-escalation changes, use `-Mode final`.
+Choose planner/verifier `-Checkpoint intermediate` whenever more development is
+planned, including workflow/verifier/MCP/skill changes and full local escalation.
+After push, sample the exact SHA once using `-Mode opportunistic
+-IncludeLongRunning`, record unfinished gates as pending, and continue independent
+work. Final review/handoff or release uses `-Checkpoint final` and `-Mode final
+-FinalCommit` over the accumulated change range. Follow the operating guide's
+shared-host RAM and cooperative-priority policy; do not cap CPUs arbitrarily.
 The waiter resolves local refs to full commit SHAs and performs a GitHub CLI
 preflight before polling. If authentication, authorization, or `gh run list`
 fails, fix that root cause immediately; do not keep waiting on a state where

@@ -75,10 +75,12 @@ After push, wait only for relevant workflows selected by the classifier:
 tools/wait_relevant_workflows.ps1 -Commit <sha> -Mode final
 ```
 
-For non-critical intermediate commits, `-Mode opportunistic` may be used only
-when `workflowWaitPolicy.deferAllowed=true`. Security, workflow, verifier, MCP,
-skill, and full-escalation changes must not be reported complete until final
-mode and any required post-push audit pass.
+Use planner/verifier `-Checkpoint intermediate` and one opportunistic exact-SHA
+sample when further work remains, including security/workflow/verifier/MCP/skill
+and full-escalation changes. Record pending gates, then continue independent work.
+Final review/handoff requires `-Checkpoint final`, `-Mode final -FinalCommit`
+over the accumulated change range, and the required post-push audit. An
+intermediate green sample is not security acceptance.
 The waiter resolves local refs to full commit SHAs and performs a GitHub CLI
 preflight before polling. Authentication failures, authorization failures, and
 `gh run list` errors are hard blockers; do not keep waiting on a state where

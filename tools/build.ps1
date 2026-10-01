@@ -125,5 +125,7 @@ if (-not $ConfigureOnly) {
     Assert-BuildOutputNotRunning -Configuration $Configuration
     $jobs = Resolve-BuildParallelism
     $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel", [string]$jobs)
-    Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
+    Invoke-SuperZipParallelBuild -Jobs $jobs -Action {
+        Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
+    }
 }

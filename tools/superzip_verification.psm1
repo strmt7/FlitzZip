@@ -1,4 +1,5 @@
 $Script:SuperZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'local_resources.ps1')
 
 # Purpose: Convert a path to the repository-relative slash form used by the verification classifier.
 # Inputs: `Path` may be absolute, relative, slash-separated, or backslash-separated.
@@ -261,7 +262,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/scan_trufflehog\.sh$',
-        '^tools/(build_parallelism|test_build_parallelism)\.ps1$',
+        '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
@@ -334,30 +335,17 @@ function Get-SuperZipVerificationScope {
     }
 }
 
-# Purpose: Build a targeted local and post-push verification plan from changed paths.
-# Inputs: `ChangedPath` or git range describes the change; `SuspectGlobalBug` forces full verification.
-# Outputs: Returns a plan object with scope, required commands, manual commands, workflows, and audit requirements.
-function Get-SuperZipVerificationPlan {
+# Purpose: Select local checks without changing coverage for remote checkpoint timing.
+# Inputs: Scope and Paths describe the classified change; TouchesBenchmarkGraph selects graph tests.
+# Outputs: Returns the ordered, deduplicated required local command descriptors.
+function Get-SuperZipLocalVerificationCommand {
     param(
-        [string[]]$ChangedPath = @(),
-        [string]$BaseRef = "",
-        [string]$HeadRef = "HEAD",
-        [switch]$IncludeUntracked,
-        [switch]$SuspectGlobalBug
-    )
-
-    $paths = Get-SuperZipChangedPath -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -IncludeUntracked:$IncludeUntracked
-    $scope = Get-SuperZipVerificationScope -ChangedPath $paths -SuspectGlobalBug:$SuspectGlobalBug
-    $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^docs/benchmarks/', '^resources/benchmarks/',
-        '^docs/(comparative-benchmark-methodology|benchmark-permissions|benchmark-research)\.md$',
-        '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison|benchmark_comparators|test_benchmark_comparators|benchmark_cache|test_benchmark_cache)\.py$',
-        '^tools/benchmark_permissions\.json$'
+        [Parameter(Mandatory = $true)]$Scope,
+        [string[]]$Paths,
+        [bool]$TouchesBenchmarkGraph
     )
     $local = New-Object System.Collections.ArrayList
-    $manual = New-Object System.Collections.ArrayList
     $seen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
-    $manualSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $hygieneArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/verify_change_hygiene.ps1")
     if (@($paths).Count -gt 0) {
         $hygieneArguments += "-ChangedPathBase64"
@@ -381,9 +369,7 @@ function Get-SuperZipVerificationPlan {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-tooling-tests" -Stage "local" -Executable "py" -Arguments $benchmarkTests -Reason "benchmark permissions, cache identity and graph contracts require offline tests, never a timed workload")
     }
 
-    if ($scope.docsOnly -and -not $scope.fullEscalationRequired) {
-        $workflows = @()
-    } else {
+    if (-not ($scope.docsOnly -and -not $scope.fullEscalationRequired)) {
         if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "release-build" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1", "-Configuration", "Release") -Reason "compiled product, CMake, package, GUI, or broad verification changes require a Release build")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "unit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`$ErrorActionPreference = 'Stop'; & ./tools/test.ps1 -Configuration Release; if (Test-Path variable:\LASTEXITCODE) { exit `$LASTEXITCODE }") -Reason "compiled product or shared verification changes require the C++ test harness with CI-equivalent native exit propagation")
@@ -393,6 +379,7 @@ function Get-SuperZipVerificationPlan {
         }
         if ($scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "workflow-checkpoint-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_workflow_checkpoint.ps1") -Reason "intermediate observations must fail on real errors, record pending checks, and preserve final acceptance")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "build-parallelism-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_build_parallelism.ps1") -Reason "build scheduling must honor explicit job counts and bound default shared-host load")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies")
@@ -439,6 +426,60 @@ function Get-SuperZipVerificationPlan {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-bounded-child-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "discover", "-s", "mcp", "-p", "test_superzip_mcp.py") -Reason "MCP changes require output, timeout, and descendant-containment regressions without shadowing the installed SDK")
         }
     }
+    return @($local)
+}
+
+# Purpose: Separate the timing of remote acceptance from local verification coverage.
+# Inputs: Checkpoint is intermediate/final; Scope and workflow counts describe required remote gates.
+# Outputs: Returns explicit pending/final wait policy; no test or audit requirement is removed.
+function Get-SuperZipWorkflowWaitPolicy {
+    param(
+        [ValidateSet('intermediate', 'final')][string]$Checkpoint,
+        [Parameter(Mandatory = $true)]$Scope,
+        [int]$WorkflowCount,
+        [int]$LongRunningCount
+    )
+    $hasRemoteGates = ($WorkflowCount -gt 0 -or $LongRunningCount -gt 0)
+    $isIntermediate = ($Checkpoint -eq 'intermediate')
+    $reasons = @()
+    if ($Scope.touchesWorkflow) { $reasons += 'workflow or scanner configuration changed' }
+    if ($Scope.touchesVerification) { $reasons += 'verification tooling, MCP, or agent skills changed' }
+    if ($Scope.fullEscalationRequired) { $reasons += 'full verification escalation is required' }
+    return [pscustomobject][ordered]@{
+        checkpoint = $Checkpoint
+        immediateRequired = ($hasRemoteGates -and -not $isIntermediate)
+        deferAllowed = $isIntermediate
+        recommendedMode = if (-not $hasRemoteGates) { 'none' } elseif ($isIntermediate) { 'opportunistic' } else { 'final' }
+        finalRequired = $hasRemoteGates
+        longRunningNormallyDeferred = ($LongRunningCount -gt 0 -and $isIntermediate)
+        reasons = @($reasons)
+    }
+}
+
+# Purpose: Build a targeted local and post-push verification plan from changed paths.
+# Inputs: ChangedPath or git range describes the change; SuspectGlobalBug forces full local coverage;
+#         Checkpoint controls only when remote acceptance blocks development (safe default: final).
+# Outputs: Returns scope, required/manual commands, workflows, audit requirements and checkpoint policy.
+function Get-SuperZipVerificationPlan {
+    param(
+        [string[]]$ChangedPath = @(),
+        [string]$BaseRef = "",
+        [string]$HeadRef = "HEAD",
+        [switch]$IncludeUntracked,
+        [switch]$SuspectGlobalBug,
+        [ValidateSet('intermediate', 'final')][string]$Checkpoint = 'final'
+    )
+    $paths = Get-SuperZipChangedPath -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -IncludeUntracked:$IncludeUntracked
+    $scope = Get-SuperZipVerificationScope -ChangedPath $paths -SuspectGlobalBug:$SuspectGlobalBug
+    $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^docs/benchmarks/', '^resources/benchmarks/',
+        '^docs/(comparative-benchmark-methodology|benchmark-permissions|benchmark-research)\.md$',
+        '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison|benchmark_comparators|test_benchmark_comparators|benchmark_cache|test_benchmark_cache)\.py$',
+        '^tools/benchmark_permissions\.json$'
+    )
+    $local = @(Get-SuperZipLocalVerificationCommand -Scope $scope -Paths $paths -TouchesBenchmarkGraph $touchesBenchmarkGraph)
+    $manual = New-Object System.Collections.ArrayList
+    $manualSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
 
     if ($scope.touchesPerformance -or $scope.fullEscalationRequired) {
         $benchmarkExpression = "& './tools/bench.ps1' -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384"
@@ -466,17 +507,8 @@ function Get-SuperZipVerificationPlan {
     }
 
     $postPushAuditRequired = ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)
-    $immediateWaitReasons = @()
-    if ($scope.touchesWorkflow) { $immediateWaitReasons += "workflow or scanner configuration changed" }
-    if ($scope.touchesVerification) { $immediateWaitReasons += "verification tooling, MCP, or agent skills changed" }
-    if ($scope.fullEscalationRequired) { $immediateWaitReasons += "full verification escalation is required" }
-    $recommendedWorkflowMode = if (@($workflows).Count -eq 0) {
-        if (@($longRunningWorkflows).Count -eq 0) { "none" } else { "opportunistic-long-running-final-only" }
-    } elseif ($postPushAuditRequired) {
-        "final"
-    } else {
-        "opportunistic-during-iteration-final-before-handoff"
-    }
+    $waitPolicy = Get-SuperZipWorkflowWaitPolicy -Checkpoint $Checkpoint -Scope $scope `
+        -WorkflowCount $workflows.Count -LongRunningCount $longRunningWorkflows.Count
 
     return [pscustomobject][ordered]@{
         scope = $scope
@@ -486,27 +518,30 @@ function Get-SuperZipVerificationPlan {
         longRunningPostPushWorkflows = @($longRunningWorkflows)
         allPostPushWorkflows = @(@($workflows) + @($longRunningWorkflows))
         postPushAuditRequired = $postPushAuditRequired
-        workflowWaitPolicy = [pscustomobject][ordered]@{
-            immediateRequired = $postPushAuditRequired
-            deferAllowed = (-not $postPushAuditRequired)
-            recommendedMode = $recommendedWorkflowMode
-            longRunningNormallyDeferred = (@($longRunningWorkflows).Count -gt 0)
-            reasons = @($immediateWaitReasons)
-        }
+        workflowWaitPolicy = $waitPolicy
         generatedAtUtc = [DateTime]::UtcNow.ToString("o")
     }
 }
 
 # Purpose: Invoke one curated verification command from a plan.
 # Inputs: `Command` is produced by `Get-SuperZipVerificationPlan`.
-# Outputs: Throws when the command exits non-zero.
+# Outputs: Throws on insufficient RAM or a non-zero exit; correctness children inherit below-normal priority.
 function Invoke-SuperZipVerificationCommand {
     param([Parameter(Mandatory = $true)]$Command)
 
     Push-Location $Script:SuperZipVerificationRepoRoot
     try {
         Write-Output "verification command=$($Command.id) reason=$($Command.reason)"
-        & $Command.executable @($Command.arguments)
+        if ($Command.id -in @('release-build', 'unit-tests', 'short-fuzz-smoke', 'gui-smoke', 'package-smoke')) {
+            $available = Get-SuperZipAvailableMemoryMiB
+            $budget = Resolve-SuperZipLocalMemoryBudget -AvailableMiB $available
+            Write-Output "local resource admission available_mib=$available budget_mib=$budget"
+        }
+        if ($Command.id -eq 'ram-benchmark-sweep') {
+            & $Command.executable @($Command.arguments)
+        } else {
+            Invoke-SuperZipBackgroundWork { & $Command.executable @($Command.arguments) }
+        }
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {
             throw "Verification command '$($Command.id)' failed with exit code $exitCode."

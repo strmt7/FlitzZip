@@ -13,9 +13,11 @@ performance architecture, or benchmark documentation.
 Run `tools/verification_plan.ps1 -IncludeUntracked` before choosing checks.
 The plan marks RAM-only benchmark sweeps as manual commands when performance
 code or performance claims are touched.
-For pushed performance changes, use opportunistic GitHub Actions checks only
-during iterative tuning when `workflowWaitPolicy.deferAllowed=true`; run the
-final relevant workflow wait before recording a completed tuning result.
+Choose planner/verifier `-Checkpoint intermediate` during continued tuning,
+including full local escalation. Sample the pushed SHA once opportunistically
+and keep pending gates visible. Final acceptance uses `-Checkpoint final` and
+`-Mode final -FinalCommit` over the accumulated change range. Follow the guide's
+RAM policy; do not lower timing benchmark priority or arbitrarily cap CPUs.
 
 Required rules:
 

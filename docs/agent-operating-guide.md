@@ -173,13 +173,13 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   instead of broad habit-driven gates. If the plan escalates, a targeted check
   fails, changed paths are unknown, or a wider bug is suspected, use the full
   verification profile automatically with `tools\verify_changes.ps1 -Full`.
-  Follow `workflowWaitPolicy`: opportunistic checks are acceptable during
-  multi-commit iteration only when deferral is allowed, but final handoff,
-  release work, workflow changes, verifier changes, MCP changes, skill changes,
-  and full-escalation changes must complete the relevant final workflow wait.
-  Long-running fuzzing is observed but not normally waited for; check it
-  opportunistically during iteration and include it only with final/release
-  workflow waits.
+  Choose `-Checkpoint intermediate` whenever further development is planned,
+  including workflow/verifier/MCP/skill edits and full local escalation. Check
+  the pushed SHA once in opportunistic mode, including long-running fuzzing,
+  and continue independent work with unfinished gates recorded as pending.
+  `-Checkpoint final` is the safe default and is mandatory at final review,
+  handoff, or release. Complete the final workflow wait and required audit there.
+  Checkpoint intent changes remote waiting only, never local verification scope.
 - Trigger additional serial security scans when changes are extensive or touch
   dangerous functions, trust boundaries, parser state machines, archive entry
   publication, path canonicalization, overwrite policy, process creation,
@@ -239,8 +239,11 @@ Guidelines, and SEI CERT C++.
   APIs solely to reduce the scanner count. Preserve unresolved findings visibly.
 - Preserve supply-chain evidence: checksums, third-party notices, SBOM output,
   release notes, and reproducible build inputs.
-- After every pushed remediation, verify workflows, deployments, and open
-  code-scanning alerts with `tools\github_post_push_audit.ps1`.
+- After pushed remediations, sample the exact-SHA workflows at intermediate
+  checkpoints and retain the deployment/code-scanning audit as pending. At the
+  final acceptance checkpoint, complete workflows and run
+  `tools\github_post_push_audit.ps1`; known unresolved alerts remain failures,
+  not passed gates. Related independent work can continue while they are open.
 - For repeated scanner incidents or a requested history review, use that audit
   with `-IncludeHistory -HistoryReportPath` and a new JSON path under `out/`.
   Review all rule/state groups once; reuse the saved evidence until the affected
@@ -340,7 +343,33 @@ Guidelines, and SEI CERT C++.
 
 - Do not stop, reconfigure, or change the priority of unrelated host tasks.
 - Continue builds and correctness checks; load-based deferral applies only to
-  performance timing. Bound this task's concurrency when sharing the host.
+  performance timing. RAM admission failure is a separate safety stop: do not
+  start heavy work that cannot fit safely, and continue lighter work instead.
+- Use `tools/local_resources.ps1` for local build/check memory planning: sample
+  available physical RAM, reserve at least 2 GiB and half that available RAM,
+  and admit work only within the remaining budget. Resample between heavy checks.
+  Compiler scheduling estimates 2 GiB per job; default jobs use all logical
+  CPUs that fit that budget rather than a fixed four-job limit. Explicit
+  `CMAKE_BUILD_PARALLEL_LEVEL` values must also fit current RAM admission.
+  CMake project jobs and MSBuild compiler tasks share that admitted count, with
+  process-local build environment restored afterward. Hosted jobs use the same
+  policy instead of forcing four workers that may exceed a small runner's budget.
+  This is a planning estimate, not a hard operating-system process-memory cap.
+  Tools with native RAM limits (such as CodeQL `--ram`) must use that budget;
+  tools without such limits need streaming, memory-aware concurrency, or separate
+  process-tree memory containment before memory-heavy unattended operation.
+- Prefer `BelowNormal` priority for this task's long builds and analyses,
+  including CodeQL, without CPU affinity or fixed CPU-rate caps. The local
+  verifier lowers only its own process while invoking correctness children,
+  restores priority on success/failure, and does not lower timed benchmark lanes.
+  Windows inherits below-normal priority unless a child explicitly overrides it.
+  Do not raise processes to high/realtime priority or change unrelated tasks.
+  See [Microsoft scheduling guidance](https://learn.microsoft.com/en-us/windows/win32/procthread/scheduling-priorities)
+  and [CodeQL resource options](https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-cli-manual/database-analyze).
+- Run heavy local checks serially unless aggregate RAM admission and ownership
+  are explicitly established. CPU availability alone does not establish RAM,
+  VRAM, memory-bandwidth or storage headroom. Keep existing product resource
+  bounds and deadlines; this host policy does not alter codec correctness.
 - Benchmarks do not require an idle machine. Sample CPU, GPU engines, available
   RAM, and storage activity before and during timing. Defer or repeat a timing
   run only when competing load is a material factor, such as sustained device
@@ -786,12 +815,20 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   preserve stateful live scans and release transactions. See
   [the workflow performance review](workflow-performance-review.md).
 - After pushing, verify the remote URL does not contain credentials.
-- After pushing, follow the current plan's `workflowWaitPolicy`. Use
-  `tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode opportunistic` only
-  during intermediate commits when the plan allows deferral. Use `-Mode final`
-  before final handoff or release, and always use final mode for workflow,
-  verifier, MCP, skill, or full-escalation changes. If the verifier requires a
-  post-push audit, the final waiter runs `tools\github_post_push_audit.ps1`.
+- After pushing, choose checkpoint intent from actual remaining work, not file
+  type. When another development step is planned, use planner/verifier
+  `-Checkpoint intermediate` and `tools\wait_relevant_workflows.ps1 -Commit
+  <sha> -Mode opportunistic -IncludeLongRunning`. This one sample surfaces failures
+  and saves pending exact-SHA evidence under ignored `out/workflow-status/`.
+  Continue independent work; revisit status at a useful boundary (before depending
+  on a result, another push, or final acceptance), not on a model polling loop.
+  Workflow/verifier/MCP/skill changes and full local escalation do not force an
+  intermediate blocking wait. Never report those gates as passed prematurely.
+  At final review/handoff or release, use `-Checkpoint final` and
+  `-Mode final -FinalCommit`; the waiter includes relevant long-running checks
+  and runs `tools\github_post_push_audit.ps1` when required. Superseded intermediate
+  SHAs need no separate final wait; final evidence must cover the accepted change
+  range, not merely `HEAD~1` if earlier iteration changes remain in scope.
   The waiter must resolve short refs to full commit SHAs and pass its GitHub
   CLI preflight before polling. If `gh` is unauthenticated, unauthorized, or
   returns an error, stop and fix authentication instead of treating every
@@ -801,9 +838,9 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   ref and verify the run's head SHA; otherwise report the missing gate. Do not
   drop the selected workflow or keep waiting as though a nonexistent run were
   progressing. Release dispatch still requires its separate authorization.
-  Fuzzing is a long-running observed workflow: do not block on it during normal
-  iteration, but sample it with `-IncludeLongRunning` and wait for it with
-  `-FinalCommit` when the current commit is the final handoff or release.
+  Fuzzing is long-running: observe it during iteration, wait at final acceptance.
+  Intermediate `-Mode defer` is a compatibility alias for an opportunistic check,
+  not an unchecked skip. Final mode cannot skip a required post-push audit.
 - Release changes must keep the package x64-only, attach SHA-256 checksum files,
   and run install/repair/uninstall smoke tests before publishing.
 - Do not replace an existing GitHub release or tag by default. Release
@@ -842,8 +879,9 @@ read a paper or permission to republish its figures.
 5. Escalate automatically to `tools\verify_changes.ps1 -IncludeUntracked -Full`
    when the plan requires it, a targeted check fails, or a wider bug is
    suspected.
-6. During multi-commit work, sample relevant workflows opportunistically only
-   when the plan allows it, keep implementing while runs are active, and do not
-   report completion until the final relevant workflow wait has passed.
+6. Choose intermediate/final checkpoint intent autonomously. Sample intermediate
+   pushes once, keep implementing independent work while runs are active, and
+   retain unfinished checks/audits as pending. Use a final checkpoint for a real
+   completion/review boundary; do not infer that every progress report is one.
 7. Report what changed, what was verified, which workflows were waited for, and
    any remaining risk.
