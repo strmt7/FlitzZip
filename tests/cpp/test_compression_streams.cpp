@@ -660,6 +660,43 @@ TEST_CASE(compression_stream_zstd_reused_context_matches_one_shot) {
     }
 }
 
+// Purpose: Check bounded single-pass decoding and independence after failed jobs through the actual pinned DLL.
+// Inputs: Empty, short, and multi-block binary frames at all nine efforts, damaged framing, and short destinations.
+// Outputs: Requires runtime errors for invalid jobs followed by an independent byte-exact valid decode.
+TEST_CASE(compression_stream_zstd_block_decoder_bounds_and_roundtrip) {
+    const auto& zstd = superzip::zstd_runtime();
+    for (int level = 1; level <= 9; ++level) {
+        for (const auto size : {0U, 1U, 127U, 65553U, 1048593U, 4096U}) {
+            std::vector<std::byte> input(size);
+            std::uint32_t state = 0xB13F29A7U;
+            for (std::size_t i = 0; i < input.size(); ++i) {
+                state ^= state << 13U;
+                state ^= state >> 17U;
+                state ^= state << 5U;
+                input[i] = static_cast<std::byte>((i / 4096U) % 3U == 0U ? state & 255U : i % 97U);
+            }
+            const auto capacity = zstd.block_compress_bound(input.size());
+            REQUIRE_TRUE(!zstd.is_error(capacity));
+            std::vector<std::byte> encoded(capacity);
+            const auto written = zstd.compress_block(encoded.data(), encoded.size(), input.data(), input.size(), level);
+            REQUIRE_TRUE(!zstd.is_error(written) && written > 0U && written <= encoded.size());
+            encoded.resize(written);
+            auto damaged = encoded;
+            damaged.front() ^= std::byte{0xFF};
+            std::vector<std::byte> actual(input.size());
+            REQUIRE_TRUE(
+                zstd.is_error(zstd.decompress_block(actual.data(), actual.size(), damaged.data(), damaged.size())));
+            if (!input.empty()) {
+                REQUIRE_TRUE(zstd.is_error(
+                    zstd.decompress_block(actual.data(), actual.size() - 1U, encoded.data(), encoded.size())));
+            }
+            REQUIRE_EQ(zstd.decompress_block(actual.data(), actual.size(), encoded.data(), encoded.size()),
+                       input.size());
+            REQUIRE_EQ(actual, input);
+        }
+    }
+}
+
 // Purpose: Verify Gzip stream partitioning, effort, framing, and close behavior together.
 // Inputs: All nine levels, mixed binary writes, and empty streams.
 // Outputs: Requires consistent encoding and byte-exact decoding.

@@ -111,8 +111,8 @@ TEST_CASE(parallel_ranges_join_before_exception_escape) {
 }
 
 // Purpose: Keep complete CPU block representations identical when balanced range geometry changes context reuse.
-// Inputs: Ten mixed blocks plus a short tail; serial encoding and worker counts 2,3,4,9 at effort five.
-// Outputs: Requires identical payload/descriptors and byte-exact independent CPU materialization for every geometry.
+// Inputs: Ten mixed blocks plus a short tail; serial encoding and worker counts 1,2,3,4,9 at effort five.
+// Outputs: Requires identical payload/descriptors and exact full/selective decode without touching other block kinds.
 TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
     constexpr auto block_size = superzip::kMinArchiveBlockBytes;
     std::vector<std::byte> input(10U * block_size + 127U);
@@ -126,7 +126,9 @@ TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
     }
     superzip::ArchiveCodecOptions options{.block_size = block_size, .worker_count = 1U, .compression_level = 5};
     const auto baseline = superzip::encode_chunk_cpu(input, options);
-    for (const auto workers : {2U, 3U, 4U, 9U}) {
+    REQUIRE_TRUE(std::ranges::any_of(baseline.blocks,
+                                     [](const auto& block) { return block.kind == superzip::BlockKind::CpuZstd; }));
+    for (const auto workers : {1U, 2U, 3U, 4U, 9U}) {
         options.worker_count = workers;
         const auto encoded = superzip::encode_chunk_cpu(input, options);
         REQUIRE_EQ(encoded.payload, baseline.payload);
@@ -143,6 +145,19 @@ TEST_CASE(cpu_codec_worker_geometry_preserves_encoded_bytes) {
         std::vector<std::byte> output(input.size());
         superzip::decode_chunk_cpu(encoded.payload, encoded.blocks, output, options);
         REQUIRE_EQ(output, input);
+        std::ranges::fill(output, std::byte{0xCD});
+        superzip::decode_cpu_only_blocks_cpu(encoded.payload, encoded.blocks, output, options);
+        std::size_t offset = 0;
+        for (const auto& block : encoded.blocks) {
+            const auto count = static_cast<std::size_t>(block.uncompressed_len);
+            const auto actual = std::span(output).subspan(offset, count);
+            if (block.kind == superzip::BlockKind::CpuZstd || block.kind == superzip::BlockKind::Deflate) {
+                REQUIRE_TRUE(std::equal(actual.begin(), actual.end(), input.begin() + offset));
+            } else {
+                REQUIRE_TRUE(std::ranges::all_of(actual, [](std::byte value) { return value == std::byte{0xCD}; }));
+            }
+            offset += count;
+        }
     }
 }
 

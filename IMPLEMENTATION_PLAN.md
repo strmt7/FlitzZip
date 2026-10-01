@@ -28,6 +28,11 @@ acceptance criteria, not completed improvements or a clean security assessment.
    regressions, not benchmark alternatives. CPU search overhead, final repeated
    comparison data, hosted validation, and the scanner backlog remain separate
    gates; do not equate distinct GPU search budgets with universal distinct sizes.
+   The [decoder-context investigation](docs/benchmarks/2026-10-02-decoder-context-review.md)
+   rejected lazy heap-context reuse after 22 alternating RAM-only runs: the
+   pinned one-shot decoder already uses stack contexts, and the candidate did
+   not establish a repeatable gain. Independent-frame error and selective-decode
+   regressions are retained; the experimental runtime API is not production code.
    Native pipeline and RAM-benchmark buffer admission now share an overflow-safe
    physical-memory policy. It rejects insufficient/unknown capacity instead of
    forcing one window, and removes the benchmark's two-buffer discount.
