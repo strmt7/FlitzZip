@@ -127,6 +127,14 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - The System page GPU graph and headline value represent total system GPU engine
   utilization. VRAM total and process-dedicated VRAM remain detail rows only.
   Do not replace the GPU graph with VRAM percentage or process-only GPU usage.
+  Aggregate processes sharing a physical engine, then select the busiest engine
+  across GPUs. Never sum independent engines and cap the sum to manufacture a
+  percentage. Process benchmark percentages likewise select the busiest process
+  engine; unavailable or invalid measurements must remain unavailable.
+  VRAM capacity, free memory, adapter-wide usage, and process-dedicated usage
+  must describe the same selected HIP adapter. Match Windows counters by its
+  LUID; never sum other adapters and clamp against one device's capacity.
+  Missing adapter identity must not silently select a different GPU.
 - The System page I/O graph and headline value represent total utilization for
   the selected fixed local drive. The drive selector must enumerate only
   `DRIVE_FIXED` letters, the graph must use `LogicalDisk(<drive>)\% Disk Time`,

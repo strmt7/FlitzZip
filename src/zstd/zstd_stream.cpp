@@ -1,5 +1,7 @@
 #include "zstd/zstd_stream.hpp"
 
+#include "core/file_size.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 #include "zstd/zstd_runtime.hpp"
@@ -74,21 +76,6 @@ int zstd_compression_level(int compression_level) {
     return levels[static_cast<std::size_t>(compression_level - 1)];
 }
 
-// Purpose: Read a filesystem file size into a 64-bit archive counter.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t zstd_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read Zstandard file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("Zstandard file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
 // Purpose: Write all bytes to a binary output stream while updating a telemetry counter.
 // Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is
 // updated. Outputs: Appends bytes or throws on stream failure.
@@ -127,7 +114,7 @@ class ZstdOutputStream::Buffer final : public std::streambuf {
                     std::optional<std::uint64_t> expected_input_bytes)
         : output_(output_path, std::ios::binary | std::ios::trunc), expected_input_bytes_(expected_input_bytes) {
         if (!output_) {
-            throw ArchiveError("cannot create Zstandard stream: " + output_path.string());
+            throw ArchiveError("cannot create Zstandard stream: " + path_diagnostic_utf8(output_path));
         }
         context_.reset(zstd_.create_compression_context());
         if (context_ == nullptr) {
@@ -307,10 +294,10 @@ class ZstdInputStream::Buffer final : public std::streambuf {
     // Inputs: `archive_path` is an existing `.zst`/`.zstd` stream.
     // Outputs: Prepares the get area and decoder state, or throws on I/O/runtime failure.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : file_(archive_path, std::ios::binary), archive_size_(zstd_file_size(archive_path)),
+        : file_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)),
           compressed_remaining_(archive_size_) {
         if (!file_) {
-            throw ArchiveError("cannot open Zstandard stream: " + archive_path.string());
+            throw ArchiveError("cannot open Zstandard stream: " + path_diagnostic_utf8(archive_path));
         }
         context_.reset(zstd_.create_decompression_stream());
         if (context_ == nullptr) {
@@ -463,14 +450,23 @@ ZstdOutputStream::~ZstdOutputStream() {
     }
 }
 
+// Purpose: Finalize the Zstd output stream and close its file.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Completes framing or throws on failure; repeated successful close calls are harmless.
 void ZstdOutputStream::close() {
     buffer_->close();
 }
 
+// Purpose: Read the Zstd encoder's accepted input byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative uncompressed bytes without advancing the encoder.
 std::uint64_t ZstdOutputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Zstd encoder's written file byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative compressed bytes including framing, without advancing the encoder.
 std::uint64_t ZstdOutputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
@@ -512,6 +508,9 @@ std::uint64_t ZstdInputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Zstd decoder's produced output byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative decoded bytes, not a checksum or validation guarantee.
 std::uint64_t ZstdInputStream::output_bytes() const {
     return buffer_->output_bytes();
 }

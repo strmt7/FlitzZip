@@ -3,213 +3,21 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
-#include "core/resource_limit_checks.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_stream.hpp"
 
-#include <algorithm>
 #include <array>
 #include <chrono>
-#include <cctype>
 #include <cstdint>
 #include <fstream>
-#include <limits>
 #include <string>
-
-#include "miniz.h"
 
 namespace superzip {
 namespace {
 
 constexpr std::size_t kGzipBufferBytes = 64U * 1024U;
-constexpr std::uint8_t kGzipFlagText = 0x01U;
-constexpr std::uint8_t kGzipFlagHeaderCrc = 0x02U;
-constexpr std::uint8_t kGzipFlagExtra = 0x04U;
-constexpr std::uint8_t kGzipFlagName = 0x08U;
-constexpr std::uint8_t kGzipFlagComment = 0x10U;
-constexpr std::uint8_t kGzipReservedFlags = 0xE0U;
-
-struct GzipHeader {
-    std::uint64_t compressed_offset = 0;
-    std::uint64_t compressed_size = 0;
-    std::uint32_t expected_crc32 = 0;
-    std::uint32_t expected_isize = 0;
-};
-
-// Purpose: Convert an unsigned file offset to the signed type required by iostreams.
-// Inputs: `value` is a byte offset and `context` identifies the caller for diagnostics.
-// Outputs: Returns `value` as `std::streamoff`, or throws if the offset cannot be represented.
-std::streamoff to_streamoff(std::uint64_t value, const char* context) {
-    const auto max_streamoff = static_cast<std::uint64_t>(std::numeric_limits<std::streamoff>::max());
-    if (value > max_streamoff) {
-        throw ArchiveError(std::string(context) + " offset exceeds host stream limits");
-    }
-    return static_cast<std::streamoff>(value);
-}
-
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried or represented.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Write all bytes in a span-like buffer to a binary stream.
-// Inputs: `output` is the destination stream, `data` points to bytes, and `size` is the byte count.
-// Outputs: Appends bytes or throws on stream failure.
-void write_exact(std::ofstream& output, const unsigned char* data, std::size_t size) {
-    if (size == 0) {
-        return;
-    }
-    output.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
-    if (!output) {
-        throw ArchiveError("failed to write Gzip stream");
-    }
-}
-
-// Purpose: Read a little-endian 32-bit Gzip trailer field.
-// Inputs: `bytes` points to at least four bytes.
-// Outputs: Returns the decoded unsigned field.
-std::uint32_t read_le32(const unsigned char* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-           (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
-}
-
-// Purpose: Seek a stream to an absolute offset after bounds checking.
-// Inputs: `input` is the source stream, `offset` is the target byte position, and `context` identifies the operation.
-// Outputs: Positions the stream or throws on seek failure.
-void seek_input(std::ifstream& input, std::uint64_t offset, const char* context) {
-    input.seekg(to_streamoff(offset, context), std::ios::beg);
-    if (!input) {
-        throw ArchiveError(std::string("failed to seek Gzip ") + context);
-    }
-}
-
-// Purpose: Advance over a bounded optional Gzip header field.
-// Inputs: `input` is positioned by caller, `offset` is updated, `bytes` is the skip count, `limit` is the first
-// compressed byte limit, and `field` names the field. Outputs: Advances `offset` and stream position, or throws when
-// the field would overlap compressed data/trailer.
-void skip_header_bytes(std::ifstream& input, std::uint64_t& offset, std::uint64_t bytes, std::uint64_t limit,
-                       const char* field) {
-    if (bytes > limit - offset) {
-        throw ArchiveError(std::string("Gzip ") + field + " field exceeds header bounds");
-    }
-    offset += bytes;
-    seek_input(input, offset, field);
-}
-
-// Purpose: Skip a bounded zero-terminated optional Gzip header string.
-// Inputs: `input` is positioned at the field start, `offset` is updated, `limit` is the first compressed byte limit,
-// and `field` names the field. Outputs: Positions the stream after the terminating NUL, or throws on
-// unterminated/overlapping metadata.
-void skip_zero_terminated_header_field(std::ifstream& input, std::uint64_t& offset, std::uint64_t limit,
-                                       const char* field) {
-    while (offset < limit) {
-        char value = 0;
-        input.read(&value, 1);
-        if (!input) {
-            throw ArchiveError(std::string("failed to read Gzip ") + field + " field");
-        }
-        ++offset;
-        if (value == '\0') {
-            return;
-        }
-    }
-    throw ArchiveError(std::string("Gzip ") + field + " field is not terminated");
-}
-
-// Purpose: Parse Gzip wrapper metadata without trusting embedded names for output paths.
-// Inputs: `input` is a binary Gzip stream and `file_size` is the total archive byte count.
-// Outputs: Returns compressed payload bounds and trailer expectations, or throws on malformed wrapper data.
-GzipHeader parse_gzip_header(std::ifstream& input, std::uint64_t file_size) {
-    if (file_size < 18U) {
-        throw ArchiveError("Gzip stream is too small");
-    }
-    const std::uint64_t compressed_limit = file_size - 8U;
-
-    std::array<unsigned char, 10> header{};
-    seek_input(input, 0, "header");
-    input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
-    if (!input) {
-        throw ArchiveError("failed to read Gzip header");
-    }
-    if (header[0] != 0x1FU || header[1] != 0x8BU || header[2] != 8U) {
-        throw ArchiveError("invalid Gzip header");
-    }
-    const auto flags = header[3];
-    if ((flags & kGzipReservedFlags) != 0U) {
-        throw ArchiveError("Gzip header uses reserved flags");
-    }
-    // FTEXT is advisory only; extraction remains binary-safe regardless of it.
-
-    std::uint64_t offset = header.size();
-    if ((flags & kGzipFlagExtra) != 0U) {
-        if (compressed_limit - offset < 2U) {
-            throw ArchiveError("Gzip extra field length exceeds header bounds");
-        }
-        std::array<unsigned char, 2> extra_size{};
-        input.read(reinterpret_cast<char*>(extra_size.data()), static_cast<std::streamsize>(extra_size.size()));
-        if (!input) {
-            throw ArchiveError("failed to read Gzip extra field length");
-        }
-        offset += extra_size.size();
-        const auto bytes =
-            static_cast<std::uint64_t>(extra_size[0]) | (static_cast<std::uint64_t>(extra_size[1]) << 8U);
-        skip_header_bytes(input, offset, bytes, compressed_limit, "extra");
-    }
-    if ((flags & kGzipFlagName) != 0U) {
-        skip_zero_terminated_header_field(input, offset, compressed_limit, "name");
-    }
-    if ((flags & kGzipFlagComment) != 0U) {
-        skip_zero_terminated_header_field(input, offset, compressed_limit, "comment");
-    }
-    if ((flags & kGzipFlagHeaderCrc) != 0U) {
-        skip_header_bytes(input, offset, 2U, compressed_limit, "header CRC");
-    }
-    if (offset >= compressed_limit) {
-        throw ArchiveError("Gzip stream has no compressed payload");
-    }
-
-    std::array<unsigned char, 8> trailer{};
-    seek_input(input, compressed_limit, "trailer");
-    input.read(reinterpret_cast<char*>(trailer.data()), static_cast<std::streamsize>(trailer.size()));
-    if (!input) {
-        throw ArchiveError("failed to read Gzip trailer");
-    }
-
-    return GzipHeader{
-        .compressed_offset = offset,
-        .compressed_size = compressed_limit - offset,
-        .expected_crc32 = read_le32(trailer.data()),
-        .expected_isize = read_le32(trailer.data() + 4),
-    };
-}
-
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.gz` stream.
-// Outputs: Returns a relative archive entry name that can be passed through path safety checks.
-std::string gzip_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 3U && lower.ends_with(".gz")) {
-        filename.resize(filename.size() - 3U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
 
 // Purpose: Use the shared Gzip stream to compress one regular file before atomic publication.
 // Inputs: `source_file` is openable input, `output_archive` is the final target, `compression_level` is 1-9, `progress`
@@ -221,7 +29,7 @@ void write_gzip_archive_payload(const std::filesystem::path& source_file, const 
                                 const ProgressCallback& progress_callback) {
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Gzip source file: " + source_file.string());
+        throw ArchiveError("cannot open Gzip source file: " + path_diagnostic_utf8(source_file));
     }
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
@@ -240,7 +48,7 @@ void write_gzip_archive_payload(const std::filesystem::path& source_file, const 
                 publish_progress(progress, progress_callback);
             }
             if (input.bad() || (input.fail() && !input.eof())) {
-                throw ArchiveError("failed to read Gzip source file: " + source_file.string());
+                throw ArchiveError("failed to read Gzip source file: " + path_diagnostic_utf8(source_file));
             }
             if (input.eof()) {
                 break;
@@ -273,12 +81,12 @@ OperationStats compress_gzip_file(const std::filesystem::path& source_file, cons
     }
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("Gzip compression requires one regular file: " + source_file.string());
+        throw ArchiveError("Gzip compression requires one regular file: " + path_diagnostic_utf8(source_file));
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
         std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
-        throw SecurityError("refusing to overwrite the Gzip source file: " + output_archive.string());
+        throw SecurityError("refusing to overwrite the Gzip source file: " + path_diagnostic_utf8(output_archive));
     }
 
     const auto manifest = build_manifest({source_file});
@@ -287,7 +95,7 @@ OperationStats compress_gzip_file(const std::filesystem::path& source_file, cons
     const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
-    progress.set_current(source_file.filename().string());
+    progress.set_current(path_diagnostic_utf8(source_file.filename()));
     publish_progress(progress, progress_callback);
 
     write_gzip_archive_payload(source_file, output_archive, compression_level, progress, progress_callback);
@@ -317,125 +125,67 @@ OperationStats compress_gzip(const std::vector<std::filesystem::path>& sources,
     return compress_gzip_file(sources.front(), output_archive, compression_level, progress_callback);
 }
 
+// Purpose: Extract one Gzip member with verified framing, checksums, and UTF-8 output naming.
+// Inputs: `archive_path`, `destination`, overwrite policy, and synchronous progress callback describe the operation.
+// Outputs: Publishes the validated file and returns statistics, or throws without publishing incomplete output.
 OperationStats extract_gzip_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto archive_size = regular_file_size(archive_path);
-    std::ifstream input(archive_path, std::ios::binary);
-    if (!input) {
-        throw ArchiveError("cannot open Gzip archive: " + archive_path.string());
-    }
-    const auto header = parse_gzip_header(input, archive_size);
-    const auto entry_name = gzip_output_entry_name(archive_path);
+    GzipInputStream input(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".gz", ""}});
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing Gzip extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing Gzip extraction target: " + path_diagnostic_utf8(target));
     }
 
-    // Progress is measured against the compressed payload because wrapper and
-    // trailer bytes are parsed separately before extraction starts.
     ProgressState progress;
-    progress.start(OperationKind::Extract, header.compressed_size, 1);
+    progress.start(OperationKind::Extract, input.compressed_payload_bytes(), 1);
     progress.set_current(entry_name);
     publish_progress(progress, progress_callback);
-
-    const auto temporary = reserve_file_publish_target(target);
-    bool temporary_active = true;
-    mz_stream stream{};
-    bool stream_active = false;
-    try {
-        std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            throw ArchiveError("cannot create Gzip extraction target: " + target.string());
-        }
-        if (mz_inflateInit2(&stream, -MZ_DEFAULT_WINDOW_BITS) != MZ_OK) {
-            throw ArchiveError("failed to initialize Gzip decompressor");
-        }
-        stream_active = true;
-        seek_input(input, header.compressed_offset, "payload");
-
-        std::array<unsigned char, kGzipBufferBytes> input_buffer{};
-        std::array<unsigned char, kGzipBufferBytes> output_buffer{};
-        auto crc = static_cast<std::uint32_t>(mz_crc32(MZ_CRC32_INIT, nullptr, 0));
-        std::uint64_t output_size = 0;
-        std::uint64_t remaining = header.compressed_size;
-        int status = MZ_OK;
-
-        // Inflate only the bounded payload range described by the parsed wrapper.
-        // Any leftover deflate bytes before the trailer are treated as malformed.
-        while (remaining > 0U && status != MZ_STREAM_END) {
-            const auto to_read = static_cast<std::size_t>(std::min<std::uint64_t>(input_buffer.size(), remaining));
-            input.read(reinterpret_cast<char*>(input_buffer.data()), static_cast<std::streamsize>(to_read));
-            if (static_cast<std::size_t>(input.gcount()) != to_read) {
-                throw ArchiveError("Gzip compressed payload is truncated");
-            }
-            remaining -= to_read;
-            stream.next_in = input_buffer.data();
-            stream.avail_in = static_cast<unsigned int>(to_read);
-
-            do {
-                stream.next_out = output_buffer.data();
-                stream.avail_out = static_cast<unsigned int>(output_buffer.size());
-                status = mz_inflate(&stream, MZ_NO_FLUSH);
-                if (status != MZ_OK && status != MZ_STREAM_END) {
-                    throw ArchiveError("Gzip decompression failed");
-                }
-                const auto produced = output_buffer.size() - stream.avail_out;
-                if (produced > 0U) {
-                    crc = static_cast<std::uint32_t>(mz_crc32(crc, output_buffer.data(), produced));
-                    output_size = checked_add_extracted_output_bytes(output_size, produced, "Gzip output");
-                    write_exact(output, output_buffer.data(), produced);
-                }
-            } while ((stream.avail_out == 0U || stream.avail_in > 0U) && status != MZ_STREAM_END);
-
-            progress.add_bytes(to_read);
-            publish_progress(progress, progress_callback);
-        }
-
-        if (status != MZ_STREAM_END) {
-            throw ArchiveError("Gzip compressed payload ended before the deflate stream completed");
-        }
-        if (stream.avail_in != 0U || remaining != 0U) {
-            throw ArchiveError("Gzip stream contains trailing compressed data before the trailer");
-        }
-        mz_inflateEnd(&stream);
-        stream_active = false;
-
-        if (crc != header.expected_crc32) {
-            throw ArchiveError("Gzip CRC32 verification failed");
-        }
-        if (static_cast<std::uint32_t>(output_size & 0xFFFFFFFFULL) != header.expected_isize) {
-            throw ArchiveError("Gzip uncompressed-size verification failed");
-        }
-        // Publish only after CRC32 and ISIZE match the trailer.
-        output.close();
-        if (!output) {
-            throw ArchiveError("failed to finalize Gzip extraction target: " + target.string());
-        }
-
-        commit_verified_file(temporary, target, overwrite);
-        cleanup_file_publish_target(temporary);
-        temporary_active = false;
-        progress.finish_entry();
-        publish_progress(progress, progress_callback);
-
-        OperationStats stats;
-        stats.input_bytes = archive_size;
-        stats.output_bytes = output_size;
-        stats.entries = 1;
-        stats.gpu_used = false;
-        stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-        return stats;
-    } catch (...) {
-        if (stream_active) {
-            mz_inflateEnd(&stream);
-        }
-        if (temporary_active) {
-            cleanup_file_publish_target(temporary);
-        }
-        throw;
+    FilePublishTransaction publication(target);
+    std::ofstream output(publication.staging_path(), std::ios::binary | std::ios::trunc);
+    if (!output) {
+        throw ArchiveError("cannot create Gzip extraction target: " + path_diagnostic_utf8(target));
     }
+    std::array<char, kGzipBufferBytes> buffer{};
+    std::uint64_t reported_payload_bytes = 0;
+    for (;;) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto bytes_read = input.gcount();
+        if (bytes_read > 0) {
+            output.write(buffer.data(), bytes_read);
+            if (!output) {
+                throw ArchiveError("failed to write Gzip extraction target: " + path_diagnostic_utf8(target));
+            }
+        }
+        const auto payload_read = input.compressed_payload_read_bytes();
+        progress.add_bytes(payload_read - reported_payload_bytes);
+        reported_payload_bytes = payload_read;
+        publish_progress(progress, progress_callback);
+        if (input.bad()) {
+            throw ArchiveError("failed to read Gzip stream");
+        }
+        if (input.eof()) {
+            break;
+        }
+    }
+    input.finish();
+    output.close();
+    if (!output) {
+        throw ArchiveError("failed to finalize Gzip extraction target: " + path_diagnostic_utf8(target));
+    }
+    publication.commit(overwrite);
+    progress.finish_entry();
+    publish_progress(progress, progress_callback);
+
+    OperationStats stats;
+    stats.input_bytes = input.input_bytes();
+    stats.output_bytes = input.output_bytes();
+    stats.entries = 1;
+    stats.gpu_used = false;
+    stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return stats;
 }
 
 }  // namespace superzip

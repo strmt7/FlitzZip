@@ -737,12 +737,20 @@ function Test-InstallerScopePolicy {
 }
 
 # Purpose: Keep standalone sanitizer targets linked to publication dependencies and make Docker failures fatal.
-# Inputs: Reads the local fuzz driver, ClusterFuzzLite build script, and CMake fuzz target declarations.
+# Inputs: Reads the local fuzz driver and seed script, ClusterFuzzLite build script, and CMake fuzz targets.
 # Outputs: Throws when a publication-enabled fuzzer omits source identity support or native failures can be masked.
 function Test-FuzzHarnessPolicy {
     $fuzzScript = Get-Content -LiteralPath (Join-Path $repo "tools\fuzz.ps1") -Raw
     if ($fuzzScript -notmatch 'if\s*\(\$LASTEXITCODE\s+-ne\s+0\)\s*\{\s*throw') {
         throw "tools/fuzz.ps1 must convert a failed Docker build or smoke run into a failing PowerShell exit."
+    }
+    if ($fuzzScript -notmatch 'bash \.clusterfuzzlite/local_smoke\.sh \$fuzzRuns' -or
+        $fuzzScript -match 'bash\s+-lc\s+\$script') {
+        throw "The local fuzz driver must execute a mounted script, not pass script text through native quoting."
+    }
+    $seedScript = Get-Content -LiteralPath (Join-Path $repo ".clusterfuzzlite\local_smoke.sh") -Raw
+    if ($seedScript.Contains("`r") -or $seedScript -notmatch 'ET\.fromstring\(toc\)') {
+        throw "The local fuzz seed script must use LF and validate its XAR XML before fuzzing."
     }
 
     $clusterBuild = Get-Content -LiteralPath (Join-Path $repo ".clusterfuzzlite\build.sh") -Raw

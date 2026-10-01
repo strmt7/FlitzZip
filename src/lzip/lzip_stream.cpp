@@ -1,6 +1,8 @@
 #include "lzip/lzip_stream.hpp"
+#include "lzma/bounded_sdk_allocator.hpp"
 
 #include "core/checksum.hpp"
+#include "core/file_size.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -8,7 +10,6 @@
 #include <array>
 #include <cstdint>
 #include <exception>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -16,7 +17,6 @@
 #include <span>
 #include <streambuf>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 extern "C" {
@@ -35,28 +35,6 @@ constexpr std::uint64_t kMaxLzipDictionaryBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaxLzipDecoderAllocationBytes = kMaxLzipDictionaryBytes + 16ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaxLzipMemberBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr Byte kLzipDefaultLzmaProperty = 0x5DU;
-
-struct LzipAllocationBudget {
-    std::uint64_t current_bytes = 0;
-    std::unordered_map<void*, std::size_t> allocations;
-};
-
-thread_local std::shared_ptr<LzipAllocationBudget> g_lzip_allocation_budget;
-
-// Purpose: Read a filesystem file size into a 64-bit archive counter.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t lzip_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read lzip file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("lzip file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
 
 // Purpose: Convert an LZMA SDK status to an actionable lzip diagnostic.
 // Inputs: `result` is returned by the LZMA SDK C API.
@@ -161,80 +139,13 @@ std::array<Byte, LZMA_PROPS_SIZE> lzip_lzma_properties(std::uint32_t dictionary_
     };
 }
 
-// Purpose: Allocate bounded memory for the LZMA SDK decoder.
-// Inputs: `size` is the SDK allocation request.
-// Outputs: Returns a zero-initialized C-heap allocation or null when the request exceeds policy.
-void* lzip_alloc(ISzAllocPtr, std::size_t size) {
-    const auto bytes = size == 0U ? 1U : size;
-    const auto budget = g_lzip_allocation_budget;
-    if (budget &&
-        (bytes > kMaxLzipDecoderAllocationBytes || budget->current_bytes > kMaxLzipDecoderAllocationBytes - bytes)) {
-        return nullptr;
-    }
-    void* allocation = std::calloc(1U, bytes);
-    if (allocation == nullptr) {
-        return nullptr;
-    }
-    if (!budget) {
-        return allocation;
-    }
-    try {
-        budget->allocations.emplace(allocation, bytes);
-        budget->current_bytes += static_cast<std::uint64_t>(bytes);
-    } catch (...) {
-        std::free(allocation);
-        return nullptr;
-    }
-    return allocation;
-}
-
-// Purpose: Free memory allocated by `lzip_alloc`.
-// Inputs: `address` is null or a pointer returned by the SDK allocator.
-// Outputs: Releases memory and updates the active bounded allocation budget.
-void lzip_free(ISzAllocPtr, void* address) {
-    if (address == nullptr) {
-        return;
-    }
-    const auto budget = g_lzip_allocation_budget;
-    if (budget) {
-        const auto it = budget->allocations.find(address);
-        if (it != budget->allocations.end()) {
-            budget->current_bytes -= static_cast<std::uint64_t>(it->second);
-            budget->allocations.erase(it);
-        }
-    }
-    std::free(address);
-}
-
-class ScopedLzipAllocationBudget {
-  public:
-    // Purpose: Install a bounded allocation budget for SDK callbacks on the current thread.
-    // Inputs: None.
-    // Outputs: Restores any previous allocator budget when destroyed.
-    ScopedLzipAllocationBudget() : previous_(std::move(g_lzip_allocation_budget)) {
-        g_lzip_allocation_budget = std::make_shared<LzipAllocationBudget>();
-    }
-
-    ScopedLzipAllocationBudget(const ScopedLzipAllocationBudget&) = delete;
-    ScopedLzipAllocationBudget& operator=(const ScopedLzipAllocationBudget&) = delete;
-
-    // Purpose: Restore the prior thread-local allocator budget.
-    // Inputs: None.
-    // Outputs: Leaves the current thread in its previous allocator state.
-    ~ScopedLzipAllocationBudget() {
-        g_lzip_allocation_budget = std::move(previous_);
-    }
-
-  private:
-    std::shared_ptr<LzipAllocationBudget> previous_;
-};
-
 class ScopedLzipDecoder {
   public:
     // Purpose: Allocate an LZMA decoder for one lzip member.
-    // Inputs: `properties` are the synthesized LZMA property bytes from the lzip header.
+    // Inputs: `properties` are synthesized header properties; `allocator` outlives this member decoder.
     // Outputs: Owns initialized SDK decoder state or throws on unsupported properties/allocation limits.
-    explicit ScopedLzipDecoder(const std::array<Byte, LZMA_PROPS_SIZE>& properties) {
+    ScopedLzipDecoder(const std::array<Byte, LZMA_PROPS_SIZE>& properties, BoundedSdkAllocator& allocator)
+        : allocator_(allocator) {
         LzmaDec_Construct(&decoder_);
         throw_on_lzip_lzma_error(LzmaDec_Allocate(&decoder_, properties.data(), LZMA_PROPS_SIZE, &allocator_),
                                  "lzip LZMA decoder allocation failed");
@@ -262,7 +173,7 @@ class ScopedLzipDecoder {
     }
 
   private:
-    ISzAlloc allocator_{lzip_alloc, lzip_free};
+    BoundedSdkAllocator& allocator_;
     CLzmaDec decoder_{};
     bool allocated_ = false;
 };
@@ -275,9 +186,9 @@ class LzipInputStream::Buffer final : public std::streambuf {
     // Inputs: archive_path is the untrusted lzip source path.
     // Outputs: Initializes an empty get area or throws ArchiveError if the source cannot be opened.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(lzip_file_size(archive_path)) {
+        : input_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)) {
         if (!input_) {
-            throw ArchiveError("cannot open lzip stream: " + archive_path.string());
+            throw ArchiveError("cannot open lzip stream: " + path_diagnostic_utf8(archive_path));
         }
         setg(reinterpret_cast<char*>(output_buffer_.data()), reinterpret_cast<char*>(output_buffer_.data()),
              reinterpret_cast<char*>(output_buffer_.data()));
@@ -392,7 +303,7 @@ class LzipInputStream::Buffer final : public std::streambuf {
         }
 
         const auto dictionary_size = decode_lzip_dictionary_size(header[5]);
-        decoder_ = std::make_unique<ScopedLzipDecoder>(lzip_lzma_properties(dictionary_size));
+        decoder_ = std::make_unique<ScopedLzipDecoder>(lzip_lzma_properties(dictionary_size), allocation_budget_);
         current_crc32_ = 0;
         current_output_size_ = 0;
         member_active_ = true;
@@ -497,7 +408,7 @@ class LzipInputStream::Buffer final : public std::streambuf {
     std::exception_ptr failure_;
     std::uint64_t archive_size_ = 0;
     std::uint64_t output_bytes_ = 0;
-    ScopedLzipAllocationBudget allocation_budget_;
+    BoundedSdkAllocator allocation_budget_{kMaxLzipDecoderAllocationBytes};
     std::unique_ptr<ScopedLzipDecoder> decoder_;
     bool source_finished_ = false;
     bool finished_ = false;
@@ -532,6 +443,9 @@ std::uint64_t LzipInputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Lzip decoder's produced output byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative decoded bytes, not a checksum or validation guarantee.
 std::uint64_t LzipInputStream::output_bytes() const {
     return buffer_->output_bytes();
 }

@@ -81,10 +81,9 @@ set(SUPERZIP_WIX_UPGRADE_GUID "8E0D80F6-859D-4FE9-B082-F0D8048A8B57")
 string(
   CONCAT SUPERZIP_WIX_PRODUCT_CODE_SEED "SuperZip MSI ProductCode "
          "${SUPERZIP_PACKAGE_NUMERIC_VERSION} "
-         "${SUPERZIP_MSI_INSTALL_SCOPE} "
-         "${SUPERZIP_MSI_PRODUCT_IDENTITY}")
+         "${SUPERZIP_MSI_INSTALL_SCOPE} " "${SUPERZIP_MSI_PRODUCT_IDENTITY}")
 string(SHA256 SUPERZIP_WIX_PRODUCT_CODE_HASH
-       "${SUPERZIP_WIX_UPGRADE_GUID}|${SUPERZIP_WIX_PRODUCT_CODE_SEED}")
+              "${SUPERZIP_WIX_UPGRADE_GUID}|${SUPERZIP_WIX_PRODUCT_CODE_SEED}")
 string(SUBSTRING "${SUPERZIP_WIX_PRODUCT_CODE_HASH}" 0 8
                  SUPERZIP_WIX_PRODUCT_GUID_A)
 string(SUBSTRING "${SUPERZIP_WIX_PRODUCT_CODE_HASH}" 8 4
@@ -95,10 +94,9 @@ string(SUBSTRING "${SUPERZIP_WIX_PRODUCT_CODE_HASH}" 16 4
                  SUPERZIP_WIX_PRODUCT_GUID_D)
 string(SUBSTRING "${SUPERZIP_WIX_PRODUCT_CODE_HASH}" 20 12
                  SUPERZIP_WIX_PRODUCT_GUID_E)
-string(
-  CONCAT SUPERZIP_WIX_PRODUCT_GUID "${SUPERZIP_WIX_PRODUCT_GUID_A}-"
-         "${SUPERZIP_WIX_PRODUCT_GUID_B}-${SUPERZIP_WIX_PRODUCT_GUID_C}-"
-         "${SUPERZIP_WIX_PRODUCT_GUID_D}-${SUPERZIP_WIX_PRODUCT_GUID_E}")
+string(CONCAT SUPERZIP_WIX_PRODUCT_GUID "${SUPERZIP_WIX_PRODUCT_GUID_A}-"
+              "${SUPERZIP_WIX_PRODUCT_GUID_B}-${SUPERZIP_WIX_PRODUCT_GUID_C}-"
+              "${SUPERZIP_WIX_PRODUCT_GUID_D}-${SUPERZIP_WIX_PRODUCT_GUID_E}")
 string(TOUPPER "${SUPERZIP_WIX_PRODUCT_GUID}" SUPERZIP_WIX_PRODUCT_GUID)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -113,10 +111,8 @@ add_library(
                third_party/miniz/miniz_tinfl.c third_party/miniz/miniz_zip.c)
 target_include_directories(miniz PUBLIC third_party/miniz)
 target_compile_definitions(
-  miniz
-  PRIVATE _CRT_SECURE_NO_WARNINGS
-          MZ_ZIP_MAX_READER_FILES=250000U
-          MZ_ZIP_MAX_READER_METADATA_SIZE=268435456ULL)
+  miniz PRIVATE _CRT_SECURE_NO_WARNINGS MZ_ZIP_MAX_READER_FILES=250000U
+                MZ_ZIP_MAX_READER_METADATA_SIZE=268435456ULL)
 
 add_library(
   bzip2 STATIC
@@ -262,29 +258,35 @@ if(WIN32)
   endif()
   if(NOT EXISTS "${SUPERZIP_ZSTD_RUNTIME_CMAKE}")
     message(
-      FATAL_ERROR
-        "Pinned Zstandard source was not found after extraction: "
-        "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
+      FATAL_ERROR "Pinned Zstandard source was not found after extraction: "
+                  "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
   endif()
-  # Build the upstream C library without its CLI/test/assembler project.
-  # MSVC uses the portable decoder; upstream disables its GNU assembly here.
+  # Build the upstream C library without its CLI/test/assembler project. MSVC
+  # uses the portable decoder; upstream disables its GNU assembly here.
   set(SUPERZIP_ZSTD_LIBRARY_DIR "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/lib")
-  file(GLOB SUPERZIP_ZSTD_SOURCES CONFIGURE_DEPENDS
-       "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/*.c"
-       "${SUPERZIP_ZSTD_LIBRARY_DIR}/compress/*.c"
-       "${SUPERZIP_ZSTD_LIBRARY_DIR}/decompress/*.c"
-       "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/*.c"
-       "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/*.c")
+  file(
+    GLOB
+    SUPERZIP_ZSTD_SOURCES
+    CONFIGURE_DEPENDS
+    "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/*.c"
+    "${SUPERZIP_ZSTD_LIBRARY_DIR}/compress/*.c"
+    "${SUPERZIP_ZSTD_LIBRARY_DIR}/decompress/*.c"
+    "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/*.c"
+    "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/*.c")
   set(SUPERZIP_ZSTD_RESOURCE
       "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/build/VS2010/libzstd-dll")
   add_library(libzstd_shared SHARED ${SUPERZIP_ZSTD_SOURCES}
-              "${SUPERZIP_ZSTD_RESOURCE}/libzstd-dll.rc")
-  target_include_directories(libzstd_shared PRIVATE
-                             "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+                                    "${SUPERZIP_ZSTD_RESOURCE}/libzstd-dll.rc")
+  target_include_directories(libzstd_shared
+                             PRIVATE "${SUPERZIP_ZSTD_LIBRARY_DIR}")
   target_compile_definitions(
     libzstd_shared
-    PRIVATE ZSTD_MULTITHREAD ZSTD_DLL_EXPORT=1 ZSTD_DISABLE_ASM
-            ZSTD_HEAPMODE=0 ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_
+    PRIVATE ZSTD_MULTITHREAD
+            ZSTD_DLL_EXPORT=1
+            ZSTD_DISABLE_ASM
+            ZSTD_HEAPMODE=0
+            ZSTD_LEGACY_SUPPORT=5
+            XXH_NAMESPACE=ZSTD_
             _CRT_SECURE_NO_WARNINGS)
   set_target_properties(libzstd_shared PROPERTIES OUTPUT_NAME libzstd)
   set(SUPERZIP_ZSTD_RUNTIME_DLL "$<TARGET_FILE:libzstd_shared>")
@@ -294,16 +296,18 @@ if(WIN32)
       "${SUPERZIP_ZSTD_RUNTIME_HASH_DIR}/zstd_runtime_identity.hpp")
   add_custom_command(
     OUTPUT "${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
-    COMMAND "${CMAKE_COMMAND}" "-DRUNTIME_DLL=${SUPERZIP_ZSTD_RUNTIME_DLL}"
-            "-DOUTPUT_HEADER=${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteRuntimeIdentity.cmake"
+    COMMAND
+      "${CMAKE_COMMAND}" "-DRUNTIME_DLL=${SUPERZIP_ZSTD_RUNTIME_DLL}"
+      "-DOUTPUT_HEADER=${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}" -P
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteRuntimeIdentity.cmake"
     DEPENDS libzstd_shared
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteRuntimeIdentity.cmake"
     COMMENT "Embedding the built Zstandard runtime identity"
     VERBATIM)
-  add_custom_target(superzip_zstd_runtime_identity
-                    DEPENDS "${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
-                    COMMENT "Preparing Zstandard runtime identity")
+  add_custom_target(
+    superzip_zstd_runtime_identity
+    DEPENDS "${SUPERZIP_ZSTD_RUNTIME_HASH_HEADER}"
+    COMMENT "Preparing Zstandard runtime identity")
   if(NOT EXISTS "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
     message(FATAL_ERROR "Bundled wimlib runtime package is missing: "
                         "${SUPERZIP_WIMLIB_RUNTIME_PACKAGE}")
@@ -380,6 +384,7 @@ add_library(
   src/cab/cab_adapter.cpp
   src/cab/cab_format.cpp
   src/core/archive.cpp
+  src/core/decoded_chunk.cpp
   src/core/archive_encode_batch.cpp
   src/core/archive_format.cpp
   src/core/archive_blocks.cpp
@@ -438,11 +443,11 @@ target_compile_definitions(
     SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256="${SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256}")
 if(WIN32)
   add_dependencies(superzip_core superzip_zstd_runtime_identity)
-  target_include_directories(superzip_core PRIVATE
-                             "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
+  target_include_directories(
+    superzip_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
 else()
-  target_compile_definitions(superzip_core PRIVATE
-                              SUPERZIP_ZSTD_RUNTIME_DLL_SHA256="")
+  target_compile_definitions(superzip_core
+                             PRIVATE SUPERZIP_ZSTD_RUNTIME_DLL_SHA256="")
 endif()
 target_compile_definitions(superzip_core PRIVATE XZ_DEC_CONCATENATED
                                                  XZ_USE_CRC64)
@@ -540,9 +545,9 @@ if(SUPERZIP_ENABLE_HIP)
       VERBATIM)
   endfunction()
 
-  superzip_compile_hip_object(src/gpu/hip_codec.hip.cpp
-                              "${SUPERZIP_HIP_CODEC_OBJECT}"
-                              "Compiling AMD HIP codec object")
+  superzip_compile_hip_object(
+    src/gpu/hip_codec.hip.cpp "${SUPERZIP_HIP_CODEC_OBJECT}"
+    "Compiling AMD HIP codec object")
   superzip_compile_hip_object(
     src/gpu/hip_codec_static_prefix.hip.cpp
     "${SUPERZIP_HIP_STATIC_PREFIX_OBJECT}"
@@ -554,12 +559,10 @@ if(SUPERZIP_ENABLE_HIP)
   file(GLOB_RECURSE SUPERZIP_ROCPRIM_HEADERS CONFIGURE_DEPENDS
        "${SUPERZIP_HIP_PATH}/include/rocprim/*.hpp")
   superzip_compile_hip_object(
-    src/gpu/hip_dictionary_matcher.hip.cpp
-    "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
+    src/gpu/hip_dictionary_matcher.hip.cpp "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
     "Compiling AMD HIP dictionary codec object" ${SUPERZIP_ROCPRIM_HEADERS})
   superzip_compile_hip_object(
-    src/gpu/hip_sparse_pattern.hip.cpp
-    "${SUPERZIP_HIP_SPARSE_OBJECT}"
+    src/gpu/hip_sparse_pattern.hip.cpp "${SUPERZIP_HIP_SPARSE_OBJECT}"
     "Compiling AMD HIP sparse-pattern codec object")
   set(SUPERZIP_HIP_OBJECTS
       "${SUPERZIP_HIP_CODEC_OBJECT}" "${SUPERZIP_HIP_STATIC_PREFIX_OBJECT}"
@@ -666,33 +669,32 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
                  "${CMAKE_CURRENT_BINARY_DIR}/SuperZip.manifest" @ONLY)
 
   add_executable(
-    SuperZip
-      WIN32
-      src/app/main.cpp
-      src/app/main_window.cpp
-      src/app/main_window_archive_support.cpp
-      src/app/main_window_commands.cpp
-      src/app/main_window_controls.cpp
-      src/app/main_window_dragdrop.cpp
-      src/app/main_window_dropdowns.cpp
-      src/app/main_window_extract_jobs.cpp
-      src/app/main_window_focus.cpp
-      src/app/main_window_folder_size.cpp
-      src/app/main_window_queue_metadata.cpp
-      src/app/queue_metadata.cpp
-      src/app/main_window_input.cpp
-      src/app/main_window_layout.cpp
-      src/app/form_layout.cpp
-      src/app/main_window_license_dialog.cpp
-      src/app/main_window_monitor.cpp
-      src/app/main_window_page_clicks.cpp
-      src/app/main_window_pages.cpp
-      src/app/main_window_queue_interaction.cpp
-      src/app/main_window_render_support.cpp
-      src/app/main_window_settings_timers.cpp
-      src/app/main_window_shell_render.cpp
-      src/app/main_window_startup_support.cpp
-      src/app/SuperZip.rc)
+    SuperZip WIN32
+    src/app/main.cpp
+    src/app/main_window.cpp
+    src/app/main_window_archive_support.cpp
+    src/app/main_window_commands.cpp
+    src/app/main_window_controls.cpp
+    src/app/main_window_dragdrop.cpp
+    src/app/main_window_dropdowns.cpp
+    src/app/main_window_extract_jobs.cpp
+    src/app/main_window_focus.cpp
+    src/app/main_window_folder_size.cpp
+    src/app/main_window_queue_metadata.cpp
+    src/app/queue_metadata.cpp
+    src/app/main_window_input.cpp
+    src/app/main_window_layout.cpp
+    src/app/form_layout.cpp
+    src/app/main_window_license_dialog.cpp
+    src/app/main_window_monitor.cpp
+    src/app/main_window_page_clicks.cpp
+    src/app/main_window_pages.cpp
+    src/app/main_window_queue_interaction.cpp
+    src/app/main_window_render_support.cpp
+    src/app/main_window_settings_timers.cpp
+    src/app/main_window_shell_render.cpp
+    src/app/main_window_startup_support.cpp
+    src/app/SuperZip.rc)
   add_dependencies(SuperZip superzip_brand_logo_header
                    superzip_license_notices_header)
   target_include_directories(SuperZip PRIVATE "${SUPERZIP_GENERATED_DIR}")
@@ -721,8 +723,27 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
 endif()
 
 if(WIN32)
-  target_link_libraries(superzip_core PUBLIC advapi32 bcrypt cabinet ole32
-                                               shell32 wintrust)
+  target_link_libraries(
+    superzip_core
+    PUBLIC advapi32
+           bcrypt
+           cabinet
+           ole32
+           shell32
+           wintrust
+           version)
+  if(MSVC)
+    # One inherited platform contract keeps CLI, GUI, and tests out of Windows
+    # version-compatibility shims.
+    set(SUPERZIP_WINDOWS_MANIFEST
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/core/windows-compatibility.manifest")
+    target_link_options(superzip_core INTERFACE "/MANIFEST:EMBED"
+                        "/MANIFESTINPUT:${SUPERZIP_WINDOWS_MANIFEST}")
+    set_property(
+      TARGET superzip_core
+      APPEND
+      PROPERTY INTERFACE_LINK_DEPENDS "${SUPERZIP_WINDOWS_MANIFEST}")
+  endif()
 endif()
 
 if(SUPERZIP_BUILD_TESTS)
@@ -742,6 +763,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_bzip2_compat.cpp
     tests/cpp/test_compression_streams.cpp
     tests/cpp/test_gpu_telemetry.cpp
+    tests/cpp/test_windows_compatibility.cpp
     tests/cpp/test_gpu_block_batch.cpp
     tests/cpp/test_cab_compat.cpp
     tests/cpp/test_compat_compression_levels.cpp

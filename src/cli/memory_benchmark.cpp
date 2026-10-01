@@ -2,6 +2,8 @@
 
 #include "core/checksum.hpp"
 #include "core/archive_index.hpp"
+#include "core/decoded_chunk.hpp"
+#include "core/worker_budget.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
 
@@ -186,11 +188,7 @@ std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers) {
 // workload chunk count.
 // Outputs: Returns at least one codec worker per chunk, using more workers only when fewer chunks can be active.
 std::uint32_t resolve_memory_codec_workers(std::uint32_t workers, std::uint32_t inflight, std::size_t chunk_count) {
-    const auto active_windows = std::max<std::uint32_t>(
-        1U, std::min<std::uint32_t>(inflight, static_cast<std::uint32_t>(std::min<std::size_t>(
-                                                  chunk_count, std::numeric_limits<std::uint32_t>::max()))));
-    return std::max<std::uint32_t>(1U,
-                                   std::min<std::uint32_t>(workers, (workers + active_windows - 1U) / active_windows));
+    return superzip::resolve_codec_worker_count(workers, inflight, chunk_count);
 }
 
 // Purpose: Generate a deterministic random-looking byte from a virtual workload offset.
@@ -503,8 +501,10 @@ void flush_one_memory_crc(std::deque<PendingMemoryCrc>& pending_crc, const std::
                                                          chunk.uncompressed_size, cpu_options);
         std::string location;
         if (profile == "RepeatedRecord" && cpu_crc.crc32 != chunk.crc32) {
-            std::vector<std::byte> decoded(static_cast<std::size_t>(chunk.uncompressed_size));
-            (void)superzip::decode_chunk(chunk.encoded.payload, chunk.encoded.blocks, decoded, cpu_options);
+            const auto owner =
+                superzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
+                                             static_cast<std::size_t>(chunk.uncompressed_size), cpu_options);
+            const auto decoded = owner.bytes();
             std::size_t bad_count = 0;
             std::size_t last_bad = 0;
             for (std::size_t offset = 0; offset < decoded.size(); ++offset) {
@@ -585,21 +585,17 @@ void extract_memory_benchmark_archive(const std::vector<MemoryArchiveChunk>& arc
     for (std::size_t index = 0; index < archive.size(); ++index) {
         pending_decode.push_back(PendingMemoryDecode{
             .index = index,
-            .result = std::async(
-                std::launch::async,
-                [&archive, index, codec_options] {
-                    const auto& chunk = archive[index];
-                    std::vector<std::byte> decoded(static_cast<std::size_t>(chunk.uncompressed_size));
-                    const bool decoded_on_gpu = superzip::decode_chunk(
-                        std::span<const std::byte>(chunk.encoded.payload.data(), chunk.encoded.payload.size()),
-                        std::span<const superzip::BlockDescriptor>(chunk.encoded.blocks.data(),
-                                                                   chunk.encoded.blocks.size()),
-                        std::span<std::byte>(decoded.data(), decoded.size()), codec_options);
-                    return MemoryDecodeResult{
-                        .crc32 = superzip::crc32(std::span<const std::byte>(decoded.data(), decoded.size())),
-                        .gpu_used = decoded_on_gpu,
-                    };
-                }),
+            .result = std::async(std::launch::async,
+                                 [&archive, index, codec_options] {
+                                     const auto& chunk = archive[index];
+                                     const auto decoded = superzip::decode_owned_chunk(
+                                         chunk.encoded.payload, chunk.encoded.blocks,
+                                         static_cast<std::size_t>(chunk.uncompressed_size), codec_options);
+                                     return MemoryDecodeResult{
+                                         .crc32 = decoded.crc32,
+                                         .gpu_used = decoded.gpu_used,
+                                     };
+                                 }),
         });
         if (pending_decode.size() >= inflight) {
             flush_one_memory_decode(pending_decode, archive, result);
@@ -719,7 +715,8 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes << " output_bytes=" << stats.output_bytes
         << " archive_bytes=" << result.archive_bytes << " workers=" << stats.workers
         << " inflight_chunks=" << stats.inflight_chunks << " codec_workers=" << result.codec_workers
-        << " block_size_bytes=" << result.block_size << " compression_level=" << result.compression_level
+        << " decode_inflight_chunks=" << result.decode_inflight_chunks << " block_size_bytes=" << result.block_size
+        << " decode_codec_workers=" << result.decode_codec_workers << " compression_level=" << result.compression_level
         << " gpu_used=" << (stats.gpu_used ? "true" : "false")
         << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
         << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
@@ -727,6 +724,8 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
         << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
         << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
+        << " gpu_host_pinned_allocation_bytes=" << stats.gpu_runtime.host_pinned_allocation_bytes
+        << " gpu_host_pinned_output_bytes=" << stats.gpu_runtime.host_pinned_output_bytes
         << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
         << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
         << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
@@ -783,7 +782,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
                                                       superzip::kMaxArchiveChunkBytes);
     const auto codec_workers = resolve_memory_codec_workers(workers, inflight, chunk_count);
     auto telemetry = std::make_shared<superzip::GpuTelemetry>();
-    const superzip::GpuCodecOptions codec_options{
+    superzip::GpuCodecOptions codec_options{
         .require_gpu = options.require_gpu,
         .force_cpu = options.force_cpu,
         .block_size = options.block_size,
@@ -797,6 +796,10 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.stats.workers = workers;
     result.stats.inflight_chunks = inflight;
     result.codec_workers = codec_workers;
+    result.decode_inflight_chunks =
+        superzip::resolve_owned_decode_inflight(inflight, superzip::kMaxArchiveChunkBytes, codec_options);
+    result.decode_codec_workers =
+        superzip::resolve_codec_worker_count(workers, result.decode_inflight_chunks, chunk_count);
     result.block_size = options.block_size;
     result.compression_level = options.compression_level;
     superzip::ArchiveIndex modeled_index;
@@ -829,7 +832,17 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
         phase_started = std::chrono::steady_clock::now();
-        extract_memory_benchmark_archive(archive, inflight, codec_options, result);
+        if (codec_options.require_gpu && !codec_options.host_output_pool) {
+            codec_options.host_output_pool = superzip::make_owned_decode_pool(codec_options);
+        }
+        {
+            auto decode_options = codec_options;
+            decode_options.worker_count = result.decode_codec_workers;
+            extract_memory_benchmark_archive(archive, result.decode_inflight_chunks, decode_options, result);
+        }
+        if (offset + current_window == total_bytes) {
+            codec_options.host_output_pool.reset();
+        }
         result.extract_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
         offset += current_window;

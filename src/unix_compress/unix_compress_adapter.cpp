@@ -3,6 +3,8 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
@@ -34,21 +36,6 @@ constexpr std::uint32_t kClearCode = 256U;
 constexpr std::uint32_t kFirstBlockCode = 257U;
 constexpr std::uint32_t kFirstNonBlockCode = 256U;
 constexpr std::uint32_t kMaxDictionaryEntries = 1U << kMaxBits;
-
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
 
 // Purpose: Write all bytes in a buffer to a binary stream.
 // Inputs: `output` is the destination stream and `bytes` is the payload to append.
@@ -296,24 +283,6 @@ class UnixCompressCodeReader {
     int bits_in_byte_ = 8;
 };
 
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.Z` stream.
-// Outputs: Returns a relative archive entry name that can pass path-safety checks.
-std::string unix_compress_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 2U && lower.ends_with(".z")) {
-        filename.resize(filename.size() - 2U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
-
 // Purpose: Expand one LZW code into a byte sequence.
 // Inputs: `code` is the requested code, `next_code` bounds valid dictionary entries, and `prefix`/`suffix` store the
 // dictionary.
@@ -397,7 +366,7 @@ UnixCompressStreamHeader read_unix_compress_header(std::ifstream& input, const s
         throw ArchiveError("Unix Compress header has unsupported maxbits");
     }
     if (!input.good() && !input.eof()) {
-        throw ArchiveError("cannot open Unix Compress archive: " + archive_path.string());
+        throw ArchiveError("cannot open Unix Compress archive: " + path_diagnostic_utf8(archive_path));
     }
     return UnixCompressStreamHeader{
         .block_mode = (header[2] & kBlockModeFlag) != 0U,
@@ -633,7 +602,7 @@ void encode_unix_compress_payload(std::ifstream& input, std::ofstream& output, P
             publish_progress(progress, progress_callback);
         }
         if (input.bad()) {
-            throw ArchiveError("failed to read Unix Compress source file: " + source_file.string());
+            throw ArchiveError("failed to read Unix Compress source file: " + path_diagnostic_utf8(source_file));
         }
         if (input.eof()) {
             break;
@@ -657,12 +626,13 @@ OperationStats compress_unix_compress_file(const std::filesystem::path& source_f
                                            const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("Unix Compress requires one regular file: " + source_file.string());
+        throw ArchiveError("Unix Compress requires one regular file: " + path_diagnostic_utf8(source_file));
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
         std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
-        throw SecurityError("refusing to overwrite the Unix Compress source file: " + output_archive.string());
+        throw SecurityError("refusing to overwrite the Unix Compress source file: " +
+                            path_diagnostic_utf8(output_archive));
     }
 
     const auto manifest = build_manifest({source_file});
@@ -671,26 +641,26 @@ OperationStats compress_unix_compress_file(const std::filesystem::path& source_f
     const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
-    progress.set_current(source_file.filename().string());
+    progress.set_current(path_diagnostic_utf8(source_file.filename()));
     publish_progress(progress, progress_callback);
 
     // Write to a verified temporary path first; a malformed stream or I/O error
     // must not replace an existing archive target.
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Unix Compress source file: " + source_file.string());
+        throw ArchiveError("cannot open Unix Compress source file: " + path_diagnostic_utf8(source_file));
     }
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create Unix Compress archive: " + output_archive.string());
+            throw ArchiveError("cannot create Unix Compress archive: " + path_diagnostic_utf8(output_archive));
         }
         encode_unix_compress_payload(input, output, progress, progress_callback, source_file);
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize Unix Compress archive: " + output_archive.string());
+            throw ArchiveError("failed to finalize Unix Compress archive: " + path_diagnostic_utf8(output_archive));
         }
 
         commit_verified_file(temporary, output_archive, true);
@@ -739,17 +709,18 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
 
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Unix Compress archive: " + archive_path.string());
+        throw ArchiveError("cannot open Unix Compress archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto stream = read_unix_compress_header(input, archive_path, archive_size);
 
     // `.Z` streams have no embedded trusted filename; derive one safe member
     // name from the host archive path and validate it through the shared join.
-    const auto entry_name = unix_compress_output_entry_name(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".z", ""}});
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing Unix Compress extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing Unix Compress extraction target: " +
+                            path_diagnostic_utf8(target));
     }
 
     const auto temporary = reserve_file_publish_target(target);
@@ -758,7 +729,7 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create Unix Compress extraction target: " + target.string());
+            throw ArchiveError("cannot create Unix Compress extraction target: " + path_diagnostic_utf8(target));
         }
 
         ProgressState progress;
@@ -770,7 +741,7 @@ OperationStats extract_unix_compress_file(const std::filesystem::path& archive_p
 
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize Unix Compress extraction target: " + target.string());
+            throw ArchiveError("failed to finalize Unix Compress extraction target: " + path_diagnostic_utf8(target));
         }
         // Publish only after the whole LZW stream has decoded without dictionary
         // violations.

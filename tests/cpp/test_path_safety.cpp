@@ -1,5 +1,7 @@
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/path_text.hpp"
 #include "core/result.hpp"
 #include "test_util.hpp"
@@ -733,4 +735,51 @@ TEST_CASE(directory_publish_preflights_overwrite_conflicts) {
     std::ifstream input(destination / "b.txt", std::ios::binary);
     REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
                std::string("existing"));
+}
+
+// Purpose: Preserve single-stream suffix semantics without interpreting Unicode bytes as ANSI text.
+// Inputs: Native Unicode paths, uppercase aliases, hidden names, and unrecognized suffixes.
+// Outputs: Requires exact UTF-8 names, preserved lzip TAR aliases, and rejection of unsafe output names.
+TEST_CASE(single_stream_names_preserve_suffix_and_path_safety_rules) {
+    const auto unicode = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6");
+    const auto expected = superzip::path_diagnostic_utf8(unicode);
+    for (const auto* suffix : {".gz", ".bz2", ".xz", ".lzma", ".zst", ".zstd", ".z"}) {
+        auto archive = unicode;
+        archive += std::string(".bin") + suffix;
+        REQUIRE_EQ(superzip::single_stream_entry_name(archive, {{suffix, ""}}), expected + ".bin");
+    }
+    REQUIRE_EQ(superzip::single_stream_entry_name("payload.TAR.LZ", {{".tlz", ".tar"}, {".lz", ""}}),
+               std::string("payload.TAR"));
+    REQUIRE_EQ(superzip::single_stream_entry_name("payload.TLZ", {{".tlz", ".tar"}, {".lz", ""}}),
+               std::string("payload.tar"));
+    REQUIRE_EQ(superzip::single_stream_entry_name(".gz", {{".gz", ""}}), std::string(".gz"));
+    REQUIRE_EQ(superzip::single_stream_entry_name("", {{".gz", ""}}), std::string("payload"));
+    REQUIRE_EQ(superzip::single_stream_entry_name("payload.other", {{".gz", ""}}), std::string("payload"));
+    for (const auto* unsafe : {"CON.gz", "NUL.zst", "payload .bz2"}) {
+        bool refused = false;
+        try {
+            (void)superzip::single_stream_entry_name(unsafe, {{".gz", ""}, {".zst", ""}, {".bz2", ""}});
+        } catch (const superzip::SecurityError&) {
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+    }
+}
+
+// Purpose: Keep file-size failures in the archive exception domain for non-ANSI native paths.
+// Inputs: A missing Unicode filename and then a created file at the same test-owned path.
+// Outputs: Requires an exact UTF-8 error diagnostic and accurate size when the file exists.
+TEST_CASE(regular_file_size_preserves_unicode_error_diagnostics) {
+    const auto root = test_temp_dir("unicode-file-size");
+    const auto path = root / std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.bin");
+    bool refused = false;
+    try {
+        (void)superzip::regular_file_size(path);
+    } catch (const superzip::ArchiveError& error) {
+        refused = true;
+        REQUIRE_EQ(std::string(error.what()), "cannot read file size: " + superzip::path_diagnostic_utf8(path));
+    }
+    REQUIRE_TRUE(refused);
+    std::ofstream(path, std::ios::binary) << "size";
+    REQUIRE_EQ(superzip::regular_file_size(path), std::uint64_t{4});
 }

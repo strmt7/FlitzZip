@@ -2,6 +2,8 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 #include "xz/xz_stream.hpp"
@@ -21,39 +23,6 @@ namespace {
 
 constexpr std::size_t kXzBufferBytes = 64U * 1024U;
 
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.xz` stream.
-// Outputs: Returns a relative archive entry name that can pass path-safety checks.
-std::string xz_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 3U && lower.ends_with(".xz")) {
-        filename.resize(filename.size() - 3U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
-
 }  // namespace
 
 // Purpose: Decode one XZ compatibility stream into a verified output file.
@@ -65,11 +34,11 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
                                bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
-    const auto entry_name = xz_output_entry_name(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".xz", ""}});
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing XZ extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing XZ extraction target: " + path_diagnostic_utf8(target));
     }
 
     ProgressState progress;
@@ -84,7 +53,7 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
         XzInputStream input(archive_path);
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create XZ extraction target: " + target.string());
+            throw ArchiveError("cannot create XZ extraction target: " + path_diagnostic_utf8(target));
         }
 
         std::array<char, kXzBufferBytes> buffer{};
@@ -96,7 +65,7 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
                                                                  "XZ output");
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
-                    throw ArchiveError("failed to write XZ extraction target: " + target.string());
+                    throw ArchiveError("failed to write XZ extraction target: " + path_diagnostic_utf8(target));
                 }
             }
         }
@@ -106,7 +75,7 @@ OperationStats extract_xz_file(const std::filesystem::path& archive_path, const 
 
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize XZ extraction target: " + target.string());
+            throw ArchiveError("failed to finalize XZ extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

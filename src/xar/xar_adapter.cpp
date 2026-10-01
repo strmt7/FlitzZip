@@ -518,7 +518,7 @@ void finalize_xar_file(std::vector<XarFileContext>& stack, XarMetadata& metadata
 // Purpose: Apply decoded XML text to the active XAR file context.
 // Inputs: `tag` is the current element name, `text` is raw XML character data, `stack` contains active files, and
 // `metadata` owns aggregate path accounting.
-// Outputs: Mutates the current context for supported fields.
+// Outputs: Mutates supported fields; XAR data length is stored bytes and size is decoded bytes.
 void apply_xar_text(std::string_view tag, std::string_view text, std::vector<XarFileContext>& stack,
                     XarMetadata& metadata) {
     if (stack.empty()) {
@@ -543,13 +543,13 @@ void apply_xar_text(std::string_view tag, std::string_view text, std::vector<Xar
         if (current.has_size || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
             throw ArchiveError("XAR payload size metadata is duplicate or oversized");
         }
-        current.compressed_size = parse_decimal_u64(text, "payload encoded size");
+        current.size = parse_decimal_u64(text, "payload decoded size");
         current.has_size = true;
     } else if (current.in_data && tag == "length") {
         if (current.has_length || trim_ascii(text).size() > kMaxXarScalarTextBytes) {
             throw ArchiveError("XAR payload length metadata is duplicate or oversized");
         }
-        current.size = parse_decimal_u64(text, "payload decoded length");
+        current.compressed_size = parse_decimal_u64(text, "payload encoded length");
         current.has_length = true;
     }
 }

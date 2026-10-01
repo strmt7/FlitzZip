@@ -72,6 +72,9 @@ function Assert-GuiSystemQueueContract {
     if ($SourceText -cmatch 'vram_span') {
         throw "System GPU graph must plot total GPU utilization, not VRAM history."
     }
+    if (-not $SourceText.Contains('system_gpu_utilization(samples)')) {
+        throw "System GPU utilization must use the regression-tested physical-engine aggregation."
+    }
     if (-not $SourceText.Contains('current_user_downloads_directory')) {
         throw "GUI destination defaults must resolve the current user's Downloads folder instead of process cwd."
     }
@@ -270,9 +273,12 @@ function Assert-GuiFormatTelemetryLicenseContract {
         throw "System graphs must render in CPU, GPU, RAM, I/O order with the I/O drive selector on the I/O card."
     }
     if (-not $SourceText.Contains('sample_total_dedicated_vram_used_bytes') -or
+        -not $SourceText.Contains('selected_gpu_memory_usage(samples, *adapter_luid, process_id)') -or
+        -not $SourceText.Contains('cached_gpu_adapter_luid_ = info.adapter_luid') -or
         -not $SourceText.Contains('reconcile_vram_usage') -or
-        -not (Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/cpp/test_resource_usage.cpp')).Contains('vram_reconciliation_keeps_process_usage_under_total_usage')) {
-        throw "VRAM total/dedicated display must use centralized, tested Windows dedicated-memory reconciliation."
+        -not (Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/cpp/test_resource_usage.cpp')).Contains('vram_reconciliation_keeps_process_usage_under_total_usage') -or
+        -not (Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/cpp/test_resource_usage.cpp')).Contains('selected_gpu_memory_matches_adapter_and_process_identity')) {
+        throw "VRAM total/dedicated display must match the selected HIP adapter identity and use tested reconciliation."
     }
 }
 

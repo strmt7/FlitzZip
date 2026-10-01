@@ -4,6 +4,8 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
@@ -21,39 +23,6 @@ namespace {
 
 constexpr std::size_t kBzip2BufferBytes = 64U * 1024U;
 
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.bz2` stream.
-// Outputs: Returns a relative archive entry name that can pass path-safety checks.
-std::string bzip2_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 4U && lower.ends_with(".bz2")) {
-        filename.resize(filename.size() - 4U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
-
 }  // namespace
 
 // Purpose: Create one `.bz2` stream from one regular file with bounded libbzip2 compression.
@@ -68,12 +37,12 @@ OperationStats compress_bzip2_file(const std::filesystem::path& source_file,
     }
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("Bzip2 compression requires one regular file: " + source_file.string());
+        throw ArchiveError("Bzip2 compression requires one regular file: " + path_diagnostic_utf8(source_file));
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
         std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
-        throw SecurityError("refusing to overwrite the Bzip2 source file: " + output_archive.string());
+        throw SecurityError("refusing to overwrite the Bzip2 source file: " + path_diagnostic_utf8(output_archive));
     }
 
     const auto manifest = build_manifest({source_file});
@@ -82,12 +51,12 @@ OperationStats compress_bzip2_file(const std::filesystem::path& source_file,
     const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
-    progress.set_current(source_file.filename().string());
+    progress.set_current(path_diagnostic_utf8(source_file.filename()));
     publish_progress(progress, progress_callback);
 
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Bzip2 source file: " + source_file.string());
+        throw ArchiveError("cannot open Bzip2 source file: " + path_diagnostic_utf8(source_file));
     }
     const auto temporary = reserve_file_publish_target(output_archive);
     bool temporary_active = true;
@@ -101,13 +70,13 @@ OperationStats compress_bzip2_file(const std::filesystem::path& source_file,
             if (bytes_read > 0U) {
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
-                    throw ArchiveError("failed to write Bzip2 archive: " + output_archive.string());
+                    throw ArchiveError("failed to write Bzip2 archive: " + path_diagnostic_utf8(output_archive));
                 }
                 progress.add_bytes(bytes_read);
                 publish_progress(progress, progress_callback);
             }
             if (input.bad()) {
-                throw ArchiveError("failed to read Bzip2 source file: " + source_file.string());
+                throw ArchiveError("failed to read Bzip2 source file: " + path_diagnostic_utf8(source_file));
             }
             if (input.eof()) {
                 break;
@@ -154,11 +123,11 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
                                   bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
-    const auto entry_name = bzip2_output_entry_name(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".bz2", ""}});
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing Bzip2 extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing Bzip2 extraction target: " + path_diagnostic_utf8(target));
     }
 
     ProgressState progress;
@@ -173,7 +142,7 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
         Bzip2InputStream input(archive_path);
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create Bzip2 extraction target: " + target.string());
+            throw ArchiveError("cannot create Bzip2 extraction target: " + path_diagnostic_utf8(target));
         }
 
         std::array<char, kBzip2BufferBytes> buffer{};
@@ -185,7 +154,7 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
                                                                  "Bzip2 output");
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
-                    throw ArchiveError("failed to write Bzip2 extraction target: " + target.string());
+                    throw ArchiveError("failed to write Bzip2 extraction target: " + path_diagnostic_utf8(target));
                 }
             }
         }
@@ -195,7 +164,7 @@ OperationStats extract_bzip2_file(const std::filesystem::path& archive_path, con
 
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize Bzip2 extraction target: " + target.string());
+            throw ArchiveError("failed to finalize Bzip2 extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

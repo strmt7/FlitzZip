@@ -238,10 +238,12 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
     HipDeviceBuffer<DeviceBlock> device_candidates(candidate_table_bytes, "hipMalloc encode candidates");
     HipDeviceBuffer<std::uint32_t> device_mismatches(mismatch_table_bytes, "hipMalloc encode mismatches");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    check_hip(hipMemcpy(device_candidates.get(), candidates.data(), candidate_table_bytes, hipMemcpyHostToDevice),
-              "hipMemcpy encode candidates");
+    check_hip(
+        copy_on_codec_stream(device_candidates.get(), candidates.data(), candidate_table_bytes, hipMemcpyHostToDevice),
+        "hipMemcpy encode candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_table_bytes));
-    check_hip(hipMemset(device_mismatches.get(), 0, mismatch_table_bytes), "hipMemset encode mismatches");
+    check_hip(hipMemsetAsync(device_mismatches.get(), 0, mismatch_table_bytes, hipStreamPerThread),
+              "hipMemset encode mismatches");
     const auto segments_per_block = static_cast<std::uint32_t>(
         (static_cast<std::uint64_t>(block_size) + kAnalyzeSegmentBytes - 1U) / kAnalyzeSegmentBytes);
     const auto grid64 = static_cast<std::uint64_t>(segments_per_block) * block_count;
@@ -254,8 +256,9 @@ std::vector<std::uint32_t> verify_encode_analysis_candidates_device(const std::b
                            input_len, device_candidates.get(), device_mismatches.get(), block_count,
                            segments_per_block);
     finish_measured_kernel(telemetry, events, "synchronize verify_analysis_candidates_kernel");
-    check_hip(hipMemcpy(mismatches.data(), device_mismatches.get(), mismatch_table_bytes, hipMemcpyDeviceToHost),
-              "hipMemcpy encode mismatches");
+    check_hip(
+        copy_on_codec_stream(mismatches.data(), device_mismatches.get(), mismatch_table_bytes, hipMemcpyDeviceToHost),
+        "hipMemcpy encode mismatches");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(mismatch_table_bytes));
     device_candidates.reset_checked("hipFree encode candidates");
     device_mismatches.reset_checked("hipFree encode mismatches");
@@ -764,7 +767,7 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
     finish_measured_kernel(telemetry, events, "synchronize crc32_segments_kernel");
 
     std::vector<DeviceCrcSegment> host_segments(segments);
-    check_hip(hipMemcpy(host_segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(host_segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy CRC segments");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
     device_segments.reset_checked("hipFree CRC segments");
@@ -798,7 +801,7 @@ std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_in
     HipDeviceBuffer<CrcInputRange> device_ranges(range_bytes, "hipMalloc batch CRC ranges");
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc batch CRC results");
     record_gpu_device_allocation_bytes(telemetry, total_bytes);
-    check_hip(hipMemcpy(device_ranges.get(), ranges.data(), range_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_ranges.get(), ranges.data(), range_bytes, hipMemcpyHostToDevice),
               "hipMemcpy batch CRC ranges");
     record_gpu_h2d_bytes(telemetry, range_bytes);
     const auto count = static_cast<std::uint32_t>(ranges.size());
@@ -810,7 +813,7 @@ std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_in
                            count);
     finish_measured_kernel(telemetry, events, "synchronize independent CRC kernel");
     std::vector<DeviceCrcSegment> segments(count);
-    check_hip(hipMemcpy(segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy independent CRC results");
     record_gpu_d2h_bytes(telemetry, segment_bytes);
     device_ranges.reset_checked("hipFree batch CRC ranges");
@@ -852,7 +855,7 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     finish_measured_kernel(telemetry, events, "synchronize decoded_crc32_segments_kernel");
 
     std::vector<DeviceCrcSegment> host_segments(segments);
-    check_hip(hipMemcpy(host_segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(host_segments.data(), device_segments.get(), segment_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy decoded CRC segments");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
     device_segments.reset_checked("hipFree decoded CRC segments");
@@ -998,7 +1001,7 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
     HipDeviceBuffer<PrefixDecodeSegment> device_plans(plan_bytes, "hipMalloc prefix decode plans");
     HipDeviceBuffer<std::uint32_t> device_errors(error_bytes, "hipMalloc prefix decode errors");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    check_hip(hipMemcpy(device_plans.get(), plans.data(), plan_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_plans.get(), plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix decode plans");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
     auto events = make_hip_event_pair("create materialize_prefix_segments_kernel events");
@@ -1011,7 +1014,7 @@ void materialize_prefix_segments_device(const std::byte* device_payload, std::by
                            device_errors.get());
     finish_measured_kernel(telemetry, events, "synchronize materialize_prefix_segments_kernel");
     std::vector<std::uint32_t> errors(plans.size());
-    check_hip(hipMemcpy(errors.data(), device_errors.get(), error_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(errors.data(), device_errors.get(), error_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy prefix decode errors");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(error_bytes));
     if (std::ranges::any_of(errors, [](std::uint32_t error) { return error != 0U; })) {
@@ -1044,11 +1047,11 @@ std::uint32_t compute_materialized_crc32_device(std::span<const std::byte> paylo
     HipDeviceBuffer<DeviceBlock> device_blocks(block_table_bytes, "hipMalloc prefix CRC blocks");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
     if (!payload.empty()) {
-        check_hip(hipMemcpy(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
+        check_hip(copy_on_codec_stream(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
                   "hipMemcpy prefix CRC payload");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload.size()));
     }
-    check_hip(hipMemcpy(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix CRC blocks");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
     materialize_non_prefix_segments_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
@@ -1104,7 +1107,8 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
     HipDeviceBuffer<std::uint32_t> device_data(static_cast<std::size_t>(bytes), "hipMalloc diagnostic data");
     HipDeviceBuffer<unsigned long long> device_partials(partial_bytes, "hipMalloc diagnostic partials");
     {
-        check_hip(hipMemcpy(device_data.get(), host.data(), static_cast<std::size_t>(bytes), hipMemcpyHostToDevice),
+        check_hip(copy_on_codec_stream(device_data.get(), host.data(), static_cast<std::size_t>(bytes),
+                                       hipMemcpyHostToDevice),
                   "hipMemcpy diagnostic input");
 
         GpuDiagnosticResult result;
@@ -1135,7 +1139,7 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
         result.kernel_launches = timing_stats.kernel_launches;
 
         std::vector<unsigned long long> partials(blocks);
-        check_hip(hipMemcpy(partials.data(), device_partials.get(), partial_bytes, hipMemcpyDeviceToHost),
+        check_hip(copy_on_codec_stream(partials.data(), device_partials.get(), partial_bytes, hipMemcpyDeviceToHost),
                   "hipMemcpy diagnostic partials");
         result.d2h_bytes = static_cast<std::uint64_t>(partial_bytes);
         result.checksum = std::accumulate(partials.begin(), partials.end(), 0ULL);
@@ -1178,7 +1182,8 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     HipDeviceBuffer<std::byte> device_input(input.size(), "hipMalloc input");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
     {
-        check_hip(hipMemcpy(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice), "hipMemcpy input");
+        check_hip(copy_on_codec_stream(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice),
+                  "hipMemcpy input");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
         std::uint32_t source_crc32 = 0;
         if (block_crcs != nullptr) {
@@ -1321,11 +1326,11 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
     HipDeviceBuffer<DeviceBlock> device_blocks(block_table_bytes, "hipMalloc decode blocks");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
     if (!payload.empty()) {
-        check_hip(hipMemcpy(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
+        check_hip(copy_on_codec_stream(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
                   "hipMemcpy payload");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload.size()));
     }
-    check_hip(hipMemcpy(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
               "hipMemcpy decode blocks");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
     materialize_non_prefix_segments_device(device_payload.get(), device_blocks.get(), host_blocks, device_output.get(),
@@ -1334,7 +1339,8 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
                                       telemetry);
     materialize_prefix_segments_device(device_payload.get(), device_output.get(), prefix_plans, telemetry);
     dictionary::decode_segments_device(device_payload.get(), dictionary_plans, device_output.get(), telemetry);
-    check_hip(hipMemcpy(output.data(), device_output.get(), output.size(), hipMemcpyDeviceToHost), "hipMemcpy output");
+    check_hip(copy_on_codec_stream(output.data(), device_output.get(), output.size(), hipMemcpyDeviceToHost),
+              "hipMemcpy output");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(output.size()));
     device_payload.reset_checked("hipFree payload");
     device_output.reset_checked("hipFree output");
@@ -1378,7 +1384,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
         HipDeviceMemoryReservation reservation(payload_bytes, "CRC raw payload");
         HipDeviceBuffer<std::byte> device_payload(payload_bytes, "hipMalloc CRC raw payload");
         record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(payload_bytes));
-        check_hip(hipMemcpy(device_payload.get(), payload.data(), payload_bytes, hipMemcpyHostToDevice),
+        check_hip(copy_on_codec_stream(device_payload.get(), payload.data(), payload_bytes, hipMemcpyHostToDevice),
                   "hipMemcpy CRC raw payload");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload_bytes));
         const auto crc =
@@ -1398,11 +1404,11 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     HipDeviceBuffer<DeviceBlock> device_blocks(block_table_bytes, "hipMalloc CRC decode blocks");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
     if (!payload.empty()) {
-        check_hip(hipMemcpy(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
+        check_hip(copy_on_codec_stream(device_payload.get(), payload.data(), payload.size(), hipMemcpyHostToDevice),
                   "hipMemcpy CRC payload");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(payload.size()));
     }
-    check_hip(hipMemcpy(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_blocks.get(), host_blocks.data(), block_table_bytes, hipMemcpyHostToDevice),
               "hipMemcpy CRC decode blocks");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(block_table_bytes));
 

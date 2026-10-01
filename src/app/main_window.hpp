@@ -1333,7 +1333,7 @@ class MainWindow {
     // Outputs: Returns dedicated GPU memory bytes or zero when the counter is unavailable.
     [[nodiscard]] std::uint64_t sample_process_dedicated_vram_bytes() const;
 
-    // Purpose: Sample total Windows dedicated GPU memory currently used by all processes/adapters.
+    // Purpose: Sample Windows dedicated GPU memory used by all processes on the selected HIP adapter.
     // Inputs: None; uses Windows PDH GPU Adapter Memory counters without mutating app state.
     // Outputs: Returns dedicated VRAM usage bytes, or zero when Windows does not expose the counter.
     [[nodiscard]] std::uint64_t sample_total_dedicated_vram_used_bytes() const;
@@ -1499,6 +1499,7 @@ class MainWindow {
     FILETIME last_system_user_time_{};
     std::uint64_t cached_vram_total_bytes_ = 0;
     std::uint64_t cached_vram_free_bytes_ = 0;
+    std::optional<std::uint64_t> cached_gpu_adapter_luid_;
     std::wstring last_clock_text_;
     PDH_HQUERY gpu_query_ = nullptr;
     PDH_HCOUNTER gpu_counter_ = nullptr;

@@ -4,6 +4,7 @@
 
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
+#include "core/path_text.hpp"
 #include "lzip/lzip_adapter.hpp"
 #include "lzip/lzip_stream.hpp"
 #include "tar/tar_adapter.hpp"
@@ -13,6 +14,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <future>
 #include <string>
 #include <vector>
 
@@ -100,6 +103,45 @@ std::vector<unsigned char> single_lzip_bytes() {
 
 }  // namespace
 
+// Purpose: Preserve real lzip decoding with interleaved streams and sequential cross-thread ownership.
+// Inputs: Two independent stream objects over one verified fixture; the first is destroyed out of open order.
+// Outputs: Requires exact payload and trailer verification after the remaining stream is handed to another thread.
+TEST_CASE(lzip_interleaved_streams_allow_sequential_thread_handoff) {
+    const auto root = test_temp_dir("lzip-stream-owner");
+    const auto archive = root / "payload.lz";
+    write_fixture(archive, kSingleFileLzipFixture);
+    {
+        auto first = std::make_unique<superzip::LzipInputStream>(archive);
+        auto second = std::make_unique<superzip::LzipInputStream>(archive);
+        REQUIRE_EQ(first->get(), static_cast<int>('S'));
+        REQUIRE_EQ(second->get(), static_cast<int>('S'));
+        first.reset();
+        auto decoded = std::async(std::launch::async, [&] {
+            const std::string payload{std::istreambuf_iterator<char>(*second), std::istreambuf_iterator<char>()};
+            second->finish();
+            return payload;
+        });
+        REQUIRE_EQ(decoded.get(), "uperZip lzip fixture payload.\nSecond line.\n");
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Report the actual missing lzip source instead of masking it with an ANSI conversion failure.
+// Inputs: A nonexistent archive path containing supplementary Unicode characters.
+// Outputs: Requires an ArchiveError containing the exact UTF-8 diagnostic path.
+TEST_CASE(lzip_missing_unicode_source_reports_original_error) {
+    const auto root = test_temp_dir("lzip-missing-unicode");
+    const auto archive = root / std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.lz");
+    bool rejected = false;
+    try {
+        superzip::LzipInputStream input(archive);
+    } catch (const superzip::ArchiveError& error) {
+        rejected = std::string(error.what()) == "cannot read file size: " + superzip::path_diagnostic_utf8(archive);
+    }
+    REQUIRE_TRUE(rejected);
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Reject a failed lzip trailer even when later bytes could satisfy a retried validation.
 // Inputs: A CRC-corrupted member followed by a compensating trailer with the larger member size.
 // Outputs: Requires no output, overwrite preservation, compressed-TAR rejection, and sticky decoder errors.
@@ -155,6 +197,28 @@ TEST_CASE(lzip_extracts_single_file_fixture) {
     REQUIRE_EQ(stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_EQ(read_text_file(output / "payload.txt"), "SuperZip lzip fixture payload.\nSecond line.\n");
     superzip_test::export_compat_fixture(archive, output);
+}
+
+// Purpose: Preserve native Unicode filenames while extracting independent lzip fixtures.
+// Inputs: A bounded upstream-compatible fixture with an uppercase suffix and a Unicode host filename.
+// Outputs: Requires exact restored bytes and overwrite refusal without encoding errors.
+TEST_CASE(lzip_unicode_archive_filename_extracts) {
+    const auto root = test_temp_dir("lzip-unicode-name");
+    const auto filename = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.txt");
+    auto archive = root / filename;
+    archive += ".LZ";
+    write_fixture(archive, kSingleFileLzipFixture);
+    const auto output = root / "out";
+    (void)superzip::extract_lzip_file(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / filename), "SuperZip lzip fixture payload.\nSecond line.\n");
+    bool refused = false;
+    try {
+        (void)superzip::extract_lzip_file(archive, output, false);
+    } catch (const superzip::SecurityError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_EQ(read_text_file(output / filename), "SuperZip lzip fixture payload.\nSecond line.\n");
 }
 
 // Purpose: Verify concatenated lzip members decode as one continuous single-file payload.

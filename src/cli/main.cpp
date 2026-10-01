@@ -155,6 +155,8 @@ void print_stats(const superzip::OperationStats& stats) {
               << " gpu_kernel_ms=" << stats.gpu_runtime.kernel_ms << " gpu_h2d_bytes=" << stats.gpu_runtime.h2d_bytes
               << " gpu_d2h_bytes=" << stats.gpu_runtime.d2h_bytes
               << " gpu_device_allocation_bytes=" << stats.gpu_runtime.device_allocation_bytes
+              << " gpu_host_pinned_allocation_bytes=" << stats.gpu_runtime.host_pinned_allocation_bytes
+              << " gpu_host_pinned_output_bytes=" << stats.gpu_runtime.host_pinned_output_bytes
               << " gpu_pattern_blocks=" << stats.gpu_runtime.pattern_blocks
               << " gpu_prefix_blocks=" << stats.gpu_runtime.prefix_blocks
               << " gpu_dictionary_blocks=" << stats.gpu_runtime.dictionary_blocks
@@ -252,6 +254,9 @@ void print_gpu_info(const superzip::GpuInfo& info) {
     std::cout << "hip_compiled=" << (info.hip_compiled ? "true" : "false") << "\n";
     std::cout << "hip_runtime_loadable=" << (info.hip_runtime_loadable ? "true" : "false") << "\n";
     std::cout << "hip_runtime_name=" << info.runtime_name << "\n";
+    std::cout << "hip_runtime_version=" << superzip::hip_runtime_version_text(info.runtime_version) << "\n";
+    std::cout << "hip_stream_ordered_allocator_supported="
+              << (info.stream_ordered_allocator_supported ? "true" : "false") << "\n";
     std::cout << "available=" << (info.available ? "true" : "false") << "\n";
     std::cout << "device_count=" << info.device_count << "\n";
     std::cout << "selected_device=" << info.selected_device << "\n";
@@ -269,6 +274,7 @@ void print_gpu_diagnostic(const superzip::GpuDiagnosticResult& result) {
     std::cout << "hip_compiled=" << (result.info.hip_compiled ? "true" : "false") << "\n";
     std::cout << "hip_runtime_loadable=" << (result.info.hip_runtime_loadable ? "true" : "false") << "\n";
     std::cout << "hip_runtime_name=" << result.info.runtime_name << "\n";
+    std::cout << "hip_runtime_version=" << superzip::hip_runtime_version_text(result.info.runtime_version) << "\n";
     std::cout << "available=" << (result.info.available ? "true" : "false") << "\n";
     std::cout << "device_name=" << result.info.device_name << "\n";
     std::cout << "gcn_arch=" << result.info.gcn_arch << "\n";

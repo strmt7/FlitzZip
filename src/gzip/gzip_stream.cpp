@@ -1,5 +1,7 @@
 #include "gzip/gzip_stream.hpp"
 
+#include "core/file_size.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
@@ -42,21 +44,6 @@ void checked_add_stream_bytes(std::uint64_t& total, std::uint64_t bytes, const c
         throw ArchiveError(std::string(context) + " byte count overflows");
     }
     total += bytes;
-}
-
-// Purpose: Read a filesystem file size into a 64-bit archive counter.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t gzip_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read Gzip file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("Gzip file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
 }
 
 // Purpose: Write all bytes to a binary output stream while updating a telemetry counter.
@@ -231,7 +218,7 @@ class GzipOutputStream::Buffer final : public std::streambuf {
     explicit Buffer(const std::filesystem::path& output_path, int compression_level)
         : output_(output_path, std::ios::binary | std::ios::trunc) {
         if (!output_) {
-            throw ArchiveError("cannot create Gzip stream: " + output_path.string());
+            throw ArchiveError("cannot create Gzip stream: " + path_diagnostic_utf8(output_path));
         }
         const std::array<unsigned char, 10> header{0x1F, 0x8B, 8U, 0U, 0U, 0U, 0U, 0U, 0U, 255U};
         write_counted(output_, header.data(), header.size(), output_bytes_);
@@ -382,9 +369,9 @@ class GzipInputStream::Buffer final : public std::streambuf {
     // Inputs: `archive_path` is an existing `.gz` stream with a validated header/trailer.
     // Outputs: Prepares the get area and decompressor state, or throws on I/O/format failure.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(gzip_file_size(archive_path)) {
+        : input_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)) {
         if (!input_) {
-            throw ArchiveError("cannot open Gzip stream: " + archive_path.string());
+            throw ArchiveError("cannot open Gzip stream: " + path_diagnostic_utf8(archive_path));
         }
         header_ = parse_gzip_stream_header(input_, archive_size_);
         seek_gzip_input(input_, header_.compressed_offset, "payload");
@@ -420,6 +407,20 @@ class GzipInputStream::Buffer final : public std::streambuf {
     // Outputs: Returns the `.gz` file byte size.
     [[nodiscard]] std::uint64_t input_bytes() const {
         return archive_size_;
+    }
+
+    // Purpose: Expose the validated compressed-payload bound for progress reporting.
+    // Inputs: None.
+    // Outputs: Returns deflate payload bytes, excluding optional header fields and the trailer.
+    [[nodiscard]] std::uint64_t compressed_payload_bytes() const {
+        return header_.compressed_size;
+    }
+
+    // Purpose: Expose compressed payload bytes fetched by the decoder.
+    // Inputs: None.
+    // Outputs: Returns total payload bytes less the unread source range, including buffered input.
+    [[nodiscard]] std::uint64_t compressed_payload_read_bytes() const {
+        return header_.compressed_size - compressed_remaining_;
     }
 
     // Purpose: Report uncompressed bytes produced by the inflater.
@@ -555,14 +556,23 @@ GzipOutputStream::~GzipOutputStream() {
     }
 }
 
+// Purpose: Finalize the Gzip output stream and close its file.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Completes framing or throws on failure; repeated successful close calls are harmless.
 void GzipOutputStream::close() {
     buffer_->close();
 }
 
+// Purpose: Read the Gzip encoder's accepted input byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative uncompressed bytes without advancing the encoder.
 std::uint64_t GzipOutputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Gzip encoder's written file byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative compressed bytes including framing, without advancing the encoder.
 std::uint64_t GzipOutputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
@@ -578,6 +588,9 @@ GzipInputStream::GzipInputStream(const std::filesystem::path& archive_path)
 
 GzipInputStream::~GzipInputStream() = default;
 
+// Purpose: Drain remaining Gzip input and require successful trailer validation.
+// Inputs: None; previous decoder failures remain terminal.
+// Outputs: Finishes validation and clears stream flags on success, or rethrows a decode/verification failure.
 void GzipInputStream::finish() {
     buffer_->finish();
     clear();
@@ -587,8 +600,25 @@ std::uint64_t GzipInputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Gzip decoder's produced output byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative decoded bytes, not a checksum or validation guarantee.
 std::uint64_t GzipInputStream::output_bytes() const {
     return buffer_->output_bytes();
+}
+
+// Purpose: Read the stream's bounded deflate-payload length for extraction progress.
+// Inputs: None.
+// Outputs: Returns compressed bytes without header/trailer framing.
+std::uint64_t GzipInputStream::compressed_payload_bytes() const {
+    return buffer_->compressed_payload_bytes();
+}
+
+// Purpose: Read the stream's cumulative compressed-payload input count.
+// Inputs: None.
+// Outputs: Returns bytes fetched into the decoder buffer; does not advance decoding.
+std::uint64_t GzipInputStream::compressed_payload_read_bytes() const {
+    return buffer_->compressed_payload_read_bytes();
 }
 
 }  // namespace superzip

@@ -90,6 +90,85 @@ Security tab or a published release.
    remain explicit. Paired diagnostic verification gains do not establish
    faster compression kernels or a general application speedup; see
    [the measured scope](docs/benchmarks/2026-09-30-crc-readiness.md).
+   The latest review consolidates ten standalone file-size readers, seven
+   filename-derived output policies, Gzip single-file/container decoding, and
+   bounded Base64/UUencode/XXEncode line I/O. Unicode filename and overwrite
+   regressions cover all seven affected compressed single-file readers.
+   UUencode now rejects trailing data on zero-length terminators before output
+   publication. Native index path budgets are enforced before allocation/I/O.
+   Required-HIP copies use the same per-thread stream as their kernels while
+   retaining synchronous host-buffer lifetimes. The benchmark and System GUI
+   now select the busiest GPU engine rather than summing independent engines;
+   the GUI first combines processes sharing a physical engine. Benchmark
+   schema two identifies the corrected process metric without rewriting old
+   records. A 54-run RAM-only sweep confirms unchanged encoded sizes and zero
+   archive disk writes; GPU extraction remains slower than CPU in these
+   profiles, and mixed-profile timing drift requires follow-up. These are not
+   universal speed claims or completed all-format performance comparisons.
+   Native comparison rounds now alternate CPU/GPU order and record their
+   configurable pause outside the timed command; a pause is not evidence that
+   thermal or resource drift has been eliminated.
+   The runtime/allocation review now records the exact loaded HIP file version
+   and shares the Windows compatibility manifest across CLI, GUI, and tests.
+   Combined-device-allocation and zero-retention stream-allocator candidates
+   passed selected correctness checks but regressed against matched controls;
+   neither is shipped. Native extraction and its RAM benchmark now share a
+   bounded owned decode buffer without a redundant zero-fill pass. Local
+   repeated measurements retain identical archive sizes but do not establish
+   a stable cross-workload speedup. See
+   [the experiment and limits](docs/benchmarks/2026-09-30-runtime-allocation-review.md).
+   Gzip, Bzip2, and Zstandard stream readers also share the UTF-8-safe file-size
+   helper: a missing supplementary Unicode filename previously masked the real
+   I/O failure with a host-code-page conversion exception. The regression now
+   checks the original ArchiveError and intact filename across all three.
+   The follow-up also repairs Unicode create/open diagnostics and the XAR
+   reader's reversed stored-length/decoded-size fields. Independent stored and
+   zlib XAR producers now have permanent interoperability checks. The corrected
+   local fuzz seed is valid XML and restores exact bytes through the product
+   CLI. All 22 full local verification commands passed with 517 C++ tests;
+   hosted analysis, broader performance comparisons, and release acceptance
+   remain open as recorded in the checkpoint above.
+   The shared IEEE checksum now uses the existing pinned SDK backend with one
+   initialization guard shared by native and 7z callers. Three paired rounds
+   across all three 10 GiB profiles show repeatable local extraction gains,
+   unchanged encoded sizes, and GPU extraction still slower than CPU. An
+   independent all-effort archive smoke then exposed a dictionary admission
+   cutoff: a better entropy result could suppress a still-smaller dictionary
+   candidate at effort 6. Its removal passes the new before/after regression
+   and exact CPU/HIP read-back checks. See
+   [the controls, negative phases, and open gates](docs/benchmarks/2026-10-01-shared-crc-backend.md).
+   The combined batch now passes all 22 local gates with 521 C++ tests.
+   The subsequent owned-output review adds aggregate-bounded pinned storage,
+   operation-local reuse, and a shared native/RAM decode worker policy. Queue
+   admission and pool reuse alone regressed one profile; root-cause inspection
+   found underused CPU checksum capacity. Bounded parallel checksums still
+   validate the actual host output. Three matched rounds show GPU extraction
+   gains of 1.38-1.47x, 1.60-1.66x, and 1.98-2.03x across the three profiles,
+   with unchanged archive sizes; GPU still trails CPU on two profiles. The
+   full pool snapshot passes 22 local gates with 527 tests, and the subsequent
+   checksum/worker delta passes ten selected gates with 530 C++ tests. See the separate verifier
+   evidence, unsuccessful candidates, counter limitations, and open acceptance
+   gates in [the bounded-output checkpoint](docs/benchmarks/2026-10-01-pinned-output-pool.md).
+   A final pre-push full run separately passes all 22 gates with 530 C++ tests.
+   These are development measurements, not a release or general ratio gain.
+   Build, test, packaging, and MSI identity checks now share pinned CMake
+   4.4.3 and installed-toolchain discovery rather than host-specific paths.
+   The follow-up VRAM review found that adapter-wide Windows usage was summed
+   across GPUs but compared against only the selected HIP device's capacity.
+   Adapter and process memory samples now match its Windows LUID through one
+   PDH reader and a tested, overflow-checked identity aggregator. Unavailable
+   identity leaves HIP memory accounting intact without borrowing another
+   GPU's counters. This does not change the total-system GPU utilization graph.
+   LZMA-Alone, lzip, and 7z now share an SDK allocator whose callback interface
+   owns its byte budget directly. The former thread-local ownership stack is
+   removed; lzip's budget remains scoped to the complete stream, not each
+   concatenated member. The existing 528 MiB LZMA/lzip and 2 GiB 7z limits,
+   zero-initialized allocations, and exception containment are preserved.
+   Direct callback tests exercise isolated owners, exact/zero limits, refusal
+   before oversized allocation, released capacity, and sequential thread
+   handoff. Real lzip fixtures also cover interleaved stream lifetimes and
+   cross-thread consumption. This is an ownership correction, not a measured
+   compression-kernel speedup or a claim of concurrent access support.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
@@ -110,9 +189,10 @@ Security tab or a published release.
    CPU-only test configurations, and GPU hardware actually tested. Retain only
    performance changes supported by correctness and controlled measurements.
    Product release builds now select six HIP GPU targets through one shared,
-   tested architecture resolver. All four HIP objects contain the requested
-   images; native tests and GUI smoke passed on the available gfx1201 device.
-   Other target families remain compile-validated, not hardware-tested.
+   tested architecture resolver. The HIP library now links five codec objects;
+   current local tests and GUI smoke exercise the available gfx1201 device.
+   Release validation must check every requested target image in the final
+   artifacts. No local result establishes hardware support for other families.
    Native HIP dictionary matching has nine bounded effort budgets. The prefix
    path now evaluates progressively sampled adaptive candidates at levels 2-9
    when useful, but repeated sizes remain on saturated or static-favored data.
@@ -129,17 +209,21 @@ Security tab or a published release.
    deterministic selector on held-out workloads. Count inference time, memory,
    model/package size, portability, and decoding dependencies; do not add cloud
    calls or model downloads to ordinary archive operations.
-   The test-target-only [HIP dictionary codec](docs/gpu-dictionary-codec-development.md)
-   now produces real independent block payloads with nine effort-dependent sizes
+   The production [HIP dictionary codec](docs/gpu-dictionary-codec-development.md)
+   produces real independent block payloads with nine effort-dependent sizes
    on a controlled repeated-record fixture. Its cooperative HIP decoder now
    restores independent blocks with bounded workspace and exact-output checks.
    Dense/tiled search now preserves encoded bytes while reducing global GPU
    workspace in high-effort large batches. Automatic dispatch retains dense
    search where tiled search measured slower; controlled host-wall comparisons
    and their shared-host telemetry limits are recorded in the codec document.
-   Native archive integration, the production CPU reader,
-   complete candidate-cost selection, portability, and timing validation remain
-   open; this does not yet replace the production two-tier policy.
+   Native version-four archive integration, the bounded production CPU reader,
+   and complete dictionary candidate-cost selection are implemented. Tests and
+   diagnostics use the same codec core; standalone dictionary decoding now
+   also shares production dispatch and timing. Historical prototype documents
+   must not be treated as evidence of a separate shipping codec. Broader
+   portability, controlled application timing, all-format comparisons, and
+   final release validation remain open.
 6. After implementation and performance changes, review the entire repository
    with a file-level coverage record. Include first-party source, frontend,
    backend, tests, scripts, workflows, build/release configuration, skills, and
@@ -318,7 +402,7 @@ For HIP-capable Windows hosts:
 tools\build.ps1 -Configuration Release
 tools\test.ps1 -Configuration Release
 build\Release\superzip_cli.exe dependency-check
-tools\gpu_proof.ps1 -Configuration Release -SizeMiB 512
+tools\gpu_proof.ps1 -Configuration Release -SizeMiB 8
 tools\package.ps1 -Configuration Release
 tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1
 build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune

@@ -6,16 +6,10 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "version.ps1")
+. (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 & (Join-Path $PSScriptRoot "test_hip_architecture.ps1")
-$ctest = Get-Command ctest -ErrorAction SilentlyContinue
-$cmakeCTest = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
-if (Test-Path $cmakeCTest) {
-    $ctestExe = $cmakeCTest
-} elseif ($ctest) {
-    $ctestExe = $ctest.Source
-} else {
-    throw "ctest was not found."
-}
+& (Join-Path $PSScriptRoot "test_cmake_toolchain.ps1")
+$ctestExe = Join-Path (Split-Path -Parent (Find-CMake -RepoRoot $repo)) 'ctest.exe'
 $build = Join-Path $repo "build"
 & $ctestExe --test-dir $build -C $Configuration --output-on-failure
 if ($LASTEXITCODE -ne 0) {

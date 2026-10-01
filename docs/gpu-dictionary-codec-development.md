@@ -1,12 +1,23 @@
-# GPU Dictionary Codec Development
+# GPU Dictionary Codec And Development Evidence
 
 ## Scope
 
-The dictionary encoder and decoder are test-target-only HIP implementations. They are not
-linked into the application or CLI, do not emit SUZIP archive blocks, and
-do not change the native format version. Production HIP compression still
-has the two prefix-code effort tiers described in
-[the compression policy](compression-level-and-benchmark-suite.md).
+The dictionary encoder and decoder are linked into the production HIP library
+used by the application, CLI, and tests. Native creation selects complete
+version-four dictionary blocks against the existing candidates; CPU and HIP
+readers decode those same archive blocks. The production encoder borrows the
+already uploaded source rather than uploading it again. Standalone diagnostic
+entry points retain their owned-upload contracts and share the encoder core;
+their decoder now also reuses production dispatch, validation, and timing.
+
+This document preserves the earlier prototype measurements as historical
+development evidence. Their test counts, baseline prefix sizes, timing methods,
+and integration status describe those earlier checkpoints, not the current
+shipping path. They are not current application throughput claims. See
+[the native format](native-suzip-format.md) and
+[the compression policy](compression-level-and-benchmark-suite.md) for current
+format and effort contracts. Release, portability, and final security gates
+remain separate from integration.
 
 ## Implemented Path
 
@@ -194,7 +205,13 @@ strategy values, exact global workspace accounting, and automatic crossover
 boundaries. These results do not satisfy the remaining archive integration,
 release, or deferred security gates below.
 
-Before production integration:
+The following list records the historical pre-integration requirements.
+Version-four framing, CPU/HIP readers, candidate selection, and native archive
+regressions now exist. Remaining release and performance requirements must
+still be checked against current binaries; this historical list is not a
+current uncompleted-task ledger.
+
+Historical pre-integration checklist:
 
 1. Add the versioned native block contract, bounded CPU and HIP readers,
    archive-level corruption handling, and backward-reader coverage.

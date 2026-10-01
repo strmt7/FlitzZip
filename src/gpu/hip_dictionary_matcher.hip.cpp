@@ -510,8 +510,8 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     HipDeviceBuffer<std::byte> device_input;
     auto* source_device = borrowed_device_input;
     if (borrowed_device_input == nullptr) {
-        device_input = HipDeviceBuffer<std::byte>(input.size(), "allocate dictionary input");
-        check_hip(hipMemcpy(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice),
+        device_input.allocate_checked(input.size(), "allocate dictionary input");
+        check_hip(copy_on_codec_stream(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice),
                   "upload dictionary input");
         source_device = device_input.get();
     }
@@ -520,15 +520,13 @@ auto with_dictionary_index(std::span<const std::byte> input, std::size_t consume
     HipDeviceBuffer<std::uint32_t> previous(previous_bytes, "allocate dictionary links");
     HipDeviceBuffer<std::byte> temporary(scratch_bytes, "allocate dictionary radix workspace");
     auto events = make_hip_event_pair("create dictionary timing events");
-    check_hip(hipEventRecord(events.start, hipStreamPerThread), "start dictionary index");
-    build_dictionary_keys<<<blocks, kThreads, 0, hipStreamPerThread>>>(source_device, size, keys.get());
-    check_hip(hipGetLastError(), "launch dictionary keys");
+    launch_kernel_with_timing(build_dictionary_keys, blocks, kThreads, 0, hipStreamPerThread, events.start, nullptr,
+                              "launch dictionary keys", source_device, size, keys.get());
     check_hip(rocprim::radix_sort_keys(temporary.get(), temporary_bytes, keys.get(), sorted_keys.get(), size, 0, 64,
                                        hipStreamPerThread),
               "sort dictionary keys");
-    link_dictionary_predecessors<<<blocks, kThreads, 0, hipStreamPerThread>>>(sorted_keys.get(), size, previous.get());
-    check_hip(hipGetLastError(), "launch dictionary links");
-    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary index");
+    launch_kernel_with_timing(link_dictionary_predecessors, blocks, kThreads, 0, hipStreamPerThread, nullptr,
+                              events.stop, "launch dictionary links", sorted_keys.get(), size, previous.get());
     MatchBatch result;
     result.index_ms = finish_dictionary_stage(events);
     result.device_workspace_bytes = required_bytes;
@@ -564,7 +562,7 @@ auto with_periodic_index(std::span<const std::byte> input, std::span<const std::
     HipDeviceBuffer<std::byte> periodic_buffers(periodic_bytes, "allocate periodic dictionary buffers");
     auto* device_distances = reinterpret_cast<std::uint16_t*>(periodic_buffers.get());
     auto* packed = periodic_buffers.get() + period_bytes;
-    check_hip(hipMemcpy(device_distances, distances.data(), period_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_distances, distances.data(), period_bytes, hipMemcpyHostToDevice),
               "upload periodic dictionary distances");
     MatchBatch metadata;
     metadata.device_workspace_bytes = total_workspace_bytes;
@@ -602,16 +600,14 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
             const auto size = static_cast<std::uint32_t>(input.size());
             const auto blocks = (size + kThreads - 1U) / kThreads;
             const auto events = make_hip_event_pair("create dictionary search timing events");
-            check_hip(hipEventRecord(events.start, hipStreamPerThread), "start dictionary search");
-            search_dictionary_matches<<<blocks, kThreads, 0, hipStreamPerThread>>>(device_input, size, previous, effort,
-                                                                                   matches.get());
-            check_hip(hipGetLastError(), "launch dictionary search");
-            check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary search");
+            launch_measured_kernel(search_dictionary_matches, blocks, kThreads, 0, hipStreamPerThread, events,
+                                   "launch dictionary search", device_input, size, previous, effort, matches.get());
             metadata.search_ms = finish_dictionary_stage(events);
             metadata.matches.resize(input.size());
             metadata.d2h_bytes = match_bytes;
-            check_hip(hipMemcpy(metadata.matches.data(), matches.get(), metadata.d2h_bytes, hipMemcpyDeviceToHost),
-                      "download dictionary matches");
+            check_hip(
+                copy_on_codec_stream(metadata.matches.data(), matches.get(), metadata.d2h_bytes, hipMemcpyDeviceToHost),
+                "download dictionary matches");
             matches.reset_checked("free dictionary diagnostic matches");
             return metadata;
         });
@@ -637,7 +633,6 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
             auto* output = encode_buffers.get() + sizes_bytes;
             const auto size = static_cast<std::uint32_t>(input.size());
             auto encode_events = make_hip_event_pair("create dictionary encode timing events");
-            check_hip(hipEventRecord(encode_events.start, hipStreamPerThread), "start dictionary encoding");
             // Longer periodic searches run only at selected positions, not at every tile byte.
             if (distances != nullptr) {
                 auto periodic_effort = effort;
@@ -645,23 +640,24 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
                     effort.max_byte_comparisons >= kMaxPeriodicMatchBytes / kPeriodicComparisonScale
                         ? kMaxPeriodicMatchBytes
                         : effort.max_byte_comparisons * kPeriodicComparisonScale;
-                encode_dictionary_segments<false, true>
-                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, distances, periodic_effort, output, sizes);
+                launch_measured_kernel(encode_dictionary_segments<false, true>,
+                                       static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread,
+                                       encode_events, "launch periodic dictionary encoder", device_input, size,
+                                       previous, distances, periodic_effort, output, sizes);
             } else if (effort.max_candidates <= 4U) {
-                encode_dictionary_segments<true, false>
-                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, distances, effort, output, sizes);
+                launch_measured_kernel(encode_dictionary_segments<true, false>,
+                                       static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread,
+                                       encode_events, "launch cached dictionary encoder", device_input, size, previous,
+                                       distances, effort, output, sizes);
             } else {
-                encode_dictionary_segments<false, false>
-                    <<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                        device_input, size, previous, distances, effort, output, sizes);
+                launch_measured_kernel(encode_dictionary_segments<false, false>,
+                                       static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread,
+                                       encode_events, "launch deferred dictionary encoder", device_input, size,
+                                       previous, distances, effort, output, sizes);
             }
-            check_hip(hipGetLastError(), "launch dictionary segment encoder");
-            check_hip(hipEventRecord(encode_events.stop, hipStreamPerThread), "stop dictionary encoding");
             const auto encode_ms = finish_dictionary_stage(encode_events);
             std::vector<std::uint32_t> host_sizes(segment_count);
-            check_hip(hipMemcpy(host_sizes.data(), sizes, sizes_bytes, hipMemcpyDeviceToHost),
+            check_hip(copy_on_codec_stream(host_sizes.data(), sizes, sizes_bytes, hipMemcpyDeviceToHost),
                       "download dictionary encoded sizes");
             std::size_t packed_bytes = 0U;
             for (const auto encoded_size : host_sizes) {
@@ -674,14 +670,12 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
                 throw GpuError("dictionary packed payload exceeds the reserved device buffer");
             }
             auto compact_events = make_hip_event_pair("create dictionary compact timing events");
-            check_hip(hipEventRecord(compact_events.start, hipStreamPerThread), "start dictionary compaction");
-            compact_dictionary_segments<<<static_cast<unsigned int>(segment_count), kThreads, 0, hipStreamPerThread>>>(
-                output, sizes, static_cast<std::uint32_t>(segment_count), packed_device);
-            check_hip(hipGetLastError(), "launch dictionary segment compaction");
-            check_hip(hipEventRecord(compact_events.stop, hipStreamPerThread), "stop dictionary compaction");
+            launch_measured_kernel(compact_dictionary_segments, static_cast<unsigned int>(segment_count), kThreads, 0,
+                                   hipStreamPerThread, compact_events, "launch dictionary compaction", output, sizes,
+                                   static_cast<std::uint32_t>(segment_count), packed_device);
             const auto compact_ms = finish_dictionary_stage(compact_events);
             std::vector<std::byte> packed(packed_bytes);
-            check_hip(hipMemcpy(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
+            check_hip(copy_on_codec_stream(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
                       "download packed dictionary blocks");
             PackedEncodedBatch result;
             result.telemetry.device_workspace_bytes = metadata.device_workspace_bytes;
@@ -764,7 +758,7 @@ void decode_segments_device(const std::byte* encoded, std::span<const Dictionary
     HipDeviceBuffer<DecodeSpan> device_spans(span_bytes, "allocate dictionary decode spans");
     HipDeviceBuffer<std::uint32_t> statuses(status_bytes, "allocate dictionary decode statuses");
     record_gpu_device_allocation_bytes(telemetry, span_bytes + status_bytes);
-    check_hip(hipMemcpy(device_spans.get(), spans.data(), span_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_spans.get(), spans.data(), span_bytes, hipMemcpyHostToDevice),
               "upload dictionary decode spans");
     record_gpu_h2d_bytes(telemetry, span_bytes);
     auto events = make_hip_event_pair("create dictionary archive decode events");
@@ -773,7 +767,7 @@ void decode_segments_device(const std::byte* encoded, std::span<const Dictionary
                            decoded, statuses.get());
     finish_measured_kernel(telemetry, events, "synchronize dictionary archive decoder");
     std::vector<std::uint32_t> host_statuses(spans.size());
-    check_hip(hipMemcpy(host_statuses.data(), statuses.get(), status_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(host_statuses.data(), statuses.get(), status_bytes, hipMemcpyDeviceToHost),
               "download dictionary archive decode statuses");
     record_gpu_d2h_bytes(telemetry, status_bytes);
     if (std::any_of(host_statuses.begin(), host_statuses.end(), [](auto status) { return status != 1U; })) {
@@ -783,7 +777,7 @@ void decode_segments_device(const std::byte* encoded, std::span<const Dictionary
     device_spans.reset_checked("free dictionary decode spans");
 }
 
-// Purpose: Upload bounded dictionary spans once and return bytes only after every GPU decoder reports success.
+// Purpose: Upload bounded dictionary input and reuse production dispatch, validation, and timing before publication.
 // Inputs: Host-admitted nonempty segments and their summed decoded extent, at most 4 MiB.
 // Outputs: Returns exact bytes and resource/timing evidence; releases all HIP resources on success or failure.
 DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::size_t decoded_bytes) {
@@ -805,39 +799,27 @@ DecodedBatch decode_segments_hip(std::span<const EncodedSegment> segments, std::
     const auto span_bytes = spans.size() * sizeof(DecodeSpan);
     const auto status_bytes = spans.size() * sizeof(std::uint32_t);
     const auto required_bytes = encoded.size() + decoded_bytes + span_bytes + status_bytes;
-    HipDeviceMemoryReservation reservation(required_bytes, "dictionary decoder");
+    HipDeviceMemoryReservation reservation(encoded.size() + decoded_bytes, "dictionary decoder");
     HipDeviceBuffer<std::byte> input(encoded.size(), "allocate dictionary decode input");
-    HipDeviceBuffer<DecodeSpan> device_spans(span_bytes, "allocate dictionary decode spans");
     HipDeviceBuffer<std::byte> output(decoded_bytes, "allocate dictionary decode output");
-    HipDeviceBuffer<std::uint32_t> statuses(status_bytes, "allocate dictionary decode statuses");
-    check_hip(hipMemcpy(input.get(), encoded.data(), encoded.size(), hipMemcpyHostToDevice),
+    GpuTelemetry telemetry;
+    record_gpu_device_allocation_bytes(&telemetry, encoded.size() + decoded_bytes);
+    check_hip(copy_on_codec_stream(input.get(), encoded.data(), encoded.size(), hipMemcpyHostToDevice),
               "upload dictionary blocks");
-    check_hip(hipMemcpy(device_spans.get(), spans.data(), span_bytes, hipMemcpyHostToDevice),
-              "upload dictionary spans");
-    auto events = make_hip_event_pair("create dictionary decode events");
-    check_hip(hipEventRecord(events.start, hipStreamPerThread), "start dictionary decode");
-    decode_dictionary_segments<<<static_cast<unsigned int>(spans.size()), kThreads, 0, hipStreamPerThread>>>(
-        input.get(), device_spans.get(), output.get(), statuses.get());
-    check_hip(hipGetLastError(), "launch dictionary decoder");
-    check_hip(hipEventRecord(events.stop, hipStreamPerThread), "stop dictionary decode");
+    record_gpu_h2d_bytes(&telemetry, encoded.size());
+    decode_segments_device(input.get(), spans, output.get(), &telemetry);
     DecodedBatch result;
-    result.decode_ms = finish_dictionary_stage(events);
-    std::vector<std::uint32_t> host_statuses(spans.size());
-    check_hip(hipMemcpy(host_statuses.data(), statuses.get(), status_bytes, hipMemcpyDeviceToHost),
-              "download dictionary decode statuses");
-    if (std::any_of(host_statuses.begin(), host_statuses.end(), [](auto status) { return status != 1U; })) {
-        throw ArchiveError("dictionary block failed GPU decoding validation");
-    }
     result.bytes.resize(decoded_bytes);
-    check_hip(hipMemcpy(result.bytes.data(), output.get(), decoded_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(result.bytes.data(), output.get(), decoded_bytes, hipMemcpyDeviceToHost),
               "download dictionary decoded bytes");
+    record_gpu_d2h_bytes(&telemetry, decoded_bytes);
+    const auto counters = snapshot_gpu_telemetry(telemetry);
+    result.decode_ms = validated_stage_milliseconds(counters.kernel_ms);
     result.device_workspace_bytes = required_bytes;
-    result.h2d_bytes = encoded.size() + span_bytes;
-    result.d2h_bytes = decoded_bytes + status_bytes;
+    result.h2d_bytes = counters.h2d_bytes;
+    result.d2h_bytes = counters.d2h_bytes;
     result.gpu_used = true;
-    statuses.reset_checked("free dictionary decode statuses");
     output.reset_checked("free dictionary decode output");
-    device_spans.reset_checked("free dictionary decode spans");
     input.reset_checked("free dictionary decode input");
     return result;
 }

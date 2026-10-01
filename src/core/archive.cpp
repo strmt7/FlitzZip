@@ -3,6 +3,8 @@
 #include "core/archive_encode_batch.hpp"
 #include "core/archive_index.hpp"
 #include "core/checksum.hpp"
+#include "core/decoded_chunk.hpp"
+#include "core/worker_budget.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -58,12 +60,6 @@ struct EncodedArchiveChunk {
 
 struct PendingEncode {
     std::future<EncodedArchiveChunk> result;
-};
-
-struct DecodedChunk {
-    std::vector<std::byte> bytes;
-    std::uint32_t crc32 = 0;
-    bool gpu_used = false;
 };
 
 struct PendingDecode {
@@ -220,10 +216,7 @@ PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t r
 // current file entry. Outputs: Returns at least one worker per chunk without exceeding the requested worker budget for
 // normal large-entry steady state.
 std::uint32_t resolve_codec_worker_count(const PipelineBudget& budget, std::uint64_t work_windows) {
-    const auto active_windows = static_cast<std::uint32_t>(std::max<std::uint64_t>(
-        1U, std::min<std::uint64_t>(budget.inflight_chunks, work_windows == 0 ? 1U : work_windows)));
-    return std::max<std::uint32_t>(
-        1U, std::min<std::uint32_t>(budget.workers, (budget.workers + active_windows - 1U) / active_windows));
+    return superzip::resolve_codec_worker_count(budget.workers, budget.inflight_chunks, work_windows);
 }
 
 // Purpose: Validate public archive options before any filesystem scan or allocation.
@@ -385,8 +378,8 @@ DecodeStreamResult decode_entry_streaming(std::ifstream& input, const ArchiveEnt
         auto decoded = pending.front().result.get();
         pending.pop_front();
         stream_result.gpu_used = decoded.gpu_used || stream_result.gpu_used;
-        stream_result.crc32 = crc32_combine(stream_result.crc32, decoded.crc32, decoded.bytes.size());
-        consume(std::span<const std::byte>(decoded.bytes.data(), decoded.bytes.size()));
+        stream_result.crc32 = crc32_combine(stream_result.crc32, decoded.crc32, decoded.bytes().size());
+        consume(decoded.bytes());
     };
     while (block_index < entry.blocks.size()) {
         std::uint64_t uncompressed_window = 0;
@@ -430,15 +423,8 @@ DecodeStreamResult decode_entry_streaming(std::ifstream& input, const ArchiveEnt
             .result = std::async(std::launch::async,
                                  [payload = std::move(payload), adjusted = std::move(adjusted), uncompressed_window,
                                   gpu_options]() mutable {
-                                     std::vector<std::byte> decoded(static_cast<std::size_t>(uncompressed_window));
-                                     const bool decoded_on_gpu = decode_chunk(payload, adjusted, decoded, gpu_options);
-                                     const auto decoded_crc =
-                                         crc32(std::span<const std::byte>(decoded.data(), decoded.size()));
-                                     return DecodedChunk{
-                                         .bytes = std::move(decoded),
-                                         .crc32 = decoded_crc,
-                                         .gpu_used = decoded_on_gpu,
-                                     };
+                                     return decode_owned_chunk(
+                                         payload, adjusted, static_cast<std::size_t>(uncompressed_window), gpu_options);
                                  }),
         });
         if (pending.size() >= budget.inflight_chunks) {
@@ -1042,7 +1028,12 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
     // Validate the complete index up front so extraction cannot create files for malformed metadata.
     const auto validation = validate_archive_index_metadata(index);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
-    const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
+    auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
+    budget.inflight_chunks = resolve_owned_decode_inflight(
+        budget.inflight_chunks, static_cast<std::size_t>(decode_window_bytes),
+        GpuCodecOptions{.require_gpu = options.gpu_required, .force_cpu = options.force_cpu});
+    auto decode_pool =
+        make_owned_decode_pool(GpuCodecOptions{.require_gpu = options.gpu_required, .force_cpu = options.force_cpu});
     create_verified_directories(destination);
     ProgressState progress;
     progress.start(OperationKind::Extract, validation.total_uncompressed_bytes, index.entries.size());
@@ -1076,6 +1067,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
             .block_size = options.block_size,
             .worker_count = resolve_codec_worker_count(budget, entry_windows),
             .telemetry = gpu_telemetry,
+            .host_output_pool = decode_pool,
         };
         // Decode into a private same-directory temporary target so failures never expose partial output.
         const auto temporary_target = reserve_file_publish_target(target);
@@ -1122,6 +1114,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
         progress.finish_entry();
         publish_progress(progress, progress_callback);
     }
+    decode_pool.reset();
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     stats.gpu_runtime = snapshot_gpu_telemetry(*gpu_telemetry);
     return stats;

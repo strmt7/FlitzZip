@@ -145,9 +145,15 @@ build_lhasa_objects() {
 
 build_lzma_sdk_objects "$OUT/lzma-sdk-objects" > "$OUT/lzma-sdk-objects.list"
 mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
+LZMA_CRC_OBJECTS=(
+  "$OUT/lzma-sdk-objects/7zCrc.o"
+  "$OUT/lzma-sdk-objects/7zCrcOpt.o"
+  "$OUT/lzma-sdk-objects/CpuArch.o"
+)
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/sevenzip_fuzzer.cpp \
   src/sevenzip/sevenzip_adapter.cpp \
+  src/core/checksum.cpp \
   src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
@@ -188,6 +194,7 @@ mapfile -t LZMA_SDK_OBJECTS < "$OUT/lzma-sdk-objects.list"
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
   src/core/progress.cpp \
+  "${LZMA_CRC_OBJECTS[@]}" \
   -o "$OUT/superzip_arj_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 

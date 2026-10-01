@@ -149,6 +149,30 @@ function Assert-PowerShellZipInterop {
     Assert-InteropRestoredPayload -SourceRoot $SourceRoot -OutputRoot $OutputRoot
 }
 
+# Purpose: Prove XAR heap extents with archives produced by libarchive, not the product's own fixture builder.
+# Inputs: Private work directory and the source fixture root; uses documented stored/zlib, checksum-free support.
+# Outputs: Requires exact SuperZip extraction from both encodings and throws on native or content failure.
+function Assert-SuperZipXarReadInterop {
+    param(
+        [Parameter(Mandatory = $true)][string]$Work,
+        [Parameter(Mandatory = $true)][string]$SourceRoot
+    )
+
+    foreach ($compression in @("none", "gzip")) {
+        $archive = Join-Path $Work ("external-$compression.xar")
+        Invoke-InteropCommand -FilePath $tar.Source -Arguments @(
+            "--format=xar", "--options", "xar:toc-checksum=none,xar:checksum=none,xar:compression=$compression",
+            "-cf", $archive, "-C", $SourceRoot, "input"
+        ) -Label "libarchive create XAR $compression" | Out-Null
+        $outputRoot = Join-Path $Work ("superzip-xar-$compression")
+        Invoke-InteropCommand -FilePath $cli -Arguments @(
+            "extract", "--format", "xar", "--output", $outputRoot, $archive
+        ) -Label "SuperZip read external XAR $compression" | Out-Null
+        Assert-InteropRestoredPayload -SourceRoot $SourceRoot -OutputRoot $outputRoot
+        Write-Output "compat_interop format=xar encoding=$compression direction=external-to-superzip status=passed"
+    }
+}
+
 $work = Join-Path $WorkRoot ("superzip-compat-interop-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 try {
@@ -189,6 +213,8 @@ try {
         Assert-LibarchiveInterop -Archive $archive -OutputRoot (Join-Path $work ("extract-" + $case.Extension)) -SourceRoot $inputRoot
         Write-Output "compat_interop format=$($case.Format) status=passed archive_bytes=$((Get-Item -LiteralPath $archive).Length)"
     }
+
+    Assert-SuperZipXarReadInterop -Work $work -SourceRoot $inputRoot
 
     foreach ($format in @("tar", "cpio", "ar")) {
         $archive = Join-Path $work ("reject-level-" + $format + ".archive")

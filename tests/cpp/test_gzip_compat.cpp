@@ -3,6 +3,7 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "gzip/gzip_adapter.hpp"
+#include "gzip/gzip_stream.hpp"
 #include "miniz.h"
 
 #include <array>
@@ -67,6 +68,35 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 }
 
 }  // namespace
+
+// Purpose: Keep standalone extraction and container streaming on the same decoder and progress semantics.
+// Inputs: One bounded Gzip archive and a callback capturing compressed-payload progress.
+// Outputs: Requires exact bytes from both readers and monotonic progress excluding the 18-byte wrapper.
+TEST_CASE(gzip_standalone_and_stream_readers_preserve_payload_progress) {
+    const auto root = test_temp_dir("gzip-reader-parity");
+    const auto source = root / "payload.bin";
+    const std::string payload(192U * 1024U + 7U, 'p');
+    write_text_file(source, payload);
+    const auto archive = root / "payload.bin.gz";
+    (void)superzip::compress_gzip_file(source, archive);
+    const auto expected_total = std::filesystem::file_size(archive) - 18U;
+    std::uint64_t previous = 0;
+    superzip::ProgressSnapshot last;
+    (void)superzip::extract_gzip_file(archive, root / "out", false, [&](const superzip::ProgressSnapshot& snapshot) {
+        REQUIRE_EQ(snapshot.total_bytes, expected_total);
+        REQUIRE_TRUE(snapshot.processed_bytes >= previous);
+        REQUIRE_TRUE(snapshot.processed_bytes <= snapshot.total_bytes);
+        previous = snapshot.processed_bytes;
+        last = snapshot;
+    });
+    REQUIRE_EQ(last.processed_bytes, expected_total);
+    REQUIRE_EQ(last.completed_entries, std::uint64_t{1});
+    REQUIRE_EQ(read_text_file(root / "out/payload.bin"), payload);
+    superzip::GzipInputStream input(archive);
+    const std::string streamed(std::istreambuf_iterator<char>(input), {});
+    input.finish();
+    REQUIRE_EQ(streamed, payload);
+}
 
 // Purpose: Verify malformed zero-bit Huffman symbols fail instead of producing unbounded output without input progress.
 // Inputs: The prefix of the upstream miniz pull-request-370 regression stream.

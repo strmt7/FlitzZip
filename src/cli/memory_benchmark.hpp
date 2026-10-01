@@ -21,6 +21,8 @@ struct MemoryBenchmarkResult {
     superzip::OperationStats stats;
     std::uint64_t archive_bytes = 0;
     std::uint32_t codec_workers = 1;
+    std::uint32_t decode_inflight_chunks = 1;
+    std::uint32_t decode_codec_workers = 1;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
     double compress_seconds = 0.0;

@@ -47,6 +47,79 @@ def fixture_record() -> dict:
 
 
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Keep graphs from silently combining driver runtime changes or inventing old provenance.
+    # Inputs: Identified, historical/missing, unavailable, mismatched, and malformed runtime versions.
+    # Outputs: Matching records render; unknown/known and differing runtime identities cannot be combined.
+    def test_runtime_version_provenance_is_preserved(self) -> None:
+        identified = fixture_record()
+        identified["hip_runtime_version"] = "10.0.3679.0"
+        same = copy.deepcopy(identified)
+        same["profile"] = "Mixed"
+        graph.summarize_records([identified, same], allow_dirty=False)
+        for value in (None, "unavailable", "10.0.3665.0"):
+            other = copy.deepcopy(same)
+            other["hip_runtime_version"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "different binaries"):
+                graph.summarize_records([identified, other], allow_dirty=False)
+        for value in (True, 10, "", "10.0.65536.0", "010.0.3679.0", "10.0.3679.0/path", "10.0.3679"):
+            other = copy.deepcopy(identified)
+            other["hip_runtime_version"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "HIP runtime"):
+                graph.summarize_records([other], allow_dirty=False)
+        unknown = fixture_record()
+        unknown["hip_runtime_version"] = "unavailable"
+        unknown["profile"] = "Mixed"
+        graph.summarize_records([fixture_record(), unknown], allow_dirty=False)
+
+    # Purpose: Preserve historical charts without mixing incompatible resource measurement methods.
+    # Inputs: Historical schema-one and current busiest-engine schema-two records.
+    # Outputs: Both versions render alone; mixed versions and undefined GPU metrics are rejected.
+    def test_resource_schema_versions_are_explicit(self) -> None:
+        historical = fixture_record()
+        current = copy.deepcopy(historical)
+        current["schema_version"] = 2
+        current["gpu_utilization_metric"] = "process_busiest_engine_pct"
+        identity, rows = graph.summarize_records([current], allow_dirty=False)
+        self.assertIn(b"Synthetic workloads only", graph.render_svg(identity, rows))
+        reordered = copy.deepcopy(current)
+        reordered["profile"] = "Compressible"
+        reordered["lane_order"] = "alternating_when_both"
+        reordered["inter_run_pause_ms"] = 250
+        with self.assertRaisesRegex(ValueError, "measurement schemas"):
+            graph.summarize_records([current, reordered], allow_dirty=False)
+        graph.summarize_records([reordered], allow_dirty=False)
+        for field, value in (("inter_run_pause_ms", -1), ("inter_run_pause_ms", True), ("lane_order", "random")):
+            invalid = copy.deepcopy(reordered)
+            invalid[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "lane order or pause"):
+                graph.summarize_records([invalid], allow_dirty=False)
+        historical["profile"] = "Mixed"
+        with self.assertRaisesRegex(ValueError, "measurement schemas"):
+            graph.summarize_records([historical, current], allow_dirty=False)
+        current["gpu_utilization_metric"] = "summed_engines"
+        with self.assertRaisesRegex(ValueError, "GPU utilization metric"):
+            graph.summarize_records([current], allow_dirty=False)
+        current["schema_version"] = True
+        with self.assertRaisesRegex(ValueError, "schema"):
+            graph.summarize_records([current], allow_dirty=False)
+
+    # Purpose: Reject invalid utilization in the corrected resource schema without rewriting historical evidence.
+    # Inputs: Schema-two records with a nonfinite, negative, excessive, or nonnumeric GPU percentage.
+    # Outputs: All invalid values fail validation; unavailable and boundary percentages remain accepted.
+    def test_busiest_engine_percentages_are_bounded(self) -> None:
+        record = fixture_record()
+        record["schema_version"] = 2
+        record["gpu_utilization_metric"] = "process_busiest_engine_pct"
+        for field in ("gpu_avg_pct", "gpu_peak_pct"):
+            for value in (float("nan"), float("inf"), -1, 101, True, "90"):
+                record["runs"][1][field] = value
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, "GPU percentage"):
+                    graph.summarize_records([record], allow_dirty=False)
+            for value in (None, 0, 100):
+                record["runs"][1][field] = value
+                graph.summarize_records([record], allow_dirty=False)
+            record["runs"][1][field] = None
+
     # Purpose: Verify exact bytes, medians, accessibility metadata, and deterministic SVG output.
     # Inputs: One valid paired-run fixture.
     # Outputs: A reproducible SVG whose metadata distinguishes synthetic data from broad claims.

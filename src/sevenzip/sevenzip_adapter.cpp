@@ -1,5 +1,7 @@
 #include "sevenzip/sevenzip_adapter.hpp"
+#include "lzma/bounded_sdk_allocator.hpp"
 
+#include "core/checksum.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
@@ -12,22 +14,18 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 extern "C" {
 #include "7z.h"
 #include "7zBuf.h"
-#include "7zCrc.h"
 #include "7zTypes.h"
 }
 
@@ -52,13 +50,6 @@ struct SevenZipMetadata {
     std::uint64_t total_file_bytes = 0;
     std::uint64_t path_metadata_bytes = 0;
 };
-
-struct SevenZipAllocationBudget {
-    std::uint64_t current_bytes = 0;
-    std::unordered_map<void*, std::size_t> allocations;
-};
-
-thread_local std::shared_ptr<SevenZipAllocationBudget> g_sevenzip_allocation_budget;
 
 // Purpose: Convert an SDK result code to a stable SuperZip diagnostic.
 // Inputs: `result` is returned by the LZMA SDK C API.
@@ -120,74 +111,6 @@ std::uint64_t checked_add_7z_bytes(std::uint64_t total, std::uint64_t size) {
     }
     return total;
 }
-
-// Purpose: Allocate bounded memory for the LZMA SDK 7z decoder.
-// Inputs: `size` is the SDK allocation request.
-// Outputs: Returns a zero-initialized C-heap allocation or null when the request exceeds policy.
-void* sevenzip_alloc(ISzAllocPtr, std::size_t size) {
-    const auto bytes = size == 0 ? 1U : size;
-    const auto budget = g_sevenzip_allocation_budget;
-    if (budget && (bytes > kMaxSevenZipDecoderAllocationBytes ||
-                   budget->current_bytes > kMaxSevenZipDecoderAllocationBytes - bytes)) {
-        return nullptr;
-    }
-    void* allocation = std::calloc(1U, bytes);
-    if (allocation == nullptr) {
-        return nullptr;
-    }
-    if (!budget) {
-        return allocation;
-    }
-    try {
-        budget->allocations.emplace(allocation, bytes);
-        budget->current_bytes += static_cast<std::uint64_t>(bytes);
-    } catch (...) {
-        std::free(allocation);
-        return nullptr;
-    }
-    return allocation;
-}
-
-// Purpose: Free memory allocated by `sevenzip_alloc`.
-// Inputs: `address` is null or a pointer returned by the SDK allocator.
-// Outputs: Releases memory and updates the active bounded allocation budget.
-void sevenzip_free(ISzAllocPtr, void* address) {
-    if (address == nullptr) {
-        return;
-    }
-    const auto budget = g_sevenzip_allocation_budget;
-    if (budget) {
-        const auto it = budget->allocations.find(address);
-        if (it != budget->allocations.end()) {
-            budget->current_bytes -= static_cast<std::uint64_t>(it->second);
-            budget->allocations.erase(it);
-        }
-    }
-    std::free(address);
-}
-
-class ScopedSevenZipAllocationBudget {
-  public:
-    // Purpose: Install a bounded allocation budget for SDK callbacks on the current thread.
-    // Inputs: None.
-    // Outputs: Restores any previous allocator budget when destroyed.
-    ScopedSevenZipAllocationBudget() : previous_(std::move(g_sevenzip_allocation_budget)) {
-        g_sevenzip_allocation_budget = std::make_shared<SevenZipAllocationBudget>();
-    }
-
-    ScopedSevenZipAllocationBudget(const ScopedSevenZipAllocationBudget&) = delete;
-    ScopedSevenZipAllocationBudget& operator=(const ScopedSevenZipAllocationBudget&) = delete;
-
-    // Purpose: Restore the prior thread-local allocator budget.
-    // Inputs: None.
-    // Outputs: Leaves the current thread in its previous allocator state.
-    ~ScopedSevenZipAllocationBudget() {
-        g_sevenzip_allocation_budget = std::move(previous_);
-    }
-
-  private:
-    std::shared_ptr<SevenZipAllocationBudget> previous_;
-};
 
 struct SevenZipFileStream {
     ISeekInStream vt{};
@@ -285,7 +208,7 @@ class SevenZipArchive {
             look_stream_.realStream = &file_.vt;
             LookToRead2_INIT(&look_stream_);
 
-            std::call_once(crc_once_, []() { CrcGenerateTable(); });
+            initialize_crc32_backend();
             SzArEx_Init(&database_);
             database_initialized_ = true;
             throw_on_7z_error(SzArEx_Open(&database_, &look_stream_.vt, &allocator_, &allocator_),
@@ -359,9 +282,7 @@ class SevenZipArchive {
     }
 
   private:
-    static std::once_flag crc_once_;
-
-    const ISzAlloc allocator_{sevenzip_alloc, sevenzip_free};
+    BoundedSdkAllocator allocator_{kMaxSevenZipDecoderAllocationBytes};
     SevenZipFileStream file_{};
     CLookToRead2 look_stream_{};
     CSzArEx database_{};
@@ -370,8 +291,6 @@ class SevenZipArchive {
     Byte* out_buffer_ = nullptr;
     std::size_t out_buffer_size_ = 0;
 };
-
-std::once_flag SevenZipArchive::crc_once_;
 
 // Purpose: Convert a UTF-16 code point to UTF-8.
 // Inputs: `code_point` is a valid Unicode scalar value.
@@ -587,7 +506,6 @@ OperationStats extract_7z(const std::filesystem::path& archive_path, const std::
                           bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_source = pin_source_file(archive_path);
-    ScopedSevenZipAllocationBudget allocation_budget;
     SevenZipArchive archive(archive_source.path());
     const auto metadata = scan_7z_metadata(archive.database());
     validate_7z_payloads(archive, metadata);

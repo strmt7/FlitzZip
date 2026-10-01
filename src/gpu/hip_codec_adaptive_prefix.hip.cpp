@@ -668,9 +668,9 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     HipDeviceBuffer<AdaptiveEncodeTable> device_tables(table_bytes, "hipMalloc adaptive prefix length tables");
     HipDeviceBuffer<std::uint32_t> device_lengths(length_bytes, "hipMalloc adaptive prefix segment lengths");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    check_hip(hipMemcpy(device_plans.get(), segment_plans.data(), plan_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_plans.get(), segment_plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix length plans");
-    check_hip(hipMemcpy(device_tables.get(), code_tables.data(), table_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_tables.get(), code_tables.data(), table_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix length tables");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + table_bytes));
     std::uint32_t maximum_candidates = 0U;
@@ -684,7 +684,7 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     launch_entropy_length_batch(device_input, device_plans.get(), device_tables.get(), device_lengths.get(),
                                 static_cast<std::uint32_t>(segment_plans.size()), maximum_candidates, events);
     finish_measured_kernel(telemetry, events, "synchronize entropy segment lengths");
-    check_hip(hipMemcpy(segment_lengths.data(), device_lengths.get(), length_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(segment_lengths.data(), device_lengths.get(), length_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy adaptive prefix segment lengths");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(length_bytes));
     device_plans.reset_checked("hipFree adaptive prefix length plans");
@@ -795,14 +795,17 @@ std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byt
     HipDeviceBuffer<std::uint32_t> device_offsets(offset_bytes, "hipMalloc adaptive prefix pack offsets");
     HipDeviceBuffer<std::byte> device_encoded(bitstream.size(), "hipMalloc adaptive prefix payload");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    check_hip(hipMemcpy(device_plans.get(), selection.pack_plans.data(), plan_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_plans.get(), selection.pack_plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy adaptive prefix pack plans");
-    check_hip(hipMemcpy(device_tables.get(), selection.pack_tables.data(), table_bytes, hipMemcpyHostToDevice),
-              "hipMemcpy adaptive prefix pack tables");
-    check_hip(hipMemcpy(device_offsets.get(), selection.pack_offsets.data(), offset_bytes, hipMemcpyHostToDevice),
-              "hipMemcpy adaptive prefix pack offsets");
+    check_hip(
+        copy_on_codec_stream(device_tables.get(), selection.pack_tables.data(), table_bytes, hipMemcpyHostToDevice),
+        "hipMemcpy adaptive prefix pack tables");
+    check_hip(
+        copy_on_codec_stream(device_offsets.get(), selection.pack_offsets.data(), offset_bytes, hipMemcpyHostToDevice),
+        "hipMemcpy adaptive prefix pack offsets");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + table_bytes + offset_bytes));
-    check_hip(hipMemset(device_encoded.get(), 0, bitstream.size()), "hipMemset adaptive prefix payload");
+    check_hip(hipMemsetAsync(device_encoded.get(), 0, bitstream.size(), hipStreamPerThread),
+              "hipMemset adaptive prefix payload");
     auto events = make_hip_event_pair("create adaptive_prefix_pack_segments_batch_kernel events");
     launch_measured_kernel(adaptive_prefix_pack_segments_batch_kernel,
                            static_cast<unsigned int>(selection.pack_plans.size()), kGpuPrefixSegmentThreads, 0,
@@ -810,7 +813,7 @@ std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byt
                            device_input, device_plans.get(), device_tables.get(), device_offsets.get(),
                            device_encoded.get(), static_cast<std::uint32_t>(selection.pack_plans.size()));
     finish_measured_kernel(telemetry, events, "synchronize adaptive_prefix_pack_segments_batch_kernel");
-    check_hip(hipMemcpy(bitstream.data(), device_encoded.get(), bitstream.size(), hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(bitstream.data(), device_encoded.get(), bitstream.size(), hipMemcpyDeviceToHost),
               "hipMemcpy adaptive prefix payload");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(bitstream.size()));
     device_plans.reset_checked("hipFree adaptive prefix pack plans");

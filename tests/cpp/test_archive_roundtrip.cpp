@@ -1438,6 +1438,48 @@ TEST_CASE(suzip_force_cpu_roundtrip_reports_no_gpu_usage) {
     std::filesystem::remove_all(root);
 }
 
+// Purpose: Exercise resource-aware pinned-output admission through real required-HIP archive extraction.
+// Inputs: A bounded native archive, 32 requested workers, and the normal automatic decode queue policy.
+// Outputs: Requires exact CPU/HIP extraction, true GPU telemetry, and at most four large output windows in flight.
+TEST_CASE(suzip_required_gpu_extract_uses_owned_output_admission) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const auto root = test_temp_dir("suzip-pinned-output-admission");
+    const auto input = root / "input.bin";
+    std::vector<char> payload(1024U * 1024U);
+    for (std::size_t index = 0; index < payload.size(); ++index) {
+        payload[index] = static_cast<char>(index & 15U);
+    }
+    std::ofstream(input, std::ios::binary).write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    const auto archive = root / "archive.suzip";
+    superzip::CompressOptions compress;
+    compress.gpu_required = true;
+    compress.block_size = static_cast<std::uint32_t>(payload.size());
+    const auto compressed = superzip::compress_suzip({input}, archive, compress);
+    REQUIRE_TRUE(compressed.gpu_used);
+    for (const bool gpu : {false, true}) {
+        superzip::ExtractOptions extract;
+        extract.gpu_required = gpu;
+        extract.force_cpu = !gpu;
+        extract.worker_count = 32U;
+        const auto destination = root / (gpu ? "gpu" : "cpu");
+        const auto stats = superzip::extract_suzip(archive, destination, extract);
+        REQUIRE_EQ(stats.gpu_used, gpu);
+        if (gpu) {
+            REQUIRE_TRUE(stats.inflight_chunks >= 1U && stats.inflight_chunks <= 4U);
+            REQUIRE_TRUE(stats.gpu_runtime.decode_chunks > 0U);
+            REQUIRE_TRUE(stats.gpu_runtime.host_pinned_allocation_bytes <= payload.size());
+        } else {
+            REQUIRE_EQ(stats.gpu_runtime.host_pinned_allocation_bytes, 0U);
+        }
+        std::ifstream restored(destination / "input.bin", std::ios::binary);
+        const std::string contents{std::istreambuf_iterator<char>(restored), std::istreambuf_iterator<char>()};
+        REQUIRE_TRUE(std::ranges::equal(contents, payload));
+    }
+    std::filesystem::remove_all(root);
+}
+
 // Purpose: Verify extraction handles archives whose encoded block size is larger than the runtime chunk preference.
 // Inputs: A force-CPU archive written with 64 KiB blocks and extracted with 4 KiB runtime chunks.
 // Outputs: Throws if decode memory budgeting rejects the archive or restores different bytes.
@@ -2027,6 +2069,128 @@ TEST_CASE(suzip_extract_rejects_file_entry_with_child_entry) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
     std::filesystem::remove_all(root);
+}
+
+// Purpose: Exhaustively check the serialized byte kind against every readable native version.
+// Inputs: One small in-memory descriptor, every kind byte and versions one through eight.
+// Outputs: Requires exact kind preservation for supported values and ArchiveError for all other values.
+TEST_CASE(suzip_index_block_kind_version_matrix) {
+    superzip::ArchiveIndex index;
+    index.version = superzip::kSuperZipMaxReadableVersion;
+    index.entries.push_back(superzip::ArchiveEntry{
+        .path = "a",
+        .blocks = {superzip::BlockDescriptor{.uncompressed_len = 4U, .encoded_len = 2U}},
+    });
+    std::ostringstream encoded(std::ios::binary);
+    superzip::write_archive_index(encoded, index);
+    const auto original = encoded.str();
+    constexpr std::array<unsigned int, 11> first_versions{1U, 1U, 1U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
+    constexpr std::size_t kind_offset = 12U + 2U + 1U + 1U + 24U + 4U + 4U;
+    REQUIRE_EQ(original.size(), kind_offset + 18U);
+    for (std::uint32_t version = 1U; version <= superzip::kSuperZipMaxReadableVersion; ++version) {
+        for (unsigned int byte = 0U; byte <= 255U; ++byte) {
+            auto bytes = original;
+            bytes[4] = static_cast<char>(version);
+            bytes[kind_offset] = static_cast<char>(byte);
+            std::istringstream input(bytes, std::ios::binary);
+            bool rejected = false;
+            try {
+                const auto parsed = superzip::read_archive_index(input);
+                REQUIRE_EQ(static_cast<unsigned int>(parsed.entries.front().blocks.front().kind), byte);
+            } catch (const superzip::ArchiveError&) {
+                rejected = true;
+            }
+            const bool supported = byte < first_versions.size() && version >= first_versions[byte];
+            REQUIRE_EQ(rejected, !supported);
+        }
+    }
+    for (std::size_t bytes = 0U; bytes < original.size(); ++bytes) {
+        std::istringstream input(original.substr(0U, bytes), std::ios::binary);
+        bool rejected = false;
+        try {
+            (void)superzip::read_archive_index(input);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Enforce per-path allocation limits at both native index boundaries.
+// Inputs: A caller-owned oversized path and an untrusted length field without its claimed path payload.
+// Outputs: Requires writer rejection before emitting bytes and reader rejection before consuming path bytes.
+TEST_CASE(suzip_index_rejects_oversized_path_before_io) {
+    superzip::ArchiveIndex index;
+    index.entries.push_back(superzip::ArchiveEntry{.path = std::string(superzip::kMaxArchivePathBytes + 1U, 'a')});
+    std::stringstream output(std::ios::in | std::ios::out | std::ios::binary);
+    bool rejected = false;
+    try {
+        superzip::write_archive_index(output, index);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(output.str().empty());
+    superzip::write_u32(output, superzip::kSuperZipMagic);
+    superzip::write_u32(output, superzip::kSuperZipVersion);
+    superzip::write_u32(output, 1U);
+    superzip::write_u16(output, static_cast<std::uint16_t>(superzip::kMaxArchivePathBytes + 1U));
+    output << std::string(35U, '\0');
+    output.seekg(0);
+    rejected = false;
+    try {
+        (void)superzip::read_archive_index(output);
+    } catch (const superzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "archive path exceeds SuperZip resource limit");
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(output.tellg(), std::streampos(14));
+}
+
+// Purpose: Admit the shared path budget exactly and reject its first extra retained byte.
+// Inputs: A RAM-only index containing 64 MiB of path metadata and one extra one-byte entry.
+// Outputs: Requires boundary roundtrip, pre-output writer rejection and pre-allocation reader rejection.
+TEST_CASE(suzip_index_path_metadata_budget_boundary) {
+    superzip::ArchiveIndex index;
+    const auto count =
+        static_cast<std::uint32_t>(superzip::kMaxArchivePathMetadataBytes / superzip::kMaxArchivePathBytes);
+    for (std::uint32_t entry = 0U; entry < count; ++entry) {
+        index.entries.push_back(superzip::ArchiveEntry{
+            .path = std::string(superzip::kMaxArchivePathBytes, 'a'),
+            .directory = true,
+        });
+    }
+    std::stringstream stream(std::ios::in | std::ios::out | std::ios::binary);
+    superzip::write_archive_index(stream, index);
+    stream.seekg(0);
+    REQUIRE_EQ(superzip::read_archive_index(stream).entries.size(), count);
+    index.entries.push_back(superzip::ArchiveEntry{.path = "b", .directory = true});
+    std::ostringstream refused(std::ios::binary);
+    bool rejected = false;
+    try {
+        superzip::write_archive_index(refused, index);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(refused.str().empty());
+    stream.seekp(8);
+    superzip::write_u32(stream, count + 1U);
+    stream.seekp(0, std::ios::end);
+    const auto extra_entry_offset = stream.tellp();
+    superzip::write_u16(stream, 1U);
+    stream << 'b' << '\1' << std::string(32U, '\0');
+    stream.seekg(0);
+    rejected = false;
+    try {
+        (void)superzip::read_archive_index(stream);
+    } catch (const superzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()), "archive index exceeds SuperZip path metadata limit");
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(stream.tellg(), extra_entry_offset + std::streamoff(2));
 }
 
 // Purpose: Verify impossible archive-index entry counts are rejected before large allocations.

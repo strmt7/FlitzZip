@@ -83,6 +83,35 @@ the Security tab, released artifacts, or the product UI again.
   local Docker driver must turn native failures into a nonzero PowerShell exit.
   `tools\security_scan.ps1` enforces both rules so sanitizer linker failures
   cannot be reported as a successful verification lane.
+- Local fuzz smoke runs execute `.clusterfuzzlite/local_smoke.sh` from the
+  read-only source mount. Passing script text through Windows native command
+  arguments stripped XAR XML attribute quotes and weakened the valid seed.
+  The script parses its generated XML before fuzzing; the security policy
+  checks LF transport and parser validation, and selector tests cover routing.
+- XAR payload `length` is the stored heap extent and `size` is decoded bytes.
+  The parser and its old fixture builder shared a reversed mapping, so their
+  mutual agreement was not interoperability evidence. The compatibility smoke
+  now extracts independent libarchive-created stored/zlib XARs; C++ tests reject
+  reversed extents, and the valid fuzz seed asserts both standard fields.
+- Shared SDK CRC tables must initialize through one guard before either native
+  or 7z use. Independent bitwise-oracle, seeded-fragmentation, and concurrent
+  first-use regressions protect the IEEE polynomial and finalized seed
+  convention. Separate per-caller initialization guards do not protect shared
+  mutable SDK state from concurrent writes.
+- An entropy savings threshold must not suppress a smaller GPU dictionary
+  candidate. Bounded source-structure screening and complete payload comparison
+  remain authoritative. The all-nine-effort regression reproduces a prior
+  effort-6 ratio inversion and checks CPU/HIP reconstruction after its repair.
+- Bounded GPU output admission must resolve decoder CPU work from the actual
+  decode queue, not the encoder's worker share. Native and RAM paths share
+  the worker calculation; CRC-oracle and ownership regressions preserve host
+  output validation, failure cleanup, and pool lifetime. Pool setup and final
+  release stay inside extraction timing. Reporting tests distinguish fresh
+  pinned allocation from all reused pinned output, and decoder queue/worker
+  fields remain separate from encoder fields. RAM reconstruction CRC checks
+  must not be described as full byte comparisons. GUI smoke coverage uses the
+  current run's returned capture manifest, not stale images accumulated in
+  the output directory.
 - `tools\github_post_push_audit.ps1 -IncludeHistory` fetches open, fixed, and
   dismissed incidents only on demand. Its optional new-file JSON report retains
   every incident ID, rule, state, location, and latest analysis identity without

@@ -1,7 +1,10 @@
 #include "lzma/lzma_adapter.hpp"
+#include "lzma/bounded_sdk_allocator.hpp"
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -10,13 +13,11 @@
 #include <chrono>
 #include <cctype>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 extern "C" {
@@ -39,28 +40,6 @@ struct LzmaAloneHeader {
     std::uint64_t declared_size = kUnknownLzmaUncompressedSize;
     std::uint32_t dictionary_size = 0;
 };
-
-struct LzmaAllocationBudget {
-    std::uint64_t current_bytes = 0;
-    std::unordered_map<void*, std::size_t> allocations;
-};
-
-thread_local std::shared_ptr<LzmaAllocationBudget> g_lzma_allocation_budget;
-
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
 
 // Purpose: Add byte counts while detecting telemetry and policy overflow.
 // Inputs: `total` is mutated by adding `bytes`; `context` identifies the counter for diagnostics.
@@ -124,74 +103,6 @@ void throw_on_lzma_error(SRes result, const char* context) {
     }
 }
 
-// Purpose: Allocate bounded memory for the LZMA SDK decoder.
-// Inputs: `size` is the SDK allocation request.
-// Outputs: Returns a zero-initialized C-heap allocation or null when the request exceeds policy.
-void* lzma_alloc(ISzAllocPtr, std::size_t size) {
-    const auto bytes = size == 0U ? 1U : size;
-    const auto budget = g_lzma_allocation_budget;
-    if (budget &&
-        (bytes > kMaxLzmaDecoderAllocationBytes || budget->current_bytes > kMaxLzmaDecoderAllocationBytes - bytes)) {
-        return nullptr;
-    }
-    void* allocation = std::calloc(1U, bytes);
-    if (allocation == nullptr) {
-        return nullptr;
-    }
-    if (!budget) {
-        return allocation;
-    }
-    try {
-        budget->allocations.emplace(allocation, bytes);
-        budget->current_bytes += static_cast<std::uint64_t>(bytes);
-    } catch (...) {
-        std::free(allocation);
-        return nullptr;
-    }
-    return allocation;
-}
-
-// Purpose: Free memory allocated by `lzma_alloc`.
-// Inputs: `address` is null or a pointer returned by the SDK allocator.
-// Outputs: Releases memory and updates the active bounded allocation budget.
-void lzma_free(ISzAllocPtr, void* address) {
-    if (address == nullptr) {
-        return;
-    }
-    const auto budget = g_lzma_allocation_budget;
-    if (budget) {
-        const auto it = budget->allocations.find(address);
-        if (it != budget->allocations.end()) {
-            budget->current_bytes -= static_cast<std::uint64_t>(it->second);
-            budget->allocations.erase(it);
-        }
-    }
-    std::free(address);
-}
-
-class ScopedLzmaAllocationBudget {
-  public:
-    // Purpose: Install a bounded allocation budget for SDK callbacks on the current thread.
-    // Inputs: None.
-    // Outputs: Restores any previous allocator budget when destroyed.
-    ScopedLzmaAllocationBudget() : previous_(std::move(g_lzma_allocation_budget)) {
-        g_lzma_allocation_budget = std::make_shared<LzmaAllocationBudget>();
-    }
-
-    ScopedLzmaAllocationBudget(const ScopedLzmaAllocationBudget&) = delete;
-    ScopedLzmaAllocationBudget& operator=(const ScopedLzmaAllocationBudget&) = delete;
-
-    // Purpose: Restore the prior thread-local allocator budget.
-    // Inputs: None.
-    // Outputs: Leaves the current thread in its previous allocator state.
-    ~ScopedLzmaAllocationBudget() {
-        g_lzma_allocation_budget = std::move(previous_);
-    }
-
-  private:
-    std::shared_ptr<LzmaAllocationBudget> previous_;
-};
-
 class ScopedLzmaDecoder {
   public:
     // Purpose: Allocate an LZMA decoder for one parsed LZMA-Alone header.
@@ -225,28 +136,10 @@ class ScopedLzmaDecoder {
     }
 
   private:
-    ISzAlloc allocator_{lzma_alloc, lzma_free};
+    BoundedSdkAllocator allocator_{kMaxLzmaDecoderAllocationBytes};
     CLzmaDec decoder_{};
     bool allocated_ = false;
 };
-
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.lzma` stream.
-// Outputs: Returns a relative archive entry name that can pass path-safety checks.
-std::string lzma_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 5U && lower.ends_with(".lzma")) {
-        filename.resize(filename.size() - 5U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
 
 // Purpose: Parse and validate the fixed LZMA-Alone stream header.
 // Inputs: `input` is positioned at the start of the archive payload.
@@ -330,11 +223,10 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
                                          const std::filesystem::path& temporary_file,
                                          const std::filesystem::path& target) {
     std::uint64_t output_size = 0;
-    ScopedLzmaAllocationBudget allocation_budget;
     ScopedLzmaDecoder decoder(header.properties);
     std::ofstream output(temporary_file, std::ios::binary | std::ios::trunc);
     if (!output) {
-        throw ArchiveError("cannot create LZMA extraction target: " + target.string());
+        throw ArchiveError("cannot create LZMA extraction target: " + path_diagnostic_utf8(target));
     }
 
     std::array<Byte, kLzmaInputBufferBytes> input_buffer{};
@@ -382,7 +274,7 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
             output.write(reinterpret_cast<const char*>(output_buffer.data()),
                          static_cast<std::streamsize>(destination_length));
             if (!output) {
-                throw ArchiveError("failed to write LZMA extraction target: " + target.string());
+                throw ArchiveError("failed to write LZMA extraction target: " + path_diagnostic_utf8(target));
             }
         }
 
@@ -406,7 +298,7 @@ std::uint64_t decode_lzma_stream_to_file(std::ifstream& input, const LzmaAloneHe
     }
     output.close();
     if (!output) {
-        throw ArchiveError("failed to finalize LZMA extraction target: " + target.string());
+        throw ArchiveError("failed to finalize LZMA extraction target: " + path_diagnostic_utf8(target));
     }
     return output_size;
 }
@@ -423,15 +315,15 @@ OperationStats extract_lzma_file(const std::filesystem::path& archive_path, cons
     const auto archive_size = regular_file_size(archive_path);
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open LZMA archive: " + archive_path.string());
+        throw ArchiveError("cannot open LZMA archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto header = read_lzma_alone_header(input);
-    const auto entry_name = lzma_output_entry_name(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".lzma", ""}});
 
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing LZMA extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing LZMA extraction target: " + path_diagnostic_utf8(target));
     }
 
     ProgressState progress;

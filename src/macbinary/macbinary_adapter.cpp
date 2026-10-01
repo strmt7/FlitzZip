@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/file_size.hpp"
 #include "core/result.hpp"
 
 #include <array>
@@ -24,21 +25,6 @@ struct MacBinaryHeader {
     std::uint64_t data_offset = 0;
     std::uint64_t data_length = 0;
 };
-
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried or represented.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
 
 // Purpose: Add byte counts while detecting telemetry overflow.
 // Inputs: `lhs` and `rhs` are byte counts and `context` identifies the counter for diagnostics.

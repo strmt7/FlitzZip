@@ -1,5 +1,7 @@
 #include "bzip2/bzip2_stream.hpp"
 
+#include "core/file_size.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
@@ -70,21 +72,6 @@ void checked_add_stream_bytes(std::uint64_t& total, std::uint64_t bytes, const c
     total += bytes;
 }
 
-// Purpose: Read a filesystem file size into a 64-bit archive counter.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried.
-std::uint64_t bzip2_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read Bzip2 file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("Bzip2 file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
 // Purpose: Write all bytes to a binary output stream while updating a telemetry counter.
 // Inputs: `output` is the destination stream, `bytes` points to data, `size` is the byte count, and `written` is
 // updated. Outputs: Appends bytes or throws on stream failure.
@@ -116,7 +103,7 @@ class Bzip2OutputStream::Buffer final : public std::streambuf {
     explicit Buffer(const std::filesystem::path& output_path, int compression_level)
         : output_(output_path, std::ios::binary | std::ios::trunc) {
         if (!output_) {
-            throw ArchiveError("cannot create Bzip2 stream: " + output_path.string());
+            throw ArchiveError("cannot create Bzip2 stream: " + path_diagnostic_utf8(output_path));
         }
         const auto status =
             BZ2_bzCompressInit(&stream_, bzip2_compression_level(compression_level), kBzip2Verbosity, kBzip2WorkFactor);
@@ -259,10 +246,13 @@ class Bzip2OutputStream::Buffer final : public std::streambuf {
 
 class Bzip2InputStream::Buffer final : public std::streambuf {
   public:
+    // Purpose: Open a bounded Bzip2 decoder and initialize its owned input/output buffers.
+    // Inputs: `archive_path` names untrusted compressed input; allocation follows codec resource limits.
+    // Outputs: Creates decoding state or throws on open/initialization failure, without publishing files.
     explicit Buffer(const std::filesystem::path& archive_path)
-        : input_(archive_path, std::ios::binary), archive_size_(bzip2_file_size(archive_path)) {
+        : input_(archive_path, std::ios::binary), archive_size_(regular_file_size(archive_path)) {
         if (!input_) {
-            throw ArchiveError("cannot open Bzip2 stream: " + archive_path.string());
+            throw ArchiveError("cannot open Bzip2 stream: " + path_diagnostic_utf8(archive_path));
         }
         const auto status = BZ2_bzDecompressInit(&stream_, kBzip2Verbosity, 0);
         if (status != BZ_OK) {
@@ -424,14 +414,23 @@ Bzip2OutputStream::~Bzip2OutputStream() {
     }
 }
 
+// Purpose: Finalize the Bzip2 output stream and close its file.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Completes framing or throws on failure; repeated successful close calls are harmless.
 void Bzip2OutputStream::close() {
     buffer_->close();
 }
 
+// Purpose: Read the Bzip2 encoder's accepted input byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative uncompressed bytes without advancing the encoder.
 std::uint64_t Bzip2OutputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Bzip2 encoder's written file byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative compressed bytes including framing, without advancing the encoder.
 std::uint64_t Bzip2OutputStream::output_bytes() const {
     return buffer_->output_bytes();
 }
@@ -456,6 +455,9 @@ std::uint64_t Bzip2InputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Bzip2 decoder's produced output byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative decoded bytes, not a checksum or validation guarantee.
 std::uint64_t Bzip2InputStream::output_bytes() const {
     return buffer_->output_bytes();
 }

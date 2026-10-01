@@ -69,6 +69,16 @@ class GzipInputStream final : public std::istream {
     // Outputs: Returns bytes produced before modulo truncation for Gzip ISIZE.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
+    // Purpose: Report the bounded deflate payload size without Gzip header/trailer bytes.
+    // Inputs: None; the stream header was validated at construction.
+    // Outputs: Returns the total compressed-payload bytes used by extraction progress.
+    [[nodiscard]] std::uint64_t compressed_payload_bytes() const;
+
+    // Purpose: Report compressed payload bytes read into the decoder's bounded input buffer.
+    // Inputs: None; buffered bytes may not yet have produced caller-visible decoded output.
+    // Outputs: Returns a monotonic count no greater than compressed_payload_bytes().
+    [[nodiscard]] std::uint64_t compressed_payload_read_bytes() const;
+
   private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;

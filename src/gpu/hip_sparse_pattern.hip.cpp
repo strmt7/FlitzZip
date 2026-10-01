@@ -125,17 +125,17 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     HipDeviceBuffer<SparseCandidate> device_candidates(candidate_bytes, "hipMalloc sparse candidates");
     HipDeviceBuffer<std::uint32_t> device_counts(count_bytes, "hipMalloc sparse counts");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes + count_bytes));
-    check_hip(hipMemcpy(device_candidates.get(), candidates.data(), candidate_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_candidates.get(), candidates.data(), candidate_bytes, hipMemcpyHostToDevice),
               "hipMemcpy sparse candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
-    check_hip(hipMemset(device_counts.get(), 0, count_bytes), "hipMemset sparse counts");
+    check_hip(hipMemsetAsync(device_counts.get(), 0, count_bytes, hipStreamPerThread), "hipMemset sparse counts");
     auto events = make_hip_event_pair("create sparse count events");
     launch_measured_kernel(count_sparse_positions_kernel, grid, kThreads, 0, hipStreamPerThread, events,
                            "launch sparse count kernel", device_input, device_candidates.get(), device_counts.get());
     finish_measured_kernel(telemetry, events, "synchronize sparse count kernel");
 
     std::vector<std::uint32_t> counts(candidates.size());
-    check_hip(hipMemcpy(counts.data(), device_counts.get(), count_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(counts.data(), device_counts.get(), count_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy sparse counts");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(count_bytes));
     std::vector<SparseCandidate> admitted(candidates.begin(), candidates.end());
@@ -165,10 +165,10 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     HipDeviceBuffer<std::uint32_t> device_positions(position_bytes, "hipMalloc sparse positions");
     HipDeviceBuffer<std::uint32_t> device_cursors(count_bytes, "hipMalloc sparse cursors");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(position_bytes + count_bytes));
-    check_hip(hipMemcpy(device_candidates.get(), admitted.data(), candidate_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_candidates.get(), admitted.data(), candidate_bytes, hipMemcpyHostToDevice),
               "hipMemcpy admitted sparse candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
-    check_hip(hipMemset(device_cursors.get(), 0, count_bytes), "hipMemset sparse cursors");
+    check_hip(hipMemsetAsync(device_cursors.get(), 0, count_bytes, hipStreamPerThread), "hipMemset sparse cursors");
     events = make_hip_event_pair("create sparse gather events");
     launch_measured_kernel(gather_sparse_positions_kernel, grid, kThreads, 0, hipStreamPerThread, events,
                            "launch sparse gather kernel", device_input, device_candidates.get(), device_cursors.get(),
@@ -176,7 +176,7 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
     finish_measured_kernel(telemetry, events, "synchronize sparse gather kernel");
 
     std::vector<std::uint32_t> cursors(candidates.size());
-    check_hip(hipMemcpy(cursors.data(), device_cursors.get(), count_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(cursors.data(), device_cursors.get(), count_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy sparse cursors");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(count_bytes));
     for (std::size_t index = 0U; index < admitted.size(); ++index) {
@@ -185,7 +185,7 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
         }
     }
     std::vector<std::uint32_t> positions(static_cast<std::size_t>(total_positions));
-    check_hip(hipMemcpy(positions.data(), device_positions.get(), position_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(positions.data(), device_positions.get(), position_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy sparse positions");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(position_bytes));
     for (std::size_t index = 0U; index < admitted.size(); ++index) {

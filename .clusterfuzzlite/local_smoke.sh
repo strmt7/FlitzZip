@@ -1,0 +1,137 @@
+#!/bin/bash
+# Purpose: Build and smoke-run the pinned, production-source sanitizer harness without Windows script quoting.
+# Inputs: One nonnegative run count and the driver's read-only /src plus writable /out mounts.
+# Outputs: Validates generated seed framing and exits nonzero on build, seed, sanitizer, or fuzzer failure.
+set -euo pipefail
+runs="${1:?Missing fuzz run count}"
+[[ $runs =~ ^[0-9]+$ ]]
+mkdir -p /out
+bash .clusterfuzzlite/build.sh
+rm -rf /out/corpus
+mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/macbinary /out/corpus/lha /out/corpus/xar
+printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
+printf '../escape' > /out/corpus/path_safety/traversal
+printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
+printf 'safe/nested/file.txt' > /out/corpus/path_safety/safe-relative
+printf '070701' > /out/corpus/cpio/tiny-new-ascii
+printf 'CD001' > /out/corpus/iso/tiny-cd001
+printf 'MSCF' > /out/corpus/cab/tiny-mscf
+printf '\355\253\356\333\003\000' > /out/corpus/rpm/tiny-rpm-lead
+printf '7z\274\257\047\034\000\003' > /out/corpus/sevenzip/tiny-sevenzip-signature
+printf '\135\000\000\200\000\377\377\377\377\377\377\377\377\000' > /out/corpus/lzma/tiny-lzma-header
+printf 'LZIP\001\014\000' > /out/corpus/lzip/tiny-lzip-header
+printf '\140\352\000\000' > /out/corpus/arj/tiny-arj-end-marker
+printf '\032\000' > /out/corpus/arc/tiny-arc-end-marker
+python3 - <<'PY'
+from pathlib import Path
+header = bytearray(128)
+header[1] = len(b'fuzz.txt')
+header[2:10] = b'fuzz.txt'
+header[122] = 0x81
+header[123] = 0x81
+crc = 0
+for b in header[:124]:
+    crc ^= b << 8
+    for _ in range(8):
+        crc = ((crc << 1) ^ 0x1021) & 0xffff if crc & 0x8000 else (crc << 1) & 0xffff
+header[124] = crc >> 8
+header[125] = crc & 0xff
+Path('/out/corpus/macbinary/empty.macbin').write_bytes(header)
+PY
+printf '\031\216-lhd-' > /out/corpus/lha/tiny-lha-signature
+printf 'xar!' > /out/corpus/xar/tiny-xar-signature
+python3 - <<'PY'
+from pathlib import Path
+import struct
+import zlib
+import xml.etree.ElementTree as ET
+# Purpose: Compute newc alignment padding. Inputs: A nonnegative byte count. Outputs: Zero to three padding bytes.
+def cpio_padding(size):
+    return (4 - (size % 4)) % 4
+# Purpose: Encode newc metadata. Inputs: A fixture uint32 value. Outputs: Eight uppercase ASCII hex bytes.
+def cpio_field(value):
+    return f'{value:08X}'.encode()
+# Purpose: Build a bounded newc fixture member. Inputs: Name, mode, and bytes. Outputs: Header and aligned payload.
+def cpio_entry(name, mode, payload=b''):
+    name_bytes = name.encode() + b'\0'
+    header = (
+        b'070701'
+        + cpio_field(1)
+        + cpio_field(mode)
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(1)
+        + cpio_field(0)
+        + cpio_field(len(payload))
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(0)
+        + cpio_field(len(name_bytes))
+        + cpio_field(0)
+    )
+    return header + name_bytes + (b'\0' * cpio_padding(len(header) + len(name_bytes))) + payload + (b'\0' * cpio_padding(len(payload)))
+Path('/out/corpus/cpio/safe-file.cpio').write_bytes(
+    cpio_entry('safe.txt', 0o100644, b'hello cpio\n') + cpio_entry('TRAILER!!!', 0)
+)
+Path('/out/corpus/sevenzip/nested-payload.7z').write_bytes(bytes([
+    55, 122, 188, 175, 39, 28, 0, 3, 61, 67, 90, 149, 110, 0, 0, 0,
+    0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 83, 152, 7, 164,
+    1, 0, 15, 115, 101, 118, 101, 110, 122, 105, 112, 32, 112, 97, 121, 108,
+    111, 97, 100, 0, 0, 0, 129, 51, 7, 174, 15, 207, 57, 176, 12, 7,
+    200, 67, 127, 65, 177, 250, 253, 226, 251, 121, 219, 32, 43, 173, 94, 44,
+    42, 8, 17, 64, 221, 175, 147, 38, 76, 135, 221, 114, 36, 255, 78, 89,
+    238, 232, 52, 84, 176, 173, 57, 39, 80, 178, 173, 141, 182, 201, 248, 140,
+    45, 225, 25, 37, 113, 224, 222, 155, 40, 199, 58, 161, 53, 45, 38, 9,
+    204, 203, 200, 225, 204, 104, 40, 134, 221, 252, 239, 51, 192, 0, 23, 6,
+    20, 1, 9, 90, 0, 7, 11, 1, 0, 1, 35, 3, 1, 1, 5, 93,
+    0, 0, 64, 0, 12, 94, 10, 1, 167, 128, 3, 7, 0, 0,
+]))
+Path('/out/corpus/lha/nested-payload.lzh').write_bytes(bytes([
+    25, 142, 45, 108, 104, 100, 45, 29, 0, 0, 0, 0, 0, 0, 0, 233,
+    163, 152, 64, 32, 1, 0, 0, 0, 85, 5, 0, 80, 192, 65, 7, 0,
+    81, 232, 3, 232, 3, 10, 0, 2, 115, 117, 98, 100, 105, 114, 255, 7,
+    0, 84, 135, 255, 150, 79, 0, 0, 25, 150, 45, 108, 104, 100, 45, 37,
+    0, 0, 0, 0, 0, 0, 0, 233, 163, 152, 64, 32, 1, 0, 0, 0,
+    85, 5, 0, 80, 109, 65, 7, 0, 81, 232, 3, 232, 3, 18, 0, 2,
+    115, 117, 98, 100, 105, 114, 255, 115, 117, 98, 100, 105, 114, 50, 255, 7,
+    0, 84, 135, 255, 150, 79, 0, 0, 34, 45, 45, 108, 104, 48, 45, 49,
+    0, 0, 0, 12, 0, 0, 0, 0, 0, 33, 60, 32, 1, 9, 104, 101,
+    108, 108, 111, 46, 116, 120, 116, 120, 151, 85, 5, 0, 80, 164, 129, 7,
+    0, 81, 232, 3, 232, 3, 18, 0, 2, 115, 117, 98, 100, 105, 114, 255,
+    115, 117, 98, 100, 105, 114, 50, 255, 7, 0, 84, 0, 59, 61, 75, 0,
+    0, 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 10, 0,
+]))
+payload = b'hello xar\n'
+encoded = zlib.compress(payload)
+toc = (
+    b'<xar><toc><file id="1"><name>payload.txt</name><type>file</type>'
+    + b'<data><length>' + str(len(encoded)).encode() + b'</length><offset>0</offset>'
+    + b'<size>' + str(len(payload)).encode() + b'</size>'
+    + b'<encoding style="application/x-gzip"/></data></file></toc></xar>'
+)
+parsed = ET.fromstring(toc)
+assert parsed.find('./toc/file').attrib['id'] == '1'
+assert parsed.find('./toc/file/data/encoding').attrib['style'] == 'application/x-gzip'
+assert int(parsed.findtext('./toc/file/data/length')) == len(encoded)
+assert int(parsed.findtext('./toc/file/data/size')) == len(payload)
+toc_encoded = zlib.compress(toc)
+header = b'xar!' + struct.pack('>HHQQI', 28, 1, len(toc_encoded), len(toc), 0)
+Path('/out/corpus/xar/nested-payload.xar').write_bytes(header + toc_encoded + encoded)
+PY
+if [ "$runs" -gt 0 ]; then
+  /out/superzip_archive_index_fuzzer -runs=$runs -max_len=1048576 /out/corpus/archive_index
+  /out/superzip_path_safety_fuzzer -runs=$runs -max_len=4096 /out/corpus/path_safety
+  /out/superzip_cpio_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cpio
+  /out/superzip_iso_fuzzer -runs=$runs -max_len=1048576 /out/corpus/iso
+  /out/superzip_cab_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/cab
+  /out/superzip_rpm_header_fuzzer -runs=$runs -max_len=1048576 /out/corpus/rpm
+  /out/superzip_sevenzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/sevenzip
+  /out/superzip_lzma_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzma
+  /out/superzip_lzip_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lzip
+  /out/superzip_arj_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arj
+  /out/superzip_arc_fuzzer -runs=$runs -max_len=1048576 /out/corpus/arc
+  /out/superzip_macbinary_fuzzer -runs=$runs -max_len=1048576 /out/corpus/macbinary
+  /out/superzip_lha_fuzzer -runs=$runs -max_len=1048576 /out/corpus/lha
+  /out/superzip_xar_fuzzer -runs=$runs -max_len=1048576 /out/corpus/xar
+fi

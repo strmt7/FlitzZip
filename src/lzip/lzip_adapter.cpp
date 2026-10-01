@@ -2,6 +2,7 @@
 
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
 #include "core/result.hpp"
 #include "lzip/lzip_stream.hpp"
 
@@ -30,29 +31,6 @@ void checked_add_lzip_adapter_bytes(std::uint64_t& total, std::uint64_t bytes, c
     total += bytes;
 }
 
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.lz` stream.
-// Outputs: Returns a relative archive entry name that can pass path-safety checks.
-std::string lzip_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 7U && lower.ends_with(".tar.lz")) {
-        filename.resize(filename.size() - 3U);
-    } else if (lower.size() > 4U && lower.ends_with(".tlz")) {
-        filename.resize(filename.size() - 4U);
-        filename += ".tar";
-    } else if (lower.size() > 3U && lower.ends_with(".lz")) {
-        filename.resize(filename.size() - 3U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
-
 }  // namespace
 
 // Purpose: Extract a single lzip payload through bounded decoding and verified file publication.
@@ -61,11 +39,11 @@ std::string lzip_output_entry_name(const std::filesystem::path& archive_path) {
 OperationStats extract_lzip_file(const std::filesystem::path& archive_path, const std::filesystem::path& destination,
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
-    const auto entry_name = lzip_output_entry_name(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".tlz", ".tar"}, {".lz", ""}});
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing lzip extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing lzip extraction target: " + path_diagnostic_utf8(target));
     }
 
     LzipInputStream input(archive_path);
@@ -80,7 +58,7 @@ OperationStats extract_lzip_file(const std::filesystem::path& archive_path, cons
     try {
         std::ofstream output(temporary.file, std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create lzip extraction target: " + target.string());
+            throw ArchiveError("cannot create lzip extraction target: " + path_diagnostic_utf8(target));
         }
 
         std::array<char, kLzipAdapterBufferBytes> buffer{};
@@ -91,7 +69,7 @@ OperationStats extract_lzip_file(const std::filesystem::path& archive_path, cons
                 checked_add_lzip_adapter_bytes(output_size, static_cast<std::uint64_t>(bytes_read), "lzip output");
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
-                    throw ArchiveError("failed to write lzip extraction target: " + target.string());
+                    throw ArchiveError("failed to write lzip extraction target: " + path_diagnostic_utf8(target));
                 }
             }
         }
@@ -101,7 +79,7 @@ OperationStats extract_lzip_file(const std::filesystem::path& archive_path, cons
 
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize lzip extraction target: " + target.string());
+            throw ArchiveError("failed to finalize lzip extraction target: " + path_diagnostic_utf8(target));
         }
         commit_verified_file(temporary, target, overwrite);
         cleanup_file_publish_target(temporary);

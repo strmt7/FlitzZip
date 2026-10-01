@@ -1,6 +1,7 @@
 #include "core/archive_index.hpp"
 
 #include "core/result.hpp"
+#include "core/resource_limit_checks.hpp"
 
 #include <array>
 #include <istream>
@@ -89,7 +90,13 @@ void reject_unbounded_index_shape(const ArchiveIndex& index) {
         throw ArchiveError("archive entry count exceeds SuperZip resource limit");
     }
     std::uint64_t total_blocks = 0;
+    std::uint64_t total_path_bytes = 0;
     for (const auto& entry : index.entries) {
+        if (entry.path.size() > kMaxArchivePathBytes) {
+            throw ArchiveError("archive path exceeds SuperZip resource limit");
+        }
+        total_path_bytes =
+            checked_add_archive_path_metadata_bytes(total_path_bytes, entry.path.size(), "archive index");
         if (entry.blocks.size() > kMaxBlocksPerEntry) {
             throw ArchiveError("archive block count exceeds per-entry resource limit");
         }
@@ -102,26 +109,44 @@ void reject_unbounded_index_shape(const ArchiveIndex& index) {
 
 }  // namespace
 
+// Purpose: Serialize a 16-bit unsigned value in native-index little-endian order.
+// Inputs: Writable binary output and the value; the stream remains caller-owned.
+// Outputs: Appends two bytes or throws ArchiveError on a failed write.
 void write_u16(std::ostream& output, std::uint16_t value) {
     write_le(output, value);
 }
 
+// Purpose: Serialize a 32-bit unsigned value in native-index little-endian order.
+// Inputs: Writable binary output and the value; the stream remains caller-owned.
+// Outputs: Appends four bytes or throws ArchiveError on a failed write.
 void write_u32(std::ostream& output, std::uint32_t value) {
     write_le(output, value);
 }
 
+// Purpose: Serialize a 64-bit unsigned value in native-index little-endian order.
+// Inputs: Writable binary output and the value; the stream remains caller-owned.
+// Outputs: Appends eight bytes or throws ArchiveError on a failed write.
 void write_u64(std::ostream& output, std::uint64_t value) {
     write_le(output, value);
 }
 
+// Purpose: Decode a little-endian 16-bit native-index value.
+// Inputs: Caller-owned binary input positioned at the value.
+// Outputs: Consumes two bytes and returns the value; truncation throws ArchiveError.
 std::uint16_t read_u16(std::istream& input) {
     return read_le<std::uint16_t>(input);
 }
 
+// Purpose: Decode a little-endian 32-bit native-index value.
+// Inputs: Caller-owned binary input positioned at the value.
+// Outputs: Consumes four bytes and returns the value; truncation throws ArchiveError.
 std::uint32_t read_u32(std::istream& input) {
     return read_le<std::uint32_t>(input);
 }
 
+// Purpose: Decode a little-endian 64-bit native-index value.
+// Inputs: Caller-owned binary input positioned at the value.
+// Outputs: Consumes eight bytes and returns the value; truncation throws ArchiveError.
 std::uint64_t read_u64(std::istream& input) {
     return read_le<std::uint64_t>(input);
 }
@@ -167,6 +192,33 @@ void validate_pattern_version_bound(const BlockDescriptor& block, std::uint32_t 
     if (block.encoded_len < 2U || block.encoded_len > limit || block.encoded_len >= block.uncompressed_len) {
         throw ArchiveError("archive pattern length is invalid for its version");
     }
+}
+
+// Purpose: Decode a descriptor without duplicating the versioned block-kind capability table.
+// Inputs: Untrusted binary input and an already admitted native format version.
+// Outputs: Returns a descriptor; truncation, unknown kinds and version/pattern violations throw ArchiveError.
+BlockDescriptor read_block_descriptor(std::istream& input, std::uint32_t version) {
+    const int kind_raw = input.get();
+    const int fill_raw = input.get();
+    if (kind_raw == EOF || fill_raw == EOF) {
+        throw ArchiveError("archive block is truncated");
+    }
+    const auto kind = static_cast<BlockKind>(kind_raw);
+    if (!block_kind_supported_in_version(kind, kSuperZipMaxReadableVersion)) {
+        throw ArchiveError("archive block has unknown encoding kind");
+    }
+    if (!block_kind_supported_in_version(kind, version)) {
+        throw ArchiveError("archive block kind is not supported by its version");
+    }
+    auto block = BlockDescriptor{
+        .kind = kind,
+        .fill_value = static_cast<std::uint8_t>(fill_raw),
+        .uncompressed_len = read_u32(input),
+        .encoded_offset = read_u64(input),
+        .encoded_len = read_u32(input),
+    };
+    validate_pattern_version_bound(block, version);
+    return block;
 }
 
 }  // namespace
@@ -233,8 +285,13 @@ ArchiveIndex read_archive_index(std::istream& input) {
                                   "archive entry count exceeds index size");
     index.entries.reserve(entry_count);
     std::uint64_t total_blocks = 0;
+    std::uint64_t total_path_bytes = 0;
     for (std::uint32_t i = 0; i < entry_count; ++i) {
         const auto path_len = read_u16(input);
+        if (path_len > kMaxArchivePathBytes) {
+            throw ArchiveError("archive path exceeds SuperZip resource limit");
+        }
+        total_path_bytes = checked_add_archive_path_metadata_bytes(total_path_bytes, path_len, "archive index");
         std::string path(path_len, '\0');
         input.read(path.data(), path_len);
         if (input.gcount() != path_len) {
@@ -262,47 +319,7 @@ ArchiveIndex read_archive_index(std::istream& input) {
                                       "archive block count exceeds index size");
         entry.blocks.reserve(block_count);
         for (std::uint32_t j = 0; j < block_count; ++j) {
-            const int kind_raw = input.get();
-            const int fill_raw = input.get();
-            if (kind_raw == EOF || fill_raw == EOF) {
-                throw ArchiveError("archive block is truncated");
-            }
-            auto kind = BlockKind::Raw;
-            if (kind_raw == static_cast<int>(BlockKind::Fill)) {
-                kind = BlockKind::Fill;
-            } else if (kind_raw == static_cast<int>(BlockKind::Deflate)) {
-                kind = BlockKind::Deflate;
-            } else if (kind_raw == static_cast<int>(BlockKind::Pattern)) {
-                kind = BlockKind::Pattern;
-            } else if (kind_raw == static_cast<int>(BlockKind::GpuPrefix)) {
-                kind = BlockKind::GpuPrefix;
-            } else if (kind_raw == static_cast<int>(BlockKind::GpuAdaptivePrefix)) {
-                kind = BlockKind::GpuAdaptivePrefix;
-            } else if (kind_raw == static_cast<int>(BlockKind::GpuDictionary)) {
-                kind = BlockKind::GpuDictionary;
-            } else if (kind_raw == static_cast<int>(BlockKind::GpuSparsePattern)) {
-                kind = BlockKind::GpuSparsePattern;
-            } else if (kind_raw == static_cast<int>(BlockKind::CpuZstd)) {
-                kind = BlockKind::CpuZstd;
-            } else if (kind_raw == static_cast<int>(BlockKind::GpuLongSparsePattern)) {
-                kind = BlockKind::GpuLongSparsePattern;
-            } else if (kind_raw == static_cast<int>(BlockKind::GpuHuffman)) {
-                kind = BlockKind::GpuHuffman;
-            } else if (kind_raw != static_cast<int>(BlockKind::Raw)) {
-                throw ArchiveError("archive block has unknown encoding kind");
-            }
-            if (!block_kind_supported_in_version(kind, version)) {
-                throw ArchiveError("archive block kind is not supported by its version");
-            }
-            auto block = BlockDescriptor{
-                .kind = kind,
-                .fill_value = static_cast<std::uint8_t>(fill_raw),
-                .uncompressed_len = read_u32(input),
-                .encoded_offset = read_u64(input),
-                .encoded_len = read_u32(input),
-            };
-            validate_pattern_version_bound(block, version);
-            entry.blocks.push_back(block);
+            entry.blocks.push_back(read_block_descriptor(input, version));
         }
         index.entries.push_back(std::move(entry));
     }

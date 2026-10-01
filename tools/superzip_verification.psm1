@@ -264,7 +264,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(build_parallelism|test_build_parallelism)\.ps1$',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
-        '^\.clusterfuzzlite/(build\.sh|Dockerfile|project\.yaml)$',
+        '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
     )

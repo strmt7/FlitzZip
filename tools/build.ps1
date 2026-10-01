@@ -4,8 +4,8 @@ param(
     [switch]$EnableHip,
     [switch]$CpuOnlyValidation,
     [switch]$ConfigureOnly,
-    [ValidateSet("Visual Studio 17 2022", "Visual Studio 18 2026")]
-    [string]$Generator = "Visual Studio 17 2022",
+    [ValidateSet("", "Visual Studio 17 2022", "Visual Studio 18 2026")]
+    [string]$Generator = "",
     [string]$HipArch = "gfx1201",
     [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",
@@ -19,23 +19,7 @@ $build = Join-Path $repo "build"
 . (Join-Path $PSScriptRoot "version.ps1")
 . (Join-Path $PSScriptRoot "hip_architecture.ps1")
 . (Join-Path $PSScriptRoot "build_parallelism.ps1")
-
-# Purpose: Find a usable CMake executable on a Windows development or CI host.
-# Inputs: None; probes known install paths and PATH.
-# Outputs: Returns the CMake executable path or throws when CMake is unavailable.
-function Find-CMake {
-    $candidates = @(
-        "C:\Program Files\CMake\bin\cmake.exe",
-        "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
-        "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) { return $candidate }
-    }
-    $cmd = Get-Command cmake -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    throw "CMake was not found."
-}
+. (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 
 # Purpose: Invoke a native executable and promote non-zero process exits to PowerShell failures.
 # Inputs: FilePath is the executable; Arguments is the argv array; Operation is the diagnostic label.
@@ -110,7 +94,8 @@ function Assert-MsiProductIdentity {
 }
 
 $HipArch = Resolve-HipArchitecture -Architecture $HipArch
-$cmake = Find-CMake
+$cmake = Find-CMake -RepoRoot $repo
+$Generator = Find-CMakeGenerator -Requested $Generator -BuildRoot $build
 if ($EnableHip.IsPresent -and $CpuOnlyValidation.IsPresent) {
     throw "-EnableHip and -CpuOnlyValidation are mutually exclusive."
 }

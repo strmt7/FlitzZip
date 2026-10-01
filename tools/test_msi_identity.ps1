@@ -3,23 +3,7 @@ param()
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "version.ps1")
-
-# Purpose: Find a usable CMake executable on a Windows development or CI host.
-# Inputs: None; probes known install paths and PATH.
-# Outputs: Returns the CMake executable path or throws when CMake is unavailable.
-function Find-CMake {
-    $candidates = @(
-        "C:\Program Files\CMake\bin\cmake.exe",
-        "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
-        "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate) { return $candidate }
-    }
-    $cmd = Get-Command cmake -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    throw "CMake was not found."
-}
+. (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 
 # Purpose: Invoke CMake and treat any non-zero exit as a test failure.
 # Inputs: CMakePath is the resolved cmake.exe path; Arguments is the argv list; Label names the operation.
@@ -102,7 +86,7 @@ function Get-MsiIdentitySnapshot {
     $configureArgs = @(
         "-S", $repo,
         "-B", $buildRoot,
-        "-G", "Visual Studio 17 2022",
+        "-G", (Find-CMakeGenerator -BuildRoot $buildRoot),
         "-A", "x64",
         "-DSUPERZIP_ENABLE_HIP=OFF",
         "-DSUPERZIP_BUILD_GUI=OFF",
@@ -125,7 +109,7 @@ function Get-MsiIdentitySnapshot {
     }
 }
 
-$cmake = Find-CMake
+$cmake = Find-CMake -RepoRoot $repo
 $baseVersion = Resolve-SuperZipProjectVersion -RepoRoot $repo
 $nextPatchVersion = Get-NextPatchPackageVersion -PackageVersion $baseVersion
 $snapshots = @()

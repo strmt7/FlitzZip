@@ -1,10 +1,13 @@
 #include "gpu/hip_device.hpp"
 
 #include "core/result.hpp"
+#include "core/resource_limits.hpp"
+#include "gpu/pinned_host_budget.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -23,10 +26,16 @@
 #include <softpub.h>
 #include <windows.h>
 #include <wintrust.h>
+#include <winver.h>
 #include <hip/hip_runtime.h>
 #endif
 
 namespace superzip {
+
+namespace {
+PinnedHostBudget pinned_host_budget;
+std::atomic<std::uint64_t> pinned_host_release_failures{0};
+}  // namespace
 
 #if SUPERZIP_ENABLE_HIP
 namespace {
@@ -167,10 +176,42 @@ std::vector<std::filesystem::path> trusted_hip_runtime_candidates(const std::wst
     return candidates;
 }
 
+// Purpose: Read bounded numeric version metadata while the trusted runtime file is held against replacement.
+// Inputs: Absolute runtime path under the loader's open file lock.
+// Outputs: Returns its fixed four-component file version or unavailable metadata without guessing SDK identity.
+std::optional<HipRuntimeVersion> read_locked_runtime_version(const std::filesystem::path& path) {
+    DWORD ignored = 0;
+    const auto size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
+    constexpr DWORD maximum_metadata_bytes = 64U * 1024U;
+    if (size == 0U || size > maximum_metadata_bytes) {
+        return std::nullopt;
+    }
+    std::vector<std::byte> metadata(size);
+    if (!GetFileVersionInfoW(path.c_str(), 0, size, metadata.data())) {
+        return std::nullopt;
+    }
+    void* value = nullptr;
+    UINT length = 0;
+    if (!VerQueryValueW(metadata.data(), L"\\", &value, &length) || value == nullptr ||
+        length < sizeof(VS_FIXEDFILEINFO)) {
+        return std::nullopt;
+    }
+    VS_FIXEDFILEINFO fixed{};
+    std::memcpy(&fixed, value, sizeof(fixed));
+    if (fixed.dwSignature != VS_FFI_SIGNATURE) {
+        return std::nullopt;
+    }
+    return HipRuntimeVersion{static_cast<std::uint16_t>(HIWORD(fixed.dwFileVersionMS)),
+                             static_cast<std::uint16_t>(LOWORD(fixed.dwFileVersionMS)),
+                             static_cast<std::uint16_t>(HIWORD(fixed.dwFileVersionLS)),
+                             static_cast<std::uint16_t>(LOWORD(fixed.dwFileVersionLS))};
+}
+
 // Purpose: Load one exact trusted HIP runtime while holding its file identity against replacement.
 // Inputs: `path` is an absolute System32 or Program Files candidate and `runtime` is the required basename.
-// Outputs: Returns the loaded module or null after any path, signature, identity, or loader failure.
-HMODULE load_trusted_hip_candidate(const std::filesystem::path& path, const std::wstring& runtime) {
+// Outputs: Returns the module with locked file-version metadata, or null after a loader/trust failure.
+HMODULE load_trusted_hip_candidate(const std::filesystem::path& path, const std::wstring& runtime,
+                                   std::optional<HipRuntimeVersion>& version) {
     if (path.filename().wstring() != runtime || !has_direct_regular_file_chain(path)) {
         return nullptr;
     }
@@ -193,28 +234,48 @@ HMODULE load_trusted_hip_candidate(const std::filesystem::path& path, const std:
     const auto loaded_length = GetModuleFileNameW(module, loaded_path.data(), static_cast<DWORD>(loaded_path.size()));
     const bool exact_module = loaded_length > 0U && loaded_length < loaded_path.size() &&
                               CompareStringOrdinal(path.c_str(), -1, loaded_path.data(), -1, TRUE) == CSTR_EQUAL;
-    CloseHandle(locked_file);
     if (!exact_module) {
+        CloseHandle(locked_file);
         FreeLibrary(module);
         return nullptr;
     }
+    try {
+        version = read_locked_runtime_version(path);
+    } catch (...) {
+        version = std::nullopt;
+    }
+    CloseHandle(locked_file);
     return module;
 }
 
+struct LoadedHipRuntime {
+    HMODULE module = nullptr;
+    std::optional<HipRuntimeVersion> version;
+};
+
 // Purpose: Load the AMD HIP runtime before touching delay-loaded HIP imports.
 // Inputs: None; uses the compile-time major-version DLL name recorded by CMake.
-// Outputs: Returns true only when a signed runtime loads from an absolute System32 or Program Files path.
-bool load_hip_runtime() {
-    static const bool loaded = [] {
+// Outputs: Returns the process-lifetime trusted module and the exact version observed under its load lock.
+const LoadedHipRuntime& loaded_hip_runtime() {
+    static const LoadedHipRuntime loaded = [] {
+        LoadedHipRuntime result;
         const auto runtime = widen_ascii(SUPERZIP_HIP_RUNTIME_DLL_NAME);
         for (const auto& candidate : trusted_hip_runtime_candidates(runtime)) {
-            if (load_trusted_hip_candidate(candidate, runtime) != nullptr) {
-                return true;
+            result.module = load_trusted_hip_candidate(candidate, runtime, result.version);
+            if (result.module != nullptr) {
+                return result;
             }
         }
-        return false;
+        return result;
     }();
     return loaded;
+}
+
+// Purpose: Preserve the existing boolean admission contract over the trusted runtime's cached identity.
+// Inputs: None; performs trusted loading only once per process.
+// Outputs: Returns true only when the exact signed module is resident.
+bool load_hip_runtime() {
+    return loaded_hip_runtime().module != nullptr;
 }
 
 struct HipDeviceIdentity {
@@ -264,9 +325,179 @@ void require_hip_device_ready() {
 #endif
 }
 
-// Purpose: Query AMD HIP availability and selected device metadata.
-// Inputs: None.
-// Outputs: Returns device status; absent or unreadable devices are reported in-band rather than thrown.
+// Purpose: Admit a pinned decode owner against current host RAM and the process-wide outstanding reservation cap.
+// Inputs: bytes is bounded native output; the caller's selected HIP device remains unchanged.
+// Outputs: Returns pinned bytes or nullptr on unavailable resources; allocation failure returns its reservation.
+std::byte* try_allocate_hip_host_output(std::size_t bytes) {
+#if SUPERZIP_ENABLE_HIP
+    if (bytes < kMinArchiveBlockBytes || bytes > kMaxArchiveChunkBytes || !load_hip_runtime()) {
+        return nullptr;
+    }
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = sizeof(memory);
+    if (!GlobalMemoryStatusEx(&memory) || !pinned_host_budget.try_reserve(bytes, memory.ullAvailPhys)) {
+        return nullptr;
+    }
+    void* pointer = nullptr;
+    const auto status = hipHostMalloc(&pointer, bytes, hipHostMallocPortable);
+    if (status != hipSuccess) {
+        pinned_host_budget.release(bytes);
+        return nullptr;
+    }
+    return static_cast<std::byte*>(pointer);
+#else
+    (void)bytes;
+    return nullptr;
+#endif
+}
+
+// Purpose: Free host storage through its allocation context and preserve conservative accounting if HIP rejects it.
+// Inputs: pointer/bytes belong to one live pinned owner with no outstanding copies or borrowed views.
+// Outputs: Returns reservation bytes only on successful free; a failed release is observable but never throws.
+void release_hip_host_output(std::byte* pointer, std::size_t bytes) noexcept {
+#if SUPERZIP_ENABLE_HIP
+    if (hipHostFree(pointer) == hipSuccess) {
+        pinned_host_budget.release(bytes);
+    } else {
+        pinned_host_release_failures.fetch_add(1U, std::memory_order_relaxed);
+    }
+#else
+    (void)pointer;
+    (void)bytes;
+#endif
+}
+
+// Purpose: Expose aggregate pin admission and cleanup state independently of GPU execution telemetry.
+// Inputs: None; all counters are process-wide and concurrently updated.
+// Outputs: Returns outstanding reservation bytes and cumulative failed frees, not an OS memory-use estimate.
+HipPinnedHostStats snapshot_hip_pinned_host_stats() noexcept {
+    return {pinned_host_budget.reserved_bytes(), pinned_host_release_failures.load(std::memory_order_relaxed)};
+}
+
+// Purpose: Size decode admission from the same live host-relative allowance used by actual pin allocations.
+// Inputs: None; does not query device availability or reserve storage.
+// Outputs: Returns the conservative aggregate pin capacity, or zero for unavailable memory/backend information.
+std::uint64_t hip_host_output_capacity_bytes() noexcept {
+#if SUPERZIP_ENABLE_HIP
+    MEMORYSTATUSEX memory{};
+    memory.dwLength = sizeof(memory);
+    return GlobalMemoryStatusEx(&memory) ? PinnedHostBudget::allowance(memory.ullAvailPhys) : 0U;
+#else
+    return 0U;
+#endif
+}
+
+// Purpose: Release the operation cache after shared borrowers have returned all completed output.
+// Inputs: Only idle allocations remain; destruction has exclusive ownership of the pool.
+// Outputs: Frees every cached allocation through its matching HIP reservation-aware release.
+HipHostOutputPool::~HipHostOutputPool() {
+    for (const auto& buffer : idle_) {
+        release_hip_host_output(buffer.pointer, buffer.allocation_bytes);
+    }
+}
+
+// Purpose: Reuse a fitting allocation without remapping host pages, evicting unusable idle extents before new
+// admission. Inputs: bytes is a positive bounded native output extent; callers return each borrowed allocation exactly
+// once. Outputs: Returns uniquely borrowed pinned storage or an empty result; failed pin admission never exceeds the
+// cap.
+HipHostOutputBuffer HipHostOutputPool::acquire(std::size_t bytes) {
+    if (bytes < kMinArchiveBlockBytes || bytes > kMaxArchiveChunkBytes) {
+        return {};
+    }
+    std::vector<HipHostOutputBuffer> retired;
+    {
+        const std::lock_guard lock(mutex_);
+        auto best = idle_.end();
+        for (auto candidate = idle_.begin(); candidate != idle_.end(); ++candidate) {
+            if (candidate->allocation_bytes >= bytes &&
+                (best == idle_.end() || candidate->allocation_bytes < best->allocation_bytes)) {
+                best = candidate;
+            }
+        }
+        if (best != idle_.end()) {
+            auto buffer = *best;
+            idle_.erase(best);
+            buffer.reused = true;
+            return buffer;
+        }
+        retired.swap(idle_);
+    }
+    for (const auto& buffer : retired) {
+        release_hip_host_output(buffer.pointer, buffer.allocation_bytes);
+    }
+    auto* pointer = try_allocate_hip_host_output(bytes);
+    return pointer ? HipHostOutputBuffer{pointer, bytes, false} : HipHostOutputBuffer{};
+}
+
+// Purpose: Return completed output to its bounded operation cache without throwing from ownership cleanup.
+// Inputs: pointer/bytes are one exclusively borrowed pinned allocation with no outstanding transfers or views.
+// Outputs: Caches at most the native maximum queue depth; cache failure immediately uses normal HIP release.
+void HipHostOutputPool::release(std::byte* pointer, std::size_t bytes) noexcept {
+    try {
+        const std::lock_guard lock(mutex_);
+        if (idle_.size() < kMaxInflightArchiveChunks) {
+            idle_.push_back({pointer, bytes, false});
+            return;
+        }
+    } catch (...) {
+        // Cache bookkeeping must not prevent reservation-aware release during stack unwinding.
+    }
+    release_hip_host_output(pointer, bytes);
+}
+
+// Purpose: Admit the current device's zero-retention stream allocator after exact runtime-version validation.
+// Inputs: The calling thread's selected device and its current pool; neither is reconfigured.
+// Outputs: Returns false for unsupported features/policies or throws GpuError for other runtime failures.
+bool hip_stream_ordered_allocator_supported() {
+#if SUPERZIP_ENABLE_HIP
+    if (!load_hip_runtime() || !hip_runtime_allows_stream_allocations(loaded_hip_runtime().version)) {
+        return false;
+    }
+    int device = -1;
+    if (hipGetDevice(&device) != hipSuccess) {
+        throw GpuError("Unable to query device for HIP stream allocation");
+    }
+    struct Capability {
+        int device = -1;
+        bool pools = false;
+    };
+    thread_local Capability cached;
+    if (cached.device != device) {
+        int supported = 0;
+        const auto status = hipDeviceGetAttribute(&supported, hipDeviceAttributeMemoryPoolsSupported, device);
+        if (status != hipSuccess && status != hipErrorNotSupported) {
+            throw GpuError(std::string("Unable to query HIP memory pools: ") + hipGetErrorString(status));
+        }
+        cached = Capability{device, status == hipSuccess && supported != 0};
+    }
+    if (!cached.pools) {
+        return false;
+    }
+    hipMemPool_t pool = nullptr;
+    const auto pool_status = hipDeviceGetMemPool(&pool, device);
+    if (pool_status == hipErrorNotSupported) {
+        return false;
+    }
+    if (pool_status != hipSuccess) {
+        throw GpuError(std::string("Unable to query current HIP pool: ") + hipGetErrorString(pool_status));
+    }
+    std::uint64_t threshold = 0;
+    const auto attribute_status = hipMemPoolGetAttribute(pool, hipMemPoolAttrReleaseThreshold, &threshold);
+    if (attribute_status == hipErrorNotSupported) {
+        return false;
+    }
+    if (attribute_status != hipSuccess) {
+        throw GpuError(std::string("Unable to query HIP pool retention: ") + hipGetErrorString(attribute_status));
+    }
+    return threshold == 0U;
+#else
+    return false;
+#endif
+}
+
+// Purpose: Query AMD HIP availability and the exact loaded runtime/device metadata.
+// Inputs: None; retains the current device selection and does not change pool attributes.
+// Outputs: Reports feature support and pool use in-band; absent/unreadable devices remain diagnostic failures.
 GpuInfo query_hip_gpu_info() {
     GpuInfo info;
 #if SUPERZIP_ENABLE_HIP
@@ -278,6 +509,7 @@ GpuInfo query_hip_gpu_info() {
         return info;
     }
     info.hip_runtime_loadable = true;
+    info.runtime_version = loaded_hip_runtime().version;
     HipDeviceIdentity identity{};
     try {
         identity = checked_hip_device_identity();
@@ -287,6 +519,19 @@ GpuInfo query_hip_gpu_info() {
     }
     info.device_count = identity.count;
     const auto selected = identity.selected;
+    try {
+        info.stream_ordered_allocator_supported = hip_stream_ordered_allocator_supported();
+    } catch (const GpuError&) {
+        info.stream_ordered_allocator_supported = false;
+    }
+    if (info.stream_ordered_allocator_supported) {
+        hipMemPool_t pool = nullptr;
+        std::uint64_t used = 0;
+        if (hipDeviceGetMemPool(&pool, selected) == hipSuccess &&
+            hipMemPoolGetAttribute(pool, hipMemPoolAttrUsedMemCurrent, &used) == hipSuccess) {
+            info.pool_used_bytes = used;
+        }
+    }
     hipDeviceProp_t props{};
     const auto props_status = hipGetDeviceProperties(&props, selected);
     if (props_status != hipSuccess) {
@@ -302,6 +547,12 @@ GpuInfo query_hip_gpu_info() {
     }
     info.available = true;
     info.selected_device = selected;
+    std::uint64_t adapter_luid = 0;
+    static_assert(sizeof(adapter_luid) == sizeof(props.luid));
+    std::memcpy(&adapter_luid, props.luid, sizeof(adapter_luid));
+    if (adapter_luid != 0U) {
+        info.adapter_luid = adapter_luid;
+    }
     info.device_name = props.name;
     info.gcn_arch = props.gcnArchName;
     std::ostringstream status;

@@ -16,12 +16,38 @@ SVG = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG)
 
 
+# Purpose: Validate optional runtime provenance while preserving historical unknown identities.
+# Inputs: A dotted four-component numeric DLL version or unavailable/missing evidence.
+# Outputs: Returns canonical version text or None; raises ValueError on malformed/private metadata.
+def runtime_version_identity(value: object) -> str | None:
+    if value is None or value == "unavailable":
+        return None
+    if (
+        not isinstance(value, str)
+        or not re.fullmatch(r"(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}", value)
+        or any(int(component) > 65535 for component in value.split("."))
+    ):
+        raise ValueError("invalid HIP runtime version evidence")
+    return value
+
+
 # Purpose: Reject malformed or unreviewed benchmark data before charting it.
-# Inputs: A parsed schema-one record and a local-preview switch.
+# Inputs: A parsed schema-one or schema-two record and a local-preview switch.
 # Outputs: Returns normalized run groups or raises ValueError with the invalid field.
 def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
-    if record.get("schema_version") != 1 or record.get("benchmark_kind") != "suzip_ram":
+    schema = record.get("schema_version")
+    if type(schema) is not int or schema not in (1, 2) or record.get("benchmark_kind") != "suzip_ram":
         raise ValueError("unsupported RAM benchmark schema or kind")
+    if schema == 2 and record.get("gpu_utilization_metric") != "process_busiest_engine_pct":
+        raise ValueError("unsupported GPU utilization metric")
+    lane_order = record.get("lane_order", "cpu_then_gpu")
+    pause_ms = record.get("inter_run_pause_ms", 0)
+    if (
+        lane_order not in ("cpu_then_gpu", "alternating_when_both")
+        or type(pause_ms) is not int
+        or not 0 <= pause_ms <= 1000
+    ):
+        raise ValueError("invalid benchmark lane order or pause")
     if type(record.get("source_dirty")) is not bool or (record["source_dirty"] and not allow_dirty):
         raise ValueError("benchmark source must be clean for publication")
     commit = record.get("source_commit")
@@ -43,6 +69,10 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
         record.get("cpu_model"),
         record.get("gpu_model"),
         record["source_dirty"],
+        schema,
+        lane_order,
+        pause_ms,
+        runtime_version_identity(record.get("hip_runtime_version")),
     )
     groups = defaultdict(lambda: defaultdict(dict))
     runs = record.get("runs")
@@ -53,6 +83,13 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
             raise ValueError("invalid benchmark lane")
         if run.get("memory_only") is not True or run.get("disk_write_bytes") != 0:
             raise ValueError("benchmark run is not RAM-only")
+        if schema == 2:
+            for field in ("gpu_avg_pct", "gpu_peak_pct"):
+                value = run.get(field)
+                if value is not None and (
+                    type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 100
+                ):
+                    raise ValueError("invalid busiest-engine GPU percentage")
         block_kib = run.get("block_size_kib")
         iteration = run.get("iteration")
         if type(block_kib) is not int or block_kib not in (256, 512, 1024, 2048, 4096, 8192, 16384):
@@ -93,7 +130,7 @@ def summarize_records(records: list[dict], allow_dirty: bool) -> tuple[tuple, li
         if identity is None:
             identity = current_identity
         elif identity != current_identity:
-            raise ValueError("benchmark records use different binaries or hardware")
+            raise ValueError("benchmark records use different binaries, hardware, or measurement schemas")
         for key, lanes in current_groups.items():
             for lane, iterations in lanes.items():
                 if set(groups[key][lane]).intersection(iterations):

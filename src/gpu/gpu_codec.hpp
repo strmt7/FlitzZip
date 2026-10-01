@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/archive_blocks.hpp"
+#include "gpu/hip_allocation_policy.hpp"
 
 #include <array>
 #include <atomic>
@@ -8,11 +9,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace superzip {
+
+class HipHostOutputPool;
 
 enum class GpuEncodeStage : std::size_t {
     Readiness,
@@ -33,9 +37,14 @@ struct GpuInfo {
     bool available = false;
     int device_count = 0;
     int selected_device = -1;
+    std::optional<std::uint64_t> adapter_luid;
     std::uint64_t vram_total_bytes = 0;
     std::uint64_t vram_free_bytes = 0;
     std::string runtime_name;
+    std::optional<HipRuntimeVersion> runtime_version;
+    // Runtime/device/pool eligibility only; production allocation may still use legacy HIP APIs.
+    bool stream_ordered_allocator_supported = false;
+    std::optional<std::uint64_t> pool_used_bytes;
     std::string device_name;
     std::string gcn_arch;
     std::string status;
@@ -48,6 +57,8 @@ struct GpuRuntimeStats {
     std::uint64_t h2d_bytes = 0;
     std::uint64_t d2h_bytes = 0;
     std::uint64_t device_allocation_bytes = 0;
+    std::uint64_t host_pinned_allocation_bytes = 0;  // Cumulative completed decode allocations, not live RAM or VRAM.
+    std::uint64_t host_pinned_output_bytes = 0;      // Completed output using pinned storage, including reuse.
     std::uint64_t pattern_blocks = 0;
     std::uint64_t prefix_blocks = 0;
     std::uint64_t dictionary_blocks = 0;
@@ -64,6 +75,8 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> h2d_bytes{0};
     std::atomic<std::uint64_t> d2h_bytes{0};
     std::atomic<std::uint64_t> device_allocation_bytes{0};
+    std::atomic<std::uint64_t> host_pinned_allocation_bytes{0};
+    std::atomic<std::uint64_t> host_pinned_output_bytes{0};
     std::atomic<std::uint64_t> pattern_blocks{0};
     std::atomic<std::uint64_t> prefix_blocks{0};
     std::atomic<std::uint64_t> dictionary_blocks{0};
@@ -79,6 +92,7 @@ struct GpuCodecOptions {
     std::uint32_t worker_count = 1;
     int compression_level = kDefaultCompressionLevel;
     std::shared_ptr<GpuTelemetry> telemetry;
+    std::shared_ptr<HipHostOutputPool> host_output_pool;
 };
 
 struct GpuDiagnosticOptions {
@@ -133,6 +147,16 @@ void record_gpu_d2h_bytes(GpuTelemetry* telemetry, std::uint64_t bytes);
 // Inputs: `telemetry` is optional operation-owned telemetry and `bytes` is the allocation size.
 // Outputs: Atomically adds the allocation byte count when telemetry is present.
 void record_gpu_device_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t bytes);
+
+// Purpose: Record operation-owned pinned output used by a successfully completed HIP decode.
+// Inputs: telemetry is optional operation state; bytes is the allocation extent, not a live-memory measurement.
+// Outputs: Adds cumulative successful pinned decode allocation bytes without altering device allocation counters.
+void record_gpu_host_pinned_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t bytes);
+
+// Purpose: Record completed HIP output materialized into pinned host storage, including reused allocations.
+// Inputs: telemetry is optional operation state; bytes is the exact completed decoded extent.
+// Outputs: Adds output traffic without claiming a new allocation or live-memory measurement.
+void record_gpu_host_pinned_output_bytes(GpuTelemetry* telemetry, std::uint64_t bytes);
 
 // Purpose: Record GPU-compressed periodic pattern blocks emitted by the AMD HIP encoder.
 // Inputs: `telemetry` is optional operation-owned telemetry and `count` is the number of compact pattern blocks.

@@ -46,6 +46,57 @@ bool read_pdh_double(PDH_HCOUNTER counter, double& value) {
     return true;
 }
 
+// Purpose: Read dedicated-memory counters within one selected HIP adapter's Windows identity.
+// Inputs: `adapter_luid` selects the adapter; optional `process_id` selects process-only counters.
+// Outputs: Returns matching dedicated bytes, or zero when identity or counters are unavailable.
+std::uint64_t sample_dedicated_memory(std::optional<std::uint64_t> adapter_luid,
+                                      std::optional<std::uint32_t> process_id) {
+    if (!adapter_luid) {
+        return 0U;
+    }
+    PDH_HQUERY query = nullptr;
+    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS || query == nullptr) {
+        return 0U;
+    }
+    struct QueryGuard {
+        PDH_HQUERY query;
+        // Purpose: Release the memory-counter query on every exit path.
+        // Inputs: Owned query handle.
+        // Outputs: Closes the PDH query without throwing.
+        ~QueryGuard() {
+            PdhCloseQuery(query);
+        }
+    } guard{query};
+    PDH_HCOUNTER counter = nullptr;
+    const auto* path =
+        process_id ? L"\\GPU Process Memory(*)\\Dedicated Usage" : L"\\GPU Adapter Memory(*)\\Dedicated Usage";
+    if (PdhAddEnglishCounterW(query, path, 0, &counter) != ERROR_SUCCESS || counter == nullptr ||
+        PdhCollectQueryData(query) != ERROR_SUCCESS) {
+        return 0U;
+    }
+    DWORD buffer_size = 0;
+    DWORD item_count = 0;
+    if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, nullptr) != PDH_MORE_DATA ||
+        buffer_size == 0U || item_count == 0U) {
+        return 0U;
+    }
+    std::vector<std::byte> buffer(buffer_size);
+    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+    if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, items) != ERROR_SUCCESS) {
+        return 0U;
+    }
+    std::vector<GpuMemorySample> samples;
+    samples.reserve(item_count);
+    for (DWORD index = 0; index < item_count; ++index) {
+        const auto& item = items[index];
+        if ((item.FmtValue.CStatus == PDH_CSTATUS_VALID_DATA || item.FmtValue.CStatus == PDH_CSTATUS_NEW_DATA) &&
+            item.szName != nullptr) {
+            samples.push_back({item.szName, item.FmtValue.largeValue});
+        }
+    }
+    return selected_gpu_memory_usage(samples, *adapter_luid, process_id).value_or(0U);
+}
+
 }  // namespace
 
 // Purpose: Refresh AMD HIP availability and device identity for the UI.
@@ -109,7 +160,7 @@ void MainWindow::reset_performance_timer(int seconds) {
 
 // Purpose: Sample total Windows GPU engine utilization when PDH exposes it.
 // Inputs: None; uses initialized PDH wildcard counters.
-// Outputs: Returns total system GPU percentage or a negative value when unavailable.
+// Outputs: Returns busiest-engine system GPU percentage or a negative value when unavailable.
 double MainWindow::sample_gpu_utilization() {
     if (gpu_query_ == nullptr || gpu_counter_ == nullptr) {
         return -1.0;
@@ -131,16 +182,16 @@ double MainWindow::sample_gpu_utilization() {
         return -1.0;
     }
 
-    double system_total = 0.0;
+    std::vector<GpuEngineSample> samples;
+    samples.reserve(item_count);
     for (DWORD index = 0; index < item_count; ++index) {
         const auto& item = items[index];
         if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr) {
             continue;
         }
-        const double value = std::max(0.0, item.FmtValue.doubleValue);
-        system_total += value;
+        samples.push_back({item.szName, item.FmtValue.doubleValue});
     }
-    return std::clamp(system_total, 0.0, 100.0);
+    return system_gpu_utilization(samples).value_or(-1.0);
 }
 
 // Purpose: Sample SuperZip process CPU use since the previous monitor tick.
@@ -208,109 +259,17 @@ double MainWindow::sample_system_cpu_percent(double elapsed_seconds) {
 }
 
 // Purpose: Sample Windows GPU dedicated memory assigned to the SuperZip process.
-// Inputs: None; uses current-process PDH GPU Process Memory counters.
+// Inputs: None; uses current-process PDH counters matching the cached HIP adapter LUID.
 // Outputs: Returns dedicated GPU memory bytes or zero when Windows does not expose the counter.
 std::uint64_t MainWindow::sample_process_dedicated_vram_bytes() const {
-    PDH_HQUERY query = nullptr;
-    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS || query == nullptr) {
-        return 0U;
-    }
-    struct QueryGuard {
-        PDH_HQUERY query = nullptr;
-        ~QueryGuard() {
-            if (query != nullptr) {
-                PdhCloseQuery(query);
-            }
-        }
-    } guard{query};
-
-    PDH_HCOUNTER counter = nullptr;
-    if (PdhAddEnglishCounterW(query, L"\\GPU Process Memory(*)\\Dedicated Usage", 0, &counter) != ERROR_SUCCESS ||
-        counter == nullptr) {
-        return 0U;
-    }
-    if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
-        return 0U;
-    }
-
-    DWORD buffer_size = 0;
-    DWORD item_count = 0;
-    PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, nullptr);
-    if (status != PDH_MORE_DATA || buffer_size == 0U || item_count == 0U) {
-        return 0U;
-    }
-    std::vector<std::byte> buffer(buffer_size);
-    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
-    status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, items);
-    if (status != ERROR_SUCCESS) {
-        return 0U;
-    }
-
-    const std::wstring pid_marker = L"pid_" + std::to_wstring(GetCurrentProcessId()) + L"_";
-    std::uint64_t total = 0U;
-    for (DWORD index = 0; index < item_count; ++index) {
-        const auto& item = items[index];
-        if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr ||
-            std::wstring_view(item.szName).find(pid_marker) == std::wstring_view::npos) {
-            continue;
-        }
-        if (item.FmtValue.largeValue > 0) {
-            total += static_cast<std::uint64_t>(item.FmtValue.largeValue);
-        }
-    }
-    return total;
+    return sample_dedicated_memory(cached_gpu_adapter_luid_, GetCurrentProcessId());
 }
 
-// Purpose: Sample Windows-visible total dedicated GPU memory usage.
-// Inputs: None; reads PDH GPU Adapter Memory wildcard counters for dedicated usage.
-// Outputs: Returns the summed dedicated usage bytes, or zero when the counter is unavailable.
+// Purpose: Sample Windows-visible total dedicated memory for the selected HIP adapter.
+// Inputs: None; reads adapter-wide PDH counters matching the cached HIP adapter LUID.
+// Outputs: Returns selected-adapter dedicated usage bytes, or zero when identity or counters are unavailable.
 std::uint64_t MainWindow::sample_total_dedicated_vram_used_bytes() const {
-    PDH_HQUERY query = nullptr;
-    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS || query == nullptr) {
-        return 0U;
-    }
-    struct QueryGuard {
-        PDH_HQUERY query = nullptr;
-        ~QueryGuard() {
-            if (query != nullptr) {
-                PdhCloseQuery(query);
-            }
-        }
-    } guard{query};
-
-    PDH_HCOUNTER counter = nullptr;
-    if (PdhAddEnglishCounterW(query, L"\\GPU Adapter Memory(*)\\Dedicated Usage", 0, &counter) != ERROR_SUCCESS ||
-        counter == nullptr) {
-        return 0U;
-    }
-    if (PdhCollectQueryData(query) != ERROR_SUCCESS) {
-        return 0U;
-    }
-
-    DWORD buffer_size = 0;
-    DWORD item_count = 0;
-    PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, nullptr);
-    if (status != PDH_MORE_DATA || buffer_size == 0U || item_count == 0U) {
-        return 0U;
-    }
-    std::vector<std::byte> buffer(buffer_size);
-    auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
-    status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &buffer_size, &item_count, items);
-    if (status != ERROR_SUCCESS) {
-        return 0U;
-    }
-
-    std::uint64_t total = 0U;
-    for (DWORD index = 0; index < item_count; ++index) {
-        const auto& item = items[index];
-        if (item.FmtValue.CStatus != PDH_CSTATUS_VALID_DATA || item.szName == nullptr) {
-            continue;
-        }
-        if (item.FmtValue.largeValue > 0) {
-            total += static_cast<std::uint64_t>(item.FmtValue.largeValue);
-        }
-    }
-    return total;
+    return sample_dedicated_memory(cached_gpu_adapter_luid_, std::nullopt);
 }
 
 // Purpose: Release selected-drive I/O performance counters after a drive-selection change.
@@ -387,6 +346,7 @@ void MainWindow::refresh_gpu_memory_cache(std::chrono::steady_clock::time_point 
     const auto info = query_gpu_info();
     cached_vram_total_bytes_ = info.vram_total_bytes;
     cached_vram_free_bytes_ = info.vram_free_bytes;
+    cached_gpu_adapter_luid_ = info.adapter_luid;
     last_gpu_memory_sample_time_ = now;
     std::lock_guard lock(mutex_);
     state_.gpu_status = info.status;

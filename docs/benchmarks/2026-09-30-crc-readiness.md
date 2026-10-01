@@ -29,9 +29,11 @@ operation. The combined logical stream was not materialized.
 Each profile used two alternating pairs in baseline/candidate then
 candidate/baseline order, with a 500 ms gap between children. Each native
 `memory-benchmark` processed 10 GiB with level 5, 8 MiB blocks, 32 workers,
-required HIP, independent byte-exact checking, and backend telemetry.
-Source generation was outside the reported compression phase. Ratios below
-are paired baseline time divided by candidate time; they are not ratios of
+required HIP, decoded CRC-32 checking, and backend telemetry.
+Source allocation and generation are included in the reported compression
+phase. The separately reported generation and codec worker times sum concurrent
+tasks; neither can be subtracted from wall time to derive codec-only throughput.
+Ratios below are paired baseline time divided by candidate time; they are not ratios of
 rounded throughput values.
 
 | Profile | Complete Archive Bytes | Compression Paired Speedup | Verification Paired Speedup | Extraction Paired Speedup |

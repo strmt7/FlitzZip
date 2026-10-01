@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gpu/gpu_codec.hpp"
+#include "gpu/hip_device.hpp"
 
 #include "core/result.hpp"
 #include "core/dictionary_block.hpp"
@@ -101,6 +102,9 @@ struct HipEventPair {
         return *this;
     }
 
+    // Purpose: Release successfully created timing events without throwing during cleanup.
+    // Inputs: Owned event handles may be null after partial initialization.
+    // Outputs: Destroys each live HIP event; ignores cleanup status and releases no caller buffers.
     ~HipEventPair() {
         if (start != nullptr) {
             (void)hipEventDestroy(start);
@@ -118,6 +122,15 @@ inline void check_hip(hipError_t status, const char* action) {
     if (status != hipSuccess) {
         throw GpuError(std::string(action) + ": " + hipGetErrorString(status));
     }
+}
+
+// Purpose: Complete a codec transfer on the same per-thread stream as its kernels.
+// Inputs: Borrowed source/destination buffers, byte count, and matching HIP direction;
+// both buffers must remain valid until this synchronous call returns.
+// Outputs: Returns the HIP status after stream completion; owns no buffers or extra staging memory.
+inline hipError_t copy_on_codec_stream(void* destination, const void* source, std::size_t bytes,
+                                       hipMemcpyKind direction) {
+    return hipMemcpyWithStream(destination, source, bytes, direction, hipStreamPerThread);
 }
 
 // Purpose: Create a start/stop HIP event pair for measuring device-side kernel time.
@@ -141,17 +154,27 @@ inline void finish_measured_kernel(GpuTelemetry* telemetry, const HipEventPair& 
     record_gpu_kernel_launch(telemetry, static_cast<double>(milliseconds));
 }
 
-// Purpose: Bind timing events to the kernel dispatch instead of separate stream markers.
-// Inputs: Kernel signature determines argument storage types; dimensions, shared bytes, stream, and owned events
-// describe one ordered launch. Outputs: Submits asynchronously or throws GpuError; caller synchronizes before cleanup.
+// Purpose: Bind optional stage-boundary events directly to an ordered kernel dispatch.
+// Inputs: Typed kernel arguments, launch dimensions, stream, and borrowed start/stop handles; either may be null.
+// Outputs: Submits asynchronously or throws GpuError; event owners and buffers must survive stream completion.
+template <typename... Args>
+inline void launch_kernel_with_timing(void (*kernel)(Args...), dim3 grid, dim3 block, std::size_t shared_bytes,
+                                      hipStream_t stream, hipEvent_t start, hipEvent_t stop, const char* action,
+                                      std::type_identity_t<Args>... args) {
+    std::array<void*, sizeof...(Args)> arguments{static_cast<void*>(&args)...};
+    check_hip(hipExtLaunchKernel(reinterpret_cast<const void*>(kernel), grid, block, arguments.data(), shared_bytes,
+                                 stream, start, stop, 0),
+              action);
+}
+
+// Purpose: Measure one complete kernel using dispatch-bound start and stop timestamps.
+// Inputs: Typed launch arguments and an operation-owned event pair that outlives completion.
+// Outputs: Submits asynchronously or throws GpuError; caller synchronizes and records the elapsed measurement.
 template <typename... Args>
 inline void launch_measured_kernel(void (*kernel)(Args...), dim3 grid, dim3 block, std::size_t shared_bytes,
                                    hipStream_t stream, const HipEventPair& events, const char* action,
                                    std::type_identity_t<Args>... args) {
-    std::array<void*, sizeof...(Args)> arguments{static_cast<void*>(&args)...};
-    check_hip(hipExtLaunchKernel(reinterpret_cast<const void*>(kernel), grid, block, arguments.data(), shared_bytes,
-                                 stream, events.start, events.stop, 0),
-              action);
+    launch_kernel_with_timing(kernel, grid, block, shared_bytes, stream, events.start, events.stop, action, args...);
 }
 
 // Purpose: Add two allocation byte counts with overflow detection.
@@ -272,10 +295,20 @@ template <typename T> class HipDeviceBuffer {
   public:
     HipDeviceBuffer() = default;
 
-    // Purpose: Allocate one HIP device buffer and assume ownership immediately.
-    // Inputs: `bytes` is the nonzero allocation size and `action` labels HIP failures.
-    // Outputs: Owns the device pointer or throws without leaking a partial allocation.
+    // Purpose: Allocate one thread-affine HIP buffer without transferring ownership between worker streams.
+    // Inputs: `bytes` is the allocation size and `action` labels errors; the calling codec owns its lifetime.
+    // Outputs: Owns the device pointer or throws without replacing another allocation.
     HipDeviceBuffer(std::size_t bytes, const char* action) {
+        allocate_checked(bytes, action);
+    }
+
+    // Purpose: Initialize an empty buffer through the same allocation path as direct construction.
+    // Inputs: `bytes` is the size and `action` labels errors; this owner must be empty.
+    // Outputs: Acquires ownership, accepts an empty region, or throws without replacing an existing allocation.
+    void allocate_checked(std::size_t bytes, const char* action) {
+        if (pointer_ != nullptr) {
+            throw GpuError(std::string(action) + ": device buffer already owns an allocation");
+        }
         if (bytes == 0U) {
             return;
         }
@@ -286,43 +319,26 @@ template <typename T> class HipDeviceBuffer {
 
     HipDeviceBuffer(const HipDeviceBuffer&) = delete;
     HipDeviceBuffer& operator=(const HipDeviceBuffer&) = delete;
+    HipDeviceBuffer(HipDeviceBuffer&&) = delete;
+    HipDeviceBuffer& operator=(HipDeviceBuffer&&) = delete;
 
-    // Purpose: Transfer one device allocation without copying device memory.
-    // Inputs: `other` relinquishes pointer ownership.
-    // Outputs: This object owns the pointer and `other` becomes empty.
-    HipDeviceBuffer(HipDeviceBuffer&& other) noexcept : pointer_(other.pointer_) {
-        other.pointer_ = nullptr;
-    }
-
-    // Purpose: Replace this device allocation with another move-owned pointer.
-    // Inputs: `other` relinquishes pointer ownership.
-    // Outputs: Frees any previous pointer and leaves `other` empty.
-    HipDeviceBuffer& operator=(HipDeviceBuffer&& other) noexcept {
-        if (this != &other) {
-            reset_noexcept();
-            pointer_ = other.pointer_;
-            other.pointer_ = nullptr;
-        }
-        return *this;
-    }
-
-    // Purpose: Release an owned HIP allocation on every normal and exceptional exit.
-    // Inputs: Uses the pointer acquired by the constructor.
+    // Purpose: Release an owned HIP allocation on normal and exceptional exits.
+    // Inputs: Uses the pointer acquired by the allocating codec operation.
     // Outputs: Best-effort frees device memory without throwing.
     ~HipDeviceBuffer() {
         reset_noexcept();
     }
 
-    // Purpose: Expose the device pointer to HIP copies and kernels.
-    // Inputs: None.
-    // Outputs: Returns the borrowed pointer without transferring ownership.
+    // Purpose: Expose the device pointer to borrowed HIP copies and kernels.
+    // Inputs: None; the caller retains this owner until stream completion.
+    // Outputs: Returns the pointer without transferring ownership.
     [[nodiscard]] T* get() const noexcept {
         return pointer_;
     }
 
-    // Purpose: Free the device allocation while reporting HIP failures to the active operation.
-    // Inputs: `action` labels a possible `hipFree` failure.
-    // Outputs: Clears ownership after a successful free or throws while retaining it for destructor retry.
+    // Purpose: Free the allocation while reporting HIP failures to the active operation.
+    // Inputs: `action` labels a possible free failure.
+    // Outputs: Clears ownership after success or throws while retaining it for destructor retry.
     void reset_checked(const char* action) {
         if (pointer_ == nullptr) {
             return;
@@ -332,9 +348,9 @@ template <typename T> class HipDeviceBuffer {
     }
 
   private:
-    // Purpose: Best-effort free for destructors and move assignment.
+    // Purpose: Release owned memory during destruction without propagating runtime cleanup errors.
     // Inputs: Uses `pointer_` when non-null.
-    // Outputs: Clears local ownership after asking HIP to release the allocation; never throws.
+    // Outputs: Requests HIP cleanup and clears local ownership; never throws.
     void reset_noexcept() noexcept {
         if (pointer_ != nullptr) {
             (void)hipFree(pointer_);

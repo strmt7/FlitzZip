@@ -6,6 +6,7 @@
 #include "uue/uue_adapter.hpp"
 
 #include <fstream>
+#include <array>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -138,6 +139,47 @@ TEST_CASE(uue_extract_rejects_malformed_payload_without_output) {
     REQUIRE_TRUE(rejected);
     REQUIRE_TRUE(!std::filesystem::exists(output / "payload.txt"));
     REQUIRE_EQ(count_regular_files(output), static_cast<std::uint64_t>(0));
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Reject extra payload on the zero-length terminator before publishing or replacing output.
+// Inputs: Space/backtick terminators followed by non-whitespace bytes, with a pre-existing target.
+// Outputs: Requires a precise parser error, preserves the original bytes, and leaves no staged files.
+TEST_CASE(uue_extract_rejects_zero_length_terminator_trailing_data) {
+    const auto root = test_temp_dir("uue-terminator-trailing-data");
+    const auto archive = root / "bad.uue";
+    const auto output = root / "out";
+    std::filesystem::create_directory(output);
+    const std::vector<unsigned char> original{'k', 'e', 'e', 'p'};
+    const std::array<std::string, 4> malformed{"`junk", " junk", "`\t!", std::string(" \0", 2)};
+    for (const auto& terminator : malformed) {
+        write_text_file(archive, "begin 644 payload.txt\n" + terminator + "\nend\n");
+        write_binary_file(output / "payload.txt", original);
+        bool rejected = false;
+        try {
+            (void)superzip::extract_uue_file(archive, output, true);
+        } catch (const superzip::ArchiveError& error) {
+            rejected = std::string(error.what()) == "UUencoded zero-length line contains trailing data";
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(read_binary_file(output / "payload.txt"), original);
+        REQUIRE_EQ(count_regular_files(output), 1U);
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Retain both historical UUencode zero terminators and tolerated horizontal whitespace.
+// Inputs: Valid empty streams using a space or backtick, CRLF, and optional spaces/tabs.
+// Outputs: Requires successful zero-byte extraction for each supported terminator form.
+TEST_CASE(uue_extract_accepts_valid_zero_length_terminators) {
+    const auto root = test_temp_dir("uue-valid-terminators");
+    const auto archive = root / "empty.uue";
+    for (const std::string terminator : {"`", " ", "` \t", " \t "}) {
+        write_text_file(archive, "begin 644 payload.txt\r\n" + terminator + "\r\nend\r\n");
+        const auto stats = superzip::extract_uue_file(archive, root / "out", true);
+        REQUIRE_EQ(stats.output_bytes, 0U);
+        REQUIRE_EQ(read_binary_file(root / "out" / "payload.txt"), std::vector<unsigned char>{});
+    }
     std::filesystem::remove_all(root);
 }
 

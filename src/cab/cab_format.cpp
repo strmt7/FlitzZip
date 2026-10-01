@@ -1,6 +1,7 @@
 #include "cab/cab_format.hpp"
 
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
@@ -33,9 +34,8 @@ constexpr std::uint32_t kMaxCabNameBytes = 64U * 1024U;
 constexpr std::uint64_t kMaxCabTotalFileBytes = kMaxPipelineMemoryBytes;
 constexpr std::array<unsigned char, 4U> kCabMagic{'M', 'S', 'C', 'F'};
 
-static_assert(
-    std::numeric_limits<std::uint16_t>::max() <= kMaxArchiveEntries,
-    "CAB file-count field can exceed the global archive entry limit; add a runtime check.");
+static_assert(std::numeric_limits<std::uint16_t>::max() <= kMaxArchiveEntries,
+              "CAB file-count field can exceed the global archive entry limit; add a runtime check.");
 
 // Purpose: Add two CAB byte counters while detecting unsigned wraparound.
 // Inputs: `lhs` and `rhs` are byte counters and `message` labels the failing operation.
@@ -85,19 +85,16 @@ void seek_cab_offset(std::ifstream& input, std::uint64_t offset, const char* lab
 // Inputs: `bytes` points to at least two bytes.
 // Outputs: Returns the decoded unsigned integer.
 std::uint16_t read_le16(const unsigned char* bytes) {
-    return static_cast<std::uint16_t>(
-        static_cast<std::uint16_t>(bytes[0]) |
-        static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[1]) << 8U));
+    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[0]) |
+                                      static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[1]) << 8U));
 }
 
 // Purpose: Decode one little-endian 32-bit CAB field.
 // Inputs: `bytes` points to at least four bytes.
 // Outputs: Returns the decoded unsigned integer.
 std::uint32_t read_le32(const unsigned char* bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8U) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16U) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24U);
+    return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U) | (static_cast<std::uint32_t>(bytes[3]) << 24U);
 }
 
 // Purpose: Read a NUL-terminated CAB filename with a strict byte limit.
@@ -193,9 +190,7 @@ CabHeader read_cab_header(std::ifstream& input, std::uint64_t archive_size) {
         result.data_reserve_bytes = reserve[3];
         if (result.header_reserve_bytes > 0U) {
             const auto after_reserve = checked_add_cab_bytes(
-                kCabFixedHeaderBytes + reserve.size(),
-                result.header_reserve_bytes,
-                "CAB header reserve overflow");
+                kCabFixedHeaderBytes + reserve.size(), result.header_reserve_bytes, "CAB header reserve overflow");
             if (after_reserve > result.cb_cabinet) {
                 throw ArchiveError("CAB header reserve extends past cabinet boundary");
             }
@@ -206,13 +201,11 @@ CabHeader read_cab_header(std::ifstream& input, std::uint64_t archive_size) {
 }
 
 // Purpose: Validate one folder's CFDATA block extents before FDI decompression.
-// Inputs: `input` is seekable, `folder` identifies the block table, `header` supplies reserve sizes, and `archive_limit` is the declared CAB size.
-// Outputs: Returns normally when every declared data block is bounded by the cabinet.
-void validate_cab_data_blocks(
-    std::ifstream& input,
-    const CabFolderRecord& folder,
-    const CabHeader& header,
-    std::uint64_t archive_limit) {
+// Inputs: `input` is seekable, `folder` identifies the block table, `header` supplies reserve sizes, and
+// `archive_limit` is the declared CAB size. Outputs: Returns normally when every declared data block is bounded by the
+// cabinet.
+void validate_cab_data_blocks(std::ifstream& input, const CabFolderRecord& folder, const CabHeader& header,
+                              std::uint64_t archive_limit) {
     if (folder.data_block_count == 0U) {
         return;
     }
@@ -224,7 +217,8 @@ void validate_cab_data_blocks(
             throw ArchiveError("failed to read CAB data block offset");
         }
         const auto block_header_offset = static_cast<std::uint64_t>(block_header_pos);
-        if (checked_add_cab_bytes(block_header_offset, kCabDataBlockHeaderBytes, "CAB data block header overflow") > archive_limit) {
+        if (checked_add_cab_bytes(block_header_offset, kCabDataBlockHeaderBytes, "CAB data block header overflow") >
+            archive_limit) {
             throw ArchiveError("CAB data block header extends past cabinet boundary");
         }
 
@@ -236,7 +230,8 @@ void validate_cab_data_blocks(
             throw ArchiveError("failed to read CAB data block payload offset");
         }
         const auto data_start = static_cast<std::uint64_t>(data_start_pos);
-        const auto payload_start = checked_add_cab_bytes(data_start, header.data_reserve_bytes, "CAB data reserve overflow");
+        const auto payload_start =
+            checked_add_cab_bytes(data_start, header.data_reserve_bytes, "CAB data reserve overflow");
         const auto payload_end = checked_add_cab_bytes(payload_start, compressed_size, "CAB compressed data overflow");
         if (payload_end > archive_limit) {
             throw ArchiveError("CAB compressed data block extends past cabinet boundary");
@@ -246,16 +241,18 @@ void validate_cab_data_blocks(
 }
 
 // Purpose: Validate the CAB folder table before reading file records.
-// Inputs: `input` is positioned at the first folder, `header` is decoded metadata, and `archive_limit` is the declared cabinet size.
-// Outputs: Returns normally when folder records are bounded and non-spanning.
+// Inputs: `input` is positioned at the first folder, `header` is decoded metadata, and `archive_limit` is the declared
+// cabinet size. Outputs: Returns normally when folder records are bounded and non-spanning.
 void scan_cab_folders(std::ifstream& input, const CabHeader& header, std::uint64_t archive_limit) {
-    const auto record_size = checked_add_cab_bytes(kCabFolderRecordBytes, header.folder_reserve_bytes, "CAB folder record overflow");
+    const auto record_size =
+        checked_add_cab_bytes(kCabFolderRecordBytes, header.folder_reserve_bytes, "CAB folder record overflow");
     const auto table_bytes = checked_mul_cab_bytes(header.folder_count, record_size, "CAB folder table overflow");
     const auto start_pos = input.tellg();
     if (start_pos == std::istream::pos_type(-1)) {
         throw ArchiveError("failed to read CAB folder table offset");
     }
-    const auto end = checked_add_cab_bytes(static_cast<std::uint64_t>(start_pos), table_bytes, "CAB folder table end overflow");
+    const auto end =
+        checked_add_cab_bytes(static_cast<std::uint64_t>(start_pos), table_bytes, "CAB folder table end overflow");
     if (end > archive_limit) {
         throw ArchiveError("CAB folder table extends past cabinet boundary");
     }
@@ -268,7 +265,8 @@ void scan_cab_folders(std::ifstream& input, const CabHeader& header, std::uint64
         read_exact(input, reinterpret_cast<char*>(folder.data()), folder.size(), "CAB folder record");
         const auto coff_cab_start = read_le32(folder.data());
         const auto data_block_count = read_le16(folder.data() + 4U);
-        const auto compression_type = static_cast<std::uint16_t>(read_le16(folder.data() + 6U) & kCabCompressionTypeMask);
+        const auto compression_type =
+            static_cast<std::uint16_t>(read_le16(folder.data() + 6U) & kCabCompressionTypeMask);
         if (coff_cab_start >= archive_limit) {
             throw ArchiveError("CAB folder data offset is outside the cabinet");
         }
@@ -292,13 +290,10 @@ void scan_cab_folders(std::ifstream& input, const CabHeader& header, std::uint64
             if (reserve_start == std::istream::pos_type(-1)) {
                 throw ArchiveError("failed to read CAB folder reserve offset");
             }
-            seek_cab_offset(
-                input,
-                checked_add_cab_bytes(
-                    static_cast<std::uint64_t>(reserve_start),
-                    header.folder_reserve_bytes,
-                    "CAB folder reserve end overflow"),
-                "CAB folder reserve");
+            seek_cab_offset(input,
+                            checked_add_cab_bytes(static_cast<std::uint64_t>(reserve_start),
+                                                  header.folder_reserve_bytes, "CAB folder reserve end overflow"),
+                            "CAB folder reserve");
         }
     }
 
@@ -324,8 +319,7 @@ CabMetadata scan_cab_files(std::ifstream& input, const CabHeader& header, std::u
         const auto file_size = read_le32(file.data());
         const auto folder_offset = read_le32(file.data() + 4U);
         const auto folder_index = read_le16(file.data() + 8U);
-        if (folder_index == kCabFolderContinuedFromPrevious ||
-            folder_index == kCabFolderContinuedToNext ||
+        if (folder_index == kCabFolderContinuedFromPrevious || folder_index == kCabFolderContinuedToNext ||
             folder_index == kCabFolderContinuedPrevAndNext) {
             throw ArchiveError("CAB file spans cabinet boundaries");
         }
@@ -345,10 +339,8 @@ CabMetadata scan_cab_files(std::ifstream& input, const CabHeader& header, std::u
             .path = normalized,
             .size = file_size,
         });
-        result.total_file_bytes = checked_add_cab_bytes(
-            result.total_file_bytes,
-            file_size,
-            "CAB uncompressed payload byte count overflow");
+        result.total_file_bytes =
+            checked_add_cab_bytes(result.total_file_bytes, file_size, "CAB uncompressed payload byte count overflow");
         if (result.total_file_bytes > kMaxCabTotalFileBytes) {
             throw ArchiveError("CAB uncompressed payload exceeds SuperZip resource limit");
         }
@@ -359,19 +351,30 @@ CabMetadata scan_cab_files(std::ifstream& input, const CabHeader& header, std::u
 
 }  // namespace
 
+// Purpose: Normalize CAB path separators before archive-wide safety validation.
+// Inputs: raw_path is untrusted member metadata copied by value.
+// Outputs: Returns a bounded relative path or throws SecurityError for unsafe names.
 std::string normalize_cab_entry_path(std::string raw_path) {
     std::ranges::replace(raw_path, '\\', '/');
     return normalize_archive_path_key(raw_path);
 }
 
+// Purpose: Validate cabinet metadata before any Windows FDI extraction pass.
+// Inputs: archive_path names untrusted input; payload decompression and output publication are separate steps.
+// Outputs: Returns bounded validated entries; unreadable/malformed input throws ArchiveError, unsafe paths
+// SecurityError.
 CabMetadata scan_cab_metadata(const std::filesystem::path& archive_path) {
-    const auto archive_size = std::filesystem::file_size(archive_path);
+    std::error_code error;
+    const auto archive_size = std::filesystem::file_size(archive_path, error);
+    if (error) {
+        throw ArchiveError("cannot read CAB archive size: " + path_diagnostic_utf8(archive_path));
+    }
     if (archive_size < kCabFixedHeaderBytes) {
         throw ArchiveError("CAB file is too small");
     }
     std::ifstream input(archive_path, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open CAB archive: " + archive_path.string());
+        throw ArchiveError("cannot open CAB archive: " + path_diagnostic_utf8(archive_path));
     }
     const auto header = read_cab_header(input, archive_size);
     const auto archive_limit = static_cast<std::uint64_t>(header.cb_cabinet);

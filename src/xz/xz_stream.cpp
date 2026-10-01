@@ -80,6 +80,9 @@ std::uint64_t xz_file_size(const std::filesystem::path& path) {
 
 class XzInputStream::Buffer final : public std::streambuf {
   public:
+    // Purpose: Open a bounded Xz decoder and initialize its owned input/output buffers.
+    // Inputs: `archive_path` names untrusted compressed input; allocation follows codec resource limits.
+    // Outputs: Creates decoding state or throws on open/initialization failure, without publishing files.
     explicit Buffer(const std::filesystem::path& archive_path)
         : input_(archive_path, std::ios::binary), archive_size_(xz_file_size(archive_path)) {
         if (!input_) {
@@ -252,6 +255,9 @@ std::uint64_t XzInputStream::input_bytes() const {
     return buffer_->input_bytes();
 }
 
+// Purpose: Read the Xz decoder's produced output byte count.
+// Inputs: None; callers must not mutate the stream concurrently.
+// Outputs: Returns cumulative decoded bytes, not a checksum or validation guarantee.
 std::uint64_t XzInputStream::output_bytes() const {
     return buffer_->output_bytes();
 }

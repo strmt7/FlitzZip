@@ -101,16 +101,13 @@ std::vector<std::uint16_t> sampled_batch_distances(std::span<const std::byte> in
 }
 
 // Purpose: Screen baseline blocks before allocating a dictionary search workspace.
-// Inputs: Source bytes, their current GPU-native descriptor, and requested effort level.
+// Inputs: Source bytes and their current GPU-native descriptor.
 // Outputs: Returns true when sampled repeats or an off-grid periodic segment can plausibly improve encoded size.
-bool should_try_dictionary(std::span<const std::byte> input, const BlockDescriptor& baseline, int level) {
+bool should_try_dictionary(std::span<const std::byte> input, const BlockDescriptor& baseline) {
     if (input.size() < 4096U || baseline.encoded_len == 0U ||
         (baseline.kind != BlockKind::Raw && baseline.kind != BlockKind::GpuPrefix &&
          baseline.kind != BlockKind::GpuAdaptivePrefix && baseline.kind != BlockKind::GpuHuffman &&
          !is_gpu_sparse_pattern_kind(baseline.kind))) {
-        return false;
-    }
-    if (level < 7 && baseline.encoded_len <= input.size() / 2U) {
         return false;
     }
     if (has_dictionary_sample_repeats(input)) {
@@ -280,7 +277,7 @@ DictionaryReplacements select_dictionary_replacements(std::span<const std::byte>
         if (source_offsets[index] > input.size() || length > input.size() - source_offsets[index]) {
             throw GpuError("dictionary candidate block exceeds source chunk");
         }
-        eligible[index] = should_try_dictionary(input.subspan(source_offsets[index], length), blocks[index], level);
+        eligible[index] = should_try_dictionary(input.subspan(source_offsets[index], length), blocks[index]);
         source_offsets[index + 1U] = source_offsets[index] + length;
     }
     if (source_offsets.back() != input.size()) {

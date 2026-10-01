@@ -140,7 +140,7 @@ foreach ($path in @("src/core/archive_name_encoding.cpp", "src/core/archive_name
     Assert-Selector (Test-LongRunningWorkflow -Plan $encodingPlan -Name "fuzzing") "name decoding changes must observe fuzzing: $path"
 }
 
-foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1", "tools/build_parallelism.ps1", "tools/test_build_parallelism.ps1", "tools/refactor_audit.ps1", "tools/test_refactor_audit.ps1")) {
+foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/local_smoke.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1", "tools/build_parallelism.ps1", "tools/test_build_parallelism.ps1", "tools/refactor_audit.ps1", "tools/test_refactor_audit.ps1")) {
     $buildGraphPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector $buildGraphPlan.scope.touchesVerification "independent build graph and verifier tests must be classified as verification tooling: $path"
     Assert-Selector $buildGraphPlan.scope.fullEscalationRequired "verification build inputs must escalate: $path"

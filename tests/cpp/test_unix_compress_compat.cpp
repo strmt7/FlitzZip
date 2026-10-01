@@ -83,6 +83,28 @@ TEST_CASE(unix_compress_extracts_handcrafted_single_literal) {
     REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::UnixCompress);
 }
 
+// Purpose: Preserve Unicode host filenames in Unix Compress extraction independently of its encoder.
+// Inputs: A handcrafted literal stream stored under an uppercase suffix and a native Unicode filename.
+// Outputs: Requires exact restored content and non-destructive overwrite refusal.
+TEST_CASE(unix_compress_unicode_archive_filename_extracts) {
+    const auto root = test_temp_dir("unix-compress-unicode-name");
+    const auto filename = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.txt");
+    auto archive = root / filename;
+    archive += ".Z";
+    write_binary_file(archive, {0x1FU, 0x9DU, 0x90U, 0x41U, 0x00U});
+    const auto output = root / "out";
+    (void)superzip::extract_unix_compress_file(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / filename), "A");
+    bool refused = false;
+    try {
+        (void)superzip::extract_unix_compress_file(archive, output, false);
+    } catch (const superzip::SecurityError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_EQ(read_text_file(output / filename), "A");
+}
+
 // Purpose: Verify a non-block-mode `.Z` stream decodes with the same bounded reader.
 // Inputs: A valid 9-bit non-block header followed by one literal `A` code.
 // Outputs: Throws if extraction incorrectly requires block mode.

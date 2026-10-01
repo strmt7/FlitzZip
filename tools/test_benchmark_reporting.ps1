@@ -13,6 +13,16 @@ foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 
+foreach ($iteration in @(1, 2, 3, 4)) {
+    $expected = if (($iteration % 2) -eq 1) { 'CPU,GPU' } else { 'GPU,CPU' }
+    if ((@(Get-BenchmarkLaneOrder -Iteration $iteration) -join ',') -ne $expected -or
+        (@(Get-BenchmarkLaneOrder -Iteration $iteration -SkipCpu) -join ',') -ne 'GPU' -or
+        (@(Get-BenchmarkLaneOrder -Iteration $iteration -SkipGpu) -join ',') -ne 'CPU' -or
+        @(Get-BenchmarkLaneOrder -Iteration $iteration -SkipCpu -SkipGpu).Count -ne 0) {
+        throw 'Benchmark rounds did not alternate enabled lanes deterministically.'
+    }
+}
+
 $sourceRoot = Join-Path $env:TEMP ("superzip-benchmark-source-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $sourceRoot | Out-Null
 try {
@@ -51,11 +61,20 @@ $fixtureRun = [pscustomobject]@{
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
     ResourceSampleCount = 25; GpuSampleCount = 23; ResourceSampleMeanIntervalMs = 102.5
     GpuKernelLaunches = 720; GpuKernelMs = $null
+    GpuHostPinnedAllocMiB = 512; GpuHostPinnedOutputMiB = 10240; DecodeInflightChunks = 4; DecodeCodecWorkers = 8
     GpuPatternBlocks = 0; GpuPrefixBlocks = 0; GpuDictionaryBlocks = 0; GpuSparsePatternBlocks = 10240
 }
 $record = ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
-    -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100
-if ($record.schema_version -ne 1 -or $record.source_dirty -ne $true -or
+    -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 `
+    -HipRuntimeVersion '10.0.3679.0'
+if ($record.runs[0].gpu_host_pinned_allocation_bytes -ne 512MB -or
+    $record.runs[0].gpu_host_pinned_output_bytes -ne 10GB -or
+    $record.runs[0].decode_inflight_chunks -ne 4 -or $record.runs[0].decode_codec_workers -ne 8) {
+    throw 'Pinned allocation, reused output, and decode admission telemetry were conflated or lost.'
+}
+if ($record.schema_version -ne 2 -or $record.gpu_utilization_metric -ne 'process_busiest_engine_pct' -or
+    $record.lane_order -ne 'alternating_when_both' -or $record.inter_run_pause_ms -ne 250 -or
+    $record.source_dirty -ne $true -or $record.hip_runtime_version -ne '10.0.3679.0' -or
     $record.binary_sha256 -ne ('b' * 64) -or $record.runs.Count -ne 1 -or
     $record.runs[0].output_bytes -ne 171079680 -or
     $record.runs[0].archive_bytes -ne 171102811 -or $null -ne $record.runs[0].gpu_kernel_ms -or
@@ -71,7 +90,10 @@ try {
     Write-BenchmarkJson -Record $record -Path $jsonPath
     $json = Get-Content -LiteralPath $jsonPath -Raw
     $stored = $json | ConvertFrom-Json
-    if ($stored.runs[0].output_bytes -ne 171079680 -or
+    if ($stored.schema_version -ne 2 -or $stored.gpu_utilization_metric -ne 'process_busiest_engine_pct' -or
+        $stored.lane_order -ne 'alternating_when_both' -or $stored.inter_run_pause_ms -ne 250 -or
+        $stored.runs[0].output_bytes -ne 171079680 -or
+        $stored.hip_runtime_version -ne '10.0.3679.0' -or
         $stored.runs[0].archive_bytes -ne 171102811 -or $stored.source_dirty -ne $true -or
         $stored.runs[0].source_generation_worker_seconds -ne 4.25 -or
         $stored.runs[0].codec_encode_worker_seconds -ne 9.5 -or
@@ -93,6 +115,16 @@ try {
     if (-not $collisionRejected) { throw 'Benchmark JSON overwrote existing evidence.' }
 } finally {
     Remove-Item -LiteralPath $jsonPath -Force -ErrorAction SilentlyContinue
+}
+foreach ($missing in @($null, '', 'unavailable')) {
+    if ($null -ne (ConvertTo-HipRuntimeVersionEvidence -Value $missing)) {
+        throw 'Missing runtime metadata was synthesized.'
+    }
+}
+foreach ($invalidVersion in @('10.0.65536.0', '010.0.3679.0', '10.0.3679.0/path', '10.0.3679', '10.0.3679.0 ', "10.0.3679.0`n")) {
+    $rejected = $false
+    try { ConvertTo-HipRuntimeVersionEvidence -Value $invalidVersion | Out-Null } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Malformed runtime identity was accepted.' }
 }
 foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
     $fixtureRun.CodecEncodeWorkerSeconds = $invalid
@@ -122,6 +154,18 @@ try {
 } catch { $invalidRejected = $true }
 if (-not $invalidRejected) { throw 'GPU sample count exceeded total resource samples.' }
 $fixtureRun.GpuSampleCount = 23
+foreach ($field in @('GpuAvgPct', 'GpuPeakPct')) {
+    foreach ($invalid in @([double]::NaN, [double]::PositiveInfinity, -1.0, 101.0)) {
+        $fixtureRun.$field = $invalid
+        $invalidRejected = $false
+        try {
+            ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+                -BinarySha256 ('B' * 64) -Profile 'SparseRecord' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+        } catch { $invalidRejected = $true }
+        if (-not $invalidRejected) { throw 'An invalid GPU percentage entered the evidence record.' }
+    }
+    $fixtureRun.$field = $null
+}
 $fixtureRun.MemoryOnly = 'false'
 $invalidRejected = $false
 try {
@@ -186,6 +230,32 @@ if ((Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -ne 12.5 -or
 $category.Instances = @()
 if ($null -ne (Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -or -not $ownedCounter.Disposed) {
     throw 'Persistent GPU sampler fabricated a value after engines disappeared.'
+}
+Close-GpuResourceSampler -Sampler $sampler
+$engineCounters = @{}
+$engineNames = @('pid_42_compute', 'pid_42_copy', 'pid_42_other_gpu')
+foreach ($name in $engineNames) { $engineCounters[$name] = [FakeGpuCounter]::new() }
+$engineCounters['pid_42_compute'].Value = 80.0
+$engineCounters['pid_42_copy'].Value = 70.0
+$engineCounters['pid_42_other_gpu'].Value = 90.0
+$category.Instances = $engineNames
+$sampler = @{ Category = $category; Counters = $engineCounters }
+if ((Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -ne 90.0) {
+    throw 'GPU percentage must select the busiest process engine, not sum parallel engines or GPUs.'
+}
+foreach ($invalid in @([single]::NaN, [single]::PositiveInfinity, [single]::NegativeInfinity, -1.0, 101.0)) {
+    $engineCounters['pid_42_other_gpu'].Value = $invalid
+    if ((Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -ne 80.0) {
+        throw 'Invalid GPU counters distorted the busiest-engine measurement.'
+    }
+}
+foreach ($counter in $engineCounters.Values) { $counter.Value = [single]::NaN }
+if ($null -ne (Get-ProcessGpuSample -Sampler $sampler -ProcessId 42)) {
+    throw 'An entirely invalid GPU sample must remain unavailable.'
+}
+foreach ($counter in $engineCounters.Values) { $counter.Value = 0.0 }
+if ((Get-ProcessGpuSample -Sampler $sampler -ProcessId 42) -ne 0.0) {
+    throw 'A valid idle GPU sample must remain zero rather than unavailable.'
 }
 Close-GpuResourceSampler -Sampler $sampler
 $resource = Measure-ResourceSample -Samples @(

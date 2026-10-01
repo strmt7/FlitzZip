@@ -5,6 +5,25 @@ creating unnecessary SSD wear. It is the operating reference for block-size
 changes, CPU/GPU benchmark claims, and the relationship between GUI controls,
 CLI arguments, and archive-core resource limits.
 
+## Resource Measurement Contract
+
+New native RAM benchmark records use schema two and identify GPU percentages
+as `process_busiest_engine_pct`: the busiest Windows engine for the tested CLI
+process, across GPUs. Historical schema-one percentages summed independent
+engines and must not be interpreted as Task Manager-style GPU utilization.
+Raw historical evidence remains unchanged. The System GUI instead combines
+processes using the same physical engine and selects the busiest system engine.
+Unavailable or invalid counter data is not replaced with zero or a capped sum.
+
+Native comparison rounds alternate CPU/GPU order when both lanes are enabled.
+`-InterRunPauseMs` requests a 250 ms pause by default between completed runs,
+outside the product timer; accepted values are 0-1000 ms. Records disclose
+`lane_order` and `inter_run_pause_ms`. The graph validator keeps different
+measurement schemes separate, including older records without these fields.
+Review individual phase times for order sensitivity and monotonic slowdown;
+repeat affected cases with recorded context before drawing conclusions. A
+short pause is not proof of idle resources or absence of thermal drift.
+
 ## Goals
 
 - Compare forced-CPU and required-AMD-HIP lanes on the same generated data.
@@ -155,11 +174,22 @@ Record these fields for every block size:
 | `CompressMiBs`, `VerifyMiBs`, `ExtractMiBs` | End-to-end archive throughput. |
 | `CompressionRatio` | Confirms CPU/GPU speed comparisons use equivalent compression strength. |
 | `Workers`, `InflightChunks`, `CodecWorkers` | Confirms production worker allocation. |
+| `DecodeInflightChunks`, `DecodeCodecWorkers` | Separates extraction admission/checksum workers from the encoder and verifier queue. |
 | `GpuEncodeChunks`, `GpuDecodeChunks` | Proves the GPU lane processed archive work. |
 | `GpuKernelLaunches`, `GpuKernelMs` | Proves HIP kernels were submitted and timed. |
 | `GpuH2DMiB`, `GpuD2HMiB`, `GpuAllocMiB` | Confirms device transfer and allocation behavior. |
+| `GpuHostPinnedAllocMiB`, `GpuHostPinnedOutputMiB` | Separates fresh pinned host extents from all output processed through them, including reuse; neither is live RAM or VRAM. |
 | `MemoryOnly`, `DiskWriteBytes` | Confirms the benchmark did not write the workload to storage. |
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
+
+The owned-output [development checkpoint](benchmarks/2026-10-01-pinned-output-pool.md)
+records the bounded pin policy, production/RAM path parity, and matched
+extraction measurements. Its new schema-two fields are additive. Historical
+records without decoder counters retain unavailable values; do not infer their
+queue depth from the requested worker count. Pinned allocation/output counters
+count successful owned decodes, not every attempted HIP allocation. RAM
+reconstruction is checked by CRC; full byte-comparison fixtures are separate
+correctness evidence, not an interchangeable benchmark claim.
 
 ### Per-Block Adaptive Selection (2026-09-05)
 

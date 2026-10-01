@@ -514,6 +514,44 @@ TEST_CASE(suzip_gpu_entropy_efforts_preserve_per_block_winners) {
     }
 }
 
+// Purpose: Preserve dictionary competition when a stronger entropy table crosses a heuristic ratio threshold.
+// Inputs: A bounded zero/text mixed block at all nine efforts, with the available HIP device.
+// Outputs: Requires non-growing dictionary payloads, exact CPU/HIP read-back, and real kernel telemetry.
+TEST_CASE(suzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::string_view phrase = "Shared IEEE CRC compatibility; independent output identity.";
+    std::vector<std::byte> input(1024U * 1024U, std::byte{0});
+    for (std::size_t index = input.size() / 2U; index < input.size(); ++index) {
+        input[index] = static_cast<std::byte>(phrase[(index - input.size() / 2U) % phrase.size()]);
+    }
+    auto previous_bytes = input.size();
+    for (const int effort : {1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+        superzip::GpuCodecOptions options;
+        options.require_gpu = true;
+        options.block_size = static_cast<std::uint32_t>(input.size());
+        options.compression_level = effort;
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_TRUE(encoded.gpu_used);
+        REQUIRE_EQ(encoded.blocks.size(), 1U);
+        REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
+        REQUIRE_TRUE(encoded.payload.size() < 32768U);
+        REQUIRE_TRUE(encoded.payload.size() <= previous_bytes);
+        previous_bytes = encoded.payload.size();
+        std::vector<std::byte> decoded(input.size());
+        REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+        REQUIRE_TRUE(decoded == input);
+        REQUIRE_TRUE(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches > 0U);
+        options.require_gpu = false;
+        options.force_cpu = true;
+        std::fill(decoded.begin(), decoded.end(), std::byte{0xBC});
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+        REQUIRE_TRUE(decoded == input);
+    }
+}
+
 // Purpose: Accept complete sparse-alphabet Huffman lookups while rejecting uncovered or conflicting slots.
 // Inputs: A two-symbol 4096-entry lookup with individual malformed-entry mutations.
 // Outputs: Validates the version-eight trust boundary independently of GPU availability.

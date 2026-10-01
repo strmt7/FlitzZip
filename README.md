@@ -53,14 +53,16 @@ reports missing prerequisites clearly, and records the expected runtime DLL in
 Development systems additionally need:
 
 - Visual Studio C++ build tools.
-- CMake.
+- CMake 4.4.3, provisioned and checksum-verified by the build tools.
 - AMD HIP SDK for Windows with `HIP_PATH` pointing at the SDK root.
 
 ## Build
 
-The default CMake generator is Visual Studio 2022. On a fresh build directory,
-VS 2026 can be selected with `-Generator "Visual Studio 18 2026"` and CMake
-4.2 or newer. Do not change generators inside an existing CMake build tree.
+On a fresh build directory, the tools discover installed Visual Studio C++
+toolchains and prefer VS 2026, falling back to VS 2022. An existing build keeps
+its configured generator; an unavailable installation or requested generator
+change fails explicitly. Use `-Generator` to select an installed supported
+toolchain when needed. Do not change generators inside an existing CMake tree.
 The hosted CPU-only workflow defines test lanes for Windows Server 2022 with VS 2022 and Windows Server
 2025 with VS 2026. These checks do not establish AMD GPU runtime support on
 Windows Server or hardware that was not exercised. The release runtime target

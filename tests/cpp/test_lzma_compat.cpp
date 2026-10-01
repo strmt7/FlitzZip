@@ -82,6 +82,28 @@ TEST_CASE(lzma_extracts_single_file_fixture) {
     superzip_test::export_compat_fixture(archive, output);
 }
 
+// Purpose: Preserve native Unicode filenames while extracting independent lzma fixtures.
+// Inputs: A bounded upstream-compatible fixture with an uppercase suffix and a Unicode host filename.
+// Outputs: Requires exact restored bytes and overwrite refusal without encoding errors.
+TEST_CASE(lzma_unicode_archive_filename_extracts) {
+    const auto root = test_temp_dir("lzma-unicode-name");
+    const auto filename = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.txt");
+    auto archive = root / filename;
+    archive += ".LZMA";
+    write_fixture(archive, kSingleFileLzmaFixture);
+    const auto output = root / "out";
+    (void)superzip::extract_lzma_file(archive, output, false);
+    REQUIRE_EQ(read_text_file(output / filename), "SuperZip LZMA fixture payload.\nSecond line.\n");
+    bool refused = false;
+    try {
+        (void)superzip::extract_lzma_file(archive, output, false);
+    } catch (const superzip::SecurityError&) {
+        refused = true;
+    }
+    REQUIRE_TRUE(refused);
+    REQUIRE_EQ(read_text_file(output / filename), "SuperZip LZMA fixture payload.\nSecond line.\n");
+}
+
 // Purpose: Verify `.lzma` extraction refuses overwriting existing files unless explicitly allowed.
 // Inputs: A valid `.lzma` stream and a preexisting destination file.
 // Outputs: Throws if extraction overwrites while `overwrite` is false.

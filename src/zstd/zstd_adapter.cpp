@@ -3,6 +3,8 @@
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/stream_archive_path.hpp"
+#include "core/file_size.hpp"
 #include "core/result.hpp"
 #include "zstd/zstd_stream.hpp"
 
@@ -20,41 +22,6 @@ namespace superzip {
 namespace {
 
 constexpr std::size_t kZstdCopyBufferBytes = 64U * 1024U;
-
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried or represented.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
-// Purpose: Derive a safe single output entry name from the archive filename.
-// Inputs: `archive_path` is the host path to the `.zst` stream.
-// Outputs: Returns a relative archive entry name that can be passed through path safety checks.
-std::string zstd_output_entry_name(const std::filesystem::path& archive_path) {
-    auto filename = archive_path.filename().string();
-    auto lower = filename;
-    std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (lower.size() > 5U && lower.ends_with(".zstd")) {
-        filename.resize(filename.size() - 5U);
-    } else if (lower.size() > 4U && lower.ends_with(".zst")) {
-        filename.resize(filename.size() - 4U);
-    } else {
-        filename = archive_path.stem().string();
-    }
-    if (filename.empty()) {
-        filename = "payload";
-    }
-    return normalize_archive_path_key(filename);
-}
 
 }  // namespace
 
@@ -74,12 +41,12 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     const auto& source_file = sources.front();
     const auto started = std::chrono::steady_clock::now();
     if (!std::filesystem::is_regular_file(source_file)) {
-        throw ArchiveError("Zstandard compression requires one regular file: " + source_file.string());
+        throw ArchiveError("Zstandard compression requires one regular file: " + path_diagnostic_utf8(source_file));
     }
     std::error_code equivalent_error;
     if (std::filesystem::exists(output_archive) &&
         std::filesystem::equivalent(source_file, output_archive, equivalent_error) && !equivalent_error) {
-        throw SecurityError("refusing to overwrite the Zstandard source file: " + output_archive.string());
+        throw SecurityError("refusing to overwrite the Zstandard source file: " + path_diagnostic_utf8(output_archive));
     }
 
     const auto manifest = build_manifest({source_file});
@@ -88,12 +55,12 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     const auto input_size = source_entry.size;
     ProgressState progress;
     progress.start(OperationKind::Compress, input_size, 1);
-    progress.set_current(source_file.filename().string());
+    progress.set_current(path_diagnostic_utf8(source_file.filename()));
     publish_progress(progress, progress_callback);
 
     std::ifstream input(source_file, std::ios::binary);
     if (!input) {
-        throw ArchiveError("cannot open Zstandard source file: " + source_file.string());
+        throw ArchiveError("cannot open Zstandard source file: " + path_diagnostic_utf8(source_file));
     }
     FilePublishTransaction publication(output_archive);
     std::uint32_t compression_workers = 0;
@@ -113,7 +80,7 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
                 publish_progress(progress, progress_callback);
             }
             if (input.bad() || (input.fail() && !input.eof())) {
-                throw ArchiveError("failed to read Zstandard source file: " + source_file.string());
+                throw ArchiveError("failed to read Zstandard source file: " + path_diagnostic_utf8(source_file));
             }
             if (input.eof()) {
                 break;
@@ -143,11 +110,12 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
                                  bool overwrite, const ProgressCallback& progress_callback) {
     const auto started = std::chrono::steady_clock::now();
     const auto archive_size = regular_file_size(archive_path);
-    const auto entry_name = zstd_output_entry_name(archive_path);
+    const auto entry_name = single_stream_entry_name(archive_path, {{".zstd", ""}, {".zst", ""}});
     create_verified_directories(destination);
-    const auto target = safe_join_archive_path(destination, entry_name);
+    const auto target = safe_join_archive_path(destination, entry_name, ArchivePathEncoding::Utf8);
     if (!overwrite && std::filesystem::exists(target)) {
-        throw SecurityError("refusing to overwrite existing Zstandard extraction target: " + target.string());
+        throw SecurityError("refusing to overwrite existing Zstandard extraction target: " +
+                            path_diagnostic_utf8(target));
     }
 
     ProgressState progress;
@@ -160,7 +128,7 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         ZstdInputStream input(archive_path);
         std::ofstream output(publication.staging_path(), std::ios::binary | std::ios::trunc);
         if (!output) {
-            throw ArchiveError("cannot create Zstandard extraction target: " + target.string());
+            throw ArchiveError("cannot create Zstandard extraction target: " + path_diagnostic_utf8(target));
         }
         std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
@@ -169,7 +137,7 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
             if (bytes_read > 0U) {
                 output.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
                 if (!output) {
-                    throw ArchiveError("failed to write Zstandard extraction target: " + target.string());
+                    throw ArchiveError("failed to write Zstandard extraction target: " + path_diagnostic_utf8(target));
                 }
             }
             if (input.bad()) {
@@ -183,7 +151,7 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         progress.add_bytes(archive_size);
         output.close();
         if (!output) {
-            throw ArchiveError("failed to finalize Zstandard extraction target: " + target.string());
+            throw ArchiveError("failed to finalize Zstandard extraction target: " + path_diagnostic_utf8(target));
         }
         publication.commit(overwrite);
         progress.finish_entry();

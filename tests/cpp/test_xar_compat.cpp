@@ -83,7 +83,7 @@ void write_xar_fixture(const std::filesystem::path& archive, const std::string& 
 
 // Purpose: Create a nested XAR fixture with one directory and one file.
 // Inputs: `archive` is the destination and `payload` is the regular-file text.
-// Outputs: Writes a zlib-compressed XAR payload fixture.
+// Outputs: Writes a zlib-compressed XAR with stored length and decoded size in their standard fields.
 void write_nested_xar_fixture(const std::filesystem::path& archive, std::string_view payload) {
     const auto compressed_payload = zlib_compress(payload);
     const std::string toc = "<?xml version=\"1.0\"?>"
@@ -91,11 +91,11 @@ void write_nested_xar_fixture(const std::filesystem::path& archive, std::string_
                             "<file id=\"1\"><name>subdir</name><type>directory</type>"
                             "<file id=\"2\"><name>hello.txt</name><type>file</type>"
                             "<data><length>" +
-                            std::to_string(payload.size()) +
+                            std::to_string(compressed_payload.size()) +
                             "</length>"
                             "<offset>0</offset>"
                             "<size>" +
-                            std::to_string(compressed_payload.size()) +
+                            std::to_string(payload.size()) +
                             "</size>"
                             "<encoding style=\"application/x-gzip\"/>"
                             "</data></file>"
@@ -154,6 +154,31 @@ TEST_CASE(xar_extraction_reads_nested_zlib_payload) {
     superzip_test::export_compat_fixture(archive, output);
 }
 
+// Purpose: Reject the formerly accepted, nonstandard reversal of XAR stored and decoded extents.
+// Inputs: A valid zlib payload whose length and size metadata are deliberately reversed and materially different.
+// Outputs: Requires ArchiveError before publishing files; never guesses an alternate metadata interpretation.
+TEST_CASE(xar_extraction_rejects_reversed_payload_extents) {
+    const auto root = test_temp_dir("xar-reversed-extents");
+    const auto archive = root / "reversed.xar";
+    const std::string payload(128U * 1024U, 'x');
+    const auto compressed = zlib_compress(payload);
+    REQUIRE_TRUE(compressed.size() < payload.size());
+    const std::string toc = "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
+                            "<data><length>" +
+                            std::to_string(payload.size()) + "</length><offset>0</offset><size>" +
+                            std::to_string(compressed.size()) +
+                            "</size><encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
+    write_xar_fixture(archive, toc, compressed);
+    bool rejected = false;
+    try {
+        (void)superzip::extract_xar(archive, root / "out", false);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(count_regular_files(root / "out"), 0U);
+}
+
 // Purpose: Preserve XML UTF-8 and character-reference names through extraction and replacement.
 // Inputs: Stored and zlib fixtures mix raw UTF-8 with numeric and named XML entities.
 // Outputs: Checks Unicode filesystem paths, exact content, and unchanged overwrite semantics.
@@ -171,8 +196,8 @@ TEST_CASE(xar_unicode_names_extract_and_overwrite) {
                                 "<file id=\"1\"><name>caf\xC3\xA9</name><type>directory</type>"
                                 "<file id=\"2\"><name>&#26085;&#x672C;-&#x1F680;&amp;.txt</name><type>file</type>"
                                 "<data><length>" +
-                                std::to_string(payload.size()) + "</length><offset>0</offset><size>" +
-                                std::to_string(heap.size()) + "</size><encoding style=\"" +
+                                std::to_string(heap.size()) + "</length><offset>0</offset><size>" +
+                                std::to_string(payload.size()) + "</size><encoding style=\"" +
                                 (compressed ? "application/x-gzip" : "application/octet-stream") +
                                 "\"/></data></file></file></toc></xar>";
         write_xar_fixture(archive, toc, heap);
@@ -230,10 +255,10 @@ TEST_CASE(xar_extraction_rejects_parent_directory_paths) {
     const auto compressed_payload = zlib_compress(payload);
     const std::string toc = "<xar><toc><file id=\"1\"><name>../escape.txt</name><type>file</type>"
                             "<data><length>" +
-                            std::to_string(payload.size()) +
+                            std::to_string(compressed_payload.size()) +
                             "</length><offset>0</offset>"
                             "<size>" +
-                            std::to_string(compressed_payload.size()) +
+                            std::to_string(payload.size()) +
                             "</size>"
                             "<encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
     write_xar_fixture(archive, toc, compressed_payload);
@@ -336,10 +361,10 @@ TEST_CASE(xar_extraction_rejects_corrupt_zlib_payload_before_output) {
     compressed_payload.back() ^= 0x01U;
     const std::string toc = "<xar><toc><file id=\"1\"><name>payload.txt</name><type>file</type>"
                             "<data><length>" +
-                            std::to_string(payload.size()) +
+                            std::to_string(compressed_payload.size()) +
                             "</length><offset>0</offset>"
                             "<size>" +
-                            std::to_string(compressed_payload.size()) +
+                            std::to_string(payload.size()) +
                             "</size>"
                             "<encoding style=\"application/x-gzip\"/></data></file></toc></xar>";
     write_xar_fixture(archive, toc, compressed_payload);

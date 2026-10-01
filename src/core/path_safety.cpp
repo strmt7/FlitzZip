@@ -268,6 +268,9 @@ void validate_archive_path_set(std::span<const ArchivePathValidationEntry> entri
     }
 }
 
+// Purpose: Convert a source-relative filesystem path to a validated UTF-8 archive key.
+// Inputs: relative_path is caller-owned; empty/dot segments are ignored and traversal is forbidden.
+// Outputs: Returns a normalized slash-separated key; empty, unsafe or over-budget paths throw SecurityError.
 std::string normalize_entry_name(const std::filesystem::path& relative_path) {
     std::string out;
     for (const auto& part : relative_path) {

@@ -6,7 +6,10 @@
 #include "core/result.hpp"
 #include "core/trusted_runtime.hpp"
 
+#include "7zCrc.h"
+
 #include <array>
+#include <barrier>
 #include <cstddef>
 #include <fstream>
 #include <future>
@@ -15,6 +18,107 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace {
+
+// Purpose: Provide an independent bitwise IEEE CRC oracle without production or SDK lookup tables.
+// Inputs: Readable bytes and a finalized incremental seed; neither is retained or modified.
+// Outputs: Returns the finalized polynomial-0xEDB88320 checksum, including unchanged empty seeds.
+std::uint32_t bitwise_crc32(std::span<const std::byte> bytes, std::uint32_t seed) {
+    auto state = seed ^ 0xFFFFFFFFU;
+    for (const auto byte : bytes) {
+        state ^= static_cast<std::uint8_t>(byte);
+        for (unsigned bit = 0U; bit < 8U; ++bit) {
+            state = (state >> 1U) ^ ((0U - (state & 1U)) & 0xEDB88320U);
+        }
+    }
+    return state ^ 0xFFFFFFFFU;
+}
+
+}  // namespace
+
+// Purpose: Verify shared checksums and direct SDK callers publish the same tables under concurrent first use.
+// Inputs: Eight synchronized workers hashing the standard check string through alternating public/SDK paths.
+// Outputs: Requires exact checksums in a fresh filtered process and idempotent SDK initialization.
+TEST_CASE(crc32_parallel_first_use_matches_known_digest) {
+    constexpr std::string_view input = "123456789";
+    std::barrier ready(8);
+    std::array<std::future<std::uint32_t>, 8> workers;
+    for (std::size_t index = 0U; index < workers.size(); ++index) {
+        workers[index] = std::async(std::launch::async, [&ready, input, index] {
+            ready.arrive_and_wait();
+            if ((index & 1U) != 0U) {
+                superzip::initialize_crc32_backend();
+                return static_cast<std::uint32_t>(CrcCalc(input.data(), input.size()));
+            }
+            return superzip::crc32(std::as_bytes(std::span(input.data(), input.size())));
+        });
+    }
+    for (auto& worker : workers) {
+        REQUIRE_EQ(worker.get(), 0xCBF43926U);
+    }
+}
+
+// Purpose: Verify IEEE CRC seeds, unaligned input, table-word boundaries, and partial tails independently.
+// Inputs: Deterministic nonperiodic bytes at sixteen alignments, thirty-four lengths, and four finalized seeds.
+// Outputs: Requires bitwise-oracle equality and preserves seeds for an empty default span.
+TEST_CASE(crc32_seeded_alignment_and_tail_oracle) {
+    constexpr std::array<std::size_t, 34> lengths{
+        0U,  1U,  2U,  3U,  4U,  7U,  8U,  9U,  11U, 12U,  13U,  15U,  16U,   17U,   23U,   24U,   25U,
+        31U, 32U, 33U, 47U, 48U, 49U, 63U, 64U, 65U, 255U, 256U, 257U, 4095U, 4096U, 4097U, 8191U, 8193U,
+    };
+    constexpr std::array<std::uint32_t, 4> seeds{0U, 1U, 0x12345678U, 0xFFFFFFFFU};
+    std::array<std::byte, 8193U + 15U> input{};
+    std::uint32_t state = 0x75BA3210U;
+    for (auto& byte : input) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        byte = static_cast<std::byte>(state & 255U);
+    }
+    for (const auto seed : seeds) {
+        REQUIRE_EQ(superzip::crc32({}, seed), seed);
+        for (std::size_t alignment = 0U; alignment < 16U; ++alignment) {
+            for (const auto length : lengths) {
+                const auto bytes = std::span(input).subspan(alignment, length);
+                REQUIRE_EQ(superzip::crc32(bytes, seed), bitwise_crc32(bytes, seed));
+            }
+        }
+    }
+}
+
+// Purpose: Verify arbitrary nonzero CRC seeds retain their meaning across fragmented streaming calls.
+// Inputs: A fixed UTF-8 byte sequence, four seeds, and every possible ordered split including empty halves.
+// Outputs: Requires each fragmented result to match the independent contiguous oracle.
+TEST_CASE(crc32_seeded_fragmentation_matches_independent_oracle) {
+    constexpr std::string_view input = "CRC streaming seeds must remain finalized across calls.";
+    const auto bytes = std::as_bytes(std::span(input.data(), input.size()));
+    for (const auto seed : {0U, 1U, 0x12345678U, 0xFFFFFFFFU}) {
+        const auto expected = bitwise_crc32(bytes, seed);
+        for (std::size_t split = 0U; split <= bytes.size(); ++split) {
+            const auto first = superzip::crc32(bytes.first(split), seed);
+            REQUIRE_EQ(superzip::crc32(bytes.subspan(split), first), expected);
+        }
+    }
+}
+
+// Purpose: Prove bounded parallel checksum composition matches an independent IEEE oracle and serial backend.
+// Inputs: Unaligned irregular output, small/empty spans, zero/large worker requests, and real multi-task extents.
+// Outputs: Requires exact CRC equality for every admitted split without changing serial or seeded CRC semantics.
+TEST_CASE(crc32_parallel_output_matches_oracle_and_worker_bounds) {
+    std::vector<std::byte> storage(32U * 1024U * 1024U + 37U);
+    for (std::size_t index = 0; index < storage.size(); ++index) {
+        storage[index] = static_cast<std::byte>((index * 31U + index / 997U) & 255U);
+    }
+    const auto bytes = std::span(storage).subspan(3U);
+    const auto expected = bitwise_crc32(bytes, 0U);
+    for (const auto workers : {0U, 1U, 2U, 3U, 8U, 64U, std::numeric_limits<std::uint32_t>::max()}) {
+        REQUIRE_EQ(superzip::crc32_parallel(bytes, workers), expected);
+    }
+    for (const auto size : {0U, 1U, 1024U, 8U * 1024U * 1024U + 1U}) {
+        REQUIRE_EQ(superzip::crc32_parallel(bytes.first(size), 64U), superzip::crc32(bytes.first(size)));
+    }
+}
 
 // Purpose: Verify disabled integrity mode performs no hashing work.
 // Inputs: A temporary sample file and `IntegrityMode::Disabled`.

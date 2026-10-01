@@ -144,6 +144,10 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
     merge_gpu_counter(target->h2d_bytes, source.h2d_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->d2h_bytes, source.d2h_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->device_allocation_bytes, source.device_allocation_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->host_pinned_allocation_bytes,
+                      source.host_pinned_allocation_bytes.load(std::memory_order_relaxed));
+    merge_gpu_counter(target->host_pinned_output_bytes,
+                      source.host_pinned_output_bytes.load(std::memory_order_relaxed));
     merge_gpu_counter(target->pattern_blocks, source.pattern_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->prefix_blocks, source.prefix_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->dictionary_blocks, source.dictionary_blocks.load(std::memory_order_relaxed));
@@ -231,6 +235,8 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         .h2d_bytes = telemetry.h2d_bytes.load(std::memory_order_relaxed),
         .d2h_bytes = telemetry.d2h_bytes.load(std::memory_order_relaxed),
         .device_allocation_bytes = telemetry.device_allocation_bytes.load(std::memory_order_relaxed),
+        .host_pinned_allocation_bytes = telemetry.host_pinned_allocation_bytes.load(std::memory_order_relaxed),
+        .host_pinned_output_bytes = telemetry.host_pinned_output_bytes.load(std::memory_order_relaxed),
         .pattern_blocks = telemetry.pattern_blocks.load(std::memory_order_relaxed),
         .prefix_blocks = telemetry.prefix_blocks.load(std::memory_order_relaxed),
         .dictionary_blocks = telemetry.dictionary_blocks.load(std::memory_order_relaxed),
@@ -246,36 +252,72 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
     return stats;
 }
 
+// Purpose: Count one completed GPU encode in operation telemetry.
+// Inputs: `telemetry` may be null; callers count only successful selected GPU work.
+// Outputs: Atomically increments the encode counter when telemetry exists.
 void record_gpu_encode_chunk(GpuTelemetry* telemetry) {
     if (telemetry) {
         telemetry->encode_chunks.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
+// Purpose: Count one completed GPU decode in operation telemetry.
+// Inputs: `telemetry` may be null; callers count only successful selected GPU work.
+// Outputs: Atomically increments the decode counter when telemetry exists.
 void record_gpu_decode_chunk(GpuTelemetry* telemetry) {
     if (telemetry) {
         telemetry->decode_chunks.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
+// Purpose: Record host-to-device transfer traffic for an operation.
+// Inputs: Optional `telemetry` and transferred `bytes`, not an allocation size.
+// Outputs: Atomically adds to cumulative H2D traffic when telemetry exists.
 void record_gpu_h2d_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
     if (telemetry) {
         telemetry->h2d_bytes.fetch_add(bytes, std::memory_order_relaxed);
     }
 }
 
+// Purpose: Record device-to-host transfer traffic for an operation.
+// Inputs: Optional `telemetry` and transferred `bytes`, not an allocation size.
+// Outputs: Atomically adds to cumulative D2H traffic when telemetry exists.
 void record_gpu_d2h_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
     if (telemetry) {
         telemetry->d2h_bytes.fetch_add(bytes, std::memory_order_relaxed);
     }
 }
 
+// Purpose: Record cumulative device allocation traffic rather than peak live VRAM.
+// Inputs: Optional `telemetry` and the `bytes` allocated by one successful device allocation.
+// Outputs: Atomically adds to allocation traffic when telemetry exists.
 void record_gpu_device_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
     if (telemetry) {
         telemetry->device_allocation_bytes.fetch_add(bytes, std::memory_order_relaxed);
     }
 }
 
+// Purpose: Account only successful HIP-owned output allocations separately from device workspaces.
+// Inputs: telemetry may be null; bytes is one completed pinned decode allocation extent.
+// Outputs: Adds cumulative operation bytes; never changes the process-wide live pin reservation budget.
+void record_gpu_host_pinned_allocation_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
+    if (telemetry) {
+        merge_gpu_counter(telemetry->host_pinned_allocation_bytes, bytes);
+    }
+}
+
+// Purpose: Count decoded output using either fresh or reused pinned host storage.
+// Inputs: telemetry may be null; bytes is one successfully completed HIP decoded extent.
+// Outputs: Adds cumulative output bytes independently of fresh pin allocation accounting.
+void record_gpu_host_pinned_output_bytes(GpuTelemetry* telemetry, std::uint64_t bytes) {
+    if (telemetry) {
+        merge_gpu_counter(telemetry->host_pinned_output_bytes, bytes);
+    }
+}
+
+// Purpose: Count selected GPU pattern blocks in an operation.
+// Inputs: Optional `telemetry` and exact emitted block `count`.
+// Outputs: Atomically adds to pattern block telemetry when present.
 void record_gpu_pattern_blocks(GpuTelemetry* telemetry, std::uint64_t count) {
     if (telemetry) {
         telemetry->pattern_blocks.fetch_add(count, std::memory_order_relaxed);
@@ -360,8 +402,11 @@ GpuInfo query_gpu_info() {
 #endif
 }
 
+// Purpose: Admit bounded diagnostic options before dispatching HIP-only compute work.
+// Inputs: `options` supplies finite duration in seconds, buffer MiB, and bounded kernel work.
+// Outputs: Returns device timing and checksum telemetry, or throws before dispatch for invalid options.
 GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options) {
-    if (options.seconds < 1.0 || options.seconds > 30.0) {
+    if (!std::isfinite(options.seconds) || options.seconds < 1.0 || options.seconds > 30.0) {
         throw ArchiveError("GPU diagnostic seconds must be between 1 and 30");
     }
     if (options.buffer_mib < 16U || options.buffer_mib > 512U) {
@@ -377,6 +422,9 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options) {
 #endif
 }
 
+// Purpose: Encode borrowed input using validated CPU/HIP policy and transactional GPU telemetry.
+// Inputs: `input` remains readable until return; `options` selects effort, block sizing, and backend requirements.
+// Outputs: Returns owned encoded bytes; required-HIP failures throw and never silently select CPU encoding.
 EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
     reject_oversized_codec_span(input.size(), "codec input");

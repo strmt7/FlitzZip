@@ -1,8 +1,10 @@
 #include "xxe/xxe_adapter.hpp"
 
+#include "core/bounded_text_io.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/file_size.hpp"
 #include "core/resource_limit_checks.hpp"
 #include "core/result.hpp"
 
@@ -30,21 +32,6 @@ struct XxeHeader {
     std::size_t lines_consumed = 0;
 };
 
-// Purpose: Read a filesystem file size into the archive telemetry type.
-// Inputs: `path` is an existing file path.
-// Outputs: Returns the file size or throws when it cannot be queried or represented.
-std::uint64_t regular_file_size(const std::filesystem::path& path) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(path, error);
-    if (error) {
-        throw ArchiveError("cannot read file size: " + path.string());
-    }
-    if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())) {
-        throw ArchiveError("file size exceeds SuperZip limits: " + path.string());
-    }
-    return static_cast<std::uint64_t>(size);
-}
-
 // Purpose: Encode one six-bit XXEncode value.
 // Inputs: `value` is a six-bit payload value or decoded line length.
 // Outputs: Returns the printable XXEncode character.
@@ -67,42 +54,14 @@ std::uint8_t decode_xxe_six(char ch) {
 // Inputs: `output` is the destination stream and `line` excludes the trailing newline.
 // Outputs: Appends `line` plus LF or throws on stream failure.
 void write_xxe_line(std::ofstream& output, const std::string& line) {
-    output.write(line.data(), static_cast<std::streamsize>(line.size()));
-    output.put('\n');
-    if (!output) {
-        throw ArchiveError("failed to write XXEncoded stream");
-    }
+    write_archive_text_line(output, line, "XXEncoded");
 }
 
 // Purpose: Read one bounded XXEncode text line without allowing unbounded allocation.
 // Inputs: `input` is the source stream and `line` receives bytes excluding CR/LF.
 // Outputs: Returns true for a line, false at clean EOF before any bytes; throws on overlong lines or I/O errors.
 bool read_xxe_line(std::ifstream& input, std::string& line) {
-    line.clear();
-    std::istream::int_type next = std::char_traits<char>::eof();
-    while (!std::char_traits<char>::eq_int_type((next = input.get()), std::char_traits<char>::eof())) {
-        const auto byte = static_cast<unsigned char>(std::char_traits<char>::to_char_type(next));
-        if (byte == static_cast<unsigned char>('\n')) {
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-            return true;
-        }
-        if (line.size() >= kMaxXxeLineBytes) {
-            throw ArchiveError("XXEncoded line exceeds SuperZip metadata limit");
-        }
-        line.push_back(static_cast<char>(byte));
-    }
-    if (input.bad()) {
-        throw ArchiveError("failed to read XXEncoded stream");
-    }
-    if (!line.empty()) {
-        if (line.back() == '\r') {
-            line.pop_back();
-        }
-        return true;
-    }
-    return false;
+    return read_bounded_text_line(input, line, kMaxXxeLineBytes, "XXEncoded");
 }
 
 // Purpose: Test whether a line contains only ignorable whitespace after an XXEncode end marker.

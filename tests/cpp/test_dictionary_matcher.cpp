@@ -490,10 +490,37 @@ std::size_t require_valid_encoded_batch(std::span<const std::byte> input, const 
     REQUIRE_EQ(gpu_decoded.bytes.size(), input.size());
     REQUIRE_TRUE(std::equal(input.begin(), input.end(), gpu_decoded.bytes.begin()));
     REQUIRE_TRUE(gpu_decoded.device_workspace_bytes < 9U * 1024U * 1024U);
+    REQUIRE_EQ(gpu_decoded.device_workspace_bytes,
+               payload_bytes + input.size() + batch.segments.size() * (16U + sizeof(std::uint32_t)));
     REQUIRE_EQ(gpu_decoded.h2d_bytes, payload_bytes + batch.segments.size() * 16U);
     REQUIRE_EQ(gpu_decoded.d2h_bytes, input.size() + batch.segments.size() * sizeof(std::uint32_t));
     REQUIRE_TRUE(!gpu_decoded.decode_ms || (std::isfinite(*gpu_decoded.decode_ms) && *gpu_decoded.decode_ms >= 0.0));
     return payload_bytes;
+}
+
+// Purpose: Catch unavailable dictionary timing while independently verifying the indexed encoder's output.
+// Inputs: A bounded, nonperiodic RAM corpus at low, balanced, and high effort on an available HIP device.
+// Outputs: Requires finite stage measurements, exact diagnostic matches, and independent LZ4/HIP read-back.
+TEST_CASE(dictionary_dispatch_bound_stage_timing) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const auto input = make_near_identical_records(4U * kSegmentBytes);
+    const auto matches = find_matches(input, 5);
+    require_valid_matches(input, matches, 5);
+    for (const auto duration : {matches.index_ms, matches.search_ms}) {
+        REQUIRE_TRUE(duration && std::isfinite(*duration) && *duration >= 0.0);
+    }
+    for (const int level : {1, 5, 9}) {
+        const auto encoded = encode_segments(input, level);
+        for (const auto duration : {encoded.index_ms, encoded.encode_ms, encoded.compact_ms, encoded.device_ms}) {
+            REQUIRE_TRUE(duration && std::isfinite(*duration) && *duration >= 0.0);
+        }
+        REQUIRE_TRUE(require_valid_encoded_batch(input, encoded) < input.size());
+        REQUIRE_EQ(*encoded.device_ms, *encoded.index_ms + *encoded.encode_ms + *encoded.compact_ms);
+        std::cout << "dictionary_stage_timing level=" << level << " index_ms=" << *encoded.index_ms
+                  << " encode_ms=" << *encoded.encode_ms << " compact_ms=" << *encoded.compact_ms << '\n';
+    }
 }
 
 // Purpose: Verify production periodic-index output with an independent LZ4 block reader.
@@ -516,6 +543,7 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
             options.telemetry = std::make_shared<superzip::GpuTelemetry>();
             const auto encoded = superzip::encode_chunk(input, options);
             const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
+            REQUIRE_TRUE(std::isfinite(telemetry.kernel_ms) && telemetry.kernel_ms > 0.0);
             std::cout << "dictionary_periodic_launches input_bytes=" << input_bytes << " record_bytes=" << record_bytes
                       << " level=" << level << " launches=" << telemetry.kernel_launches << '\n';
             const bool measures_entropy = level == 9 || (level == 5 && input_bytes >= 8U * 1024U * 1024U);

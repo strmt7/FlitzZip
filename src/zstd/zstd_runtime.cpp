@@ -72,10 +72,16 @@ ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName
 
 ZstdRuntime::~ZstdRuntime() = default;
 
+// Purpose: Allocate an encoder context through the pinned runtime ABI.
+// Inputs: None; this runtime owns the loaded function table.
+// Outputs: Returns a caller-owned context or null; callers must check and free it with this runtime.
 ZstdCompressionContext* ZstdRuntime::create_compression_context() const {
     return create_compression_context_();
 }
 
+// Purpose: Release a caller-owned encoder context through its matching runtime.
+// Inputs: `context` is null or was allocated by this runtime; ownership is surrendered.
+// Outputs: Frees runtime resources when the release function exists; never throws.
 void ZstdRuntime::free_compression_context(ZstdCompressionContext* context) const noexcept {
     if (free_compression_context_ != nullptr) {
         (void)free_compression_context_(context);
@@ -167,6 +173,9 @@ void ZstdRuntime::free_decompression_stream(ZstdDecompressionStream* stream) con
     }
 }
 
+// Purpose: Set an explicit decoder parameter through the pinned runtime ABI.
+// Inputs: A live caller-owned `stream`, parameter identifier, and integer `value`.
+// Outputs: Returns runtime status; callers must check it before decoding untrusted data.
 std::size_t ZstdRuntime::set_decompression_parameter(ZstdDecompressionStream* stream, int parameter, int value) const {
     return set_decompression_parameter_(stream, parameter, value);
 }
@@ -188,6 +197,9 @@ std::string ZstdRuntime::error_name(std::size_t code) const {
     return name == nullptr ? "unknown Zstandard error" : name;
 }
 
+// Purpose: Lazily initialize the process-wide verified Zstandard runtime.
+// Inputs: None; construction enforces pinned runtime identity and ABI requirements.
+// Outputs: Returns a process-lifetime shared reference, or propagates initialization failure.
 const ZstdRuntime& zstd_runtime() {
     static const ZstdRuntime runtime;
     return runtime;

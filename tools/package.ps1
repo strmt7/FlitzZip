@@ -11,28 +11,12 @@ $repo = Split-Path -Parent $PSScriptRoot
 $build = Join-Path $repo "build"
 $stage = Join-Path $repo "out\install-$Configuration"
 . (Join-Path $PSScriptRoot "version.ps1")
+. (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 
 $PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
 $packageBase = Get-SuperZipPackageBase -PackageVersion $PackageVersion
 $package = Join-Path $repo "out\$packageBase-portable.zip"
 $wixUiExtension = "WixToolset.UI.wixext/7.0.0"
-
-# Purpose: Find a usable CMake executable on a Windows development or CI host.
-# Inputs: None; probes known install paths and PATH.
-# Outputs: Returns the CMake executable path or throws when CMake is unavailable.
-function Find-CMake {
-    $candidates = @(
-        "C:\Program Files\CMake\bin\cmake.exe",
-        "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
-        "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) { return $candidate }
-    }
-    $cmd = Get-Command cmake -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    throw "CMake was not found."
-}
 
 # Purpose: Find the WiX CLI from the repository-local tool cache or PATH.
 # Inputs: None; probes the ignored local tools folder first, then PATH.
@@ -133,7 +117,7 @@ if (Test-Path $stage) {
     Remove-Item -LiteralPath $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
-$cmake = Find-CMake
+$cmake = Find-CMake -RepoRoot $repo
 & $cmake --install $build --config $Configuration --prefix $stage
 
 $cli = Join-Path $stage "bin\superzip_cli.exe"

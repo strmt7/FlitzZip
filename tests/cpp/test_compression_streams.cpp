@@ -2,9 +2,13 @@
 #include "test_stream_failure.hpp"
 
 #include "bzip2/bzip2_stream.hpp"
+#include "bzip2/bzip2_adapter.hpp"
 #include "core/result.hpp"
+#include "core/path_text.hpp"
+#include "core/bounded_text_io.hpp"
 #include "gzip/gzip_stream.hpp"
 #include "gzip/gzip_adapter.hpp"
+#include "lzma/bounded_sdk_allocator.hpp"
 #include "miniz.h"
 #include "zstd/zstd_stream.hpp"
 #include "zstd/zstd_adapter.hpp"
@@ -16,6 +20,256 @@
 #include <limits>
 #include <memory>
 #include <thread>
+#include <sstream>
+
+// Purpose: Preserve the original file-size failure when compressed-stream filenames cannot use the host code page.
+// Inputs: A missing Unicode/supplementary filename through the shared Gzip, Bzip2, and Zstandard readers.
+// Outputs: Requires ArchiveError with the intact UTF-8 filename, not an unrelated narrowing exception.
+TEST_CASE(compression_stream_missing_unicode_file_diagnostics) {
+    const auto root = test_temp_dir("compression-stream-missing-unicode");
+    const auto missing = root / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
+    const auto filename = superzip::path_diagnostic_utf8(missing.filename());
+    for (int codec = 0; codec < 3; ++codec) {
+        bool rejected = false;
+        try {
+            if (codec == 0) {
+                superzip::GzipInputStream input(missing);
+            } else if (codec == 1) {
+                superzip::Bzip2InputStream input(missing);
+            } else {
+                superzip::ZstdInputStream input(missing);
+            }
+        } catch (const superzip::ArchiveError& error) {
+            REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Preserve useful creation errors when a Unicode output has no parent directory.
+// Inputs: The same nonexistent Unicode/supplementary output path through all three stream writers.
+// Outputs: Requires ArchiveError containing the original UTF-8 filename and leaves the parent absent.
+TEST_CASE(compression_stream_unicode_create_failure_diagnostics) {
+    const auto root = test_temp_dir("compression-stream-unicode-create-failure");
+    const auto missing = root / "missing-parent" / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
+    const auto filename = superzip::path_diagnostic_utf8(missing.filename());
+    for (int codec = 0; codec < 3; ++codec) {
+        bool rejected = false;
+        try {
+            if (codec == 0) {
+                superzip::GzipOutputStream output(missing, 5);
+            } else if (codec == 1) {
+                superzip::Bzip2OutputStream output(missing, 5);
+            } else {
+                superzip::ZstdOutputStream output(missing, 5);
+            }
+        } catch (const superzip::ArchiveError& error) {
+            REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_TRUE(!std::filesystem::exists(missing.parent_path()));
+    }
+}
+
+#ifdef _WIN32
+// Purpose: Preserve the original open error for a Unicode file locked against readers.
+// Inputs: One temporary, exclusively held Windows file with a Unicode/supplementary filename.
+// Outputs: Requires intact UTF-8 ArchiveError diagnostics from all three readers and releases the owned lock.
+TEST_CASE(compression_stream_unicode_locked_file_diagnostics) {
+    const auto root = test_temp_dir("compression-stream-unicode-locked-file");
+    const auto path = root / std::filesystem::path(u8"\u538b\u7f29-\U0001f4e6.bin");
+    {
+        std::ofstream seed(path, std::ios::binary);
+        seed.put('x');
+        REQUIRE_TRUE(seed.good());
+    }
+    const auto handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE_TRUE(handle != INVALID_HANDLE_VALUE);
+    const std::unique_ptr<void, decltype(&CloseHandle)> lock(handle, &CloseHandle);
+    const auto filename = superzip::path_diagnostic_utf8(path.filename());
+    for (int codec = 0; codec < 3; ++codec) {
+        bool rejected = false;
+        try {
+            if (codec == 0) {
+                superzip::GzipInputStream input(path);
+            } else if (codec == 1) {
+                superzip::Bzip2InputStream input(path);
+            } else {
+                superzip::ZstdInputStream input(path);
+            }
+        } catch (const superzip::ArchiveError& error) {
+            REQUIRE_TRUE(std::string_view(error.what()).find(filename) != std::string_view::npos);
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+#endif
+
+// Purpose: Exercise the actual SDK callbacks at exact limits without allocating large hostile dictionaries.
+// Inputs: Two independent allocators, zero-size requests, exhausted budgets, and released pointers.
+// Outputs: Requires zero initialization, isolated accounting, refusal before overflow, and reusable capacity.
+TEST_CASE(sdk_allocator_enforces_owner_limits_through_c_callbacks) {
+    superzip::BoundedSdkAllocator first(16);
+    superzip::BoundedSdkAllocator second(8);
+    auto* first_bytes = static_cast<unsigned char*>(ISzAlloc_Alloc(&first, 16));
+    REQUIRE_TRUE(first_bytes != nullptr);
+    for (std::size_t index = 0; index < 16; ++index) {
+        REQUIRE_EQ(first_bytes[index], 0U);
+    }
+    REQUIRE_EQ(first.current_bytes(), 16U);
+    REQUIRE_TRUE(ISzAlloc_Alloc(&first, 1) == nullptr);
+    auto* second_bytes = ISzAlloc_Alloc(&second, 8);
+    REQUIRE_TRUE(second_bytes != nullptr);
+    ISzAlloc_Free(&second, first_bytes);
+    REQUIRE_EQ(first.current_bytes(), 16U);
+    REQUIRE_EQ(second.current_bytes(), 8U);
+    ISzAlloc_Free(&first, first_bytes);
+    REQUIRE_EQ(first.current_bytes(), 0U);
+    auto* zero = ISzAlloc_Alloc(&first, 0);
+    REQUIRE_TRUE(zero != nullptr);
+    REQUIRE_EQ(first.current_bytes(), 1U);
+    ISzAlloc_Free(&first, zero);
+    ISzAlloc_Free(&first, nullptr);
+    ISzAlloc_Free(&second, second_bytes);
+    REQUIRE_EQ(second.current_bytes(), 0U);
+    REQUIRE_TRUE(ISzAlloc_Alloc(&first, std::numeric_limits<std::size_t>::max()) == nullptr);
+    superzip::BoundedSdkAllocator empty(0);
+    REQUIRE_TRUE(ISzAlloc_Alloc(&empty, 0) == nullptr);
+}
+
+// Purpose: Preserve allocation ownership across interleaved owners and a sequential decoder thread handoff.
+// Inputs: A callback allocation created on one thread and freed on another while another owner stays live.
+// Outputs: Requires no ambient-thread dependency, exact retained accounting, and independent subsequent allocation.
+TEST_CASE(sdk_allocator_context_survives_sequential_thread_handoff) {
+    superzip::BoundedSdkAllocator first(32);
+    superzip::BoundedSdkAllocator second(32);
+    auto* retained = ISzAlloc_Alloc(&second, 16);
+    REQUIRE_TRUE(retained != nullptr);
+    void* handed_off = nullptr;
+    std::thread allocate([&] { handed_off = ISzAlloc_Alloc(&first, 32); });
+    allocate.join();
+    REQUIRE_TRUE(handed_off != nullptr);
+    REQUIRE_EQ(first.current_bytes(), 32U);
+    std::thread release([&] { ISzAlloc_Free(&first, handed_off); });
+    release.join();
+    REQUIRE_EQ(first.current_bytes(), 0U);
+    REQUIRE_EQ(second.current_bytes(), 16U);
+    auto* replacement = ISzAlloc_Alloc(&first, 32);
+    REQUIRE_TRUE(replacement != nullptr);
+    ISzAlloc_Free(&first, replacement);
+    ISzAlloc_Free(&second, retained);
+}
+
+// Purpose: Preserve host Unicode archive filenames through each writable single-stream adapter.
+// Inputs: Three production adapters, uppercase suffix aliases, and a bounded binary payload.
+// Outputs: Requires byte-exact extraction to the native filename and non-destructive overwrite refusal.
+TEST_CASE(single_stream_unicode_archive_names_roundtrip) {
+    using Compress = superzip::OperationStats (*)(const std::vector<std::filesystem::path>&,
+                                                  const std::filesystem::path&, int, const superzip::ProgressCallback&);
+    using Extract = superzip::OperationStats (*)(const std::filesystem::path&, const std::filesystem::path&, bool,
+                                                 const superzip::ProgressCallback&);
+    struct Case {
+        const char* suffix;
+        Compress compress;
+        Extract extract;
+    };
+    const std::array cases = {
+        Case{".GZ", superzip::compress_gzip, superzip::extract_gzip_file},
+        Case{".BZ2", superzip::compress_bzip2, superzip::extract_bzip2_file},
+        Case{".ZST", superzip::compress_zstd, superzip::extract_zstd_file},
+        Case{".ZSTD", superzip::compress_zstd, superzip::extract_zstd_file},
+    };
+    const auto root = test_temp_dir("single-stream-unicode-names");
+    const auto filename = std::filesystem::path(u8"\u6E2C\u8A66\U0001F4E6.bin");
+    const std::string payload("binary\0payload\xff", 15);
+    const auto source = root / "source" / filename;
+    std::filesystem::create_directory(source.parent_path());
+    {
+        std::ofstream output(source, std::ios::binary);
+        output.exceptions(std::ios::badbit | std::ios::failbit);
+        output.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    }
+    for (const auto& item : cases) {
+        auto archive = root / filename;
+        archive += item.suffix;
+        (void)item.compress({source}, archive, 5, {});
+        const auto destination = root / (std::string("restore") + item.suffix);
+        (void)item.extract(archive, destination, false, {});
+        const auto target = destination / filename;
+        REQUIRE_TRUE(std::filesystem::exists(target));
+        std::ifstream input(target, std::ios::binary);
+        REQUIRE_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()), payload);
+        bool refused = false;
+        try {
+            (void)item.extract(archive, destination, false, {});
+        } catch (const superzip::SecurityError&) {
+            refused = true;
+        }
+        REQUIRE_TRUE(refused);
+        REQUIRE_EQ(std::filesystem::file_size(target), payload.size());
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Preserve bounded archive text-line behavior across LF, CRLF, empty, binary, and unterminated lines.
+// Inputs: An in-memory stream containing boundary-length lines and embedded NUL bytes.
+// Outputs: Requires exact content, clean EOF, and rejection before an overlong line grows past its limit.
+TEST_CASE(bounded_archive_text_lines_preserve_boundaries_and_eof) {
+    std::istringstream input(std::string("abc\nxy\r\n\n") + std::string("\0z", 2) + "\nend\r");
+    std::string line;
+    for (const auto& expected : std::array<std::string, 5>{"abc", "xy", "", std::string("\0z", 2), "end"}) {
+        REQUIRE_TRUE(superzip::read_bounded_text_line(input, line, 4, "Test"));
+        REQUIRE_EQ(line, expected);
+    }
+    REQUIRE_TRUE(!superzip::read_bounded_text_line(input, line, 4, "Test"));
+    REQUIRE_TRUE(line.empty());
+    std::istringstream exact("1234\n");
+    REQUIRE_TRUE(superzip::read_bounded_text_line(exact, line, 4, "Test"));
+    REQUIRE_EQ(line, "1234");
+    std::istringstream oversized("12345\n");
+    bool rejected = false;
+    try {
+        (void)superzip::read_bounded_text_line(oversized, line, 4, "Test");
+    } catch (const superzip::ArchiveError& error) {
+        rejected = std::string(error.what()) == "Test line exceeds SuperZip metadata limit";
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_EQ(line.size(), 4U);
+}
+
+// Purpose: Distinguish failed text streams from clean EOF and preserve exact archive-line writes.
+// Inputs: In-memory streams with failbit/badbit and a line containing an embedded NUL.
+// Outputs: Requires stable read/write diagnostics and exact payload-plus-LF serialization.
+TEST_CASE(bounded_archive_text_io_reports_stream_failures) {
+    for (const auto state : {std::ios::failbit, std::ios::badbit}) {
+        std::istringstream input("data");
+        input.setstate(state);
+        std::string line;
+        bool rejected = false;
+        try {
+            (void)superzip::read_bounded_text_line(input, line, 4, "Test");
+        } catch (const superzip::ArchiveError& error) {
+            rejected = std::string(error.what()) == "failed to read Test stream";
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    std::ostringstream output;
+    const std::string line("a\0b", 3);
+    superzip::write_archive_text_line(output, line, "Test");
+    REQUIRE_EQ(output.str(), line + "\n");
+    output.setstate(std::ios::badbit);
+    bool rejected = false;
+    try {
+        superzip::write_archive_text_line(output, line, "Test");
+    } catch (const superzip::ArchiveError& error) {
+        rejected = std::string(error.what()) == "failed to write Test stream";
+    }
+    REQUIRE_TRUE(rejected);
+}
 
 namespace {
 

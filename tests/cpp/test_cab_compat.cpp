@@ -5,6 +5,7 @@
 #include "cab/cab_format.hpp"
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
+#include "core/path_text.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -173,6 +174,24 @@ void write_uncompressed_cab(const std::filesystem::path& archive, const std::vec
 }
 
 }  // namespace
+
+// Purpose: Preserve a missing cabinet's Unicode filename in the archive error contract.
+// Inputs: A nonexistent CAB beneath a test-owned path containing supplementary Unicode characters.
+// Outputs: Requires ArchiveError with exact UTF-8 path text and no created source file.
+TEST_CASE(cab_missing_unicode_source_has_actionable_error) {
+    const auto root = test_temp_dir("cab-unicode-missing");
+    const auto archive = root / std::filesystem::path(u"missing-\U0001F9EA.cab");
+    bool rejected = false;
+    try {
+        (void)superzip::scan_cab_metadata(archive);
+    } catch (const superzip::ArchiveError& error) {
+        REQUIRE_EQ(std::string(error.what()),
+                   "cannot read CAB archive size: " + superzip::path_diagnostic_utf8(archive));
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+    REQUIRE_TRUE(!std::filesystem::exists(archive));
+}
 
 // Purpose: Verify native `.cab` extraction reads uncompressed CAB payloads through Windows FDI.
 // Inputs: A handcrafted single-folder CAB with one nested file.

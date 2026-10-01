@@ -263,7 +263,7 @@ std::vector<std::uint32_t> compute_prefix_lengths_batch_device(const std::byte* 
     HipDeviceBuffer<PrefixEncodeSegmentPlan> device_plans(plan_bytes, "hipMalloc prefix length plans");
     HipDeviceBuffer<std::uint32_t> device_lengths(length_bytes, "hipMalloc prefix segment lengths");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    check_hip(hipMemcpy(device_plans.get(), segment_plans.data(), plan_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_plans.get(), segment_plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix length plans");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
     auto events = make_hip_event_pair("create prefix_segment_lengths_batch_kernel events");
@@ -272,7 +272,7 @@ std::vector<std::uint32_t> compute_prefix_lengths_batch_device(const std::byte* 
                            "launch prefix_segment_lengths_batch_kernel", device_input, device_plans.get(),
                            device_lengths.get(), static_cast<std::uint32_t>(segment_plans.size()));
     finish_measured_kernel(telemetry, events, "synchronize prefix_segment_lengths_batch_kernel");
-    check_hip(hipMemcpy(segment_lengths.data(), device_lengths.get(), length_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(segment_lengths.data(), device_lengths.get(), length_bytes, hipMemcpyDeviceToHost),
               "hipMemcpy prefix segment lengths");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(length_bytes));
     device_plans.reset_checked("hipFree prefix length plans");
@@ -347,12 +347,14 @@ std::vector<std::byte> pack_prefix_segments_batch_device(const std::byte* device
     HipDeviceBuffer<std::uint32_t> device_offsets(offset_bytes, "hipMalloc prefix pack offsets");
     HipDeviceBuffer<std::byte> device_encoded(bitstream.size(), "hipMalloc prefix payload");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(required_bytes));
-    check_hip(hipMemcpy(device_plans.get(), selection.pack_plans.data(), plan_bytes, hipMemcpyHostToDevice),
+    check_hip(copy_on_codec_stream(device_plans.get(), selection.pack_plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix pack plans");
-    check_hip(hipMemcpy(device_offsets.get(), selection.pack_offsets.data(), offset_bytes, hipMemcpyHostToDevice),
-              "hipMemcpy prefix pack offsets");
+    check_hip(
+        copy_on_codec_stream(device_offsets.get(), selection.pack_offsets.data(), offset_bytes, hipMemcpyHostToDevice),
+        "hipMemcpy prefix pack offsets");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + offset_bytes));
-    check_hip(hipMemset(device_encoded.get(), 0, bitstream.size()), "hipMemset prefix payload");
+    check_hip(hipMemsetAsync(device_encoded.get(), 0, bitstream.size(), hipStreamPerThread),
+              "hipMemset prefix payload");
     auto events = make_hip_event_pair("create prefix_pack_segments_batch_kernel events");
     launch_measured_kernel(prefix_pack_segments_batch_kernel, static_cast<unsigned int>(selection.pack_plans.size()),
                            kGpuPrefixSegmentThreads, 0, hipStreamPerThread, events,
@@ -360,7 +362,7 @@ std::vector<std::byte> pack_prefix_segments_batch_device(const std::byte* device
                            device_offsets.get(), device_encoded.get(),
                            static_cast<std::uint32_t>(selection.pack_plans.size()));
     finish_measured_kernel(telemetry, events, "synchronize prefix_pack_segments_batch_kernel");
-    check_hip(hipMemcpy(bitstream.data(), device_encoded.get(), bitstream.size(), hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(bitstream.data(), device_encoded.get(), bitstream.size(), hipMemcpyDeviceToHost),
               "hipMemcpy prefix payload");
     record_gpu_d2h_bytes(telemetry, static_cast<std::uint64_t>(bitstream.size()));
     device_plans.reset_checked("hipFree prefix pack plans");

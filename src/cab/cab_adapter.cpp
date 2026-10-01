@@ -3,6 +3,7 @@
 #include "cab/cab_format.hpp"
 #include "core/file_publish.hpp"
 #include "core/path_safety.hpp"
+#include "core/path_text.hpp"
 #include "core/progress.hpp"
 #include "core/result.hpp"
 
@@ -209,7 +210,8 @@ INT_PTR open_cab_extract_target(CabFdiContext& context, const std::string& path,
             _wopen(temporary.file.wstring().c_str(), _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
         if (fd < 0) {
             cleanup_file_publish_target(temporary);
-            set_cab_callback_error(context, "failed to create temporary CAB extraction target: " + target.string());
+            set_cab_callback_error(context,
+                                   "failed to create temporary CAB extraction target: " + path_diagnostic_utf8(target));
             return -1;
         }
         context.outputs.emplace(static_cast<INT_PTR>(fd), CabOutputTarget{
@@ -245,7 +247,8 @@ bool close_and_publish_cab_output(CabFdiContext& context, INT_PTR hf) {
     context.outputs.erase(it);
     if (_close(static_cast<int>(hf)) != 0) {
         cleanup_file_publish_target(output.temporary);
-        set_cab_callback_error(context, "failed to close CAB extraction target: " + output.final_path.string());
+        set_cab_callback_error(context,
+                               "failed to close CAB extraction target: " + path_diagnostic_utf8(output.final_path));
         return false;
     }
 
