@@ -22,6 +22,12 @@ Security tab or a published release.
    regressions, not benchmark alternatives. CPU search overhead, final repeated
    comparison data, hosted validation, and the scanner backlog remain separate
    gates; do not equate distinct GPU search budgets with universal distinct sizes.
+   Native pipeline and RAM-benchmark buffer admission now share an overflow-safe
+   physical-memory policy. It rejects insufficient/unknown capacity instead of
+   forcing one window, and removes the benchmark's two-buffer discount.
+   Synthetic host-size and reserve-boundary regressions cover the policy without
+   stressing the host. This is not complete process-memory accounting: CPU codec
+   workspace, candidate metadata, and retained pools remain review items.
    Zstandard Strong/Maximum now use bounded higher-effort backend settings.
    Apply this review to every CPU-backed format as well as SUZIP: share codec
    policy across single-file and container wrappers, verify supported levels,

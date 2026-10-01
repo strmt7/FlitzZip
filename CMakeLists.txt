@@ -408,6 +408,7 @@ add_library(
   src/core/file_manifest.cpp
   src/core/file_publish.cpp
   src/core/integrity.cpp
+  src/core/host_memory_budget.cpp
   src/core/path_safety.cpp
   src/core/archive_name_encoding.cpp
   src/core/progress.cpp
@@ -806,6 +807,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_bzip2_compat.cpp
     tests/cpp/test_compression_streams.cpp
     tests/cpp/test_gpu_telemetry.cpp
+    tests/cpp/test_host_memory_budget.cpp
     tests/cpp/test_windows_compatibility.cpp
     tests/cpp/test_gpu_block_batch.cpp
     tests/cpp/test_cab_compat.cpp

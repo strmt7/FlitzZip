@@ -4,6 +4,7 @@
 #include "core/archive_index.hpp"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
+#include "core/host_memory_budget.hpp"
 #include "core/worker_budget.hpp"
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
@@ -27,16 +28,6 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
-
 namespace superzip {
 namespace {
 
@@ -45,11 +36,6 @@ constexpr std::size_t kFileStreamBufferBytes = 4U * 1024U * 1024U;
 struct PipelineBudget {
     std::uint32_t workers = 1;
     std::uint32_t inflight_chunks = 1;
-};
-
-struct HostMemorySnapshot {
-    std::uint64_t total_bytes = 0;
-    std::uint64_t available_bytes = 0;
 };
 
 struct EncodedArchiveChunk {
@@ -119,26 +105,6 @@ std::uint64_t checked_add_u64(std::uint64_t lhs, std::uint64_t rhs, const char* 
     return lhs + rhs;
 }
 
-// Purpose: Read physical RAM counters from the host OS.
-// Inputs: None.
-// Outputs: Returns total and available bytes, or a conservative fallback when the platform counter is unavailable.
-HostMemorySnapshot query_host_memory_snapshot() {
-#ifdef _WIN32
-    MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
-    if (GlobalMemoryStatusEx(&status) != 0) {
-        return HostMemorySnapshot{
-            .total_bytes = static_cast<std::uint64_t>(status.ullTotalPhys),
-            .available_bytes = static_cast<std::uint64_t>(status.ullAvailPhys),
-        };
-    }
-#endif
-    return HostMemorySnapshot{
-        .total_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL,
-        .available_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL,
-    };
-}
-
 // Purpose: Multiply two unsigned counters while detecting overflow.
 // Inputs: `lhs` and `rhs` are byte or block counters; `message` labels the failing operation.
 // Outputs: Returns the product or throws `ArchiveError` before wraparound.
@@ -162,35 +128,15 @@ std::uint64_t count_stream_windows(std::uint64_t bytes, std::uint64_t window_byt
     return ((bytes - 1U) / window_bytes) + 1U;
 }
 
-// Purpose: Compute the host RAM budget available to the archive pipeline.
-// Inputs: `per_chunk_budget` estimates the memory held by one in-flight chunk.
-// Outputs: Returns a byte budget that never projects total physical RAM usage above the target usage limit.
-std::uint64_t resolve_host_pipeline_memory_budget(std::uint64_t per_chunk_budget) {
-    const auto memory = query_host_memory_snapshot();
-    if (memory.total_bytes == 0 || memory.available_bytes > memory.total_bytes) {
-        return per_chunk_budget;
-    }
-    const auto current_used = memory.total_bytes - memory.available_bytes;
-    const auto target_used = (memory.total_bytes / 100U) * kHostMemoryTargetUsagePercent;
-    if (current_used >= target_used) {
-        return per_chunk_budget;
-    }
-    const auto safe_growth = target_used - current_used;
-    return std::max<std::uint64_t>(per_chunk_budget, std::min<std::uint64_t>(safe_growth, kMaxPipelineMemoryBytes));
-}
-
 // Purpose: Resolve worker and in-flight chunk counts from caller options and host memory.
 // Inputs: `chunk_size`, `requested_workers`, and `requested_inflight` are validated option values.
-// Outputs: Returns bounded concurrency settings or throws when requested concurrency would exceed memory limits.
+// Outputs: Returns bounded concurrency or throws when even one estimated buffer window cannot fit.
 PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t requested_workers,
                                        std::uint32_t requested_inflight) {
     const auto hardware_threads = std::max(1U, std::thread::hardware_concurrency());
     const auto workers =
         requested_workers == 0 ? std::min<std::uint32_t>(hardware_threads, kMaxArchiveWorkers) : requested_workers;
-    const auto per_chunk_budget = checked_multiply_u64(chunk_size, 3U, "pipeline memory budget overflows");
-    const auto memory_budget = resolve_host_pipeline_memory_budget(per_chunk_budget);
-    const auto memory_limited_inflight =
-        static_cast<std::uint32_t>(std::max<std::uint64_t>(1U, memory_budget / per_chunk_budget));
+    const auto memory_limited_inflight = resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), chunk_size);
     const auto automatic_target =
         requested_workers == 0
             ? std::min<std::uint32_t>(

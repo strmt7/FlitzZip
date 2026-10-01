@@ -200,6 +200,13 @@ scanner families to existing guardrails and records unfinished work. It is an
 evidence index, not a new allowlist or proof that every historical alert was a
 vulnerability. Normative agent rules remain in the operating guide.
 
+- `core/host_memory_budget.cpp` owns native production and RAM-benchmark buffer
+  admission. `test_host_memory_budget.cpp` checks boundary refusal, unknown
+  capacity, overflow, reserve parity, and a synthetic host-size matrix. Never
+  clamp insufficient capacity upward to one window or give benchmarks a
+  smaller buffer estimate than production. Keep estimated buffers distinct
+  from codec workspace and a volatile snapshot distinct from a reservation.
+
 ## Adding A New Lesson
 
 HIP event timing now has bounded accumulation and a persistent unavailable

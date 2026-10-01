@@ -180,6 +180,32 @@ series and the other profiles therefore remain incomplete; those samples do
 not support a throughput conclusion. The guard was not weakened and unrelated
 host processes were left alone.
 
+## Host Buffer Admission
+
+Native archive processing and the RAM-only benchmark share
+`core/host_memory_budget.cpp`. Both admit three chunk-sized buffers per
+in-flight window; the benchmark additionally retains its 1 GiB overhead
+reserve. A snapshot at or above the 80% physical-RAM usage target, or with
+insufficient growth for one window, refuses processing rather than forcing a
+minimum depth of one. Failed or invalid Windows memory counters never become
+invented fallback capacity. Reducing virtual benchmark input bytes does not
+reduce its fixed 128 MiB processing window.
+
+This is buffer admission from a volatile snapshot, not an OS reservation or a
+hard bound on total process memory. Codec contexts, candidate metadata,
+manifest/index growth, retained pools, and concurrent host allocations need
+their own accounting. In particular, custom small CPU windows can hold codec
+workspace larger than the three-buffer estimate; complete codec-workspace
+admission remains open. No timing or general memory-safety claim follows from
+the buffer correction alone.
+
+`test_host_memory_budget.cpp` checks exact target/window/reserve boundaries,
+invalid counters, unsigned limits, and 8,080 synthetic combinations spanning
+2 GiB through 1 TiB hosts. It does not consume that RAM or require an idle PC.
+The primary counter contract is Microsoft's
+[GlobalMemoryStatusEx documentation](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex),
+which explicitly describes memory availability as volatile.
+
 ## Benchmark Score
 
 ### Zstandard Effort

@@ -3,6 +3,7 @@
 #include "core/checksum.hpp"
 #include "core/archive_index.hpp"
 #include "core/decoded_chunk.hpp"
+#include "core/host_memory_budget.hpp"
 #include "core/worker_budget.hpp"
 #include "core/result.hpp"
 #include "gpu/gpu_codec.hpp"
@@ -23,16 +24,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
 
 namespace superzip::cli {
 namespace {
@@ -134,53 +125,13 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
     return lhs * rhs;
 }
 
-// Purpose: Estimate safe host-memory growth before the process risks exceeding the SuperZip RAM target.
-// Inputs: None.
-// Outputs: Returns available growth bytes until 80% host RAM use, or a conservative fallback on unsupported hosts.
-std::uint64_t safe_host_memory_growth_bytes() {
-#ifdef _WIN32
-    MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
-    if (GlobalMemoryStatusEx(&status) != 0 && status.ullAvailPhys <= status.ullTotalPhys) {
-        const auto total = static_cast<std::uint64_t>(status.ullTotalPhys);
-        const auto available = static_cast<std::uint64_t>(status.ullAvailPhys);
-        const auto used = total - available;
-        const auto target = (total / 100U) * superzip::kHostMemoryTargetUsagePercent;
-        return used >= target ? 0 : target - used;
-    }
-#endif
-    return 4ULL * 1024ULL * 1024ULL * 1024ULL;
-}
-
-// Purpose: Refuse a memory-only benchmark when even one bounded archive window would exceed the RAM-use policy.
-// Inputs: None.
-// Outputs: Returns normally when host RAM can hold one generated chunk, one encoded chunk, and the reserve.
-void assert_memory_benchmark_budget() {
-    auto required = checked_add_cli_u64(
-        kMemoryBenchmarkReserveBytes,
-        checked_multiply_cli_u64(superzip::kMaxArchiveChunkBytes, 2U, "memory benchmark working set overflow"),
-        "memory benchmark budget overflow");
-    const auto safe_growth = safe_host_memory_growth_bytes();
-    if (required > safe_growth) {
-        throw superzip::ArchiveError("memory benchmark would exceed the 80% host RAM target; reduce --size-mib or "
-                                     "close other memory-heavy processes");
-    }
-}
-
 // Purpose: Resolve bounded in-flight work for the memory-only benchmark pipeline.
 // Inputs: `workers` is the resolved CPU worker count.
-// Outputs: Returns a queue depth that fits the 80% host RAM policy and SuperZip's in-flight limit.
+// Outputs: Returns a depth admitted by production buffer policy plus benchmark reserve, or throws ArchiveError.
 std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers) {
-    const auto safe_growth = safe_host_memory_growth_bytes();
-    const auto baseline = kMemoryBenchmarkReserveBytes;
-    if (baseline >= safe_growth) {
-        return 1;
-    }
-    const auto remaining = safe_growth - baseline;
-    const auto per_inflight =
-        checked_multiply_cli_u64(superzip::kMaxArchiveChunkBytes, 2U, "memory benchmark in-flight budget overflow");
-    const auto memory_limited = static_cast<std::uint32_t>(std::max<std::uint64_t>(1U, remaining / per_inflight));
-    return std::max<std::uint32_t>(1U, std::min({workers, memory_limited, superzip::kMaxInflightArchiveChunks}));
+    const auto limit = superzip::resolve_host_pipeline_inflight_limit(
+        superzip::query_host_memory_snapshot(), superzip::kMaxArchiveChunkBytes, kMemoryBenchmarkReserveBytes);
+    return std::min(workers, limit);
 }
 
 // Purpose: Match production per-chunk codec worker allocation for the memory-only benchmark.
@@ -703,9 +654,9 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
     return *(best == nullptr ? baseline : best);
 }
 
-// Purpose: Admit a RAM benchmark before allocating workers, codec state, or an archive window.
+// Purpose: Validate RAM benchmark arguments before host admission and any codec allocation.
 // Inputs: `options` selects size in MiB, effort, block size, and mutually exclusive backend policies.
-// Outputs: Returns checked input bytes or throws on invalid arguments or insufficient host memory.
+// Outputs: Returns checked input bytes or throws on invalid arguments; pipeline admission follows before allocation.
 std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& options) {
     if (options.size_mib < 10240U) {
         throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
@@ -724,7 +675,6 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
         throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
     const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
-    assert_memory_benchmark_budget();
     return total_bytes;
 }
 
