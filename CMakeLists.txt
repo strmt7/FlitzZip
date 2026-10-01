@@ -624,6 +624,42 @@ else()
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=0)
 endif()
 
+set(SUPERZIP_LICENSE_NOTICES_MANIFEST
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses/license-notices.json")
+set_property(
+  DIRECTORY
+  APPEND
+  PROPERTY CMAKE_CONFIGURE_DEPENDS "${SUPERZIP_LICENSE_NOTICES_MANIFEST}")
+file(READ "${SUPERZIP_LICENSE_NOTICES_MANIFEST}" SUPERZIP_LICENSE_MANIFEST_JSON)
+string(JSON SUPERZIP_LICENSE_COUNT LENGTH "${SUPERZIP_LICENSE_MANIFEST_JSON}"
+                                          notices)
+if(SUPERZIP_LICENSE_COUNT LESS 1)
+  message(FATAL_ERROR "License manifest must have nonempty notices")
+endif()
+math(EXPR SUPERZIP_LICENSE_LAST "${SUPERZIP_LICENSE_COUNT} - 1")
+set(SUPERZIP_LICENSE_SOURCES)
+foreach(license_index RANGE 0 ${SUPERZIP_LICENSE_LAST} 1)
+  string(
+    JSON
+    license_source
+    GET
+    "${SUPERZIP_LICENSE_MANIFEST_JSON}"
+    notices
+    ${license_index}
+    source)
+  if(NOT license_source MATCHES "^(LICENSE|third_party/[A-Za-z0-9_./-]+)$"
+     OR license_source MATCHES "(^|/)\\.\\.(/|$)"
+     OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${license_source}"
+     OR IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${license_source}")
+    message(FATAL_ERROR "Invalid or missing license source: ${license_source}")
+  endif()
+  list(APPEND SUPERZIP_LICENSE_SOURCES "${license_source}")
+endforeach()
+list(REMOVE_DUPLICATES SUPERZIP_LICENSE_SOURCES)
+set(SUPERZIP_LICENSE_SOURCE_FILES ${SUPERZIP_LICENSE_SOURCES})
+list(TRANSFORM SUPERZIP_LICENSE_SOURCE_FILES
+     PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+
 add_executable(superzip_cli src/cli/main.cpp src/cli/memory_benchmark.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
 superzip_copy_zstd_runtime(superzip_cli)
@@ -636,13 +672,8 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
   set(SUPERZIP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
   set(SUPERZIP_BRAND_LOGO_HEADER
       "${SUPERZIP_GENERATED_DIR}/superzip_brand_logo.hpp")
-  set(SUPERZIP_LICENSE_NOTICES_MANIFEST
-      "${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses/license-notices.json")
   set(SUPERZIP_LICENSE_NOTICES_HEADER
       "${SUPERZIP_GENERATED_DIR}/superzip_license_notices.hpp")
-  string(CONCAT SUPERZIP_LIBDIVSUFSORT_LICENSE
-                "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wimlib/"
-                "COPYING.libdivsufsort-lite.txt")
   add_custom_command(
     OUTPUT "${SUPERZIP_BRAND_LOGO_HEADER}"
     COMMAND
@@ -668,17 +699,7 @@ if(SUPERZIP_BUILD_GUI AND WIN32)
       "${CMAKE_CURRENT_SOURCE_DIR}" -OutputPath
       "${SUPERZIP_LICENSE_NOTICES_HEADER}"
     DEPENDS
-      "${SUPERZIP_LICENSE_NOTICES_MANIFEST}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz/LICENSE"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/bzip2/LICENSE"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xz_embedded/COPYING"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzma_sdk/LICENSE"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/LICENSE"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/LICENSE"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lhasa/COPYING.md"
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wimlib/COPYING.LGPL.txt"
-      "${SUPERZIP_LIBDIVSUFSORT_LICENSE}"
+      "${SUPERZIP_LICENSE_NOTICES_MANIFEST}" ${SUPERZIP_LICENSE_SOURCE_FILES}
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_license_notices_header.ps1"
     COMMENT "Generating SuperZip license notices header"
     VERBATIM)
@@ -979,6 +1000,12 @@ if(SUPERZIP_BUILD_FUZZERS)
 endif()
 
 install(FILES README.md LICENSE SECURITY.md CONTRIBUTING.md DESTINATION .)
+foreach(license_source IN LISTS SUPERZIP_LICENSE_SOURCES)
+  get_filename_component(license_source_dir "${license_source}" DIRECTORY)
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/${license_source}"
+          DESTINATION "licenses/${license_source_dir}")
+endforeach()
+install(FILES resources/licenses/license-notices.json DESTINATION licenses)
 if(WIN32)
   install(FILES "${SUPERZIP_ZSTD_RUNTIME_DLL}" DESTINATION bin)
   install(FILES "${SUPERZIP_WIMLIB_RUNTIME_DLL}" DESTINATION bin)

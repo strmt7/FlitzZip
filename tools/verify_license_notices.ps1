@@ -1,4 +1,4 @@
-param()
+param([string]$PackageRoot = '')
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -22,9 +22,12 @@ function Test-LicenseNoticeGeneration {
         "bzip2 1.0.8",
         "XZ Embedded",
         "LZMA SDK 26.03",
+        "LZ4 1.10.0",
         "Zstandard 1.5.7",
         "Lhasa 0.6.0",
         "wimlib 1.14.5",
+        "wimlib dual-license terms",
+        "wimlib GPL alternative",
         "libdivsufsort-lite"
     )
     $titles = @($manifest.notices | ForEach-Object { [string]$_.title })
@@ -116,6 +119,40 @@ function Test-LicenseNoticeGuiContract {
     }
 }
 
+# Purpose: Verify that installed notice text matches every recorded original license exactly.
+# Inputs: An existing installer/portable staging root; no files are modified.
+# Outputs: Throws on an omitted, linked, or modified notice or a different notice manifest.
+function Test-LicensePackage {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $package = [IO.Path]::GetFullPath($Root)
+    $installedManifest = Join-Path $package 'licenses\license-notices.json'
+    if (-not (Test-Path -LiteralPath $installedManifest -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $installedManifest).Hash -ne
+        (Get-FileHash -LiteralPath $manifestPath).Hash) {
+        throw 'Packaged license manifest is missing or differs from the reviewed source.'
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    foreach ($notice in $manifest.notices) {
+        $relative = [string]$notice.source
+        if ([IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)') {
+            throw "License source must be repository-relative: $relative"
+        }
+        $installed = Join-Path $package (Join-Path 'licenses' $relative)
+        if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+            throw "Packaged license text is missing: $relative"
+        }
+        if ((Get-Item -LiteralPath $installed).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Packaged license text must not be linked: $relative"
+        }
+        if ((Get-FileHash -LiteralPath $installed).Hash -ne
+            (Get-FileHash -LiteralPath (Join-Path $repo $relative)).Hash) {
+            throw "Packaged license text differs from the original: $relative"
+        }
+    }
+}
+
 Test-LicenseNoticeGeneration
 Test-LicenseNoticeGuiContract
+if ($PackageRoot) { Test-LicensePackage -Root $PackageRoot }
 Write-Output "License notice verification passed."

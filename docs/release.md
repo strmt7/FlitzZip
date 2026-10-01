@@ -140,6 +140,16 @@ download paths to the repository.
 
 ## Validation
 
+Before publishing binaries, verify the exact release source offering. It must
+contain the complete application sources and build scripts, the unmodified
+`third_party/upstream/wimlib/1.14.5/wimlib-1.14.5.tar.gz` matching its recorded
+SHA-256, and every other required corresponding source and notice. Make that
+source available from the same GitHub release location and document the
+modified-library application rebuild check. Runtime checksum pinning means
+we do not rely solely on LGPL's drop-in shared-library route; see
+[the wimlib source and rebuild contract](third-party.md#wimlib-1145).
+An upstream website link or a passing notice-text check alone is insufficient.
+
 The workflow performs:
 
 - HIP SDK installation and checksum verification when `HIP_PATH` is not already

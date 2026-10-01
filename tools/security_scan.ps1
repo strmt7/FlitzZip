@@ -364,9 +364,9 @@ function Test-ReadmeBadgePolicy {
 
 Test-ReadmeBadgePolicy
 
-# Purpose: Keep external product comparison names out of repo docs and source after one-time audit use.
-# Inputs: Scans source-controlled text outside generated/build folders.
-# Outputs: Throws when an intentionally omitted comparison name is reintroduced.
+# Purpose: Permit comparator research while keeping competitor branding out of product source.
+# Inputs: Scans owned source/include text outside generated and build folders.
+# Outputs: Throws when branding enters product code; benchmark tools and docs are permitted.
 function Test-ExternalComparisonNamePolicy {
     $forbiddenNames = @(
         ("ban" + "dizip"),
@@ -378,6 +378,8 @@ function Test-ExternalComparisonNamePolicy {
     )
     $policyFiles = Get-ChildItem -Path $repo -Recurse -File -Force | Where-Object {
         $path = $_.FullName
+        $relativePath = $path.Substring($repo.Length + 1) -replace "\\", "/"
+        $relativePath -match '^(src|include)/' -and
         ($textExtensions -contains $_.Extension.ToLowerInvariant()) -and
         -not ($excludedRoots | Where-Object { $path.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) })
     }
@@ -386,7 +388,7 @@ function Test-ExternalComparisonNamePolicy {
         if ($null -eq $text) { continue }
         foreach ($name in $forbiddenNames) {
             if ($text.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                throw "Forbidden external comparison name found in $($file.FullName). Keep only product-agnostic audit logic in this repository."
+                throw "Competitor branding belongs in benchmark research, not product source: $($file.FullName)"
             }
         }
     }

@@ -27,7 +27,7 @@ function Test-TextScanCandidate {
     ) -contains $extension -or [System.IO.Path]::GetFileName($Path) -eq "CMakeLists.txt"
 }
 
-# Purpose: Scan one changed text file for forbidden local secrets and policy-only comparison names.
+# Purpose: Scan changed text for secrets and keep competitor branding out of product source.
 # Inputs: `Path` is repository-relative and points to an existing text file.
 # Outputs: Throws when a forbidden pattern is found.
 function Test-ChangedFileTextPolicy {
@@ -60,13 +60,14 @@ function Test-ChangedFileTextPolicy {
     }
 
     $forbiddenNames = @(("ban" + "dizip"), ("ban" + "disoft"))
+    $normalizedPath = $Path -replace "\\", "/"
     foreach ($name in $forbiddenNames) {
-        if ($text.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-            throw "Forbidden external comparison name found in changed file: $Path"
+        if ($normalizedPath -match '^(src|include)/' -and
+            $text.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "Competitor branding belongs in benchmark research, not product source: $Path"
         }
     }
 
-    $normalizedPath = $Path -replace "\\", "/"
     if ($normalizedPath -in @(".github/workflows/greenbone-openvas-live.yml", ".github/openvas/resolve_config.cjs")) {
         $workflow = Get-Content -LiteralPath (Join-Path $repo ".github/workflows/greenbone-openvas-live.yml") -Raw
         $resolver = Get-Content -LiteralPath (Join-Path $repo ".github/openvas/resolve_config.cjs") -Raw

@@ -279,6 +279,7 @@ function Get-SuperZipVerificationScope {
     $touchesSecurityBoundary = $touchesArchiveParser -or (Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows)\.ps1$',
+        '^tools/(prepare_semgrep_wheel|test_prepare_semgrep_wheel|test_semgrep_runtime)\.py$',
         '^\.github/'
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
@@ -347,6 +348,12 @@ function Get-SuperZipVerificationPlan {
 
     $paths = Get-SuperZipChangedPath -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef -IncludeUntracked:$IncludeUntracked
     $scope = Get-SuperZipVerificationScope -ChangedPath $paths -SuspectGlobalBug:$SuspectGlobalBug
+    $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^docs/benchmarks/', '^resources/benchmarks/',
+        '^docs/(comparative-benchmark-methodology|benchmark-permissions|benchmark-research)\.md$',
+        '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison|benchmark_comparators|test_benchmark_comparators|benchmark_cache|test_benchmark_cache)\.py$',
+        '^tools/benchmark_permissions\.json$'
+    )
     $local = New-Object System.Collections.ArrayList
     $manual = New-Object System.Collections.ArrayList
     $seen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
@@ -362,6 +369,16 @@ function Get-SuperZipVerificationPlan {
 
     if ($scope.touchesLintSurface -or $scope.fullEscalationRequired) {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "language-lint" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/lint.ps1", "-CppMode", "Changed", "-IncludeUntracked") -Reason "changed docs, workflow, script, CMake, or C/C++ surfaces require the fast language linter lane")
+    }
+
+    if ($touchesBenchmarkGraph -or $scope.fullEscalationRequired) {
+        $benchmarkTests = @(
+            "-3", "-m", "unittest", "tools.test_benchmark_graph",
+            "tools.test_archive_comparison", "tools.test_comparison_graph",
+            "tools.test_tradeoff_graph", "tools.test_native_tradeoff_graph",
+            "tools.test_benchmark_comparators", "tools.test_benchmark_cache"
+        )
+        Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-tooling-tests" -Stage "local" -Executable "py" -Arguments $benchmarkTests -Reason "benchmark permissions, cache identity and graph contracts require offline tests, never a timed workload")
     }
 
     if ($scope.docsOnly -and -not $scope.fullEscalationRequired) {
@@ -386,6 +403,9 @@ function Get-SuperZipVerificationPlan {
         if ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "security-scan" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/security_scan.ps1") -Reason "security boundaries, workflows, packaging, or verifier changes require repository policy checks")
         }
+        if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(prepare_semgrep_wheel|test_prepare_semgrep_wheel|test_semgrep_runtime)\.py$', '^\.github/requirements/(semgrep-packaging\.json|requirements-semgrep-linux\.(in|txt))$', '^\.github/workflows/security-code-scanning\.yml$'))) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "scanner-packaging-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_prepare_semgrep_wheel") -Reason "scanner packaging must preserve code/notices, validate provenance, reject metadata drift and produce deterministic wheels; Linux runtime checks remain mandatory in the security workflow")
+        }
         if ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "greenbone-config-tests" -Stage "local" -Executable "node" -Arguments @("--test", ".github/openvas/resolve_config.test.cjs") -Reason "broker configuration must remain bounded, masked, and authorized before publishing step outputs")
@@ -407,7 +427,7 @@ function Get-SuperZipVerificationPlan {
         }
         if ($scope.touchesMcp -or $scope.touchesVerification) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-python-compile" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "py_compile", "mcp/superzip_mcp.py") -Reason "MCP Python changes require syntax validation")
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-bounded-child-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "mcp.test_superzip_mcp") -Reason "MCP changes require output, timeout, and descendant-containment regressions")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-bounded-child-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "discover", "-s", "mcp", "-p", "test_superzip_mcp.py") -Reason "MCP changes require output, timeout, and descendant-containment regressions without shadowing the installed SDK")
         }
     }
 
@@ -416,10 +436,6 @@ function Get-SuperZipVerificationPlan {
         Add-SuperZipVerificationCommand -List $manual -Seen $manualSeen -Command (Get-SuperZipVerificationCommand -Id "ram-benchmark-sweep" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $benchmarkExpression) -Reason "performance-sensitive changes need the RAM-only CPU/GPU benchmark sweep before making speed claims" -Requirement "manual")
     }
 
-    $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^docs/benchmarks/', '^resources/benchmarks/',
-        '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison)\.py$'
-    )
     $workflows = New-Object System.Collections.ArrayList
     $longRunningWorkflows = New-Object System.Collections.ArrayList
     $workflowSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)

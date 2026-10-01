@@ -108,8 +108,10 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
   replace them with CPU-deflate fallback or present GPU CRC/classification work
   as evidence of general GPU entropy compression.
 - Before adding product behavior learned from a mature archive tool, read
-  `docs/product-behavior-audit.md`. Capture logic only; do not record external
-  product names or copy another product's UI/help text into this repository.
+  `docs/product-behavior-audit.md`. Capture logic only; do not copy another
+  product's UI/help text. Named comparator research, tools, and benchmark
+  reports, including Bandizip, are explicitly authorized by the maintainer.
+  Keep competitor branding out of product source.
 - Before performing repo-wide refactoring or automatic cleanup, read
   `docs/refactoring-governance.md` and run `tools\refactor_audit.ps1`.
 - Before changing workflow security, CI badges, README logo rendering, verifier
@@ -214,6 +216,11 @@ Guidelines, and SEI CERT C++.
 - Treat refactoring and modernization as behavior-preserving engineering work,
   not cosmetic churn. Split large functions, remove real duplication, clarify
   ownership, and improve testability only with matching verification evidence.
+- Keep one production implementation per behavior. Tests and benchmarks should
+  exercise that implementation rather than copied development variants. Separate
+  fixtures, test doubles and labelled control builds are validation tools, not
+  alternate product paths. Wire a verified beneficial change into the canonical
+  product or workflow and verify that path before describing it as implemented.
 - Prefer pinned, provenance-recorded dependencies. Do not track extracted
   runtime binaries such as `.dll` or `.exe`; extract them from pinned upstream
   packages during build and verify checksums before use.
@@ -237,8 +244,14 @@ Guidelines, and SEI CERT C++.
   release ready. A local policy scan is not an equivalent CodeQL analysis.
 - Resolve scanner upgrades with their full transitive graph for the actual CI
   platform. If a patched child conflicts with its parent's published metadata,
-  retain the failed resolution evidence and release blocker; do not force
-  installation, override metadata, or repeatedly test unchanged combinations.
+  retain the failed resolution evidence. A maintainer-authorized compatibility
+  investigation may test the patched child in isolation. Promote it only through
+  a documented, separately identified downstream packaging revision with pinned
+  provenance, unchanged scanner code/notices, a normal hash-locked install,
+  passing `pip check`, consumer/API regressions, and equivalent real scans.
+  Never silently edit installed metadata, bypass dependency checks in production,
+  or weaken vulnerability gates. Prefer a compatible upstream release when
+  available; retire the downstream patch after verifying that replacement.
 - Express fixed hardware/feature test matrices as explicit case data, retaining
   their availability guards and required-backend assertions. Review SAST in
   its actual build configuration: a CPU-only backend that always throws can
@@ -293,7 +306,8 @@ Guidelines, and SEI CERT C++.
 - `third_party/lhasa/`: production Lhasa 0.6.0 copy with SuperZip-local hardening patches documented in `README.SUPERZIP.md`.
 - `third_party/upstream/lhasa/0.6.0/`: unmodified upstream Lhasa 0.6.0 release archive and checksum for provenance.
 - `third_party/wimlib/`: wimlib 1.14.5 header and LGPL/libdivsufsort-lite notices. Do not track extracted runtime DLLs here.
-- `third_party/upstream/wimlib/1.14.5/`: upstream wimlib Windows x64 runtime package and checksums for provenance.
+- `third_party/upstream/wimlib/1.14.5/`: unmodified upstream Windows x64 runtime
+  and complete source packages, with checksums for provenance and source delivery.
 - `.github/workflows/`: CI and opt-in security integrations.
 - `.clusterfuzzlite/`: ClusterFuzzLite build integration for C++ sanitizer fuzzing.
 - `.github/codeql/`: CodeQL scanning configuration.
@@ -780,6 +794,15 @@ Report a blocking tool or service error immediately with the exact returned
 cause, the work it prevents, and the next actionable step. Distinguish a
 disconnected access checker from an account eligibility denial. Do not repeat
 failed checks without new evidence or make unrelated work wait for that service.
+
+For research, prefer accessible primary publisher pages, official documentation,
+and scientific publications. If a page is unavailable, report the exact access
+failure and continue with an independently accessible primary source. A robots
+denial, CAPTCHA, paywall or explicit tool/site restriction is not authorization
+to impersonate a human, conceal automation or bypass the restriction. Do not
+install a paid/trial service or another model-agent stack merely to retrieve
+an article. Search/image previews are discovery aids, not evidence of having
+read a paper or permission to republish its figures.
 
 1. Read root `AGENTS.md`, the applicable sections of this guide, `README.md`, `IMPLEMENTATION_PLAN.md`, and relevant local code before editing.
 2. Make the smallest change that satisfies the request while preserving the architecture.

@@ -75,23 +75,75 @@ either rule. Dismiss confirmed false positives with a specific GitHub audit
 comment; do not dismiss unresolved findings or change the source to evade a
 pattern.
 
-## Unresolved Scanner Dependency
+## Scanner Dependency Remediation
 
 On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in
 `.github/requirements/requirements-semgrep-linux.txt`. The affected package is
 CI scanner tooling, not a dependency shipped in the SuperZip application.
-[PyJWT's advisory](https://github.com/advisories/GHSA-ffc3-869f-jxw9) identifies
-2.14.0 as patched, but the latest published Semgrep 1.178.0 requires
-`pyjwt[crypto]~=2.13.0`, excluding that version.
+[PyJWT's newer pre-verification advisory](https://github.com/advisories/GHSA-42vr-xj54-vc7v)
+requires at least 2.15.0; the latest stable PyJWT checked on 2026-10-01 is 2.15.1.
+Semgrep 1.178.0 still declares `pyjwt[crypto]~=2.13.0`, excluding that version.
 
 The Linux CPython 3.14 target was checked with uv's dependency resolver:
-`semgrep==1.178.0` together with `pyjwt>=2.14.0` is unsatisfiable. The
+`semgrep==1.178.0` together with a patched PyJWT is unsatisfiable. The
 [upstream constraint issue](https://github.com/semgrep/semgrep/issues/11925)
-remains open. Do not force an incompatible lock, patch installed package
-metadata, remove the scanner, dismiss the findings, or describe this as fixed.
-Retain failing dependency gates until an upstream-supported combination
-resolves, installs with hashes, passes `pip check`, and executes the scanner.
-Recheck upstream rather than repeating the same failed resolution unchanged.
+remains open. The maintainer explicitly authorized compatibility investigation
+and production promotion on 2026-10-01. An isolated, non-root CPython 3.14.7
+Linux run compared the original dependency graph with PyJWT 2.15.1. Normal
+installation and `pip check` passed for the baseline; the experimental child
+upgrade correctly reported the published metadata conflict. Runtime controls
+passed for both: signed HMAC/RSA decode, invalid signatures/expiry, the actual
+Semgrep MCP token-verifier call sites with local JWKS, CLI positive/negative
+controls and SARIF output. No credentials or live authentication service were used.
+
+The paired repository scans used 1,086 frozen `p/default` and `p/github-actions`
+rules and the same 638-file working-tree snapshot. Both reported the same 619
+scanned paths, zero Semgrep findings and 71 identical parsing/matching diagnostics.
+These diagnostics are coverage limits, not proof of a vulnerability-free tree.
+Other scanners and all current GitHub alerts remain required.
+
+The production workflow now builds the explicit downstream distribution
+`semgrep==1.178.0+superzip.1` through `tools/prepare_semgrep_wheel.py`. The
+official upstream wheel and its RECORD are verified before transformation.
+Every code/notice byte stays unchanged; the distribution version and requirement
+become the reviewed local identity and `pyjwt[crypto]==2.15.1`. Complete RECORD
+hashes and dist-info paths are rebuilt. The hash-locked install uses normal
+dependency resolution, then `pip check` and `tools.test_semgrep_runtime`, before
+the unchanged full scan. There is no production dependency-check bypass,
+installed-metadata edit, scanner removal or alert suppression. The native app
+does not acquire a Python dependency.
+
+The local production-path execution on CPython 3.14.7 passed normal hashed
+installation, `pip check`, all five runtime tests and the full frozen-rule scan:
+625 scanned paths, zero findings and the same 71 known diagnostics. Windows
+CPython 3.12.14 and Linux CPython 3.14.7 produced the identical derived wheel
+SHA-256 recorded in the lock. Eight offline packaging/configuration tests cover
+payload and notice parity, complete RECORD hashes, repeatability, corrupted
+inputs, metadata drift, collision refusal and the actual production workflow.
+
+The advisory regression follows
+[PyJWT's deterministic cross-version test](https://github.com/jpadilla/pyjwt/commit/9bc06658f875b9b40091539140bbbdc4639161c3),
+not an assumed interpreter nesting limit. A differential control reproduced
+uncaught `RecursionError` for PyJWT 2.13.0 and contained `DecodeError` for 2.15.1
+through both direct pre-verification decode and the JWKS consumer, with no
+network access. A live OSV query on 2026-10-01 returned no advisories matching
+PyJWT 2.15.1. This is local package/runtime evidence, not GitHub alert closure.
+
+Local Linux verification uses exactly the same files and commands as CI:
+
+```sh
+python -m unittest tools.test_prepare_semgrep_wheel
+python tools/prepare_semgrep_wheel.py
+python -m venv /tmp/superzip-semgrep
+/tmp/superzip-semgrep/bin/python -m pip install --require-hashes -r .github/requirements/requirements-semgrep-linux.txt
+/tmp/superzip-semgrep/bin/python -m pip check
+/tmp/superzip-semgrep/bin/python -m unittest tools.test_semgrep_runtime
+```
+
+Hosted remediation is not confirmed until the exact pushed commit passes its
+scanner workflows and the post-push audit shows the affected alerts fixed.
+Retire this downstream packaging patch after a compatible upstream release
+passes the same gates; never label the local revision an official Semgrep release.
 
 ## Required GitHub Repository Settings
 
@@ -151,7 +203,8 @@ Required returned fields:
   create tasks, start tasks, read reports, and delete temporary tasks.
 - `greenbone_password`: Password for `greenbone_username`.
 - `greenbone_target`: Authorized host, IP, or CIDR to scan by default. A
-  manual `workflow_dispatch` target overrides this value for one run.
+  manual `workflow_dispatch` target is a request for broker authorization, not
+  an override. Only the broker-returned target becomes the effective scan target.
 - `vulnetix_org_id`: Vulnetix organization identifier for uploading OpenVAS
   artifacts after the scan.
 

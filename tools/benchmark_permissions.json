@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-10-01",
+  "review_valid_days": 30,
+  "subjects": {
+    "7-Zip": {
+      "versions": ["26.03"],
+      "binaries": {
+        "7za.exe": "edbee35370e14030e4c785cf88200f42dc651c1eb4217c1e3963c38a12f099b0",
+        "7za.dll": "876077825e49f5a39fb472532080b91a41fec508c714eab8a51af5a51183eba0",
+        "7zxa.dll": "6509b5d4895103250405ab516421b4068e78b67cabc0c6eef774df31572d9fad"
+      },
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "LGPL-2.1-or-later; BSD components and unRAR restrictions remain applicable. Standalone ZIP/7z benchmarking does not copy or recreate RAR code.",
+      "evidence": ["https://www.7-zip.org/license.txt"],
+      "conditions": ["Use an unmodified official executable and its supplied notices.", "Publish original measurements, not copied vendor charts or artwork.", "Do not bundle comparator binaries with SuperZip."]
+    },
+    "Zstd": {
+      "versions": ["1.5.7"],
+      "binaries": {
+        "zstd.exe": "8076aae03feac7c66b319579e82172eed168deed2a3f25e5e2d3c60f55e84111"
+      },
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "BSD-3-Clause option in the upstream dual license; no endorsement rights are granted.",
+      "evidence": ["https://github.com/facebook/zstd/blob/v1.5.7/LICENSE"],
+      "conditions": ["Use the official standalone CLI with its notices.", "Do not imply upstream endorsement or redistribute the comparator binary."]
+    },
+    "Bandizip": {
+      "versions": ["7.46"],
+      "edition": "Standard",
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "prohibited",
+      "basis": "Controlling Korean EULA section 1(4) permits Standard Edition commercial use. No benchmark restriction was found in the reviewed EULA; this is a license-review conclusion, not an express vendor endorsement.",
+      "evidence": ["https://kr.bandisoft.com/bandizip/eula/eula.kr.pdf", "https://www.bandisoft.com/bandizip/help/license-policy/"],
+      "conditions": ["Verify Standard Edition without inspecting or publishing product keys.", "Do not redistribute binaries, manuals, screenshots, or artwork without separately established permission.", "Do not reverse engineer or modify the program."]
+    },
+    "Hyperfine": {
+      "versions": ["1.20.0"],
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "MIT or Apache-2.0; select MIT for standalone timing-tool use.",
+      "evidence": ["https://github.com/sharkdp/hyperfine/blob/v1.20.0/LICENSE-MIT"],
+      "conditions": ["Use the unmodified timing tool and retain its notices.", "Do not redistribute its binary in the product package."]
+    },
+    "lzbench": {
+      "versions": ["2.4"],
+      "modules": ["lz4", "zstd"],
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "Harness GPL-2.0-or-GPL-3.0; selected LZ4 library BSD-2-Clause and Zstd BSD-3-Clause. Other integrated codecs have separate terms and are not cleared by this entry.",
+      "evidence": ["https://github.com/inikep/lzbench/blob/v2.4/LICENSE", "https://github.com/inikep/lzbench/blob/v2.4/lz/lz4/lib/LICENSE", "https://github.com/inikep/lzbench/blob/v2.4/lz/zstd/LICENSE"],
+      "conditions": ["Select only the reviewed modules explicitly; never run the all-codec preset.", "Use results only as codec context, not application or GPU archive timings.", "Do not redistribute the binary or reuse its code without a separate compliance review."]
+    },
+    "PeaZip": {
+      "versions": ["11.3.0"],
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "Official project terms explicitly permit free personal, professional and commercial use of its official LGPL-3.0 packages. Application measurements are separate from backend-only timings.",
+      "evidence": ["https://peazip.github.io/peazip-tos-privacy.html", "https://github.com/peazip/PeaZip/blob/sources/LICENSE"],
+      "conditions": ["Use an unmodified official package with its original component notices.", "Measure ZIP/7z without separately installed proprietary RAR or ACE plugins.", "Do not label a backend-only command as PeaZip application performance.", "Do not redistribute the package or copy its website text or artwork in a result chart."]
+    },
+    "NanaZip": {
+      "versions": ["7.0.1843.0"],
+      "execute": "hold",
+      "publish_results": "hold",
+      "redistribute": "hold",
+      "basis": "MIT-owned code, 7-Zip and other component licenses, and CC-BY-ND-4.0 icons. Exact package/backend scope still requires review.",
+      "evidence": ["https://github.com/M2Team/NanaZip/blob/main/License.md"],
+      "conditions": ["Do not copy or adapt NanaZip icons.", "Do not label a 7-Zip backend invocation as NanaZip application performance."]
+    },
+    "WinRAR": {
+      "versions": ["7.23"],
+      "execute": "hold",
+      "publish_results": "hold",
+      "redistribute": "prohibited",
+      "basis": "Reviewed EULA permits licensed use but requires payment after a 40-day trial. No current license or evaluation entitlement has been verified on this host.",
+      "evidence": ["https://www.rarlab.com/license.htm"],
+      "conditions": ["Excluded from the free-tool comparison plan; use 7-Zip, Bandizip Standard or PeaZip instead.", "Do not bundle its executable with SuperZip or reverse engineer RAR compression."]
+    },
+    "WinZip": {
+      "versions": [],
+      "execute": "prohibited",
+      "publish_results": "prohibited",
+      "redistribute": "prohibited",
+      "basis": "Current Corel EULA General Terms, License Restrictions (l), restricts performing or disclosing benchmarks. No overriding agreement or written permission has been established.",
+      "evidence": ["https://www.corel.com/en/eula/", "https://www.corel.com/en/eula/licensing-terms/winzip/"],
+      "conditions": ["Excluded from active runs and published comparisons; use an eligible comparator instead."]
+    },
+    "Silesia": {
+      "execute": "hold",
+      "publish_results": "hold",
+      "redistribute": "hold",
+      "basis": "Author page offers a compression corpus but does not establish a blanket license for its mixed source/document/medical-image components. Historical numeric records are retained for audit, not silently relicensed.",
+      "evidence": ["https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia"],
+      "conditions": ["Excluded from new runs and headline comparisons; use a separately licensed replacement instead.", "Never commit corpus payloads or assume medical-image redistribution rights."]
+    },
+    "HIGGS": {
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "UCI explicitly licenses the dataset under CC-BY-4.0. Suitable as a large numeric-table candidate, not a representative mixed-file corpus.",
+      "evidence": ["https://archive.ics.uci.edu/dataset/280/higgs", "https://doi.org/10.24432/C5V312", "https://creativecommons.org/licenses/by/4.0/"],
+      "conditions": ["Attribute Daniel Whiteson, HIGGS (2014), UCI, DOI 10.24432/C5V312, and CC-BY-4.0.", "Document every split, transformation, byte count and hash.", "Do not distribute the dataset through this repository; retrieve from UCI."]
+    }
+  }
+}

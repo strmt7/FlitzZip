@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bz2
+import copy
 import hashlib
 import json
 import tempfile
@@ -15,6 +16,104 @@ from tools import run_archive_comparison as comparison
 
 
 class ComparisonRunnerTests(unittest.TestCase):
+    # Purpose: Verify replacement-corpus provenance, permissions and actual bytes before any product execution.
+    # Inputs: An owned temporary input and manifest with a mocked reviewed permission decision.
+    # Outputs: Exact input/cases pass; malformed metadata, wrong bytes and denied permissions fail.
+    def test_licensed_manifest(self) -> None:
+        payload = b"owned synthetic CSV fixture\n"
+        source = "https://archive.ics.uci.edu/dataset/280/higgs"
+        spec = {
+            "schema_version": 1,
+            "name": "owned offline fixture, not benchmark data",
+            "files": [
+                {
+                    "name": "sample.csv",
+                    "bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "subject": "HIGGS",
+                    "source_url": source,
+                    "transformation": "owned test fixture, no downloaded data",
+                }
+            ],
+            "cases": [{"name": "numeric", "format": "zst", "files": ["sample.csv"], "tools": ["SuperZip", "Zstd"]}],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            corpus = root / "raw"
+            corpus.mkdir()
+            raw = corpus / "sample.csv"
+            raw.write_bytes(payload)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(spec), encoding="utf-8")
+            with patch.object(comparison, "require_permission", return_value={"evidence": [source]}) as permission:
+                files, cases, metadata = comparison.verify_manifest(manifest, corpus)
+                self.assertEqual(files, spec["files"])
+                self.assertEqual(cases, (("numeric", "zst", ("sample.csv",), ("SuperZip", "Zstd")),))
+                self.assertEqual(metadata["manifest_sha256"], comparison.digest(manifest))
+                permission.assert_called_once_with("HIGGS", "execute")
+                for field, value in (
+                    ("name", "../escape"),
+                    ("name", "-switch"),
+                    ("name", "NUL.csv"),
+                    ("name", "COM1.txt"),
+                    ("name", "trailing."),
+                    ("bytes", True),
+                    ("bytes", 65 * 1024**2),
+                    ("sha256", "bad"),
+                    ("source_url", "https://unreviewed.invalid/data"),
+                    ("transformation", ""),
+                ):
+                    modified = copy.deepcopy(spec)
+                    modified["files"][0][field] = value
+                    manifest.write_text(json.dumps(modified), encoding="utf-8")
+                    with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                        comparison.verify_manifest(manifest, corpus)
+                for invalid in (
+                    {**spec, "schema_version": True},
+                    {**spec, "cases": []},
+                    {**spec, "unexpected": True},
+                    {**spec, "files": [spec["files"][0], spec["files"][0]]},
+                    {**spec, "cases": spec["cases"] * 2},
+                ):
+                    manifest.write_text(json.dumps(invalid), encoding="utf-8")
+                    with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                        comparison.verify_manifest(manifest, corpus)
+                manifest.write_text(json.dumps(spec), encoding="utf-8")
+                raw.write_bytes(b"x" * len(payload))
+                with self.assertRaisesRegex(ValueError, "SHA-256 differs"):
+                    comparison.verify_manifest(manifest, corpus)
+            with (
+                patch.object(comparison, "require_permission", side_effect=ValueError("permission denied")),
+                self.assertRaisesRegex(ValueError, "permission denied"),
+            ):
+                comparison.verify_manifest(manifest, corpus)
+
+    # Purpose: Reject case mutations that change the measurement or exceed the filesystem budget.
+    # Inputs: Incompatible formats/tools, repeated inputs and oversized aggregate cases.
+    # Outputs: No unsupported case reaches a subprocess; valid ZIP and Zstd pairings normalize exactly.
+    def test_manifest_case_boundaries(self) -> None:
+        files = {"first": {"bytes": 33 * 1024**2}, "second": {"bytes": 33 * 1024**2}}
+        row = {"name": "files", "format": "zip", "files": ["first"], "tools": ["SuperZip", "7-Zip"]}
+        self.assertEqual(comparison.manifest_case(row, files), ("files", "zip", ("first",), ("SuperZip", "7-Zip")))
+        for field, value in (
+            ("name", "../escape"),
+            ("format", "suzip"),
+            ("format", None),
+            ("files", ["missing"]),
+            ("files", ["first", "first"]),
+            ("files", ["first", "second"]),
+            ("files", [False]),
+            ("tools", ["SuperZip", "SuperZip"]),
+            ("tools", ["7-Zip", "SuperZip"]),
+            ("tools", ["SuperZip", "WinZip"]),
+        ):
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                comparison.manifest_case({**row, field: value}, files)
+        with self.assertRaises(ValueError):
+            comparison.manifest_case(
+                {**row, "format": "zst", "files": ["first", "second"], "tools": ["SuperZip", "Zstd"]}, files
+            )
+
     # Purpose: Preserve all nine efforts and reject malformed values before starting a process.
     # Inputs: Each supported software/format pairing and valid or invalid effort values.
     # Outputs: Exact effort switches pass; non-integers and out-of-range efforts fail.
@@ -113,6 +212,11 @@ class ComparisonRunnerTests(unittest.TestCase):
             (target / "sample").write_bytes(b"abc")
             manifest = {"sample": {"bytes": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}}
             comparison.verify_tree(target, ("sample",), manifest)
+            unexpected_directory = target / "unexpected-empty-directory"
+            unexpected_directory.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "paths differ"):
+                comparison.verify_tree(target, ("sample",), manifest)
+            unexpected_directory.rmdir()
             (target / "extra").write_bytes(b"x")
             with self.assertRaisesRegex(RuntimeError, "paths differ"):
                 comparison.verify_tree(target, ("sample",), manifest)

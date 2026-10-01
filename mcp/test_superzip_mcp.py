@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from mcp import superzip_mcp
+import superzip_mcp
 
 
 class ProtocolTests(unittest.TestCase):

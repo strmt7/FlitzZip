@@ -7,6 +7,22 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Scanner dependency remediation must reach the real CI path. The reviewed
+  Semgrep packaging revision has a distinct local version, pinned upstream and
+  derived hashes, unchanged code/notice bytes, and offline provenance tests.
+  CI installs with normal dependency resolution and `--require-hashes`, runs
+  `pip check`, exercises actual JWT consumer APIs and scanner controls, then
+  retains the full scan and vulnerability gates. A passing isolated override
+  alone is not production verification or remote alert closure.
+- Standalone MCP integration scripts must not claim the SDK's `mcp` package
+  namespace. Test discovery imports the uniquely named `superzip_mcp` module;
+  Semgrep runtime tests import the real installed SDK from the repository root.
+  The stdio client launch path remains `mcp/superzip_mcp.py`.
+- CocoIndex inventories the live checkout, not every cached Git path. It omits
+  an absent source only when Git confirms its unstaged deletion, retains
+  unexpected-missing-file and link rejection, and removes the deleted mirror
+  entry on refresh. A real temporary-checkout regression covers this boundary.
+
 - Expected-failure native tests run in an isolated process so their checked
   exit status cannot leak into GitHub Actions' PowerShell wrapper. The local
   unit-test command propagates native exit codes like CI instead of relying on

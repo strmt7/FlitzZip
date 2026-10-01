@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "upstream_version": "1.178.0",
+  "local_version": "1.178.0+superzip.1",
+  "filename": "semgrep-1.178.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+  "url": "https://files.pythonhosted.org/packages/b3/bf/5bc9cc1b1e1650467ceb6361306d170dd3641b911efa2a89bc7129be4d54/semgrep-1.178.0-cp310.cp311.cp312.cp313.cp314.py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl",
+  "sha256": "b7c4a4ba5cad1a6b0e76f7143c164b3f2853b9d0f902f2db2f64006257c941f2",
+  "original_requirement": "pyjwt[crypto]~=2.13.0",
+  "tested_requirement": "pyjwt[crypto]==2.15.1",
+  "upstream_issue": "https://github.com/semgrep/semgrep/issues/11925"
+}

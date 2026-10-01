@@ -160,8 +160,21 @@ Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "scorecard") "workflow 
 Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must require post-push audit"
 $benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/benchmarks/data/effort-native-L5.json")
 Assert-Selector (Test-Workflow -Plan $benchmarkPlan -Name "benchmark-graph") "benchmark records must wait for graph regeneration"
+foreach ($path in @("tools/benchmark_cache.py", "tools/test_benchmark_cache.py", "tools/benchmark_comparators.py", "tools/test_benchmark_comparators.py", "tools/benchmark_permissions.json", "docs/benchmark-permissions.md", "docs/benchmark-research.md", "docs/comparative-benchmark-methodology.md")) {
+    $benchmarkToolPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "benchmark-tooling-tests") "benchmark tools and policies require offline validation: $path"
+    Assert-Selector (Test-Workflow -Plan $benchmarkToolPlan -Name "benchmark-graph") "benchmark tooling changes must select graph validation: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "release-build")) "benchmark tooling alone must not rebuild the application: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "gui-smoke")) "benchmark tooling alone must not launch the GUI: $path"
+}
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tests") "workflow changes must test secret artifact redaction"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests") "workflow changes must test broker authorization and masking"
+
+foreach ($path in @("tools/prepare_semgrep_wheel.py", "tools/test_prepare_semgrep_wheel.py", "tools/test_semgrep_runtime.py", ".github/requirements/semgrep-packaging.json", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {
+    $scannerPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $scannerPlan -Id "scanner-packaging-tests") "scanner packaging changes require offline provenance and parity regressions: $path"
+    Assert-Selector (Test-Workflow -Plan $scannerPlan -Name "security") "scanner changes require Linux runtime checks in the hosted security workflow: $path"
+}
 
 foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh")) {
     $redactionPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)

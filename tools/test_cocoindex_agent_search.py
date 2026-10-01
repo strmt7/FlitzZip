@@ -4,6 +4,7 @@ Adapted from strmt7/VulnerabilityScreener tests/test_cocoindex_agent_search.py (
 """
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -114,6 +115,46 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
                 run.return_value.stdout = b"src/codec.hpp\0CMakeLists.txt\0third_party/lib/codec.cpp\0"
                 entries = tracked_files(root)
             self.assertEqual([name for name, _ in entries], ["src/codec.hpp", "CMakeLists.txt"])
+
+    def test_tracked_files_omits_only_git_confirmed_deletions(self):
+        """Purpose: Check deletion admission. Inputs: Git inventories. Outputs: only confirmed deletions omitted."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for deleted in (b"removed.py\0", b""):
+                with self.subTest(deleted=deleted), patch("tools.cocoindex_agent_search.subprocess.run") as run:
+                    run.side_effect = [
+                        subprocess.CompletedProcess([], 0, stdout=b"removed.py\0"),
+                        subprocess.CompletedProcess([], 0, stdout=deleted),
+                    ]
+                    if deleted:
+                        self.assertEqual(tracked_files(root), [])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "not a regular file"):
+                            tracked_files(root)
+                    self.assertIn("--deleted", run.call_args.args[0])
+
+    def test_tracked_files_handles_real_unstaged_deletion_and_mirror_pruning(self):
+        """Purpose: Exercise Git deletion. Inputs: temporary checkout. Outputs: exact live mirror and digest."""
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            repo = base / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "--quiet", str(repo)], check=True, timeout=30)
+            for name in ("live.py", "removed.py"):
+                (repo / name).write_text("pass\n", encoding="utf-8")
+            subprocess.run(["git", "add", "--", "live.py", "removed.py"], cwd=repo, check=True, timeout=30)
+            mirror = base / "mirror"
+            before = tracked_files(repo)
+            before_digest = source_digest(before)
+            prepare_mirror(mirror, before)
+            (repo / "removed.py").unlink()
+            (repo / "new.py").write_text("value = 1\n", encoding="utf-8")
+            after = tracked_files(repo)
+            self.assertEqual({name for name, _ in after}, {"live.py", "new.py"})
+            self.assertNotEqual(before_digest, source_digest(after))
+            prepare_mirror(mirror, after)
+            self.assertFalse((mirror / "removed.py").exists())
+            self.assertEqual((mirror / "new.py").read_bytes(), (repo / "new.py").read_bytes())
 
 
 if __name__ == "__main__":

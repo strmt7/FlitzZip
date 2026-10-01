@@ -1,4 +1,5 @@
 --index-url https://pypi.org/simple
+--find-links ../../out/scanner-wheels
 --only-binary :all:
 
 annotated-types==0.8.0 \
@@ -574,9 +575,9 @@ pydantic-settings==2.15.0 \
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c
-pyjwt==2.13.0 \
-    --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
-    --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
+pyjwt==2.15.1 \
+    --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193 \
+    --hash=sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8
 python-dotenv==1.2.3 \
     --hash=sha256:904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9 \
     --hash=sha256:a20a594dabeaa385725aa239d5244871c143ecb356add8a20fcf23773a6c3a35
@@ -777,15 +778,8 @@ ruamel-yaml-clib==0.2.15 \
 semantic-version==2.10.0 \
     --hash=sha256:bdabb6d336998cbb378d4b9db3a4b56a1e3235701dc05ea2690d9a997ed5041c \
     --hash=sha256:de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177
-semgrep==1.178.0 \
-    --hash=sha256:0267a4fb850da85dd0d804487699c21995a2d25029afb6e655826371fd13fbb4 \
-    --hash=sha256:22215f444af400ca03dc57bdebbf0b34fc7a2b80a5ce0081adff02198c55f1f6 \
-    --hash=sha256:33eb20066093799ab5fb9c4d3722e891d2bfb89218a145762a1f4397642b9ad2 \
-    --hash=sha256:7a4083761f253d9354612b0509ec53243c6e1d95ad9612d74cac3c0e54e7d523 \
-    --hash=sha256:7e0dfdcf5708f132a0f3d243a24ba9bbbf5a62a7a78fc182a537b3cbdc641cd4 \
-    --hash=sha256:a64fb4ed4fc5b68016381085088f732a58cfd9a87b16c6ab70c12aac784bd17d \
-    --hash=sha256:b7c4a4ba5cad1a6b0e76f7143c164b3f2853b9d0f902f2db2f64006257c941f2 \
-    --hash=sha256:ba18dbf4f293ed20834b69aae62b9352a089f2c9308e66f6eb43d67ca780e633
+semgrep==1.178.0+superzip.1 \
+    --hash=sha256:cfc6621782ca8ba0d1f8992d1926be7d6caf375e7dca5417c3e26149e78a1a1a
 sse-starlette==3.4.11 \
     --hash=sha256:1bae716c02f3e6f294be41ff333220692dae7c3cbab077c900f159676719dade \
     --hash=sha256:c7b2244bdff016fe7f64e10075e89a3e6bbf899649cc89b0fe884b5545042453

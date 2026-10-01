@@ -119,6 +119,8 @@ if (Test-Path $stage) {
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 $cmake = Find-CMake -RepoRoot $repo
 & $cmake --install $build --config $Configuration --prefix $stage
+if ($LASTEXITCODE -ne 0) { throw "Package staging failed: $LASTEXITCODE" }
+& (Join-Path $PSScriptRoot 'verify_license_notices.ps1') -PackageRoot $stage
 
 $cli = Join-Path $stage "bin\superzip_cli.exe"
 if (-not (Test-Path -LiteralPath $cli)) {

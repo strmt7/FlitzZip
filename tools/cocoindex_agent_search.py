@@ -3,6 +3,7 @@
 This tool is never imported by scanner runtime. Install and index explicitly;
 search refuses stale source bytes. Exact source reads remain authoritative.
 Adapted from strmt7/VulnerabilityScreener scripts/cocoindex_agent_search.py (MIT).
+Original notice: third_party/notices/VulnerabilityScreener-MIT.txt.
 """
 
 from __future__ import annotations
@@ -140,7 +141,7 @@ def install(base: Path) -> None:
 
 
 def tracked_files(repo: Path) -> list[tuple[str, Path]]:
-    """Purpose: Inventory Git-visible code. Inputs: checkout. Outputs: bounded safe source paths."""
+    """Purpose: Inventory live code. Inputs: checkout. Outputs: safe paths without Git-confirmed deletions."""
     raw = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"],
         cwd=repo,
@@ -149,6 +150,7 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
         stdout=subprocess.PIPE,
     ).stdout
     result = []
+    deleted: set[str] | None = None
     for name in (part.decode("utf-8", "surrogateescape") for part in raw.split(b"\0") if part):
         rel = PurePosixPath(name)
         if (
@@ -165,6 +167,18 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
         if rel.suffix.lower() not in INDEX_SUFFIXES and rel.name != "CMakeLists.txt":
             continue
         source = repo.joinpath(*rel.parts)
+        if not source.exists() and not source.is_symlink():
+            if deleted is None:
+                removed = subprocess.run(
+                    ["git", "ls-files", "-z", "--deleted"],
+                    cwd=repo,
+                    timeout=30,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                ).stdout
+                deleted = {part.decode("utf-8", "surrogateescape") for part in removed.split(b"\0") if part}
+            if name in deleted:
+                continue
         if source.is_symlink() or not source.is_file():
             raise ValueError(f"source is not a regular file: {name}")
         if not source.resolve().is_relative_to(repo.resolve()):

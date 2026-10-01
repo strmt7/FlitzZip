@@ -88,7 +88,7 @@ classification does not authorize bypassing the existing open-alert gate.
 
 OSV and Grype each report the same ten PyJWT advisories in the Semgrep CI lock.
 The supported parent/child version conflict is recorded in
-[the scanner dependency blocker](security-code-scanning.md#unresolved-scanner-dependency).
+[the scanner dependency remediation](security-code-scanning.md#scanner-dependency-remediation).
 Scorecard also reports that unresolved dependency, alongside two approved
 governance residuals. No release is authorized while these blockers remain.
 

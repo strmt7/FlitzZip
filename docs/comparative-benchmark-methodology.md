@@ -2,12 +2,23 @@
 
 This protocol is for a bounded comparison of **applications**, not a claim that
 one codec, CPU, or GPU is universally faster. It complements, but does not
-replace, the 10 GiB RAM-only forced-CPU/required-HIP tests in
+replace, the 10 GiB RAM-only CPU/GPU tests in
 `docs/performance-block-size-validation.md`. GitHub-hosted runners may check
 records and regenerate graphs; their variable hardware is not the source of
 published performance measurements.
 
+**Permission takes precedence over measurement.** Read
+[Benchmark Permissions And Tool Selection](benchmark-permissions.md) before
+installing, executing or publishing any comparator or corpus. Silesia is
+excluded from new runs and headline publication; licensed replacements are
+used instead of depending on permission requests. Existing records document historical experiments;
+they are not the next release's cleared benchmark set.
+
 ## Research Basis
+
+[Benchmark Research And Adoption Decisions](benchmark-research.md) records
+the dated source review, scientific papers, tool boundaries and access limits.
+It distinguishes reviewed practices from work not yet implemented or measured.
 
 - [Tom's Hardware's archive-tool comparison](https://www.tomshardware.com/reviews/winrar-winzip-7-zip-magicrar,3436-6.html)
   disclosed its hardware, mixed-file workload, formats, and exact commands.
@@ -25,19 +36,15 @@ published performance measurements.
 - [Hyperfine's documentation](https://github.com/sharkdp/hyperfine#readme)
   explains warmups, cache effects, per-run JSON, and outlier diagnostics.
   These are useful practices regardless of which timing harness runs a case.
-- [Phoronix/OpenBenchmarking's 7-Zip profile](https://openbenchmarking.org/test/pts/compress-7zip-1.8.0)
-  uses 7-Zip's built-in benchmark, at least three runs, and additional runs
-  when variability warrants it. Its MIPS rating is a hardware/codec workload,
-  not measured archive size or whole-application creation time.
-  [The Zstd profile](https://openbenchmarking.org/test/pts/compress-zstd)
-  likewise measures in-memory codec throughput. The
-  [Phoronix Windows instructions](https://github.com/phoronix-test-suite/phoronix-test-suite/blob/master/documentation/phoronix-test-suite.md)
-  require PHP and Cygwin for profile setup, so this Windows-native project
-  does not make that stack part of its production benchmark harness.
+- [AnandTech's encoding methodology](https://www.anandtech.com/show/16195/a-broadwell-retrospective-review-in-2020-is-edram-still-worth-it/7)
+  uses repeated 7-Zip CLI built-in scores separately from an application
+  workload. Built-in ratings provide CPU/codec context, not archive size or
+  whole-application creation time. OpenBenchmarking profile pages were not
+  accessible in the current review; no current run-count policy is inferred.
 - [lzbench](https://github.com/inikep/lzbench) is an in-memory multi-codec
   comparator with timed loops and round-trip verification. It requires codecs
   to be integrated into its binary; it cannot measure SuperZip's application,
-  archive container, or required-HIP path without a maintained integration.
+  archive container, or GPU path without a maintained integration.
   Its results are contextual, not a substitute for archive measurements.
 - The [Silesia corpus author](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia)
   publishes file descriptions, exact byte counts, and original MD5 digests.
@@ -54,16 +61,23 @@ make any individual SuperZip result representative.
 
 ## Scope And Corpus
 
-The first product lane uses the author's unmodified Silesia files. The
+The historical product lane used the author's unmodified Silesia files. The
 multi-file ZIP case contains `dickens`, `ooffice`, `samba`, `xml`, and `x-ray`
 (51,770,558 input bytes in total). Single-file Zstandard cases use `mozilla`
 (51,220,480 bytes) and `nci` (33,553,445 bytes) separately. Do not relabel a
-subset as the full 211,938,580-byte Silesia corpus. Fetch from the author's
-links and verify each raw file against the repository's pinned SHA-256 and
-exact byte count; the original MD5 values were used to corroborate the
-initial pins but are not the operational integrity gate. Retain the source
-URL and download SHA-256 in the run manifest. No corpus
+subset as the full 211,938,580-byte Silesia corpus. Historical raw-file SHA-256
+pins and exact byte counts remain part of the archived measurement identity.
+The original MD5 values corroborated the initial pins but are not the
+operational integrity gate. Retain source URLs and download SHA-256 values;
+do not rerun these held inputs or relabel them as replacement-corpus data. No corpus
 payload or generated archive belongs in Git.
+
+The replacement workload plan includes licensed large structured data
+(UCI HIGGS, with CC-BY-4.0 attribution) and separately reviewed mixed-file and
+small-file corpora. No unreviewed corpus is eligible merely because a timing
+harness supports it. HIGGS alone cannot represent documents, software,
+media and small-file trees. Preserve historical records rather than renaming
+Silesia measurements as results for a different corpus.
 
 Each case stays below the repository's 64 MiB filesystem cap. This bounded
 product comparison includes CLI startup, filesystem reads/writes, and normal
@@ -72,6 +86,32 @@ throughput graph. A second, separately labeled lane may use a disclosed
 user-like document/media tree, but its licensing, manifest, and hashes must
 be settled before it is charted. Incompressible controls and small-file trees
 are useful diagnostics, not substitutes for real-file cases.
+
+### Replacement Input Manifest
+
+`python -m tools.run_archive_comparison --manifest manifest.json --corpus raw`
+selects reviewed replacement inputs instead of the historical Silesia path.
+Also provide `--superzip`, the `--sevenzip` or `--zstd` executable required by
+each case, and a new `--output` beneath ignored `out/benchmarks/`. This path is
+still a bounded filesystem diagnostic, not the large RAM-only throughput lane.
+No payload download, data duplication or trial software is implied.
+
+The manifest has exactly `schema_version: 1`, `name`, `files` and `cases`.
+Each file has `name`, exact `bytes` and `sha256`, a catalog `subject`, a
+`source_url` matching that subject's reviewed evidence, and `transformation`
+describing any split or conversion, or explicitly stating `unmodified`.
+Inputs are flat regular files with Windows-safe names; links, duplicate names,
+incorrect hashes and cases above 64 MiB are refused. Verify the original
+download and transformation independently before approving its manifest:
+matching a declared hash does not itself prove that a file came from UCI.
+
+Each case has `name`, `format`, `files` and `tools`. Current implemented pairs
+are `["SuperZip", "7-Zip"]` for `zip` and `["SuperZip", "Zstd"]` for a
+single-file `zst` case. Every listed file must be used. Bandizip and PeaZip
+remain selected candidates, not implemented adapters or measured series.
+Replacement runs produce schema-two records with the manifest hash; the
+historical graph validators remain schema-one and cannot publish these new
+records until the replacement-series chart review is completed.
 
 For Zstandard diagnostics, the normal SuperZip CLI also reports disjoint
 `setup_seconds`, `stream_seconds`, and `publication_seconds`. Setup includes
@@ -86,14 +126,24 @@ integrity checks or durability guarantees to improve comparison scores.
 
 ## Comparators And Configuration
 
-Use a clean, built SuperZip commit on Windows and a current, provenance-checked
-official 7-Zip CLI for ZIP. Use the official Zstd CLI for single-file `.zst`
+Use a clean, built SuperZip commit on Windows and the latest stable,
+provenance-checked official 7-Zip CLI for ZIP. Use the latest stable official
+Zstd CLI for single-file `.zst`
 cases. These are separate format panels: never rank `.zip`, `.zst`, and
 `.suzip` archive bytes as if the containers and semantics were identical.
 Record each executable's version, SHA-256, source URL, full arguments, build
 mode, OS version, CPU/GPU models, RAM, storage type, and relevant thread limits.
 No competitor is silently assigned SuperZip's GPU capability. Native SUZIP
-forced-CPU and required-HIP measurements remain a distinct paired study.
+CPU and GPU measurements remain a distinct paired study.
+
+Bandizip Standard is the eligible commercial ZIP alternative, subject to
+edition proof, exact command verification, and independent decoding. WinZip
+is excluded under the current reviewed terms; WinRAR is excluded from the
+free-tool plan. PeaZip's official packages are eligible for reviewed ZIP/7z
+comparisons after application-adapter validation; NanaZip is not in the active
+selection while package-level review remains incomplete. The permission matrix
+records these decisions and their sources. Do not copy competitor software,
+branding, manuals or graphs into the product or benchmark publications.
 
 Set both ZIP writers to ZIP Deflate explicitly. This first study selects
 numeric level 5 explicitly in SuperZip, 7-Zip, and Zstd; it is not described as
@@ -104,7 +154,8 @@ equal compression strength. Compare time against achieved bytes, not speed at
 an allegedly equivalent level. A tool's built-in benchmark is contextual
 hardware data only and must not be plotted as product archive throughput.
 
-The effort study uses levels 1, 3, 5, 7, and 9 for each supported writer.
+The final effort study uses all supported levels 1 through 9. Earlier charts
+with levels 1, 3, 5, 7 and 9 are historical records, not a complete nine-level study.
 Each setting is a **tool-local control**, not equivalent work across tools:
 SuperZip's `.zst` levels map to Zstandard backend efforts differently from
 the official CLI, and `.suzip` selects among static, adaptive, Huffman, and
@@ -112,7 +163,7 @@ dictionary HIP candidates by complete encoded size. The
 graph uses achieved whole-archive bytes and whole-command time, not numeric
 level as a proxy for quality. It may show same-size plateaus; no result is
 altered to make every control produce a distinct size. Native `.suzip`
-forced-CPU versus required-HIP effort sweeps are separately labeled and
+CPU versus GPU effort sweeps are separately labeled and
 RAM-only, never pooled with compatibility-format sizes.
 
 ## Execution And Correctness
@@ -173,8 +224,10 @@ details, machine serials, and private paths from committed results.
    noisy or order-sensitive cases once under calmer conditions; keep both
    attempts and their reason instead of selecting only the favorable result.
 
-Use median elapsed seconds as the headline, with the five individual samples
-and range or interquartile range visible in the data/report. Archive size is
+Use median elapsed seconds as the headline, with all individual samples
+and labeled observed min/max error bars in every final time/speed plot.
+These ranges show dispersion, not a confidence interval. Deterministic size
+results retain an honest zero-width size interval. Archive size is
 exact bytes; ratio is `archive_bytes / input_bytes` (lower is smaller).
 Throughput is `input_bytes / elapsed_seconds`, with decimal MB/s labeled.
 Do not call a small difference a win when run-to-run spread overlaps it. A
@@ -183,12 +236,16 @@ energy efficiency. The reference archive may favor one decoder's optimized
 bitstream; a broad decoder-ranking claim needs a second crossed reference.
 No overall score may conceal a worse size or extraction result.
 
-For the multi-effort chart, increase to **at least ten** timed runs per point
-and direction. Report the observed range alongside the median. A short
-single invocation is not itself an accuracy failure when timer resolution is
-fine, but few samples or substantial run-to-run spread are. Recheck one
-representative level-5 case with official Hyperfine using a warmup, automatic
-duration-based repetitions (at least ten), and exported individual timings.
+For final multi-effort and native charts, take **at least five** independent
+timed runs per point and direction. Repeat only an affected ambiguous series,
+not every minor documentation or code iteration. Preserve all attempts and
+the reason for a repeat. A final timing series is eligible for a sustained-speed
+headline only when every sample lasts at least one second and each direction
+totals at least ten seconds. These are project admission targets, not a
+magazine standard. Shorter real operations remain explicitly labeled diagnostics;
+do not add delays inside the timer or duplicate files to manufacture duration.
+Recheck a representative case with official Hyperfine using a warmup,
+at least five runs, its independently disclosed duration policy and exported timings.
 State its version, binary SHA-256, timer boundary, setup command, and any
 differences in run ordering. Hyperfine timing is a cross-check; the primary
 hash-checked AB/BA harness remains authoritative for archive bytes and
@@ -205,18 +262,20 @@ source/input cache remains deliberately warm. Resource snapshots and repeated
 timings are still needed to detect sustained contention. The separate native
 10 GiB RAM-only CPU/GPU suite does not insert a disk-oriented cooldown.
 
-The native effort chart uses the deterministic 10 GiB Mixed generator, 16 MiB
-blocks, and three alternating CPU/GPU pairs at each of product levels 1, 3,
-5, 7, and 9. It records exact complete in-memory archive bytes, median
+The historical native effort chart used the deterministic 10 GiB Mixed
+generator, 16 MiB blocks, and three alternating CPU/GPU pairs at product levels
+1, 3, 5, 7 and 9. It records exact complete in-memory archive bytes, median
 compression seconds, and observed min/max per lane. Verification and
 extraction run for every sample but are timed separately. The runner requires
 real HIP launches and zero disk writes; generation and CPU orchestration remain
 part of the operation. Source SHA, dirty state, binary SHA-256, CPU/GPU models,
-workload, and memory mode must match across all five records. Diagnostic
-levels 2/4/6/8 may be run once for size behavior, but their single timings do
-not appear on the reviewed chart. If all three samples in one lane rise and
-the last exceeds the first by more than 5%, reject that timing series, inspect
-host load, and repeat only the affected setting.
+workload, and memory mode must match across records. The next final refresh
+requires at least five pairs at every level 1 through 9, not the historical
+three-sample/five-level design. Single-run size diagnostics never appear as
+repeated timing evidence. Inspect chronological samples and resource context
+for monotonic slowdown. A greater-than-5% first-to-last rise is a diagnostic
+trigger, not automatic proof of cache exhaustion: examine competing load,
+thermal state, order and phase timings, then repeat only the affected setting.
 
 ## Graph And Publication Contract
 
@@ -249,3 +308,44 @@ workflow regenerates and byte-checks the reviewed SVG from committed JSON;
 measurement is an explicit local run, never an automatic noisy CI benchmark.
 Every README chart links to this method and its reviewed record. Unmeasured
 formats and systems are shown as unmeasured, not as failures or wins.
+
+## Measurement Cache
+
+Store competitor records separately from SuperZip records. A SuperZip source
+change must not invalidate unchanged competitor timings merely because the
+combined chart changed. Reuse requires an exact content-addressed identity
+covering the methodology, relevant harness/adapter source hashes, immutable
+corpus manifest, tool version, executable and dependency hashes, reviewed
+edition/module scope, format/options/thread policy, timer/cache boundary and
+relevant host hardware/software configuration. Reader timings also bind to
+the exact extraction-reference archive SHA-256. An unchanged decoder is not
+the same workload when its reference archive changes.
+Record actual collection dates; a reused result is never a new measurement.
+
+Changing only chart styling or explanatory text does not invalidate timing.
+Changed inputs, measured code, competitor stable release, command flags,
+thread counts or material host conditions do invalidate affected records.
+Always refresh current version and permission checks before accepting a
+cached comparator record for publication. Retain at least five raw samples,
+correctness proof and original resource context; do not reuse corrupt,
+undersampled, contested or context-incompatible records. Reuse is a savings
+mechanism, not a waiver of the latest-version or uncertainty requirements.
+
+`tools/benchmark_cache.py` currently provides metadata import and lookup;
+the legacy comparison runner does not yet reuse it automatically. Invoke it
+as `python -m tools.benchmark_cache --identity identity.json --result result.json`
+to store reviewed evidence, or omit `--result` to look up that exact identity.
+Output stays under ignored `out/benchmarks/cache/`; existing evidence is never
+overwritten. A miss returns exit code `2`; invalid evidence returns `1`.
+
+Identity JSON has exactly `methodology_sha256`, `corpus_sha256`,
+`corpus_subject`, `tool`, `tool_version`, `binary_sha256`,
+`binary_dependencies_sha256`, `extract_reference_sha256`, `scope`, `settings`
+and `host`. Hashes must come from the actual reviewed bytes. Dependency hashes
+map filenames to SHA-256 values; use an empty object only for a standalone
+binary with no separately shipped measurement-relevant dependency. Scope has
+an `edition` string or `null` and a sorted, unique `modules` list. The original
+result retains its UTC collection date, both directions' raw samples,
+archive sizes/hashes, matching reference hash, independent verification and
+reviewed resource context. Manual metadata is not proof that measurements
+were collected correctly; review that evidence before importing it.

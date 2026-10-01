@@ -45,6 +45,20 @@ upstream. The only SuperZip-owned file in that directory is
 unmodified upstream 1.0.8 source archive and checksum are stored under
 `third_party/upstream/bzip2/1.0.8/` for provenance.
 
+## LZ4 1.10.0
+
+SuperZip vendors the LZ4 library for decoding LZ4 native archive blocks.
+
+- Upstream: <https://github.com/lz4/lz4>
+- Release: `v1.10.0`
+- Source archive SHA-256: `537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b`
+- Library license: BSD-2-Clause, preserved at `third_party/lz4/LICENSE`.
+
+The library files under `third_party/lz4/` are compiled in process. This
+does not provide GPU acceleration or authorize use of unrelated LZ4
+command-line source under a different license. The provenance archive and
+checksum remain under `third_party/upstream/lz4/1.10.0/`.
+
 ## XZ Embedded
 
 SuperZip vendors the XZ Embedded decoder at upstream commit
@@ -138,12 +152,18 @@ extract-only standalone WIM compatibility.
 
 - Upstream: <https://wimlib.net/>
 - Release package: <https://wimlib.net/downloads/wimlib-1.14.5-windows-x86_64-bin.zip>
+- Complete upstream source: <https://wimlib.net/downloads/wimlib-1.14.5.tar.gz>
+- Source archive SHA-256: `84221a3abd5b91228f15f8e6065c335a336237b5738197b75bf419eea561a194`
 - Win64 runtime package SHA-256: `2f446d6fa3866582175f1a22a7be198eeee0aec7aba5b4e04ad25c99eae2d265`
 - Extracted DLL SHA-256: `ba853ee1e3fc5f5798581f02e8e066ba07a0a2375f0bf444fe981431fd508495`
 - Active header SHA-256: `76ff273fb0c89fd2fd084f0467b1146afb3228db9372d4193432f13c2871f67e`
-- License: LGPLv3 for the library, preserved at
-  `third_party/wimlib/COPYING.LGPL.txt`; bundled libdivsufsort-lite notice
-  preserved at `third_party/wimlib/COPYING.libdivsufsort-lite.txt`
+- License: LGPL-2.1-or-later for the Windows library, selected from the
+  dual-license terms preserved at `third_party/wimlib/COPYING.txt` and
+  `third_party/wimlib/COPYING.LGPL.txt`; the alternative GPL-3.0-or-later
+  terms are preserved at `third_party/wimlib/COPYING.GPLv3.txt`. The Windows
+  build does not link libntfs-3g, which would prohibit the LGPL option.
+  The bundled libdivsufsort-lite notice is preserved at
+  `third_party/wimlib/COPYING.libdivsufsort-lite.txt`.
 
 SuperZip uses wimlib only through an app-local dynamically loaded
 `libwim-15.dll` and does not call `wimlib-imagex.exe`, DISM, PowerShell, shell
@@ -159,6 +179,26 @@ The active header under `third_party/wimlib/wimlib.h` carries a local
 scanner-neutral comment/member-name normalization for declarations SuperZip
 does not use as security primitives. The original upstream header remains
 unchanged inside the pinned upstream package recorded above.
+
+The unmodified complete source tarball is preserved beside the binary
+provenance package. It contains the library sources, notices, configuration,
+Makefiles, `README.WINDOWS.md` and `tools/windows-build.sh`. The upstream
+Windows source build uses MinGW-w64 through MSYS2; it is not an MSVC build.
+This does not change SuperZip's Windows-native MSVC/HIP product build and does
+not authorize WSL or installation of another toolchain during ordinary work.
+
+For distribution, use the source/rebuild route in LGPL-2.1 sections 6(a)/6(d),
+not a claim that the shipped executable permits every interface-compatible
+DLL to be substituted directly. Its runtime checksum pin deliberately rejects
+modified DLL bytes. The release's exact SuperZip source must be available
+alongside the binary release, including this complete wimlib source tarball
+and application build scripts. A recipient rebuilding with a modified library
+must update that build's wimlib package and DLL hash pins in `CMakeLists.txt`
+and rebuild the application, preserving app-local loading and the library's
+ABI. Do not change the canonical upstream archives or disable integrity
+verification in distributed product builds. Final release validation must
+prove that the offered source snapshot contains these materials and document
+the rebuild check; adding this archive alone is not proof of that gate.
 
 ## AMD HIP SDK
 
@@ -179,3 +219,16 @@ Alternative GPU-compute and compression backends are evaluated in
 HIP. hipCOMP-core is tracked as a research candidate only while its upstream
 README labels it early-access technology preview and not recommended for
 production workloads.
+
+## Adapted Development Tools
+
+`tools/cocoindex_agent_search.py` is adapted from the MIT-licensed
+`scripts/cocoindex_agent_search.py` in
+[strmt7/VulnerabilityScreener](https://github.com/strmt7/VulnerabilityScreener).
+Its original copyright and full permission notice are preserved in
+`third_party/notices/VulnerabilityScreener-MIT.txt`. It is development tooling,
+not a shipped runtime dependency or a product scanner.
+
+Benchmark-tool execution and result-publication decisions are recorded
+separately in [Benchmark Permissions And Tool Selection](benchmark-permissions.md).
+They do not grant permission to redistribute comparator binaries with SuperZip.

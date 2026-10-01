@@ -8,8 +8,15 @@ on:
       - README.md
       - docs/benchmarks/data/**
       - docs/comparative-benchmark-methodology.md
+      - docs/benchmark-permissions.md
+      - docs/benchmark-research.md
       - resources/benchmarks/**
       - tools/run_archive_comparison.py
+      - tools/benchmark_comparators.py
+      - tools/benchmark_permissions.json
+      - tools/test_benchmark_comparators.py
+      - tools/benchmark_cache.py
+      - tools/test_benchmark_cache.py
       - tools/render_comparison_graph.py
       - tools/render_tradeoff_graph.py
       - tools/render_native_tradeoff_graph.py
@@ -25,8 +32,15 @@ on:
       - README.md
       - docs/benchmarks/data/**
       - docs/comparative-benchmark-methodology.md
+      - docs/benchmark-permissions.md
+      - docs/benchmark-research.md
       - resources/benchmarks/**
       - tools/run_archive_comparison.py
+      - tools/benchmark_comparators.py
+      - tools/benchmark_permissions.json
+      - tools/test_benchmark_comparators.py
+      - tools/benchmark_cache.py
+      - tools/test_benchmark_cache.py
       - tools/render_comparison_graph.py
       - tools/render_tradeoff_graph.py
       - tools/render_native_tradeoff_graph.py
@@ -62,6 +76,7 @@ jobs:
         run: >-
           python -m unittest tools.test_benchmark_graph tools.test_archive_comparison
           tools.test_comparison_graph tools.test_tradeoff_graph tools.test_native_tradeoff_graph
+          tools.test_benchmark_comparators tools.test_benchmark_cache
       - name: Generate and verify README graph
         shell: bash
         run: |

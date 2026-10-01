@@ -275,6 +275,14 @@ weekly schedule, and manual dispatch.
 
 ## Benchmarking
 
+**Historical evidence:** the graphs below describe earlier engineering runs,
+not the current source or a release-ready product ranking. The Silesia series
+is excluded from new runs and headline comparisons after its dataset-rights
+review. Licensed replacements, additional applications and the final
+five-run-per-point refresh are in preparation. See the
+[permission decisions](docs/benchmark-permissions.md) and
+[research and methodology](docs/benchmark-research.md).
+
 ![Measured archive application comparison against 7-Zip and Zstandard](resources/benchmarks/application-comparison.svg)
 
 The [Silesia application comparison report](docs/benchmarks/comparison-silesia-2026-09-29.md)

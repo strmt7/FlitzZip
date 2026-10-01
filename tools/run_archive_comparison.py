@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import platform
+import re
 import shutil
 import statistics
 import subprocess
@@ -16,6 +17,16 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+from tools.benchmark_cache import read_json
+from tools.benchmark_comparators import (
+    fetch_release_source,
+    parse_release,
+    require_binary_identity,
+    require_current_release,
+    require_permission,
+    timing_eligibility,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
@@ -36,6 +47,11 @@ SOURCES = {
     "SuperZip": "https://github.com/strmt7/SuperZip",
     "7-Zip": "https://github.com/ip7z/7zip/releases/tag/26.03",
     "Zstd": "https://github.com/facebook/zstd/releases/tag/v1.5.7",
+}
+CASE_TOOLS = {"zip": {"SuperZip", "7-Zip"}, "zst": {"SuperZip", "Zstd"}}
+MAX_FILESYSTEM_BYTES = 64 * 1024 * 1024
+RESERVED_FILENAMES = {"CON", "PRN", "AUX", "NUL"} | {
+    f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
 }
 
 
@@ -87,6 +103,98 @@ def verify_corpus(directory: Path, downloads: Path) -> list[dict]:
             }
         )
     return manifest
+
+
+# Purpose: Admit an explicit application case without accepting injected switches or unsupported tool labels.
+# Inputs: A manifest case object and lookup of reviewed, hash-checked source files.
+# Outputs: Normalized case tuple; duplicate inputs, incompatible tools or excessive size raise ValueError.
+def manifest_case(row: dict, files: dict[str, dict]) -> tuple:
+    if not isinstance(row, dict) or set(row) != {"name", "format", "files", "tools"}:
+        raise ValueError("corpus case fields are missing or unknown")
+    name, fmt = row["name"], row["format"]
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise ValueError("corpus case name is invalid")
+    if not isinstance(fmt, str) or fmt not in CASE_TOOLS:
+        raise ValueError("corpus case format is unsupported")
+    names, tools = row["files"], row["tools"]
+    if (
+        not isinstance(names, list)
+        or not names
+        or any(not isinstance(value, str) or value not in files for value in names)
+        or len(set(names)) != len(names)
+        or (fmt == "zst" and len(names) != 1)
+    ):
+        raise ValueError("corpus case inputs are missing, repeated or incompatible with its format")
+    if (
+        not isinstance(tools, list)
+        or len(tools) != 2
+        or any(not isinstance(value, str) or value not in CASE_TOOLS[fmt] for value in tools)
+        or set(tools) != CASE_TOOLS[fmt]
+        or tools[0] != "SuperZip"
+    ):
+        raise ValueError("corpus case requires SuperZip and its independent supported comparator")
+    if sum(files[value]["bytes"] for value in names) > MAX_FILESYSTEM_BYTES:
+        raise ValueError("filesystem case exceeds 64 MiB")
+    return name, fmt, tuple(names), tuple(tools)
+
+
+# Purpose: Verify licensed replacement inputs without downloading data or relying on historical corpus pins.
+# Inputs: A bounded provenance manifest and directory containing its exact flat regular-file inputs.
+# Outputs: Verified files/cases/public corpus metadata; permission, link, hash or schema failures stop execution.
+def verify_manifest(path: Path, directory: Path) -> tuple[list[dict], tuple, dict]:
+    spec = read_json(path)
+    if not isinstance(spec, dict) or set(spec) != {"schema_version", "name", "files", "cases"}:
+        raise ValueError("corpus manifest fields are missing or unknown")
+    if type(spec["schema_version"]) is not int or spec["schema_version"] != 1:
+        raise ValueError("unsupported corpus manifest schema")
+    if not isinstance(spec["name"], str) or not spec["name"].strip() or len(spec["name"]) > 120:
+        raise ValueError("corpus manifest name is missing or too long")
+    if not isinstance(spec["files"], list) or not 1 <= len(spec["files"]) <= 128:
+        raise ValueError("corpus manifest requires 1-128 reviewed files")
+    if any(value.is_symlink() or value.is_junction() for value in (directory, *directory.parents)):
+        raise ValueError("corpus directory must not traverse links or junctions")
+    verified = {}
+    for entry in spec["files"]:
+        keys = {"name", "bytes", "sha256", "subject", "source_url", "transformation"}
+        if not isinstance(entry, dict) or set(entry) != keys:
+            raise ValueError("corpus file fields are missing or unknown")
+        name = entry["name"]
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", name):
+            raise ValueError("corpus file must have a safe flat filename")
+        if (
+            name.endswith(".")
+            or name.split(".", 1)[0].upper() in RESERVED_FILENAMES
+            or name.casefold() in {value.casefold() for value in verified}
+        ):
+            raise ValueError("corpus file names must be unique on Windows and have no trailing dot")
+        if type(entry["bytes"]) is not int or not 1 <= entry["bytes"] <= MAX_FILESYSTEM_BYTES:
+            raise ValueError("corpus file byte count is outside the filesystem cap")
+        if not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+            raise ValueError("corpus file SHA-256 is invalid")
+        if not isinstance(entry["subject"], str) or not entry["subject"].strip():
+            raise ValueError("corpus file has no reviewed permission subject")
+        permission = require_permission(entry["subject"], "execute")
+        if not isinstance(entry["source_url"], str) or entry["source_url"] not in permission["evidence"]:
+            raise ValueError("corpus source URL must be a reviewed catalog evidence URL")
+        if not isinstance(entry["transformation"], str) or not entry["transformation"].strip():
+            raise ValueError("corpus file must disclose its transformation or state that it is unmodified")
+        raw = directory / name
+        if raw.is_symlink() or not raw.is_file() or raw.stat().st_size != entry["bytes"]:
+            raise ValueError("corpus file is missing, linked or has the wrong byte count")
+        if digest(raw) != entry["sha256"]:
+            raise ValueError("corpus file SHA-256 differs from its reviewed manifest")
+        verified[name] = dict(entry)
+    rows = spec["cases"]
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 32:
+        raise ValueError("corpus manifest requires 1-32 cases")
+    cases = tuple(manifest_case(row, verified) for row in rows)
+    if len({case[0].casefold() for case in cases}) != len(cases):
+        raise ValueError("corpus case names are repeated")
+    if {name for case in cases for name in case[2]} != set(verified):
+        raise ValueError("corpus manifest contains unused source files")
+    files = list(verified.values())
+    metadata = {"name": spec["name"], "manifest_sha256": digest(path), "files": files}
+    return files, cases, metadata
 
 
 # Purpose: Run one product command with bounded output and a monotonic wall timer.
@@ -254,12 +362,17 @@ def build_identity(binary: Path) -> dict:
 # Inputs: Output directory, expected case filenames, and source SHA-256 lookup.
 # Outputs: Raises if any path, size, or content differs.
 def verify_tree(target: Path, files: tuple[str, ...], manifest: dict[str, dict]) -> None:
-    actual = {str(path.relative_to(target)).replace("\\", "/") for path in target.rglob("*") if path.is_file()}
+    actual = {path.name for path in target.iterdir()}
     if actual != set(files):
         raise RuntimeError(f"extracted paths differ: expected {files}, got {sorted(actual)}")
     for name in files:
         path = target / name
-        if path.is_symlink() or path.stat().st_size != manifest[name]["bytes"]:
+        if (
+            path.is_symlink()
+            or path.is_junction()
+            or not path.is_file()
+            or path.stat().st_size != manifest[name]["bytes"]
+        ):
             raise RuntimeError(f"extracted size or type differs: {name}")
         if digest(path) != manifest[name]["sha256"]:
             raise RuntimeError(f"extracted SHA-256 differs: {name}")
@@ -292,7 +405,7 @@ def measure_case(
 ) -> dict:
     name, fmt, files, tools = case
     input_bytes = sum(manifest[file]["bytes"] for file in files)
-    if input_bytes > 64 * 1024 * 1024:
+    if input_bytes > MAX_FILESYSTEM_BYTES:
         raise ValueError("filesystem case exceeds 64 MiB")
     results = {
         tool: {
@@ -386,9 +499,13 @@ def source_identity(binary: Path) -> tuple[str, str, list[str]]:
         "cmake/",
         ".github/workflows/benchmark-graph.yml",
         "tools/run_archive_comparison.py",
+        "tools/benchmark_comparators.py",
+        "tools/benchmark_cache.py",
+        "tools/benchmark_permissions.json",
         "tools/render_comparison_graph.py",
         "tools/render_tradeoff_graph.py",
         "docs/comparative-benchmark-methodology.md",
+        "docs/benchmark-permissions.md",
     )
     dirty = [line[3:].replace("\\", "/") for line in status]
     if any(path.startswith(relevant) for path in dirty):
@@ -396,16 +513,17 @@ def source_identity(binary: Path) -> tuple[str, str, list[str]]:
     return commit, digest(binary), dirty
 
 
-# Purpose: Parse bounded benchmark inputs and write a reviewable raw JSON record.
-# Inputs: Explicit corpus, official CLI binaries, run count, and new ignored output path.
-# Outputs: Writes one result file only after all three cases pass independent round trips.
-def main() -> int:
+# Purpose: Parse bounded benchmark arguments without starting any external program.
+# Inputs: CLI corpus, official binary, run-count, effort, and output arguments.
+# Outputs: Validated argparse namespace; invalid bounds terminate before execution.
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
-    parser.add_argument("--downloads", type=Path, required=True)
+    parser.add_argument("--downloads", type=Path)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--superzip", type=Path, required=True)
-    parser.add_argument("--sevenzip", type=Path, required=True)
-    parser.add_argument("--zstd", type=Path, required=True)
+    parser.add_argument("--sevenzip", type=Path)
+    parser.add_argument("--zstd", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--level", type=int, choices=range(1, 10), default=5)
@@ -415,61 +533,67 @@ def main() -> int:
         parser.error("publication requires 5-10 timed runs per direction")
     if not 0 <= args.round_pause_ms <= 1000:
         parser.error("round pause must be between 0 and 1000 ms")
-    corpus = args.corpus.resolve(strict=True)
-    binaries = {
-        "SuperZip": args.superzip.resolve(strict=True),
-        "7-Zip": args.sevenzip.resolve(strict=True),
-        "Zstd": args.zstd.resolve(strict=True),
-    }
-    output = args.output.resolve()
+    if args.manifest is None and args.downloads is None:
+        parser.error("provide a reviewed --manifest; --downloads applies only to historical corpus handling")
     benchmark_root = (ROOT / "out" / "benchmarks").resolve()
-    if not output.is_relative_to(benchmark_root) or output.exists():
+    if not args.output.resolve().is_relative_to(benchmark_root) or args.output.exists():
         parser.error("output must be a new file beneath repository out/benchmarks")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    files = verify_corpus(corpus, args.downloads.resolve(strict=True))
-    manifest = {entry["name"]: entry for entry in files}
-    commit, binary_hash, unrelated_dirty = source_identity(binaries["SuperZip"])
-    build = build_identity(binaries["SuperZip"])
+    return args
+
+
+# Purpose: Check corpus and exact tool permissions before executing a version or benchmark command.
+# Inputs: Resolved binary paths and permission subjects from the verified corpus.
+# Outputs: Official version, binary hash, and permission evidence or a fail-closed error.
+def tool_preflight(binaries: dict[str, Path], subjects: tuple[str, ...] = ("Silesia",)) -> list[dict]:
+    for subject in subjects:
+        require_permission(subject, "execute")
     tool_data = []
     for name, path in binaries.items():
+        permission = None
+        release_source = None
+        if name != "SuperZip":
+            release_source = fetch_release_source(name)
+            latest = parse_release(name, release_source)
+            permission = require_permission(name, "execute", version=latest)
+            require_binary_identity(name, path)
         version_args = [str(path), "--version"] if name != "7-Zip" else [str(path), "i"]
         version_output = subprocess.run(version_args, capture_output=True, text=True, errors="replace", timeout=20)
         if version_output.returncode:
             raise RuntimeError(f"could not read version of {name}")
-        version = next(
-            (line.strip() for line in (version_output.stdout + version_output.stderr).splitlines() if line.strip()),
-            "unknown",
-        )
-        tool_data.append(
-            {"name": name, "version": version[:160], "binary_sha256": digest(path), "source_url": SOURCES[name]}
-        )
-    host_before = host_snapshot()
-    cases = []
-    for case in CASES:
-        print(f"measuring {case[0]} ({case[1]}), level {args.level}", flush=True)
-        resource_before = host_snapshot()
-        measured = measure_case(
-            case, binaries, corpus, args.runs, manifest, output.parent, args.level, args.round_pause_ms
-        )
-        measured["resource_before"] = resource_before
-        measured["resource_after"] = host_snapshot()
-        cases.append(measured)
-        for result in measured["results"]:
-            print(
-                f"  {result['tool']}: {statistics.median(result['compress_seconds']):.3f}s create, "
-                f"{statistics.median(result['extract_seconds']):.3f}s extract, "
-                f"{result['archive_bytes'][0]:,} bytes",
-                flush=True,
-            )
-    record = {
-        "schema_version": 1,
+        banner = version_output.stdout + version_output.stderr
+        version = next((line.strip() for line in banner.splitlines() if line.strip()), "unknown")
+        entry = {"name": name, "version": version[:160], "binary_sha256": digest(path), "source_url": SOURCES[name]}
+        if permission:
+            entry["release_check"] = require_current_release(name, banner, release_source=release_source)
+            entry["permission"] = permission
+        tool_data.append(entry)
+    return tool_data
+
+
+# Purpose: Assemble reproducible raw results without copying local paths or unrelated host details.
+# Inputs: Validated settings, source/build/tool identity, corpus manifest, and measured cases.
+# Outputs: Portable result object retaining raw timings and headline eligibility.
+def result_record(
+    args,
+    commit: str,
+    binary_hash: str,
+    dirty: list[str],
+    build: dict,
+    tools: list,
+    files: list,
+    cases: list,
+    host_before: dict,
+    corpus_metadata: dict | None = None,
+) -> dict:
+    return {
+        "schema_version": 2 if corpus_metadata else 1,
         "benchmark_kind": "archive_application_comparison",
         "methodology": "docs/comparative-benchmark-methodology.md",
         "measured_at_utc": datetime.now(UTC).isoformat(),
         "source_commit": commit,
         "source_dirty": False,
         "superzip_binary_sha256": binary_hash,
-        "unrelated_dirty_count": len(unrelated_dirty),
+        "unrelated_dirty_count": len(dirty),
         "host": {
             "os": platform.platform(),
             "os_name": host_before["os_name"],
@@ -489,12 +613,13 @@ def main() -> int:
             "resource_after": host_snapshot(),
         },
         "build": build,
-        "corpus": {
+        "corpus": corpus_metadata
+        or {
             "name": "Silesia selected files",
             "source_url": "https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia",
             "files": files,
         },
-        "tools": tool_data,
+        "tools": tools,
         "settings": {
             "level": args.level,
             "cache": "warm",
@@ -506,6 +631,55 @@ def main() -> int:
         },
         "cases": cases,
     }
+
+
+# Purpose: Run only permission-cleared, identity-checked application comparisons.
+# Inputs: Explicit corpus, official CLI binaries, run count, and new ignored output path.
+# Outputs: Writes one raw result only after permission and independent round-trip checks pass.
+def main() -> int:
+    args = parse_arguments()
+    corpus_metadata = None
+    if args.manifest:
+        files, selected_cases, corpus_metadata = verify_manifest(args.manifest, args.corpus.absolute())
+        subjects = tuple(sorted({entry["subject"] for entry in files}))
+    else:
+        require_permission("Silesia", "execute")
+        files = verify_corpus(args.corpus, args.downloads.resolve(strict=True))
+        selected_cases, subjects = CASES, ("Silesia",)
+    corpus = args.corpus.resolve(strict=True)
+    configured = {"SuperZip": args.superzip, "7-Zip": args.sevenzip, "Zstd": args.zstd}
+    required_tools = {tool for case in selected_cases for tool in case[3]}
+    if any(configured[tool] is None for tool in required_tools):
+        raise ValueError("provide every comparator binary required by the corpus cases")
+    binaries = {tool: configured[tool].resolve(strict=True) for tool in sorted(required_tools)}
+    output = args.output.resolve()
+    manifest = {entry["name"]: entry for entry in files}
+    commit, binary_hash, unrelated_dirty = source_identity(binaries["SuperZip"])
+    build = build_identity(binaries["SuperZip"])
+    tool_data = tool_preflight(binaries, subjects)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    host_before = host_snapshot()
+    cases = []
+    for case in selected_cases:
+        print(f"measuring {case[0]} ({case[1]}), level {args.level}", flush=True)
+        resource_before = host_snapshot()
+        measured = measure_case(
+            case, binaries, corpus, args.runs, manifest, output.parent, args.level, args.round_pause_ms
+        )
+        measured["resource_before"] = resource_before
+        measured["resource_after"] = host_snapshot()
+        measured["timing_eligibility"] = timing_eligibility(measured["results"])
+        cases.append(measured)
+        for result in measured["results"]:
+            print(
+                f"  {result['tool']}: {statistics.median(result['compress_seconds']):.3f}s create, "
+                f"{statistics.median(result['extract_seconds']):.3f}s extract, "
+                f"{result['archive_bytes'][0]:,} bytes",
+                flush=True,
+            )
+    record = result_record(
+        args, commit, binary_hash, unrelated_dirty, build, tool_data, files, cases, host_before, corpus_metadata
+    )
     output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"saved {output}", flush=True)
     return 0

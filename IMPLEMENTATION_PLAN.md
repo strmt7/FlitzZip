@@ -191,6 +191,17 @@ Security tab or a published release.
    The completed `c21b435` analysis closes five owned-source quality warnings.
    Its 208 unapproved code-scanning alerts and scanner dependency conflict
    still block final acceptance; no release has been created.
+   The subsequent scanner revision tests Semgrep 1.178.0 with PyJWT 2.15.1 and
+   promotes the compatible pair into the canonical security workflow through
+   a pinned, separately identified downstream wheel. Normal hash-locked
+   installation and `pip check` pass; five runtime regressions and equivalent
+   full scans retain the scanner's coverage. Eight packaging tests and all
+   24 full local verification commands pass. This is local CI-path evidence,
+   not hosted workflow success or alert closure. The MCP scripts no longer
+   shadow the installed SDK package. CocoIndex also handles Git-confirmed
+   unstaged deletions, with 12 passing offline regressions and a successful
+   real index refresh. The follow-up full verifier and exact-SHA post-push
+   audit remain required before accepting this batch.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
