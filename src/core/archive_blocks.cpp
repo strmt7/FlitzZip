@@ -93,48 +93,61 @@ bool block_is_fill(std::span<const std::byte> bytes, std::uint8_t& value) {
     return std::ranges::all_of(bytes, [&](std::byte byte) { return static_cast<std::uint8_t>(byte) == value; });
 }
 
-// Purpose: Try miniz deflate for one bounded block.
-// Inputs: `block` is a non-fill block to compress and `compression_level` selects the miniz effort.
-// Outputs: Returns compressed bytes only when smaller than raw, with trial output capacity bounded by that saving.
+// Purpose: Retain the smallest complete Deflate representation from a nested bounded effort search.
+// Inputs: A non-fill short block and maximum requested effort 1-9.
+// Outputs: Returns bytes smaller than raw or empty, preserving earlier frames on ties; throws on codec failure.
 std::vector<std::byte> try_deflate_block(std::span<const std::byte> block, int compression_level) {
     // A zlib stream needs six framing bytes plus at least two bytes for its Deflate block.
     if (block.size() <= 8U) {
         return {};
     }
-    mz_ulong bound = static_cast<mz_ulong>(block.size() - 1U);
-    std::vector<std::byte> compressed(static_cast<std::size_t>(bound));
-    const auto status = compress2(reinterpret_cast<unsigned char*>(compressed.data()), &bound,
-                                  reinterpret_cast<const unsigned char*>(block.data()),
-                                  static_cast<mz_ulong>(block.size()), compression_level);
-    if (status != MZ_OK || bound >= block.size()) {
-        return {};
+    std::vector<std::byte> trial(block.size() - 1U);
+    std::vector<std::byte> best;
+    for (int effort = 1; effort <= compression_level; ++effort) {
+        auto written = static_cast<mz_ulong>(trial.size());
+        const auto status = compress2(reinterpret_cast<unsigned char*>(trial.data()), &written,
+                                      reinterpret_cast<const unsigned char*>(block.data()),
+                                      static_cast<mz_ulong>(block.size()), effort);
+        if (status == MZ_BUF_ERROR) {
+            continue;
+        }
+        if (status != MZ_OK || written > trial.size()) {
+            throw ArchiveError("Deflate native block compression failed");
+        }
+        if (best.empty() || written < best.size()) {
+            best.assign(trial.begin(), trial.begin() + static_cast<std::ptrdiff_t>(written));
+        }
     }
-    compressed.resize(static_cast<std::size_t>(bound));
-    return compressed;
+    return best;
 }
 
-// Purpose: Encode a bounded native CPU block with the pinned Zstandard runtime only when it saves bytes.
-// Inputs: One non-fill source block, a validated product effort level 1-9, and an exclusive worker context.
-// Outputs: Returns one complete frame smaller than raw, or empty; throws on runtime failure.
+// Purpose: Retain the smallest complete Zstandard frame across all policies admitted by the requested effort.
+// Inputs: One non-fill block, maximum effort 1-9, an exclusive worker context, and reusable trial storage.
+// Outputs: Returns a frame smaller than raw or empty, retaining earlier ties; throws on runtime failure.
 std::vector<std::byte> try_zstd_block(std::span<const std::byte> block, int compression_level,
-                                      ZstdCompressionContext* context) {
+                                      ZstdCompressionContext* context, std::vector<std::byte>& trial) {
     const auto& zstd = zstd_runtime();
     const auto bound = zstd.block_compress_bound(block.size());
     if (zstd.is_error(bound) || bound < block.size() ||
         bound > kMaxArchiveBlockBytes + kMaxArchiveBlockBytes / 128U + 128U) {
         throw ArchiveError("Zstandard native block capacity is invalid");
     }
-    std::vector<std::byte> compressed(bound);
-    const auto written = zstd.compress_block_with_context(context, compressed.data(), compressed.size(), block.data(),
-                                                          block.size(), compression_level);
-    if (zstd.is_error(written)) {
-        throw ArchiveError("Zstandard native block compression failed: " + zstd.error_name(written));
+    trial.resize(bound);
+    std::vector<std::byte> best;
+    for (int effort = 1; effort <= compression_level; ++effort) {
+        const auto written =
+            zstd.compress_block_with_context(context, trial.data(), trial.size(), block.data(), block.size(), effort);
+        if (zstd.is_error(written)) {
+            throw ArchiveError("Zstandard native block compression failed: " + zstd.error_name(written));
+        }
+        if (written > trial.size()) {
+            throw ArchiveError("Zstandard native block encoded length is invalid");
+        }
+        if (written < block.size() && (best.empty() || written < best.size())) {
+            best.assign(trial.begin(), trial.begin() + static_cast<std::ptrdiff_t>(written));
+        }
     }
-    if (written >= block.size()) {
-        return {};
-    }
-    compressed.resize(written);
-    return compressed;
+    return best;
 }
 
 // Purpose: Inflate one miniz deflate payload into the caller-owned output span.
@@ -580,6 +593,7 @@ static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32
         zstd_runtime().free_compression_context(context);
     };
     std::unique_ptr<ZstdCompressionContext, decltype(release_context)> context(nullptr, release_context);
+    std::vector<std::byte> trial;
     for (std::size_t i = begin; i < end; ++i) {
         const auto pos = i * static_cast<std::size_t>(block_size);
         const auto len = static_cast<std::uint32_t>(std::min<std::size_t>(block_size, input.size() - pos));
@@ -602,7 +616,7 @@ static void encode_cpu_block_range(std::span<const std::byte> input, std::uint32
                 throw ArchiveError("Zstandard native compression context allocation failed");
             }
         }
-        auto compressed = use_zstd ? try_zstd_block(block, compression_level, context.get())
+        auto compressed = use_zstd ? try_zstd_block(block, compression_level, context.get(), trial)
                                    : try_deflate_block(block, compression_level);
         if (!compressed.empty()) {
             block_work[i].descriptor = BlockDescriptor{

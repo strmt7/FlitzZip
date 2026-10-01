@@ -43,11 +43,19 @@ Zstandard.
 Level 1 uses the static GPU-prefix code. Levels 2-9 retain eligible entropy
 tables from every preceding effort rather than replacing an earlier winner.
 The progressive target sample budgets are 4 KiB, 16 KiB, 64 KiB, 256 KiB, 1 MiB,
-4 MiB, and 8 MiB per block; level 9 samples the full block. At levels 2-6,
+4 MiB, and 8 MiB per block, capped respectively at 1/8 through 7/8 of the block
+so only level 9 completes the histogram. Normal supported block sizes have
+distinct exact counts at all entropy efforts; tiny tails can share counts.
+Samples extend a deterministic bit-reversed permutation of 64-byte tiles,
+with per-stratum XOR scrambling of tile positions inside 16 KiB strata. This
+avoids a fixed record-header phase without introducing random process state;
+each sampled byte is counted once, including uneven final tiles. Partial
+histograms remain estimates, not guaranteed unbiased distributions. Complete
+GPU payload measurement still governs selection. At levels 2-6,
 three bounded 256-byte windows first compare static and adaptive code widths
 and admit only a clear predicted gain. Levels 7-9 admit the adaptive search
-without that probe. Equal sampling strides reuse a histogram; adaptive and
-Huffman builders share it. Tables of the same kind with identical code widths
+without that probe. Adaptive and Huffman builders share the incremental
+histogram. Tables of the same kind with identical code widths
 have equal measured cost and are measured only once, even if their codewords
 differ; ties retain the earlier table.
 Required GPU mode never emits CPU Deflate blocks.
@@ -100,8 +108,23 @@ adaptive decoding and required-HIP semantics remain unchanged.
 
 ## Native CPU Blocks
 
-Non-uniform CPU blocks now try the selected miniz effort whenever a smaller
-zlib stream is possible. The former 512-byte cutoff discarded real savings
+Non-uniform CPU blocks of at least 4 KiB use the pinned Zstandard runtime;
+shorter blocks use miniz Deflate. Both evaluate policies from effort one through
+the requested maximum and retain the smallest complete encoded result, with
+raw bytes as the baseline and earlier frames winning ties. Codec presets are
+not size-monotone: replacing the earlier parser with a stronger search can
+produce a larger frame. The nested selection prevents this growth for a fixed
+input and block partition without padding or weaker low-effort settings.
+
+Each CPU range owns one reusable Zstandard context and trial buffer; candidates
+are evaluated sequentially and only the winner is retained. At most four ranges
+run per chunk. This search costs additional CPU work, especially when no later
+policy improves the first frame; it is not a CPU speedup claim. Larger effort
+budgets cannot guarantee distinct sizes or monotonically increasing measured
+wall time on every input. Independent oracle tests cover all nine efforts,
+low-entropy alphabets, random data, repeated records, and long-distance repeats.
+
+The former 512-byte cutoff discarded real savings
 on small files and final blocks. Its distinct-byte sample could not reject
 larger blocks: 512 samples contain at most 256 distinct values, always below
 the 85% threshold. The replacement uses actual encoded size, not that estimate.

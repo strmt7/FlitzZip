@@ -1,4 +1,5 @@
 #include "gpu/hip_codec_support.hpp"
+#include "gpu/entropy_sampling.hpp"
 
 #include <algorithm>
 #include <array>
@@ -190,30 +191,6 @@ __global__ void entropy_segment_lengths_batch_kernel(const std::byte* input, con
             segment_lengths[plan.length_offset + candidate] = (bytes + 3U) & ~3U;
         }
     }
-}
-
-// Purpose: Share the exact effort sampling policy between adaptive and Huffman table builders.
-// Inputs: Positive block size and validated effort 2-9.
-// Outputs: Returns a positive deterministic sampling stride; equal strides produce identical samples.
-std::size_t entropy_sample_stride(std::size_t block_size, int compression_level) {
-    constexpr std::array<std::size_t, 8> budgets{4096U,    16384U,   65536U,   262144U,
-                                                 1048576U, 4194304U, 8388608U, std::numeric_limits<std::size_t>::max()};
-    const auto target = std::min(block_size, budgets[static_cast<std::size_t>(compression_level - 2)]);
-    return std::max<std::size_t>(1U, block_size / target);
-}
-
-// Purpose: Share one deterministic byte histogram between adaptive and Huffman candidates at an effort.
-// Inputs: A nonempty eligible block and positive sampling stride.
-// Outputs: Returns exact sampled frequencies without retaining input bytes or changing the sampling policy.
-std::array<std::uint64_t, 256> sample_entropy_histogram(std::span<const std::byte> block, std::size_t stride) {
-    if (block.empty() || stride == 0U) {
-        throw GpuError("GPU entropy histogram requires a nonempty block and positive stride");
-    }
-    std::array<std::uint64_t, 256> histogram{};
-    for (std::size_t index = 0U; index < block.size(); index += stride) {
-        ++histogram[static_cast<std::uint8_t>(block[index])];
-    }
-    return histogram;
 }
 
 // Purpose: Pack a batched list of byte segments with adaptive GPU prefix code tables.
@@ -520,35 +497,32 @@ void append_entropy_candidate(std::span<const std::byte> block, int level, bool 
 
 // Purpose: Make compression efforts nested searches rather than replacements of lower-effort tables.
 // Inputs: One eligible block, immutable static-baseline kind, maximum effort, and mutable candidate/table lists.
-// Outputs: Adds at most sixteen unique candidates; both codecs and repeated phases reuse the current histogram.
+// Outputs: Adds at most sixteen unique candidates; both codecs reuse nested samples counted only once.
 void build_entropy_candidates(std::span<const std::byte> block, BlockKind baseline_kind, int level,
                               AdaptiveEncodeBlockPlan& plan, std::vector<AdaptiveEncodeTable>& code_tables) {
     const auto try_low_adaptive = should_try_sampled_adaptive_prefix(block, 2);
-    std::array<std::size_t, 3> previous_strides{};
-    std::array<std::uint64_t, 256> histogram{};
-    std::size_t sampled_stride = 0U;
+    std::array<std::size_t, 3> previous_samples{};
+    EntropyHistogramSampler sampler(block);
     const auto offset_bytes = (static_cast<std::size_t>(plan.segment_count) + 1U) * sizeof(std::uint32_t);
     for (int effort = 2; effort <= level; ++effort) {
-        const auto stride = entropy_sample_stride(block.size(), effort);
+        const auto samples = entropy_sample_count(block.size(), effort);
         const auto phase = effort < 7 ? 0U : 1U;
-        const bool adaptive = (try_low_adaptive || effort >= 7) && previous_strides[phase] != stride &&
+        const bool adaptive = (try_low_adaptive || effort >= 7) && previous_samples[phase] != samples &&
                               kGpuAdaptivePrefixCodebookBytes + offset_bytes < plan.payload_limit;
-        const bool huffman = (effort != 2 || baseline_kind == BlockKind::GpuPrefix) && previous_strides[2] != stride &&
+        const bool huffman = (effort != 2 || baseline_kind == BlockKind::GpuPrefix) && previous_samples[2] != samples &&
                              kGpuHuffmanLookupBytes + offset_bytes < plan.payload_limit;
         if (!adaptive && !huffman) {
             continue;
         }
-        if (sampled_stride != stride) {
-            histogram = sample_entropy_histogram(block, stride);
-            sampled_stride = stride;
-        }
+        const auto& histogram = sampler.sample_to(samples);
+        const bool complete_sample = samples == block.size();
         if (adaptive) {
-            append_entropy_candidate(block, effort, false, plan, code_tables, histogram, stride == 1U);
-            previous_strides[phase] = stride;
+            append_entropy_candidate(block, effort, false, plan, code_tables, histogram, complete_sample);
+            previous_samples[phase] = samples;
         }
         if (huffman) {
-            append_entropy_candidate(block, effort, true, plan, code_tables, histogram, stride == 1U);
-            previous_strides[2] = stride;
+            append_entropy_candidate(block, effort, true, plan, code_tables, histogram, complete_sample);
+            previous_samples[2] = samples;
         }
     }
 }

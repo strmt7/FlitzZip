@@ -41,9 +41,12 @@ explicit:
   winning entropy tables and preserves baseline bytes on ties. Candidate
   search and shared histogram reuse do not change version-three codebooks,
   version-eight lookup layouts, segment offsets, or decoding rules.
-- CPU compression tries one independently framed Zstandard block for non-fill
-  blocks of at least 4 KiB, retaining Deflate for shorter blocks. It records
-  Zstandard only when the result is smaller than raw. The reader requires one
+- CPU compression evaluates a bounded nested search of independently framed
+  Zstandard policies from one through the requested effort for non-fill blocks
+  of at least 4 KiB, retaining a corresponding Deflate search for shorter
+  blocks. It stores only the smallest complete result smaller than raw, retaining
+  earlier frames on ties. Each CPU worker reuses its context and trial storage
+  across the assigned block range; losing frames are never serialized. The reader requires one
   complete frame with an exact declared decoded size and rejects trailing
   frames or bytes. Required-HIP decode and verification reject both CPU-only
   compression kinds.

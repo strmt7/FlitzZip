@@ -4,6 +4,7 @@
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "gpu/entropy_sampling.hpp"
 #include "test_suzip_helpers.hpp"
 #include "test_util.hpp"
 
@@ -196,6 +197,99 @@ std::vector<std::byte> reference_prefix_payload(std::span<const std::byte> input
 }
 
 }  // namespace
+
+// Purpose: Prevent premature full sampling and rounded-stride aliases at every supported block size.
+// Inputs: All production block sizes, uneven tails, and entropy efforts 2-9; no GPU is required.
+// Outputs: Requires strictly growing exact budgets for normal blocks, with complete sampling only at nine.
+TEST_CASE(suzip_entropy_sampling_budgets_are_distinct_and_bounded) {
+    for (const auto bytes : {4096U, 65537U, 262144U, 524288U, 1048576U, 2097152U, 4194304U, 8388608U, 16777216U}) {
+        std::size_t previous = 0U;
+        for (int effort = 2; effort <= 9; ++effort) {
+            const auto count = superzip::entropy_sample_count(bytes, effort);
+            REQUIRE_TRUE(count > previous);
+            REQUIRE_TRUE(count <= bytes);
+            REQUIRE_EQ(count == bytes, effort == 9);
+            previous = count;
+        }
+    }
+    for (const auto bytes : {0U, superzip::kMaxArchiveBlockBytes + 1U}) {
+        bool rejected = false;
+        try {
+            (void)superzip::entropy_sample_count(bytes, 5);
+        } catch (const superzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Prove exact nested counting and full histogram identity across permutation and tail boundaries.
+// Inputs: Deterministic nonperiodic spans of 1-259 bytes and odd large spans, sampled at every budget.
+// Outputs: Requires sample totals, unchanged repeated targets, monotone per-symbol counts, and exact full counts.
+TEST_CASE(suzip_entropy_sampling_histograms_are_exact_nested_permutations) {
+    std::vector<std::size_t> lengths;
+    for (std::size_t size = 1U; size <= 259U; ++size) {
+        lengths.push_back(size);
+    }
+    lengths.insert(lengths.end(), {4095U, 4096U, 4097U, 65537U, 262145U, 8388609U});
+    for (const auto size : lengths) {
+        std::vector<std::byte> input(size);
+        std::array<std::uint64_t, 256> exact{};
+        std::uint32_t state = 0x183D75A9U;
+        for (auto& byte : input) {
+            state ^= state << 13U;
+            state ^= state >> 17U;
+            state ^= state << 5U;
+            byte = static_cast<std::byte>(state & 255U);
+            ++exact[state & 255U];
+        }
+        superzip::EntropyHistogramSampler sampler(input);
+        std::array<std::uint64_t, 256> previous{};
+        for (int effort = 2; effort <= 9; ++effort) {
+            const auto target = superzip::entropy_sample_count(size, effort);
+            const auto current = sampler.sample_to(target);
+            std::uint64_t sum = 0U;
+            for (std::size_t symbol = 0U; symbol < exact.size(); ++symbol) {
+                REQUIRE_TRUE(current[symbol] >= previous[symbol]);
+                REQUIRE_TRUE(current[symbol] <= exact[symbol]);
+                sum += current[symbol];
+            }
+            REQUIRE_EQ(sum, target);
+            REQUIRE_EQ(sampler.sample_to(target), current);
+            previous = current;
+        }
+        REQUIRE_EQ(previous, exact);
+        bool rejected = false;
+        try {
+            (void)sampler.sample_to(size + 1U);
+        } catch (const superzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+}
+
+// Purpose: Detect sampling aliases that mistake periodic record headers for the full byte distribution.
+// Inputs: Four MiB of periodic records with shifted 64-byte zero headers and nonzero bodies, entirely in RAM.
+// Outputs: Requires early counts to avoid header domination and full counts to match every period and phase.
+TEST_CASE(suzip_entropy_sampling_does_not_alias_periodic_record_headers) {
+    for (const std::size_t period : {512U, 4096U, 32768U}) {
+        for (const std::size_t phase : {0U, 64U, 192U}) {
+            std::vector<std::byte> input(4U * 1024U * 1024U, std::byte{1});
+            for (std::size_t start = phase; start < input.size(); start += period) {
+                std::fill_n(input.begin() + static_cast<std::ptrdiff_t>(start), 64U, std::byte{0});
+            }
+            superzip::EntropyHistogramSampler sampler(input);
+            const auto target = superzip::entropy_sample_count(input.size(), 2);
+            const auto first = sampler.sample_to(target);
+            REQUIRE_TRUE(first[0] <= target * 64U / period + target / 8U);
+            REQUIRE_EQ(first[0] + first[1], target);
+            const auto full = sampler.sample_to(input.size());
+            REQUIRE_EQ(full[0], input.size() * 64U / period);
+            REQUIRE_EQ(full[1], input.size() - full[0]);
+        }
+    }
+}
 
 // Purpose: Anchor the independent encoder to manually calculated format bytes even on CPU-only hosts.
 // Inputs: The four three-bit static symbols and a four-byte-aligned segment.

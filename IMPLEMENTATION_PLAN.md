@@ -13,6 +13,15 @@ Security tab or a published release.
 2. Review product ownership, compression effort, CPU/HIP work allocation, GUI
    responsiveness, and format contracts. Preserve measured improvements;
    distinguish uncompressed containers and extract-only formats from codecs.
+   October diagnostics found premature GPU histogram saturation at the default
+   block size and non-monotone native CPU codec presets. The GPU encoder now
+   uses distinct exact sample budgets and incremental tile-stratified counting,
+   with phase scrambling to avoid the reproduced periodic-header sampling alias.
+   Native CPU encoding retains complete lower-effort winners and reuses worker
+   trial storage. These are production paths with independent size/read-back
+   regressions, not benchmark alternatives. CPU search overhead, final repeated
+   comparison data, hosted validation, and the scanner backlog remain separate
+   gates; do not equate distinct GPU search budgets with universal distinct sizes.
    Zstandard Strong/Maximum now use bounded higher-effort backend settings.
    Apply this review to every CPU-backed format as well as SUZIP: share codec
    policy across single-file and container wrappers, verify supported levels,

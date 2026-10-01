@@ -6,6 +6,7 @@
 #include "core/resource_limits.hpp"
 #include "core/sparse_pattern_block.hpp"
 #include "gpu/gpu_codec.hpp"
+#include "zstd/zstd_runtime.hpp"
 #include "lz4.h"
 #include "miniz.h"
 #include "test_suzip_helpers.hpp"
@@ -660,7 +661,7 @@ TEST_CASE(suzip_late_crc_failure_respects_publication_policy) {
 
 // Purpose: Compare native CPU blocks with actual codec sizes instead of a size heuristic.
 // Inputs: Non-uniform periodic and random payloads around the framing and old 512-byte cutoffs at every effort.
-// Outputs: Requires the smaller Raw/Deflate representation, exact codec bytes, and lossless CPU decoding.
+// Outputs: Requires the smallest admitted Raw/Deflate representation, stable ties, and lossless CPU decoding.
 TEST_CASE(suzip_cpu_short_blocks_use_smaller_deflate) {
     for (const auto size :
          {2U, 3U, 7U, 8U, 9U, 10U, 11U, 12U, 16U, 17U, 31U, 32U, 63U, 64U, 127U, 255U, 511U, 512U, 513U, 1024U}) {
@@ -678,13 +679,18 @@ TEST_CASE(suzip_cpu_short_blocks_use_smaller_deflate) {
                 options.force_cpu = true;
                 options.require_gpu = false;
                 options.compression_level = level;
-                auto capacity = mz_compressBound(static_cast<mz_ulong>(input.size()));
-                std::vector<std::byte> reference(capacity);
-                REQUIRE_EQ(mz_compress2(reinterpret_cast<unsigned char*>(reference.data()), &capacity,
-                                        reinterpret_cast<const unsigned char*>(input.data()),
-                                        static_cast<mz_ulong>(input.size()), level),
-                           MZ_OK);
-                reference.resize(capacity);
+                std::vector<std::byte> reference = input;
+                std::vector<std::byte> trial(mz_compressBound(static_cast<mz_ulong>(input.size())));
+                for (int admitted = 1; admitted <= level; ++admitted) {
+                    auto written = static_cast<mz_ulong>(trial.size());
+                    REQUIRE_EQ(mz_compress2(reinterpret_cast<unsigned char*>(trial.data()), &written,
+                                            reinterpret_cast<const unsigned char*>(input.data()),
+                                            static_cast<mz_ulong>(input.size()), admitted),
+                               MZ_OK);
+                    if (written < reference.size()) {
+                        reference.assign(trial.begin(), trial.begin() + static_cast<std::ptrdiff_t>(written));
+                    }
+                }
                 const bool smaller = reference.size() < input.size();
                 const auto encoded = superzip::encode_chunk(input, options);
                 REQUIRE_EQ(encoded.blocks.size(), 1U);
@@ -721,6 +727,61 @@ TEST_CASE(suzip_cpu_zstd_blocks_all_levels_roundtrip) {
         std::vector<std::byte> decoded(input.size());
         REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
         REQUIRE_EQ(decoded, input);
+    }
+}
+
+// Purpose: Preserve actual lower-effort winners when codec search policies are not size-monotone.
+// Inputs: Independent low-alphabet, biased, repeated-record, random, and long-distance RAM fixtures at all efforts.
+// Outputs: Requires the smallest complete codec frame or raw bytes, stable tie handling, and exact read-back.
+TEST_CASE(suzip_cpu_efforts_preserve_complete_frame_winners) {
+    const auto& zstd = superzip::zstd_runtime();
+    for (const auto family : {0U, 1U, 2U, 3U, 4U}) {
+        std::vector<std::byte> input(family == 4U ? 2U * 1024U * 1024U : 256U * 1024U);
+        std::uint32_t state = 0x917DD82FU;
+        for (std::size_t index = 0U; index < input.size(); ++index) {
+            state ^= state << 13U;
+            state ^= state >> 17U;
+            state ^= state << 5U;
+            const auto value = state & 255U;
+            input[index] = static_cast<std::byte>(family == 0U                   ? value & 15U
+                                                  : family == 1U && value < 160U ? value & 3U
+                                                                                 : value);
+            if (family == 2U && index >= 16384U) {
+                input[index] = input[index % 16384U];
+            }
+            if (family == 4U && index >= input.size() / 2U) {
+                input[index] = input[index - input.size() / 2U];
+            }
+        }
+        std::vector<std::byte> best = input;
+        std::vector<std::byte> trial(zstd.block_compress_bound(input.size()));
+        std::size_t first_bytes = 0U;
+        for (int effort = 1; effort <= 9; ++effort) {
+            const auto written = zstd.compress_block(trial.data(), trial.size(), input.data(), input.size(), effort);
+            REQUIRE_TRUE(!zstd.is_error(written));
+            if (written < best.size()) {
+                best.assign(trial.begin(), trial.begin() + static_cast<std::ptrdiff_t>(written));
+            }
+            superzip::GpuCodecOptions options;
+            options.force_cpu = true;
+            options.require_gpu = false;
+            options.block_size = static_cast<std::uint32_t>(input.size());
+            options.compression_level = effort;
+            const auto encoded = superzip::encode_chunk(input, options);
+            REQUIRE_EQ(encoded.payload, best);
+            REQUIRE_EQ(encoded.blocks.size(), 1U);
+            REQUIRE_EQ(encoded.blocks.front().kind,
+                       best.size() < input.size() ? superzip::BlockKind::CpuZstd : superzip::BlockKind::Raw);
+            std::vector<std::byte> decoded(input.size());
+            REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options));
+            REQUIRE_EQ(decoded, input);
+            if (effort == 1) {
+                first_bytes = encoded.payload.size();
+            }
+        }
+        if (family == 4U) {
+            REQUIRE_TRUE(best.size() < first_bytes * 3U / 4U);
+        }
     }
 }
 

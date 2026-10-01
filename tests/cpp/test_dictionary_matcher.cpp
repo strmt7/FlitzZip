@@ -130,7 +130,7 @@ std::vector<std::byte> make_segmented_records(std::size_t size, std::size_t reco
 
 // Purpose: Prove large-block HIP encoding actually selects dictionary blocks on locally repeated data.
 // Inputs: Independently seeded 64 KiB groups with 12 or 16 KiB records, level-five HIP, and production block sizes.
-// Outputs: Requires one entropy measurement plus the periodic dictionary batch at 8/16 MiB, and exact decoding.
+// Outputs: Requires entropy rejection before launch, one bounded periodic dictionary batch, and exact decoding.
 TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -153,7 +153,7 @@ TEST_CASE(dictionary_segmented_records_large_block_roundtrip) {
             const auto telemetry = superzip::snapshot_gpu_telemetry(*options.telemetry);
             std::cout << "dictionary_segmented_launches block_bytes=" << block_bytes << " record_bytes=" << record_bytes
                       << " launches=" << telemetry.kernel_launches << '\n';
-            REQUIRE_EQ(telemetry.kernel_launches, 5U);
+            REQUIRE_EQ(telemetry.kernel_launches, 4U);
             REQUIRE_EQ(telemetry.dictionary_blocks, 1U);
         }
         for (const bool hip : {false, true}) {
@@ -548,7 +548,7 @@ TEST_CASE(dictionary_periodic_candidate_independent_block_decode) {
             REQUIRE_TRUE(std::isfinite(telemetry.kernel_ms) && telemetry.kernel_ms > 0.0);
             std::cout << "dictionary_periodic_launches input_bytes=" << input_bytes << " record_bytes=" << record_bytes
                       << " level=" << level << " launches=" << telemetry.kernel_launches << '\n';
-            const bool measures_entropy = level == 9 || (level == 5 && input_bytes >= 8U * 1024U * 1024U);
+            const bool measures_entropy = level == 9;
             REQUIRE_EQ(telemetry.kernel_launches, measures_entropy ? 5U : 4U);
             REQUIRE_EQ(encoded.blocks.size(), 1U);
             REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuDictionary);
