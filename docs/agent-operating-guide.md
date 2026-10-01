@@ -429,6 +429,10 @@ tools\package.ps1 -Configuration Release
 - Treat refactoring as behavior-preserving work. Use small, reviewable steps,
   measure before/after when performance is involved, and never combine broad
   cleanup with functional changes unless the coupling is documented.
+- After moving or removing a private helper's caller, inspect remaining
+  references in its owning translation unit and supported compile paths.
+  Remove a proven orphan in the same change; a passing build or function-size
+  gate does not establish that anonymous-namespace helpers are reachable.
 - New or changed functions must pass
   `tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings`.
   Split large functions before pushing; do not wait for CodeQL to report

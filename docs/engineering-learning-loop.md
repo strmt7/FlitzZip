@@ -206,6 +206,10 @@ vulnerability. Normative agent rules remain in the operating guide.
   clamp insufficient capacity upward to one window or give benchmarks a
   smaller buffer estimate than production. Keep estimated buffers distinct
   from codec workspace and a volatile snapshot distinct from a reservation.
+  The extraction's first push exposed an orphaned overflow helper through
+  CodeQL `cpp/unused-static-function`; the build and contract gate had passed.
+  Apply the operating guide's private-helper reference check after moving
+  callers, and confirm automatic closure in the exact follow-up analysis.
 
 ## Adding A New Lesson
 

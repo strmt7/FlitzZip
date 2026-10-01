@@ -105,16 +105,6 @@ std::uint64_t checked_add_u64(std::uint64_t lhs, std::uint64_t rhs, const char* 
     return lhs + rhs;
 }
 
-// Purpose: Multiply two unsigned counters while detecting overflow.
-// Inputs: `lhs` and `rhs` are byte or block counters; `message` labels the failing operation.
-// Outputs: Returns the product or throws `ArchiveError` before wraparound.
-std::uint64_t checked_multiply_u64(std::uint64_t lhs, std::uint64_t rhs, const char* message) {
-    if (lhs != 0 && rhs > std::numeric_limits<std::uint64_t>::max() / lhs) {
-        throw ArchiveError(message);
-    }
-    return lhs * rhs;
-}
-
 // Purpose: Count bounded streaming windows for a byte total without overflowing.
 // Inputs: `bytes` is a file or entry length and `window_bytes` is the nonzero processing window size.
 // Outputs: Returns at least one window; throws `ArchiveError` when the window size is invalid.
