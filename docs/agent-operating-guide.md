@@ -210,6 +210,11 @@ Guidelines, and SEI CERT C++.
 - Keep the whole codebase resource-bounded by design. Every archive path, GPU
   path, GUI worker, benchmark, and installer action must have clear CPU, RAM,
   VRAM, disk-write, handle, and timeout limits that match the product contract.
+- For nested codec concurrency, bound active windows and per-window workers
+  together; per-task caps are not aggregate caps. Count complete-block decode
+  windows using execution's grouping, not a byte-total estimate. Keep shared
+  worker/range regressions in the production test target, including uneven
+  division, empty work, unsigned limits, and joins during exception unwinding.
 - Make performance claims evidence-based. Any speed or ratio claim must name
   the workload shape, input bytes, output bytes, compression level, block size,
   CPU/GPU mode, and whether the run was RAM-only.
@@ -427,6 +432,9 @@ tools\package.ps1 -Configuration Release
 ## Coding Standards
 
 - Use C++20, RAII, value types, `std::filesystem`, `std::span`, explicit integer widths, and clear ownership.
+- Scope test-owned file streams and handles before removing their directories
+  on Windows. Fix a proven lifetime conflict rather than adding cleanup retries,
+  weakening assertions, or changing file-sharing policy to conceal it.
 - Keep memory bounded. Do not read whole archives or whole large files into memory when streaming APIs are available.
 - Prefer deterministic behavior over hidden global state. Options must be explicit and safe by default.
 - Keep dependencies minimal and pinned. New runtime dependencies require maintainer approval and a security rationale.

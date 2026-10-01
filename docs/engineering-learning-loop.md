@@ -7,6 +7,21 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Native worker admission now caps both active windows and the floor share of
+  workers per window. Ceiling division could exceed the requested aggregate;
+  a one-worker minimum alone could also exceed it when queue depth was larger
+  than the budget. The CPU/GPU production and RAM-validation paths share this
+  policy. Decode counts actual complete-block windows through execution's
+  grouping helper; total-byte division can undercount uneven blocks.
+  `test_worker_budget.cpp` covers the aggregate geometry without exhausting
+  host resources, exercises the real archive pipeline, and checks balanced
+  nonempty ranges and exception-time joins. These are concurrency invariants,
+  not complete codec-workspace admission or measured speedup claims.
+- Windows fixture cleanup must run after test-owned file streams leave scope.
+  The worker-cap regression originally kept its read-back stream open through
+  `remove_all`; verification caught the sharing violation. Its scoped stream
+  and CPU/required-HIP roundtrips now exercise the corrected ownership order,
+  without retry delays or relaxed cleanup assertions.
 - Scanner dependency remediation must reach the real CI path. The reviewed
   Semgrep packaging revision has a distinct local version, pinned upstream and
   derived hashes, unchanged code/notice bytes, and offline provenance tests.

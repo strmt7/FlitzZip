@@ -131,7 +131,7 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
 std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers) {
     const auto limit = superzip::resolve_host_pipeline_inflight_limit(
         superzip::query_host_memory_snapshot(), superzip::kMaxArchiveChunkBytes, kMemoryBenchmarkReserveBytes);
-    return std::min(workers, limit);
+    return superzip::resolve_worker_inflight_limit(workers, limit);
 }
 
 // Purpose: Match production per-chunk codec worker allocation for the memory-only benchmark.

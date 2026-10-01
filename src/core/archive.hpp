@@ -15,8 +15,8 @@ struct CompressOptions {
     bool force_cpu = false;
     std::uint64_t chunk_size = kDefaultArchiveChunkBytes;
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
-    std::uint32_t worker_count = 0;
-    std::uint32_t max_inflight_chunks = 0;
+    std::uint32_t worker_count = 0;         // Aggregate codec worker limit; zero selects host capacity.
+    std::uint32_t max_inflight_chunks = 0;  // Queue upper bound, also limited by workers and admitted host memory.
     int compression_level = kDefaultCompressionLevel;
     bool verify_after_write = false;
 };
@@ -27,8 +27,8 @@ struct ExtractOptions {
     bool overwrite = false;
     std::uint64_t chunk_size = kDefaultArchiveChunkBytes;
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
-    std::uint32_t worker_count = 0;
-    std::uint32_t max_inflight_chunks = 0;
+    std::uint32_t worker_count = 0;         // Aggregate codec worker limit; zero selects host capacity.
+    std::uint32_t max_inflight_chunks = 0;  // Queue upper bound, also limited by workers and admitted host memory.
 };
 
 // Purpose: Separate successful adapter work from durable publication without changing execution policy.

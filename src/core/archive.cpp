@@ -127,30 +127,21 @@ PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t r
     const auto workers =
         requested_workers == 0 ? std::min<std::uint32_t>(hardware_threads, kMaxArchiveWorkers) : requested_workers;
     const auto memory_limited_inflight = resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), chunk_size);
-    const auto automatic_target =
-        requested_workers == 0
-            ? std::min<std::uint32_t>(
-                  kMaxInflightArchiveChunks,
-                  std::max<std::uint32_t>(workers, hardware_threads > (std::numeric_limits<std::uint32_t>::max() / 2U)
-                                                       ? kMaxInflightArchiveChunks
-                                                       : hardware_threads * 2U))
-            : workers;
-    const auto automatic_inflight =
-        std::max<std::uint32_t>(1U, std::min({automatic_target, memory_limited_inflight, kMaxInflightArchiveChunks}));
+    const auto automatic_inflight = std::min({workers, memory_limited_inflight, kMaxInflightArchiveChunks});
     const auto inflight = requested_inflight == 0 ? automatic_inflight : requested_inflight;
     if (inflight > memory_limited_inflight) {
         throw ArchiveError("requested in-flight chunks exceed SuperZip memory budget");
     }
     return PipelineBudget{
         .workers = workers,
-        .inflight_chunks = inflight,
+        .inflight_chunks = resolve_worker_inflight_limit(workers, inflight),
     };
 }
 
 // Purpose: Allocate per-chunk codec workers from the production pipeline budget.
 // Inputs: `budget` is the resolved worker/in-flight policy and `work_windows` is the number of chunks/windows in the
-// current file entry. Outputs: Returns at least one worker per chunk without exceeding the requested worker budget for
-// normal large-entry steady state.
+// current file entry, counted with the same grouping as execution. Outputs: Returns a positive floor share whose
+// aggregate across admitted windows never exceeds the requested worker budget.
 std::uint32_t resolve_codec_worker_count(const PipelineBudget& budget, std::uint64_t work_windows) {
     return superzip::resolve_codec_worker_count(budget.workers, budget.inflight_chunks, work_windows);
 }
@@ -318,26 +309,19 @@ DecodeStreamResult decode_entry_streaming(std::ifstream& input, const ArchiveEnt
         consume(decoded.bytes());
     };
     while (block_index < entry.blocks.size()) {
-        std::uint64_t uncompressed_window = 0;
         std::uint64_t payload_start = entry.payload_size;
         std::uint64_t payload_end = 0;
         const auto first = block_index;
-        while (block_index < entry.blocks.size()) {
-            const auto& block = entry.blocks[block_index];
-            if (uncompressed_window != 0 && block.uncompressed_len > chunk_limit - uncompressed_window) {
-                break;
-            }
+        const auto window = resolve_decode_block_window(entry.blocks, first, chunk_limit);
+        const auto uncompressed_window = window.uncompressed_size;
+        block_index = window.end;
+        for (std::size_t i = first; i < block_index; ++i) {
+            const auto& block = entry.blocks[i];
             if (block_has_payload(block.kind)) {
                 payload_start = std::min<std::uint64_t>(payload_start, block.encoded_offset);
                 payload_end =
                     std::max<std::uint64_t>(payload_end, checked_add_u64(block.encoded_offset, block.encoded_len,
                                                                          "block payload bounds overflow"));
-            }
-            uncompressed_window = checked_add_u64(uncompressed_window, block.uncompressed_len,
-                                                  "decoded chunk size exceeds SuperZip resource limits");
-            ++block_index;
-            if (uncompressed_window >= chunk_limit) {
-                break;
             }
         }
 
@@ -394,26 +378,19 @@ DecodeStreamResult verify_entry_streaming(std::ifstream& input, const ArchiveEnt
         consume_bytes(decoded.uncompressed_size);
     };
     while (block_index < entry.blocks.size()) {
-        std::uint64_t uncompressed_window = 0;
         std::uint64_t payload_start = entry.payload_size;
         std::uint64_t payload_end = 0;
         const auto first = block_index;
-        while (block_index < entry.blocks.size()) {
-            const auto& block = entry.blocks[block_index];
-            if (uncompressed_window != 0 && block.uncompressed_len > chunk_limit - uncompressed_window) {
-                break;
-            }
+        const auto window = resolve_decode_block_window(entry.blocks, first, chunk_limit);
+        const auto uncompressed_window = window.uncompressed_size;
+        block_index = window.end;
+        for (std::size_t i = first; i < block_index; ++i) {
+            const auto& block = entry.blocks[i];
             if (block_has_payload(block.kind)) {
                 payload_start = std::min<std::uint64_t>(payload_start, block.encoded_offset);
                 payload_end =
                     std::max<std::uint64_t>(payload_end, checked_add_u64(block.encoded_offset, block.encoded_len,
                                                                          "block payload bounds overflow"));
-            }
-            uncompressed_window = checked_add_u64(uncompressed_window, block.uncompressed_len,
-                                                  "decoded chunk size exceeds SuperZip resource limits");
-            ++block_index;
-            if (uncompressed_window >= chunk_limit) {
-                break;
             }
         }
 
@@ -996,7 +973,7 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
         if (!options.overwrite && std::filesystem::exists(target)) {
             throw SecurityError("refusing to overwrite existing file: " + target.string());
         }
-        const auto entry_windows = count_stream_windows(entry.uncompressed_size, decode_window_bytes);
+        const auto entry_windows = count_decode_block_windows(entry.blocks, decode_window_bytes);
         const GpuCodecOptions gpu_options{
             .require_gpu = options.gpu_required,
             .force_cpu = options.force_cpu,
@@ -1094,7 +1071,7 @@ OperationStats verify_suzip(const std::filesystem::path& archive_path, const Ext
             publish_progress(progress, progress_callback);
             continue;
         }
-        const auto entry_windows = count_stream_windows(entry.uncompressed_size, decode_window_bytes);
+        const auto entry_windows = count_decode_block_windows(entry.blocks, decode_window_bytes);
         const GpuCodecOptions gpu_options{
             .require_gpu = options.gpu_required,
             .force_cpu = options.force_cpu,

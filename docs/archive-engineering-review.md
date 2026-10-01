@@ -82,12 +82,14 @@ contexts, candidate payloads, descriptors, retained pools, and GPU staging in a
 single lifetime-aware admission design. Use bounded estimates or allocator
 accounting; current context size is not a guaranteed maximum.
 
-The [worker share](../src/core/worker_budget.hpp) uses a ceiling per active
-window. Consequently, aggregate workers can exceed the requested count;
-admitting more windows than workers amplifies the one-worker minimum.
-The [range loop](../src/core/archive_blocks.cpp) also uses ceiling-sized ranges,
-which can launch empty callbacks for uneven item counts. Plan outer and inner
-concurrency together, create only nonempty ranges, and avoid multiplying pools.
+At the review baseline, the [worker share](../src/core/worker_budget.hpp)
+used a ceiling per active window, which could exceed the requested aggregate;
+admitting more windows than workers amplified the one-worker minimum.
+Ceiling-sized CPU ranges could also launch empty callbacks for uneven counts.
+The follow-up production repair caps active windows, uses floor shares and
+balanced nonempty ranges, and shares exact decode grouping with admission.
+See [the current worker contract](compression-level-and-benchmark-suite.md#aggregate-codec-workers).
+Complete codec-workspace/pool accounting remains separate unfinished work.
 
 Acceptance: synthetic RAM/worker matrices, disjoint complete range coverage,
 no empty ranges, requested aggregate limits, allocation/failure cleanup, and

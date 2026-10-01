@@ -808,6 +808,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_compression_streams.cpp
     tests/cpp/test_gpu_telemetry.cpp
     tests/cpp/test_host_memory_budget.cpp
+    tests/cpp/test_worker_budget.cpp
     tests/cpp/test_windows_compatibility.cpp
     tests/cpp/test_gpu_block_batch.cpp
     tests/cpp/test_cab_compat.cpp

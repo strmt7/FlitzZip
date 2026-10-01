@@ -206,6 +206,30 @@ The primary counter contract is Microsoft's
 [GlobalMemoryStatusEx documentation](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex),
 which explicitly describes memory availability as volatile.
 
+### Aggregate Codec Workers
+
+Native pipeline `worker_count` limits aggregate codec concurrency, not workers
+per chunk. A zero value selects bounded host capacity. `max_inflight_chunks`
+is a queue upper bound: admitted depth cannot exceed the worker budget or
+the existing host-buffer policy. An explicit request beyond that memory policy
+still fails before processing; worker capping does not weaken memory admission.
+
+Active windows receive the floor share of the aggregate budget. For example,
+64 workers across 17 windows receive three workers per window, not four;
+32 workers cannot admit 64 simultaneous one-worker chunks. Unused remainder
+capacity is intentional, not a claim of a dynamic global worker pool.
+Verification and extraction count actual complete-block windows through the
+same grouping helper used to submit them. An estimate from total bytes alone
+is not sufficient when blocks leave unused space at window boundaries.
+
+The CPU range dispatcher divides work into balanced, nonempty intervals and
+includes the calling codec thread in its worker count. Futures retain borrowed
+callable/data lifetime through failure unwinding; this follows the C++ draft's
+[async completion contract](https://eel.is/c++draft/futures.async). The worker
+limit does not include the archive producer, UI, runtime service threads, or
+other independent application jobs, and is not a complete process-memory cap.
+It applies equally to CPU work supporting the GPU lane.
+
 ## Benchmark Score
 
 ### Zstandard Effort

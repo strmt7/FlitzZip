@@ -7,7 +7,6 @@
 #include "core/decoded_chunk.hpp"
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
-#include "core/worker_budget.hpp"
 
 #include <array>
 #include <barrier>
@@ -16,23 +15,6 @@
 #include <limits>
 #include <thread>
 #include <utility>
-
-// Purpose: Keep production and RAM validation on one overflow-safe per-window worker allocation policy.
-// Inputs: Empty work, ordinary CPU/GPU depths, short entries, and extreme unsigned counts.
-// Outputs: Requires exact shared allocation and overflow-safe ceiling division.
-TEST_CASE(shared_codec_worker_budget_boundaries) {
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 32U, 80U), 1U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 4U, 80U), 8U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 4U, 1U), 32U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(32U, 0U, 0U), 32U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(1U, 64U, 80U), 1U);
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(std::numeric_limits<std::uint32_t>::max(), 1U, 1U),
-               std::numeric_limits<std::uint32_t>::max());
-    REQUIRE_EQ(superzip::resolve_codec_worker_count(std::numeric_limits<std::uint32_t>::max(),
-                                                    std::numeric_limits<std::uint32_t>::max(),
-                                                    std::numeric_limits<std::uint64_t>::max()),
-               1U);
-}
 
 // Purpose: Keep host-output counters callable without a HIP backend or device initialization.
 // Inputs: Optional telemetry, zero counts, and distinct cumulative allocation/output values.

@@ -1,6 +1,7 @@
 #include "core/archive_blocks.hpp"
 #include "core/dictionary_block.hpp"
 #include "core/huffman_lookup.hpp"
+#include "core/parallel_ranges.hpp"
 #include "core/sparse_pattern_block.hpp"
 
 #include "core/result.hpp"
@@ -11,7 +12,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <future>
 #include <memory>
 #include <string>
 #include <utility>
@@ -51,33 +51,6 @@ void validate_decode_options(const ArchiveCodecOptions& options) {
 void reject_oversized_codec_span(std::size_t size, const char* label) {
     if (size > kMaxArchiveChunkBytes) {
         throw ArchiveError(std::string(label) + " exceeds SuperZip codec resource limit");
-    }
-}
-
-// Purpose: Run a bounded parallel loop over contiguous index ranges.
-// Inputs: `count` is the number of work items, `worker_count` is the requested worker budget, and `fn` processes
-// `[begin,end)`. Outputs: Blocks until all ranges finish; propagates worker exceptions.
-template <typename Fn> void run_parallel_ranges(std::size_t count, std::uint32_t worker_count, Fn fn) {
-    if (count == 0) {
-        return;
-    }
-    const auto workers = std::min<std::size_t>(std::max<std::uint32_t>(1U, worker_count), count);
-    if (workers == 1) {
-        fn(0, count);
-        return;
-    }
-    const auto items_per_worker = (count + workers - 1U) / workers;
-    std::vector<std::future<void>> futures;
-    futures.reserve(workers - 1U);
-    std::size_t begin = 0;
-    for (std::size_t worker = 1; worker < workers; ++worker) {
-        const auto end = std::min<std::size_t>(count, begin + items_per_worker);
-        futures.push_back(std::async(std::launch::async, [begin, end, &fn] { fn(begin, end); }));
-        begin = end;
-    }
-    fn(begin, count);
-    for (auto& future : futures) {
-        future.get();
     }
 }
 
@@ -574,6 +547,46 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 }
 
 }  // namespace
+
+// Purpose: Use one overflow-safe complete-block grouping policy for decode execution and concurrency admission.
+// Inputs: Borrowed blocks, a starting index through size, and a positive decoded-byte window limit.
+// Outputs: Returns exact extent and bytes, or throws ArchiveError before invalid metadata can enter a worker.
+DecodeBlockWindow resolve_decode_block_window(std::span<const BlockDescriptor> blocks, std::size_t first,
+                                              std::uint64_t window_bytes) {
+    if (window_bytes == 0 || first > blocks.size()) {
+        throw ArchiveError("invalid decode block window bounds");
+    }
+    DecodeBlockWindow window{.end = first};
+    while (window.end < blocks.size()) {
+        const auto length = blocks[window.end].uncompressed_len;
+        if (length == 0 || length > window_bytes) {
+            throw ArchiveError("archive block is outside decode window bounds");
+        }
+        if (length > window_bytes - window.uncompressed_size) {
+            break;
+        }
+        window.uncompressed_size += length;
+        ++window.end;
+        if (window.uncompressed_size == window_bytes) {
+            break;
+        }
+    }
+    return window;
+}
+
+// Purpose: Count the exact windows that the streaming decoder will submit.
+// Inputs: Borrowed block metadata and the same positive window byte limit used during execution.
+// Outputs: Returns zero for empty entries; throws ArchiveError for invalid block/window bounds.
+std::uint64_t count_decode_block_windows(std::span<const BlockDescriptor> blocks, std::uint64_t window_bytes) {
+    auto window = resolve_decode_block_window(blocks, 0, window_bytes);
+    std::uint64_t count = 0;
+    for (std::size_t first = 0; first < blocks.size();) {
+        ++count;
+        first = window.end;
+        window = resolve_decode_block_window(blocks, first, window_bytes);
+    }
+    return count;
+}
 
 // Purpose: Report whether a SUZIP block kind reserves bytes in the encoded payload window.
 // Inputs: `kind` is a native archive block encoding tag.

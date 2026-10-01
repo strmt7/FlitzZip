@@ -23,6 +23,25 @@ struct ArchiveCodecOptions {
     int compression_level = kDefaultCompressionLevel;
 };
 
+// Purpose: Describe one contiguous decode window without allocating or owning block metadata.
+// Inputs: Populated by resolve_decode_block_window from bounded descriptors.
+// Outputs: end is the exclusive block index; uncompressed_size is the exact decoded byte sum.
+struct DecodeBlockWindow {
+    std::size_t end = 0;
+    std::uint64_t uncompressed_size = 0;
+};
+
+// Purpose: Group complete blocks under the decoded-byte window limit used by execution and worker admission.
+// Inputs: blocks is borrowed metadata; first is an index through size; window_bytes is the positive byte limit.
+// Outputs: Returns a nonempty window unless at end; throws ArchiveError on invalid indices, lengths, or limits.
+DecodeBlockWindow resolve_decode_block_window(std::span<const BlockDescriptor> blocks, std::size_t first,
+                                              std::uint64_t window_bytes);
+
+// Purpose: Count actual complete-block windows rather than estimating from total decoded bytes.
+// Inputs: blocks and window_bytes follow resolve_decode_block_window's borrowed metadata and byte-limit contract.
+// Outputs: Returns the exact count, zero for no blocks; throws ArchiveError for invalid window metadata.
+std::uint64_t count_decode_block_windows(std::span<const BlockDescriptor> blocks, std::uint64_t window_bytes);
+
 // Purpose: Identify block kinds that carry bytes in the encoded payload stream.
 // Inputs: `kind` is a native SUZIP block kind.
 // Outputs: Returns true for raw, CPU-compressed, and GPU-compressed payload blocks.
