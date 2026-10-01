@@ -119,6 +119,45 @@ unapproved alerts. Overall security remains blocked by OSV/Grype's PyJWT
 findings despite successful CodeQL, secret-history, SAST, Windows CI, lint,
 graph validation, and both fuzzing jobs. This is a snapshot, not release acceptance.
 
+### Verified Repair Snapshot
+
+The completed `8e712c63647a8e699072a0555ea12da21f765cf1` analysis supersedes
+the dependency-blocker state above. On 2026-10-01, the audit retrieved 1,711
+records: 198 open, 889 fixed, and 624 dismissed. CodeQL accounts for 184 open
+records, DevSkim for 12, and the two approved Scorecard governance residuals
+for the remainder. The open-alert gate still fails for 196 unapproved records;
+no alert was dismissed or excluded by this repair.
+
+All seven selected workflows passed on that SHA, including both hosted fuzzing
+lanes and secret-history scanning. OSV, Grype, and Trivy published zero results;
+the live Dependabot general/malware queries and open-PR query returned zero.
+These results are dated evidence, not an exemption from the next push audit.
+The Semgrep/PyJWT production-tooling repair is documented in
+[the scanner dependency remediation](security-code-scanning.md#scanner-dependency-remediation).
+Do not treat the older snapshots as its current dependency state.
+
+The C++ CodeQL analysis ID is `1876587616`, category `/language:c-cpp`,
+version `2.27.1`, with an empty error field and 201 results. Result count is
+not the unique open-alert count. The previous orphan-helper alert 1705 remains
+automatically fixed; this SDK repair adds no CodeQL alert family.
+
+Correctly instrumented local fuzzing exposed a real SDK alignment error on
+the existing valid 7z seed. The production fixed-size byte-copy repair passed
+the shared byte oracle, 545 C++ tests, and local/hosted sanitizer checks.
+DevSkim then added six API-name-only `DS121708` notes, IDs 1706-1711, against
+those fixed copies. Their copy lengths are compiler-derived scalar sizes, not
+archive-provided lengths. Static triage retains each as `needs_review` pending
+the complete caller-extent audit; it does not claim a new proven vulnerability
+or a completed false-positive disposition. Do not restore unsafe typed loads,
+disable alignment, or change safe primitives just to remove those notes.
+
+The 92 commented-code reports remain a component-based review queue, not
+permission to delete every matching comment. Preserve format documentation,
+supported conditional implementations, and upstream provenance while removing
+only code demonstrated to be obsolete. The
+[archive engineering review](archive-engineering-review.md) records the next
+root-cause and resource-accounting workstreams without claiming completion.
+
 ## Reuse Without Repeating Work
 
 Run the existing audit on demand, with a new report destination:

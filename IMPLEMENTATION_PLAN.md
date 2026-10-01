@@ -6,6 +6,12 @@ The September 2026 work proceeds serially, with Codex Security reserved for the
 final audit phase as requested. A local pass is not evidence of a clean remote
 Security tab or a published release.
 
+The [2026-10-01 archive engineering review](docs/archive-engineering-review.md)
+compares selected practices from six established open-source projects and orders
+the remaining work by security risk, aggregate resource accounting, measured CPU
+and HIP costs, product parity, and final publication. It records research and
+acceptance criteria, not completed improvements or a clean security assessment.
+
 1. Refresh dependency graphs and pinned provenance. Current local checks cover
    updated Python locks, LZMA SDK 26.03, miniz 3.1.2, Lhasa 0.6.0, native build,
    tests, 36-format routing, and independent format interoperability. Hosted

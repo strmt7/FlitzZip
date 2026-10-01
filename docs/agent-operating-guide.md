@@ -226,6 +226,12 @@ Guidelines, and SEI CERT C++.
   packages during build and verify checksums before use.
 - Fix scanner findings at root cause. Suppressions need documented evidence and
   maintainer approval; they are not a default remediation strategy.
+- Investigate related scanner findings in shared-root-cause/component batches,
+  retaining one evidence-backed result per alert ID. Validate distinct callers,
+  allocation contracts, build configurations, and failure paths before extending
+  a family verdict. Fix the shared production boundary with regression coverage;
+  do not rename safe primitives, remove useful code, or substitute platform-only
+  APIs solely to reduce the scanner count. Preserve unresolved findings visibly.
 - Preserve supply-chain evidence: checksums, third-party notices, SBOM output,
   release notes, and reproducible build inputs.
 - After every pushed remediation, verify workflows, deployments, and open
