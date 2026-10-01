@@ -6,7 +6,17 @@ set -euo pipefail
 runs="${1:?Missing fuzz run count}"
 [[ $runs =~ ^[0-9]+$ ]]
 mkdir -p /out
+# Direct base-image invocation does not perform ClusterFuzzLite's compiler flag setup.
+sanitizer_flags="-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=all"
+export CFLAGS="${CFLAGS:?Missing C compiler flags} $sanitizer_flags"
+export CXXFLAGS="${CXXFLAGS:?Missing C++ compiler flags} $sanitizer_flags"
 bash .clusterfuzzlite/build.sh
+# Runtime symbols verify linking; the flags above instrument both source languages.
+for target in /out/superzip_*_fuzzer; do
+  symbols="$(llvm-nm "$target")"
+  grep -qE '[[:space:]]T[[:space:]]__asan_init$' <<< "$symbols"
+  grep -qE '[[:space:]]T[[:space:]]__ubsan_handle_type_mismatch_v1$' <<< "$symbols"
+done
 rm -rf /out/corpus
 mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out/corpus/iso /out/corpus/cab /out/corpus/rpm /out/corpus/sevenzip /out/corpus/lzma /out/corpus/lzip /out/corpus/arj /out/corpus/arc /out/corpus/macbinary /out/corpus/lha /out/corpus/xar
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index

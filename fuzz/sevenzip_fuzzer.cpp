@@ -1,5 +1,6 @@
 #include "core/result.hpp"
 #include "sevenzip/sevenzip_adapter.hpp"
+#include "../tests/cpp/sdk_byte_access_checks.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -50,6 +51,15 @@ void write_fuzz_input(const std::uint8_t* data, std::size_t size, const std::fil
 }
 
 }  // namespace
+
+// Purpose: Run the shared endian/alignment oracle under the fuzzer's real sanitizer instrumentation.
+// Inputs: Unused libFuzzer argument pointers; checks use bounded deterministic byte arrays.
+// Outputs: Returns zero on success; any assertion or sanitizer failure aborts initialization.
+extern "C" int LLVMFuzzerInitialize(int*, char***) {
+    superzip_test::verify_sdk_unaligned_access();
+    superzip_test::verify_sdk_aligned_access();
+    return 0;
+}
 
 // Purpose: Feed arbitrary bytes into the 7z decoder and extraction validator.
 // Inputs: `data` and `size` are libFuzzer-owned bytes for one fuzz iteration.

@@ -738,9 +738,9 @@ function Test-InstallerScopePolicy {
     Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction
 }
 
-# Purpose: Keep standalone sanitizer targets linked to publication dependencies and make Docker failures fatal.
-# Inputs: Reads the local fuzz driver and seed script, ClusterFuzzLite build script, and CMake fuzz targets.
-# Outputs: Throws when a publication-enabled fuzzer omits source identity support or native failures can be masked.
+# Purpose: Keep local sanitizer instrumentation, publication dependencies, and Docker failure propagation mandatory.
+# Inputs: Reads fuzz scripts/targets, SDK byte accessors, and CMake registration.
+# Outputs: Throws when a fuzzer omits required instrumentation or dependencies, or native failures can be masked.
 function Test-FuzzHarnessPolicy {
     $fuzzScript = Get-Content -LiteralPath (Join-Path $repo "tools\fuzz.ps1") -Raw
     if ($fuzzScript -notmatch 'if\s*\(\$LASTEXITCODE\s+-ne\s+0\)\s*\{\s*throw') {
@@ -754,8 +754,22 @@ function Test-FuzzHarnessPolicy {
     if ($seedScript.Contains("`r") -or $seedScript -notmatch 'ET\.fromstring\(toc\)') {
         throw "The local fuzz seed script must use LF and validate its XAR XML before fuzzing."
     }
+    if ($seedScript -notmatch 'sanitizer_flags="-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=all"' -or
+        $seedScript -notmatch 'export CFLAGS="\$\{CFLAGS:\?[^}]+\} \$sanitizer_flags"' -or
+        $seedScript -notmatch 'export CXXFLAGS="\$\{CXXFLAGS:\?[^}]+\} \$sanitizer_flags"' -or
+        $seedScript -notmatch 'symbols="\$\(llvm-nm "\$target"\)"' -or
+        $seedScript -notmatch '__asan_init\$' -or
+        $seedScript -notmatch '__ubsan_handle_type_mismatch_v1\$') {
+        throw "Local fuzz smoke must instrument C and C++ with nonrecovering ASan/UBSan and check every target's sanitizer runtimes."
+    }
 
     $clusterBuild = Get-Content -LiteralPath (Join-Path $repo ".clusterfuzzlite\build.sh") -Raw
+    if ($clusterBuild -notmatch 'if \[\[ "\$\{SANITIZER:-\}" == "undefined" \]\]; then' -or
+        $clusterBuild -notmatch 'alignment_flags="-fsanitize=alignment -fno-sanitize-recover=alignment"' -or
+        $clusterBuild -notmatch 'export CFLAGS="\$CFLAGS \$alignment_flags"' -or
+        $clusterBuild -notmatch 'export CXXFLAGS="\$CXXFLAGS \$alignment_flags"') {
+        throw "Hosted undefined-sanitizer builds must enable nonrecovering alignment checks for C and C++."
+    }
     if ($clusterBuild -notmatch 'MINIZ_SOURCE="third_party/miniz"' -or
         $clusterBuild -match 'MINIZ_UPSTREAM_SOURCE|prepare_upstream_miniz' -or
         $clusterBuild -notmatch '-DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1') {
@@ -771,6 +785,17 @@ function Test-FuzzHarnessPolicy {
     $cmakeLists = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
     if ($cmakeLists -notmatch '(?s)add_executable\(\s*superzip_iso_fuzzer.*?src/core/file_manifest\.cpp.*?\)') {
         throw "The standalone CMake ISO fuzzer must link file_manifest.cpp with file_publish.cpp."
+    }
+    $sdkAccess = Get-Content -LiteralPath (Join-Path $repo "third_party\lzma_sdk\C\CpuArch.h") -Raw
+    if ($sdkAccess -match '\*\s*\(\s*(?:const\s+)?UInt(?:16|32|64)\s*\*\s*\)') {
+        throw "SDK byte accessors must not dereference typed integer pointer casts; preserve the fixed-size copy adaptation."
+    }
+    $sevenzipFuzzer = Get-Content -LiteralPath (Join-Path $repo "fuzz\sevenzip_fuzzer.cpp") -Raw
+    if ($sevenzipFuzzer -notmatch 'sdk_byte_access_checks\.hpp' -or
+        $sevenzipFuzzer -notmatch 'verify_sdk_unaligned_access\(\)' -or
+        $sevenzipFuzzer -notmatch 'verify_sdk_aligned_access\(\)' -or
+        $cmakeLists -notmatch 'tests/cpp/test_sdk_byte_access\.cpp') {
+        throw "SDK endian/alignment byte-oracle regressions must remain wired into Windows unit tests and Linux sanitizer fuzzing."
     }
 }
 

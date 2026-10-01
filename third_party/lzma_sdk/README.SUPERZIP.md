@@ -36,3 +36,13 @@ SuperZip byte-copy/fill helpers remain in the production subset. Unused
 upstream `Z7_ANALYZE_MODE` warning suppressions are not imported. Some unchanged
 files retain historical comment removal; the upstream archive contains the
 unmodified complete source and public-domain notices.
+
+`CpuArch.h` uses fixed-size `memcpy` helpers instead of typed integer pointer
+dereferences for native-endian loads/stores, including the aligned-name aliases.
+Wire endian conversions and caller-owned extent bounds remain unchanged. This
+production adaptation removes alignment/aliasing assumptions exposed by UBSan
+on a valid 7z start header; byte-oracle/canary tests cover all offsets 0-15 in
+both Windows unit tests and Linux sanitizer fuzzer initialization.
+The missing `SetBe16` byte-store definition is supplied for the SDK's existing
+`SetBe16a` alias, with the same two-byte big-endian contract.
+The upstream provenance archive is not modified, and sanitizer checks stay enabled.

@@ -587,6 +587,12 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Reject absolute paths, drive-rooted paths, UNC paths, traversal, reserved Windows device names, unsafe trailing dot/space, and invalid characters.
 - Default to no overwrite. Overwrite is an explicit option.
 - Verify block lengths, offsets, CRC32, and archive footer/index consistency before trusting payload metadata.
+- Read and write serialized integer fields through bounded byte access or
+  fixed-size copies into properly aligned values. Hardware support for
+  unaligned instructions does not justify typed integer pointer dereferences
+  on byte buffers. Preserve downstream SDK copy adaptations during upgrades;
+  validate wire bytes with an independent endian oracle and canaries, including
+  misaligned offsets and exact-width buffers under real sanitizer instrumentation.
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.

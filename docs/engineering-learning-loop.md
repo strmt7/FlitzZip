@@ -108,6 +108,25 @@ the Security tab, released artifacts, or the product UI again.
   arguments stripped XAR XML attribute quotes and weakened the valid seed.
   The script parses its generated XML before fuzzing; the security policy
   checks LF transport and parser validation, and selector tests cover routing.
+- A direct base-builder invocation does not apply ClusterFuzzLite's sanitizer
+  flags. The local smoke script must explicitly instrument both C and C++ with
+  ASan, UBSan, and libFuzzer coverage, fail on sanitizer reports, and check every
+  target's linked runtimes. A libFuzzer pass, `SANITIZER` environment value, or
+  linked UBSan symbol alone does not prove product-source instrumentation.
+  Earlier local smoke passes without those flags are libFuzzer-only evidence;
+  hosted address/undefined jobs are separate evidence. See
+  [LLVM's libFuzzer usage](https://llvm.org/docs/LibFuzzer.html#fuzzer-usage).
+- The pinned base image's hosted undefined-check list omits alignment. The
+  shared fuzz build explicitly adds nonrecovering alignment instrumentation
+  for C and C++ in that lane; the policy scan guards this addition. A green
+  sanitizer job proves only the enabled checks, not every sanitizer category.
+- Hardware support for unaligned loads does not make typed integer pointer
+  casts on byte buffers valid C/C++. The LZMA SDK's production endian accessors
+  use fixed-size `memcpy` with existing endian conversions, not sanitizer-only
+  substitutions or disabled alignment checks. Byte-oracle/canary tests cover
+  every offset 0-15, and the previously failing valid 7z seed remains in fuzz
+  smoke. The policy scan rejects reintroduced SDK casts or missing Windows/Linux
+  oracle hooks. Preserve these downstream adaptations when updating the SDK.
 - XAR payload `length` is the stored heap extent and `size` is decoded bytes.
   The parser and its old fixture builder shared a reversed mapping, so their
   mutual agreement was not interoperability evidence. The compatibility smoke

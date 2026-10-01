@@ -9,6 +9,13 @@ set -euo pipefail
 CC="${CC:-clang}"
 CFLAGS="${CFLAGS:-$CXXFLAGS}"
 
+# The pinned base image's undefined-check list omits alignment; byte parsers need it.
+if [[ "${SANITIZER:-}" == "undefined" ]]; then
+  alignment_flags="-fsanitize=alignment -fno-sanitize-recover=alignment"
+  export CFLAGS="$CFLAGS $alignment_flags"
+  export CXXFLAGS="$CXXFLAGS $alignment_flags"
+fi
+
 COMMON_FLAGS=(
   -std=c++20
   -Isrc
