@@ -168,7 +168,15 @@ foreach ($path in @("tools/benchmark_cache.py", "tools/test_benchmark_cache.py",
     Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "gui-smoke")) "benchmark tooling alone must not launch the GUI: $path"
 }
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tests") "workflow changes must test secret artifact redaction"
+Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "scanner-coverage-tests") "workflow changes must test complete scanner coverage evidence"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests") "workflow changes must test broker authorization and masking"
+
+foreach ($path in @("tools/semgrep_coverage.py", "tools/test_semgrep_coverage.py")) {
+    $coveragePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $coveragePlan -Id "scanner-coverage-tests") "coverage changes must run their offline regressions: $path"
+    Assert-Selector (Test-Workflow -Plan $coveragePlan -Name "security") "coverage changes must exercise the real scanner report: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $coveragePlan -Id "release-build")) "coverage metadata changes alone must not rebuild the product: $path"
+}
 
 foreach ($path in @("tools/prepare_semgrep_wheel.py", "tools/test_prepare_semgrep_wheel.py", "tools/test_semgrep_runtime.py", ".github/requirements/semgrep-packaging.json", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {
     $scannerPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)

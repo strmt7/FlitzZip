@@ -11,7 +11,7 @@ namespace superzip {
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
 // Outputs: Provides raw uncompressed bytes and validates XZ framing/checks when drained.
 class XzInputStream final : public std::istream {
-public:
+  public:
     explicit XzInputStream(const std::filesystem::path& archive_path);
     ~XzInputStream() override;
 
@@ -33,7 +33,7 @@ public:
     // Outputs: Returns bytes produced before EOF.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };

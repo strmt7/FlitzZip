@@ -24,7 +24,8 @@ struct RpmPayloadInfo {
 
 // Purpose: Parse the RPM lead, signature header, package header, and payload descriptor.
 // Inputs: `archive_path` is an RPM package candidate.
-// Outputs: Returns payload offset/size/compression metadata; throws `ArchiveError` for malformed or unsupported RPM containers.
+// Outputs: Returns payload offset/size/compression metadata; throws `ArchiveError` for malformed or unsupported RPM
+// containers.
 RpmPayloadInfo scan_rpm_payload(const std::filesystem::path& archive_path);
 
 }  // namespace superzip

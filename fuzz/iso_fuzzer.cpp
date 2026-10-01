@@ -53,7 +53,8 @@ void write_fuzz_input(const std::uint8_t* data, std::size_t size, const std::fil
 
 // Purpose: Feed arbitrary bytes into the ISO 9660 scanner and extractor.
 // Inputs: `data` and `size` are libFuzzer-owned bytes for one fuzz iteration.
-// Outputs: Returns 0 after accepted extraction or expected parser/security rejection; sanitizer findings crash the process.
+// Outputs: Returns 0 after accepted extraction or expected parser/security rejection; sanitizer findings crash the
+// process.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
     if (data == nullptr || size > kMaxIsoFuzzInputBytes) {
         return 0;

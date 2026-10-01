@@ -10,7 +10,7 @@ created.
 Do not open public issues for exploitable archive parsing, path traversal,
 malware scanning, credential, or supply-chain findings. Report privately through
 GitHub private vulnerability reporting:
-https://github.com/strmt7/SuperZip/security/advisories/new
+[Create a private report](https://github.com/strmt7/SuperZip/security/advisories/new).
 
 ## Scope
 

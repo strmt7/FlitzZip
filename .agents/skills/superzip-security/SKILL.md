@@ -167,9 +167,10 @@ Workflow and release hardening rules:
   `third_party/upstream/**`, record checksums and license notes, and extract
   runtime DLLs into the build tree only after checksum verification.
 - LHA/LZH support must stay extraction-only, in-process, and backed by the
-  vendored Lhasa 0.5.0 decoder. Keep SuperZip's two-pass path/payload
+  Lhasa decoder pinned in the operating guide's Mission and Project Map.
+  Keep SuperZip's two-pass path/payload
   validation around Lhasa and preserve the unmodified upstream archive under
-  `third_party/upstream/lhasa/0.5.0/`.
+  the corresponding versioned `third_party/upstream/lhasa/` directory.
 - WIM support must stay extraction-only for standalone WIMs, in-process, and
   backed by the bundled app-local wimlib 1.14.5 DLL. Keep split WIMs rejected
   until multipart handling is deliberately implemented, reject reparse points,
@@ -177,12 +178,12 @@ Workflow and release hardening rules:
   files, and publish only rechecked staged regular files through SuperZip's
   verified temporary-file path.
 - LZMA support must stay extraction-only for legacy `.lzma` LZMA-Alone streams,
-  in-process, and backed by the vendored LZMA SDK 26.01 decoder. Keep it
+  in-process, and backed by the LZMA SDK pinned in the operating guide. Keep it
   single-file, reject oversized dictionaries and decoded output, and publish
   only through SuperZip's verified temporary-file path.
 - Lzip support must stay extraction-only for `.lz` and TAR-stream-only for
   `.tar.lz`/`.tlz`, in-process, and backed by SuperZip's lzip wrapper over the
-  vendored LZMA SDK 26.01 decoder. Keep version, dictionary, EOS, CRC32,
+  same pinned LZMA SDK decoder. Keep version, dictionary, EOS, CRC32,
   data-size, and member-size checks mandatory for every member, reject trailing
   non-member data, and publish only through verified temporary paths.
 - CPIO.GZ support must stay in-process as a Gzip-filtered SVR4 new ASCII CPIO
@@ -207,6 +208,9 @@ Workflow and release hardening rules:
   `tools/build.ps1 -Configuration Release -CpuOnlyValidation`. Build-free C/C++
   analysis under-models this Win32/HIP/vendored-C codebase and produces
   parser-artifact alerts; do not restore it for speed.
+- Read `docs/security-code-scanning.md#scanner-coverage` before making coverage
+  claims. Review the same-run Semgrep coverage artifact and its diagnostics;
+  hosted CPU-only CodeQL is not HIP device-kernel analysis.
 - Workflow `run` blocks must not interpolate `${{ github.* }}` directly. Route
   GitHub context through quoted environment variables so script-injection
   scanners and local hygiene checks agree.

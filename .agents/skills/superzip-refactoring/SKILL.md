@@ -13,15 +13,19 @@ Read `docs/targeted-verification.md` before choosing checks.
 Required sequence:
 
 1. Run the read-only audit:
+
    ```powershell
    tools/refactor_audit.ps1
    ```
+
    Add `-CheckContracts` only when explicitly auditing function comments; it is
    a heuristic and can flag lambdas or test macros.
    Before committing, run the changed-code gate:
+
    ```powershell
    tools/refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
    ```
+
 2. Identify the behavior that must remain unchanged.
 3. Make one focused structural change at a time.
 4. Run `tools/verification_plan.ps1 -IncludeUntracked`.
@@ -58,8 +62,10 @@ Rules:
   120 lines or mixes multiple responsibilities, split it before pushing.
 - For codec or performance refactors, run RAM-only CPU/GPU benchmarking at
   compression level 5 and record compression ratio:
+
   ```powershell
   tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
   ```
+
 - Never use `tools/refactor_audit.ps1 -FailOnFindings` as a new required gate
   until existing findings have been triaged.

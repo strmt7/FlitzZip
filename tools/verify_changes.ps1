@@ -84,4 +84,4 @@ try {
     throw "Targeted verification failed and full escalation completed; original failure still requires remediation."
 }
 
-Write-Host "Targeted verification passed. Commands executed: $($executed.Count)."
+Write-Output "Targeted verification passed. Commands executed: $($executed.Count)."

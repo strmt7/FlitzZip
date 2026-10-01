@@ -81,7 +81,7 @@ try {
     if ($expectedHash -ne $actualHash) {
         throw "storage smoke SHA-256 mismatch"
     }
-    Write-Host "Storage smoke passed with $SizeMiB MiB bounded filesystem workload."
+    Write-Output "Storage smoke passed with $SizeMiB MiB bounded filesystem workload."
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

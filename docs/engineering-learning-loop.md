@@ -171,6 +171,17 @@ the Security tab, released artifacts, or the product UI again.
   Windows runner before the `*.cmake` attribute was added. Validate attribute
   changes with a fresh Git export under the runner's checkout configuration.
 
+- `tools/semgrep_coverage.py` compares actual same-run scanner admission with
+  Git's complete tracked inventory and retains parser/matcher diagnostic
+  counts and locations. Offline regressions cover deep/vendor/HIP/test/skill
+  paths, malformed evidence, omitted source, and metadata-only publication.
+  A `find` listing or successful scan exit is not coverage evidence. CPU-only
+  CodeQL does not extract HIP kernels, and scanner upgrades do not change a
+  public checksum into a credential. Keep source pins and negative tests;
+  record each false positive only after checking its producer, consumer, and
+  exact analysis identity. GitHub disposition comments are limited to 280
+  characters; preserve full evidence separately and stop on API failure.
+
 The [incident-history review](code-scanning-history-review.md) maps all retrieved
 scanner families to existing guardrails and records unfinished work. It is an
 evidence index, not a new allowlist or proof that every historical alert was a

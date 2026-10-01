@@ -54,10 +54,10 @@ function Add-RpmIndexEntry {
     Add-RpmBigEndianUInt32 -Bytes $Header -Value $Count
 }
 
-# Purpose: Create a minimal RPM header containing string tags.
+# Purpose: Serialize string tags into a minimal RPM header.
 # Inputs: Strings is an array of objects with Tag and Value properties.
 # Outputs: Returns a complete RPM header byte array.
-function New-RpmStringHeader {
+function ConvertTo-RpmStringHeader {
     param(
         [AllowEmptyCollection()]
         [object[]]$Strings = @()
@@ -124,12 +124,12 @@ for ($index = 0; $index -lt $nameBytes.Length -and $index -lt 66; ++$index) {
     $rpm[10 + $index] = $nameBytes[$index]
 }
 
-foreach ($byte in (New-RpmStringHeader -Strings @())) {
+foreach ($byte in (ConvertTo-RpmStringHeader -Strings @())) {
     [void]$rpm.Add($byte)
 }
 Add-RpmEightBytePadding -Bytes $rpm
 
-$mainHeader = New-RpmStringHeader -Strings @(
+$mainHeader = ConvertTo-RpmStringHeader -Strings @(
     [pscustomobject]@{ Tag = 1124; Value = "cpio" },
     [pscustomobject]@{ Tag = 1125; Value = $PayloadCompressor.ToLowerInvariant() }
 )

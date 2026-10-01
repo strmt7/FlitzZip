@@ -20,14 +20,15 @@ namespace {
 // Purpose: Write a fixed-size TAR string field for handcrafted `.tar.gz` fixtures.
 // Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is ASCII metadata.
 // Outputs: Copies `value` into the field; throws through the test harness if it cannot fit.
-void put_test_tar_string(std::array<char, 512>& header, std::size_t offset, std::size_t length, std::string_view value) {
+void put_test_tar_string(std::array<char, 512>& header, std::size_t offset, std::size_t length,
+                         std::string_view value) {
     REQUIRE_TRUE(value.size() <= length);
     std::copy(value.begin(), value.end(), header.begin() + static_cast<std::ptrdiff_t>(offset));
 }
 
 // Purpose: Write a simple octal TAR numeric field for handcrafted `.tar.gz` fixtures.
-// Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is the small integer to encode.
-// Outputs: Encodes a NUL-terminated octal field.
+// Inputs: `header` is the mutable block, `offset`/`length` select the field, and `value` is the small integer to
+// encode. Outputs: Encodes a NUL-terminated octal field.
 void put_test_tar_octal(std::array<char, 512>& header, std::size_t offset, std::size_t length, std::uint64_t value) {
     std::string encoded(length - 1U, '0');
     for (std::size_t i = 0; i < encoded.size(); ++i) {
@@ -68,13 +69,10 @@ std::array<char, 512> make_test_tar_header(std::string_view path, char typeflag,
 }
 
 // Purpose: Write a one-entry uncompressed TAR archive fixture.
-// Inputs: `archive` is the output TAR path, `path` is the entry name, `typeflag` is the TAR type, and `payload` is file or link payload data.
-// Outputs: Creates a complete TAR stream with end markers.
-void write_one_entry_tar(
-    const std::filesystem::path& archive,
-    std::string_view path,
-    char typeflag,
-    std::string_view payload) {
+// Inputs: `archive` is the output TAR path, `path` is the entry name, `typeflag` is the TAR type, and `payload` is file
+// or link payload data. Outputs: Creates a complete TAR stream with end markers.
+void write_one_entry_tar(const std::filesystem::path& archive, std::string_view path, char typeflag,
+                         std::string_view payload) {
     std::ofstream output(archive, std::ios::binary);
     const auto header = make_test_tar_header(path, typeflag, typeflag == '5' ? 0 : payload.size());
     output.write(header.data(), static_cast<std::streamsize>(header.size()));

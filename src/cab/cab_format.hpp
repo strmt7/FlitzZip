@@ -24,7 +24,8 @@ std::string normalize_cab_entry_path(std::string raw_path);
 
 // Purpose: Parse and validate CAB metadata without decompressing file payloads.
 // Inputs: `archive_path` is a CAB file candidate.
-// Outputs: Returns validated file names/sizes; throws on malformed headers, spanning cabinets, unsafe paths, or resource-limit violations.
+// Outputs: Returns validated file names/sizes; throws on malformed headers, spanning cabinets, unsafe paths, or
+// resource-limit violations.
 CabMetadata scan_cab_metadata(const std::filesystem::path& archive_path);
 
 }  // namespace superzip

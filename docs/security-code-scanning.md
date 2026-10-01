@@ -20,8 +20,10 @@ are used, and default to read-only repository permissions.
 - `.github/workflows/lint.yml` runs language linters for the languages used in
   this repository: C/C++ formatting, PowerShell static analysis, Python helper
   lint/format checks, YAML workflow linting, Markdown linting, and CMake
-  linting. Push and pull-request runs are change-aware; manual dispatch
-  rechecks the latest commit range.
+  linting. Push and pull-request runs are change-aware; weekly and manual runs
+  check all owned files. Markdown includes root documents and agent skills,
+  not only README and `docs/`. Upstream vendor formatting is not rewritten to
+  enforce SuperZip style; its compiled/source security checks remain active.
 - `.github/workflows/dependency-review.yml` runs Dependency Review on pull
   request only.
 - `.github/workflows/release.yml` is manual-only and runs release build,
@@ -36,14 +38,14 @@ are used, and default to read-only repository permissions.
 
 | Scanner | Purpose | Output |
 | --- | --- | --- |
-| CodeQL C++ | Whole-repository manual Windows build analysis of archive parser, path handling, CLI, Win32 UI, and HIP boundary | GitHub code scanning |
+| CodeQL C++ | Manual Windows CPU-only build analysis of compiled archive parsers, path handling, CLI, Win32 UI, host GPU boundary, and vendored C/C++; not HIP device-kernel extraction | GitHub code scanning |
 | CodeQL Actions | Workflow injection and Actions misuse | GitHub code scanning |
 | Language linters | C/C++ style drift, PowerShell warnings, Python helper lint/format issues, YAML workflow issues, Markdown issues, and CMake style problems | Workflow check |
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
 | zizmor | GitHub Actions security analysis through a hash-locked `requirements-*.txt` wheel install | SARIF upload |
 | Trivy | Filesystem dependency, config, secret, and license scan | SARIF upload |
-| Semgrep | Cross-language SAST through a hash-locked `requirements-*.txt` wheel install with full repository scan scope | SARIF upload |
-| DevSkim | Microsoft security anti-pattern scanning through the pinned `Microsoft.CST.DevSkim.CLI` .NET tool | SARIF upload |
+| Semgrep | Cross-language SAST through a hash-locked install, unrestricted source scope, and same-run coverage/diagnostic evidence | SARIF upload and coverage artifact |
+| DevSkim | Microsoft security anti-pattern scanning through a version/hash-verified `Microsoft.CST.DevSkim.CLI` package | SARIF upload |
 | OSV Scanner | Known dependency vulnerability scan | GitHub code scanning |
 | Grype | Independent filesystem dependency vulnerability scan | SARIF upload |
 | Gitleaks | Full git history and working-tree secret scan | JSON artifact |
@@ -52,6 +54,34 @@ are used, and default to read-only repository permissions.
 | OSSF Scorecard | Default-branch repository supply-chain security posture | SARIF upload |
 | Greenbone/OpenVAS | Always-on scanner integration audit plus scheduled/manual network vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and Vulnetix upload |
 | Vulnetix | External vulnerability-management upload for authorized live OpenVAS results | Vulnetix project |
+
+Semgrep produces JSON coverage evidence and SARIF in the same invocation. The
+coverage artifact compares `paths.scanned` with **all** Git-tracked paths,
+including deeply nested files, tests, vendor files, and agent skills; it does
+not inherit an extension, directory, or depth exclusion from the old log-only
+scope listings. Missing C/C++/Python/JavaScript/YAML source is a failing gate.
+All other unscanned tracked files remain listed, not silently classified as
+safe. Binary provenance archives, unsupported languages, and files admitted
+with parser/matcher diagnostics need their appropriate independent review.
+Admission is not successful parsing, sufficient rule coverage, or proof of
+safety. The artifact retains diagnostic types and paths, but not diagnostic
+messages, matched source snippets, or scanner-authentication material.
+
+Inline Semgrep and DevSkim comment suppression is disabled; the empty `.semgrepignore` and
+`--no-git-ignore` scope remain intact. The coverage tool's offline tests run
+in both Windows CI and the security job. HIP-enabled product tests, kernel
+source review, and release validation remain separate from hosted CPU-only
+CodeQL. Do not describe the latter as device-kernel analysis.
+
+DevSkim 1.0.100 was checked against the official stable GitHub release and
+NuGet package on 2026-10-01. Its pinned package is downloaded with bounded
+HTTPS-only curl, verified with SHA-256, then installed through a local-only
+NuGet source. The SDK cannot silently install a different network copy of the
+same version. The upstream generic hexadecimal-literal rule remains enabled;
+upgrading the CLI does not establish that public-digest matches are secrets
+or that all old findings were fixed. Locally defined scanner jobs have explicit time budgets;
+CodeQL C++ retains 60 minutes, compared with 20 minutes for the observed
+2026-10-01 build/analysis. A timeout is a failed gate, never clean-scan evidence.
 
 ## Finding Triage
 

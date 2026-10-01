@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"
 
 permissions:
   contents: read
@@ -16,6 +18,7 @@ jobs:
   language-linters:
     name: Language linters
     runs-on: windows-2022
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,8 +70,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $eventName = $env:SUPERZIP_EVENT_NAME
-          if ($eventName -eq "workflow_dispatch") {
-            tools/lint.ps1 -CppMode Changed -BaseRef HEAD~1 -HeadRef HEAD
+          if ($eventName -in @("workflow_dispatch", "schedule")) {
+            tools/lint.ps1 -CppMode All
           } elseif ($eventName -eq "pull_request") {
             $baseRef = "origin/$($env:SUPERZIP_BASE_REF)"
             tools/lint.ps1 -CppMode Changed -BaseRef "$baseRef" -HeadRef "$env:SUPERZIP_HEAD_SHA"

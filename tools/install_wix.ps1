@@ -39,8 +39,8 @@ $wix = Join-Path $toolPath "wix.exe"
 if (Test-Path -LiteralPath $wix) {
     $installed = & $wix --version 2>$null
     if ($LASTEXITCODE -eq 0 -and $installed -like "$Version*") {
-        Write-Host "WiX $installed is already installed at $wix"
-        Write-Host "This script does not accept the WiX OSMF EULA."
+        Write-Output "WiX $installed is already installed at $wix"
+        Write-Output "This script does not accept the WiX OSMF EULA."
         return
     }
     & $dotnet tool update --tool-path $toolPath wix --version $Version
@@ -51,5 +51,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "WiX tool installation failed."
 }
 & $wix --version
-Write-Host "Installed WiX $Version at $wix"
-Write-Host "This script does not accept the WiX OSMF EULA."
+Write-Output "Installed WiX $Version at $wix"
+Write-Output "This script does not accept the WiX OSMF EULA."

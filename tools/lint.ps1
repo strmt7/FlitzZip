@@ -230,8 +230,8 @@ try {
 
     $markdownFiles = Get-LintTargetFile `
         -ChangedPath $changedFiles `
-        -AllPathspec @("README.md", "AGENTS.md", "docs/*.md", "docs/**/*.md") `
-        -FilePattern @("^(README|AGENTS)\.md$", "^docs/.*\.md$") `
+        -AllPathspec @("*.md", ":(exclude)third_party/**") `
+        -FilePattern @("^(?!third_party/).*\.md$") `
         -ConfigPattern @("^\.pymarkdown\.json$") `
         -ForceAll:($CppMode -eq "All")
     if ($markdownFiles.Count -gt 0) {

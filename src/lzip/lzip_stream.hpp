@@ -9,9 +9,10 @@ namespace superzip {
 
 // Purpose: Stream-decompress an `.lz` lzip file through `std::istream` with bounded LZMA SDK state.
 // Inputs: Construct with `archive_path`; callers read uncompressed bytes through the `std::istream` interface.
-// Outputs: Provides concatenated member payload bytes and validates lzip CRC32, data size, member size, and EOS markers when drained.
+// Outputs: Provides concatenated member payload bytes and validates lzip CRC32, data size, member size, and EOS markers
+// when drained.
 class LzipInputStream final : public std::istream {
-public:
+  public:
     explicit LzipInputStream(const std::filesystem::path& archive_path);
     ~LzipInputStream() override;
 
@@ -33,7 +34,7 @@ public:
     // Outputs: Returns bytes produced before EOF.
     [[nodiscard]] std::uint64_t output_bytes() const;
 
-private:
+  private:
     class Buffer;
     std::unique_ptr<Buffer> buffer_;
 };

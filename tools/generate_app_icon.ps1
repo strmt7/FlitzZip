@@ -56,9 +56,9 @@ $mark = Read-SuperZipLogoMark -SvgPath $SvgPath
 $images = foreach ($size in @(16, 24, 32, 48, 64, 128, 256)) {
     [pscustomobject]@{
         Size = $size
-        Bytes = New-SuperZipLogoIcoImageBytes -Mark $mark -Size $size
+        Bytes = ConvertTo-SuperZipLogoIcoImage -Mark $mark -Size $size
     }
 }
 
 Write-IcoFile -Path $OutputPath -Images $images
-Write-Host "Generated $OutputPath"
+Write-Output "Generated $OutputPath"

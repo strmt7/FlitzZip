@@ -35,6 +35,7 @@ Use `-Mode opportunistic -IncludeLongRunning` to sample it periodically, and use
 Manual lanes remain available when the plan selects them:
 
 1. Portable CI lane:
+
    ```powershell
    tools/build.ps1 -Configuration Release
    tools/test.ps1
@@ -45,6 +46,7 @@ Manual lanes remain available when the plan selects them:
    ```
 
 2. Local AMD HIP lane:
+
    ```powershell
    tools/build.ps1 -Configuration Release -EnableHip -HipArch gfx1201
    build/Release/superzip_cli.exe gpu-info

@@ -281,7 +281,7 @@ function ConvertFrom-SvgColor {
 # Purpose: Render the canonical SuperZip stacked-logo mark into raw ICO image bytes.
 # Inputs: `Mark` is returned by `Read-SuperZipLogoMark`; `Size` is the square bitmap side length.
 # Outputs: Returns deterministic 32-bit BGRA DIB bytes with an empty AND mask.
-function New-SuperZipLogoIcoImageBytes {
+function ConvertTo-SuperZipLogoIcoImage {
     param(
         [Parameter(Mandatory = $true)]$Mark,
         [Parameter(Mandatory = $true)][int]$Size
@@ -319,4 +319,4 @@ function New-SuperZipLogoIcoImageBytes {
         [int]$Size)
 }
 
-Export-ModuleMember -Function Read-SuperZipLogoMark, New-SuperZipLogoIcoImageBytes
+Export-ModuleMember -Function Read-SuperZipLogoMark, ConvertTo-SuperZipLogoIcoImage

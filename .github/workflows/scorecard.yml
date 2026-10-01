@@ -19,6 +19,7 @@ jobs:
   scorecard:
     name: OSSF Scorecard supply-chain security
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Scorecard is a repository-level check. The action rejects non-default
     # branch push refs, so this workflow is intentionally default-branch only.
     # Keep this job limited to action steps; Scorecard verifies that shape before

@@ -57,7 +57,7 @@ function Add-CabLittleEndianUInt32 {
 # Purpose: Append raw bytes to a byte list.
 # Inputs: Bytes receives output and Data provides the bytes to copy.
 # Outputs: Appends every byte in order.
-function Add-CabBytes {
+function Add-CabByte {
     param(
         [AllowEmptyCollection()]
         [Parameter(Mandatory = $true)]
@@ -79,7 +79,7 @@ $dataOffset = [uint32]($fileTableOffset + $fileRecordBytes)
 $cabinetSize = [uint32]($dataOffset + $dataHeaderBytes + $payloadBytes.Length)
 
 $cab = [System.Collections.Generic.List[byte]]::new([int]$cabinetSize)
-Add-CabBytes -Bytes $cab -Data ([byte[]][char[]]"MSCF")
+Add-CabByte -Bytes $cab -Data ([byte[]][char[]]"MSCF")
 Add-CabLittleEndianUInt32 -Bytes $cab -Value 0
 Add-CabLittleEndianUInt32 -Bytes $cab -Value $cabinetSize
 Add-CabLittleEndianUInt32 -Bytes $cab -Value 0
@@ -103,13 +103,13 @@ Add-CabLittleEndianUInt16 -Bytes $cab -Value 0
 Add-CabLittleEndianUInt16 -Bytes $cab -Value 0
 Add-CabLittleEndianUInt16 -Bytes $cab -Value 0
 Add-CabLittleEndianUInt16 -Bytes $cab -Value 0x20
-Add-CabBytes -Bytes $cab -Data $nameBytes
+Add-CabByte -Bytes $cab -Data $nameBytes
 [void]$cab.Add([byte]0)
 
 Add-CabLittleEndianUInt32 -Bytes $cab -Value 0
 Add-CabLittleEndianUInt16 -Bytes $cab -Value ([uint16]$payloadBytes.Length)
 Add-CabLittleEndianUInt16 -Bytes $cab -Value ([uint16]$payloadBytes.Length)
-Add-CabBytes -Bytes $cab -Data $payloadBytes
+Add-CabByte -Bytes $cab -Data $payloadBytes
 
 if ($cab.Count -ne $cabinetSize) {
     throw "CAB smoke fixture size mismatch."

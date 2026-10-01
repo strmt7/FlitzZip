@@ -29,10 +29,11 @@ struct ProgressSnapshot {
 };
 
 class ProgressState {
-public:
+  public:
     // Purpose: Reset progress state for a new operation.
-    // Inputs: `operation` identifies the workflow, `total_bytes` is the expected byte count, and `total_entries` is the expected entry count.
-    // Outputs: Mutates internal counters and timestamps; does not throw unless string allocation fails.
+    // Inputs: `operation` identifies the workflow, `total_bytes` is the expected byte count, and `total_entries` is the
+    // expected entry count. Outputs: Mutates internal counters and timestamps; does not throw unless string allocation
+    // fails.
     void start(OperationKind operation, std::uint64_t total_bytes, std::uint64_t total_entries);
 
     // Purpose: Update the current archive entry label.
@@ -70,7 +71,7 @@ public:
     // Outputs: Returns counters, current entry, note, cancellation flag, and measured throughput.
     [[nodiscard]] ProgressSnapshot snapshot() const;
 
-private:
+  private:
     mutable std::mutex mutex_;
     OperationKind operation_ = OperationKind::Idle;
     std::uint64_t total_bytes_ = 0;
