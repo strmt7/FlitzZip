@@ -5,6 +5,7 @@
 #include "gpu/gpu_codec.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 namespace superzip {
@@ -30,6 +31,16 @@ struct ExtractOptions {
     std::uint32_t max_inflight_chunks = 0;
 };
 
+// Purpose: Separate successful adapter work from durable publication without changing execution policy.
+// Inputs: Monotonic wall intervals measured by the adapter, in seconds; phases do not overlap.
+// Outputs: Setup includes runtime/path admission, stream includes codec/file I/O and close, publication includes
+// commit.
+struct OperationPhaseStats {
+    double setup_seconds = 0.0;
+    double stream_seconds = 0.0;
+    double publication_seconds = 0.0;
+};
+
 struct OperationStats {
     std::uint64_t input_bytes = 0;
     std::uint64_t output_bytes = 0;
@@ -39,6 +50,7 @@ struct OperationStats {
     bool gpu_used = false;
     GpuRuntimeStats gpu_runtime;
     double seconds = 0.0;
+    std::optional<OperationPhaseStats> phases;
 };
 
 // Purpose: Create a native SuperZip `.suzip` archive from one or more files/directories.

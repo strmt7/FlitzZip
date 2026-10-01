@@ -144,7 +144,7 @@ double compression_ratio(std::uint64_t input_bytes, std::uint64_t output_bytes) 
 
 // Purpose: Print archive operation statistics in a stable key/value format.
 // Inputs: `stats` is the completed operation result.
-// Outputs: Writes one line to stdout.
+// Outputs: Writes one line to stdout; includes optional adapter phase timings only when measured.
 void print_stats(const superzip::OperationStats& stats) {
     std::cout << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes
               << " output_bytes=" << stats.output_bytes << " workers=" << stats.workers
@@ -163,7 +163,13 @@ void print_stats(const superzip::OperationStats& stats) {
               << " gpu_sparse_pattern_blocks=" << stats.gpu_runtime.sparse_pattern_blocks
               << " seconds=" << stats.seconds
               << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
-              << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes) << "\n";
+              << " compression_ratio=" << compression_ratio(stats.input_bytes, stats.output_bytes);
+    if (stats.phases) {
+        std::cout << " setup_seconds=" << stats.phases->setup_seconds
+                  << " stream_seconds=" << stats.phases->stream_seconds
+                  << " publication_seconds=" << stats.phases->publication_seconds;
+    }
+    std::cout << '\n';
 }
 
 // Purpose: Print the archive formats that SuperZip recognizes and whether each is implemented.

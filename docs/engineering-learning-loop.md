@@ -127,6 +127,14 @@ the Security tab, released artifacts, or the product UI again.
   and test-target dependencies; the same test still fails for a missing enabled
   executable. Both GUI-enabled and headless builds must retain the CLI/test
   Windows compatibility identity checks.
+- Profile normal adapter phases before changing codec policy. Zstandard's
+  optional setup/stream/publication intervals keep runtime admission, codec
+  plus file I/O, and durable commit distinct from whole-command time. Worker
+  admission tests cover unknown sizes, small inputs, low-core hosts, all nine
+  efforts, and size-counter extremes. Independent read-back and exact archive
+  sizes accompany timing: threaded speed gains can change job-boundary ratio.
+  Test-name filtering is the native harness's positional argument, not an
+  environment variable; supplementary configurations use the pinned CTest.
 - `tools\github_post_push_audit.ps1 -IncludeHistory` fetches open, fixed, and
   dismissed incidents only on demand. Its optional new-file JSON report retains
   every incident ID, rule, state, location, and latest analysis identity without

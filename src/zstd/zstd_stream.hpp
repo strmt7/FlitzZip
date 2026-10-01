@@ -13,7 +13,8 @@ namespace superzip {
 
 // Purpose: Bound asynchronous compression workers for sufficiently large, known-size streams.
 // Inputs: Optional exact byte count, product effort 1-9, and the available logical processor count.
-// Outputs: Returns 0-4 workers; unknown/small inputs and high-effort history-sensitive streams stay synchronous.
+// Outputs: Returns 0-4 workers, capped by complete 8 MiB input units and CPU headroom; inputs below 16 MiB,
+// unknown sizes, and high-effort history-sensitive streams stay synchronous.
 [[nodiscard]] std::uint32_t zstd_stream_worker_count(std::optional<std::uint64_t> input_bytes, int compression_level,
                                                      unsigned int logical_processors);
 

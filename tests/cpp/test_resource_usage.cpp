@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <array>
+#include <cmath>
 #include <limits>
 
 using superzip::reconcile_vram_usage;
@@ -76,7 +77,8 @@ TEST_CASE(system_gpu_utilization_groups_processes_before_selecting_busiest_engin
         superzip::GpuEngineSample{L"pid_42_luid_0x00000000_0x000156da_phys_0_eng_0_engtype_3D", 55.0},
         superzip::GpuEngineSample{L"pid_42_luid_0x00000000_0x000146da_phys_1_eng_0_engtype_3D", 65.0},
     };
-    REQUIRE_EQ(superzip::system_gpu_utilization(samples).value(), 70.0);
+    const auto utilization = superzip::system_gpu_utilization(samples).value();
+    REQUIRE_TRUE(std::isfinite(utilization) && std::abs(utilization - 70.0) < 1e-12);
 }
 
 // Purpose: Keep absent or invalid performance counters distinct from a genuinely idle GPU.
@@ -98,9 +100,10 @@ TEST_CASE(system_gpu_utilization_rejects_invalid_and_inconsistent_counters) {
     REQUIRE_TRUE(!superzip::system_gpu_utilization(invalid).has_value());
     REQUIRE_TRUE(!superzip::system_gpu_utilization({}).has_value());
     const std::array idle{GpuEngineSample{valid_name, 0.0}};
-    REQUIRE_EQ(superzip::system_gpu_utilization(idle).value(), 0.0);
+    REQUIRE_EQ(std::fpclassify(superzip::system_gpu_utilization(idle).value()), FP_ZERO);
     const std::array saturated{GpuEngineSample{valid_name, 100.0}};
-    REQUIRE_EQ(superzip::system_gpu_utilization(saturated).value(), 100.0);
+    const auto utilization = superzip::system_gpu_utilization(saturated).value();
+    REQUIRE_TRUE(std::isfinite(utilization) && std::abs(utilization - 100.0) < 1e-12);
     const std::array inconsistent{
         GpuEngineSample{valid_name, 80.0},
         GpuEngineSample{L"pid_420_luid_0x00000000_0x000146da_phys_0_eng_0_engtype_3D", 40.0},

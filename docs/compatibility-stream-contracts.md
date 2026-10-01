@@ -2,10 +2,11 @@
 
 ## Shared CPU Writers
 
-Zstandard streams with an exact size of at least 32 MiB use up to four
-compression workers at product efforts 1-6. Worker selection is one per four
-reported logical processors, capped at four; fewer than four reported
-processors, unknown sizes, smaller inputs, and efforts 7-9 use synchronous
+Zstandard streams with an exact size of at least 16 MiB use up to four
+compression workers at product efforts 1-6. Selection is capped by one worker
+per complete 8 MiB of input, one per four reported logical processors, and
+four workers overall. Fewer than four reported processors, unknown sizes,
+smaller inputs, and efforts 7-9 use synchronous
 compression. High-effort operation preserves its larger history and avoids
 multiplying job buffers. Both standalone and TAR.ZST creation report the
 selected worker count. This is CPU compression.
@@ -19,6 +20,10 @@ accepted in threaded mode throws because upstream pool accounting is incomplete
 while jobs are active. The completion snapshot excludes process and caller
 overhead and is not a peak-memory measurement. Threaded output remains a single
 checksummed standard frame, but job boundaries can change compressed size.
+Standalone copying uses a 128 KiB buffer; each stream buffer is 129 KiB, enough
+for a maximum-size Zstandard block and encoded framing. Both standalone and
+TAR.ZST paths share the same stream implementation and worker admission.
+These bounded buffers are not a whole-file staging allocation.
 
 | Stream | Product Writers | Effort Policy |
 | --- | --- | --- |

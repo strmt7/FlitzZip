@@ -21,7 +21,7 @@
 namespace superzip {
 namespace {
 
-constexpr std::size_t kZstdCopyBufferBytes = 64U * 1024U;
+constexpr std::size_t kZstdCopyBufferBytes = 128U * 1024U;
 
 }  // namespace
 
@@ -64,9 +64,12 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     }
     FilePublishTransaction publication(output_archive);
     std::uint32_t compression_workers = 0;
+    OperationPhaseStats phases;
     {
         ZstdOutputStream output(publication.staging_path(), compression_level, input_size);
         compression_workers = output.compression_workers();
+        const auto stream_started = std::chrono::steady_clock::now();
+        phases.setup_seconds = std::chrono::duration<double>(stream_started - started).count();
         std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -87,7 +90,11 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
             }
         }
         output.close();
+        const auto publication_started = std::chrono::steady_clock::now();
+        phases.stream_seconds = std::chrono::duration<double>(publication_started - stream_started).count();
         publication.commit(true);
+        phases.publication_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - publication_started).count();
     }
 
     progress.finish_entry();
@@ -99,6 +106,7 @@ OperationStats compress_zstd(const std::vector<std::filesystem::path>& sources,
     stats.workers = compression_workers;
     stats.entries = 1;
     stats.gpu_used = false;
+    stats.phases = phases;
     stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     return stats;
 }
@@ -130,6 +138,9 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         if (!output) {
             throw ArchiveError("cannot create Zstandard extraction target: " + path_diagnostic_utf8(target));
         }
+        OperationPhaseStats phases;
+        const auto stream_started = std::chrono::steady_clock::now();
+        phases.setup_seconds = std::chrono::duration<double>(stream_started - started).count();
         std::array<char, kZstdCopyBufferBytes> buffer{};
         for (;;) {
             input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
@@ -153,7 +164,11 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         if (!output) {
             throw ArchiveError("failed to finalize Zstandard extraction target: " + path_diagnostic_utf8(target));
         }
+        const auto publication_started = std::chrono::steady_clock::now();
+        phases.stream_seconds = std::chrono::duration<double>(publication_started - stream_started).count();
         publication.commit(overwrite);
+        phases.publication_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - publication_started).count();
         progress.finish_entry();
         publish_progress(progress, progress_callback);
 
@@ -162,6 +177,7 @@ OperationStats extract_zstd_file(const std::filesystem::path& archive_path, cons
         stats.output_bytes = input.output_bytes();
         stats.entries = 1;
         stats.gpu_used = false;
+        stats.phases = phases;
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         return stats;
     }

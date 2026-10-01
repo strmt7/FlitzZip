@@ -888,7 +888,7 @@ TEST_CASE(compression_stream_zstd_declared_size_mismatch) {
 // Inputs: Threshold byte counts, every effort, and representative logical processor availability.
 // Outputs: Requires synchronous small/high-effort operation and bounded workers with caller headroom.
 TEST_CASE(compression_stream_zstd_worker_admission) {
-    constexpr std::uint64_t threshold = 32U * 1024U * 1024U;
+    constexpr std::uint64_t threshold = 16U * 1024U * 1024U;
     for (int level = 1; level <= 9; ++level) {
         REQUIRE_EQ(superzip::zstd_stream_worker_count(std::nullopt, level, 64U), 0U);
         REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold - 1U, level, 64U), 0U);
@@ -896,7 +896,12 @@ TEST_CASE(compression_stream_zstd_worker_admission) {
             REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, processors), 0U);
         }
         REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 4U), level < 7 ? 1U : 0U);
-        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 64U), level < 7 ? 4U : 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(threshold, level, 64U), level < 7 ? 2U : 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(2U * threshold - 1U, level, 64U), level < 7 ? 3U : 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(2U * threshold, level, 64U), level < 7 ? 4U : 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(8U * threshold, level, 64U), level < 7 ? 4U : 0U);
+        REQUIRE_EQ(superzip::zstd_stream_worker_count(std::numeric_limits<std::uint64_t>::max(), level, 64U),
+                   level < 7 ? 4U : 0U);
     }
 }
 

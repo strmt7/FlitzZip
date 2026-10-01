@@ -58,9 +58,9 @@ comments are historical evidence, not authorization to dismiss any new digest
 or credential report automatically. Eight records were dismissed as "won't
 fix"; that state is not equivalent to a vulnerability fix.
 
-## Current Blockers
+## Initial Blocker Snapshot
 
-All 183 current CodeQL alerts originate in the Zstandard 1.5.7 source now compiled
+All 183 CodeQL alerts in the initial inventory originate in the Zstandard 1.5.7 source now compiled
 for bounded multithreaded compression. The previous app-local prebuilt DLL did
 not expose those translation units to this repository's build-traced analysis.
 The unchanged version number does not mean unchanged scanning coverage.
@@ -91,6 +91,24 @@ The supported parent/child version conflict is recorded in
 [the scanner dependency blocker](security-code-scanning.md#unresolved-scanner-dependency).
 Scorecard also reports that unresolved dependency, alongside two approved
 governance residuals. No release is authorized while these blockers remain.
+
+### 2026-10-01 Refresh
+
+The completed `d486ecd` analysis has 1,692 incident records: 215 open, 859
+fixed, and 618 dismissed. Five new DevSkim reports were individually reviewed
+as false positives using their exact bounds, digest producers, or SVG namespace
+uses; their GitHub comments retain the evidence. This is not a vulnerability
+remediation count or a broad scanner exclusion. All hosted secret-history
+checks passed at that commit.
+
+Six additional CodeQL quality reports cover a generated CMake ABI header,
+four floating-point test comparisons, and the native RAM benchmark's large
+orchestration function. Owned-source repairs require a new analysis before
+closure is claimed. OSV now reports thirteen PyJWT advisories, Grype ten,
+and Dependabot thirteen open alerts in the Semgrep CI lock. Those counts
+are separate scanner records, not summed unique vulnerabilities; the upstream
+parent/child constraint remains unresolved. Two Scorecard governance residuals
+remain approved, leaving 213 unapproved open alerts in this dated snapshot.
 
 ## Reuse Without Repeating Work
 

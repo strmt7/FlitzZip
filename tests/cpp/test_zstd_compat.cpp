@@ -6,6 +6,7 @@
 #include "zstd/zstd_stream.hpp"
 
 #include <cstdint>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -60,6 +61,18 @@ std::string mixed_payload(std::size_t bytes) {
     return payload;
 }
 
+// Purpose: Keep measured adapter phases finite, nonnegative, disjoint, and distinct from absent telemetry.
+// Inputs: Statistics from one successfully completed Zstandard operation.
+// Outputs: Requires recorded phase intervals whose sum does not exceed the operation's wall interval.
+void require_phase_timings(const superzip::OperationStats& stats) {
+    REQUIRE_TRUE(stats.phases.has_value());
+    const auto& phases = *stats.phases;
+    for (const auto seconds : {phases.setup_seconds, phases.stream_seconds, phases.publication_seconds}) {
+        REQUIRE_TRUE(std::isfinite(seconds) && seconds >= 0.0);
+    }
+    REQUIRE_TRUE(phases.setup_seconds + phases.stream_seconds + phases.publication_seconds <= stats.seconds);
+}
+
 }  // namespace
 
 // Purpose: Verify native `.zst` compatibility roundtrip over streaming-sized data.
@@ -73,12 +86,14 @@ TEST_CASE(zstd_roundtrip_single_file) {
 
     const auto archive = root / "payload.bin.zst";
     const auto compress_stats = superzip::compress_zstd({input}, archive);
+    require_phase_timings(compress_stats);
     REQUIRE_EQ(compress_stats.entries, static_cast<std::uint64_t>(1));
     REQUIRE_TRUE(compress_stats.output_bytes > 8U);
     REQUIRE_EQ(superzip::detect_archive_format(archive), superzip::ArchiveFormat::Zstd);
 
     const auto output = root / "out";
     const auto extract_stats = superzip::extract_zstd_file(archive, output, false);
+    require_phase_timings(extract_stats);
     REQUIRE_EQ(extract_stats.output_bytes, static_cast<std::uint64_t>(payload.size()));
     REQUIRE_EQ(read_text_file(output / "payload.bin"), payload);
 }
@@ -98,6 +113,24 @@ TEST_CASE(zstd_all_compression_levels_roundtrip) {
         (void)superzip::extract_zstd_file(archive, output, false);
         REQUIRE_EQ(read_text_file(output / archive.stem()), payload);
     }
+}
+
+// Purpose: Verify empty streams retain complete framing and honest phase telemetry.
+// Inputs: An empty regular file created/extracted through the production adapter.
+// Outputs: Requires a byte-exact empty result, recorded finite timings, and absent timings on default statistics.
+TEST_CASE(zstd_empty_stream_phase_timings) {
+    REQUIRE_TRUE(!superzip::OperationStats{}.phases.has_value());
+    const auto root = test_temp_dir("zstd-empty-phases");
+    const auto input = root / "empty";
+    write_text_file(input, "");
+    const auto archive = root / "empty.zst";
+    const auto encoded = superzip::compress_zstd({input}, archive);
+    require_phase_timings(encoded);
+    REQUIRE_EQ(encoded.input_bytes, static_cast<std::uint64_t>(0));
+    const auto decoded = superzip::extract_zstd_file(archive, root / "out", false);
+    require_phase_timings(decoded);
+    REQUIRE_EQ(decoded.output_bytes, static_cast<std::uint64_t>(0));
+    REQUIRE_EQ(read_text_file(root / "out" / "empty"), "");
 }
 
 // Purpose: Prove Maximum recovers long-distance redundancy missed by Balanced.

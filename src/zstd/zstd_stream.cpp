@@ -21,7 +21,8 @@
 namespace superzip {
 namespace {
 
-constexpr std::size_t kZstdStreamBufferBytes = 64U * 1024U;
+// Fit a complete 128 KiB Zstandard block plus its bounded encoded framing.
+constexpr std::size_t kZstdStreamBufferBytes = 129U * 1024U;
 constexpr int kZstdMaxWindowLog = 26;
 
 // Purpose: Release a compression context through its owning runtime.
@@ -94,15 +95,18 @@ void write_counted(std::ofstream& output, const char* bytes, std::size_t size, s
 
 // Purpose: Admit bounded parallelism without multiplying high-effort history or small-stream allocations.
 // Inputs: Optional exact bytes, validated product effort, and logical processor availability (zero means unknown).
-// Outputs: Returns up to four workers, reserving processor capacity for the caller and other host work.
+// Outputs: Returns up to four workers, capped by complete 8 MiB units and CPU headroom; inputs below 16 MiB,
+// unknown sizes, and high-effort history-sensitive streams stay synchronous.
 std::uint32_t zstd_stream_worker_count(std::optional<std::uint64_t> input_bytes, int compression_level,
                                        unsigned int logical_processors) {
     (void)zstd_compression_level(compression_level);
-    constexpr std::uint64_t minimum_bytes = 32U * 1024U * 1024U;
+    constexpr std::uint64_t minimum_bytes = 16U * 1024U * 1024U;
+    constexpr std::uint64_t bytes_per_worker = 8U * 1024U * 1024U;
     if (!input_bytes || *input_bytes < minimum_bytes || compression_level >= 7 || logical_processors < 4U) {
         return 0U;
     }
-    return std::min(4U, logical_processors / 4U);
+    const auto size_workers = static_cast<std::uint32_t>(std::min<std::uint64_t>(4U, *input_bytes / bytes_per_worker));
+    return std::min(size_workers, logical_processors / 4U);
 }
 
 class ZstdOutputStream::Buffer final : public std::streambuf {

@@ -73,6 +73,17 @@ user-like document/media tree, but its licensing, manifest, and hashes must
 be settled before it is charted. Incompressible controls and small-file trees
 are useful diagnostics, not substitutes for real-file cases.
 
+For Zstandard diagnostics, the normal SuperZip CLI also reports disjoint
+`setup_seconds`, `stream_seconds`, and `publication_seconds`. Setup includes
+runtime integrity checks and path admission. Streaming includes codec work,
+file reads/writes, frame validation, and stream close; it is not pure codec
+time. Publication includes the durable flush and atomic commit. These optional
+adapter intervals exclude process startup, final reporting, and any outer CLI
+quarantine/publication wrapper, so they do not replace whole-command time or
+describe competitors' internal phase costs.
+Absent phase telemetry is not a zero-duration measurement. Do not remove
+integrity checks or durability guarantees to improve comparison scores.
+
 ## Comparators And Configuration
 
 Use a clean, built SuperZip commit on Windows and a current, provenance-checked

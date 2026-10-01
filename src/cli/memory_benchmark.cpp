@@ -703,6 +703,31 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
     return *(best == nullptr ? baseline : best);
 }
 
+// Purpose: Admit a RAM benchmark before allocating workers, codec state, or an archive window.
+// Inputs: `options` selects size in MiB, effort, block size, and mutually exclusive backend policies.
+// Outputs: Returns checked input bytes or throws on invalid arguments or insufficient host memory.
+std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& options) {
+    if (options.size_mib < 10240U) {
+        throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
+    }
+    if (options.compression_level < superzip::kMinCompressionLevel ||
+        options.compression_level > superzip::kMaxCompressionLevel) {
+        throw superzip::ArchiveError("compression level must be between 1 and 9");
+    }
+    if (options.block_size < superzip::kMinArchiveBlockBytes || options.block_size > superzip::kMaxArchiveBlockBytes) {
+        throw superzip::ArchiveError("memory benchmark block size is outside SuperZip resource limits");
+    }
+    if ((superzip::kMaxArchiveChunkBytes % options.block_size) != 0) {
+        throw superzip::ArchiveError("memory benchmark block size must divide the 128 MiB chunk size");
+    }
+    if (options.require_gpu && options.force_cpu) {
+        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
+    }
+    const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
+    assert_memory_benchmark_budget();
+    return total_bytes;
+}
+
 }  // namespace
 
 // Purpose: Print one machine-readable memory benchmark result line.
@@ -754,27 +779,10 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
 }
 
 // Purpose: Execute a bounded, RAM-only archive workload with independent encode, verify, and extract phases.
-// Inputs: Validated benchmark profile, size, backend policy, workers, block size, and compression level.
+// Inputs: `options` selects the benchmark profile, size, backend policy, workers, block size, and effort.
 // Outputs: Returns exact size, timing, integrity, and GPU telemetry statistics or throws on any failed phase.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
-    if (options.size_mib < 10240U) {
-        throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
-    }
-    if (options.compression_level < superzip::kMinCompressionLevel ||
-        options.compression_level > superzip::kMaxCompressionLevel) {
-        throw superzip::ArchiveError("compression level must be between 1 and 9");
-    }
-    if (options.block_size < superzip::kMinArchiveBlockBytes || options.block_size > superzip::kMaxArchiveBlockBytes) {
-        throw superzip::ArchiveError("memory benchmark block size is outside SuperZip resource limits");
-    }
-    if ((superzip::kMaxArchiveChunkBytes % options.block_size) != 0) {
-        throw superzip::ArchiveError("memory benchmark block size must divide the 128 MiB chunk size");
-    }
-    if (options.require_gpu && options.force_cpu) {
-        throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
-    }
-    const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
-    assert_memory_benchmark_budget();
+    const auto total_bytes = validate_memory_benchmark_options(options);
 
     const auto workers = resolve_memory_benchmark_workers(options.workers);
     const auto inflight = resolve_memory_benchmark_inflight(workers);

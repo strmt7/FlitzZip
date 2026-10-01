@@ -517,7 +517,9 @@ TEST_CASE(dictionary_dispatch_bound_stage_timing) {
             REQUIRE_TRUE(duration && std::isfinite(*duration) && *duration >= 0.0);
         }
         REQUIRE_TRUE(require_valid_encoded_batch(input, encoded) < input.size());
-        REQUIRE_EQ(*encoded.device_ms, *encoded.index_ms + *encoded.encode_ms + *encoded.compact_ms);
+        const auto stage_total = *encoded.index_ms + *encoded.encode_ms + *encoded.compact_ms;
+        const auto rounding_bound = std::numeric_limits<double>::epsilon() * std::max(1.0, stage_total) * 4.0;
+        REQUIRE_TRUE(std::abs(*encoded.device_ms - stage_total) <= rounding_bound);
         std::cout << "dictionary_stage_timing level=" << level << " index_ms=" << *encoded.index_ms
                   << " encode_ms=" << *encoded.encode_ms << " compact_ms=" << *encoded.compact_ms << '\n';
     }

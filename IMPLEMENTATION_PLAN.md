@@ -169,6 +169,17 @@ Security tab or a published release.
    handoff. Real lzip fixtures also cover interleaved stream lifetimes and
    cross-thread consumption. This is an ownership correction, not a measured
    compression-kernel speedup or a claim of concurrent access support.
+   The standard-format timing review now exposes optional Zstandard setup,
+   stream/I/O, and durable-publication intervals in normal CLI statistics.
+   A block-buffer-only trial did not explain the measured compression gap.
+   Shared worker admission now accepts known streams from 16 MiB and caps
+   workers by complete 8 MiB units, CPU headroom, and four workers overall.
+   Unknown, smaller, and high-effort streams remain synchronous. Paired local
+   diagnostics show a substantial `nci` creation gain with a 4,720-byte size
+   tradeoff; `mozilla` has unchanged size and no clear timing win. These are
+   workload-specific diagnostics, not a universal competitor or GPU claim.
+   Fresh clean-source comparisons, graphs, broad remaining review, and release
+   acceptance are still required.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.
