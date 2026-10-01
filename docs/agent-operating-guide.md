@@ -779,6 +779,12 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Before pushing, run the checks selected by the verification plan and the
   changed-file hygiene gate. Do not run unrelated heavyweight checks unless the
   selector escalates or there is evidence of a broader problem.
+- Optimize CI from exact-run queue, job, and step timings, not total-duration
+  impressions. Keep build-traced coverage, query suites, intended fuzz budgets,
+  provenance checks, and publication safeguards intact. Never restore compiled
+  outputs into a fresh CodeQL build. Cancel superseded stateless checks, but
+  preserve stateful live scans and release transactions. See
+  [the workflow performance review](workflow-performance-review.md).
 - After pushing, verify the remote URL does not contain credentials.
 - After pushing, follow the current plan's `workflowWaitPolicy`. Use
   `tools\wait_relevant_workflows.ps1 -Commit <sha> -Mode opportunistic` only

@@ -9,7 +9,8 @@ permissions:
 
 concurrency:
   group: greenbone-openvas-vulnetix-${{ github.ref }}
-  cancel-in-progress: false
+  # This is an offline audit, not the stateful live scanner workflow.
+  cancel-in-progress: true
 
 jobs:
   openvas-integration-audit:

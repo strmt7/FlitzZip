@@ -74,6 +74,14 @@ the Security tab, released artifacts, or the product UI again.
   Agents must not wait on completed Greenbone/OpenVAS integration runs,
   unauthenticated GitHub CLI calls, wrong commit refs, unreliable commit-filter
   wrapper results, or unrelated long-running workflows.
+- CI timing reviews separate queue delay, setup, traced compilation, analysis,
+  and timed fuzzing using exact run/job IDs. The October review found short
+  queues and already resource-adaptive CodeQL execution, not an idle timeout.
+  The offline Greenbone audit now cancels superseded checks; live scans and
+  releases retain non-cancelling transaction semantics. Preserve those different
+  ownership boundaries rather than applying one concurrency rule everywhere.
+  [The timing review](workflow-performance-review.md) records measured costs
+  and the limits of the optimization claim.
 - CodeQL C++ must use a real manual Windows build database. Build-free C/C++
   analysis produced parser-artifact Security tab alerts for Win32/GDI+, HIP,
   and vendored C code; `tools\verify_change_hygiene.ps1` and
