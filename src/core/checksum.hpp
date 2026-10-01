@@ -14,7 +14,7 @@ void initialize_crc32_backend() noexcept;
 // Purpose: Compute a CRC-32 checksum compatible with ZIP block integrity checks.
 // Inputs: `bytes` is the memory region to hash and `seed` is a finalized prior CRC for incremental hashing.
 // Outputs: Returns the finalized CRC-32 value; does not allocate or throw.
-std::uint32_t crc32(std::span<const std::byte> bytes, std::uint32_t seed = 0);
+std::uint32_t crc32(std::span<const std::byte> bytes, std::uint32_t seed = 0) noexcept;
 
 // Purpose: Compute the same IEEE CRC using a bounded worker budget for sufficiently large borrowed output.
 // Inputs: bytes stays valid until return; workers is the per-window CPU budget, capped at the archive worker limit.

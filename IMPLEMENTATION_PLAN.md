@@ -180,6 +180,17 @@ Security tab or a published release.
    workload-specific diagnostics, not a universal competitor or GPU claim.
    Fresh clean-source comparisons, graphs, broad remaining review, and release
    acceptance are still required.
+   Miniz now shares the existing IEEE checksum backend through its official
+   external hook, covering ZIP and the common Gzip wrappers without a new
+   dependency or removed checks. Independent CRC-oracle and ABI tests pass,
+   as do 533 HIP-enabled tests, 532 isolated CPU-only tests, and 22 full gates.
+   All fourteen native seven-block-size results retain prior encoded sizes.
+   The application diagnostic has identical new/control archive hashes but
+   includes extraction outliers and storage activity; it is not a published
+   speed claim. See the [checksum controls and limits](docs/benchmarks/2026-10-01-compatibility-crc-hook.md).
+   The completed `c21b435` analysis closes five owned-source quality warnings.
+   Its 208 unapproved code-scanning alerts and scanner dependency conflict
+   still block final acceptance; no release has been created.
 3. Complete relevant frontend smoke, regression, sanitizer, packaging, and
    resource-aware RAM-only performance gates. Defer only timing-sensitive runs
    when host contention is material; leave unrelated tasks untouched.

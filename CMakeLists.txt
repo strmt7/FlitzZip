@@ -107,12 +107,18 @@ add_library(lz4 STATIC third_party/lz4/lz4.c)
 target_include_directories(lz4 PUBLIC third_party/lz4)
 
 add_library(
-  miniz STATIC third_party/miniz/miniz.c third_party/miniz/miniz_tdef.c
-               third_party/miniz/miniz_tinfl.c third_party/miniz/miniz_zip.c)
+  miniz STATIC
+  src/core/miniz_checksum.cpp third_party/miniz/miniz.c
+  third_party/miniz/miniz_tdef.c third_party/miniz/miniz_tinfl.c
+  third_party/miniz/miniz_zip.c)
 target_include_directories(miniz PUBLIC third_party/miniz)
+target_include_directories(miniz PRIVATE src)
+target_link_libraries(miniz PRIVATE superzip_checksum)
 target_compile_definitions(
-  miniz PRIVATE _CRT_SECURE_NO_WARNINGS MZ_ZIP_MAX_READER_FILES=250000U
-                MZ_ZIP_MAX_READER_METADATA_SIZE=268435456ULL)
+  miniz
+  PRIVATE _CRT_SECURE_NO_WARNINGS USE_EXTERNAL_MZCRC
+          MZ_ZIP_MAX_READER_FILES=250000U
+          MZ_ZIP_MAX_READER_METADATA_SIZE=268435456ULL)
 
 add_library(
   bzip2 STATIC
@@ -169,6 +175,15 @@ if(MSVC)
 else()
   target_compile_options(lzma_sdk_7z PRIVATE -Wno-conversion
                                              -Wno-sign-conversion)
+endif()
+
+add_library(superzip_checksum STATIC src/core/checksum.cpp)
+target_include_directories(superzip_checksum PUBLIC src)
+target_link_libraries(superzip_checksum PRIVATE lzma_sdk_7z)
+if(MSVC)
+  target_compile_options(superzip_checksum PRIVATE /W4 /permissive- /EHsc)
+else()
+  target_compile_options(superzip_checksum PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 add_library(
@@ -389,7 +404,6 @@ add_library(
   src/core/archive_format.cpp
   src/core/archive_blocks.cpp
   src/core/archive_index.cpp
-  src/core/checksum.cpp
   src/core/defender_scan.cpp
   src/core/file_manifest.cpp
   src/core/file_publish.cpp
@@ -432,8 +446,15 @@ target_include_directories(
   superzip_core
   PUBLIC src third_party/miniz third_party/bzip2 third_party/lzma_sdk/C
          third_party/lhasa/lib/public third_party/wimlib)
-target_link_libraries(superzip_core PUBLIC miniz bzip2 xz_embedded lzma_sdk_7z
-                                           lz4 lhasa)
+target_link_libraries(
+  superzip_core
+  PUBLIC superzip_checksum
+         miniz
+         bzip2
+         xz_embedded
+         lzma_sdk_7z
+         lz4
+         lhasa)
 target_compile_definitions(
   superzip_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
                        SUPERZIP_VERSION="${SUPERZIP_PACKAGE_VERSION}")

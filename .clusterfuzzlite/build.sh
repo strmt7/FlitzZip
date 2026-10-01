@@ -75,7 +75,7 @@ build_miniz_objects() {
     local source="$source_dir/$source_name"
     local object="$object_dir/$(basename "$source_name" .c).o"
     "$CC" $CFLAGS -std=c11 -I"$source_dir" \
-      -DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 \
+      -DUSE_EXTERNAL_MZCRC -DSUPERZIP_MINIZ_FUZZ_ALLOCATOR=1 -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 \
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
   done
@@ -150,10 +150,12 @@ LZMA_CRC_OBJECTS=(
   "$OUT/lzma-sdk-objects/7zCrcOpt.o"
   "$OUT/lzma-sdk-objects/CpuArch.o"
 )
+CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -c src/core/checksum.cpp -o "$CHECKSUM_OBJECT"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/sevenzip_fuzzer.cpp \
   src/sevenzip/sevenzip_adapter.cpp \
-  src/core/checksum.cpp \
+  "$CHECKSUM_OBJECT" \
   src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
@@ -177,7 +179,7 @@ LZMA_CRC_OBJECTS=(
   fuzz/lzip_fuzzer.cpp \
   src/lzip/lzip_adapter.cpp \
   src/lzip/lzip_stream.cpp \
-  src/core/checksum.cpp \
+  "$CHECKSUM_OBJECT" \
   src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
@@ -189,7 +191,7 @@ LZMA_CRC_OBJECTS=(
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/arj_fuzzer.cpp \
   src/arj/arj_adapter.cpp \
-  src/core/checksum.cpp \
+  "$CHECKSUM_OBJECT" \
   src/core/file_manifest.cpp \
   src/core/file_publish.cpp \
   src/core/path_safety.cpp \
@@ -233,6 +235,9 @@ mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
 
 build_miniz_objects "$MINIZ_SOURCE" "$OUT/miniz-objects" > "$OUT/miniz-objects.list"
 mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
+MINIZ_CRC_OBJECT="$OUT/superzip-miniz-checksum.o"
+"$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
+  -c src/core/miniz_checksum.cpp -o "$MINIZ_CRC_OBJECT"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/cpio_fuzzer.cpp \
   src/cpio/cpio_adapter.cpp \
@@ -243,6 +248,7 @@ mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
   src/core/path_safety.cpp \
   src/core/progress.cpp \
   "${MINIZ_OBJECTS[@]}" \
+  "$MINIZ_CRC_OBJECT" "$CHECKSUM_OBJECT" "${LZMA_CRC_OBJECTS[@]}" \
   -o "$OUT/superzip_cpio_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
@@ -254,6 +260,7 @@ mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
   src/core/path_safety.cpp \
   src/core/progress.cpp \
   "${MINIZ_OBJECTS[@]}" \
+  "$MINIZ_CRC_OBJECT" "$CHECKSUM_OBJECT" "${LZMA_CRC_OBJECTS[@]}" \
   -o "$OUT/superzip_xar_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 

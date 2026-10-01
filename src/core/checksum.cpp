@@ -78,7 +78,7 @@ void initialize_crc32_backend() noexcept {
 // Purpose: Compute or continue the ZIP-compatible CRC-32 of a borrowed byte range.
 // Inputs: bytes remains readable for this call; seed is a finalized prior CRC, or zero for a new range.
 // Outputs: Returns a finalized CRC without retaining input, allocating per call, or changing bytes.
-std::uint32_t crc32(std::span<const std::byte> bytes, std::uint32_t seed) {
+std::uint32_t crc32(std::span<const std::byte> bytes, std::uint32_t seed) noexcept {
     if (bytes.empty()) {
         return seed;
     }

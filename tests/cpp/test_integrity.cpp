@@ -8,6 +8,9 @@
 
 #include "7zCrc.h"
 
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
+#include "miniz.h"
+
 #include <array>
 #include <barrier>
 #include <cstddef>
@@ -38,7 +41,7 @@ std::uint32_t bitwise_crc32(std::span<const std::byte> bytes, std::uint32_t seed
 }  // namespace
 
 // Purpose: Verify shared checksums and direct SDK callers publish the same tables under concurrent first use.
-// Inputs: Eight synchronized workers hashing the standard check string through alternating public/SDK paths.
+// Inputs: Eight synchronized workers hashing the standard check string through shared, SDK, and Miniz paths.
 // Outputs: Requires exact checksums in a fresh filtered process and idempotent SDK initialization.
 TEST_CASE(crc32_parallel_first_use_matches_known_digest) {
     constexpr std::string_view input = "123456789";
@@ -47,9 +50,13 @@ TEST_CASE(crc32_parallel_first_use_matches_known_digest) {
     for (std::size_t index = 0U; index < workers.size(); ++index) {
         workers[index] = std::async(std::launch::async, [&ready, input, index] {
             ready.arrive_and_wait();
-            if ((index & 1U) != 0U) {
+            if (index % 3U == 1U) {
                 superzip::initialize_crc32_backend();
                 return static_cast<std::uint32_t>(CrcCalc(input.data(), input.size()));
+            }
+            if (index % 3U == 2U) {
+                return static_cast<std::uint32_t>(
+                    mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const unsigned char*>(input.data()), input.size()));
             }
             return superzip::crc32(std::as_bytes(std::span(input.data(), input.size())));
         });
@@ -61,7 +68,7 @@ TEST_CASE(crc32_parallel_first_use_matches_known_digest) {
 
 // Purpose: Verify IEEE CRC seeds, unaligned input, table-word boundaries, and partial tails independently.
 // Inputs: Deterministic nonperiodic bytes at sixteen alignments, thirty-four lengths, and four finalized seeds.
-// Outputs: Requires bitwise-oracle equality and preserves seeds for an empty default span.
+// Outputs: Requires both shared and Miniz CRCs to equal the bitwise oracle and preserve non-null empty seeds.
 TEST_CASE(crc32_seeded_alignment_and_tail_oracle) {
     constexpr std::array<std::size_t, 34> lengths{
         0U,  1U,  2U,  3U,  4U,  7U,  8U,  9U,  11U, 12U,  13U,  15U,  16U,   17U,   23U,   24U,   25U,
@@ -81,7 +88,10 @@ TEST_CASE(crc32_seeded_alignment_and_tail_oracle) {
         for (std::size_t alignment = 0U; alignment < 16U; ++alignment) {
             for (const auto length : lengths) {
                 const auto bytes = std::span(input).subspan(alignment, length);
-                REQUIRE_EQ(superzip::crc32(bytes, seed), bitwise_crc32(bytes, seed));
+                const auto expected = bitwise_crc32(bytes, seed);
+                REQUIRE_EQ(superzip::crc32(bytes, seed), expected);
+                REQUIRE_EQ(mz_crc32(seed, reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size()),
+                           static_cast<mz_ulong>(expected));
             }
         }
     }
@@ -89,7 +99,7 @@ TEST_CASE(crc32_seeded_alignment_and_tail_oracle) {
 
 // Purpose: Verify arbitrary nonzero CRC seeds retain their meaning across fragmented streaming calls.
 // Inputs: A fixed UTF-8 byte sequence, four seeds, and every possible ordered split including empty halves.
-// Outputs: Requires each fragmented result to match the independent contiguous oracle.
+// Outputs: Requires shared and Miniz fragmented results to match the independent contiguous oracle.
 TEST_CASE(crc32_seeded_fragmentation_matches_independent_oracle) {
     constexpr std::string_view input = "CRC streaming seeds must remain finalized across calls.";
     const auto bytes = std::as_bytes(std::span(input.data(), input.size()));
@@ -98,8 +108,25 @@ TEST_CASE(crc32_seeded_fragmentation_matches_independent_oracle) {
         for (std::size_t split = 0U; split <= bytes.size(); ++split) {
             const auto first = superzip::crc32(bytes.first(split), seed);
             REQUIRE_EQ(superzip::crc32(bytes.subspan(split), first), expected);
+            const auto miniz_first = mz_crc32(seed, reinterpret_cast<const unsigned char*>(bytes.data()), split);
+            REQUIRE_EQ(mz_crc32(miniz_first, reinterpret_cast<const unsigned char*>(bytes.data() + split),
+                                bytes.size() - split),
+                       static_cast<mz_ulong>(expected));
         }
     }
+}
+
+// Purpose: Verify the external hook's documented null initialization and platform-width seed semantics.
+// Inputs: Null initialization requests, a non-null empty range, and the widest mz_ulong finalized seed.
+// Outputs: Requires null to reset to zero and non-null calls to retain only the low 32 seed bits.
+TEST_CASE(crc32_miniz_null_initialization_and_seed_width) {
+    constexpr unsigned char byte = 0xA5U;
+    constexpr auto seed = std::numeric_limits<mz_ulong>::max();
+    REQUIRE_EQ(mz_crc32(seed, nullptr, 0U), static_cast<mz_ulong>(MZ_CRC32_INIT));
+    REQUIRE_EQ(mz_crc32(seed, nullptr, 1U), static_cast<mz_ulong>(MZ_CRC32_INIT));
+    REQUIRE_EQ(mz_crc32(seed, &byte, 0U), static_cast<mz_ulong>(0xFFFFFFFFU));
+    const auto expected = bitwise_crc32(std::as_bytes(std::span(&byte, 1U)), 0xFFFFFFFFU);
+    REQUIRE_EQ(mz_crc32(seed, &byte, 1U), static_cast<mz_ulong>(expected));
 }
 
 // Purpose: Prove bounded parallel checksum composition matches an independent IEEE oracle and serial backend.

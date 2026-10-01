@@ -110,6 +110,15 @@ are separate scanner records, not summed unique vulnerabilities; the upstream
 parent/child constraint remains unresolved. Two Scorecard governance residuals
 remain approved, leaving 213 unapproved open alerts in this dated snapshot.
 
+The completed `c21b435` analysis retains 1,692 records: 210 open, 864 fixed,
+and 618 dismissed. CodeQL automatically closes the five owned-source
+floating-point/function-size reports after their code repairs; no dismissal
+or scanner exclusion was used. The generated CMake header report stays open.
+With two approved governance residuals, the audit still fails for 208
+unapproved alerts. Overall security remains blocked by OSV/Grype's PyJWT
+findings despite successful CodeQL, secret-history, SAST, Windows CI, lint,
+graph validation, and both fuzzing jobs. This is a snapshot, not release acceptance.
+
 ## Reuse Without Repeating Work
 
 Run the existing audit on demand, with a new report destination:

@@ -43,6 +43,18 @@ existing file. Regression tests first reproduced that behavior in all three
 implementations, then verified preservation for existing and missing paths at
 levels 0, 10, and both signed integer extremes.
 
+## Shared IEEE Integrity Backend
+
+ZIP and Gzip use Miniz's documented external-CRC hook to share the existing
+capability-aware IEEE backend with SUZIP and 7z. TAR.GZ and CPIO.GZ receive
+the same implementation. There is one thread-safe initialization guard, no new
+dependency, no CRC32C substitution, and no change to required checks, effort,
+or durable publication. The C ABI resets on null initialization and preserves
+a non-null empty range's low 32 seed bits. Bitwise-oracle, fragmentation,
+alignment, and concurrent-first-use tests verify the contract.
+See the [controls and measurement limits](benchmarks/2026-10-01-compatibility-crc-hook.md);
+an isolated checksum gain is not an end-to-end performance guarantee.
+
 ## Lifetime And Byte Identity
 
 `tests/cpp/test_compression_streams.cpp` applies shared checks to all three
