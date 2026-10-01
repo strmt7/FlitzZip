@@ -750,9 +750,19 @@ function Test-FuzzHarnessPolicy {
         $fuzzScript -match 'bash\s+-lc\s+\$script') {
         throw "The local fuzz driver must execute a mounted script, not pass script text through native quoting."
     }
+    if ($fuzzScript -notmatch '--memory \$memoryLimit --memory-swap \$memoryLimit' -or
+        $fuzzScript -notmatch 'Resolve-SuperZipFuzzMemoryBudget' -or
+        $fuzzScript -notmatch 'SUPERZIP_FUZZ_MEMORY_MIB=\$memoryMiB' -or
+        $fuzzScript -match '--(?:cpus|cpu-quota|cpuset-cpus|oom-kill-disable)\b') {
+        throw 'Local fuzzing must enforce admitted RAM with no swap, CPU cap, or disabled OOM safeguards.'
+    }
     $seedScript = Get-Content -LiteralPath (Join-Path $repo ".clusterfuzzlite\local_smoke.sh") -Raw
     if ($seedScript.Contains("`r") -or $seedScript -notmatch 'ET\.fromstring\(toc\)') {
         throw "The local fuzz seed script must use LF and validate its XAR XML before fuzzing."
+    }
+    if ($seedScript -notmatch 'python3 tools/fuzz_memory\.py verify --budget-mib' -or
+        $seedScript.IndexOf('python3 tools/fuzz_memory.py verify') -gt $seedScript.IndexOf('bash .clusterfuzzlite/build.sh')) {
+        throw 'Local fuzzing must verify enforced cgroup limits before building the sanitizer harness.'
     }
     if ($seedScript -notmatch 'sanitizer_flags="-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=all"' -or
         $seedScript -notmatch 'export CFLAGS="\$\{CFLAGS:\?[^}]+\} \$sanitizer_flags"' -or

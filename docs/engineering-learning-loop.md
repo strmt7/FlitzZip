@@ -90,6 +90,13 @@ the Security tab, released artifacts, or the product UI again.
   CMake/MSBuild scheduling shares the same admitted count and restores its local
   environment on failure. Hosted YAML must not force a stale job count past this
   admission check; dedicated CI still uses the shared production build helper.
+- Local fuzzing previously had no Docker RAM or swap cap. It now admits the
+  smaller budget from Windows and Docker-host free RAM, verifies cgroup v1/v2
+  enforcement before compilation, and leaves CPUs unrestricted. Offline
+  regressions cover low-memory refusal, malformed/unavailable counters,
+  native failure propagation, unsupported limits, and both cgroup layouts.
+  The real sanitizer smoke must also pass under those enforced limits.
+  Volatile admission is not a reservation against concurrent unrelated work.
 - A native bridge launched from PowerShell 7 can pass incompatible module paths
   to Windows PowerShell 5.1. The traced CodeQL pilot and actual MCP launcher both
   reproduced missing `Get-FileHash`. MCP now normalizes only the child environment,

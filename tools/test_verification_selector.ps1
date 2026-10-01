@@ -89,6 +89,15 @@ function Invoke-WaiterSmoke {
 $emptyPaths = @(Select-SuperZipUniquePath -Path @($null, "", " "))
 Assert-Selector ($emptyPaths.Count -eq 0) "clean git output must normalize to an empty path set without binding errors"
 
+foreach ($path in @('tools/fuzz_resources.ps1', 'tools/test_fuzz_resources.ps1',
+        'tools/fuzz_memory.py', 'tools/test_fuzz_memory.py')) {
+    $resourcePlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector $resourcePlan.scope.fullEscalationRequired 'fuzz resource boundaries must receive full verification'
+    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id 'fuzz-resource-tests') 'fuzz admission tests must remain selected'
+    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id 'fuzz-memory-tests') 'cgroup limit regressions must remain selected'
+    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id 'short-fuzz-smoke') 'resource changes must exercise real sanitizer targets'
+}
+
 $docsPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md")
 Assert-Selector $docsPlan.scope.docsOnly "docs-only changes must be classified as docsOnly"
 Assert-Selector (-not $docsPlan.scope.fullEscalationRequired) "docs-only changes must not escalate"

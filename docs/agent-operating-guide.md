@@ -358,6 +358,14 @@ Guidelines, and SEI CERT C++.
   Tools with native RAM limits (such as CodeQL `--ram`) must use that budget;
   tools without such limits need streaming, memory-aware concurrency, or separate
   process-tree memory containment before memory-heavy unattended operation.
+- Local Docker fuzzing must sample both Windows and Docker-host available RAM,
+  select the smaller shared-policy budget, and enforce it with matching
+  `--memory` and `--memory-swap` values (no container swap). Its contained
+  probe and sanitizer harness verify the actual cgroup limits before building.
+  Missing memory/swap support or insufficient headroom is an explicit failure,
+  not permission to run unbounded. Do not cap CPU availability or disable the
+  OOM safeguards. This contains the fuzz container, not unrelated Docker or
+  Windows work. See [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/).
 - Prefer `BelowNormal` priority for this task's long builds and analyses,
   including CodeQL, without CPU affinity or fixed CPU-rate caps. The local
   verifier lowers only its own process while invoking correctness children,

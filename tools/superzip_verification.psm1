@@ -263,6 +263,8 @@ function Get-SuperZipVerificationScope {
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
+        '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
+        '^tools/(fuzz_memory|test_fuzz_memory)\.py$',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
@@ -381,6 +383,8 @@ function Get-SuperZipLocalVerificationCommand {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "workflow-checkpoint-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_workflow_checkpoint.ps1") -Reason "intermediate observations must fail on real errors, record pending checks, and preserve final acceptance")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "build-parallelism-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_build_parallelism.ps1") -Reason "build scheduling must honor explicit job counts and bound default shared-host load")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "fuzz-resource-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_fuzz_resources.ps1") -Reason "local fuzz admission must fit Windows and Docker-host RAM without CPU caps")
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "fuzz-memory-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_fuzz_memory") -Reason "local fuzzing must verify real cgroup RAM and zero-swap limits before compiling")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies")
         }
