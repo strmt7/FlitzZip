@@ -170,6 +170,7 @@ foreach ($path in @("tools/benchmark_cache.py", "tools/test_benchmark_cache.py",
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tests") "workflow changes must test secret artifact redaction"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "scanner-coverage-tests") "workflow changes must test complete scanner coverage evidence"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-provenance-tests") "workflow changes must test exact scanner package provenance"
+Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-report-tests") "workflow changes must test lossless scanner report publication"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests") "workflow changes must test broker authorization and masking"
 
 foreach ($path in @("tools/semgrep_coverage.py", "tools/test_semgrep_coverage.py")) {
@@ -184,6 +185,12 @@ foreach ($path in @("tools/devskim_provenance.py", "tools/test_devskim_provenanc
     Assert-Selector (Test-RequiredCommand -Plan $provenancePlan -Id "devskim-provenance-tests") "scanner provenance changes must run their offline regressions: $path"
     Assert-Selector (Test-Workflow -Plan $provenancePlan -Name "security") "scanner provenance changes must exercise the real installation: $path"
     Assert-Selector (-not (Test-RequiredCommand -Plan $provenancePlan -Id "release-build")) "scanner metadata changes alone must not rebuild the product: $path"
+}
+foreach ($path in @("tools/devskim_report.py", "tools/test_devskim_report.py")) {
+    $reportPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $reportPlan -Id "devskim-report-tests") "report changes must run their offline regressions: $path"
+    Assert-Selector (Test-Workflow -Plan $reportPlan -Name "security") "report changes must exercise hosted SARIF validation: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $reportPlan -Id "release-build")) "scanner report changes alone must not rebuild the product: $path"
 }
 
 foreach ($path in @("tools/prepare_semgrep_wheel.py", "tools/test_prepare_semgrep_wheel.py", "tools/test_semgrep_runtime.py", ".github/requirements/semgrep-packaging.json", ".github/requirements/requirements-semgrep-linux.in", ".github/requirements/requirements-semgrep-linux.txt", ".github/workflows/security-code-scanning.yml")) {

@@ -188,6 +188,12 @@ the Security tab, released artifacts, or the product UI again.
   Offline regressions reject metadata drift, truncation, growth, and digest
   corruption. A CLI-version probe does not validate the SDK installation path;
   the hosted job must also install and scan through the verified local feed.
+  The next run exposed an upstream empty-snippet SARIF serialization failure.
+  Before changing scanner pins, exercise an actual finding through scanning,
+  publication, and complete SARIF schema validation, not only the version probe.
+  Keep source excerpts disabled and finding metadata intact. The report adapter
+  rejects producer drift and unexpected excerpt content; its offline regressions
+  run locally and in hosted CI. A valid raw result count is not an accepted upload.
 
 The [incident-history review](code-scanning-history-review.md) maps all retrieved
 scanner families to existing guardrails and records unfinished work. It is an

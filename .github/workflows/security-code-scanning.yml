@@ -339,8 +339,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/devskim/devskim" analyze -I . -O devskim-results.sarif \
+          python -m unittest tools.test_devskim_report
+          "$RUNNER_TEMP/devskim/devskim" analyze -I . -O "$RUNNER_TEMP/devskim-raw.sarif" \
             -f sarif -g "**/.git/**" --disable-supression --skip-excerpts
+          python -m tools.devskim_report "$RUNNER_TEMP/devskim-raw.sarif" devskim-results.sarif
       - name: Upload DevSkim SARIF
         if: always() && hashFiles('devskim-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2

@@ -55,7 +55,7 @@ jobs:
       - name: Scanner provenance and coverage regression tests
         shell: pwsh
         run: |
-          python -m unittest tools.test_semgrep_coverage tools.test_devskim_provenance
+          python -m unittest tools.test_semgrep_coverage tools.test_devskim_provenance tools.test_devskim_report
           if ($LASTEXITCODE -ne 0) { throw "Scanner provenance or coverage regressions failed." }
       - name: Refactor inventory regression tests
         shell: pwsh

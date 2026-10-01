@@ -83,6 +83,20 @@ metadata, truncation, growth, corruption, and streaming chunk boundaries.
 An isolated empty NuGet cache and cleared fallback folders prevent reuse of
 a different same-version package. The configuration follows
 [NuGet's documented lookup order](https://learn.microsoft.com/en-us/nuget/reference/nuget-config-file#fallbackpackagefolders-section).
+
+The pinned [upstream SARIF writer](https://github.com/microsoft/DevSkim/blob/ea92e6f3cc1a1482c39afbe2060aba7f77b74c48/DevSkim-DotNet/Microsoft.DevSkim.CLI/Writers/SarifWriter.cs)
+emits empty rendered snippets when `--skip-excerpts` is active. Its serializer
+omits the required rendered `text`, so GitHub rejects the report against
+[SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/cos02/schemas/sarif-schema-2.1.0.json).
+`tools/devskim_report.py` removes only these empty optional physical-region
+snippets. It preserves every finding, location, message, severity, and
+fingerprint; nonempty or unknown snippet content fails publication. Raw scanner
+output stays in runner temporary storage, and only the completed report is
+published atomically. Offline regressions cover metadata parity, malformed
+reports, bounded resources, overwrite refusal, and publication failures.
+GitHub's complete SARIF schema validation remains enabled. This adapter is
+not a finding filter, and successful upload does not establish zero alerts.
+
 The upstream generic hexadecimal-literal rule remains enabled;
 upgrading the CLI does not establish that public-digest matches are secrets
 or that all old findings were fixed. Locally defined scanner jobs have explicit time budgets;
