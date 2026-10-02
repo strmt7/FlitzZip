@@ -17,10 +17,10 @@ namespace {
 
 constexpr auto kUnavailableKernelTime = std::numeric_limits<std::uint64_t>::max();
 
-// Purpose: Accumulate event time without wrapping or losing an unavailable-time marker.
+// Purpose: Accumulate event or worker time without wrapping or losing an unavailable-time marker.
 // Inputs: `counter` is shared timing state and `microseconds` is a duration or the unavailable sentinel.
 // Outputs: Atomically adds valid durations; overflow or any unavailable input permanently marks the total unavailable.
-void accumulate_kernel_microseconds(std::atomic<std::uint64_t>& counter, std::uint64_t microseconds) {
+void accumulate_timing_microseconds(std::atomic<std::uint64_t>& counter, std::uint64_t microseconds) {
     auto current = counter.load(std::memory_order_relaxed);
     while (current != kUnavailableKernelTime) {
         const auto next =
@@ -28,6 +28,19 @@ void accumulate_kernel_microseconds(std::atomic<std::uint64_t>& counter, std::ui
         if (counter.compare_exchange_weak(current, next, std::memory_order_relaxed)) {
             return;
         }
+    }
+}
+
+// Purpose: Accumulate a host-observed worker interval with the same overflow contract as device event timing.
+// Inputs: counter owns one stage; elapsed is a steady-clock interval and may be zero or negative.
+// Outputs: Adds positive whole microseconds; invalid nonpositive intervals are ignored and overflow is sticky.
+void record_worker_duration(std::atomic<std::uint64_t>& counter, std::chrono::steady_clock::duration elapsed) {
+    if (elapsed <= std::chrono::steady_clock::duration::zero()) {
+        return;
+    }
+    const auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    if (microseconds > 0) {
+        accumulate_timing_microseconds(counter, static_cast<std::uint64_t>(microseconds));
     }
 }
 
@@ -153,10 +166,15 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
     merge_gpu_counter(target->dictionary_blocks, source.dictionary_blocks.load(std::memory_order_relaxed));
     merge_gpu_counter(target->sparse_pattern_blocks, source.sparse_pattern_blocks.load(std::memory_order_relaxed));
     for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
-        merge_gpu_counter(target->encode_stage_worker_microseconds[index],
-                          source.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
+        accumulate_timing_microseconds(target->encode_stage_worker_microseconds[index],
+                                       source.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
     }
-    accumulate_kernel_microseconds(target->kernel_microseconds,
+    for (std::size_t index = 0; index < kOwnedDecodeStageCount; ++index) {
+        accumulate_timing_microseconds(
+            target->owned_decode_stage_worker_microseconds[index],
+            source.owned_decode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
+    }
+    accumulate_timing_microseconds(target->kernel_microseconds,
                                    source.kernel_microseconds.load(std::memory_order_relaxed));
 }
 
@@ -245,9 +263,16 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
                                                             : static_cast<double>(microseconds) / 1000.0,
     };
     for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
-        stats.encode_stage_worker_seconds[index] =
-            static_cast<double>(telemetry.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed)) /
-            1'000'000.0;
+        const auto stage_time = telemetry.encode_stage_worker_microseconds[index].load(std::memory_order_relaxed);
+        stats.encode_stage_worker_seconds[index] = stage_time == kUnavailableKernelTime
+                                                       ? std::numeric_limits<double>::quiet_NaN()
+                                                       : static_cast<double>(stage_time) / 1'000'000.0;
+    }
+    for (std::size_t index = 0; index < kOwnedDecodeStageCount; ++index) {
+        const auto stage_time = telemetry.owned_decode_stage_worker_microseconds[index].load(std::memory_order_relaxed);
+        stats.owned_decode_stage_worker_seconds[index] = stage_time == kUnavailableKernelTime
+                                                             ? std::numeric_limits<double>::quiet_NaN()
+                                                             : static_cast<double>(stage_time) / 1'000'000.0;
     }
     return stats;
 }
@@ -370,7 +395,7 @@ void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, dou
                                           rounded >= std::ldexp(1.0, 64)
                                       ? kUnavailableKernelTime
                                       : static_cast<std::uint64_t>(rounded);
-        accumulate_kernel_microseconds(telemetry->kernel_microseconds, microseconds);
+        accumulate_timing_microseconds(telemetry->kernel_microseconds, microseconds);
     }
 }
 
@@ -380,14 +405,22 @@ void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, dou
 void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
                                   std::chrono::steady_clock::duration elapsed) {
     const auto index = static_cast<std::size_t>(stage);
-    if (!telemetry || index >= kGpuEncodeStageCount || elapsed <= std::chrono::steady_clock::duration::zero()) {
+    if (!telemetry || index >= kGpuEncodeStageCount) {
         return;
     }
-    const auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
-    if (microseconds > 0) {
-        telemetry->encode_stage_worker_microseconds[index].fetch_add(static_cast<std::uint64_t>(microseconds),
-                                                                     std::memory_order_relaxed);
+    record_worker_duration(telemetry->encode_stage_worker_microseconds[index], elapsed);
+}
+
+// Purpose: Record host-observed owned-decode work independently of CPU/GPU backend selection.
+// Inputs: Optional operation telemetry, a stage identifier, and its measured steady-clock interval.
+// Outputs: Accumulates positive whole microseconds; invalid stages/intervals are ignored and overflow is sticky.
+void record_owned_decode_stage_time(GpuTelemetry* telemetry, OwnedDecodeStage stage,
+                                    std::chrono::steady_clock::duration elapsed) {
+    const auto index = static_cast<std::size_t>(stage);
+    if (!telemetry || index >= kOwnedDecodeStageCount) {
+        return;
     }
+    record_worker_duration(telemetry->owned_decode_stage_worker_microseconds[index], elapsed);
 }
 
 GpuInfo query_gpu_info() {

@@ -686,6 +686,7 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
 void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
     const auto& stats = result.stats;
     const auto& stages = stats.gpu_runtime.encode_stage_worker_seconds;
+    const auto& decode_stages = stats.gpu_runtime.owned_decode_stage_worker_seconds;
     std::cout
         << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes << " output_bytes=" << stats.output_bytes
         << " archive_bytes=" << result.archive_bytes << " workers=" << stats.workers
@@ -713,6 +714,12 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << " gpu_sparse_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Sparse)]
         << " gpu_dictionary_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Dictionary)]
         << " gpu_publication_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Publication)]
+        << " decode_allocation_worker_seconds="
+        << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::OutputAllocation)]
+        << " decode_materialization_worker_seconds="
+        << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::Materialization)]
+        << " decode_crc_worker_seconds="
+        << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)]
         << " seconds=" << stats.seconds << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
         << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
         << " extract_seconds=" << result.extract_seconds

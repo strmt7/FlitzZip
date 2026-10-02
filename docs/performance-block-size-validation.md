@@ -136,6 +136,23 @@ attempt merges, and operation-total aggregation. Benchmark readers retain it
 as unavailable and reject it as HIP timing evidence. This does not identify
 the cause of an invalid device clock or establish performance improvements.
 
+Owned-output decoding records allocation, decoded-byte materialization and host
+CRC intervals through the same production path for CPU and GPU execution. The
+RAM result adds `owned_decode_stage_worker_seconds` with `allocation`,
+`materialization` and `crc` fields. These are summed concurrent host-observed
+worker intervals, not HIP event durations, wall-clock phase fractions or a
+critical-path breakdown. Materialization includes the backend work and waits
+inside `decode_chunk`; it does not isolate transfers from kernels. In the RAM
+benchmark, owned-output decoding occurs during extraction, while aggregate HIP
+kernel and transfer counters also include compression and verification.
+
+Worker timing uses the same sticky unavailable-on-overflow contract as kernel
+timing. The benchmark reporter rejects missing, extra, negative or non-finite
+stage values. Historical records without these additive schema-two fields do
+not provide stage evidence; never fill missing timings with fabricated zeros.
+Single-repeat stage diagnostics can select the next profiling target, but cannot
+establish a speedup, stability trend or release-ready comparison.
+
 ### Dispatch-Bound Timing (2026-09-08)
 
 Production codec and diagnostic launches now attach their start/stop events
@@ -175,6 +192,7 @@ Record these fields for every block size:
 | `CompressionRatio` | Confirms CPU/GPU speed comparisons use equivalent compression strength. |
 | `Workers`, `InflightChunks`, `CodecWorkers` | Confirms production worker allocation. |
 | `DecodeInflightChunks`, `DecodeCodecWorkers` | Separates extraction admission/checksum workers from the encoder and verifier queue. |
+| `OwnedDecodeStages` | Separates owned-output allocation, materialization and host CRC as summed worker intervals for either backend, not elapsed phase times. |
 | `GpuEncodeChunks`, `GpuDecodeChunks` | Proves the GPU lane processed archive work. |
 | `GpuKernelLaunches`, `GpuKernelMs` | Proves HIP kernels were submitted and timed. |
 | `GpuH2DMiB`, `GpuD2HMiB`, `GpuAllocMiB` | Confirms device transfer and allocation behavior. |

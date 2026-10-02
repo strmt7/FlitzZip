@@ -2,9 +2,10 @@
 
 ## Current Modernization Sequence
 
-The September 2026 work proceeds serially, with Codex Security reserved for the
-final audit phase as requested. A local pass is not evidence of a clean remote
-Security tab or a published release.
+The modernization work proceeds serially. Imported scanner alerts are being
+triaged in batches; a comprehensive final security audit remains a separate
+gate. A local pass is not evidence of a clean remote Security tab or a published
+release.
 
 The [2026-10-01 archive engineering review](docs/archive-engineering-review.md)
 compares selected practices from six established open-source projects and orders
@@ -23,15 +24,34 @@ committed-memory containment is verified; actual parent/descendant allocation
 tests and launch-failure regressions cover the new boundary. These are correctness
 and hardening results, not new speed or compression-ratio measurements.
 
-The pre-push GitHub snapshot has 216 open alerts, including 183 in the pinned
-Zstandard source, six owned numeric-formatting alerts addressed by this batch,
-six SDK fixed-size-copy warnings, 18 verified provenance-hash matches, one CMake
-compiler-probe warning and two existing Scorecard residuals. Four Zstandard
-dictionary-job lifetime alerts have retained static join-before-destruction
-counterevidence; their GitHub state is unchanged. This is not a completed audit
-or permission to suppress rules. Hosted confirmation, the rest of the scanner
-backlog, CPU/GPU workspace accounting, mixed-profile extraction diagnosis, final
-comparisons/charts, end-user documentation and release acceptance remain open.
+Hosted checks for commit `e79cee0` passed Windows CI, lint, security, fuzzing,
+Scorecard, scanner-configuration validation and the explicitly dispatched graph
+validation. The October 2 post-push snapshot has 210 open alerts, down from 216:
+all six owned numeric-formatting alerts closed automatically. The remaining
+alerts comprise 183 in pinned Zstandard source, six SDK fixed-size-copy warnings,
+18 verified provenance-hash matches, one CMake compiler-probe warning and two
+Scorecard residuals. Dependabot and open pull-request counts are both zero in
+that snapshot. These counts describe GitHub alerts, not confirmed vulnerabilities.
+
+Static triage retains per-alert counterevidence for four dictionary-job lifetime
+alerts, six pointer-bound alerts and 20 packed-table pointer-stride alerts. Their
+GitHub state is unchanged; static counterevidence is not a blanket vendor safety
+claim or permission to suppress rules. Remaining scanner triage, CPU/GPU
+workspace accounting, mixed-profile extraction diagnosis, final comparisons and
+charts, end-user documentation and release acceptance remain open.
+
+The subsequent owned-decoder instrumentation batch passes all 28 full-profile
+local commands, including 560 native tests, the format matrix, independent
+interoperability, bounded sanitizer smoke and unpublished package validation.
+All eight GUI pages were inspected. Allocation, materialization and host-CRC
+worker intervals now share production CPU/GPU instrumentation; overflowing
+worker totals remain unavailable rather than wrapping. Six 10 GiB RAM diagnostic
+lanes at effort 5 and 8 MiB blocks completed with unchanged archive sizes.
+Materialization is the largest measured GPU owned-decode worker interval on the
+Mixed and Incompressible profiles. These overlapping intervals are not wall-time
+fractions or a new speedup claim. One run overlapped a short lint invocation;
+none of these single-repeat diagnostics is final publication evidence. Hosted
+validation for this subsequent batch remains pending until its push completes.
 
 1. Refresh dependency graphs and pinned provenance. Current local checks cover
    updated Python locks, LZMA SDK 26.03, miniz 3.1.2, Lhasa 0.6.0, native build,

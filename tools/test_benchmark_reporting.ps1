@@ -58,6 +58,7 @@ $fixtureRun = [pscustomobject]@{
         readiness = 0.5; analysis = 0.1; classification = 1.25; prefix = 0.75
         sparse = 0.2; dictionary = 5.5; publication = 0.3
     }
+    OwnedDecodeStages = [ordered]@{ allocation = 0.25; materialization = 2.5; crc = 0.75 }
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
     ResourceSampleCount = 25; GpuSampleCount = 23; ResourceSampleMeanIntervalMs = 102.5
     GpuKernelLaunches = 720; GpuKernelMs = $null
@@ -82,7 +83,10 @@ if ($record.schema_version -ne 2 -or $record.gpu_utilization_metric -ne 'process
     $record.runs[0].codec_encode_worker_seconds -ne 9.5 -or
     $record.runs[0].gpu_sample_count -ne 23 -or
     $record.runs[0].resource_sample_mean_interval_ms -ne 102.5 -or
-    $record.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5) {
+    $record.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5 -or
+    $record.runs[0].owned_decode_stage_worker_seconds.allocation -ne 0.25 -or
+    $record.runs[0].owned_decode_stage_worker_seconds.materialization -ne 2.5 -or
+    $record.runs[0].owned_decode_stage_worker_seconds.crc -ne 0.75) {
     throw 'RAM benchmark JSON lost provenance, exact size, or unavailable counter semantics.'
 }
 $jsonPath = Join-Path $env:TEMP ("superzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
@@ -99,7 +103,10 @@ try {
         $stored.runs[0].codec_encode_worker_seconds -ne 9.5 -or
         $stored.runs[0].resource_sample_count -ne 25 -or
         $stored.runs[0].gpu_sample_count -ne 23 -or
-        $stored.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5) {
+        $stored.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5 -or
+        $stored.runs[0].owned_decode_stage_worker_seconds.allocation -ne 0.25 -or
+        $stored.runs[0].owned_decode_stage_worker_seconds.materialization -ne 2.5 -or
+        $stored.runs[0].owned_decode_stage_worker_seconds.crc -ne 0.75) {
         throw 'Serialized RAM benchmark JSON differs from the record.'
     }
     if ($record.runs[0].gpu_kernel_launches -isnot [int64] -or
@@ -146,6 +153,36 @@ foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
     if (-not $invalidRejected) { throw 'Invalid GPU encode stage time entered the RAM-only evidence record.' }
 }
 $fixtureRun.GpuEncodeStages['dictionary'] = 5.5
+
+foreach ($stage in @('allocation', 'materialization', 'crc')) {
+    $saved = $fixtureRun.OwnedDecodeStages[$stage]
+    foreach ($invalid in @($null, -1.0, [double]::NaN, [double]::PositiveInfinity)) {
+        $fixtureRun.OwnedDecodeStages[$stage] = $invalid
+        $rejected = $false
+        try {
+            ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+                -BinarySha256 ('B' * 64) -Profile 'Mixed' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+        } catch { $rejected = $true }
+        if (-not $rejected) { throw "Invalid $stage owned-decode stage time was accepted." }
+    }
+    $fixtureRun.OwnedDecodeStages[$stage] = $saved
+    $fixtureRun.OwnedDecodeStages.Remove($stage)
+    $rejected = $false
+    try {
+        ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+            -BinarySha256 ('B' * 64) -Profile 'Mixed' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw "Missing $stage owned-decode stage was accepted." }
+    $fixtureRun.OwnedDecodeStages[$stage] = $saved
+}
+$fixtureRun.OwnedDecodeStages['unknown'] = 0.0
+$rejected = $false
+try {
+    ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+        -BinarySha256 ('B' * 64) -Profile 'Mixed' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+} catch { $rejected = $true }
+if (-not $rejected) { throw 'Unknown owned-decode stage was accepted.' }
+$fixtureRun.OwnedDecodeStages.Remove('unknown')
 $fixtureRun.GpuSampleCount = 26
 $invalidRejected = $false
 try {

@@ -31,6 +31,18 @@ enum class GpuEncodeStage : std::size_t {
 
 inline constexpr std::size_t kGpuEncodeStageCount = static_cast<std::size_t>(GpuEncodeStage::Count);
 
+// Purpose: Name host-observed phases shared by CPU and GPU owned-output decoding.
+// Inputs: Used as a validated telemetry index, never as a wire-format value.
+// Outputs: Separates storage allocation, decoded-byte materialization, and host integrity work.
+enum class OwnedDecodeStage : std::size_t {
+    OutputAllocation,
+    Materialization,
+    HostChecksum,
+    Count,
+};
+
+inline constexpr std::size_t kOwnedDecodeStageCount = static_cast<std::size_t>(OwnedDecodeStage::Count);
+
 struct GpuInfo {
     bool hip_compiled = false;
     bool hip_runtime_loadable = false;
@@ -66,6 +78,8 @@ struct GpuRuntimeStats {
     double kernel_ms = 0.0;  // NaN means at least one event time or its accumulated total was invalid.
     // Summed concurrent worker time, not elapsed wall time or HIP device time.
     std::array<double, kGpuEncodeStageCount> encode_stage_worker_seconds{};
+    // CPU or GPU owned decoding; summed worker intervals, not device or elapsed operation time.
+    std::array<double, kOwnedDecodeStageCount> owned_decode_stage_worker_seconds{};
 };
 
 struct GpuTelemetry {
@@ -83,6 +97,7 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> sparse_pattern_blocks{0};
     std::atomic<std::uint64_t> kernel_microseconds{0};  // UINT64_MAX permanently marks unavailable timing.
     std::array<std::atomic<std::uint64_t>, kGpuEncodeStageCount> encode_stage_worker_microseconds{};
+    std::array<std::atomic<std::uint64_t>, kOwnedDecodeStageCount> owned_decode_stage_worker_microseconds{};
 };
 
 struct GpuCodecOptions {
@@ -191,9 +206,15 @@ void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, dou
 
 // Purpose: Accumulate one HIP encode phase's host-observed worker time.
 // Inputs: Optional operation telemetry, a named phase, and a nonnegative steady-clock duration.
-// Outputs: Adds worker microseconds; concurrent phases may overlap and do not represent device time.
+// Outputs: Adds worker microseconds with sticky unavailable timing on overflow; overlapping work is not device time.
 void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
                                   std::chrono::steady_clock::duration elapsed);
+
+// Purpose: Accumulate production owned-decoding work for either CPU or GPU execution.
+// Inputs: Optional operation telemetry, named allocation/materialization/checksum stage, and steady-clock duration.
+// Outputs: Adds positive worker microseconds; overflow permanently marks the stage unavailable, not zero.
+void record_owned_decode_stage_time(GpuTelemetry* telemetry, OwnedDecodeStage stage,
+                                    std::chrono::steady_clock::duration elapsed);
 
 // Purpose: Inspect the compiled GPU backend and available AMD HIP device.
 // Inputs: None.

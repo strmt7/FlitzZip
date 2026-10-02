@@ -307,9 +307,13 @@ vulnerability. Normative agent rules remain in the operating guide.
 ## Adding A New Lesson
 
 HIP event timing now has bounded accumulation and a persistent unavailable
-state. `test_gpu_telemetry.cpp` covers invalid numbers, total overflow, and
-concurrent updates; `tools/test_benchmark_reporting.ps1` rejects non-finite
-evidence and checks lowercase native `nan` handling on Windows PowerShell.
+state. Encode and owned-decode worker intervals use the same overflow contract;
+never restore unchecked timing `fetch_add` or sum overlapping worker intervals
+as wall-clock phase fractions. `test_gpu_telemetry.cpp` covers invalid numbers,
+total overflow, concurrent updates and production CPU/GPU decode recording;
+`tools/test_benchmark_reporting.ps1` rejects missing, extra or non-finite stage
+evidence and checks JSON roundtrips and lowercase native `nan` handling on
+Windows PowerShell.
 Successful HIP API calls must not be taken as proof that returned durations
 are valid.
 

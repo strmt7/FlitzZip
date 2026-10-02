@@ -887,6 +887,14 @@ function Invoke-MemoryBenchmarkLane {
         }
         $gpuEncodeStages[$stage] = $value
     }
+    $ownedDecodeStages = [ordered]@{}
+    foreach ($stage in @('allocation', 'materialization', 'crc')) {
+        $value = Get-StatsNumber -Stats $stats -Key "decode_${stage}_worker_seconds"
+        if ($null -eq $value -or $value -lt 0) {
+            throw "$Lane memory benchmark did not report a finite nonnegative $stage decode worker time."
+        }
+        $ownedDecodeStages[$stage] = $value
+    }
     if ($ModeFlag -eq "--require-gpu") {
         Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
         if ($gpuEncodeStages['readiness'] -le 0 -or $gpuEncodeStages['classification'] -le 0) {
@@ -902,6 +910,7 @@ function Invoke-MemoryBenchmarkLane {
         SourceGenerationWorkerSeconds = $generationWork
         CodecEncodeWorkerSeconds = $codecWork
         GpuEncodeStages = $gpuEncodeStages
+        OwnedDecodeStages = $ownedDecodeStages
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
         Workers = [int]$stats["workers"]
@@ -977,9 +986,30 @@ function ConvertTo-HipRuntimeVersionEvidence {
     return $Value
 }
 
-# Purpose: Convert ordered RAM-only lane runs into a portable, provenance-bearing evidence record.
-# Inputs: `Runs` are verified lane results; remaining values identify binary/source state, workload, and configured pause.
-# Outputs: Returns schema-two data with explicit resource/run-order semantics and no synthesized missing counters.
+# Purpose: Validate complete independently named worker intervals before publishing benchmark evidence.
+# Inputs: Values is a stage dictionary, Stages is its exact required key set, and Label names the diagnostic group.
+# Outputs: Returns normally only for finite nonnegative values and exact stage coverage; otherwise throws.
+function Assert-BenchmarkWorkerStageTime {
+    param(
+        [AllowNull()][Collections.IDictionary]$Values,
+        [Parameter(Mandatory = $true)][string[]]$Stages,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if ($null -eq $Values -or $Values.Count -ne $Stages.Count) {
+        throw "RAM benchmark JSON rejected incomplete $Label stage times."
+    }
+    foreach ($stage in $Stages) {
+        if (-not $Values.Contains($stage) -or $null -eq $Values[$stage] -or
+            [double]::IsNaN([double]$Values[$stage]) -or
+            [double]::IsInfinity([double]$Values[$stage]) -or $Values[$stage] -lt 0) {
+            throw "RAM benchmark JSON rejected invalid $stage $Label worker time."
+        }
+    }
+}
+
+# Purpose: Build an exact, auditable RAM-only benchmark record without serializing host-private paths.
+# Inputs: Runs contain completed CPU/GPU lanes; arguments carry bounded workload and source/toolchain identity.
+# Outputs: Returns a validated record with finite timings, exact sizes, independent stages and resource evidence.
 function ConvertTo-RamBenchmarkRecord {
     param(
         [Parameter(Mandatory = $true)][object[]]$Runs,
@@ -1009,16 +1039,11 @@ function ConvertTo-RamBenchmarkRecord {
                 throw "RAM benchmark JSON rejected an inconsistent lane result."
             }
             $stageTimes = $_.GpuEncodeStages
-            if ($null -eq $stageTimes -or $stageTimes.Count -ne 7) {
-                throw "RAM benchmark JSON rejected incomplete GPU encode stage times."
-            }
-            foreach ($stage in @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')) {
-                if (-not $stageTimes.Contains($stage) -or $null -eq $stageTimes[$stage] -or
-                    [double]::IsNaN([double]$stageTimes[$stage]) -or
-                    [double]::IsInfinity([double]$stageTimes[$stage]) -or $stageTimes[$stage] -lt 0) {
-                    throw "RAM benchmark JSON rejected invalid $stage GPU encode worker time."
-                }
-            }
+            Assert-BenchmarkWorkerStageTime -Values $stageTimes -Label 'GPU encode' `
+                -Stages @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')
+            $decodeStageTimes = $_.OwnedDecodeStages
+            Assert-BenchmarkWorkerStageTime -Values $decodeStageTimes -Label 'owned-decode' `
+                -Stages @('allocation', 'materialization', 'crc')
             if ($_.Lane -eq 'GPU' -and ($stageTimes['readiness'] -le 0 -or $stageTimes['classification'] -le 0)) {
                 throw "RAM benchmark JSON rejected missing required HIP encode stage work."
             }
@@ -1051,6 +1076,7 @@ function ConvertTo-RamBenchmarkRecord {
                 source_generation_worker_seconds = $_.SourceGenerationWorkerSeconds
                 codec_encode_worker_seconds = $_.CodecEncodeWorkerSeconds
                 gpu_encode_stage_worker_seconds = $stageTimes
+                owned_decode_stage_worker_seconds = $decodeStageTimes
                 verify_seconds = $_.VerifySeconds
                 extract_seconds = $_.ExtractSeconds
                 cpu_avg_pct = $_.CpuAvgPct

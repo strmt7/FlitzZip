@@ -591,6 +591,100 @@ TEST_CASE(gpu_encode_worker_stage_accumulation) {
         1e-12);
 }
 
+// Purpose: Preserve distinct CPU/GPU owned-decode work totals under concurrent recording.
+// Inputs: Four joined writers, invalid/null stages, and zero/negative durations.
+// Outputs: Requires exact worker-second sums, zero untouched stages, and no GPU execution counter changes.
+TEST_CASE(owned_decode_worker_stage_accumulation) {
+    superzip::GpuTelemetry telemetry;
+    {
+        std::vector<std::jthread> workers;
+        for (int worker = 0; worker < 4; ++worker) {
+            workers.emplace_back([&telemetry] {
+                for (int event = 0; event < 1000; ++event) {
+                    superzip::record_owned_decode_stage_time(&telemetry, superzip::OwnedDecodeStage::OutputAllocation,
+                                                             std::chrono::milliseconds(1));
+                    superzip::record_owned_decode_stage_time(&telemetry, superzip::OwnedDecodeStage::HostChecksum,
+                                                             std::chrono::milliseconds(2));
+                }
+            });
+        }
+    }
+    for (const auto stage : {superzip::OwnedDecodeStage::Count, static_cast<superzip::OwnedDecodeStage>(999U)}) {
+        superzip::record_owned_decode_stage_time(&telemetry, stage, std::chrono::milliseconds(1));
+    }
+    for (const auto duration : {std::chrono::milliseconds(0), std::chrono::milliseconds(-1)}) {
+        superzip::record_owned_decode_stage_time(&telemetry, superzip::OwnedDecodeStage::Materialization, duration);
+    }
+    superzip::record_owned_decode_stage_time(nullptr, superzip::OwnedDecodeStage::Materialization,
+                                             std::chrono::milliseconds(1));
+    const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
+    const auto& stages = stats.owned_decode_stage_worker_seconds;
+    REQUIRE_TRUE(std::abs(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::OutputAllocation)] - 4.0) <
+                 1e-12);
+    REQUIRE_TRUE(std::abs(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)] - 8.0) < 1e-12);
+    REQUIRE_EQ(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::Materialization)], 0.0);
+    REQUIRE_EQ(stats.encode_chunks + stats.decode_chunks + stats.kernel_launches, 0U);
+}
+
+// Purpose: Prevent accumulated stage intervals from wrapping into plausible but false measurements.
+// Inputs: Both encode/decode counters start one microsecond below the sticky unavailable marker.
+// Outputs: Overflow snapshots are NaN and remain unavailable after later valid intervals.
+TEST_CASE(worker_stage_timing_overflow_remains_unavailable) {
+    superzip::GpuTelemetry telemetry;
+    telemetry.encode_stage_worker_microseconds[0].store(std::numeric_limits<std::uint64_t>::max() - 1U);
+    telemetry.owned_decode_stage_worker_microseconds[0].store(std::numeric_limits<std::uint64_t>::max() - 1U);
+    for (const auto duration : {std::chrono::microseconds(1), std::chrono::microseconds(50)}) {
+        superzip::record_gpu_encode_stage_time(&telemetry, superzip::GpuEncodeStage::Readiness, duration);
+        superzip::record_owned_decode_stage_time(&telemetry, superzip::OwnedDecodeStage::OutputAllocation, duration);
+    }
+    const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
+    REQUIRE_TRUE(std::isnan(stats.encode_stage_worker_seconds[0]));
+    REQUIRE_TRUE(std::isnan(stats.owned_decode_stage_worker_seconds[0]));
+    REQUIRE_EQ(stats.encode_stage_worker_seconds[1], 0.0);
+    REQUIRE_EQ(stats.owned_decode_stage_worker_seconds[1], 0.0);
+}
+
+// Purpose: Observe the shared production allocation, materialization and host-CRC stages without changing bytes.
+// Inputs: A bounded raw block runs in CPU and, when available, required-GPU mode with operation telemetry.
+// Outputs: Requires independent byte/CRC equality, finite stage totals bounded by the single call, and empty no-work.
+TEST_CASE(owned_decode_production_stage_timing) {
+    std::vector<std::byte> input(1024U * 1024U);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        input[index] = static_cast<std::byte>((index * 31U + index / 997U) & 255U);
+    }
+    const superzip::BlockDescriptor block{.kind = superzip::BlockKind::Raw,
+                                          .uncompressed_len = static_cast<std::uint32_t>(input.size()),
+                                          .encoded_len = static_cast<std::uint32_t>(input.size())};
+    for (const auto gpu : {false, true}) {
+        if (gpu && !superzip::query_gpu_info().available) {
+            continue;
+        }
+        superzip::GpuCodecOptions options;
+        options.require_gpu = gpu;
+        options.force_cpu = !gpu;
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        const auto empty = superzip::decode_owned_chunk({}, {}, 0U, options);
+        REQUIRE_TRUE(empty.bytes().empty());
+        for (const auto value :
+             superzip::snapshot_gpu_telemetry(*options.telemetry).owned_decode_stage_worker_seconds) {
+            REQUIRE_EQ(value, 0.0);
+        }
+        const auto started = std::chrono::steady_clock::now();
+        const auto decoded = superzip::decode_owned_chunk(input, std::span(&block, 1U), input.size(), options);
+        const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        REQUIRE_EQ(decoded.gpu_used, gpu);
+        REQUIRE_TRUE(std::ranges::equal(decoded.bytes(), input));
+        REQUIRE_EQ(decoded.crc32, superzip::crc32(input));
+        const auto stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
+        double total = 0.0;
+        for (const auto value : stats.owned_decode_stage_worker_seconds) {
+            REQUIRE_TRUE(std::isfinite(value) && value >= 0.0);
+            total += value;
+        }
+        REQUIRE_TRUE(total > 0.0 && total <= seconds);
+    }
+}
+
 // Purpose: Keep invalid HIP event values out of integer conversion and preserve unavailable timing thereafter.
 // Inputs: Negative, non-finite, and out-of-range synthetic durations followed by a valid duration.
 // Outputs: Requires NaN timing, intact execution counters, and a sticky unavailable marker without throwing.
