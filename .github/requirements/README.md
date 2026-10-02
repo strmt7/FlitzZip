@@ -3,20 +3,18 @@
 The `.in` files declare direct tools and advisory minimum versions. The `.txt`
 files contain the complete, hash-locked dependency graph used by CI. Update the
 inputs and resolve the graph together. Do not silently force a transitive version
-outside its parent's declared requirements. The sole current downstream revision
-is the reviewed Semgrep dependency-metadata patch described below. Its upstream
-wheel and every other installed dependency are pinned to official PyPI artifacts.
+outside its parent's declared requirements. All installed tools and dependencies
+are pinned to official PyPI artifacts; no downstream wheel transformation is
+needed for the current graph.
 
 ## Refresh
 
-The September 12, 2026 refresh used uv 0.12.13. Resolve Linux tools for the Ubuntu
+The October 2, 2026 Semgrep refresh used uv 0.12.18. Resolve Linux tools for the Ubuntu
 24.04 x64 / CPython 3.14 runner, and Windows linters for the oldest supported
 local interpreter, CPython 3.12. Also validate the Windows lock against CI's
 CPython 3.14. Run from the repository root:
 
 ```powershell
-py -3 tools/prepare_semgrep_wheel.py
-if ($LASTEXITCODE -ne 0) { throw "Scanner packaging failed" }
 foreach ($lane in 'semgrep', 'gvm-tools', 'zizmor', 'lint') {
     $platform = 'x86_64-manylinux_2_39'
     $python = '3.14'
@@ -29,7 +27,7 @@ foreach ($lane in 'semgrep', 'gvm-tools', 'zizmor', 'lint') {
     $stem = ".github/requirements/requirements-$lane-$suffix"
     uv pip compile "$stem.in" --output-file "$stem.txt" `
         --python-version $python --python-platform $platform `
-        --generate-hashes --emit-index-url --emit-find-links --emit-build-options `
+        --generate-hashes --emit-index-url --emit-build-options `
         --no-annotate --no-header --upgrade --no-python-downloads
     if ($LASTEXITCODE -ne 0) { throw "Resolution failed: $lane" }
 }
@@ -45,39 +43,28 @@ failure as evidence that the Linux dependency graph is broken.
 
 ## Compatibility Review
 
-Semgrep 1.178.0's published `pyjwt[crypto]~=2.13.0` restriction excludes the
-patched PyJWT 2.15.1. On 2026-10-01 the maintainer authorized practical
-compatibility tests and production promotion when verified. The paired scans
-use the same frozen registry rules and source snapshot, and exercise the
-scanner's actual MCP JWT verifier as well as valid/invalid JWT controls.
+Semgrep 1.179.0's official `pyjwt[crypto]>=2.15.0,<3` declaration supports patched
+PyJWT 2.15.1. The complete graph resolves for the Linux CPython 3.14 target.
+Normal wheel-only hash-locked installation, `pip check` and all five runtime
+tests pass on Linux CPython 3.14.7, including the actual MCP JWT verifier,
+signed/invalid token controls, the pre-verification parser regression and
+CLI/SARIF controls. The previous reviewed local metadata revision is retired:
+its wheel builder, manifest, local version and `--find-links` are removed.
 
-`tools/prepare_semgrep_wheel.py` checks the official upstream SHA-256 and every
-RECORD hash, preserves all scanner code and license bytes, and creates the
-explicit local distribution `semgrep==1.178.0+superzip.1`. Only the distribution
-version and the PyJWT requirement change semantically; dist-info paths and
-RECORD are regenerated for that identity. ZIP storage and fixed timestamps
-make its hash independent of host compression-library versions. The derived
-wheel is built under ignored `out/scanner-wheels`, never committed or shipped
-with SuperZip. The checked-in manifest records the original artifact and patch;
-the normal lock pins the derived hash and PyJWT 2.15.1. No installed metadata
-is edited and production installation does not use `--no-deps`.
-
-CI and local Linux execution use this same preparation, wheel-only hashed
-install, `pip check`, runtime test module and full scanner. See
+Offline tests enforce official input/lock parity, every dependency's SHA-256
+pin and the actual workflow's normal installation and coverage controls. CI
+retains the runtime tests, full scanner and coverage audit. See
 [the scanning guide](../../docs/security-code-scanning.md#scanner-dependency-remediation)
-for evidence and remaining coverage limits. The upstream constraint issue
-remains open; this is a reviewed downstream revision, not an upstream release.
-Recheck upstream at each dependency refresh and remove the patch once a compatible
-upstream release passes the same gates. Dependabot still monitors the other
-normal PyPI pins; the local Semgrep identity requires an explicit manifest/lock
-refresh because it is intentionally not published on PyPI.
+for the earlier compatibility evidence and remaining coverage limits. Dependabot
+can monitor the official Semgrep pin normally again. Local success is not evidence
+that a newly pushed workflow or GitHub alert has passed its acceptance gate.
 
-On 2026-09-12, Semgrep 1.177.0 requires MCP exactly 1.29.0. This is above the
+Semgrep 1.179.0 still requires MCP exactly 1.29.0. This is above the
 patched minimum for the three MCP Dependabot advisories; upgrading to MCP 2.x
 would violate Semgrep's contract. The SDK belongs to scanner tooling, not
 SuperZip's native application runtime.
 
-The same Semgrep release requires `exceptiongroup~=1.2.0`,
+This release also requires `exceptiongroup~=1.2.0`,
 `jsonschema~=4.25.1`, `wcmatch~=8.3`, OpenTelemetry 1.37 / 0.58b0, and indirectly
 `wrapt<2` and `importlib-metadata<8.8.0`. Consequently PRs 26, 29, 30, 31,
 32, 33, and 34 cannot be applied independently. Keep these constraints until

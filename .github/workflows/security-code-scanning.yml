@@ -217,12 +217,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m unittest tools.test_prepare_semgrep_wheel
-          python tools/prepare_semgrep_wheel.py
+          python -m unittest tools.test_semgrep_installation
           python -m venv "$RUNNER_TEMP/semgrep"
           "$RUNNER_TEMP/semgrep/bin/python" -m pip install \
             --disable-pip-version-check \
             --require-hashes \
+            --only-binary=:all: \
             -r .github/requirements/requirements-semgrep-linux.txt
           "$RUNNER_TEMP/semgrep/bin/python" -m pip check
           "$RUNNER_TEMP/semgrep/bin/python" -m unittest tools.test_semgrep_runtime

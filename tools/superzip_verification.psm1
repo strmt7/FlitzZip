@@ -282,7 +282,7 @@ function Get-SuperZipVerificationScope {
     $touchesSecurityBoundary = $touchesArchiveParser -or (Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows)\.ps1$',
-        '^tools/(prepare_semgrep_wheel|test_prepare_semgrep_wheel|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report)\.py$',
+        '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report)\.py$',
         '^\.github/'
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
@@ -397,8 +397,8 @@ function Get-SuperZipLocalVerificationCommand {
         if ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "security-scan" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/security_scan.ps1") -Reason "security boundaries, workflows, packaging, or verifier changes require repository policy checks")
         }
-        if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(prepare_semgrep_wheel|test_prepare_semgrep_wheel|test_semgrep_runtime)\.py$', '^\.github/requirements/(semgrep-packaging\.json|requirements-semgrep-linux\.(in|txt))$', '^\.github/workflows/security-code-scanning\.yml$'))) {
-            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "scanner-packaging-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_prepare_semgrep_wheel") -Reason "scanner packaging must preserve code/notices, validate provenance, reject metadata drift and produce deterministic wheels; Linux runtime checks remain mandatory in the security workflow")
+        if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(test_semgrep_installation|test_semgrep_runtime)\.py$', '^\.github/requirements/requirements-semgrep-linux\.(in|txt)$', '^\.github/workflows/security-code-scanning\.yml$'))) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "scanner-installation-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_semgrep_installation") -Reason "scanner pins, complete dependency hashes and the normal production install must remain aligned; real Linux runtime and coverage checks remain mandatory in the security workflow")
         }
         if ($scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(semgrep_coverage|test_semgrep_coverage)\.py$'))) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "scanner-coverage-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_semgrep_coverage") -Reason "scanner admission must be compared with complete tracked inventory without hiding diagnostics or publishing source snippets")

@@ -6,6 +6,7 @@ import importlib
 import importlib.metadata
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -16,7 +17,16 @@ from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.prepare_semgrep_wheel import MANIFEST, read_manifest
+REQUIREMENTS = Path(__file__).resolve().parents[1] / ".github/requirements"
+
+
+# Purpose: Read one exact package identity from a tooling input or generated lock.
+# Inputs: requirements text and package name. Outputs: the unique pinned version or ValueError.
+def pinned_version(contents: str, package: str) -> str:
+    matches = re.findall(rf"(?m)^{re.escape(package)}(?:\[[a-z0-9,]+\])?==([a-zA-Z0-9.+-]+)(?=\s|$)", contents)
+    if len(matches) != 1:
+        raise ValueError(f"Expected one exact pin for {package}")
+    return matches[0]
 
 
 class SemgrepRuntimeTests(unittest.TestCase):
@@ -27,7 +37,9 @@ class SemgrepRuntimeTests(unittest.TestCase):
         cls.jwt = importlib.import_module("jwt")
         cls.rsa = importlib.import_module("cryptography.hazmat.primitives.asymmetric.rsa")
         cls.verifier_type = importlib.import_module("semgrep.mcp.utilities.token_verifier").IntrospectionTokenVerifier
-        cls.manifest = read_manifest(MANIFEST)
+        locked = (REQUIREMENTS / "requirements-semgrep-linux.txt").read_text(encoding="utf-8")
+        cls.scanner_version = pinned_version(locked, "semgrep")
+        cls.jwt_version = pinned_version(locked, "pyjwt")
         cls.key = cls.rsa.generate_private_key(public_exponent=65537, key_size=2048)
         cls.secret = secrets.token_bytes(64)
         cls.claims = {
@@ -39,15 +51,20 @@ class SemgrepRuntimeTests(unittest.TestCase):
             "exp": int(time.time()) + 300,
         }
 
-    # Purpose: Prevent the tested CI environment from silently reverting to an upstream conflict.
+    # Purpose: Require the official locked scanner/JWT identities and a satisfied upstream dependency contract.
     # Inputs: installed distribution metadata. Outputs: exact scanner/JWT identity and declaration assertions.
     def test_distribution_identity(self):
-        self.assertEqual(importlib.metadata.version("semgrep"), self.manifest["local_version"])
-        expected = self.manifest["tested_requirement"].split("==")[1]
-        self.assertEqual(importlib.metadata.version("pyjwt"), expected)
-        requirements = importlib.metadata.requires("semgrep")
-        self.assertIn(self.manifest["tested_requirement"], requirements)
-        self.assertNotIn(self.manifest["original_requirement"], requirements)
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+
+        self.assertEqual(importlib.metadata.version("semgrep"), self.scanner_version)
+        self.assertNotIn("+", self.scanner_version)
+        self.assertEqual(importlib.metadata.version("pyjwt"), self.jwt_version)
+        requirements = [Requirement(item) for item in importlib.metadata.requires("semgrep")]
+        jwt_requirements = [item for item in requirements if item.name.lower() == "pyjwt"]
+        self.assertEqual(len(jwt_requirements), 1)
+        self.assertIn("crypto", jwt_requirements[0].extras)
+        self.assertIn(Version(self.jwt_version), jwt_requirements[0].specifier)
 
     # Purpose: Preserve signed decoding, claim checks and signature refusal in the newer JWT library.
     # Inputs: fresh HMAC/RSA keys and ephemeral claims. Outputs: accepted legitimate claims and rejected invalid tokens.

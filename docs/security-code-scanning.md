@@ -132,7 +132,7 @@ On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in
 CI scanner tooling, not a dependency shipped in the SuperZip application.
 [PyJWT's newer pre-verification advisory](https://github.com/advisories/GHSA-42vr-xj54-vc7v)
 requires at least 2.15.0; the latest stable PyJWT checked on 2026-10-01 is 2.15.1.
-Semgrep 1.178.0 still declares `pyjwt[crypto]~=2.13.0`, excluding that version.
+At that point Semgrep 1.178.0 declared `pyjwt[crypto]~=2.13.0`, excluding that version.
 
 The Linux CPython 3.14 target was checked with uv's dependency resolver:
 `semgrep==1.178.0` together with a patched PyJWT is unsatisfiable. The
@@ -152,8 +152,8 @@ scanned paths, zero Semgrep findings and 71 identical parsing/matching diagnosti
 These diagnostics are coverage limits, not proof of a vulnerability-free tree.
 Other scanners and all current GitHub alerts remain required.
 
-The production workflow now builds the explicit downstream distribution
-`semgrep==1.178.0+superzip.1` through `tools/prepare_semgrep_wheel.py`. The
+The October 1 production workflow built the explicit downstream distribution
+`semgrep==1.178.0+superzip.1` through a reviewed wheel builder. The
 official upstream wheel and its RECORD are verified before transformation.
 Every code/notice byte stays unchanged; the distribution version and requirement
 become the reviewed local identity and `pyjwt[crypto]==2.15.1`. Complete RECORD
@@ -179,21 +179,44 @@ through both direct pre-verification decode and the JWKS consumer, with no
 network access. A live OSV query on 2026-10-01 returned no advisories matching
 PyJWT 2.15.1. This is local package/runtime evidence, not GitHub alert closure.
 
-Local Linux verification uses exactly the same files and commands as CI:
+On October 2, official Semgrep 1.179.0 changed its declaration to
+`pyjwt[crypto]>=2.15.0,<3`. The current production workflow therefore uses that
+unmodified official release with PyJWT 2.15.1. Its complete hash lock resolves
+for Linux CPython 3.14; non-root Linux CPython 3.14.7 installation, `pip check`
+and all five runtime tests pass without dependency overrides. The obsolete
+wheel builder, local distribution manifest and `--find-links` are removed.
+Offline installation tests retain input/lock parity, per-dependency hashes and
+no-bypass workflow contracts. Coverage audits, runtime controls and the full
+scanner remain mandatory; no scanner, rule or alert is suppressed by this update.
+
+The official-release scan used a new 677-file frozen working-tree snapshot and
+the current registry configurations: 1,075 loaded rules, 493 applicable rules,
+658 admitted files, zero findings and valid SARIF 2.1.0. The complete inventory
+audit reports no unscanned source paths and 43 parsing/matching diagnostics.
+Remaining non-source omissions are binary artwork and provenance archives;
+compiled dependency coverage belongs to the separate build-traced analysis.
+The changed snapshot and registry contents prevent treating these numbers as a
+controlled improvement over the earlier 71 diagnostics. Admission and zero
+findings do not prove complete parsing or absence of vulnerabilities.
+An October 2 OSV batch query returned no matching advisories for all 66 packages
+in the refreshed scanner lock. All 31 full-profile local checks also pass; these
+results do not establish hosted workflow or alert acceptance.
+
+Local Linux verification uses the same installation and runtime commands as CI:
 
 ```sh
-python -m unittest tools.test_prepare_semgrep_wheel
-python tools/prepare_semgrep_wheel.py
+python -m unittest tools.test_semgrep_installation
 python -m venv /tmp/superzip-semgrep
-/tmp/superzip-semgrep/bin/python -m pip install --require-hashes -r .github/requirements/requirements-semgrep-linux.txt
+/tmp/superzip-semgrep/bin/python -m pip install --require-hashes --only-binary=:all: -r .github/requirements/requirements-semgrep-linux.txt
 /tmp/superzip-semgrep/bin/python -m pip check
 /tmp/superzip-semgrep/bin/python -m unittest tools.test_semgrep_runtime
 ```
 
 Hosted remediation is not confirmed until the exact pushed commit passes its
 scanner workflows and the post-push audit shows the affected alerts fixed.
-Retire this downstream packaging patch after a compatible upstream release
-passes the same gates; never label the local revision an official Semgrep release.
+The earlier downstream revision remains historical evidence, not the current
+installation or an official release. CI tooling does not add a Python dependency
+to SuperZip's native runtime.
 
 ## Required GitHub Repository Settings
 

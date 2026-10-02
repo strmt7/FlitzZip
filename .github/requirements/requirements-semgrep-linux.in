@@ -1,8 +1,6 @@
 --index-url https://pypi.org/simple
 --only-binary=:all:
---find-links ../../out/scanner-wheels
-# Explicit downstream metadata patch; see semgrep-packaging.json and the scanning guide.
-semgrep==1.178.0+superzip.1
+semgrep==1.179.0
 pyjwt[crypto]==2.15.1
 # Advisory floors still apply to the complete resolved graph.
 cryptography>=50.0.0

@@ -174,6 +174,21 @@ independent interoperability, bounded sanitizer smoke, GUI and unpublished packa
 validation. Normal and compact page captures were inspected. This is not a claim
 of attacker-triggerable reachability through SuperZip's default allocator.
 
+Official Semgrep 1.179.0 now accepts patched PyJWT 2.15.1 directly. The Linux
+CPython 3.14 dependency graph resolves, and non-root Linux CPython 3.14.7 passes
+normal wheel-only hash-locked installation, `pip check` and all five runtime
+controls. The custom wheel builder and manifest are retired; official input/lock
+parity, complete hashes and no-bypass installation contracts replace the obsolete
+packaging tests. The complete 677-file frozen snapshot passes the official
+scanner with 658 admitted paths, zero findings, no unscanned source paths and
+valid SARIF. Its 43 parsing/matching diagnostics remain coverage limits, not
+resolved vulnerabilities. All 31 full-profile checks pass, including the
+verifier's own selector, 563 native tests, nine allocation failure-path groups,
+format interoperability, bounded sanitizer smoke, all-page GUI and unpublished
+package checks. A fresh OSV batch query found no matching advisories for the
+66-package scanner lock. Hosted scanner acceptance is not implied by these local
+results.
+
 GPU phase diagnosis, aggregate CPU
 workspace accounting, final repeated licensed-software comparisons and graphs,
 end-user documentation, remote security acceptance and the final audit remain

@@ -67,13 +67,13 @@ the Security tab, released artifacts, or the product UI again.
   `remove_all`; verification caught the sharing violation. Its scoped stream
   and CPU/required-HIP roundtrips now exercise the corrected ownership order,
   without retry delays or relaxed cleanup assertions.
-- Scanner dependency remediation must reach the real CI path. The reviewed
-  Semgrep packaging revision has a distinct local version, pinned upstream and
-  derived hashes, unchanged code/notice bytes, and offline provenance tests.
-  CI installs with normal dependency resolution and `--require-hashes`, runs
+- Scanner dependency remediation must reach the real CI path. CI installs with
+  normal dependency resolution, wheel-only artifacts and `--require-hashes`, runs
   `pip check`, exercises actual JWT consumer APIs and scanner controls, then
-  retains the full scan and vulnerability gates. A passing isolated override
-  alone is not production verification or remote alert closure.
+  retains full scan coverage and vulnerability gates. Prefer compatible official
+  releases and retire temporary packaging revisions after equivalent validation;
+  Semgrep 1.179.0 replaces the previous metadata revision. A passing isolated
+  override alone is not production verification or remote alert closure.
 - Standalone MCP integration scripts must not claim the SDK's `mcp` package
   namespace. Test discovery imports the uniquely named `superzip_mcp` module;
   Semgrep runtime tests import the real installed SDK from the repository root.
