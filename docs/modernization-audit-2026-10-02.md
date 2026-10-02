@@ -632,9 +632,28 @@ bounded fuzzing and packaging. The result is recorded separately in
 hosted assessment remains pending. The failed hosted run remains recorded;
 the first migration commit is not final acceptance.
 
-Before new scientific timing, extend clean-source detection to include the SDK
-lock and shared build/compiler helpers. Fresh hosted whole-SDK provisioning
-and HIP compilation also remain separate release qualification work.
+Windows CI subsequently passes on both hosted runner images for `8acf383`.
+Security and fuzzing are still running at its intermediate snapshot; neither
+the first migration commit nor this snapshot is final acceptance.
+
+## Round Fourteen: Benchmark Build-Input Provenance
+
+The benchmark clean-source check omitted SDK pins and build helpers even though
+they affect the compiled HIP binary and its configuration. It now includes the
+whole-SDK lock and provisioning, compiler and architecture configuration,
+process-environment restoration, CMake discovery, version resolution, and
+resource-derived build scheduling. Unrelated untracked skills still do not
+invalidate native measurements.
+
+Real temporary Git repositories exercise untracked inputs and every newly
+covered helper in staged and unstaged states, followed by clean restoration of
+fixture contents. The reporting regressions pass under Windows PowerShell 5.1
+and PowerShell 7.6.5; targeted hygiene/lint/reporting verification and the changed
+function contract gate also pass. Evidence is recorded in
+`out/benchmark-build-inputs-verification-result-20261002.json`. This tightens
+provenance rather than changing product execution or establishing a speedup.
+Fresh hosted whole-SDK provisioning and HIP compilation remain separate release
+qualification work, and the corrected scientific timing rounds remain open.
 
 ## Bounds Review Progress
 

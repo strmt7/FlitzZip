@@ -1154,7 +1154,7 @@ function Write-BenchmarkJson {
     }
 }
 
-# Purpose: Mark native benchmark provenance dirty only when product or measurement inputs changed.
+# Purpose: Mark native benchmark provenance dirty when product, build, or measurement inputs changed.
 # Inputs: `RepositoryRoot` is a Git worktree containing the tested Release binary.
 # Outputs: Returns true for relevant staged, unstaged, or untracked changes; throws if Git fails.
 function Get-RamBenchmarkSourceDirty {
@@ -1162,6 +1162,10 @@ function Get-RamBenchmarkSourceDirty {
     $relevant = @(
         'src', 'include', 'third_party', 'cmake', 'CMakeLists.txt',
         'tools/build.ps1', 'tools/bench.ps1', 'tools/render_benchmark_graph.py',
+        'tools/version.ps1', 'tools/compile_hip_object.ps1', 'tools/hip_architecture.ps1',
+        'tools/rocm-sdk-lock.json', 'tools/rocm_toolchain.ps1', 'tools/bootstrap_rocm_sdk.py',
+        'tools/process_environment.ps1', 'tools/cmake_toolchain.ps1',
+        'tools/build_parallelism.ps1', 'tools/local_resources.ps1',
         'tools/benchmark_statistics.ps1',
         'tools/test_benchmark_graph.py', 'tools/test_benchmark_reporting.ps1',
         'docs/performance-block-size-validation.md', 'docs/compression-level-and-benchmark-suite.md'

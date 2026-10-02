@@ -28,9 +28,12 @@ PowerShell 7 because absent process-environment values were restored as empty
 values. The shared fix now restores exact caller state for HIP compilation,
 build scheduling and GUI cleanup, and removes remaining `C:` Program Files
 assumptions from tool discovery. Cross-shell regressions and all 33 full local
-commands pass; exact-SHA hosted assessment of the fix remains pending. Fresh
-hosted SDK/HIP qualification and complete benchmark build-input provenance
-remain prerequisites for the next release/performance assessment.
+commands pass. Windows CI passes on both hosted runner images for `8acf383`;
+security and fuzzing remain running at the intermediate snapshot. Benchmark
+clean-source detection now covers SDK pins and shared build/compiler inputs,
+with real Git regression checks under both PowerShell hosts. Fresh hosted
+SDK/HIP qualification and scientific timing remain prerequisites for the next
+release/performance assessment.
 
 ## Fresh Audit And Measurement Rounds
 

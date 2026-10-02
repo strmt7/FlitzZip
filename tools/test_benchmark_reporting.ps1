@@ -216,11 +216,55 @@ try {
     if (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot) {
         throw 'Unrelated skill made native benchmark source dirty.'
     }
+    $fixtureTools = Join-Path $sourceRoot 'tools'
+    New-Item -ItemType Directory -Path $fixtureTools | Out-Null
+    $untrackedLock = Join-Path $fixtureTools 'rocm-sdk-lock.json'
+    Set-Content -LiteralPath $untrackedLock -Value 'untracked SDK pin'
+    if (-not (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot)) {
+        throw 'Untracked SDK lock was missed by native benchmark provenance.'
+    }
+    Remove-Item -LiteralPath $untrackedLock
     $source = Join-Path $sourceRoot 'src/codec.cpp'
     New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
     Set-Content -LiteralPath $source -Value 'relevant source'
     if (-not (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot)) {
         throw 'Untracked codec source was missed by native benchmark provenance.'
+    }
+    # Establish a real clean commit, then exercise each build input in both tracked states.
+    $buildInputs = @(
+        'version.ps1', 'compile_hip_object.ps1', 'hip_architecture.ps1',
+        'rocm-sdk-lock.json', 'rocm_toolchain.ps1', 'bootstrap_rocm_sdk.py',
+        'process_environment.ps1', 'cmake_toolchain.ps1',
+        'build_parallelism.ps1', 'local_resources.ps1'
+    )
+    foreach ($buildInput in $buildInputs) {
+        Set-Content -LiteralPath (Join-Path $fixtureTools $buildInput) -Value 'original build input'
+    }
+    & git -C $sourceRoot add -- src tools
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stage source-state fixture inputs.' }
+    & git -C $sourceRoot -c user.name='SuperZip fixture' -c user.email='fixture@example.invalid' `
+        -c commit.gpgsign=false -c core.hooksPath=$fixtureTools commit --quiet -m 'Fixture baseline'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not commit source-state fixture inputs.' }
+    if (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot) {
+        throw 'Committed build inputs or unrelated untracked skills made benchmark source dirty.'
+    }
+    foreach ($buildInput in $buildInputs) {
+        $inputPath = Join-Path $fixtureTools $buildInput
+        Set-Content -LiteralPath $inputPath -Value 'modified build input'
+        if (-not (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot)) {
+            throw "Unstaged build input was missed by benchmark provenance: $buildInput"
+        }
+        & git -C $sourceRoot add -- "tools/$buildInput"
+        if ($LASTEXITCODE -ne 0) { throw "Could not stage fixture input: $buildInput" }
+        if (-not (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot)) {
+            throw "Staged build input was missed by benchmark provenance: $buildInput"
+        }
+        Set-Content -LiteralPath $inputPath -Value 'original build input'
+        & git -C $sourceRoot add -- "tools/$buildInput"
+        if ($LASTEXITCODE -ne 0) { throw "Could not restore fixture input contents: $buildInput" }
+        if (Get-RamBenchmarkSourceDirty -RepositoryRoot $sourceRoot) {
+            throw "Restored fixture input still appeared dirty: $buildInput"
+        }
     }
 } finally {
     $resolvedRoot = [IO.Path]::GetFullPath($sourceRoot)
