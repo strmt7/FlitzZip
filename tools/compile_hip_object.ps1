@@ -3,6 +3,7 @@ param(
     [string]$Source,
     [Parameter(Mandatory = $true)]
     [string]$Output,
+    [string]$DependencyFile = "",
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot,
     [string]$Arch = "gfx1201",
@@ -136,9 +137,51 @@ function Resolve-VcvarsVersionCandidate {
     return @($candidates.ToArray())
 }
 
+# Purpose: Escape one compiler-reported path for a CMake Make-format dependency rule.
+# Inputs: Path is a source/header/output path; Windows separators are normalized before escaping.
+# Outputs: Returns a pathname with literal spaces, hashes and dollar signs preserved.
+function ConvertTo-HipDependencyPath {
+    param([string]$Path)
+    return $Path.Replace('\', '/').Replace('$', '$$').Replace('#', '\#').Replace(' ', '\ ')
+}
+
+# Purpose: Complete host dependencies with actual device-preprocessor inputs for every requested architecture.
+# Inputs: Prefix selects MSVC/compiler; CompilerArguments contains the compilation's shared language/define/include flags.
+# Outputs: Appends deduplicated device dependency rules, streams away preprocessed code, and returns native status.
+function Add-HipDeviceDependency {
+    param([string]$Prefix, [string]$CompilerArguments)
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($architecture in $Arch.Split(',')) {
+        $scan = "$Prefix --offload-arch=$architecture --offload-device-only $CompilerArguments -E `"$Source`""
+        cmd /c $scan | ForEach-Object {
+            if ([string]$_ -match '^#\s+\d+\s+"((?:[^"\\]|\\.)*)"') {
+                $path = $Matches[1].Replace('\\', '\')
+                if (-not $path.StartsWith('<')) {
+                    [void]$paths.Add([IO.Path]::GetFullPath($path))
+                }
+            }
+        }
+        if ($LASTEXITCODE -ne 0) { return $LASTEXITCODE }
+    }
+    if ($paths.Count -eq 0) { throw 'HIP device preprocessor returned no dependency paths.' }
+    $escaped = @($paths | Sort-Object | ForEach-Object { ConvertTo-HipDependencyPath -Path $_ })
+    $rule = (ConvertTo-HipDependencyPath -Path $Output) + ': ' + ($escaped -join ' ') + "`n"
+    [IO.File]::AppendAllText($DependencyFile, "`n" + $rule, [Text.UTF8Encoding]::new($false))
+    return 0
+}
+
+# Purpose: Discard only the current compiler attempt's object and optional dependency data.
+# Inputs: Output and DependencyFile are the validated, caller-selected artifact paths; no recursive deletion occurs.
+# Outputs: Removes stale or failed artifacts, or throws on a filesystem failure.
+function Invoke-HipCompileCleanup {
+    foreach ($path in @($Output, $DependencyFile)) {
+        if ($path -and (Test-Path -LiteralPath $path)) { Remove-Item -LiteralPath $path -Force }
+    }
+}
+
 # Purpose: Build the HIP object with one Visual Studio environment candidate.
-# Inputs: CandidateVersion selects MSVC; validated Arch selects one or more GPU images in the output object.
-# Outputs: Returns hipcc's native process exit code.
+# Inputs: CandidateVersion selects MSVC; validated Arch selects GPU images. Optional DependencyFile receives compiler-discovered inputs.
+# Outputs: Returns hipcc's native exit code; rejects successful compilation without a requested dependency file.
 function Invoke-HipCompile {
     param(
         [Parameter(Mandatory = $true)]
@@ -159,14 +202,41 @@ function Invoke-HipCompile {
         Write-Information "Compiling HIP object with the Visual Studio default MSVC toolset." -InformationAction Continue
     }
 
-    if (Test-Path -LiteralPath $Output) {
-        Remove-Item -LiteralPath $Output -Force
+    Invoke-HipCompileCleanup
+    $dependencyArguments = ""
+    if ($DependencyFile) {
+        $dependencyArguments = "-MD -MF `"$DependencyFile`" -MQ `"$Output`""
     }
 
     $offloadArguments = Get-HipOffloadArgument -Architecture $Arch
-    $cmd = "call `"$VcvarsAll`" $vcvarsArgs >nul && `"$HipccPath`" $offloadArguments -std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$IncludePath`" -c `"$Source`" -o `"$Output`""
-    cmd /c $cmd | ForEach-Object { Write-Information ([string]$_) -InformationAction Continue }
-    return $LASTEXITCODE
+    $prefix = "call `"$VcvarsAll`" $vcvarsArgs >nul && `"$HipccPath`""
+    $compilerArguments = "-std=c++20 -O3 -fms-runtime-lib=static -DSUPERZIP_ENABLE_HIP=1 -I`"$IncludePath`""
+    $cmd = "$prefix $offloadArguments $dependencyArguments $compilerArguments -c `"$Source`" -o `"$Output`""
+    try {
+        cmd /c $cmd | ForEach-Object { Write-Information ([string]$_) -InformationAction Continue }
+    } catch {
+        Invoke-HipCompileCleanup
+        throw
+    }
+    $compilerExitCode = $LASTEXITCODE
+    if ($compilerExitCode -eq 0 -and $DependencyFile -and
+        (-not (Test-Path -LiteralPath $DependencyFile -PathType Leaf) -or
+            (Get-Item -LiteralPath $DependencyFile).Length -eq 0)) {
+        Invoke-HipCompileCleanup
+        throw "HIP compiler succeeded without a nonempty requested dependency file."
+    }
+    if ($compilerExitCode -eq 0 -and $DependencyFile) {
+        try {
+            $compilerExitCode = Add-HipDeviceDependency -Prefix $prefix -CompilerArguments $compilerArguments
+        } catch {
+            Invoke-HipCompileCleanup
+            throw
+        }
+    }
+    if ($compilerExitCode -ne 0) {
+        Invoke-HipCompileCleanup
+    }
+    return $compilerExitCode
 }
 
 if (-not $env:HIP_PATH) {
@@ -184,6 +254,7 @@ if ($VcvarsVersion -and $VcvarsVersion -notmatch '^[0-9]+(\.[0-9]+)*$') {
 
 Assert-SingleLine -Name "Source" -Value $Source
 Assert-SingleLine -Name "Output" -Value $Output
+Assert-SingleLine -Name "DependencyFile" -Value $DependencyFile
 Assert-SingleLine -Name "RepoRoot" -Value $RepoRoot
 Assert-SingleLine -Name "Arch" -Value $Arch
 Assert-SingleLine -Name "VcvarsVersion" -Value $VcvarsVersion

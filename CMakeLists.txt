@@ -532,42 +532,24 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_dictionary_matcher.obj")
   set(SUPERZIP_HIP_SPARSE_OBJECT
       "${CMAKE_CURRENT_BINARY_DIR}/superzip_hip_sparse_pattern.obj")
-  set(SUPERZIP_HIP_COMMON_DEPS
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_block_types.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/archive_blocks.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/dictionary_block.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/huffman_lookup.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/sparse_pattern_block.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/crc32_operators.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/entropy_sampling.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_device.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_device.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_matcher.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/sparse_pattern_device.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/crc32_device.hpp"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1")
-
   # Purpose: Compile one HIP translation unit with the pinned Windows HIP path.
   # Inputs: source is repo-relative, output is the generated object path, and
-  # comment is the build status text; optional trailing arguments add
-  # dependencies. Outputs: Adds a custom command that produces the object file.
+  # comment is the build status text. Outputs: Produces an object and a compiler
+  # dependency file, tracking the headers consumed by this translation unit.
   function(superzip_compile_hip_object source output comment)
     add_custom_command(
       OUTPUT "${output}"
+      DEPFILE "${output}.d"
       COMMAND
         powershell -NoProfile -ExecutionPolicy Bypass -File
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1" -Source
         "${CMAKE_CURRENT_SOURCE_DIR}/${source}" -Output "${output}" -RepoRoot
         "${CMAKE_CURRENT_SOURCE_DIR}" -Arch "${SUPERZIP_HIP_ARCH}"
         -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
+        -DependencyFile "${output}.d"
       DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
-              ${SUPERZIP_HIP_COMMON_DEPS} ${ARGN}
+              "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1"
       COMMENT "${comment}"
       VERBATIM)
   endfunction()
@@ -583,11 +565,9 @@ if(SUPERZIP_ENABLE_HIP)
     src/gpu/hip_codec_adaptive_prefix.hip.cpp
     "${SUPERZIP_HIP_ADAPTIVE_PREFIX_OBJECT}"
     "Compiling AMD HIP adaptive-prefix codec object")
-  file(GLOB_RECURSE SUPERZIP_ROCPRIM_HEADERS CONFIGURE_DEPENDS
-       "${SUPERZIP_HIP_PATH}/include/rocprim/*.hpp")
   superzip_compile_hip_object(
     src/gpu/hip_dictionary_matcher.hip.cpp "${SUPERZIP_HIP_DICTIONARY_OBJECT}"
-    "Compiling AMD HIP dictionary codec object" ${SUPERZIP_ROCPRIM_HEADERS})
+    "Compiling AMD HIP dictionary codec object")
   superzip_compile_hip_object(
     src/gpu/hip_sparse_pattern.hip.cpp "${SUPERZIP_HIP_SPARSE_OBJECT}"
     "Compiling AMD HIP sparse-pattern codec object")

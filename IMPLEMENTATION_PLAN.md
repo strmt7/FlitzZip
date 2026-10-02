@@ -55,6 +55,13 @@ neither whole-repo acceptance nor a claimed compression speedup.
 
 ## Current Modernization Sequence
 
+The maintainer requests consistent shared contracts, ownership patterns and
+policies across codecs, headers, functions and tools. Subsequent rounds must
+review earlier exceptions for consolidation into the existing common layers.
+Format and hardware differences remain explicit where their documented
+contracts require them; abstractions must preserve those differences and have
+regression coverage rather than conceal them.
+
 The next sampling round freezes native execution geometry before pilot and
 confirmation observations, preserves every sample and stops on configuration
 changes. Graphs recompute evidence quality and disclose full observed ranges.

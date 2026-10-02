@@ -350,6 +350,58 @@ Exact-SHA hosted assessment remains pending.
 The whole-repository audit, hosted security findings, controlled speed
 comparisons and release acceptance remain open.
 
+## Round Eight: Shared HIP Build Dependencies
+
+The GPU hot-path review found an incremental-build correctness gap before
+introducing allocation reuse. The five HIP custom commands used an incomplete
+shared header list, omitting transitive inputs such as the device-memory budget
+and allocation policy. They also shared unrelated header dependencies, causing
+unnecessary GPU recompilation. Runtime codec behavior is unchanged in this round.
+
+All five translation units now use the same compiler-derived dependency path.
+CMake consumes a per-object Make-format dependency file through its documented
+[DEPFILE support](https://cmake.org/cmake/help/latest/command/add_custom_command.html).
+A real Windows test exposed that this HIP compiler's ordinary dependency output
+omits device-only inputs. LLVM documents the
+[host-only dependency-file change](https://lists.llvm.org/pipermail/all-commits/Week-of-Mon-20250203/202575.html)
+that avoids multi-architecture writers colliding. The shared wrapper therefore
+combines host dependencies with line-marker inputs from each requested device
+preprocessor pass, using identical language, optimization, define and include
+options. It discards the preprocessed code as it streams. No SDK files or compiler
+packages are modified, and the build does not initialize GPU compute.
+
+Artifact cleanup is centralized. Missing dependency data, device-scan failures,
+native exceptions and unsuccessful compilation invalidate the attempted object
+and dependency file rather than leaving apparently current output. Path escaping,
+the six declared release architectures, shared compiler flags and seven failure/
+success scenarios have automated wrapper regressions. A retained real Windows
+HIP/CMake fixture verifies no-op builds, selective transitive-header invalidation,
+unrelated-header exclusion, new includes, failure/recovery, and device-only and
+architecture-only inputs with two compiled architectures. It includes a build
+path containing spaces and confirms edited dependencies change emitted code.
+These are dependency-contract diagnostics, not archive throughput benchmarks or
+hardware compatibility claims. The targeted run caught three helper naming/
+command conventions in lint. Those were corrected, and the subsequent frozen
+full profile passed all 30 selected commands, including 570 native tests,
+independent interoperability, the 36-format matrix, sanitizer smoke and packaging.
+All eight current GUI page captures were reviewed without an observed layout
+defect. The retained verifier output is bounded tails, not a complete transcript.
+
+The rebuilt binary also passes all 14 CPU/HIP RAM readback cases across seven
+block sizes using the prior fixed geometry, 10 GiB Mixed input and level five.
+Every exact archive size and geometry field matches the prior retained sweep;
+archive-data disk writes remain zero and all seven GPU cases record real HIP
+work. The source remains explicitly dirty in this development diagnostic.
+Thirty-six host samples retain unavailable-counter and collection-error records.
+One-sample timing attribution remains inconclusive, and the independent graph
+validator refuses publication even when dirty-source preview is allowed.
+Exact-SHA hosted assessment for this new round remains pending.
+
+The broader modernization now explicitly includes review of previous special
+cases for consolidation into shared contracts and ownership/resource policies.
+Format semantics, required-HIP boundaries and measured correctness remain the
+criteria for retaining necessary exceptions.
+
 ## Bounds Review Progress
 
 The six baseline pointer-bounds results contain 21 reported flow variants.
