@@ -548,6 +548,40 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
 
 }  // namespace
 
+// Purpose: Estimate native encode metadata and retained codec storage before pipeline allocation.
+// Inputs: A bounded nonempty chunk, codec block size/effort, and the aggregate worker ceiling.
+// Outputs: Returns conservative overhead beyond three payload buffers; throws for invalid runtime bounds.
+HostPipelineWorkspace cpu_encode_workspace_estimate(std::uint64_t chunk_size, const ArchiveCodecOptions& options,
+                                                    std::uint32_t aggregate_workers) {
+    validate_encode_options(options);
+    if (chunk_size == 0 || chunk_size > kMaxArchiveChunkBytes || aggregate_workers == 0 ||
+        aggregate_workers > kMaxArchiveWorkers) {
+        throw ArchiveError("CPU workspace estimate is outside SuperZip resource limits");
+    }
+    const auto blocks = (chunk_size + options.block_size - 1U) / options.block_size;
+    const auto largest_block = static_cast<std::size_t>(std::min<std::uint64_t>(chunk_size, options.block_size));
+    std::uint64_t worker_bytes = largest_block > 8U ? sizeof(tdefl_compressor) : 0U;
+    if (largest_block >= kMinArchiveBlockBytes) {
+        const auto& zstd = zstd_runtime();
+        const auto context_bytes = zstd.estimate_block_workspace_bytes(options.compression_level);
+        const auto trial_bound = zstd.block_compress_bound(largest_block);
+        if (zstd.is_error(context_bytes) || context_bytes == 0 || context_bytes > kMaxPipelineMemoryBytes ||
+            zstd.is_error(trial_bound) || trial_bound < largest_block ||
+            trial_bound > kMaxArchiveBlockBytes + kMaxArchiveBlockBytes / 128U + 128U) {
+            throw ArchiveError("Zstandard native workspace estimate is invalid");
+        }
+        // A final short Deflate block can coexist with the retained Zstandard context and trial.
+        worker_bytes += context_bytes + trial_bound - largest_block + kMinArchiveBlockBytes;
+    }
+    return HostPipelineWorkspace{
+        .per_window_bytes = blocks * (sizeof(EncodedBlockWork) + sizeof(BlockDescriptor)),
+        .per_worker_bytes = worker_bytes,
+        .aggregate_workers = aggregate_workers,
+        .workers_per_window = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>({blocks, kMaxCpuEncodeWorkersPerWindow, aggregate_workers})),
+    };
+}
+
 // Purpose: Use one overflow-safe complete-block grouping policy for decode execution and concurrency admission.
 // Inputs: Borrowed blocks, a starting index through size, and a positive decoded-byte window limit.
 // Outputs: Returns exact extent and bytes, or throws ArchiveError before invalid metadata can enter a worker.
@@ -665,11 +699,11 @@ EncodedChunk encode_chunk_cpu(std::span<const std::byte> input, const ArchiveCod
     std::vector<EncodedBlockWork> block_work(block_count);
 
     // Bound concurrently retained Zstandard workspaces on smaller hosts.
-    constexpr std::uint32_t kMaxConcurrentZstdBlocks = 4U;
-    run_parallel_ranges(
-        block_count, std::min(options.worker_count, kMaxConcurrentZstdBlocks), [&](std::size_t begin, std::size_t end) {
-            encode_cpu_block_range(input, block_size, options.compression_level, block_work, begin, end);
-        });
+    run_parallel_ranges(block_count, std::min(options.worker_count, kMaxCpuEncodeWorkersPerWindow),
+                        [&](std::size_t begin, std::size_t end) {
+                            encode_cpu_block_range(input, block_size, options.compression_level, block_work, begin,
+                                                   end);
+                        });
 
     out.blocks.resize(block_count);
     std::uint64_t encoded_offset = 0;

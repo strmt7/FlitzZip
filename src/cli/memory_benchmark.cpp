@@ -126,11 +126,18 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
 }
 
 // Purpose: Resolve bounded in-flight work for the memory-only benchmark pipeline.
-// Inputs: `workers` is the resolved CPU worker count.
-// Outputs: Returns a depth admitted by production buffer policy plus benchmark reserve, or throws ArchiveError.
-std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers) {
-    const auto limit = superzip::resolve_host_pipeline_inflight_limit(
-        superzip::query_host_memory_snapshot(), superzip::kMaxArchiveChunkBytes, kMemoryBenchmarkReserveBytes);
+// Inputs: `workers` is the aggregate worker count; options specify effort, block size, and fallback policy.
+// Outputs: Returns a depth admitted by production workspace policy plus benchmark reserve, or throws ArchiveError.
+std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const MemoryBenchmarkOptions& options) {
+    superzip::HostPipelineWorkspace workspace;
+    if (!options.require_gpu) {
+        workspace = superzip::cpu_encode_workspace_estimate(
+            superzip::kMaxArchiveChunkBytes,
+            {.block_size = options.block_size, .compression_level = options.compression_level}, workers);
+    }
+    const auto limit = superzip::resolve_host_pipeline_inflight_limit(superzip::query_host_memory_snapshot(),
+                                                                      superzip::kMaxArchiveChunkBytes,
+                                                                      kMemoryBenchmarkReserveBytes, workspace);
     return superzip::resolve_worker_inflight_limit(workers, limit);
 }
 
@@ -751,7 +758,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     const auto total_bytes = validate_memory_benchmark_options(options);
 
     const auto workers = resolve_memory_benchmark_workers(options.workers);
-    const auto inflight = resolve_memory_benchmark_inflight(workers);
+    const auto inflight = resolve_memory_benchmark_inflight(workers, options);
     const auto chunk_count = static_cast<std::size_t>((total_bytes + superzip::kMaxArchiveChunkBytes - 1U) /
                                                       superzip::kMaxArchiveChunkBytes);
     const auto codec_workers = resolve_memory_codec_workers(workers, inflight, chunk_count);

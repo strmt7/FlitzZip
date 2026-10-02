@@ -97,12 +97,14 @@ void validate_encode_batch(std::size_t input_size, std::span<const std::uint32_t
 
 // Purpose: Apply the existing CPU block encoder to a validated independent-block batch.
 // Inputs: input and lengths have exact bounded coverage; options select the same policy as separate chunk encoding.
-// Outputs: Returns independent descriptors, concatenated payload, per-block CRCs, and combined CRC without GPU use.
+// Outputs: Returns independent descriptors, a bounded preallocated payload, and CRCs without GPU use.
 EncodedBlockBatch encode_block_batch_cpu(std::span<const std::byte> input, std::span<const std::uint32_t> lengths,
                                          const ArchiveCodecOptions& options) {
     EncodedBlockBatch batch;
     batch.encoded.blocks.reserve(lengths.size());
     batch.block_crc32.reserve(lengths.size());
+    // Each native encoded member is no larger than raw; avoid transient growth reallocations.
+    batch.encoded.payload.reserve(input.size());
     std::size_t offset = 0;
     for (const auto length : lengths) {
         const auto source = input.subspan(offset, length);

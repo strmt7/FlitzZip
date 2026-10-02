@@ -46,6 +46,8 @@ ZstdRuntime::ZstdRuntime() : module_(load_trusted_app_local_runtime(kZstdDllName
     set_compression_source_size_ =
         load_required_symbol<SetCompressionSourceSizeFn>(module, "ZSTD_CCtx_setPledgedSrcSize");
     compression_workspace_bytes_ = load_required_symbol<CompressionWorkspaceBytesFn>(module, "ZSTD_sizeof_CCtx");
+    estimate_block_workspace_bytes_ =
+        load_required_symbol<EstimateBlockWorkspaceBytesFn>(module, "ZSTD_estimateCCtxSize");
     compress_stream_ = load_required_symbol<CompressStreamFn>(module, "ZSTD_compressStream2");
     compress_block_ = load_required_symbol<CompressBlockFn>(module, "ZSTD_compress");
     compress_block_with_context_ = load_required_symbol<CompressBlockWithContextFn>(module, "ZSTD_compressCCtx");
@@ -107,6 +109,13 @@ std::size_t ZstdRuntime::set_compression_source_size(ZstdCompressionContext* con
 // Outputs: Returns the runtime's context allocation size, excluding application-owned buffers.
 std::size_t ZstdRuntime::compression_workspace_bytes(const ZstdCompressionContext* context) const {
     return compression_workspace_bytes_(context);
+}
+
+// Purpose: Obtain the version-pinned one-shot context bound without allocating a compression context.
+// Inputs: The maximum native effort level, with no dictionaries or internal Zstandard worker threads.
+// Outputs: Returns bytes covering levels up to that maximum, or a runtime error code.
+std::size_t ZstdRuntime::estimate_block_workspace_bytes(int maximum_level) const {
+    return estimate_block_workspace_bytes_(maximum_level);
 }
 
 // Purpose: Advance one bounded Zstandard compression stream operation through the pinned runtime.

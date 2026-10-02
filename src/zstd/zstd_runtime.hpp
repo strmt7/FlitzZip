@@ -37,7 +37,7 @@ constexpr int kZstdContentChecksumParameter = 201;
 constexpr int kZstdCompressionWorkersParameter = 400;
 constexpr int kZstdWindowLogMaxParameter = 100;
 
-// Purpose: Own the bundled Zstandard DLL handle and expose the small stable C ABI SuperZip uses.
+// Purpose: Own the identity-pinned Zstandard DLL and expose its compression and workspace APIs.
 // Inputs: Constructed lazily from `zstd_runtime()` with no caller arguments.
 // Outputs: Provides checked function dispatch to the app-local `libzstd.dll` runtime.
 class ZstdRuntime final {
@@ -74,6 +74,12 @@ class ZstdRuntime final {
     // Inputs: A live context; no concurrent compression may mutate it during this call.
     // Outputs: Returns context/workspace bytes, excluding wrapper and caller buffers.
     [[nodiscard]] std::size_t compression_workspace_bytes(const ZstdCompressionContext* context) const;
+
+    // Purpose: Bound one-shot context storage for all effort levels through the requested maximum.
+    // Inputs: A validated maximum level; applies only to dictionary-free, single-thread compressCCtx calls.
+    // Outputs: Returns the pinned runtime's worst-input estimate or a Zstandard error code.
+    // The upstream estimate API is experimental; DLL identity and version validation are mandatory.
+    [[nodiscard]] std::size_t estimate_block_workspace_bytes(int maximum_level) const;
 
     // Purpose: Compress one streaming chunk through the bundled runtime.
     // Inputs: `context`, `output`, `input`, and `directive` mirror the Zstandard stable C ABI.
@@ -153,6 +159,7 @@ class ZstdRuntime final {
     using SetCompressionParameterFn = std::size_t (*)(ZstdCompressionContext*, int, int);
     using SetCompressionSourceSizeFn = std::size_t (*)(ZstdCompressionContext*, unsigned long long);
     using CompressionWorkspaceBytesFn = std::size_t (*)(const ZstdCompressionContext*);
+    using EstimateBlockWorkspaceBytesFn = std::size_t (*)(int);
     using CompressStreamFn = std::size_t (*)(ZstdCompressionContext*, ZstdOutputBuffer*, ZstdInputBuffer*,
                                              ZstdEndDirective);
     using CompressBlockFn = std::size_t (*)(void*, std::size_t, const void*, std::size_t, int);
@@ -176,6 +183,7 @@ class ZstdRuntime final {
     SetCompressionParameterFn set_compression_parameter_ = nullptr;
     SetCompressionSourceSizeFn set_compression_source_size_ = nullptr;
     CompressionWorkspaceBytesFn compression_workspace_bytes_ = nullptr;
+    EstimateBlockWorkspaceBytesFn estimate_block_workspace_bytes_ = nullptr;
     CompressStreamFn compress_stream_ = nullptr;
     CompressBlockFn compress_block_ = nullptr;
     CompressBlockWithContextFn compress_block_with_context_ = nullptr;

@@ -119,14 +119,26 @@ std::uint64_t count_stream_windows(std::uint64_t bytes, std::uint64_t window_byt
 }
 
 // Purpose: Resolve worker and in-flight chunk counts from caller options and host memory.
-// Inputs: `chunk_size`, `requested_workers`, and `requested_inflight` are validated option values.
-// Outputs: Returns bounded concurrency or throws when even one estimated buffer window cannot fit.
+// Inputs: Validated resource options; optional borrowed compression options identify CPU fallback costs.
+// Outputs: Returns bounded concurrency or throws when one complete pipeline estimate cannot fit.
 PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t requested_workers,
-                                       std::uint32_t requested_inflight) {
+                                       std::uint32_t requested_inflight, const CompressOptions* compression = nullptr) {
     const auto hardware_threads = std::max(1U, std::thread::hardware_concurrency());
     const auto workers =
         requested_workers == 0 ? std::min<std::uint32_t>(hardware_threads, kMaxArchiveWorkers) : requested_workers;
-    const auto memory_limited_inflight = resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), chunk_size);
+    HostPipelineWorkspace workspace;
+    if (compression != nullptr && !compression->gpu_required) {
+        workspace = cpu_encode_workspace_estimate(
+            chunk_size, {.block_size = compression->block_size, .compression_level = compression->compression_level},
+            workers);
+        if (!compression->force_cpu) {
+            // Independent-file CPU fallback retains batch output while encoding its next member.
+            workspace.per_window_bytes += std::min(chunk_size, kArchiveEncodeBatchBytes) +
+                                          kArchiveEncodeBatchFiles * (sizeof(BlockDescriptor) + sizeof(std::uint32_t));
+        }
+    }
+    const auto memory_limited_inflight =
+        resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), chunk_size, 0, workspace);
     const auto automatic_inflight = std::min({workers, memory_limited_inflight, kMaxInflightArchiveChunks});
     const auto inflight = requested_inflight == 0 ? automatic_inflight : requested_inflight;
     if (inflight > memory_limited_inflight) {
@@ -838,7 +850,8 @@ OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
                               const ProgressCallback& progress_callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
     validate_compression_level(options.compression_level);
-    const auto budget = resolve_pipeline_budget(options.chunk_size, options.worker_count, options.max_inflight_chunks);
+    const auto budget =
+        resolve_pipeline_budget(options.chunk_size, options.worker_count, options.max_inflight_chunks, &options);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();
     const auto started = std::chrono::steady_clock::now();
     const auto manifest = build_manifest(sources);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/archive_block_types.hpp"
+#include "core/host_memory_budget.hpp"
 #include "core/resource_limits.hpp"
 
 #include <cstddef>
@@ -22,6 +23,12 @@ struct ArchiveCodecOptions {
     std::uint32_t worker_count = 1;
     int compression_level = kDefaultCompressionLevel;
 };
+
+// Purpose: Bound native CPU encode workspace before allocating queued input windows.
+// Inputs: A nonzero bounded chunk, validated codec options, and a 1..64 aggregate worker budget.
+// Outputs: Returns metadata/context/trial overhead beyond three payload buffers; throws on invalid bounds.
+HostPipelineWorkspace cpu_encode_workspace_estimate(std::uint64_t chunk_size, const ArchiveCodecOptions& options,
+                                                    std::uint32_t aggregate_workers);
 
 // Purpose: Describe one contiguous decode window without allocating or owning block metadata.
 // Inputs: Populated by resolve_decode_block_window from bounded descriptors.

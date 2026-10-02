@@ -46,6 +46,13 @@ required local commands; exact-SHA hosted assessment remains pending.
 Character-count measurements
 are recorded in the fresh audit without claiming token billing or total speedup.
 
+The native CPU admission round accounts for codec workspace and metadata across
+the aggregate worker budget, including optional-HIP small-file fallback costs.
+The HIP build, 11 focused tests and all 30 frozen full-profile commands pass.
+Both CPU/HIP lanes pass the seven-size RAM sweep; CPU archive sizes remain
+identical. Timing attribution and adaptive repetition remain open; this is
+neither whole-repo acceptance nor a claimed compression speedup.
+
 ## Current Modernization Sequence
 
 The modernization work proceeds serially. Imported scanner alerts are being

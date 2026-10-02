@@ -13,6 +13,7 @@ constexpr std::uint32_t kMaxArchiveBlockBytes = 16U * 1024U * 1024U;
 
 // Concurrency limits cap CPU worker fan-out and queued archive chunks.
 constexpr std::uint32_t kMaxArchiveWorkers = 64U;
+constexpr std::uint32_t kMaxCpuEncodeWorkersPerWindow = 4U;
 constexpr std::uint32_t kMaxInflightArchiveChunks = 64U;
 
 // Archive metadata limits prevent parser and in-memory index exhaustion.

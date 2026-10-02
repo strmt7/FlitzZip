@@ -213,8 +213,9 @@ and a subsequent content mutation invalidates it. This removes a demonstrated
 unnecessary refresh; it does not bypass actual source/config freshness checks.
 All 26 context/search contracts and the changed-function gate pass. The frozen
 follow-up full profile passed all 32 required commands; its eight current GUI
-page screenshots were reviewed without an observed layout defect. Exact-SHA
-hosted verification for this follow-up remains pending.
+page screenshots were reviewed without an observed layout defect. All seven
+hosted workflows for `549091a` passed when refreshed during the next round.
+This is checkpoint validation, not whole-repository security acceptance.
 
 ## Codec Workspace Observation And Next Admission Work
 
@@ -237,13 +238,51 @@ These context observations exclude caller buffers and metadata and are not
 worst-case bounds on arbitrary input. The pinned DLL also exports the one-shot
 `ZSTD_estimateCCtxSize` API; its level-nine estimate is 13,100,056 bytes under the
 upstream header contract. That contract excludes streaming and does not bound
-total process memory. No runtime API or admission behavior has yet changed.
+total process memory. The subsequent implementation is recorded in round six.
 
 Keep the four-block cap while deriving aggregate worker/context, candidate-buffer
 excess, metadata, queue and optional-fallback admission. Production and RAM
 validation must share the eventual policy. Source-hashed, expiring local notes
 preserve this lead without promoting a hypothesis to acceptance. The raw
 observations and estimate records are `out/fresh-audit-workspace-*-20261002.json`.
+
+## Round Six: Native CPU Workspace Admission
+
+Production native compression and RAM validation now share a CPU workspace
+estimate in addition to the existing three-buffer policy. It accounts for
+candidate/final block metadata, aggregate retained contexts, trial bytes beyond
+raw and short Deflate tails that can coexist with Zstandard context/trial
+storage. The four-worker window ceiling now has one shared constant used by
+both admission and dispatch. The pinned one-shot context estimator covers all
+effort levels through the selected maximum without changing encoded data.
+Queue arithmetic avoids unsigned allocation-cost multiplication overflow.
+
+Required-HIP compression preserves its GPU-only contract. Optional-HIP fallback
+includes CPU storage even when the current device is available. Small-file CPU
+fallback reserves bounded output capacity once rather than growing it during
+member concatenation; its extra member/output overlap and metadata are admitted.
+This does not reserve memory against other processes or account for all process,
+manifest, streaming, thread-stack and GPU-pool memory.
+
+The HIP build and all 11 focused memory tests pass, including 16,384
+synthetic concurrency geometries, exact boundaries and actual runtime context
+size/readback checks across nine effort levels. The frozen full profile passed
+all 30 selected commands, including 570 native tests, production-DLL bounds and
+fault groups, the 36-format matrix, independent readers, sanitizer smoke,
+unpublished packaging and 26 context/search tests. The bounded result retains
+output tails, not a complete log; it reports no timeout or output-limit breach.
+Eight current GUI page captures were reviewed without an observed layout defect.
+The final seven-size CPU/HIP sweep also passed exact readbacks with zero
+archive-data disk writes, and every CPU archive size matches its baseline.
+The seven-size baseline
+CPU sweep used 10 GiB Mixed input at level five, verified readback and reported
+zero archive-data disk writes. Its recorded executable hash identifies the
+pre-change binary; source edits began during the sweep, so its JSON correctly
+marks the source tree dirty. This is diagnostic baseline evidence, not a
+clean-source published comparison or a speedup claim. Timing changes have both
+signs, including slower large-block CPU observations; this single sequential
+baseline/candidate pair cannot attribute the differences to the admission change.
+Adaptive repetitions and matched controls are the next measurement refinement.
 
 ## Bounds Review Progress
 

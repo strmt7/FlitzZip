@@ -180,28 +180,48 @@ series and the other profiles therefore remain incomplete; those samples do
 not support a throughput conclusion. The guard was not weakened and unrelated
 host processes were left alone.
 
-## Host Buffer Admission
+## Host Pipeline Admission
 
 Native archive processing and the RAM-only benchmark share
 `core/host_memory_budget.cpp`. Both admit three chunk-sized buffers per
-in-flight window; the benchmark additionally retains its 1 GiB overhead
-reserve. A snapshot at or above the 80% physical-RAM usage target, or with
+in-flight window. CPU encoding and optional-HIP fallback additionally admit
+block metadata and codec workspace across the aggregate worker budget; the
+benchmark additionally retains its 1 GiB overhead reserve. A snapshot at or above the 80% physical-RAM usage target, or with
 insufficient growth for one window, refuses processing rather than forcing a
 minimum depth of one. Failed or invalid Windows memory counters never become
 invented fallback capacity. Reducing virtual benchmark input bytes does not
 reduce its fixed 128 MiB processing window.
 
 This is buffer admission from a volatile snapshot, not an OS reservation or a
-hard bound on total process memory. Codec contexts, candidate metadata,
-manifest/index growth, retained pools, and concurrent host allocations need
-their own accounting. In particular, custom small CPU windows can hold codec
-workspace larger than the three-buffer estimate; complete codec-workspace
-admission remains open. No timing or general memory-safety claim follows from
-the buffer correction alone.
+hard bound on total process memory. Manifest/index growth, thread stacks,
+allocator bookkeeping, GPU/pinned pools, streaming codecs, and concurrent host
+allocations still need separate accounting. No timing or general memory-safety
+claim follows from admission alone.
+
+For native CPU encoding, a window carries both candidate and final block
+metadata. Concurrent codec contexts are bounded by the smaller of aggregate
+workers and queue depth times the existing four-worker per-window ceiling.
+Each context allowance includes the identity-pinned Zstandard 1.5.7
+`ZSTD_estimateCCtxSize` bound, trial bytes beyond raw, and miniz state plus a
+short-tail trial that can coexist with retained Zstandard storage. The
+[upstream estimate contract](https://github.com/facebook/zstd/blob/v1.5.7/lib/zstd.h)
+covers all levels up to the requested maximum for dictionary-free,
+single-threaded one-shot calls. It excludes streaming. This experimental API
+is accepted only through the already version- and hash-pinned DLL.
+
+Optional-HIP small-file batches reserve their bounded CPU fallback output once
+and admit an additional member/output overlap and batch metadata allowance.
+Forced-CPU production and RAM validation share the native estimator; required-HIP
+operations do not claim CPU compression workspace or allow hidden CPU encoding.
+Explicit queue requests beyond the complete estimate continue to fail before
+reading inputs or opening staging output.
 
 `test_host_memory_budget.cpp` checks exact target/window/reserve boundaries,
 invalid counters, unsigned limits, and 8,080 synthetic combinations spanning
-2 GiB through 1 TiB hosts. It does not consume that RAM or require an idle PC.
+2 GiB through 1 TiB hosts. Workspace tests add all 16,384 worker/fan-out/depth
+geometries, exact one-byte boundaries, invalid full-width costs, and real
+production-DLL retained-context/readback checks. They do not consume the
+synthetic RAM or require an idle PC.
 The primary counter contract is Microsoft's
 [GlobalMemoryStatusEx documentation](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-globalmemorystatusex),
 which explicitly describes memory availability as volatile.

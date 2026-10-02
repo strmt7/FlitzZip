@@ -89,6 +89,27 @@ Shared worker contention can offset earlier compilation; removing the barrier
 does not yet prove a wall-time gain or guarantee a sub-20-minute job. A comparison
 between different source revisions/runners is diagnostic, not a controlled speedup.
 
+### Fresh October 2 Observations
+
+Two subsequent completed C++ jobs confirm the scheduling barrier is absent:
+native test-object compilation starts after core completion and finishes before
+the GUI executable. The manual traced build and both query suites remain active.
+
+| Source/run | Traced build | Analyze step | Whole C++ job | Reported extracted C++ / C files |
+| --- | ---: | ---: | ---: | --- |
+| `6d0ba97` / `36989167658` | 12m08s | 4m41s | 17m47s | 241/268; 107/110 |
+| `549091a` / `37000781910` | 10m15s | 4m38s | 15m33s | 242/269; 107/110 |
+
+The later revision adds the production-DLL bounds test translation unit. These
+reported counts do not establish complete source coverage or identical extracted
+file sets. They retain 27 unextracted C++ and three C files per invocation, which
+remain coverage signals to inspect. Resource flags stay `--threads=4 --ram=14433`.
+Different source revisions, runner/cache state and competing work prevent a
+causal speedup estimate. These observations justify keeping the scheduling
+repair; they do not justify reducing scanner/test coverage or further guessed
+resource changes. Job APIs and timestamped logs are retained under ignored
+`out/fresh-audit-hosted-*-20261002.*`.
+
 ## Changes And Preserved Boundaries
 
 - The stateless offline Greenbone integration workflow now cancels a superseded

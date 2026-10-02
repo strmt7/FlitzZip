@@ -42,7 +42,9 @@ documents compatibility and verification. Unsupported methods fail explicitly.
 Runtime systems need:
 
 - Windows 11 x64.
-- A supported AMD GPU.
+- A [supported](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
+  AMD GPU. Choose Windows in AMD's compatibility selector and check the
+  [GPU targets included in the SuperZip build](docs/release.md#gpu-targets).
 - An AMD GPU driver that provides the HIP runtime required by the build.
 
 AMD documents the HIP runtime as part of the AMD GPU driver, not something an
