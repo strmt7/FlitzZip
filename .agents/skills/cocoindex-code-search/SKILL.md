@@ -6,7 +6,7 @@ origin: adapted from strmt7/VulnerabilityScreener .agents/skills/cocoindex-code-
 
 # CocoIndex Code Search
 
-For broad or fuzzy repository code navigation, use this workflow before
+This workflow is mandatory for broad or fuzzy repository code navigation, before
 opening many files. Keep direct `rg` first for exact symbols, strings,
 counts and small known scopes. CocoIndex is a development aid and never
 part of scanner runtime or training data.
@@ -20,7 +20,10 @@ part of scanner runtime or training data.
    override it with an absolute path.
 2. Run `<python> tools/cocoindex_agent_search.py search --limit 5
    "conceptual question"`. Search rejects source changes until `index`
-   refreshes the code-only mirror. The wrapper disables usage telemetry
+   refreshes the code-only mirror. Successful searches record a local,
+   per-checkout receipt with the source/config digests and query hash; an
+   installation or index marker alone does not prove search use. This receipt
+   is development evidence, not a proof of complete source review. The wrapper disables usage telemetry
    and uses CPU embeddings, preserving HIP capacity for SuperZip work.
 3. Confirm each relevant candidate with `rg -n` and an exact source
    read. The first-five ranking is a hint, not evidence of completeness
@@ -33,6 +36,10 @@ part of scanner runtime or training data.
    `rg` for path narrowing.
 5. If install/index fails twice, inspect the exact error and use bounded `rg`
    so a development tool does not block a correctness fix.
+
+Use `tools/agent_context.py startup` at a new context boundary to load both
+mandatory skills. The bounded document reader supplements code navigation;
+it does not replace semantic routing or the authoritative source reads.
 
 Do not register over an existing `cocoindex-code` MCP server bound to
 another repository. This repository's CLI workflow is independent of

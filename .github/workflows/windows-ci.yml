@@ -54,6 +54,11 @@ jobs:
         run: |
           python -m unittest tools.test_semgrep_coverage tools.test_devskim_provenance tools.test_devskim_report
           if ($LASTEXITCODE -ne 0) { throw "Scanner provenance or coverage regressions failed." }
+      - name: Agent context and mandatory skill contracts
+        shell: pwsh
+        run: |
+          python -m unittest tools.test_agent_context tools.test_cocoindex_agent_search
+          if ($LASTEXITCODE -ne 0) { throw "Agent context or mandatory skill contracts failed." }
       - name: Refactor inventory regression tests
         shell: pwsh
         run: |

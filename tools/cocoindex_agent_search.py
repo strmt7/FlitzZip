@@ -16,6 +16,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -287,6 +289,33 @@ def index(base: Path, repo: Path = ROOT) -> None:
     print(output[-2000:])
 
 
+def record_search_use(base: Path, repo: Path, digest: str, query: str, hit_count: int) -> None:
+    """Purpose: Record real successful routing.
+    Inputs: verified search metadata.
+    Outputs: atomic local receipt, no query text."""
+    mirror = paths(base, repo)[1]
+    target = base / "active" / (mirror.name + ".usage.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "schema": 1,
+        "source_digest": digest,
+        "config_digest": CONFIG_DIGEST,
+        "cocoindex_code": VERSION,
+        "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+        "hit_count": hit_count,
+        "completed_at": datetime.now(UTC).isoformat(),
+    }
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".search-", delete=False) as output:
+            temporary = Path(output.name)
+            output.write((json.dumps(receipt) + "\n").encode("utf-8"))
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def search(base: Path, query: str, limit: int, repo: Path = ROOT, path: str | None = None) -> None:
     """Purpose: Route a conceptual query. Inputs: fresh index/query/limit/path. Outputs: bounded hints."""
     if path and any(mark in path for mark in "*?["):
@@ -324,6 +353,9 @@ def search(base: Path, query: str, limit: int, repo: Path = ROOT, path: str | No
         if len(distinct) == limit:
             break
     hits = distinct
+    if source_digest(tracked_files(repo)) != current:
+        raise RuntimeError("source changed during semantic search; refresh index before using results")
+    record_search_use(base, repo, current, query, len(hits))
     for hit in hits:
         excerpt = " ".join(hit["content"].split())[:160]
         print(f"{hit['file_path']}:{hit['start_line']}-{hit['end_line']} score={hit['score']:.3f} {excerpt}")
@@ -339,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     find = sub.add_parser("search")
     find.add_argument("query")
     find.add_argument("--limit", type=int, default=5)
-    find.add_argument("--path", help="repository-relative glob after initial routing")
+    find.add_argument("--path", help="exact repository-relative file after initial routing; wildcards are rejected")
     args = parser.parse_args(argv)
     base = home()
     if args.action == "install":

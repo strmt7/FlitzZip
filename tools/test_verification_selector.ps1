@@ -224,6 +224,12 @@ Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "package-smoke") 
 Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packaging changes must wait for windows-ci"
 
 $mcpPlan = Get-SuperZipVerificationPlan -ChangedPath @("mcp/superzip_mcp.py")
+foreach ($agentToolPath in @("tools/agent_context.py", "tools/test_agent_context.py", "tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py")) {
+    $agentToolPlan = Get-SuperZipVerificationPlan -ChangedPath @($agentToolPath)
+    Assert-Selector $agentToolPlan.scope.fullEscalationRequired "agent context and routing changes must escalate"
+    Assert-Selector (Test-RequiredCommand -Plan $agentToolPlan -Id "agent-context-contracts") "agent tool changes must exercise real context and search receipt contracts"
+    Assert-Selector (Test-RequiredCommand -Plan $agentToolPlan -Id "verification-selector-self-test") "agent tool routing must retain selector coverage"
+}
 Assert-Selector $mcpPlan.scope.fullEscalationRequired "MCP verifier-adjacent changes must escalate"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-python-compile") "MCP changes must compile Python"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-bounded-child-tests") "MCP changes must test bounded child execution"

@@ -3,6 +3,8 @@
 Adapted from strmt7/VulnerabilityScreener tests/test_cocoindex_agent_search.py (MIT).
 """
 
+import contextlib
+import io
 import json
 import subprocess
 import tempfile
@@ -11,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools.cocoindex_agent_search import (
+    CONFIG_DIGEST,
     ROOT,
     home,
     paths,
@@ -22,6 +25,81 @@ from tools.cocoindex_agent_search import (
 
 
 class CocoIndexAgentSearchTests(unittest.TestCase):
+    def test_successful_search_records_real_use_without_query_text(self):
+        """Purpose: Prove routing receipt semantics.
+        Inputs: fresh source/real wrapper/mock package.
+        Outputs: deduplicated use record."""
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            source = base / "source.py"
+            source.write_text("pass\n", encoding="utf-8")
+            entries = [("source.py", source)]
+            digest = source_digest(entries)
+            mirror = paths(base, base)[1]
+            marker = base / "active" / (mirror.name + ".json")
+            marker.parent.mkdir()
+            marker.write_text(
+                json.dumps({"source_digest": digest, "config_digest": CONFIG_DIGEST, "cocoindex_code": "0.2.41"}),
+                encoding="utf-8",
+            )
+            hit = dict(file_path="source.py", start_line=1, end_line=1, score=0.9, content="pass")
+            result = subprocess.CompletedProcess([], 0, stdout=json.dumps({"success": True, "results": [hit, hit]}))
+            query = "private conceptual question"
+            with (
+                patch("tools.cocoindex_agent_search.tracked_files", return_value=entries),
+                patch("tools.cocoindex_agent_search._run", return_value=result),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                search(base, query, 5, repo=base)
+            self.assertIn("results=1", output.getvalue())
+            receipt = marker.with_name(mirror.name + ".usage.json").read_text()
+            self.assertNotIn(query, receipt)
+            self.assertEqual(json.loads(receipt)["source_digest"], digest)
+            self.assertEqual(json.loads(receipt)["hit_count"], 1)
+            source.write_text("changed\n", encoding="utf-8")
+            original = receipt
+            with (
+                patch("tools.cocoindex_agent_search.tracked_files", return_value=entries),
+                self.assertRaisesRegex(RuntimeError, "index is stale"),
+            ):
+                search(base, query, 5, repo=base)
+            self.assertEqual(marker.with_name(mirror.name + ".usage.json").read_text(), original)
+
+    def test_source_changed_during_search_cannot_record_current_use(self):
+        """Purpose: Close the search freshness race.
+        Inputs: source mutation during the package call. Outputs: explicit failure without a new receipt."""
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            source = base / "source.py"
+            source.write_text("pass\n", encoding="utf-8")
+            entries = [("source.py", source)]
+            mirror = paths(base, base)[1]
+            marker = base / "active" / (mirror.name + ".json")
+            marker.parent.mkdir()
+            marker.write_text(
+                json.dumps(
+                    {
+                        "source_digest": source_digest(entries),
+                        "config_digest": CONFIG_DIGEST,
+                        "cocoindex_code": "0.2.41",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def mutate_source(*args, **kwargs):
+                """Purpose: Inject source drift. Inputs: package argv. Outputs: successful stale search data."""
+                source.write_text("changed\n", encoding="utf-8")
+                return subprocess.CompletedProcess([], 0, stdout=json.dumps({"success": True, "results": []}))
+
+            with (
+                patch("tools.cocoindex_agent_search.tracked_files", return_value=entries),
+                patch("tools.cocoindex_agent_search._run", side_effect=mutate_source),
+                self.assertRaisesRegex(RuntimeError, "source changed during semantic search"),
+            ):
+                search(base, "conceptual question", 5, repo=base)
+            self.assertFalse(marker.with_name(mirror.name + ".usage.json").exists())
+
     def test_home_requires_absolute_override(self):
         with patch.dict("os.environ", {"AGENT_CODE_HOME": "relative"}), self.assertRaisesRegex(ValueError, "absolute"):
             home()

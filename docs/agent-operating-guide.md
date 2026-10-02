@@ -876,6 +876,12 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 
 ## Agent Workflow
 
+Load the current mandatory Caveman and CocoIndex skills at a new context
+boundary, and re-read them when changed. Use the
+[development-context tools](development-context.md) for bounded section reads
+and explicit source-backed notes. Its caches never replace required reading,
+verification, scanner coverage or the exact-source confirmation of semantic hits.
+
 Report a blocking tool or service error immediately with the exact returned
 cause, the work it prevents, and the next actionable step. Distinguish a
 disconnected access checker from an account eligibility denial. Do not repeat

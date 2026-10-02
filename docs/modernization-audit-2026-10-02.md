@@ -153,3 +153,48 @@ Production telemetry and codec behavior are unchanged. This resolves a
 demonstrated validation flake, not an application performance defect. The
 original full-profile failure and diagnostic output remain in ignored evidence.
 The corrected full profile and final targeted rerun passed, as recorded above.
+
+## Round Four: Development Context And Mandatory Skills
+
+The [development-context index](development-context.md) routes to existing
+sources instead of copying policy or volatile current-state values. A new
+standard-library helper supplies exact heading/line windows, explicit per-context
+read reuse, and short cited notes with source hashes and expiry. Partial reads
+retain exact unread ranges and cannot enter the cache. Context resets require a
+new session or forced source output. Stale notes withhold their synthesis;
+unchanged citations do not establish correctness or acceptance.
+
+Caveman and CocoIndex are explicitly mandatory in AGENTS.md. Startup delivers
+their current full instructions; successful CocoIndex searches record local
+source/config/query hashes and completion metadata. Search checks source
+freshness again after retrieval. Neither installation nor a stale receipt is
+proof of actual current routing, and instruction delivery cannot prove model
+behavior. The existing exact-search boundary and single-agent rule remain.
+
+On the current operating guide, the complete Git Workflow section emitted
+4,464 numbered source characters from a 70,021-character file. Its JSON response
+was 4,733 characters; a repeated fully read window in the same explicit context
+was 206 characters. These are emitted-character measurements, not token billing,
+latency, correctness or whole-development speedup measurements. Raw records and
+note/read demonstrations remain in ignored `out/fresh-audit-context-*` artifacts.
+
+The source-thread review retrieved 1,132 comments across 12 pages and screened
+every record before targeted technical reading. It did not load all 1.75 million
+characters into the model. Current primary sources and conflicting 2026 agent
+evaluation results are linked in the context guide; forum product performance
+claims were not adopted as evidence.
+
+The frozen latest-source full profile passed all 32 required commands, including
+25 context/search contracts, 24 bounded-child contracts, selector regressions,
+HIP-enabled native tests, the format matrix, independent interoperability,
+security checks, sanitizer smoke and packaging. The eight current GUI page
+screenshots were reviewed without an observed layout defect. Language lint and
+changed-function contracts passed. Exact-SHA hosted assessment remains pending;
+this is an intermediate development checkpoint, not final product acceptance.
+
+At the subsequent hosted boundary, all six workflows triggered by application
+checkpoint `91c38ac` had completed successfully. The fresh post-push history
+audit nevertheless failed: 208 unapproved open scanner records remain, including
+six Zstandard pointer-bounds alerts. Deployment count was zero. The inventory
+and failure log are retained under ignored `out/fresh-audit-post-push-app-*`;
+neither test success nor green workflows resolves that backlog.

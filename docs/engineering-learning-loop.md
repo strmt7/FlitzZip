@@ -7,6 +7,26 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Development context must expose partial reads and stale synthesis instead of
+  quietly treating either as current knowledge. The bounded reader caches only
+  fully emitted exact windows in an explicitly retained context. Source mutation,
+  a new context or forced reads restore the source; note expiry and changed or
+  unavailable dependencies withhold the summary. Real-file regressions cover
+  those cases, collision preservation and Windows case-insensitive secret-path
+  admission. See [development context](development-context.md).
+- A mandatory tool's installation does not prove its use. Startup delivers the
+  current Caveman/CocoIndex instructions, while only successful fresh semantic
+  searches publish a routing receipt. A source mutation during retrieval fails
+  before output and leaves previous evidence historical. Instruction delivery
+  and source freshness do not prove model compliance or complete review.
+- Freeze a coherent source batch before full verification. In the October
+  context-tool round, a late Windows path refinement required another full run;
+  earlier passing checks could not establish acceptance of the final source.
+  Use focused failure diagnosis while editing, then the actual-path classifier.
+  Record failures, pending gates and exact evidence rather than narrowing the
+  mandatory profile to save time. Summarize saved raw logs before emitting them
+  to the model, and continue required reads through explicit unread ranges.
+
 - Reduce scanning backlogs by root-cause batch, not alert-count targets. Separate
   code defects, quality observations and verified false positives; retain an
   alert-to-evidence record and confirm actual fixes on the pushed SHA. An upstream

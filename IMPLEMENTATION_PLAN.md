@@ -38,6 +38,14 @@ and the final five-command assertion rerun pass; hosted assessment remains
 pending. The 21-flow static bounds review, whole-repository audit and
 wider performance/compression work remain open.
 
+The next round adds [bounded development context](docs/development-context.md):
+exact section reads, explicit context reuse and cited notes that withhold stale
+synthesis. Caveman and CocoIndex are mandatory, with current instruction delivery
+and real successful-search receipts. The frozen full profile passed all 32
+required local commands; exact-SHA hosted assessment remains pending.
+Character-count measurements
+are recorded in the fresh audit without claiming token billing or total speedup.
+
 ## Current Modernization Sequence
 
 The modernization work proceeds serially. Imported scanner alerts are being

@@ -265,6 +265,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
         '^tools/(fuzz_memory|test_fuzz_memory)\.py$',
+        '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
@@ -427,6 +428,9 @@ function Get-SuperZipLocalVerificationCommand {
         if ($scope.touchesPackaging -or $scope.fullEscalationRequired) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "msi-identity-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_msi_identity.ps1") -Reason "installer identity changes require deterministic ProductCode and stable UpgradeCode coverage")
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "package-smoke" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/package.ps1", "-Configuration", "Release") -Reason "installer, CPack, versioning, or broad changes require package validation")
+        }
+        if ($scope.touchesVerification -or $scope.fullEscalationRequired) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "agent-context-contracts" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_agent_context", "tools.test_cocoindex_agent_search") -Reason "mandatory skills, bounded source reads, note freshness and real semantic-routing receipts require executable contracts")
         }
         if ($scope.touchesMcp -or $scope.touchesVerification) {
             Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "mcp-python-compile" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "py_compile", "mcp/superzip_mcp.py") -Reason "MCP Python changes require syntax validation")
