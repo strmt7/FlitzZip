@@ -1,5 +1,44 @@
 #include "fault_allocator.h"
 #include "legacy/zstd_legacy.h"
+#include "common/allocations.h"
+
+/* Purpose: Provide nonzero custom storage; opaque is unused, bytes is the test extent, returns tracked storage or NULL.
+ */
+static void* sz_custom_allocate(void* opaque, size_t bytes) {
+    void* address;
+    (void)opaque;
+    address = sz_fault_malloc(bytes);
+    if (address != NULL) {
+        memset(address, 0xA5, bytes);
+    }
+    return address;
+}
+
+/* Purpose: Return tracked custom storage; opaque is unused, address is owned or NULL, no return value. */
+static void sz_custom_release(void* opaque, void* address) {
+    (void)opaque;
+    sz_fault_free(address);
+}
+
+/* Purpose: Test production zero-allocation semantics; bytes and custom select the plan, returns storage or NULL. */
+void* sz_custom_calloc(size_t bytes, int custom) {
+    ZSTD_customMem memory = ZSTD_defaultCMem;
+    if (custom) {
+        memory.customAlloc = sz_custom_allocate;
+        memory.customFree = sz_custom_release;
+    }
+    return ZSTD_customCalloc(bytes, memory);
+}
+
+/* Purpose: Test production release semantics; address and custom retain allocator identity, releases storage. */
+void sz_custom_free(void* address, int custom) {
+    ZSTD_customMem memory = ZSTD_defaultCMem;
+    if (custom) {
+        memory.customAlloc = sz_custom_allocate;
+        memory.customFree = sz_custom_release;
+    }
+    ZSTD_customFree(address, memory);
+}
 
 /* Purpose: Create the upstream decoder for version 5, 6 or 7; returns an owned pointer or NULL. */
 void* sz_legacy_create(unsigned version) {

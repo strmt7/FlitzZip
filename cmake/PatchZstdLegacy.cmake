@@ -130,10 +130,39 @@ function(superzip_patch_zstd_initializer source_dir)
     "${header_content}")
 endfunction()
 
-# Purpose: Apply both production legacy-context repairs reproducibly. Inputs:
-# source_dir is the extracted root of the verified upstream archive. Outputs:
-# Patches generated files or fails closed; leaves provenance untouched.
+# Purpose: Repair custom allocation failure before zero initialization. Inputs:
+# source_dir is the verified v1.5.7 source root. Outputs: Writes only the
+# hash-checked production allocation helper; preserves upstream notices.
+function(superzip_patch_zstd_custom_allocator source_dir)
+  set(header "${source_dir}/lib/common/allocations.h")
+  file(READ "${header}" content)
+  string(
+    CONCAT contract
+           "/* Purpose: Zero custom storage only after successful allocation.\n"
+           " * Inputs: size is the requested extent; customMem supplies "
+           "callbacks or the standard allocator.\n"
+           " * Outputs: Returns zeroed owned storage or NULL without accessing "
+           "failed allocation. */\n")
+  string(CONCAT signature "MEM_STATIC void* ZSTD_customCalloc(size_t size, "
+                "ZSTD_customMem customMem)\n")
+  string(REPLACE "${signature}" "${contract}${signature}" content "${content}")
+  string(CONCAT checked_clear "        if (ptr == NULL) {\n"
+                "            return NULL;\n        }\n"
+                "        ZSTD_memset(ptr, 0, size);\n")
+  string(REPLACE "        ZSTD_memset(ptr, 0, size);\n" "${checked_clear}"
+                 content "${content}")
+  superzip_write_verified_zstd_patch(
+    "${header}"
+    "6a718e8edaca112abdc0bdfa7de67edefaa44c8d9e514b79672ab58ab3a9118a"
+    "b1e3a6f3460a0558727860cd0ade078c2311cc474c6a4aafc161bdf938c296cd"
+    "${content}")
+endfunction()
+
+# Purpose: Apply the production dependency's allocation repairs reproducibly.
+# Inputs: source_dir is the extracted root of the verified upstream archive.
+# Outputs: Patches generated files or fails closed; leaves provenance untouched.
 function(superzip_patch_zstd_legacy source_dir)
   superzip_patch_zstd_v05("${source_dir}")
   superzip_patch_zstd_initializer("${source_dir}")
+  superzip_patch_zstd_custom_allocator("${source_dir}")
 endfunction()

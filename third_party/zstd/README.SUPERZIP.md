@@ -51,3 +51,19 @@ decoder fork or a compression-performance claim.
 
 Upstream copyright and BSD license text remain unchanged. This is a downstream
 patch, not a claim that the upstream release already contains these fixes.
+
+## Custom Allocation Failure
+
+The same reproducible recipe guards `ZSTD_customCalloc` before it clears custom
+storage. A callback returning NULL now propagates allocation failure rather than
+passing NULL to `memset`. This matches the failure handling in
+[upstream commit 3f8f9b3f](https://github.com/facebook/zstd/commit/3f8f9b3f89244638f10bca664c120fd28cb14efe),
+checked on 2026-10-02; it does not replace the pinned release with development
+source. The original header and complete derived output have verified hashes.
+
+The allocation fixture invokes the actual production helper. It covers injected
+failure, zero-size failure, an existing live owner, retry, nonzero-to-zero custom
+initialization, the unchanged standard allocator, and matched release. CMake
+fixtures additionally cover the helper's drift, idempotence and interrupted-write
+boundaries. SuperZip currently uses the standard allocator; attacker-triggerable
+reachability through a custom allocator is not established by these tests.

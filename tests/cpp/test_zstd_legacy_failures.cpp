@@ -20,7 +20,68 @@ struct LegacyOwner {
     }
 };
 
+struct CustomAllocationOwner {
+    void* address;
+    int custom;
+
+    // Purpose: Release helper output even when a test assertion throws.
+    // Inputs: Retained allocation and allocator selection.
+    // Outputs: Frees the allocation exactly once without changing fault state.
+    ~CustomAllocationOwner() {
+        sz_custom_free(address, custom);
+    }
+};
+
 }  // namespace
+
+// Purpose: Return custom allocation failure without a null write or disturbing an existing owner.
+// Inputs: Injected failures for zero and positive extents, with a live preceding allocation and a successful retry.
+// Outputs: Requires NULL, retained ownership, zero-initialized retry and leak-free destruction.
+TEST_CASE(zstd_custom_calloc_failure_preserves_owners) {
+    for (const auto bytes : {0U, 1U, 64U, 4096U, 1048576U}) {
+        REQUIRE_TRUE(sz_fault_reset(0));
+        {
+            CustomAllocationOwner retained{sz_custom_calloc(16U, 1), 1};
+            REQUIRE_TRUE(retained.address != nullptr);
+            REQUIRE_TRUE(sz_fault_fail_after(1U));
+            REQUIRE_TRUE(sz_custom_calloc(bytes, 1) == nullptr);
+            REQUIRE_EQ(sz_fault_live_allocations(), 1U);
+            REQUIRE_TRUE(sz_fault_fail_after(0U));
+            if (bytes != 0U) {
+                CustomAllocationOwner retry{sz_custom_calloc(bytes, 1), 1};
+                REQUIRE_TRUE(retry.address != nullptr);
+                const auto* data = static_cast<const unsigned char*>(retry.address);
+                for (unsigned index = 0; index < bytes; ++index) {
+                    REQUIRE_EQ(data[index], 0U);
+                }
+            }
+        }
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+        REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+    }
+}
+
+// Purpose: Preserve successful zero initialization and release for custom and standard allocators.
+// Inputs: Four bounded positive allocation extents; custom callback fills storage with nonzero bytes before return.
+// Outputs: Requires every requested byte to be zero and no leaked or invalid custom releases.
+TEST_CASE(zstd_custom_calloc_success_zeroes_requested_extent) {
+    for (const auto custom : {0, 1}) {
+        for (const auto bytes : {1U, 64U, 4096U, 1048576U}) {
+            REQUIRE_TRUE(sz_fault_reset(0));
+            {
+                CustomAllocationOwner owner{sz_custom_calloc(bytes, custom), custom};
+                REQUIRE_TRUE(owner.address != nullptr);
+                const auto* data = static_cast<const unsigned char*>(owner.address);
+                for (unsigned index = 0; index < bytes; ++index) {
+                    REQUIRE_EQ(data[index], 0U);
+                }
+                REQUIRE_EQ(sz_fault_live_allocations(), custom == 0 ? 0U : 1U);
+            }
+            REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+            REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+        }
+    }
+}
 
 // Purpose: Check both constructor failures and a successful owner for one shipped legacy decoder.
 // Inputs: version is 5, 6 or 7; each case injects a specific allocation failure without memory pressure.

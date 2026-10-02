@@ -99,7 +99,7 @@ It does not provide GPU acceleration.
 
 The production copy under `third_party/zstd/` contains only license files and
 SuperZip runtime notes. CMake verifies the source archive, builds `libzstd.dll`
-in the build directory with the reproducible legacy-context hardening patch
+in the build directory with reproducible legacy-context and custom-allocation repairs
 documented in `third_party/zstd/README.SUPERZIP.md`, and copies it beside each
 executable. The original archives and license notices remain unchanged. The official
 Win64 package remains pinned for independent CLI comparisons. SuperZip loads

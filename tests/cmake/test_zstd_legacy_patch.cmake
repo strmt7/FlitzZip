@@ -41,6 +41,7 @@ function(prepare_fixture name output)
     COMMAND
       "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}" --
       "zstd-1.5.7/lib/legacy/zstd_v05.c" "zstd-1.5.7/lib/legacy/zstd_legacy.h"
+      "zstd-1.5.7/lib/common/allocations.h"
     WORKING_DIRECTORY "${root}"
     RESULT_VARIABLE extraction_result)
   if(NOT extraction_result EQUAL 0)
@@ -53,10 +54,16 @@ endfunction()
 
 # Purpose: Require a child patch to reject one invalid fixture without
 # overwrite. Inputs: root owns the fixture; cause is the exact expected failure
-# diagnostic. Outputs: Fails if the child succeeds, rejects for another reason,
-# or changes source.
+# diagnostic; optional third argument selects the relative source boundary.
+# Outputs: Fails if the child succeeds, rejects for another reason, or changes
+# the selected source.
 function(require_rejection root cause)
-  set(source "${root}/lib/legacy/zstd_v05.c")
+  if(ARGC GREATER 2)
+    set(relative "${ARGV2}")
+  else()
+    set(relative "lib/legacy/zstd_v05.c")
+  endif()
+  set(source "${root}/${relative}")
   file(SHA256 "${source}" before)
   execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DREPO_ROOT=${REPO_ROOT}"
@@ -78,11 +85,14 @@ prepare_fixture(fresh fresh)
 superzip_patch_zstd_legacy("${fresh}")
 file(SHA256 "${fresh}/lib/legacy/zstd_v05.c" decoder_after)
 file(SHA256 "${fresh}/lib/legacy/zstd_legacy.h" header_after)
+file(SHA256 "${fresh}/lib/common/allocations.h" allocations_after)
 superzip_patch_zstd_legacy("${fresh}")
 file(SHA256 "${fresh}/lib/legacy/zstd_v05.c" decoder_repeat)
 file(SHA256 "${fresh}/lib/legacy/zstd_legacy.h" header_repeat)
-if(NOT decoder_after STREQUAL decoder_repeat OR NOT header_after STREQUAL
-                                                header_repeat)
+file(SHA256 "${fresh}/lib/common/allocations.h" allocations_repeat)
+if(NOT decoder_after STREQUAL decoder_repeat
+   OR NOT header_after STREQUAL header_repeat
+   OR NOT allocations_after STREQUAL allocations_repeat)
   message(FATAL_ERROR "Dependency patch is not idempotent")
 endif()
 
@@ -90,19 +100,30 @@ prepare_fixture(drift drift)
 file(APPEND "${drift}/lib/legacy/zstd_v05.c" "\n/* fixture source drift */\n")
 require_rejection("${drift}" "Zstandard patch source identity mismatch")
 
-foreach(phase IN ITEMS input output)
-  prepare_fixture("interrupted-${phase}" interrupted)
-  set(PARTIAL "${interrupted}/lib/legacy/zstd_v05.c.superzip-patch")
-  if(phase STREQUAL "input")
-    string(APPEND PARTIAL ".raw")
-  endif()
-  file(WRITE "${PARTIAL}" "fixture-owned incomplete patch\n")
-  file(SHA256 "${PARTIAL}" partial_before)
-  require_rejection("${interrupted}" "Incomplete or concurrent Zstandard patch")
-  file(SHA256 "${PARTIAL}" partial_after)
-  if(NOT partial_before STREQUAL partial_after)
-    message(FATAL_ERROR "Dependency patch overwrote an incomplete patch")
-  endif()
+prepare_fixture(allocations-drift allocations_drift)
+file(APPEND "${allocations_drift}/lib/common/allocations.h"
+     "\n/* fixture source drift */\n")
+require_rejection(
+  "${allocations_drift}" "Zstandard patch source identity mismatch"
+  "lib/common/allocations.h")
+
+foreach(boundary IN ITEMS "lib/legacy/zstd_v05.c" "lib/common/allocations.h")
+  foreach(phase IN ITEMS input output)
+    string(MAKE_C_IDENTIFIER "${boundary}" boundary_name)
+    prepare_fixture("interrupted-${boundary_name}-${phase}" interrupted)
+    set(PARTIAL "${interrupted}/${boundary}.superzip-patch")
+    if(phase STREQUAL "input")
+      string(APPEND PARTIAL ".raw")
+    endif()
+    file(WRITE "${PARTIAL}" "fixture-owned incomplete patch\n")
+    file(SHA256 "${PARTIAL}" partial_before)
+    require_rejection("${interrupted}"
+                      "Incomplete or concurrent Zstandard patch" "${boundary}")
+    file(SHA256 "${PARTIAL}" partial_after)
+    if(NOT partial_before STREQUAL partial_after)
+      message(FATAL_ERROR "Dependency patch overwrote an incomplete patch")
+    endif()
+  endforeach()
 endforeach()
 
 file(SHA256 "${ARCHIVE}" archive_after)

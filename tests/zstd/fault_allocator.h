@@ -48,6 +48,16 @@ void sz_legacy_free(void* context, unsigned version);
  * Outputs: Returns one on error, zero on success; mutates context exactly as the upstream initializer does. */
 int sz_legacy_initialize(void** context, unsigned previous, unsigned version, const void* dictionary, size_t bytes);
 
+/* Purpose: Exercise the production zero-allocation helper with optional fault callbacks.
+ * Inputs: bytes is the bounded test extent; custom selects the tracked allocator instead of the standard allocator.
+ * Outputs: Returns zeroed owned storage or NULL; successful custom storage was nonzero before initialization. */
+void* sz_custom_calloc(size_t bytes, int custom);
+
+/* Purpose: Release helper storage through the same allocator identity.
+ * Inputs: address is NULL or a helper result; custom matches its acquisition.
+ * Outputs: Frees the allocation or does nothing for NULL; tracked releases retain ownership diagnostics. */
+void sz_custom_free(void* address, int custom);
+
 #ifdef __cplusplus
 }
 #endif

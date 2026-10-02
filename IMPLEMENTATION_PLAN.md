@@ -163,6 +163,17 @@ seven legacy groups and all-page smoke. Normal and compact page captures were
 inspected after the smoke process closed. No codec behavior or benchmark path
 changed in this follow-up.
 
+The next dependency review found an additional shared failure-path defect:
+the pinned Zstandard custom zero-allocation helper accessed NULL after callback
+failure. A hash-checked backport now propagates failure before initialization,
+consistent with the reviewed upstream repair. Tests invoke the production helper
+for failure, a retained owner, retry, successful zeroing and the standard allocator.
+All 29 full-profile checks pass, including 563 native tests, nine allocation
+failure-path groups, idempotent and fail-closed patch fixtures, the format matrix,
+independent interoperability, bounded sanitizer smoke, GUI and unpublished package
+validation. Normal and compact page captures were inspected. This is not a claim
+of attacker-triggerable reachability through SuperZip's default allocator.
+
 GPU phase diagnosis, aggregate CPU
 workspace accounting, final repeated licensed-software comparisons and graphs,
 end-user documentation, remote security acceptance and the final audit remain
