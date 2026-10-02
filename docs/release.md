@@ -21,13 +21,23 @@ Target selections are bounded, checked for duplicates, and passed as separate
 `--offload-arch` arguments. CMake tracks the shared resolver as an object
 dependency so changing the preset rebuilds affected kernels.
 
-Local development keeps the fast single-target default. Use:
+Ordinary wrapper builds, direct CMake configuration and standalone HIP object
+compilation default to this same portable preset. Direct CMake resolves it
+through the shared PowerShell policy before generating runtime metadata, so
+the manifest contains concrete targets rather than the word `release`.
+Use:
 
 ```powershell
 tools/build.ps1 -Configuration Release -HipArch release
 tools/test.ps1 -Configuration Release
 tools/package.ps1 -Configuration Release
 ```
+
+An explicit `-HipArch gfx1201` (or another compiler-supported target) remains
+available for focused development; a single-target build is not the portable
+release. Existing direct CMake caches preserve an explicitly selected target;
+set `-DSUPERZIP_HIP_ARCH=release` to change that selection. This default change
+does not expand the six-target hardware claim or qualify execution elsewhere.
 
 The compiler supports multiple target images as documented in
 [Clang HIP support](https://clang.llvm.org/docs/HIPSupport.html).

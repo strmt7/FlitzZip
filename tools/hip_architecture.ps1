@@ -1,3 +1,5 @@
+param([string]$Architecture)
+
 # Purpose: Resolve a bounded HIP architecture selection without allowing compiler or shell option injection.
 # Inputs: A lower-case gfx target, comma-separated targets, or the repository's release preset.
 # Outputs: Returns a canonical comma-separated list; rejects empty, duplicate, malformed, or excessive targets.
@@ -31,4 +33,9 @@ function Get-HipOffloadArgument {
 
     $resolved = Resolve-HipArchitecture -Architecture $Architecture
     return (($resolved.Split(',') | ForEach-Object { "--offload-arch=$_" }) -join ' ')
+}
+
+if ($PSBoundParameters.ContainsKey('Architecture')) {
+    $ErrorActionPreference = 'Stop'
+    Resolve-HipArchitecture -Architecture $Architecture
 }

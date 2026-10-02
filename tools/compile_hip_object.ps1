@@ -6,7 +6,7 @@ param(
     [string]$DependencyFile = "",
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot,
-    [string]$Arch = "gfx1201",
+    [string]$Arch = "release",
     [string]$HipPath = "",
     [string]$VcvarsVersion = ""
 )

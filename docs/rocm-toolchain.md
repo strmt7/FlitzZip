@@ -17,6 +17,13 @@ tools/test.ps1 -Configuration Release
 build/Release/superzip_cli.exe dependency-check
 ```
 
+The ordinary build now defaults to the portable `release` target preset.
+Direct CMake and the standalone object compiler use the same resolver;
+explicit single-target development builds remain supported. Existing CMake
+cache choices are preserved. The preset contains the six targets whose
+production kernels were compiled below; it is not a promise to support every
+GPU in AMD's evolving matrix. Additional architectures require qualification.
+
 The cache derives from the checkout and pinned version. It requires space for
 the entire distribution, checks available storage before downloading/extracting,
 and verifies archive SHA-256 and exact byte counts. Archive inventory rejects

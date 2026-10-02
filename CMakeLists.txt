@@ -15,7 +15,7 @@ option(SUPERZIP_BUILD_TESTS "Build C++ test binaries" ON)
 option(SUPERZIP_BUILD_FUZZERS "Build libFuzzer targets for parser hardening"
        OFF)
 set(SUPERZIP_HIP_ARCH
-    "gfx1201"
+    "release"
     CACHE STRING "HIP gfx target, comma-separated targets, or release preset")
 string(CONCAT SUPERZIP_VCVARS_VERSION_HELP
               "Optional MSVC toolset version used by hipcc on Windows; "
@@ -488,6 +488,9 @@ if(SUPERZIP_ENABLE_HIP)
       FATAL_ERROR "This project currently wires HIP through the Windows ROCm "
                   "toolchain only.")
   endif()
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ResolveHipArchitecture.cmake")
+  superzip_resolve_hip_architecture(SUPERZIP_HIP_ARCH
+                                   "${SUPERZIP_HIP_ARCH}")
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm-sdk-lock.json"
        SUPERZIP_ROCM_LOCK)
   string(JSON SUPERZIP_ROCM_REQUIRED_VERSION GET "${SUPERZIP_ROCM_LOCK}"

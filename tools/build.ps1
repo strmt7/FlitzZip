@@ -6,7 +6,7 @@ param(
     [switch]$ConfigureOnly,
     [ValidateSet("", "Visual Studio 17 2022", "Visual Studio 18 2026")]
     [string]$Generator = "",
-    [string]$HipArch = "gfx1201",
+    [string]$HipArch = "release",
     [string]$HipPath = "",
     [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",

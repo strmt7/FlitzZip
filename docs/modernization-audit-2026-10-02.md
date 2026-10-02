@@ -935,3 +935,38 @@ Ignored evidence: `out/observation-guards-scientific-mixed-20261003.json.samples
 bounded failure receipt and complete host-context journal. All seven selected
 hosted workflows now pass at `d2a44ca`; the 213-alert post-push audit remains
 failed. This is an intermediate checkpoint, not release acceptance.
+
+## Round Twenty: Portable Native Build Defaults
+
+Ordinary PowerShell builds, standalone HIP object compilation and fresh direct
+CMake configuration now select the existing six-target `release` preset rather
+than `gfx1201`. Explicit target overrides remain available. Direct CMake calls
+the same bounded PowerShell resolver at configure time and records concrete
+targets in runtime metadata. Invalid selections fail before HIP compilation.
+Existing direct CMake cache choices are preserved; selecting `release` explicitly
+changes an older single-target cache. No installed SDK component is modified.
+
+The preset remains `gfx1100,gfx1101,gfx1102,gfx1151,gfx1200,gfx1201`. It does not
+claim every architecture in AMD's ROCm 10 Windows matrix. The separate vendor
+matrix review identified five additional targets requiring application compile
+and execution qualification. Compiler acceptance alone cannot establish runtime
+correctness on unavailable GPUs.
+
+Production resolver tests cover the release preset and explicit lists through
+actual CMake invocation, including duplicate, native and shell-separator
+rejection. Default regressions inspect the wrapper parameter definitions.
+The initial full attempt rejected three overlong CMake comments; after those
+were shortened, all 33 full-profile commands passed. The HIP-enabled runtime
+manifest records all six targets. All 576 native tests, five CTests, format and
+independent interoperability smoke, bounded Docker sanitizer/fuzz smoke, GUI
+controls, brand checks and portable packaging passed. All eight fresh GUI page
+screenshots were reviewed after its owned process exited. Existing About-page
+speed wording remains an audit item, not a proven claim.
+
+Ignored receipts: `out/portable-default-full-result-20261003.json` retains the
+lint failure, and `out/portable-default-full-corrected-result-20261003.json`
+retains the successful terminal result. Its 128,000-byte response tail is
+truncated; it is not a complete raw verification log. The separate current
+CTest log remains under `build/Testing/Temporary/LastTest.log`. Successful
+build-input receipts, larger-matrix qualification, corpus comparisons, security
+backlog and release acceptance remain open.

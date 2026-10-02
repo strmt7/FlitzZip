@@ -2,6 +2,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "hip_architecture.ps1")
+. (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 
 $releaseTargets = "gfx1100,gfx1101,gfx1102,gfx1151,gfx1200,gfx1201"
 $cases = @(
@@ -35,6 +36,38 @@ foreach ($value in $invalid) {
     }
     if (-not $rejected) {
         throw "An invalid HIP architecture selection was accepted."
+    }
+}
+
+# The configure path must use the same resolver, including rejected selections.
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$cmake = Find-CMake -RepoRoot $repoRoot
+foreach ($selection in @('release', 'gfx1100,gfx1201', 'gfx1201,gfx1201', 'native', 'gfx1201;gfx1100')) {
+    $expected = if ($selection -eq 'release') { $releaseTargets } else { $selection }
+    $savedPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $cmake "-DREPO_ROOT=$repoRoot" "-DSELECTION=$selection" "-DEXPECTED=$expected" `
+            -P (Join-Path $repoRoot 'tests/cmake/test_hip_architecture.cmake') 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $savedPreference }
+    $shouldPass = $selection -in @('release', 'gfx1100,gfx1201')
+    if (($exitCode -eq 0) -ne $shouldPass) {
+        throw "Configure-time architecture boundary diverged: $selection; $($output -join ' ')"
+    }
+}
+foreach ($scriptCase in @(@{ Name = 'build.ps1'; Parameter = 'HipArch' },
+                         @{ Name = 'compile_hip_object.ps1'; Parameter = 'Arch' })) {
+    $defaultTokens = $null
+    $defaultErrors = $null
+    $defaultAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot $scriptCase.Name), [ref]$defaultTokens, [ref]$defaultErrors)
+    $defaultParameter = @($defaultAst.ParamBlock.Parameters | Where-Object {
+        $_.Name.VariablePath.UserPath -eq $scriptCase.Parameter
+    })
+    if ($defaultErrors.Count -ne 0 -or $defaultParameter.Count -ne 1 -or
+        $defaultParameter[0].DefaultValue.SafeGetValue() -cne 'release') {
+        throw 'Ordinary build and device compilation must default to the portable release preset.'
     }
 }
 
