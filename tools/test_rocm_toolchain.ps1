@@ -83,13 +83,15 @@ $definition = $policy.Find({ param($node)
 }, $false)
 if ($null -eq $definition) { throw 'ROCm release provisioning policy is missing.' }
 . ([scriptblock]::Create($definition.Extent.Text))
-$action = [IO.File]::ReadAllText((Join-Path $repo '.github/actions/windows-release/action.yml'))
-Test-RocmProvisioningPolicy -ReleaseAction $action
-foreach ($invalid in @($action.Replace('python tools/bootstrap_rocm_sdk.py', 'python other_tool.py'),
-        ($action + "`nsetx SDK_ROOT ignored`n"),
-        ($action + "`nAdd-Content -LiteralPath `$env:GITHUB_ENV -Value 'LLVM_PATH=compiler-only'`n"))) {
-    $rejected = $false
-    try { Test-RocmProvisioningPolicy -ReleaseAction $invalid } catch { $rejected = $true }
-    if (-not $rejected) { throw 'Hosted ROCm provisioning policy accepted an unsafe path.' }
+foreach ($workflowPath in @('.github/actions/windows-release/action.yml', '.github/workflows/rocm-qualification.yml')) {
+    $workflow = [IO.File]::ReadAllText((Join-Path $repo $workflowPath))
+    Test-RocmProvisioningPolicy -WorkflowText $workflow
+    foreach ($invalid in @($workflow.Replace('python tools/bootstrap_rocm_sdk.py', 'python other_tool.py'),
+            ($workflow + "`nsetx SDK_ROOT ignored`n"),
+            ($workflow + "`nAdd-Content -LiteralPath `$env:GITHUB_ENV -Value 'LLVM_PATH=compiler-only'`n"))) {
+        $rejected = $false
+        try { Test-RocmProvisioningPolicy -WorkflowText $invalid } catch { $rejected = $true }
+        if (-not $rejected) { throw "Hosted ROCm provisioning policy accepted an unsafe path: $workflowPath" }
+    }
 }
 Write-Output 'rocm_toolchain status=passed scope_restore=success_and_exception'

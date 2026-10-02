@@ -655,6 +655,79 @@ provenance rather than changing product execution or establishing a speedup.
 Fresh hosted whole-SDK provisioning and HIP compilation remain separate release
 qualification work, and the corrected scientific timing rounds remain open.
 
+## Round Fifteen: Corrected Whole Mixed-Profile Sampling
+
+The ROCm 10 build completes the 10 GiB RAM-only Mixed level-five sweep across all
+seven production block sizes. All 42 pilots and 156 preplanned confirmations
+are retained, with alternating lane order and reversed case order. Every
+observation passes CRC read-back verification, reports zero payload disk writes,
+and retains identical exact archive bytes within its case. Independent Python
+recomputation matches every confirmation mean, sample SD and CV reported by the
+PowerShell controller. The complete bounded run exits successfully without a
+timeout or output-limit violation.
+
+| Block KiB | Confirmations per lane | CPU archive bytes | HIP archive bytes | Paired descriptive quality |
+| ---: | ---: | ---: | ---: | --- |
+| 256 | 15 | 4,518,088,166 | 4,572,118,255 | Inconclusive |
+| 512 | 15 | 4,517,025,225 | 4,567,776,791 | Descriptively stable |
+| 1024 | 6 | 4,516,534,055 | 4,546,487,579 | Descriptively stable |
+| 2048 | 10 | 4,516,280,994 | 4,535,842,123 | Inconclusive |
+| 4096 | 7 | 4,516,153,879 | 4,530,520,631 | Inconclusive |
+| 8192 | 15 | 4,516,089,518 | 4,527,857,731 | Inconclusive |
+| 16384 | 10 | 4,516,058,195 | 4,526,528,555 | Inconclusive |
+
+At 512 KiB, CPU/HIP mean compress/verify/extract totals are 9.0803/6.0761 seconds
+with sample SDs of 0.2587/0.0978 seconds; at 1 MiB they are 9.5176/5.7299 seconds
+with sample SDs of 0.3421/0.1845 seconds. These are descriptive observations,
+not confidence or significance statements. HIP produces larger archives on
+this synthetic profile. The five other paired cases retain their variability
+or precision failures; no slow observation is removed. The graph validator
+refuses the full sweep with `confirmation measurements remain inconclusive`.
+
+The separate host trace has 298 snapshots, a measured mean interval of 5.67
+seconds and maximum gap of 13.97 seconds, despite its nominal one-second pause.
+Eighty-seven snapshots report counter errors, with 696 invalid counter entries.
+GPU values therefore reflect available engine counters rather than complete
+contention evidence. Available RAM stays above 24.98 GB, but paging spikes and
+sparse host sampling prevent fine-grained timing attribution. These limits must
+remain visible rather than treating counter availability as proof of isolation.
+
+Evidence is retained in `out/rocm10-scientific-mixed-20261002.json`, its complete
+`.samples.jsonl` journal, `out/rocm10-scientific-mixed-result-20261002.json`, and
+`out/rocm10-scientific-mixed-analysis-20261002.json`. The measurement checkout is
+`47423ab`; the binary hash begins `f7f26e3c`. These records do not establish an
+SDK-caused improvement: there is no independent matched SDK baseline, and the
+binary still lacks a verified build-input manifest. That provenance gap is the
+next shared-tooling hardening task. Exact source inspection also confirms that
+the current verifier/extractor compares decoded CRCs rather than every byte.
+An earlier description of these observations as byte-exact was incorrect;
+the observations establish CRC-checked integrity, not bytewise equality. Add
+separately identified bytewise reference validation with explicit resource and
+timing costs before stronger integrity claims. The benchmark and owned monitor
+have exited.
+
+## Round Sixteen: Fresh Hosted HIP Qualification
+
+A separate manually dispatched `rocm-qualification` workflow provisions the
+complete pinned SDK on a selected fresh Windows runner, then compiles and links
+the application for the repository's complete release target set. It reuses
+the existing provisioner, compiler configuration and memory-derived build
+scheduling. It requires actual storage admission rather than assuming a fixed
+drive or deleting installed runner software to make space. Both existing
+GitHub action pins still match their official latest release tags on October 2.
+
+The workflow has read-only repository permission and no publication, driver
+installation or deployment step. Its shared provisioning-policy checks cover
+both the release action and qualification workflow, including regressions that
+reject a substituted provisioner, global environment changes and leaked
+compiler-only settings. All 33 full local verification commands pass, with
+bounded evidence in `out/rocm-qualification-full-verification-result-20261002.json`.
+The retained response tail is truncated intentionally; the command does not hit
+its total output limit or deadline. The late CRC-only documentation correction
+receives an additional documentation hygiene/lint check. Exact-SHA hosted
+qualification remains pending. Successful compilation alone will not qualify
+GPU execution on other hardware or authorize release.
+
 ## Bounds Review Progress
 
 The six baseline pointer-bounds results contain 21 reported flow variants.

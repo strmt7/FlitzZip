@@ -1,0 +1,66 @@
+name: rocm-qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Fresh Windows image for complete SDK provisioning and HIP compilation
+        required: true
+        default: windows-2025-vs2026
+        type: choice
+        options:
+          - windows-2025-vs2026
+          - windows-2022
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocm-qualification-${{ github.ref }}-${{ inputs.runner }}
+  cancel-in-progress: true
+
+jobs:
+  compile-link:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Resource diagnostics and environment regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name,Free,Used
+          Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize
+          tools/test_process_environment.ps1
+          tools/test_rocm_toolchain.ps1
+      - name: Provision complete pinned SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sdkRoot = python tools/bootstrap_rocm_sdk.py
+          if ($LASTEXITCODE -ne 0) { throw 'Complete ROCm SDK provisioning failed.' }
+          . ./tools/rocm_toolchain.ps1
+          $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$sdkRoot"
+      - name: Compile and link all release targets
+        shell: pwsh
+        run: tools/build.ps1 -Configuration Release -HipArch release
+      - name: Record compile qualification limits
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the qualified source.' }
+          $lockHash = (Get-FileHash tools/rocm-sdk-lock.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "Source: $commit; SDK lock SHA-256: $lockHash."
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (
+            'Complete pinned SDK provisioning and HIP compilation/linking passed for the release target set. ' +
+            'This job does not test GPU execution, install drivers, package or publish a release.'
+          )

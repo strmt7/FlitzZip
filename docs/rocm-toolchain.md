@@ -92,3 +92,17 @@ Compilation for six targets does not establish runtime compatibility on every
 GPU. See [release targets and validation](release.md#gpu-targets). Any speed or
 compression-ratio improvement still requires the documented byte-exact RAM-only
 CPU/GPU comparison with measured HIP telemetry and corrected statistical planning.
+
+## Fresh Hosted Compile Qualification
+
+The manually dispatched `rocm-qualification` workflow uses a fresh selected
+Windows runner and the same complete-distribution provisioner and native build
+helpers as local development. It builds every release target with read-only
+repository permissions. Storage admission checks actual available capacity;
+insufficient capacity fails rather than removing runner software or extracting
+only selected SDK components.
+
+Run it on the intended pushed source before release qualification. Its successful
+result establishes fresh SDK provisioning and HIP compilation/linking for that
+runner image. It does not establish GPU execution, driver compatibility,
+compression speed or package acceptance, and it never publishes a release.

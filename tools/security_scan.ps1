@@ -682,15 +682,15 @@ function Test-InstallerPackagingScriptPolicy {
 }
 
 # Purpose: Keep whole-SDK provisioning bounded and isolated from product launch environments.
-# Inputs: ReleaseAction is hosted workflow text; reads the shared repository provisioning implementation.
+# Inputs: WorkflowText is hosted workflow text; reads the shared repository provisioning implementation.
 # Outputs: Throws when provisioning, finite resource guards or compiler-only environment isolation are absent.
 function Test-RocmProvisioningPolicy {
-    param([Parameter(Mandatory = $true)][string]$ReleaseAction)
-    if ($ReleaseAction -notmatch 'python\s+tools/bootstrap_rocm_sdk\.py' -or
-        $ReleaseAction -match 'HIP_SDK_INSTALLER|setx\s') {
-        throw 'Hosted HIP releases must use the complete pinned distribution provisioner without global installation changes.'
+    param([Parameter(Mandatory = $true)][string]$WorkflowText)
+    if ($WorkflowText -notmatch 'python\s+tools/bootstrap_rocm_sdk\.py' -or
+        $WorkflowText -match 'HIP_SDK_INSTALLER|setx\s') {
+        throw 'Hosted HIP builds must use the complete pinned distribution provisioner without global installation changes.'
     }
-    if ($ReleaseAction -match 'GITHUB_ENV[^\r\n]*(?:LLVM_PATH|HIP_DEVICE_LIB_PATH)') {
+    if ($WorkflowText -match 'GITHUB_ENV[^\r\n]*(?:LLVM_PATH|HIP_DEVICE_LIB_PATH)') {
         throw 'Compiler-only ROCm environment must not persist into hosted product execution.'
     }
     $provisioner = [IO.File]::ReadAllText((Join-Path $repo 'tools/bootstrap_rocm_sdk.py'))
@@ -721,7 +721,7 @@ function Test-InstallerReleaseActionPolicy {
     if ($releaseAction -match 'Start-Process\s+(?:-FilePath\s+)?msiexec\.exe[^\r\n]*-Wait') {
         throw "Release MSI smoke tests must use a bounded WaitForExit timeout, not unbounded Start-Process -Wait."
     }
-    Test-RocmProvisioningPolicy -ReleaseAction $ReleaseAction
+    Test-RocmProvisioningPolicy -WorkflowText $ReleaseAction
     if ($releaseAction -notmatch '\[int\]\$TimeoutSeconds\s*=\s*300') {
         throw "Release MSI install/repair/uninstall smoke tests must default to a 300-second stale-wait timeout."
     }

@@ -35,6 +35,19 @@ with real Git regression checks under both PowerShell hosts. Fresh hosted
 SDK/HIP qualification and scientific timing remain prerequisites for the next
 release/performance assessment.
 
+The corrected 10 GiB Mixed level-five experiment completes all 42 pilots and
+156 confirmations across seven block sizes with CRC readbacks and zero payload
+disk writes. Independent recomputation confirms the reported statistics. Only
+512 KiB and 1 MiB meet both lanes' descriptive quality thresholds; the other
+five pairs remain inconclusive, and full-sweep chart publication is refused.
+No SDK-caused speedup is established. A fresh hosted HIP compile qualification
+workflow is added and passes all 33 full local verification commands; fresh
+hosted qualification remains pending. Bytewise reference validation and a shared
+binary build-input receipt
+remain open work before stronger integrity or publication claims. The
+[fresh audit](docs/modernization-audit-2026-10-02.md)
+retains all measurement limits and exact evidence locations.
+
 ## Fresh Audit And Measurement Rounds
 
 The [fresh October 2 audit](docs/modernization-audit-2026-10-02.md) restarts
