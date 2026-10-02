@@ -27,6 +27,13 @@ COMMON_FLAGS=(
   -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1
 )
 
+CORE_SOURCES=(
+  src/core/path_safety.cpp
+  src/core/file_manifest.cpp
+  src/core/file_publish.cpp
+  src/core/progress.cpp
+)
+
 MINIZ_SOURCE="third_party/miniz"
 MINIZ_SOURCES=(miniz.c miniz_tdef.c miniz_tinfl.c)
 
@@ -115,6 +122,26 @@ build_lhasa_objects() {
   printf '%s\n' "${objects[@]}"
 }
 
+# Purpose: Compile shared C++ sources once per sanitizer run and exact include-context variant.
+# Inputs: Object directory, optional include flags, and ClusterFuzzLite's compiler/flags; every object is rebuilt.
+# Outputs: Prints the ordered object paths; compiler errors fail the build before any target links.
+build_core_objects() {
+  local object_dir="$1"
+  shift
+  mkdir -p "$object_dir"
+  local objects=()
+  for source in "${CORE_SOURCES[@]}"; do
+    local object="$object_dir/$(basename "$source" .cpp).o"
+    "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" "$@" -c "$source" -o "$object"
+    objects+=("$object")
+  done
+  printf '%s\n' "${objects[@]}"
+}
+
+build_core_objects "$OUT/core-objects" > "$OUT/core-objects.list"
+mapfile -t CORE_OBJECTS < "$OUT/core-objects.list"
+PATH_SAFETY_OBJECT="${CORE_OBJECTS[0]}"
+
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/archive_index_fuzzer.cpp \
   src/core/archive_index.cpp \
@@ -123,24 +150,21 @@ build_lhasa_objects() {
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/path_safety_fuzzer.cpp \
-  src/core/path_safety.cpp \
+  "$PATH_SAFETY_OBJECT" \
   -o "$OUT/superzip_path_safety_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/iso_fuzzer.cpp \
   src/iso/iso_adapter.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   -o "$OUT/superzip_iso_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/cab_header_fuzzer.cpp \
   src/cab/cab_format.cpp \
-  src/core/path_safety.cpp \
+  "$PATH_SAFETY_OBJECT" \
   -o "$OUT/superzip_cab_header_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
@@ -163,10 +187,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   fuzz/sevenzip_fuzzer.cpp \
   src/sevenzip/sevenzip_adapter.cpp \
   "$CHECKSUM_OBJECT" \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   "${LZMA_SDK_OBJECTS[@]}" \
   -o "$OUT/superzip_sevenzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
@@ -174,10 +195,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/lzma_fuzzer.cpp \
   src/lzma/lzma_adapter.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   "${LZMA_SDK_OBJECTS[@]}" \
   -o "$OUT/superzip_lzma_fuzzer" \
   "$LIB_FUZZING_ENGINE"
@@ -187,10 +205,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   src/lzip/lzip_adapter.cpp \
   src/lzip/lzip_stream.cpp \
   "$CHECKSUM_OBJECT" \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   "${LZMA_SDK_OBJECTS[@]}" \
   -o "$OUT/superzip_lzip_fuzzer" \
   "$LIB_FUZZING_ENGINE"
@@ -199,10 +214,7 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
   fuzz/arj_fuzzer.cpp \
   src/arj/arj_adapter.cpp \
   "$CHECKSUM_OBJECT" \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   "${LZMA_CRC_OBJECTS[@]}" \
   -o "$OUT/superzip_arj_fuzzer" \
   "$LIB_FUZZING_ENGINE"
@@ -210,20 +222,14 @@ CHECKSUM_OBJECT="$OUT/superzip-checksum.o"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/arc_fuzzer.cpp \
   src/arc/arc_adapter.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   -o "$OUT/superzip_arc_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/macbinary_fuzzer.cpp \
   src/macbinary/macbinary_adapter.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   -o "$OUT/superzip_macbinary_fuzzer" \
   "$LIB_FUZZING_ENGINE"
 
@@ -232,10 +238,7 @@ mapfile -t LHASA_OBJECTS < "$OUT/lhasa-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" \
   fuzz/lha_fuzzer.cpp \
   src/lha/lha_adapter.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${CORE_OBJECTS[@]}" \
   "${LHASA_OBJECTS[@]}" \
   -o "$OUT/superzip_lha_fuzzer" \
   "$LIB_FUZZING_ENGINE"
@@ -245,15 +248,14 @@ mapfile -t MINIZ_OBJECTS < "$OUT/miniz-objects.list"
 MINIZ_CRC_OBJECT="$OUT/superzip-miniz-checksum.o"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   -c src/core/miniz_checksum.cpp -o "$MINIZ_CRC_OBJECT"
+build_core_objects "$OUT/miniz-core-objects" -I"$MINIZ_SOURCE" > "$OUT/miniz-core-objects.list"
+mapfile -t MINIZ_CORE_OBJECTS < "$OUT/miniz-core-objects.list"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/cpio_fuzzer.cpp \
   src/cpio/cpio_adapter.cpp \
   src/core/archive_name_encoding.cpp \
   src/gzip/gzip_stream.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${MINIZ_CORE_OBJECTS[@]}" \
   "${MINIZ_OBJECTS[@]}" \
   "$MINIZ_CRC_OBJECT" "$CHECKSUM_OBJECT" "${LZMA_CRC_OBJECTS[@]}" \
   -o "$OUT/superzip_cpio_fuzzer" \
@@ -262,10 +264,7 @@ MINIZ_CRC_OBJECT="$OUT/superzip-miniz-checksum.o"
 "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -I"$MINIZ_SOURCE" \
   fuzz/xar_fuzzer.cpp \
   src/xar/xar_adapter.cpp \
-  src/core/file_manifest.cpp \
-  src/core/file_publish.cpp \
-  src/core/path_safety.cpp \
-  src/core/progress.cpp \
+  "${MINIZ_CORE_OBJECTS[@]}" \
   "${MINIZ_OBJECTS[@]}" \
   "$MINIZ_CRC_OBJECT" "$CHECKSUM_OBJECT" "${LZMA_CRC_OBJECTS[@]}" \
   -o "$OUT/superzip_xar_fuzzer" \

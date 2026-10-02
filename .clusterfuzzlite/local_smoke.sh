@@ -6,6 +6,7 @@ set -euo pipefail
 runs="${1:?Missing fuzz run count}"
 [[ $runs =~ ^[0-9]+$ ]]
 python3 tools/fuzz_memory.py verify --budget-mib "${SUPERZIP_FUZZ_MEMORY_MIB:?Missing fuzz RAM budget}"
+python3 -m unittest tools.test_fuzz_build
 mkdir -p /out
 # Direct base-image invocation does not perform ClusterFuzzLite's compiler flag setup.
 sanitizer_flags="-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize-recover=all"

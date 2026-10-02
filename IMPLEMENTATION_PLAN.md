@@ -7,6 +7,30 @@ triaged in batches; a comprehensive final security audit remains a separate
 gate. A local pass is not evidence of a clean remote Security tab or a published
 release.
 
+The next October 2 batch preserves worker-stage and pinned-memory telemetry
+through archive read-back verification and adds four nested classification
+intervals in the canonical HIP encoder, without new device synchronization.
+The initial full profile passes 29 local commands and 565 native tests. All
+14 Mixed RAM diagnostic lanes at effort 5 verify bytes and retain exact prior
+archive sizes across the seven block sizes. Allocation/admission and upload
+account for about 72-75% of classification worker time on this host; no new
+speedup or universal hardware claim is made.
+
+All hosted jobs for the preceding `eb4a8b9` push pass. Its fresh security-history
+inventory nevertheless has 212 open alerts: the earlier backlog plus DevSkim
+`DS205001` on a negative assertion in an installation test. The replacement
+parses the complete permitted requirements syntax and passes five offline
+tests. The same pinned DevSkim reproduces the old assertion match and reports
+no findings in the replacement file; hosted closure is not yet confirmed.
+The independent fuzz-build refactor reduces shared-source compilations from
+42 to eight while preserving both include contexts and all 14 targets.
+Its command-plan regressions and real 14-target sanitizer smoke pass. The
+combined batch passes all 31 full-profile checks, including 565 native tests,
+nine allocation-failure groups, the 36-format matrix, independent readers,
+all-page GUI smoke, unpublished package validation and 24 MCP tests.
+Hosted checks for this combined batch remain pending; release 0.8.0 stays held
+for review and explicit approval.
+
 The [2026-10-01 archive engineering review](docs/archive-engineering-review.md)
 compares selected practices from six established open-source projects and orders
 the remaining work by security risk, aggregate resource accounting, measured CPU

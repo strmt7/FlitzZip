@@ -31,6 +31,19 @@ enum class GpuEncodeStage : std::size_t {
 
 inline constexpr std::size_t kGpuEncodeStageCount = static_cast<std::size_t>(GpuEncodeStage::Count);
 
+// Purpose: Name the non-overlapping host intervals inside DeviceClassification.
+// Inputs: Telemetry index only; not a wire-format value or a separate top-level stage.
+// Outputs: Distinguishes admission/allocation, upload, source integrity, and candidate validation.
+enum class GpuClassificationStage : std::size_t {
+    InputAllocation,
+    InputUpload,
+    SourceChecksum,
+    CandidateValidation,
+    Count,
+};
+
+inline constexpr std::size_t kGpuClassificationStageCount = static_cast<std::size_t>(GpuClassificationStage::Count);
+
 // Purpose: Name host-observed phases shared by CPU and GPU owned-output decoding.
 // Inputs: Used as a validated telemetry index, never as a wire-format value.
 // Outputs: Separates storage allocation, decoded-byte materialization, and host integrity work.
@@ -78,6 +91,8 @@ struct GpuRuntimeStats {
     double kernel_ms = 0.0;  // NaN means at least one event time or its accumulated total was invalid.
     // Summed concurrent worker time, not elapsed wall time or HIP device time.
     std::array<double, kGpuEncodeStageCount> encode_stage_worker_seconds{};
+    // Nested within DeviceClassification; do not add these to the top-level stage total.
+    std::array<double, kGpuClassificationStageCount> classification_stage_worker_seconds{};
     // CPU or GPU owned decoding; summed worker intervals, not device or elapsed operation time.
     std::array<double, kOwnedDecodeStageCount> owned_decode_stage_worker_seconds{};
 };
@@ -97,6 +112,7 @@ struct GpuTelemetry {
     std::atomic<std::uint64_t> sparse_pattern_blocks{0};
     std::atomic<std::uint64_t> kernel_microseconds{0};  // UINT64_MAX permanently marks unavailable timing.
     std::array<std::atomic<std::uint64_t>, kGpuEncodeStageCount> encode_stage_worker_microseconds{};
+    std::array<std::atomic<std::uint64_t>, kGpuClassificationStageCount> classification_stage_worker_microseconds{};
     std::array<std::atomic<std::uint64_t>, kOwnedDecodeStageCount> owned_decode_stage_worker_microseconds{};
 };
 
@@ -209,6 +225,12 @@ void record_gpu_kernel_work(GpuTelemetry* telemetry, std::uint32_t launches, dou
 // Outputs: Adds worker microseconds with sticky unavailable timing on overflow; overlapping work is not device time.
 void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
                                   std::chrono::steady_clock::duration elapsed);
+
+// Purpose: Accumulate a nested HIP classification interval without changing top-level stage totals.
+// Inputs: Optional telemetry, a classification substage, and its steady-clock duration.
+// Outputs: Adds positive whole microseconds; invalid indices are ignored and overflow remains unavailable.
+void record_gpu_classification_stage_time(GpuTelemetry* telemetry, GpuClassificationStage stage,
+                                          std::chrono::steady_clock::duration elapsed);
 
 // Purpose: Accumulate production owned-decoding work for either CPU or GPU execution.
 // Inputs: Optional operation telemetry, named allocation/materialization/checksum stage, and steady-clock duration.

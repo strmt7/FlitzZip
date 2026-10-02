@@ -3,7 +3,8 @@ FROM gcr.io/oss-fuzz-base/base-builder@sha256:18973cd0446a865235843ccc4f6c561d99
 COPY . $SRC/superzip
 WORKDIR $SRC/superzip
 COPY .clusterfuzzlite/build.sh $SRC/build.sh
-RUN FUZZING_LANGUAGE=c++ ARCHITECTURE=x86_64 LIB_FUZZING_ENGINE=/usr/lib/libFuzzingEngine.a LIB_FUZZING_ENGINE_DEPRECATED=/usr/lib/libFuzzingEngine.a compile_libfuzzer \
+RUN python3 -m unittest tools.test_fuzz_build \
+    && FUZZING_LANGUAGE=c++ ARCHITECTURE=x86_64 LIB_FUZZING_ENGINE=/usr/lib/libFuzzingEngine.a LIB_FUZZING_ENGINE_DEPRECATED=/usr/lib/libFuzzingEngine.a compile_libfuzzer \
     && chmod a+rw /usr/lib/libFuzzingEngine.a \
     && chmod -R a+rX "$SRC/superzip" \
     && chmod a+rx "$SRC/build.sh"

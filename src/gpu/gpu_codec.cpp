@@ -174,6 +174,11 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
             target->owned_decode_stage_worker_microseconds[index],
             source.owned_decode_stage_worker_microseconds[index].load(std::memory_order_relaxed));
     }
+    for (std::size_t index = 0; index < kGpuClassificationStageCount; ++index) {
+        accumulate_timing_microseconds(
+            target->classification_stage_worker_microseconds[index],
+            source.classification_stage_worker_microseconds[index].load(std::memory_order_relaxed));
+    }
     accumulate_timing_microseconds(target->kernel_microseconds,
                                    source.kernel_microseconds.load(std::memory_order_relaxed));
 }
@@ -273,6 +278,13 @@ GpuRuntimeStats snapshot_gpu_telemetry(const GpuTelemetry& telemetry) {
         stats.owned_decode_stage_worker_seconds[index] = stage_time == kUnavailableKernelTime
                                                              ? std::numeric_limits<double>::quiet_NaN()
                                                              : static_cast<double>(stage_time) / 1'000'000.0;
+    }
+    for (std::size_t index = 0; index < kGpuClassificationStageCount; ++index) {
+        const auto stage_time =
+            telemetry.classification_stage_worker_microseconds[index].load(std::memory_order_relaxed);
+        stats.classification_stage_worker_seconds[index] = stage_time == kUnavailableKernelTime
+                                                               ? std::numeric_limits<double>::quiet_NaN()
+                                                               : static_cast<double>(stage_time) / 1'000'000.0;
     }
     return stats;
 }
@@ -409,6 +421,18 @@ void record_gpu_encode_stage_time(GpuTelemetry* telemetry, GpuEncodeStage stage,
         return;
     }
     record_worker_duration(telemetry->encode_stage_worker_microseconds[index], elapsed);
+}
+
+// Purpose: Record one nested HIP classification interval without adding synchronization or device events.
+// Inputs: Optional operation telemetry, a substage identifier, and its measured steady-clock interval.
+// Outputs: Adds positive whole microseconds for valid stages; overflow permanently marks timing unavailable.
+void record_gpu_classification_stage_time(GpuTelemetry* telemetry, GpuClassificationStage stage,
+                                          std::chrono::steady_clock::duration elapsed) {
+    const auto index = static_cast<std::size_t>(stage);
+    if (!telemetry || index >= kGpuClassificationStageCount) {
+        return;
+    }
+    record_worker_duration(telemetry->classification_stage_worker_microseconds[index], elapsed);
 }
 
 // Purpose: Record host-observed owned-decode work independently of CPU/GPU backend selection.

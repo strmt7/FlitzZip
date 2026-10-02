@@ -12,6 +12,8 @@
 #include "test_suzip_helpers.hpp"
 #include "test_util.hpp"
 
+#include <cmath>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -1673,7 +1675,7 @@ TEST_CASE(suzip_compresses_text_heavy_payload) {
 
 // Purpose: Verify the required-HIP encoder produces GPU-supported SUZIP blocks without CPU deflate.
 // Inputs: A repetitive payload compressed with `gpu_required` on an AMD HIP host.
-// Outputs: Throws if required-HIP compression emits deflate blocks or cannot verify/extract through HIP.
+// Outputs: Requires preserved encode-stage statistics after read-back verification and HIP-only roundtrips.
 TEST_CASE(suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks) {
     if (!superzip::query_gpu_info().available) {
         return;
@@ -1699,6 +1701,17 @@ TEST_CASE(suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks) {
     REQUIRE_TRUE(compressed.gpu_used);
     REQUIRE_TRUE(compressed.gpu_runtime.encode_chunks > 0);
     REQUIRE_TRUE(compressed.gpu_runtime.kernel_launches > 0);
+
+    REQUIRE_TRUE(compressed.gpu_runtime.encode_stage_worker_seconds[static_cast<std::size_t>(
+                     superzip::GpuEncodeStage::DeviceClassification)] > 0.0);
+    double classification_total = 0.0;
+    for (const auto value : compressed.gpu_runtime.classification_stage_worker_seconds) {
+        REQUIRE_TRUE(std::isfinite(value) && value >= 0.0);
+        classification_total += value;
+    }
+    REQUIRE_TRUE(classification_total > 0.0);
+    REQUIRE_TRUE(classification_total <= compressed.gpu_runtime.encode_stage_worker_seconds[static_cast<std::size_t>(
+                                             superzip::GpuEncodeStage::DeviceClassification)]);
 
     const auto index = read_test_archive_index(archive);
     REQUIRE_TRUE(!archive_contains_block_kind(index, superzip::BlockKind::Deflate));

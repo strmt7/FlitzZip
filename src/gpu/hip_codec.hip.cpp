@@ -1082,6 +1082,16 @@ void record_encode_phase(GpuTelemetry* telemetry, GpuEncodeStage stage,
     started = finished;
 }
 
+// Purpose: Mark nested classification boundaries without resetting the enclosing encode-phase clock.
+// Inputs: Optional telemetry, the completed substage, and its mutable steady-clock start point.
+// Outputs: Records worker time and advances only the nested start point; no HIP synchronization is added.
+void record_classification_phase(GpuTelemetry* telemetry, GpuClassificationStage stage,
+                                 std::chrono::steady_clock::time_point& started) {
+    const auto finished = std::chrono::steady_clock::now();
+    record_gpu_classification_stage_time(telemetry, stage, finished - started);
+    started = finished;
+}
+
 }  // namespace
 
 // Purpose: Run a HIP-only workload that proves the AMD GPU can execute sustained kernels.
@@ -1183,13 +1193,16 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     const auto block_count = static_cast<std::uint32_t>(computed_block_count);
     auto host_candidates = build_encode_analysis_candidates(input, block_size, block_count, block_lengths);
     record_encode_phase(telemetry, GpuEncodeStage::HostAnalysis, phase_started);
+    auto classification_started = phase_started;
     HipDeviceMemoryReservation reservation(input.size(), "encode input");
     HipDeviceBuffer<std::byte> device_input(input.size(), "hipMalloc input");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
+    record_classification_phase(telemetry, GpuClassificationStage::InputAllocation, classification_started);
     {
         check_hip(copy_on_codec_stream(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice),
                   "hipMemcpy input");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
+        record_classification_phase(telemetry, GpuClassificationStage::InputUpload, classification_started);
         std::uint32_t source_crc32 = 0;
         if (block_crcs != nullptr) {
             *block_crcs = compute_block_crc32_device(device_input.get(), block_lengths, telemetry);
@@ -1200,6 +1213,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             source_crc32 = compute_crc32_device(device_input.get(), static_cast<std::uint64_t>(input.size()), telemetry,
                                                 "encode CRC device memory");
         }
+        record_classification_phase(telemetry, GpuClassificationStage::SourceChecksum, classification_started);
         const auto verify_block_size =
             block_lengths.empty() ? block_size : *std::max_element(block_lengths.begin(), block_lengths.end());
         const auto mismatches = verify_encode_analysis_candidates_device(device_input.get(), input.size(),
@@ -1213,6 +1227,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         const bool all_raw =
             append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
         record_gpu_pattern_blocks(telemetry, pattern_blocks);
+        record_classification_phase(telemetry, GpuClassificationStage::CandidateValidation, classification_started);
         record_encode_phase(telemetry, GpuEncodeStage::DeviceClassification, phase_started);
         std::optional<EncodedChunk> prefix_encoded;
         if (std::ranges::any_of(out.blocks,

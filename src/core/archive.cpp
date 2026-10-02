@@ -433,9 +433,9 @@ DecodeStreamResult verify_entry_streaming(std::ifstream& input, const ArchiveEnt
 
 // Purpose: Add GPU telemetry counters from two phases of the same operation.
 // Inputs: `lhs` and `rhs` are operation statistics from compression and optional verification.
-// Outputs: Returns combined counters without changing either input.
+// Outputs: Returns every combined counter and stage; counter overflow throws and unavailable timings remain NaN.
 GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuRuntimeStats& rhs) {
-    return GpuRuntimeStats{
+    auto combined = GpuRuntimeStats{
         .encode_chunks = checked_add_u64(lhs.encode_chunks, rhs.encode_chunks, "GPU encode chunk counter overflows"),
         .decode_chunks = checked_add_u64(lhs.decode_chunks, rhs.decode_chunks, "GPU decode chunk counter overflows"),
         .kernel_launches =
@@ -444,6 +444,11 @@ GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuR
         .d2h_bytes = checked_add_u64(lhs.d2h_bytes, rhs.d2h_bytes, "GPU D2H byte counter overflows"),
         .device_allocation_bytes = checked_add_u64(lhs.device_allocation_bytes, rhs.device_allocation_bytes,
                                                    "GPU allocation byte counter overflows"),
+        .host_pinned_allocation_bytes =
+            checked_add_u64(lhs.host_pinned_allocation_bytes, rhs.host_pinned_allocation_bytes,
+                            "GPU pinned allocation byte counter overflows"),
+        .host_pinned_output_bytes = checked_add_u64(lhs.host_pinned_output_bytes, rhs.host_pinned_output_bytes,
+                                                    "GPU pinned output byte counter overflows"),
         .pattern_blocks =
             checked_add_u64(lhs.pattern_blocks, rhs.pattern_blocks, "GPU pattern block counter overflows"),
         .prefix_blocks = checked_add_u64(lhs.prefix_blocks, rhs.prefix_blocks, "GPU prefix block counter overflows"),
@@ -453,6 +458,19 @@ GpuRuntimeStats combine_gpu_runtime_stats(const GpuRuntimeStats& lhs, const GpuR
                                                  "GPU sparse pattern block counter overflows"),
         .kernel_ms = lhs.kernel_ms + rhs.kernel_ms,
     };
+    for (std::size_t index = 0; index < kGpuEncodeStageCount; ++index) {
+        combined.encode_stage_worker_seconds[index] =
+            lhs.encode_stage_worker_seconds[index] + rhs.encode_stage_worker_seconds[index];
+    }
+    for (std::size_t index = 0; index < kGpuClassificationStageCount; ++index) {
+        combined.classification_stage_worker_seconds[index] =
+            lhs.classification_stage_worker_seconds[index] + rhs.classification_stage_worker_seconds[index];
+    }
+    for (std::size_t index = 0; index < kOwnedDecodeStageCount; ++index) {
+        combined.owned_decode_stage_worker_seconds[index] =
+            lhs.owned_decode_stage_worker_seconds[index] + rhs.owned_decode_stage_worker_seconds[index];
+    }
+    return combined;
 }
 
 // Purpose: Sum uncompressed block lengths for an entry.

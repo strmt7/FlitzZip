@@ -839,6 +839,27 @@ function Invoke-BenchmarkLane {
     }
 }
 
+# Purpose: Parse independently named worker intervals from production CLI telemetry.
+# Inputs: Stats is a completed key/value result, Prefix and Stages identify keys, and Lane labels failures.
+# Outputs: Returns ordered finite nonnegative stage times or throws for missing/unavailable measurements.
+function Read-BenchmarkWorkerStageSet {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Stats,
+        [Parameter(Mandatory = $true)][string]$Prefix,
+        [Parameter(Mandatory = $true)][string[]]$Stages,
+        [Parameter(Mandatory = $true)][string]$Lane
+    )
+    $values = [ordered]@{}
+    foreach ($stage in $Stages) {
+        $value = Get-StatsNumber -Stats $Stats -Key "${Prefix}${stage}_worker_seconds"
+        if ($null -eq $value -or $value -lt 0) {
+            throw "$Lane memory benchmark did not report a finite nonnegative $Prefix$stage worker time."
+        }
+        $values[$stage] = $value
+    }
+    return $values
+}
+
 # Purpose: Execute one memory-only benchmark lane and enforce expected GPU usage.
 # Inputs: `Lane` is the display name, `ModeFlag` is `--force-cpu` or `--require-gpu`, and `BlockSizeKiB` selects the production archive block size.
 # Outputs: Returns measured compress/verify/extract statistics without creating benchmark files.
@@ -879,22 +900,12 @@ function Invoke-MemoryBenchmarkLane {
         $null -eq $codecWork -or $codecWork -le 0) {
         throw "$Lane memory benchmark did not report positive encode-stage worker times."
     }
-    $gpuEncodeStages = [ordered]@{}
-    foreach ($stage in @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')) {
-        $value = Get-StatsNumber -Stats $stats -Key "gpu_${stage}_worker_seconds"
-        if ($null -eq $value -or $value -lt 0) {
-            throw "$Lane memory benchmark did not report a finite nonnegative $stage GPU encode worker time."
-        }
-        $gpuEncodeStages[$stage] = $value
-    }
-    $ownedDecodeStages = [ordered]@{}
-    foreach ($stage in @('allocation', 'materialization', 'crc')) {
-        $value = Get-StatsNumber -Stats $stats -Key "decode_${stage}_worker_seconds"
-        if ($null -eq $value -or $value -lt 0) {
-            throw "$Lane memory benchmark did not report a finite nonnegative $stage decode worker time."
-        }
-        $ownedDecodeStages[$stage] = $value
-    }
+    $gpuEncodeStages = Read-BenchmarkWorkerStageSet -Stats $stats -Prefix 'gpu_' -Lane $Lane `
+        -Stages @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')
+    $gpuClassificationStages = Read-BenchmarkWorkerStageSet -Stats $stats -Prefix 'gpu_classification_' -Lane $Lane `
+        -Stages @('allocation', 'upload', 'crc', 'validation')
+    $ownedDecodeStages = Read-BenchmarkWorkerStageSet -Stats $stats -Prefix 'decode_' -Lane $Lane `
+        -Stages @('allocation', 'materialization', 'crc')
     if ($ModeFlag -eq "--require-gpu") {
         Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
         if ($gpuEncodeStages['readiness'] -le 0 -or $gpuEncodeStages['classification'] -le 0) {
@@ -910,6 +921,7 @@ function Invoke-MemoryBenchmarkLane {
         SourceGenerationWorkerSeconds = $generationWork
         CodecEncodeWorkerSeconds = $codecWork
         GpuEncodeStages = $gpuEncodeStages
+        GpuClassificationStages = $gpuClassificationStages
         OwnedDecodeStages = $ownedDecodeStages
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
@@ -1041,6 +1053,9 @@ function ConvertTo-RamBenchmarkRecord {
             $stageTimes = $_.GpuEncodeStages
             Assert-BenchmarkWorkerStageTime -Values $stageTimes -Label 'GPU encode' `
                 -Stages @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')
+            $classificationTimes = $_.GpuClassificationStages
+            Assert-BenchmarkWorkerStageTime -Values $classificationTimes -Label 'nested GPU classification' `
+                -Stages @('allocation', 'upload', 'crc', 'validation')
             $decodeStageTimes = $_.OwnedDecodeStages
             Assert-BenchmarkWorkerStageTime -Values $decodeStageTimes -Label 'owned-decode' `
                 -Stages @('allocation', 'materialization', 'crc')
@@ -1076,6 +1091,7 @@ function ConvertTo-RamBenchmarkRecord {
                 source_generation_worker_seconds = $_.SourceGenerationWorkerSeconds
                 codec_encode_worker_seconds = $_.CodecEncodeWorkerSeconds
                 gpu_encode_stage_worker_seconds = $stageTimes
+                gpu_classification_stage_worker_seconds = $classificationTimes
                 owned_decode_stage_worker_seconds = $decodeStageTimes
                 verify_seconds = $_.VerifySeconds
                 extract_seconds = $_.ExtractSeconds

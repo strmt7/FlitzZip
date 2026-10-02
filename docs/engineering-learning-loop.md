@@ -62,6 +62,12 @@ the Security tab, released artifacts, or the product UI again.
   Synthetic unequal-device, pressure, concurrency and overflow tests cover the
   shared production ledger; they are not multi-GPU hardware validation. Driver
   memory snapshots remain volatile and, on Windows, may omit other processes.
+- Telemetry composition must preserve every counter and worker-stage array,
+  including pinned allocation/output traffic, through successful optional-GPU
+  attempts and archive read-back verification. Nested classification intervals
+  remain inside their enclosing stage, not additional wall or device time.
+  Concurrent, overflow, CPU/GPU dispatch, archive-pipeline and JSON regressions
+  cover these boundaries without adding HIP synchronization for measurement.
 - Windows fixture cleanup must run after test-owned file streams leave scope.
   The worker-cap regression originally kept its read-back stream open through
   `remove_all`; verification caught the sharing violation. Its scoped stream
@@ -74,6 +80,20 @@ the Security tab, released artifacts, or the product UI again.
   releases and retire temporary packaging revisions after equivalent validation;
   Semgrep 1.179.0 replaces the previous metadata revision. A passing isolated
   override alone is not production verification or remote alert closure.
+- Scanner requirements gates must parse the permitted installation syntax,
+  require one approved index and reject duplicate/unknown options, instead of
+  only searching for forbidden substrings. A negative fixture assertion caused
+  DevSkim `DS205001` even though it configured no index. The stronger admission
+  gate rejects added install locations, direct wheel URLs, malformed hashes and
+  changed binary policy. The same pinned scanner reproduced the old match and
+  found none in the replacement test; hosted closure remains a separate check.
+- Sanitizer build reuse belongs within one invocation and one exact compiler,
+  flag and include context. Recompile shared objects for each run and sanitizer;
+  never reuse a previously accepted binary or omit source from analysis. The
+  ClusterFuzzLite command-contract tests retain all 14 target links, both include
+  contexts, sanitizer/alignment flags, paths containing spaces and fail-fast
+  compilation. Real sanitizer execution is still required; compiler fixtures
+  alone are not compiled-code or fuzzing evidence.
 - Standalone MCP integration scripts must not claim the SDK's `mcp` package
   namespace. Test discovery imports the uniquely named `superzip_mcp` module;
   Semgrep runtime tests import the real installed SDK from the repository root.

@@ -13,6 +13,22 @@ foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 
+foreach ($prefix in @('gpu_', 'gpu_classification_', 'decode_')) {
+    $values = Read-BenchmarkWorkerStageSet -Stats @{ "${prefix}allocation_worker_seconds" = '0.125' } `
+        -Prefix $prefix -Stages @('allocation') -Lane 'fixture'
+    if ($values.Count -ne 1 -or $values['allocation'] -ne 0.125) {
+        throw 'CLI stage parsing lost the named production interval.'
+    }
+    foreach ($invalid in @($null, '', 'NaN', 'Infinity', '-0.1')) {
+        $rejected = $false
+        try {
+            Read-BenchmarkWorkerStageSet -Stats @{ "${prefix}allocation_worker_seconds" = $invalid } `
+                -Prefix $prefix -Stages @('allocation') -Lane 'fixture' | Out-Null
+        } catch { $rejected = $true }
+        if (-not $rejected) { throw 'Invalid CLI stage value was accepted.' }
+    }
+}
+
 foreach ($iteration in @(1, 2, 3, 4)) {
     $expected = if (($iteration % 2) -eq 1) { 'CPU,GPU' } else { 'GPU,CPU' }
     if ((@(Get-BenchmarkLaneOrder -Iteration $iteration) -join ',') -ne $expected -or
@@ -59,6 +75,7 @@ $fixtureRun = [pscustomobject]@{
         sparse = 0.2; dictionary = 5.5; publication = 0.3
     }
     OwnedDecodeStages = [ordered]@{ allocation = 0.25; materialization = 2.5; crc = 0.75 }
+    GpuClassificationStages = [ordered]@{ allocation = 0.05; upload = 0.25; crc = 0.75; validation = 0.15 }
     CpuAvgPct = $null; CpuPeakPct = $null; GpuAvgPct = $null; GpuPeakPct = $null
     ResourceSampleCount = 25; GpuSampleCount = 23; ResourceSampleMeanIntervalMs = 102.5
     GpuKernelLaunches = 720; GpuKernelMs = $null
@@ -84,6 +101,8 @@ if ($record.schema_version -ne 2 -or $record.gpu_utilization_metric -ne 'process
     $record.runs[0].gpu_sample_count -ne 23 -or
     $record.runs[0].resource_sample_mean_interval_ms -ne 102.5 -or
     $record.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5 -or
+    $record.runs[0].gpu_classification_stage_worker_seconds.upload -ne 0.25 -or
+    $record.runs[0].gpu_classification_stage_worker_seconds.crc -ne 0.75 -or
     $record.runs[0].owned_decode_stage_worker_seconds.allocation -ne 0.25 -or
     $record.runs[0].owned_decode_stage_worker_seconds.materialization -ne 2.5 -or
     $record.runs[0].owned_decode_stage_worker_seconds.crc -ne 0.75) {
@@ -104,6 +123,8 @@ try {
         $stored.runs[0].resource_sample_count -ne 25 -or
         $stored.runs[0].gpu_sample_count -ne 23 -or
         $stored.runs[0].gpu_encode_stage_worker_seconds.dictionary -ne 5.5 -or
+        $stored.runs[0].gpu_classification_stage_worker_seconds.upload -ne 0.25 -or
+        $stored.runs[0].gpu_classification_stage_worker_seconds.crc -ne 0.75 -or
         $stored.runs[0].owned_decode_stage_worker_seconds.allocation -ne 0.25 -or
         $stored.runs[0].owned_decode_stage_worker_seconds.materialization -ne 2.5 -or
         $stored.runs[0].owned_decode_stage_worker_seconds.crc -ne 0.75) {
@@ -153,6 +174,36 @@ foreach ($invalid in @(-1.0, [double]::NaN, [double]::PositiveInfinity)) {
     if (-not $invalidRejected) { throw 'Invalid GPU encode stage time entered the RAM-only evidence record.' }
 }
 $fixtureRun.GpuEncodeStages['dictionary'] = 5.5
+
+foreach ($stage in @('allocation', 'upload', 'crc', 'validation')) {
+    $saved = $fixtureRun.GpuClassificationStages[$stage]
+    foreach ($invalid in @($null, -1.0, [double]::NaN, [double]::PositiveInfinity)) {
+        $fixtureRun.GpuClassificationStages[$stage] = $invalid
+        $rejected = $false
+        try {
+            ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+                -BinarySha256 ('B' * 64) -Profile 'Mixed' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+        } catch { $rejected = $true }
+        if (-not $rejected) { throw "Invalid $stage nested classification time was accepted." }
+    }
+    $fixtureRun.GpuClassificationStages[$stage] = $saved
+    $fixtureRun.GpuClassificationStages.Remove($stage)
+    $rejected = $false
+    try {
+        ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+            -BinarySha256 ('B' * 64) -Profile 'Mixed' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw "Missing $stage nested classification time was accepted." }
+    $fixtureRun.GpuClassificationStages[$stage] = $saved
+}
+$fixtureRun.GpuClassificationStages['unknown'] = 0.0
+$rejected = $false
+try {
+    ConvertTo-RamBenchmarkRecord -Runs @($fixtureRun) -Commit ('a' * 40) -Dirty $true `
+        -BinarySha256 ('B' * 64) -Profile 'Mixed' -SizeMiB 10240 -Level 5 -SampleIntervalMs 100 | Out-Null
+} catch { $rejected = $true }
+if (-not $rejected) { throw 'Unknown nested classification stage was accepted.' }
+$fixtureRun.GpuClassificationStages.Remove('unknown')
 
 foreach ($stage in @('allocation', 'materialization', 'crc')) {
     $saved = $fixtureRun.OwnedDecodeStages[$stage]

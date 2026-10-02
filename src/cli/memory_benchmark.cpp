@@ -686,6 +686,7 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
 void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
     const auto& stats = result.stats;
     const auto& stages = stats.gpu_runtime.encode_stage_worker_seconds;
+    const auto& classification = stats.gpu_runtime.classification_stage_worker_seconds;
     const auto& decode_stages = stats.gpu_runtime.owned_decode_stage_worker_seconds;
     std::cout
         << "entries=" << stats.entries << " input_bytes=" << stats.input_bytes << " output_bytes=" << stats.output_bytes
@@ -710,6 +711,14 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << " gpu_analysis_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::HostAnalysis)]
         << " gpu_classification_worker_seconds="
         << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::DeviceClassification)]
+        << " gpu_classification_allocation_worker_seconds="
+        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::InputAllocation)]
+        << " gpu_classification_upload_worker_seconds="
+        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::InputUpload)]
+        << " gpu_classification_crc_worker_seconds="
+        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::SourceChecksum)]
+        << " gpu_classification_validation_worker_seconds="
+        << classification[static_cast<std::size_t>(superzip::GpuClassificationStage::CandidateValidation)]
         << " gpu_prefix_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Prefix)]
         << " gpu_sparse_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Sparse)]
         << " gpu_dictionary_worker_seconds=" << stages[static_cast<std::size_t>(superzip::GpuEncodeStage::Dictionary)]

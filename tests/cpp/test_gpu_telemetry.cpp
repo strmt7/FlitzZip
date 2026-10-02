@@ -668,6 +668,50 @@ TEST_CASE(gpu_encode_worker_stage_accumulation) {
         1e-12);
 }
 
+// Purpose: Preserve nested classification totals without counting them again as top-level encode stages.
+// Inputs: Four joined writers and all invalid substage/duration cases use synthetic intervals only.
+// Outputs: Requires exact nested sums, zero unrelated totals, and no invented GPU execution work.
+TEST_CASE(gpu_classification_worker_stage_accumulation) {
+    superzip::GpuTelemetry telemetry;
+    {
+        std::vector<std::jthread> workers;
+        for (int worker = 0; worker < 4; ++worker) {
+            workers.emplace_back([&telemetry] {
+                for (int event = 0; event < 1000; ++event) {
+                    superzip::record_gpu_classification_stage_time(
+                        &telemetry, superzip::GpuClassificationStage::InputUpload, std::chrono::milliseconds(1));
+                    superzip::record_gpu_classification_stage_time(
+                        &telemetry, superzip::GpuClassificationStage::SourceChecksum, std::chrono::milliseconds(2));
+                }
+            });
+        }
+    }
+    for (const auto stage :
+         {superzip::GpuClassificationStage::Count, static_cast<superzip::GpuClassificationStage>(999U)}) {
+        superzip::record_gpu_classification_stage_time(&telemetry, stage, std::chrono::milliseconds(1));
+    }
+    for (const auto duration : {std::chrono::milliseconds(0), std::chrono::milliseconds(-1)}) {
+        superzip::record_gpu_classification_stage_time(&telemetry,
+                                                       superzip::GpuClassificationStage::CandidateValidation, duration);
+    }
+    superzip::record_gpu_classification_stage_time(nullptr, superzip::GpuClassificationStage::InputAllocation,
+                                                   std::chrono::milliseconds(1));
+    const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
+    const auto& stages = stats.classification_stage_worker_seconds;
+    REQUIRE_TRUE(std::abs(stages[static_cast<std::size_t>(superzip::GpuClassificationStage::InputUpload)] - 4.0) <
+                 1e-12);
+    REQUIRE_TRUE(std::abs(stages[static_cast<std::size_t>(superzip::GpuClassificationStage::SourceChecksum)] - 8.0) <
+                 1e-12);
+    REQUIRE_EQ(std::fpclassify(stages[static_cast<std::size_t>(superzip::GpuClassificationStage::InputAllocation)]),
+               FP_ZERO);
+    REQUIRE_EQ(std::fpclassify(stages[static_cast<std::size_t>(superzip::GpuClassificationStage::CandidateValidation)]),
+               FP_ZERO);
+    for (const auto value : stats.encode_stage_worker_seconds) {
+        REQUIRE_EQ(std::fpclassify(value), FP_ZERO);
+    }
+    REQUIRE_EQ(stats.encode_chunks + stats.decode_chunks + stats.kernel_launches, 0U);
+}
+
 // Purpose: Preserve distinct CPU/GPU owned-decode work totals under concurrent recording.
 // Inputs: Four joined writers, invalid/null stages, and zero/negative durations.
 // Outputs: Requires exact worker-second sums, zero untouched stages, and no GPU execution counter changes.
@@ -704,21 +748,79 @@ TEST_CASE(owned_decode_worker_stage_accumulation) {
 }
 
 // Purpose: Prevent accumulated stage intervals from wrapping into plausible but false measurements.
-// Inputs: Both encode/decode counters start one microsecond below the sticky unavailable marker.
+// Inputs: Encode, nested classification and decode counters start one microsecond below the unavailable marker.
 // Outputs: Overflow snapshots are NaN and remain unavailable after later valid intervals.
 TEST_CASE(worker_stage_timing_overflow_remains_unavailable) {
     superzip::GpuTelemetry telemetry;
     telemetry.encode_stage_worker_microseconds[0].store(std::numeric_limits<std::uint64_t>::max() - 1U);
     telemetry.owned_decode_stage_worker_microseconds[0].store(std::numeric_limits<std::uint64_t>::max() - 1U);
+    telemetry.classification_stage_worker_microseconds[0].store(std::numeric_limits<std::uint64_t>::max() - 1U);
     for (const auto duration : {std::chrono::microseconds(1), std::chrono::microseconds(50)}) {
         superzip::record_gpu_encode_stage_time(&telemetry, superzip::GpuEncodeStage::Readiness, duration);
         superzip::record_owned_decode_stage_time(&telemetry, superzip::OwnedDecodeStage::OutputAllocation, duration);
+        superzip::record_gpu_classification_stage_time(&telemetry, superzip::GpuClassificationStage::InputAllocation,
+                                                       duration);
     }
     const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
     REQUIRE_TRUE(std::isnan(stats.encode_stage_worker_seconds[0]));
     REQUIRE_TRUE(std::isnan(stats.owned_decode_stage_worker_seconds[0]));
+    REQUIRE_TRUE(std::isnan(stats.classification_stage_worker_seconds[0]));
     REQUIRE_EQ(std::fpclassify(stats.encode_stage_worker_seconds[1]), FP_ZERO);
     REQUIRE_EQ(std::fpclassify(stats.owned_decode_stage_worker_seconds[1]), FP_ZERO);
+    REQUIRE_EQ(std::fpclassify(stats.classification_stage_worker_seconds[1]), FP_ZERO);
+}
+
+// Purpose: Exercise nested timings through the same CPU, optional-GPU and required-GPU production dispatch.
+// Inputs: One bounded input and empty work use independent operation telemetry in each available backend mode.
+// Outputs: Requires unchanged source CRC/bytes, positive GPU detail within its enclosing stage, and CPU zeros.
+TEST_CASE(gpu_classification_production_stage_timing) {
+    std::vector<std::byte> input(1024U * 1024U);
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        input[index] = static_cast<std::byte>((index * 31U + index / 997U) & 255U);
+    }
+    const auto gpu_available = superzip::query_gpu_info().available;
+    const auto modes = std::array{
+        superzip::GpuCodecOptions{.require_gpu = false, .force_cpu = true},
+        superzip::GpuCodecOptions{.require_gpu = false, .force_cpu = false},
+        superzip::GpuCodecOptions{.require_gpu = true, .force_cpu = false},
+    };
+    for (auto options : modes) {
+        if (options.require_gpu && !gpu_available) {
+            continue;
+        }
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        const auto empty = superzip::encode_chunk({}, options);
+        REQUIRE_TRUE(empty.payload.empty());
+        for (const auto value :
+             superzip::snapshot_gpu_telemetry(*options.telemetry).classification_stage_worker_seconds) {
+            REQUIRE_EQ(std::fpclassify(value), FP_ZERO);
+        }
+        const auto encoded = superzip::encode_chunk(input, options);
+        REQUIRE_EQ(encoded.gpu_used, !options.force_cpu && gpu_available);
+        if (encoded.gpu_used) {
+            REQUIRE_TRUE(encoded.source_crc32_available);
+            REQUIRE_EQ(encoded.source_crc32, superzip::crc32(input));
+        }
+        std::vector<std::byte> decoded(input.size());
+        superzip::GpuCodecOptions cpu;
+        cpu.require_gpu = false;
+        cpu.force_cpu = true;
+        superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu);
+        REQUIRE_EQ(decoded, input);
+        const auto stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
+        double total = 0.0;
+        for (const auto value : stats.classification_stage_worker_seconds) {
+            REQUIRE_TRUE(std::isfinite(value) && value >= 0.0);
+            total += value;
+        }
+        if (encoded.gpu_used) {
+            REQUIRE_TRUE(total > 0.0);
+            REQUIRE_TRUE(total <= stats.encode_stage_worker_seconds[static_cast<std::size_t>(
+                                      superzip::GpuEncodeStage::DeviceClassification)]);
+        } else {
+            REQUIRE_EQ(std::fpclassify(total), FP_ZERO);
+        }
+    }
 }
 
 // Purpose: Observe the shared production allocation, materialization and host-CRC stages without changing bytes.

@@ -63,6 +63,17 @@ runner, unverified executable cache, or source exclusion was introduced.
 
 ## Repeatable Follow-Up
 
+An October 2 source review identified 42 compilations of four shared C++ files
+within each sanitizer build. The revised build compiles eight objects: each
+file once in the ordinary include context and once in the Miniz include context.
+All original per-target sources, defines, C/C++ sanitizer flags, link inputs and
+14 fuzzer targets remain. Objects are rebuilt in every invocation, with no
+cross-run or cross-sanitizer cache. The command-contract test exercises both
+sanitizers and compiler failure before real local sanitizer compilation.
+This removes 34 repeated compilations by construction; it is not yet a measured
+hosted job speedup. The intentional 600-second fuzz budgets remain unchanged.
+The implementation follows [ClusterFuzzLite's compiler/flag contract](https://google.github.io/clusterfuzzlite/build-integration/#buildsh-environment-variables-for-compilation).
+
 Use the Actions API's exact `head_sha` filter, then retrieve each selected
 run's jobs. Record event, attempt, runner, status, creation/start/completion
 timestamps, and step durations. Separate dependent-job waiting from queueing;
