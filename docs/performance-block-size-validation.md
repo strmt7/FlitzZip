@@ -153,6 +153,16 @@ not provide stage evidence; never fill missing timings with fabricated zeros.
 Single-repeat stage diagnostics can select the next profiling target, but cannot
 establish a speedup, stability trend or release-ready comparison.
 
+The October 2 single-allocation workspace experiment did not establish a
+general decode improvement and is not production code. A preserved baseline,
+initial packed layout, aligned correction and return-to-baseline check covered
+16 RAM-only diagnostic runs. Mixed verification remained slower after the
+alignment correction, while extraction ranges overlapped. The allocation count
+alone was insufficient evidence of a benefit. Allocation placement, transfer,
+materialization, resident CRC and cleanup still need separate phase evidence;
+do not attribute the result to an unmeasured device or runtime mechanism.
+These diagnostics are not final comparison graphs or release throughput claims.
+
 ### Dispatch-Bound Timing (2026-09-08)
 
 Production codec and diagnostic launches now attach their start/stop events

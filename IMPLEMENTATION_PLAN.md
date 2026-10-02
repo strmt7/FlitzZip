@@ -50,8 +50,27 @@ lanes at effort 5 and 8 MiB blocks completed with unchanged archive sizes.
 Materialization is the largest measured GPU owned-decode worker interval on the
 Mixed and Incompressible profiles. These overlapping intervals are not wall-time
 fractions or a new speedup claim. One run overlapped a short lint invocation;
-none of these single-repeat diagnostics is final publication evidence. Hosted
-validation for this subsequent batch remains pending until its push completes.
+none of these single-repeat diagnostics is final publication evidence. All six
+automatically triggered workflows for the pushed diagnostic batch `26dbe3e`
+passed, including the secret-history scan. The separate post-push acceptance
+audit still fails because 208 non-approved alerts remain open, alongside the
+two approved Scorecard residuals; workflow success is not security acceptance.
+
+The following 18-alert legacy-history triage retains nine output-borrow cases
+with static counterevidence and nine dictionary cases with explicit caller-
+lifetime proof gaps. No GitHub state was changed. The retained history snapshot
+contains 1,729 incidents across 101 tool/rule groups; its 895 fixed and 624
+dismissed records are historical state, not proof that current code is safe.
+
+A shared single-allocation HIP decode workspace was evaluated but not accepted.
+It passed 562 native tests in both layout-validation rounds and retained exact
+archive sizes in 16 RAM diagnostic runs. Correcting metadata-only alignment to
+256-byte region offsets did not remove the Mixed verification regression:
+baseline/return runs took approximately 0.58-0.61 seconds, versus about 0.65
+seconds for the aligned candidate. Extraction ranges overlapped. The prototype,
+measurements and unresolved allocator/transfer questions are retained outside
+the checkout; no experimental workspace or its unused tests remain in product
+source. The accepted production path and its 560-test suite are restored.
 
 1. Refresh dependency graphs and pinned provenance. Current local checks cover
    updated Python locks, LZMA SDK 26.03, miniz 3.1.2, Lhasa 0.6.0, native build,

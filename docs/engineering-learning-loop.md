@@ -317,6 +317,18 @@ Windows PowerShell.
 Successful HIP API calls must not be taken as proof that returned durations
 are valid.
 
+Device suballocation must preserve the transaction alignment of the original
+allocations, not merely a metadata type's alignment. Checked extents and fewer
+allocator calls do not prove faster execution. The October 2 packed-workspace
+experiment was not accepted after its aligned correction still regressed Mixed
+verification; retain failed hypotheses and inspect the affected phases before
+repeating an experiment or claiming a gain.
+
+The repository's `mcp/` directory is not installed as the Python `mcp` package.
+An installed SDK can shadow that name. Launch the documented MCP entry point;
+for a direct internal helper invocation, load the exact repository file rather
+than assuming `import mcp.superzip_mcp` resolves locally.
+
 When a failure exposes a repeatable class of mistake, add the narrowest useful
 guard in this order:
 
