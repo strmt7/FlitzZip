@@ -725,8 +725,66 @@ bounded evidence in `out/rocm-qualification-full-verification-result-20261002.js
 The retained response tail is truncated intentionally; the command does not hit
 its total output limit or deadline. The late CRC-only documentation correction
 receives an additional documentation hygiene/lint check. Exact-SHA hosted
-qualification remains pending. Successful compilation alone will not qualify
-GPU execution on other hardware or authorize release.
+qualification passes for `9aa2a6607a51ec549635d9399940927410609be0` on the fresh
+VS 2026 runner: [run 37058607674](https://github.com/strmt7/SuperZip/actions/runs/37058607674).
+Its complete SDK provisioning and release-target compile/link steps succeed.
+Successful compilation alone does not qualify GPU execution on other hardware
+or authorize release.
+
+## Round Seventeen: Independent Bytewise Benchmark Validation
+
+The native RAM benchmark now decodes every archived window again after the
+ordinary timed compression, CRC verification and extraction phases. It compares
+every byte with independently regenerated source, using the existing production
+owned decoder and required-HIP policy. Source generation moves unchanged into a
+shared testable module. Additional output/reference memory is included in
+admission, and the reference buffer is bounded to 64 KiB.
+
+The new `bytewise-regenerated-v1` measurement protocol records the validated
+byte count, separate validation cost and complete wall time. Its HIP telemetry
+does not inflate the timed operation counters. Resource averages cover the
+whole process, including validation; validation between windows can change
+cache and thermal conditions. Graph validation prevents combining this protocol
+with historical CRC-only evidence and rejects missing pilot/confirmation
+coverage. Historical raw observations remain unchanged.
+
+Tests cover all seven profiles, unaligned offsets, reference-buffer tails,
+production CPU/HIP owned decoding and unequal byte arrays with the same known
+CRC32. Initial formatting, a moved-helper diagnostic reference and a test's
+incorrect default GPU policy were caught during verification and corrected.
+All 33 selected full verification commands pass, including 574 native tests,
+all-profile CPU and actual required-HIP bytewise fixtures, format interoperability,
+GUI smoke, packaging and bounded fuzzing. Evidence is retained in
+`out/byte-validation-full-verification-result-20261002.json`; its response tail
+is bounded, with no command timeout or total output-limit failure. The complete
+10 GiB RAM block-size validation sweep also passes: all 14 forced-CPU/required-HIP
+cases compare every byte, totaling 140 GiB of validated source across the seven
+production block sizes. Their exact archive sizes match the earlier CRC-only
+sweep. Timed GPU decode counters remain at 160 chunks per case, excluding the
+additional validation decodes. The source-dirty, single-observation sweep is
+integrity evidence, not a speed claim; the graph validator correctly refuses it
+as insufficient confirmation evidence.
+
+Its separate serial validation costs 24.60–26.49 seconds per observation,
+dominating total development workload time. Preserve this baseline and evaluate
+bounded worker-parallel reference generation in a separately identified protocol
+before longer statistical runs. Raw observations and independent checks remain
+in `out/byte-validation-ram-20261002.json`, its complete `.json.samples.jsonl`
+journal and `out/byte-validation-ram-analysis-20261002.json`. After the maintainer
+dedicated the host, brief checks show approximately 3.25% external CPU activity
+and 0.83% external GPU engine activity, with no invalid GPU counters in that
+sample. Those checks do not establish isolation throughout a future run.
+
+The earlier hosted security workflow at `9aa2a66` fails its Semgrep job with
+[finding 1745](https://github.com/strmt7/SuperZip/security/code-scanning/1745)
+in the SDK provisioner's test fixture. The archive is created within that test;
+this is not evidence of an exploitable product extractor. The fixture now writes
+its independently declared paths/bytes with exclusive creation instead of
+calling `extractall()`. Production archive inspection, installation preservation
+and the fixture's actual provisioning calls remain exercised. Same-SHA hosted
+confirmation of this remediation is pending; no scanner exclusion is added.
+A verified binary-build receipt, broader corpus comparisons and final release
+acceptance remain open.
 
 ## Bounds Review Progress
 

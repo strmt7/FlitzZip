@@ -668,7 +668,10 @@ set(SUPERZIP_LICENSE_SOURCE_FILES ${SUPERZIP_LICENSE_SOURCES})
 list(TRANSFORM SUPERZIP_LICENSE_SOURCE_FILES
      PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
-add_executable(superzip_cli src/cli/main.cpp src/cli/memory_benchmark.cpp)
+add_executable(
+  superzip_cli
+  src/cli/main.cpp src/cli/memory_benchmark.cpp
+  src/cli/memory_benchmark_source.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
 superzip_copy_zstd_runtime(superzip_cli)
 superzip_copy_wimlib_runtime(superzip_cli)
@@ -816,6 +819,8 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_compression_streams.cpp
     tests/cpp/test_gpu_telemetry.cpp
     tests/cpp/test_host_memory_budget.cpp
+    tests/cpp/test_memory_benchmark_source.cpp
+    src/cli/memory_benchmark_source.cpp
     tests/cpp/test_worker_budget.cpp
     tests/cpp/test_windows_compatibility.cpp
     tests/cpp/test_gpu_block_batch.cpp

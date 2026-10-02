@@ -850,6 +850,20 @@ function Read-BenchmarkWorkerStageSet {
     return $values
 }
 
+# Purpose: Require complete bytewise source validation and its separately disclosed cost for each native observation.
+# Inputs: Raw native statistics and the declared workload byte count.
+# Outputs: Throws for historical/partial integrity evidence, malformed costs or incomplete coverage.
+function Assert-BytewiseBenchmarkValidation {
+    param([Collections.IDictionary]$Stats, [int64]$ExpectedInputBytes)
+    $validation = Get-StatsNumber -Stats $Stats -Key 'validation_seconds'
+    $wall = Get-StatsNumber -Stats $Stats -Key 'wall_seconds'
+    if ($Stats['measurement_protocol'] -ne 'bytewise-regenerated-v1' -or
+        [string]$Stats['validated_bytes'] -cne $ExpectedInputBytes.ToString([Globalization.CultureInfo]::InvariantCulture) -or
+        $null -eq $validation -or $validation -le 0 -or $null -eq $wall -or $wall -lt $validation) {
+        throw 'Native benchmark requires complete bytewise validation and separate validation/wall timing evidence.'
+    }
+}
+
 # Purpose: Execute one memory-only benchmark lane and enforce expected GPU usage.
 # Inputs: `Lane` is the display name, `ModeFlag` is `--force-cpu` or `--require-gpu`, and `BlockSizeKiB` selects the production archive block size.
 # Outputs: Returns measured compress/verify/extract statistics without creating benchmark files.
@@ -885,6 +899,7 @@ function Invoke-MemoryBenchmarkLane {
         throw "$Lane memory benchmark did not report a complete serialized archive size."
     }
     Assert-MemoryBenchmarkStat -Stats $stats -ExpectedInputBytes ($SizeMiB * 1MB) -BlockSizeKiB $BlockSizeKiB
+    Assert-BytewiseBenchmarkValidation -Stats $stats -ExpectedInputBytes ($SizeMiB * 1MB)
     $generationWork = Get-StatsNumber -Stats $stats -Key "source_generation_worker_seconds"
     $codecWork = Get-StatsNumber -Stats $stats -Key "codec_encode_worker_seconds"
     if ($null -eq $generationWork -or $generationWork -le 0 -or
@@ -916,6 +931,10 @@ function Invoke-MemoryBenchmarkLane {
         OwnedDecodeStages = $ownedDecodeStages
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
+        MeasurementProtocol = $stats['measurement_protocol']
+        ValidatedBytes = [int64]$stats['validated_bytes']
+        ValidationSeconds = [double]$stats['validation_seconds']
+        WallSeconds = [double]$stats['wall_seconds']
         Workers = [int]$stats["workers"]
         InflightChunks = [int]$stats["inflight_chunks"]
         CodecWorkers = [int]$stats["codec_workers"]
@@ -1010,6 +1029,105 @@ function Assert-BenchmarkWorkerStageTime {
     }
 }
 
+# Purpose: Serialize one validated native observation with exact counts and independent timing stages.
+# Inputs: Run is a completed lane and SizeMiB is the complete declared workload size.
+# Outputs: Returns the ordered observation dictionary or throws on inconsistent or malformed evidence.
+function ConvertTo-RamBenchmarkObservation {
+    param([Parameter(Mandatory = $true)]$Run, [int64]$SizeMiB)
+    if ($null -ne $Run.MeasurementProtocol) {
+        Assert-BytewiseBenchmarkValidation -Stats @{
+            measurement_protocol = $Run.MeasurementProtocol; validated_bytes = $Run.ValidatedBytes
+            validation_seconds = $Run.ValidationSeconds; wall_seconds = $Run.WallSeconds
+        } -ExpectedInputBytes ($SizeMiB * 1MB)
+    }
+    if ($Run.MemoryOnly -ne "true" -or $Run.DiskWriteBytes -ne 0 -or
+        $Run.InputBytes -ne ($SizeMiB * 1MB) -or $Run.OutputBytes -lt 0 -or
+        $Run.ArchiveBytes -le $Run.OutputBytes -or
+        [double]::IsNaN($Run.SourceGenerationWorkerSeconds) -or
+        [double]::IsInfinity($Run.SourceGenerationWorkerSeconds) -or
+        [double]::IsNaN($Run.CodecEncodeWorkerSeconds) -or
+        [double]::IsInfinity($Run.CodecEncodeWorkerSeconds) -or
+        $Run.SourceGenerationWorkerSeconds -le 0 -or $Run.CodecEncodeWorkerSeconds -le 0 -or
+        ($Run.CompressSeconds + $Run.VerifySeconds + $Run.ExtractSeconds) -le 0) {
+        throw "RAM benchmark JSON rejected an inconsistent lane result."
+    }
+    $stageTimes = $Run.GpuEncodeStages
+    Assert-BenchmarkWorkerStageTime -Values $stageTimes -Label 'GPU encode' `
+        -Stages @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')
+    $classificationTimes = $Run.GpuClassificationStages
+    Assert-BenchmarkWorkerStageTime -Values $classificationTimes -Label 'nested GPU classification' `
+        -Stages @('allocation', 'upload', 'crc', 'validation')
+    $decodeStageTimes = $Run.OwnedDecodeStages
+    Assert-BenchmarkWorkerStageTime -Values $decodeStageTimes -Label 'owned-decode' `
+        -Stages @('allocation', 'materialization', 'crc')
+    if ($Run.Lane -eq 'GPU' -and ($stageTimes['readiness'] -le 0 -or $stageTimes['classification'] -le 0)) {
+        throw "RAM benchmark JSON rejected missing required HIP encode stage work."
+    }
+    if (($null -ne $Run.ResourceSampleCount -and ($Run.ResourceSampleCount -lt 0 -or
+            $Run.ResourceSampleCount -ne [math]::Floor($Run.ResourceSampleCount))) -or
+        ($null -ne $Run.GpuSampleCount -and ($Run.GpuSampleCount -lt 0 -or
+            $Run.GpuSampleCount -ne [math]::Floor($Run.GpuSampleCount))) -or
+        ($null -ne $Run.ResourceSampleCount -and $null -ne $Run.GpuSampleCount -and
+            $Run.GpuSampleCount -gt $Run.ResourceSampleCount) -or
+        ($null -ne $Run.ResourceSampleMeanIntervalMs -and
+            ($Run.ResourceSampleMeanIntervalMs -le 0 -or
+                [double]::IsNaN([double]$Run.ResourceSampleMeanIntervalMs) -or
+                [double]::IsInfinity([double]$Run.ResourceSampleMeanIntervalMs)))) {
+        throw "RAM benchmark JSON rejected invalid resource sampling evidence."
+    }
+    foreach ($gpuPercent in @($Run.GpuAvgPct, $Run.GpuPeakPct)) {
+        if ($null -ne $gpuPercent -and ([double]::IsNaN([double]$gpuPercent) -or
+            [double]::IsInfinity([double]$gpuPercent) -or $gpuPercent -lt 0 -or $gpuPercent -gt 100)) {
+            throw "RAM benchmark JSON rejected invalid busiest-engine GPU percentage."
+        }
+    }
+    [ordered]@{
+        lane = $Run.Lane
+        iteration = [int]$Run.Iteration
+        block_size_kib = [int]$Run.BlockSizeKiB
+        workers = ConvertTo-ExactBenchmarkCounter $Run.Workers
+        inflight_chunks = ConvertTo-ExactBenchmarkCounter $Run.InflightChunks
+        codec_workers = ConvertTo-ExactBenchmarkCounter $Run.CodecWorkers
+        input_bytes = [int64]$Run.InputBytes
+        output_bytes = [int64]$Run.OutputBytes
+        archive_bytes = ConvertTo-ExactBenchmarkCounter $Run.ArchiveBytes
+        compress_seconds = $Run.CompressSeconds
+        source_generation_worker_seconds = $Run.SourceGenerationWorkerSeconds
+        codec_encode_worker_seconds = $Run.CodecEncodeWorkerSeconds
+        gpu_encode_stage_worker_seconds = $stageTimes
+        gpu_classification_stage_worker_seconds = $classificationTimes
+        owned_decode_stage_worker_seconds = $decodeStageTimes
+        verify_seconds = $Run.VerifySeconds
+        extract_seconds = $Run.ExtractSeconds
+        measurement_protocol = $Run.MeasurementProtocol
+        validated_bytes = ConvertTo-ExactBenchmarkCounter $Run.ValidatedBytes
+        validation_seconds = $Run.ValidationSeconds
+        wall_seconds = $Run.WallSeconds
+        cpu_avg_pct = $Run.CpuAvgPct
+        cpu_peak_pct = $Run.CpuPeakPct
+        gpu_avg_pct = $Run.GpuAvgPct
+        gpu_peak_pct = $Run.GpuPeakPct
+        resource_sample_count = $Run.ResourceSampleCount
+        gpu_sample_count = $Run.GpuSampleCount
+        resource_sample_mean_interval_ms = $Run.ResourceSampleMeanIntervalMs
+        gpu_kernel_launches = ConvertTo-ExactBenchmarkCounter $Run.GpuKernelLaunches
+        gpu_h2d_bytes = ConvertTo-ExactBenchmarkCounter ($Run.GpuH2DMiB * 1MB)
+        gpu_d2h_bytes = ConvertTo-ExactBenchmarkCounter ($Run.GpuD2HMiB * 1MB)
+        gpu_device_allocation_bytes = ConvertTo-ExactBenchmarkCounter ($Run.GpuAllocMiB * 1MB)
+        gpu_kernel_ms = $Run.GpuKernelMs
+        gpu_pattern_blocks = ConvertTo-ExactBenchmarkCounter $Run.GpuPatternBlocks
+        gpu_prefix_blocks = ConvertTo-ExactBenchmarkCounter $Run.GpuPrefixBlocks
+        gpu_dictionary_blocks = ConvertTo-ExactBenchmarkCounter $Run.GpuDictionaryBlocks
+        gpu_sparse_pattern_blocks = ConvertTo-ExactBenchmarkCounter $Run.GpuSparsePatternBlocks
+        gpu_host_pinned_allocation_bytes = ConvertTo-ExactBenchmarkCounter ($Run.GpuHostPinnedAllocMiB * 1MB)
+        gpu_host_pinned_output_bytes = ConvertTo-ExactBenchmarkCounter ($Run.GpuHostPinnedOutputMiB * 1MB)
+        decode_inflight_chunks = ConvertTo-ExactBenchmarkCounter $Run.DecodeInflightChunks
+        decode_codec_workers = ConvertTo-ExactBenchmarkCounter $Run.DecodeCodecWorkers
+        memory_only = $true
+        disk_write_bytes = 0
+    }
+}
+
 # Purpose: Build an exact, auditable RAM-only benchmark record without serializing host-private paths.
 # Inputs: Runs contain completed CPU/GPU lanes; arguments carry bounded workload and source/toolchain identity.
 # Outputs: Returns a validated record with finite timings, exact sizes, independent stages and resource evidence.
@@ -1029,90 +1147,7 @@ function ConvertTo-RamBenchmarkRecord {
         [string]$HipRuntimeVersion
     )
     $runtimeVersion = ConvertTo-HipRuntimeVersionEvidence -Value $HipRuntimeVersion
-    $orderedRuns = @($Runs | ForEach-Object {
-            if ($_.MemoryOnly -ne "true" -or $_.DiskWriteBytes -ne 0 -or
-                $_.InputBytes -ne ($SizeMiB * 1MB) -or $_.OutputBytes -lt 0 -or
-                $_.ArchiveBytes -le $_.OutputBytes -or
-                [double]::IsNaN($_.SourceGenerationWorkerSeconds) -or
-                [double]::IsInfinity($_.SourceGenerationWorkerSeconds) -or
-                [double]::IsNaN($_.CodecEncodeWorkerSeconds) -or
-                [double]::IsInfinity($_.CodecEncodeWorkerSeconds) -or
-                $_.SourceGenerationWorkerSeconds -le 0 -or $_.CodecEncodeWorkerSeconds -le 0 -or
-                ($_.CompressSeconds + $_.VerifySeconds + $_.ExtractSeconds) -le 0) {
-                throw "RAM benchmark JSON rejected an inconsistent lane result."
-            }
-            $stageTimes = $_.GpuEncodeStages
-            Assert-BenchmarkWorkerStageTime -Values $stageTimes -Label 'GPU encode' `
-                -Stages @('readiness', 'analysis', 'classification', 'prefix', 'sparse', 'dictionary', 'publication')
-            $classificationTimes = $_.GpuClassificationStages
-            Assert-BenchmarkWorkerStageTime -Values $classificationTimes -Label 'nested GPU classification' `
-                -Stages @('allocation', 'upload', 'crc', 'validation')
-            $decodeStageTimes = $_.OwnedDecodeStages
-            Assert-BenchmarkWorkerStageTime -Values $decodeStageTimes -Label 'owned-decode' `
-                -Stages @('allocation', 'materialization', 'crc')
-            if ($_.Lane -eq 'GPU' -and ($stageTimes['readiness'] -le 0 -or $stageTimes['classification'] -le 0)) {
-                throw "RAM benchmark JSON rejected missing required HIP encode stage work."
-            }
-            if (($null -ne $_.ResourceSampleCount -and ($_.ResourceSampleCount -lt 0 -or
-                    $_.ResourceSampleCount -ne [math]::Floor($_.ResourceSampleCount))) -or
-                ($null -ne $_.GpuSampleCount -and ($_.GpuSampleCount -lt 0 -or
-                    $_.GpuSampleCount -ne [math]::Floor($_.GpuSampleCount))) -or
-                ($null -ne $_.ResourceSampleCount -and $null -ne $_.GpuSampleCount -and
-                    $_.GpuSampleCount -gt $_.ResourceSampleCount) -or
-                ($null -ne $_.ResourceSampleMeanIntervalMs -and
-                    ($_.ResourceSampleMeanIntervalMs -le 0 -or
-                        [double]::IsNaN([double]$_.ResourceSampleMeanIntervalMs) -or
-                        [double]::IsInfinity([double]$_.ResourceSampleMeanIntervalMs)))) {
-                throw "RAM benchmark JSON rejected invalid resource sampling evidence."
-            }
-            foreach ($gpuPercent in @($_.GpuAvgPct, $_.GpuPeakPct)) {
-                if ($null -ne $gpuPercent -and ([double]::IsNaN([double]$gpuPercent) -or
-                    [double]::IsInfinity([double]$gpuPercent) -or $gpuPercent -lt 0 -or $gpuPercent -gt 100)) {
-                    throw "RAM benchmark JSON rejected invalid busiest-engine GPU percentage."
-                }
-            }
-            [ordered]@{
-                lane = $_.Lane
-                iteration = [int]$_.Iteration
-                block_size_kib = [int]$_.BlockSizeKiB
-                workers = ConvertTo-ExactBenchmarkCounter $_.Workers
-                inflight_chunks = ConvertTo-ExactBenchmarkCounter $_.InflightChunks
-                codec_workers = ConvertTo-ExactBenchmarkCounter $_.CodecWorkers
-                input_bytes = [int64]$_.InputBytes
-                output_bytes = [int64]$_.OutputBytes
-                archive_bytes = ConvertTo-ExactBenchmarkCounter $_.ArchiveBytes
-                compress_seconds = $_.CompressSeconds
-                source_generation_worker_seconds = $_.SourceGenerationWorkerSeconds
-                codec_encode_worker_seconds = $_.CodecEncodeWorkerSeconds
-                gpu_encode_stage_worker_seconds = $stageTimes
-                gpu_classification_stage_worker_seconds = $classificationTimes
-                owned_decode_stage_worker_seconds = $decodeStageTimes
-                verify_seconds = $_.VerifySeconds
-                extract_seconds = $_.ExtractSeconds
-                cpu_avg_pct = $_.CpuAvgPct
-                cpu_peak_pct = $_.CpuPeakPct
-                gpu_avg_pct = $_.GpuAvgPct
-                gpu_peak_pct = $_.GpuPeakPct
-                resource_sample_count = $_.ResourceSampleCount
-                gpu_sample_count = $_.GpuSampleCount
-                resource_sample_mean_interval_ms = $_.ResourceSampleMeanIntervalMs
-                gpu_kernel_launches = ConvertTo-ExactBenchmarkCounter $_.GpuKernelLaunches
-                gpu_h2d_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuH2DMiB * 1MB)
-                gpu_d2h_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuD2HMiB * 1MB)
-                gpu_device_allocation_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuAllocMiB * 1MB)
-                gpu_kernel_ms = $_.GpuKernelMs
-                gpu_pattern_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPatternBlocks
-                gpu_prefix_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPrefixBlocks
-                gpu_dictionary_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuDictionaryBlocks
-                gpu_sparse_pattern_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuSparsePatternBlocks
-                gpu_host_pinned_allocation_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuHostPinnedAllocMiB * 1MB)
-                gpu_host_pinned_output_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuHostPinnedOutputMiB * 1MB)
-                decode_inflight_chunks = ConvertTo-ExactBenchmarkCounter $_.DecodeInflightChunks
-                decode_codec_workers = ConvertTo-ExactBenchmarkCounter $_.DecodeCodecWorkers
-                memory_only = $true
-                disk_write_bytes = 0
-            }
-        })
+    $orderedRuns = @($Runs | ForEach-Object { ConvertTo-RamBenchmarkObservation -Run $_ -SizeMiB $SizeMiB })
     return [ordered]@{
         schema_version = 2
         benchmark_kind = "suzip_ram"
@@ -1416,6 +1451,7 @@ if ($Mode -eq "Memory") {
             -InterRunPauseMs $InterRunPauseMs `
             -CpuModel $cpuModel -GpuModel $gpuModel -HipRuntimeVersion $hipRuntimeVersion
         $record.schema_version = 3
+        $record.measurement_protocol = 'bytewise-regenerated-v1'
         $record.sampling_policy = $samplingPolicy
         $record.case_quality = $quality
         $record.pilot_runs = @()

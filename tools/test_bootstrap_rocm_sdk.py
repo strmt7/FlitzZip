@@ -94,12 +94,16 @@ class RocmBootstrapTests(unittest.TestCase):
             portable = root / "portable installation"
 
             def extract_fixture(source, destination):
-                """Purpose: Stand in for native extraction using only this test's admitted tiny archive.
-                Inputs: Source and destination are fresh, test-owned paths.
-                Outputs: Writes the complete fixture; never downloads or executes software.
+                """Purpose: Stand in for native extraction using the independently declared fixture files.
+                Inputs: Source must be this test's admitted archive; destination is a fresh test-owned directory.
+                Outputs: Writes only predefined fixture paths and bytes; never extracts archive-controlled names.
                 """
-                with tarfile.open(source, "r:gz") as stream:
-                    stream.extractall(destination, filter="data")
+                self.assertEqual(source, archive)
+                for name, data in files.items():
+                    target = destination / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("xb") as output:
+                        output.write(data)
 
             with patch("tools.bootstrap_rocm_sdk.bounded_extract", side_effect=extract_fixture) as extract:
                 self.assertEqual(provision(lock, portable, archive), portable / "sdk")

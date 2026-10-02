@@ -14,6 +14,24 @@ engines and must not be interpreted as Task Manager-style GPU utilization.
 Raw historical evidence remains unchanged. The System GUI instead combines
 processes using the same physical engine and selects the busiest system engine.
 Unavailable or invalid counter data is not replaced with zero or a capped sum.
+
+New runs declare `measurement_protocol=bytewise-regenerated-v1`. After the
+normal timed compression, CRC verification and extraction phases in every RAM
+window, an independent owned decode compares every byte against regenerated
+source for all seven profiles. This validation uses the same backend policy;
+required-HIP decoding cannot silently fall back. One decoded chunk and a 64 KiB
+reference buffer are admitted in addition to the benchmark's normal reserve.
+Validation is serial across chunks and uses the admitted worker budget inside
+each decode. Its GPU telemetry is isolated from the timed operation counters.
+
+`validated_bytes` must equal the entire input. `validation_seconds` reports the
+extra decode, regeneration, comparison and buffer cleanup; `wall_seconds`
+includes it. Product phase times and `seconds` exclude this extra pass.
+Validation between windows can affect cache and thermal state, so the graph
+validator keeps this protocol separate from historical CRC-only measurements.
+Process resource averages span the whole CLI lifetime, including validation;
+they are not phase-specific utilization measurements. A CRC collision fixture
+checks that the new pass requires byte equality rather than another checksum.
 Schema three additionally preserves pilot observations, fixed confirmation
 plans, all confirmation observations, exact worker/admission geometry and HIP
 transfer/allocation counters. Schema-one and schema-two historical records
@@ -318,8 +336,9 @@ extraction measurements. Its new schema-two fields are additive. Historical
 records without decoder counters retain unavailable values; do not infer their
 queue depth from the requested worker count. Pinned allocation/output counters
 count successful owned decodes, not every attempted HIP allocation. RAM
-reconstruction is checked by CRC; full byte-comparison fixtures are separate
-correctness evidence, not an interchangeable benchmark claim.
+reconstruction in those historical measurements is checked by CRC; their
+separate byte-comparison fixtures are not an interchangeable benchmark claim.
+The current independent benchmark validation pass is documented above.
 
 ### Per-Block Adaptive Selection (2026-09-05)
 

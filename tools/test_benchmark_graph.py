@@ -110,6 +110,43 @@ def sampling_fixture() -> dict:
 
 
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Reject CRC-only, partial, or malformed observations labeled as fully bytewise validated.
+    # Inputs: Current sampling fixtures with independent protocol and coverage mutations.
+    # Outputs: Requires all pilots/confirmations to match and keeps historical protocols incompatible.
+    def test_bytewise_integrity_protocol_coverage(self) -> None:
+        record = sampling_fixture()
+        record["measurement_protocol"] = "bytewise-regenerated-v1"
+        for run in record["runs"] + record["pilot_runs"]:
+            run.update(
+                measurement_protocol="bytewise-regenerated-v1",
+                validated_bytes=run["input_bytes"],
+                validation_seconds=2.5,
+                wall_seconds=10.0,
+            )
+        identity, _ = graph.validate_record(record, False)
+        self.assertNotEqual(identity, graph.validate_record(sampling_fixture(), False)[0])
+        missing = copy.deepcopy(record)
+        missing.pop("measurement_protocol")
+        with self.assertRaisesRegex(ValueError, "protocol declaration"):
+            graph.validate_record(missing, False)
+        malformed = copy.deepcopy(record)
+        malformed["pilot_runs"] = None
+        with self.assertRaisesRegex(ValueError, "observation collections"):
+            graph.validate_record(malformed, False)
+        for collection in ("runs", "pilot_runs"):
+            for field, value in (
+                ("measurement_protocol", None),
+                ("validated_bytes", True),
+                ("validated_bytes", 1),
+                ("validation_seconds", float("nan")),
+                ("validation_seconds", 0),
+                ("wall_seconds", 1),
+            ):
+                mutated = copy.deepcopy(record)
+                mutated[collection][0][field] = value
+                with self.assertRaisesRegex(ValueError, "bytewise validation"):
+                    graph.validate_record(mutated, False)
+
     # Purpose: Refuse stable-looking measurements that do not follow their frozen admission plan.
     # Inputs: Valid evidence with missing, altered, duplicate or unrelated geometry plans.
     # Outputs: Every configuration mismatch raises instead of producing a publishable chart.

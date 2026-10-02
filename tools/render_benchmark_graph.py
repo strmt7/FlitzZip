@@ -209,6 +209,42 @@ def validate_sampling_protocol(record: dict, allow_dirty: bool) -> tuple:
     )
 
 
+# Purpose: Keep historical CRC-only records separate from independently validated bytewise observations.
+# Inputs: Record declares optional new measurement protocol; every pilot and confirmation must match it.
+# Outputs: Returns a protocol identity or rejects missing coverage, changed protocol or invalid validation cost.
+def validate_integrity_protocol(record: dict) -> str:
+    protocol = record.get("measurement_protocol", "crc-only-historical")
+    if protocol not in ("crc-only-historical", "bytewise-regenerated-v1"):
+        raise ValueError("unsupported integrity measurement protocol")
+    runs, pilots = record.get("runs"), record.get("pilot_runs", [])
+    if not isinstance(runs, list) or not isinstance(pilots, list):
+        raise ValueError("invalid integrity observation collections")
+    if protocol == "crc-only-historical":
+        if any(
+            isinstance(run, dict) and run.get("measurement_protocol") == "bytewise-regenerated-v1"
+            for run in runs + pilots
+        ):
+            raise ValueError("bytewise validation protocol declaration is missing")
+        return protocol
+    for run in runs + pilots:
+        if not isinstance(run, dict):
+            raise ValueError("invalid bytewise validation observation")
+        validation, wall = run.get("validation_seconds"), run.get("wall_seconds")
+        if (
+            run.get("measurement_protocol") != protocol
+            or type(run.get("validated_bytes")) is not int
+            or run["validated_bytes"] != run.get("input_bytes")
+            or type(validation) not in (int, float)
+            or not math.isfinite(validation)
+            or validation <= 0
+            or type(wall) not in (int, float)
+            or not math.isfinite(wall)
+            or wall < validation
+        ):
+            raise ValueError("incomplete or invalid bytewise validation evidence")
+    return protocol
+
+
 # Purpose: Reject malformed or unreviewed benchmark data before charting it.
 # Inputs: A parsed historical or current RAM record and a local-preview switch.
 # Outputs: Returns normalized run groups or raises ValueError with the invalid field.
@@ -251,6 +287,7 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
         lane_order,
         pause_ms,
         runtime_version_identity(record.get("hip_runtime_version")),
+        validate_integrity_protocol(record),
     )
     groups = defaultdict(lambda: defaultdict(dict))
     runs = record.get("runs")

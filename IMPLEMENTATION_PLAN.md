@@ -19,9 +19,19 @@ distribution is now integrated through portable shared provisioning and scoped
 compiler configuration. Its observed component versions differ from AMD's
 release-note table and are recorded honestly. The migrated build and 570 native
 tests pass; the corrected full verification passes all 33 commands. Hosted SDK
-assessment remains pending. The wider audit, security backlog, eligible corpus comparisons,
+compile/link qualification passes on a fresh VS 2026 hosted runner at `9aa2a66`.
+This does not establish other-hardware GPU execution. The wider audit, security backlog, eligible corpus comparisons,
 scientific SDK timing and release acceptance remain open. Release 0.8.0
 remains held for completed gates and explicit publication approval.
+
+Independent bytewise RAM validation now passes every CPU/HIP production block
+size and all-profile native fixtures. The corrected batch passes 33 full local
+verification commands and 574 native tests. The new protocol separates validation
+costs and telemetry, rejects incomplete graph evidence and preserves historical
+CRC-only records. A hosted Semgrep finding in the SDK test fixture is remediated
+without suppressing the scanner; same-SHA hosted confirmation remains pending.
+Serial validation overhead, fresh dedicated-host statistics and verified binary
+build provenance are the next performance-tooling tasks.
 
 The later migration commit `08519a5` fails hosted Windows tests under
 PowerShell 7 because absent process-environment values were restored as empty

@@ -1,4 +1,5 @@
 #include "cli/memory_benchmark.hpp"
+#include "cli/memory_benchmark_source.hpp"
 
 #include "core/checksum.hpp"
 #include "core/archive_index.hpp"
@@ -30,7 +31,9 @@ namespace superzip::cli {
 namespace {
 
 constexpr std::uint64_t kCliMiB = 1024ULL * 1024ULL;
-constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL;
+// Reserve the independent validation output and reference scratch in addition to normal benchmark headroom.
+constexpr std::uint64_t kMemoryBenchmarkReserveBytes =
+    1024ULL * 1024ULL * 1024ULL + superzip::kMaxArchiveChunkBytes + kMemoryBenchmarkReferenceBytes;
 constexpr std::array<int, 5> kBenchmarkCompressionLevels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
 constexpr std::array<std::uint32_t, 7> kBenchmarkBlockSizes{
     256U * 1024U, 512U * 1024U, 1024U * 1024U, 2048U * 1024U, 4096U * 1024U, 8192U * 1024U, 16384U * 1024U,
@@ -153,161 +156,6 @@ std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const Mem
 // Outputs: Returns at least one codec worker per chunk, using more workers only when fewer chunks can be active.
 std::uint32_t resolve_memory_codec_workers(std::uint32_t workers, std::uint32_t inflight, std::size_t chunk_count) {
     return superzip::resolve_codec_worker_count(workers, inflight, chunk_count);
-}
-
-// Purpose: Generate a deterministic random-looking byte from a virtual workload offset.
-// Inputs: `index` is the zero-based virtual byte offset.
-// Outputs: Returns one reproducible byte without maintaining RNG state.
-std::uint8_t randomish_benchmark_byte(std::uint64_t index) {
-    std::uint64_t value = index + 0x9E3779B97F4A7C15ULL;
-    value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
-    value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
-    value ^= value >> 31U;
-    return static_cast<std::uint8_t>(value >> 56U);
-}
-
-// Purpose: Generate a deterministic low-entropy byte that is not a fill or periodic pattern.
-// Inputs: `index` is the zero-based virtual byte offset inside the low-entropy region.
-// Outputs: Returns one reproducible byte from a biased distribution similar to already-compressed scientific chunks.
-std::uint8_t low_entropy_benchmark_byte(std::uint64_t index) {
-    const auto bucket = static_cast<std::uint32_t>((static_cast<std::uint64_t>(randomish_benchmark_byte(index)) << 2U) |
-                                                   (randomish_benchmark_byte(index + 0xA5A5A5A5ULL) & 0x03U));
-    if (bucket < 180U) {
-        return 1U;
-    }
-    if (bucket < 330U) {
-        return 0U;
-    }
-    if (bucket < 450U) {
-        return 2U;
-    }
-    if (bucket < 520U) {
-        return 3U;
-    }
-    if (bucket < 720U) {
-        return static_cast<std::uint8_t>(4U + (bucket % 16U));
-    }
-    if (bucket < 900U) {
-        return static_cast<std::uint8_t>(20U + (bucket % 64U));
-    }
-    return static_cast<std::uint8_t>(84U + (bucket % 172U));
-}
-
-// Purpose: Fill independent 64 KiB groups whose four near-identical records require local dictionary matches.
-// Inputs: `buffer` is the output and `global_offset` is its virtual file offset; neither needs group alignment.
-// Outputs: Writes deterministic bytes without filesystem access or cross-group repetition.
-void fill_segmented_record_chunk(std::vector<std::byte>& buffer, std::uint64_t global_offset) {
-    constexpr std::size_t record_bytes = 16U * 1024U;
-    constexpr std::size_t segment_bytes = 4U * record_bytes;
-    constexpr std::size_t patch_offset = 1024U;
-    std::array<std::byte, record_bytes> record{};
-    for (std::size_t offset = 0; offset < buffer.size();) {
-        const auto absolute_offset = global_offset + offset;
-        const auto segment_index = absolute_offset / segment_bytes;
-        const auto segment_offset = static_cast<std::size_t>(absolute_offset % segment_bytes);
-        for (std::size_t index = 0; index < record_bytes; ++index) {
-            record[index] = static_cast<std::byte>(randomish_benchmark_byte(segment_index * record_bytes + index));
-        }
-        const auto segment_count = std::min(segment_bytes - segment_offset, buffer.size() - offset);
-        for (std::size_t copied = 0; copied < segment_count;) {
-            const auto position = segment_offset + copied;
-            const auto record_index = position / record_bytes;
-            const auto record_offset = position % record_bytes;
-            const auto count = std::min(record_bytes - record_offset, segment_count - copied);
-            std::copy_n(record.begin() + static_cast<std::ptrdiff_t>(record_offset), count,
-                        buffer.begin() + static_cast<std::ptrdiff_t>(offset + copied));
-            if (record_index != 0U && record_offset <= patch_offset && patch_offset - record_offset < count) {
-                buffer[offset + copied + patch_offset - record_offset] ^=
-                    static_cast<std::byte>(1U + (segment_index + record_index) % 255U);
-            }
-            copied += count;
-        }
-        offset += segment_count;
-    }
-}
-
-// Purpose: Retain one seeded 1 MiB long-record motif without allocating it for other benchmark profiles.
-// Inputs: None.
-// Outputs: Returns a process-owned immutable motif for the long-sparse RAM workload.
-const std::vector<std::byte>& long_sparse_record_motif() {
-    static const auto record = [] {
-        std::vector<std::byte> bytes(1024U * 1024U);
-        for (std::size_t index = 0U; index < bytes.size(); ++index) {
-            bytes[index] = static_cast<std::byte>(randomish_benchmark_byte(index));
-        }
-        return bytes;
-    }();
-    return record;
-}
-
-// Purpose: Fill a benchmark chunk with deterministic compressed-pattern or incompressible data.
-// Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,
-// and `profile` selects data shape.
-// Outputs: Writes benchmark bytes into `buffer` without filesystem access.
-void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t global_offset, std::uint64_t total_bytes,
-                                 const std::string& profile) {
-    if (profile == "SegmentedRecords") {
-        fill_segmented_record_chunk(buffer, global_offset);
-        return;
-    }
-    if (profile == "RepeatedRecord" || profile == "SparseRecord" || profile == "LongSparseRecord") {
-        static const auto record = [] {
-            std::array<std::byte, 16U * 1024U> bytes{};
-            for (std::size_t index = 0; index < bytes.size(); ++index) {
-                bytes[index] = static_cast<std::byte>(randomish_benchmark_byte(index));
-            }
-            return bytes;
-        }();
-        const std::span<const std::byte> motif =
-            profile == "LongSparseRecord" ? std::span(long_sparse_record_motif()) : std::span(record);
-        for (std::size_t offset = 0; offset < buffer.size();) {
-            const auto absolute_offset = global_offset + offset;
-            const auto record_offset = static_cast<std::size_t>(absolute_offset % motif.size());
-            const auto count = std::min(motif.size() - record_offset, buffer.size() - offset);
-            std::copy_n(motif.begin() + static_cast<std::ptrdiff_t>(record_offset), count,
-                        buffer.begin() + static_cast<std::ptrdiff_t>(offset));
-            constexpr std::size_t patch_offset = 1024U;
-            if ((profile == "SparseRecord" || profile == "LongSparseRecord") && record_offset <= patch_offset &&
-                patch_offset - record_offset < count) {
-                const auto record_index = absolute_offset / motif.size();
-                if (profile == "SparseRecord" || record_index != 0U) {
-                    buffer[offset + patch_offset - record_offset] ^= static_cast<std::byte>(1U + record_index % 255U);
-                }
-            }
-            offset += count;
-        }
-        return;
-    }
-    std::uint64_t zero_limit = 0;
-    std::uint64_t text_limit = 0;
-    std::uint64_t low_entropy_limit = 0;
-    if (profile == "Compressible") {
-        zero_limit = total_bytes / 10U;
-        text_limit = zero_limit + ((total_bytes / 10U) * 8U);
-        low_entropy_limit = text_limit;
-    } else if (profile == "Mixed") {
-        zero_limit = total_bytes / 4U;
-        text_limit = zero_limit + (total_bytes / 4U);
-        low_entropy_limit = text_limit + (total_bytes / 4U);
-    } else if (profile != "Incompressible") {
-        throw superzip::ArchiveError("unknown memory benchmark profile: " + profile);
-    }
-
-    constexpr char text[] =
-        "SuperZip memory benchmark line: AMD HIP native archive codec, metadata, and verification.\n";
-    constexpr auto text_len = sizeof(text) - 1U;
-    for (std::size_t i = 0; i < buffer.size(); ++i) {
-        const auto pos = global_offset + i;
-        if (pos < zero_limit) {
-            buffer[i] = std::byte{0};
-        } else if (pos < text_limit) {
-            buffer[i] = static_cast<std::byte>(text[pos % text_len]);
-        } else if (pos < low_entropy_limit) {
-            buffer[i] = static_cast<std::byte>(low_entropy_benchmark_byte(pos - text_limit));
-        } else {
-            buffer[i] = static_cast<std::byte>(randomish_benchmark_byte(pos));
-        }
-    }
 }
 
 // Purpose: Resolve the worker count used by in-memory codec benchmarks.
@@ -469,10 +317,12 @@ void flush_one_memory_crc(std::deque<PendingMemoryCrc>& pending_crc, const std::
                 superzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
                                              static_cast<std::size_t>(chunk.uncompressed_size), cpu_options);
             const auto decoded = owner.bytes();
+            std::vector<std::byte> reference(16U * 1024U);
+            fill_memory_benchmark_chunk(reference, 0, reference.size(), "RepeatedRecord");
             std::size_t bad_count = 0;
             std::size_t last_bad = 0;
             for (std::size_t offset = 0; offset < decoded.size(); ++offset) {
-                const auto expected = randomish_benchmark_byte(offset % (16U * 1024U));
+                const auto expected = static_cast<std::uint8_t>(reference[offset % reference.size()]);
                 if (decoded[offset] != static_cast<std::byte>(expected)) {
                     if (bad_count == 0U) {
                         location = " first_bad_byte=" + std::to_string(offset) +
@@ -795,7 +645,9 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)]
         << " seconds=" << stats.seconds << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
         << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
-        << " extract_seconds=" << result.extract_seconds
+        << " extract_seconds=" << result.extract_seconds << " measurement_protocol=bytewise-regenerated-v1"
+        << " validated_bytes=" << result.validated_bytes << " validation_seconds=" << result.validation_seconds
+        << " wall_seconds=" << result.wall_seconds
         << " source_generation_worker_seconds=" << result.source_generation_worker_seconds
         << " codec_encode_worker_seconds=" << result.codec_encode_worker_seconds
         << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
@@ -806,6 +658,32 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << " memory_only=true"
         << " disk_write_bytes=0"
         << "\n";
+}
+
+// Purpose: Check every archived chunk against its exact source outside timed product phases.
+// Inputs: One bounded archive window, source geometry/profile, and backend policy with isolated telemetry.
+// Outputs: Accumulates byte-validation cost/count; throws on wrong bytes or hidden required-HIP fallback.
+void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archive, std::uint64_t window_offset,
+                                       std::uint64_t total_bytes, std::string_view profile,
+                                       const superzip::GpuCodecOptions& options, MemoryBenchmarkResult& result) {
+    const auto started = std::chrono::steady_clock::now();
+    {
+        std::vector<std::byte> scratch;
+        scratch.reserve(kMemoryBenchmarkReferenceBytes);
+        auto offset = window_offset;
+        for (const auto& chunk : archive) {
+            auto decoded = superzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
+                                                        static_cast<std::size_t>(chunk.uncompressed_size), options);
+            if (decoded.bytes().size() != chunk.uncompressed_size || (options.require_gpu && !decoded.gpu_used)) {
+                throw superzip::ArchiveError("memory benchmark byte validation size/backend mismatch");
+            }
+            validate_memory_benchmark_bytes(decoded.bytes(), offset, total_bytes, profile, scratch);
+            result.validated_bytes = checked_add_cli_u64(result.validated_bytes, chunk.uncompressed_size,
+                                                         "memory benchmark validation byte count overflows");
+            offset = checked_add_cli_u64(offset, chunk.uncompressed_size, "memory benchmark source offset overflows");
+        }
+    }
+    result.validation_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 }
 
 // Purpose: Execute a bounded, RAM-only archive workload with independent encode, verify, and extract phases.
@@ -843,6 +721,11 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         .uncompressed_size = total_bytes,
     });
 
+    auto validation_options = codec_options;
+    validation_options.worker_count = workers;
+    validation_options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    // One output at a time bounds validation storage; no extra retained pinned-output pool.
+    validation_options.host_output_pool.reset();
     const auto total_started = std::chrono::steady_clock::now();
     const auto window_chunks = std::max<std::uint64_t>(1U, inflight);
     const auto window_bytes = checked_multiply_cli_u64(window_chunks, superzip::kMaxArchiveChunkBytes,
@@ -879,7 +762,11 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         }
         result.extract_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
+        validate_memory_benchmark_archive(archive, offset, total_bytes, options.profile, validation_options, result);
         offset += current_window;
+    }
+    if (result.validated_bytes != total_bytes) {
+        throw superzip::ArchiveError("memory benchmark byte validation did not cover the complete source");
     }
     const auto finalize_started = std::chrono::steady_clock::now();
     if (modeled_index.entries.front().payload_size != result.stats.output_bytes) {
@@ -894,7 +781,8 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.compress_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - finalize_started).count();
     result.stats.entries = modeled_index.entries.size();
-    result.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
+    result.wall_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - total_started).count();
+    result.stats.seconds = result.wall_seconds - result.validation_seconds;
     result.stats.gpu_runtime = superzip::snapshot_gpu_telemetry(*telemetry);
     return result;
 }

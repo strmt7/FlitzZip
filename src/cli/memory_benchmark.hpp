@@ -43,6 +43,10 @@ struct MemoryBenchmarkResult {
     double codec_encode_worker_seconds = 0.0;
     double verify_seconds = 0.0;
     double extract_seconds = 0.0;
+    // Independent post-phase decode/regeneration; excluded from product phase timings and telemetry.
+    std::uint64_t validated_bytes = 0;
+    double validation_seconds = 0.0;
+    double wall_seconds = 0.0;
 };
 
 struct BenchmarkSuiteOptions {
