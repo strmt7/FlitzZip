@@ -21,6 +21,60 @@ def line(time: int, thread: str, body: str) -> str:
 
 
 class HipTraceTests(unittest.TestCase):
+    # Purpose: Separate allocation size and transfer direction without losing failure or window accounting.
+    # Inputs: Complete interleaved calls, including failed allocation and copy records.
+    # Outputs: Requires exact numeric groups, unchanged API totals and no raw private argument material.
+    def test_allocation_and_transfer_cost_groups(self):
+        calls = [
+            trace.TraceCall((1, 1), "hipMalloc", 10, 20, "private-a, 512", True),
+            trace.TraceCall((1, 2), "hipMalloc", 10, 40, "private-b, 512", False),
+            trace.TraceCall((1, 1), "hipMallocAsync", 21, 24, "private-c, 512, private-stream", True),
+            trace.TraceCall(
+                (1, 1), "hipMallocFromPoolAsync", 25, 26, "private-d, 0, private-pool, private-stream", True
+            ),
+            trace.TraceCall((1, 1), "hipHostMalloc", 27, 28, "private-e, 128, 0", True),
+            trace.TraceCall((1, 1), "hipMalloc", 29, 30, "private-h, 128", True),
+            trace.TraceCall((1, 1), "hipMemcpy", 41, 46, "private-f, private-g, 128, hipMemcpyHostToDevice", True),
+            trace.TraceCall((1, 1), "hipMemcpy", 47, 49, "private-f, private-g, 128, hipMemcpyDeviceToHost", True),
+            trace.TraceCall((1, 1), "hipMemcpy", 50, 51, "private-f, private-g, 128, hipMemcpyHostToDevice", False),
+            trace.TraceCall((1, 1), "hipMemcpy", 53, 54, "private-f, private-g, 64, hipMemcpyHostToDevice", True),
+        ]
+        report = trace.build_report(calls)
+        allocated = {(item["api"], item["requested_bytes"]): item for item in report["allocation_requests"]}
+        self.assertEqual(len(allocated), 5)
+        self.assertEqual(allocated["hipMalloc", 512]["calls"], 2)
+        self.assertEqual(allocated["hipMalloc", 512]["failed_calls"], 1)
+        self.assertEqual(allocated["hipMalloc", 512]["traced_host_total_us"], 40)
+        self.assertEqual(allocated["hipMalloc", 512]["traced_host_median_us"], 20)
+        self.assertEqual(allocated["hipMalloc", 128]["calls"], 1)
+        self.assertEqual(sum(item["calls"] for item in report["transfer_calls"]), 3)
+        self.assertEqual(len(report["transfer_calls"]), 3)
+        self.assertEqual(report["transfer_bytes"], {"hipMemcpyDeviceToHost": 128, "hipMemcpyHostToDevice": 192})
+        narrowed = trace.build_report(calls, 21, 29)
+        self.assertEqual(sum(item["calls"] for item in narrowed["allocation_requests"]), 3)
+        self.assertEqual(narrowed["transfer_calls"], [])
+        rendered = json.dumps(report)
+        for token in ("private", "arguments", "pid:", "tid:"):
+            self.assertNotIn(token, rendered)
+
+    # Purpose: Refuse unsupported sizes/layouts consistently instead of treating arbitrary numeric text as bytes.
+    # Inputs: Valid uint64 boundaries and malformed sizes for every admitted allocation API and synchronous copies.
+    # Outputs: Requires exact bounds, explicit rejection and no allocation interpretation for unrelated APIs.
+    def test_allocation_size_and_layout_validation(self):
+        for value in ("0", "128", str((1 << 64) - 1)):
+            self.assertEqual(trace.byte_count(value), int(value))
+        for value in ("", "-1", "+1", "0x10", "1.0", "\u0661", "9" * 21, str(1 << 64)):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                trace.byte_count(value)
+            with self.assertRaises(ValueError):
+                trace.transfer_volume(
+                    trace.TraceCall((1, 1), "hipMemcpy", 1, 2, f"p, q, {value}, hipMemcpyHostToDevice", True)
+                )
+        for api in ("hipMalloc", "hipMallocAsync", "hipMallocFromPoolAsync", "hipHostMalloc"):
+            with self.subTest(api=api), self.assertRaises(ValueError):
+                trace.allocation_request(trace.TraceCall((1, 1), api, 1, 2, "p", True))
+        self.assertIsNone(trace.allocation_request(trace.TraceCall((1, 1), "hipFree", 1, 2, "p", True)))
+
     # Purpose: Admit the runtime's ANSI-colored file logs without weakening API pairing.
     # Inputs: One colored call/return pair and one colored record lacking thread identity.
     # Outputs: Checks exact duration and continued rejection of unidentified calls.

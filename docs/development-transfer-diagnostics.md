@@ -48,6 +48,42 @@ do not prove which runtime call causes the measured interval on Windows.
 Any allocator change must retain capability checks, bounded memory, stream
 lifetime and failure cleanup before making comparative speed claims.
 
+## Offline Trace Analysis
+
+`tools/analyze_hip_trace.py` can reanalyze an existing, complete HIP API log
+without running a workload or enabling runtime logging again:
+
+```powershell
+py -3 tools/analyze_hip_trace.py out/research/complete-hip-api-trace.log
+```
+
+The sanitized report retains per-API costs and adds `allocation_requests`,
+grouped by API and requested bytes, plus `transfer_calls`, grouped by API,
+direction and bytes per successful call. Allocation groups retain failed
+requests; they are not live VRAM, physical driver allocation sizes or proof
+of successful ownership. Failed copies remain visible in the API totals but
+do not count as completed transfer traffic. Optional time windows apply to
+all groups consistently. Numeric sizes must fit an ASCII decimal uint64;
+unsupported layouts fail explicitly rather than returning invented volumes.
+
+The groups overlap with the API totals: do not add both. Host call durations
+may overlap across workers and include runtime waits, and are not kernel
+durations or uninstrumented application speed. Reports exclude raw pointers,
+arguments, process/thread identities and paths. Preserve the original log
+privately with its producing binary/runtime identity; numeric groups alone
+cannot identify an encode/decode phase or explain why an API waited.
+
+Reanalysis of the earlier pinned-output trace retains all 7,144 calls. Its
+512-byte device allocations include a 138,447-microsecond host interval,
+so stalls are not confined to large input buffers. A separate October 2
+four-worker, byte-checked copy probe compared legacy allocation per cycle
+with retained legacy buffers in reversed order. Each case transferred 5 GiB
+per direction in RAM, with distinct per-cycle markers and full byte checks;
+all four completed with exact bytes and zero archive disk writes. Both
+strategies took about 0.65-0.69 seconds. This does not establish a cache
+benefit or reproduce the production codec's concurrency.
+Do not promote a cache merely because it reduces allocation/free call counts.
+
 This diagnostic is intentionally development-only. Do not use it to claim that
 the GUI is GPU accelerated, and do not replace the required release benchmark
 suite with this narrower transfer check.

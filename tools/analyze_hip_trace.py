@@ -18,6 +18,7 @@ RETURN = re.compile(r"(?P<api>hip[A-Za-z0-9_]{1,92}): Returned (?P<status>\w+)\b
 UNIDENTIFIED_API = re.compile(r"\d+ us:\s*hip[A-Za-z0-9_]+(?:\s+\(|: Returned )")
 API_RECORD = re.compile(r"hip[A-Za-z0-9_]+(?:\s+\(|:\s*Returned\b)")
 SGR_COLOR = re.compile(r"\x1b\[[0-9;]*m")
+BYTE_COUNT = re.compile(r"[0-9]{1,20}\Z")
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,43 @@ def occupied_microseconds(calls: list[TraceCall]) -> int:
     return total
 
 
+# Purpose: Validate one logged size_t without interpreting pointers or admitting unbounded numeric conversions.
+# Inputs: An ASCII decimal byte count from a supported API layout. Outputs: Returns uint64 bytes or raises ValueError.
+def byte_count(value: str) -> int:
+    if BYTE_COUNT.fullmatch(value) is None:
+        raise ValueError("HIP trace byte count is unsupported")
+    count = int(value)
+    if count > (1 << 64) - 1:
+        raise ValueError("HIP trace byte count is unsupported")
+    return count
+
+
+# Purpose: Identify requested allocation extents independently of pointer values and successful ownership.
+# Inputs: One private parsed allocation call. Outputs: Returns bytes, None for other APIs, or a value-free error.
+def allocation_request(call: TraceCall) -> int | None:
+    layouts = {"hipMalloc": 2, "hipMallocAsync": 3, "hipMallocFromPoolAsync": 4, "hipHostMalloc": 3}
+    expected = layouts.get(call.api)
+    if expected is None:
+        return None
+    arguments = [value.strip() for value in call.arguments.split(",")]
+    if len(arguments) != expected:
+        raise ValueError("HIP trace allocation arguments are unsupported")
+    return byte_count(arguments[1])
+
+
+# Purpose: Summarize the same host interval statistics for API and numeric argument groups.
+# Inputs: A nonempty collection of complete calls. Outputs: Counts failures and costs without returning raw arguments.
+def summarize_cost(group: list[TraceCall]) -> dict:
+    durations = [call.ended_us - call.started_us for call in group]
+    return {
+        "calls": len(group),
+        "failed_calls": sum(not call.succeeded for call in group),
+        "traced_host_total_us": sum(durations),
+        "traced_host_median_us": statistics.median(durations),
+        "traced_host_max_us": max(durations),
+    }
+
+
 # Purpose: Extract only numeric copy volume and direction from a supported synchronous HIP transfer.
 # Inputs: One private parsed call; pointer values are never returned.
 # Outputs: Returns direction/byte count or None for other calls; rejects malformed copy argument layouts.
@@ -93,14 +131,14 @@ def transfer_volume(call: TraceCall) -> tuple[str, int] | None:
     arguments = [value.strip() for value in call.arguments.split(",")]
     directions = {"hipMemcpyHostToDevice", "hipMemcpyDeviceToHost", "hipMemcpyDeviceToDevice", "hipMemcpyHostToHost"}
     expected = 5 if call.api == "hipMemcpyWithStream" else 4
-    if len(arguments) != expected or not arguments[2].isdecimal() or arguments[3] not in directions:
+    if len(arguments) != expected or arguments[3] not in directions:
         raise ValueError("HIP trace transfer arguments are unsupported")
-    return arguments[3], int(arguments[2])
+    return arguments[3], byte_count(arguments[2])
 
 
 # Purpose: Produce a privacy-preserving aggregate report for a complete trace or explicit host-time window.
 # Inputs: Complete calls and optional inclusive start/exclusive end bounds in the trace clock's microseconds.
-# Outputs: Returns counts, traced host costs and transfer volumes; no pointers, paths, PIDs, or thread IDs.
+# Outputs: Returns API/size/direction costs and transfer volumes; no pointers, paths, PIDs, or thread IDs.
 def build_report(calls: list[TraceCall], start_us: int | None = None, end_us: int | None = None) -> dict:
     if (start_us is not None and start_us < 0) or (end_us is not None and end_us < 0):
         raise ValueError("HIP trace time bounds must be nonnegative")
@@ -116,25 +154,18 @@ def build_report(calls: list[TraceCall], start_us: int | None = None, end_us: in
     groups: dict[str, list[TraceCall]] = defaultdict(list)
     threads: dict[tuple[int, int], list[TraceCall]] = defaultdict(list)
     transfers: dict[str, int] = defaultdict(int)
+    allocations: dict[tuple[str, int], list[TraceCall]] = defaultdict(list)
+    copy_groups: dict[tuple[str, str, int], list[TraceCall]] = defaultdict(list)
     for call in selected:
         groups[call.api].append(call)
         threads[call.thread].append(call)
+        requested = allocation_request(call)
+        if requested is not None:
+            allocations[call.api, requested].append(call)
         transfer = transfer_volume(call)
         if transfer is not None:
             transfers[transfer[0]] += transfer[1]
-    apis = []
-    for api, group in sorted(groups.items()):
-        durations = [call.ended_us - call.started_us for call in group]
-        apis.append(
-            {
-                "api": api,
-                "calls": len(group),
-                "failed_calls": sum(not call.succeeded for call in group),
-                "traced_host_total_us": sum(durations),
-                "traced_host_median_us": statistics.median(durations),
-                "traced_host_max_us": max(durations),
-            }
-        )
+            copy_groups[call.api, transfer[0], transfer[1]].append(call)
     return {
         "schema_version": 1,
         "measurement_kind": "instrumented_hip_api_diagnostic_not_benchmark",
@@ -145,7 +176,16 @@ def build_report(calls: list[TraceCall], start_us: int | None = None, end_us: in
         "selected_trace_span_us": max(call.ended_us for call in selected) - min(call.started_us for call in selected),
         "traced_host_occupied_worker_us": sum(occupied_microseconds(group) for group in threads.values()),
         "transfer_bytes": dict(sorted(transfers.items())),
-        "apis": apis,
+        "apis": [{"api": api, **summarize_cost(group)} for api, group in sorted(groups.items())],
+        # Requests are not live/peak VRAM, physical driver extents or proof of successful allocation.
+        "allocation_requests": [
+            {"api": api, "requested_bytes": requested, **summarize_cost(group)}
+            for (api, requested), group in sorted(allocations.items())
+        ],
+        "transfer_calls": [
+            {"api": api, "direction": direction, "bytes_per_call": count, **summarize_cost(group)}
+            for (api, direction, count), group in sorted(copy_groups.items())
+        ],
     }
 
 

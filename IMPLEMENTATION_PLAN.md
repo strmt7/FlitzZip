@@ -28,8 +28,25 @@ Its command-plan regressions and real 14-target sanitizer smoke pass. The
 combined batch passes all 31 full-profile checks, including 565 native tests,
 nine allocation-failure groups, the 36-format matrix, independent readers,
 all-page GUI smoke, unpublished package validation and 24 MCP tests.
-Hosted checks for this combined batch remain pending; release 0.8.0 stays held
-for review and explicit approval.
+All seven selected hosted workflows for the combined batch `bcc78e3` pass,
+including both Windows build/test jobs, CodeQL C++, all security jobs, both
+sanitizer fuzzing jobs and explicitly dispatched graph validation. GitHub
+confirms `DS205001` alert 1738 is fixed. The post-push audit still fails for
+209 unapproved alerts, alongside two approved Scorecard residuals. All eight
+header-guard alert IDs predate this push; there is no new header-guard finding
+from this batch. Dependabot and open pull-request counts are zero. Release
+0.8.0 stays held for review and explicit approval; green workflows are not
+final security acceptance.
+
+Offline HIP trace analysis now separates allocation sizes and transfer
+directions with bounded numeric parsing and privacy-preserving cost groups.
+Ten regressions pass, and all 7,144 calls in the retained production trace
+retain exactly the earlier report's API costs and traffic totals. Both
+selected local verification commands, changed-function contracts and the
+same pinned DevSkim scans pass. A bounded, reversed-order legacy input-lifetime
+probe passes every byte check but shows no reliable end-to-end cache gain. Production
+allocation policy is unchanged; concurrent runtime waits remain a profiling
+target rather than a claimed fix.
 
 The [2026-10-01 archive engineering review](docs/archive-engineering-review.md)
 compares selected practices from six established open-source projects and orders
