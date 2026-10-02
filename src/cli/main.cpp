@@ -102,7 +102,7 @@ void usage() {
         << "  superzip_cli memory-benchmark --size-mib <n> --profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
-        << kBlockSizeUsage << ">] [--compression-level <1-9>]\n"
+        << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords] "
            "[--workers "
@@ -835,9 +835,10 @@ int run_extract_command(const std::vector<std::string>& args) {
 
 // Purpose: Execute `memory-benchmark` after parsing bounded options.
 // Inputs: `args` is the full argument vector beginning with `memory-benchmark`.
-// Outputs: Returns zero and prints benchmark telemetry.
+// Outputs: Returns zero with measured telemetry or an explicit allocation-free plan; throws on invalid admission.
 int run_memory_benchmark_command(const std::vector<std::string>& args) {
     superzip::cli::MemoryBenchmarkOptions options;
+    bool plan_only = false;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--size-mib") {
             options.size_mib = require_u32_arg(args, i, "--size-mib");
@@ -849,6 +850,12 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
             options.force_cpu = true;
         } else if (args[i] == "--workers") {
             options.workers = require_u32_arg(args, i, "--workers");
+        } else if (args[i] == "--inflight") {
+            options.inflight_chunks = require_u32_arg(args, i, "--inflight");
+        } else if (args[i] == "--decode-inflight") {
+            options.decode_inflight_chunks = require_u32_arg(args, i, "--decode-inflight");
+        } else if (args[i] == "--plan-only") {
+            plan_only = true;
         } else if (args[i] == "--block-size-kib") {
             options.block_size = require_block_size_kib_arg(args, i, "--block-size-kib");
         } else if (args[i] == "--compression-level") {
@@ -858,7 +865,11 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
             throw superzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
         }
     }
-    superzip::cli::print_memory_benchmark_stats(superzip::cli::run_memory_benchmark(options));
+    if (plan_only) {
+        superzip::cli::print_memory_benchmark_plan(superzip::cli::plan_memory_benchmark(options));
+    } else {
+        superzip::cli::print_memory_benchmark_stats(superzip::cli::run_memory_benchmark(options));
+    }
     return 0;
 }
 

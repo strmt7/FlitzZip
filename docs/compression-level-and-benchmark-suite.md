@@ -282,6 +282,12 @@ The built-in suite is intentionally RAM-only. It uses the same generated
 workload, block codec, worker allocation, and required-GPU policy as
 `memory-benchmark`, then prints one `suite_case` line per candidate and one
 `suite_recommendation` line.
+This native command is a single-pass exploratory tuner: its recommendation
+is provisional and has no repeated-measurement uncertainty estimate. Use
+the [scientific RAM controller](performance-block-size-validation.md#scientific-sample-planning)
+in `tools/bench.ps1` for pilot-based, fixed-count confirmation and auditable
+variability. A single-pass score or selected candidate is insufficient
+evidence for a published performance improvement.
 
 ```powershell
 build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
@@ -329,6 +335,14 @@ compressed before archiving; a benchmark made only of zero/text/random regions
 would not detect required-HIP codecs that fail to compact those streams.
 
 ## Required Evidence
+
+The PowerShell RAM controller freezes execution geometry before its separate
+pilot and fixed-count confirmation sample. Current host admission must still
+accept each exact depth; it aborts rather than reducing concurrency between
+observations. See the
+[scientific sampling protocol](performance-block-size-validation.md#scientific-sample-planning).
+The native `benchmark-suite --tune` remains a provisional single-pass selector;
+its recommendation does not establish statistical superiority.
 
 Every benchmark-suite or release benchmark record must include:
 

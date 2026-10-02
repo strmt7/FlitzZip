@@ -13,8 +13,20 @@ struct MemoryBenchmarkOptions {
     bool require_gpu = false;
     bool force_cpu = false;
     std::uint32_t workers = 0;
+    // Zero selects admission automatically; nonzero depths are exact and never silently reduced.
+    std::uint32_t inflight_chunks = 0;
+    std::uint32_t decode_inflight_chunks = 0;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
+};
+
+struct MemoryBenchmarkPlan {
+    std::uint64_t input_bytes = 0;
+    std::uint32_t workers = 0;
+    std::uint32_t inflight_chunks = 0;
+    std::uint32_t codec_workers = 0;
+    std::uint32_t decode_inflight_chunks = 0;
+    std::uint32_t decode_codec_workers = 0;
 };
 
 struct MemoryBenchmarkResult {
@@ -47,6 +59,16 @@ struct BenchmarkSuiteOptions {
 // Inputs: `options` controls virtual workload size, data profile, backend lane, worker count, and compression level.
 // Outputs: Returns timing, byte counts, GPU telemetry, and correctness-checked phase statistics.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options);
+
+// Purpose: Resolve exact benchmark geometry without generating data or executing codecs.
+// Inputs: options selects the same workload and admission policy as a measured run.
+// Outputs: Returns admitted geometry or throws if a requested depth cannot safely fit now.
+MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options);
+
+// Purpose: Print admission planning fields without presenting a plan as measured GPU or timing evidence.
+// Inputs: plan is a validated, allocation-free benchmark configuration.
+// Outputs: Writes one parseable plan_only=true line to stdout.
+void print_memory_benchmark_plan(const MemoryBenchmarkPlan& plan);
 
 // Purpose: Print memory-only benchmark statistics in the stable SuperZip CLI key/value format.
 // Inputs: `result` is the completed memory benchmark result.

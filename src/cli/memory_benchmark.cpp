@@ -22,6 +22,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -138,7 +139,12 @@ std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const Mem
     const auto limit = superzip::resolve_host_pipeline_inflight_limit(superzip::query_host_memory_snapshot(),
                                                                       superzip::kMaxArchiveChunkBytes,
                                                                       kMemoryBenchmarkReserveBytes, workspace);
-    return superzip::resolve_worker_inflight_limit(workers, limit);
+    const auto admitted = superzip::resolve_worker_inflight_limit(workers, limit);
+    if (options.inflight_chunks > admitted) {
+        throw superzip::ArchiveError("requested benchmark inflight depth exceeds current host/worker admission; "
+                                     "configuration was not reduced");
+    }
+    return options.inflight_chunks == 0 ? admitted : options.inflight_chunks;
 }
 
 // Purpose: Match production per-chunk codec worker allocation for the memory-only benchmark.
@@ -668,6 +674,12 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
     if (options.size_mib < 10240U) {
         throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
     }
+    constexpr std::array<std::string_view, 7> profiles{"Mixed",           "Compressible", "Incompressible",
+                                                       "RepeatedRecord",  "SparseRecord", "LongSparseRecord",
+                                                       "SegmentedRecords"};
+    if (std::ranges::find(profiles, options.profile) == profiles.end()) {
+        throw superzip::ArchiveError("unknown memory benchmark profile: " + options.profile);
+    }
     if (options.compression_level < superzip::kMinCompressionLevel ||
         options.compression_level > superzip::kMaxCompressionLevel) {
         throw superzip::ArchiveError("compression level must be between 1 and 9");
@@ -681,11 +693,56 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
     if (options.require_gpu && options.force_cpu) {
         throw superzip::GpuError("--require-gpu and --force-cpu are mutually exclusive");
     }
+    if (options.inflight_chunks > superzip::kMaxInflightArchiveChunks ||
+        options.decode_inflight_chunks > superzip::kMaxInflightArchiveChunks) {
+        throw superzip::ArchiveError("benchmark inflight depth exceeds SuperZip resource limit");
+    }
     const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
     return total_bytes;
 }
 
 }  // namespace
+
+// Purpose: Share exact, snapshot-admitted geometry between preflight and measured execution.
+// Inputs: options contains validated workload settings and optional exact encode/decode queue depths.
+// Outputs: Returns admitted geometry without data generation; throws rather than shrinking a requested depth.
+MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options) {
+    MemoryBenchmarkPlan plan;
+    plan.input_bytes = validate_memory_benchmark_options(options);
+    plan.workers = resolve_memory_benchmark_workers(options.workers);
+    plan.inflight_chunks = resolve_memory_benchmark_inflight(plan.workers, options);
+    const auto chunk_count = plan.input_bytes / superzip::kMaxArchiveChunkBytes +
+                             (plan.input_bytes % superzip::kMaxArchiveChunkBytes != 0 ? 1U : 0U);
+    plan.codec_workers = resolve_memory_codec_workers(plan.workers, plan.inflight_chunks, chunk_count);
+    const superzip::GpuCodecOptions codec_options{
+        .require_gpu = options.require_gpu,
+        .force_cpu = options.force_cpu,
+        .block_size = options.block_size,
+        .worker_count = plan.codec_workers,
+        .compression_level = options.compression_level,
+    };
+    const auto admitted_decode =
+        superzip::resolve_owned_decode_inflight(plan.inflight_chunks, superzip::kMaxArchiveChunkBytes, codec_options);
+    if (options.decode_inflight_chunks > admitted_decode) {
+        throw superzip::ArchiveError("requested benchmark decode inflight depth exceeds current admission; "
+                                     "configuration was not reduced");
+    }
+    plan.decode_inflight_chunks =
+        options.decode_inflight_chunks == 0 ? admitted_decode : options.decode_inflight_chunks;
+    plan.decode_codec_workers =
+        superzip::resolve_codec_worker_count(plan.workers, plan.decode_inflight_chunks, chunk_count);
+    return plan;
+}
+
+// Purpose: Expose allocation-free planning as configuration rather than fabricated performance evidence.
+// Inputs: plan is the geometry admitted by the same resolver used by measured execution.
+// Outputs: Prints exact configuration fields and the explicit plan-only marker, without timing or gpu_used fields.
+void print_memory_benchmark_plan(const MemoryBenchmarkPlan& plan) {
+    std::cout << "plan_only=true input_bytes=" << plan.input_bytes << " workers=" << plan.workers
+              << " inflight_chunks=" << plan.inflight_chunks << " codec_workers=" << plan.codec_workers
+              << " decode_inflight_chunks=" << plan.decode_inflight_chunks
+              << " decode_codec_workers=" << plan.decode_codec_workers << "\n";
+}
 
 // Purpose: Print one machine-readable memory benchmark result line.
 // Inputs: `result` contains operation statistics, benchmark settings, and RAM-only proof fields.
@@ -755,13 +812,11 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
 // Inputs: `options` selects the benchmark profile, size, backend policy, workers, block size, and effort.
 // Outputs: Returns exact size, timing, integrity, and GPU telemetry statistics or throws on any failed phase.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
-    const auto total_bytes = validate_memory_benchmark_options(options);
-
-    const auto workers = resolve_memory_benchmark_workers(options.workers);
-    const auto inflight = resolve_memory_benchmark_inflight(workers, options);
-    const auto chunk_count = static_cast<std::size_t>((total_bytes + superzip::kMaxArchiveChunkBytes - 1U) /
-                                                      superzip::kMaxArchiveChunkBytes);
-    const auto codec_workers = resolve_memory_codec_workers(workers, inflight, chunk_count);
+    const auto plan = plan_memory_benchmark(options);
+    const auto total_bytes = plan.input_bytes;
+    const auto workers = plan.workers;
+    const auto inflight = plan.inflight_chunks;
+    const auto codec_workers = plan.codec_workers;
     auto telemetry = std::make_shared<superzip::GpuTelemetry>();
     superzip::GpuCodecOptions codec_options{
         .require_gpu = options.require_gpu,
@@ -777,10 +832,8 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.stats.workers = workers;
     result.stats.inflight_chunks = inflight;
     result.codec_workers = codec_workers;
-    result.decode_inflight_chunks =
-        superzip::resolve_owned_decode_inflight(inflight, superzip::kMaxArchiveChunkBytes, codec_options);
-    result.decode_codec_workers =
-        superzip::resolve_codec_worker_count(workers, result.decode_inflight_chunks, chunk_count);
+    result.decode_inflight_chunks = plan.decode_inflight_chunks;
+    result.decode_codec_workers = plan.decode_codec_workers;
     result.block_size = options.block_size;
     result.compression_level = options.compression_level;
     superzip::ArchiveIndex modeled_index;

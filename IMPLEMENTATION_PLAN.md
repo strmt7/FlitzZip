@@ -55,6 +55,17 @@ neither whole-repo acceptance nor a claimed compression speedup.
 
 ## Current Modernization Sequence
 
+The next sampling round freezes native execution geometry before pilot and
+confirmation observations, preserves every sample and stops on configuration
+changes. Graphs recompute evidence quality and disclose full observed ranges.
+Two interrupted diagnostic experiments are retained as invalid comparisons;
+they establish no speedup. All 14 single-pass fixed-geometry CPU/HIP readbacks
+pass, with unchanged archive sizes; their timings remain inconclusive. The
+frozen full rerun after the planning-parser correction passed all 32 selected
+commands. Exact-SHA hosted assessment and controlled timing remain pending.
+Complete released-tool upgrades preserve application dependency
+graphs; individually overriding bundled subpackages is excluded.
+
 The modernization work proceeds serially. Imported scanner alerts are being
 triaged in batches; a comprehensive final security audit remains a separate
 gate. A local pass is not evidence of a clean remote Security tab or a published

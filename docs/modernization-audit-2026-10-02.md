@@ -284,6 +284,72 @@ signs, including slower large-block CPU observations; this single sequential
 baseline/candidate pair cannot attribute the differences to the admission change.
 Adaptive repetitions and matched controls are the next measurement refinement.
 
+## Round Seven: Scientific Sampling And Configuration Control
+
+The RAM controller now uses retained pilot observations to prescribe a fixed
+confirmation count before confirmation begins. Duration and phase/total sample
+variation determine the request; a declared count ceiling bounds the work.
+All observations receive equal weight. Sample SD uses `n - 1`; the RSE
+diagnostic assumes independence and is not a confidence or significance claim.
+No timing outliers are deleted, and noisy or incomplete evidence remains
+inconclusive. Process/output/suite deadlines and an exclusive append-only
+journal retain terminal failures without silently retrying observations.
+
+Two diagnostic experiments exposed controller defects before publication.
+The first mutated a shared plan array while reversing even-round order; a
+cloned plan and three-round regression correct it. The second retained 42
+pilot and 144 confirmation observations before intentional termination because
+per-case queue depths varied with available RAM. All 186 completed observations
+remain in its journal with explicit failure/abort records; no final comparison
+was published. These are invalid fixed-configuration timing comparisons,
+not evidence of a codec failure or speedup.
+
+Native planning and execution now share admission resolution. The controller
+freezes encode/decode geometry before the pilot and preflights exact depths
+before each observation. Current memory limits remain mandatory: an unsafe
+depth fails instead of being silently reduced. Cross-stage geometry or exact
+size changes abort the entire experiment at the first detected mismatch.
+The graph validator independently checks frozen plans, retained samples and
+quality limits, and current charts expose full observed timing ranges without
+presenting them as confidence intervals.
+
+An integration smoke caught a second parser that still required measured
+`seconds` on planning output, before any workload ran. The parser now accepts
+explicit planning records; a real subprocess reader/parser regression covers
+both diagnostic-output settings. The corrected single-pass sweep completed all
+14 CPU/HIP cases across seven block sizes with 10 GiB Mixed input at level five,
+exact readback and zero archive-data disk writes. All CPU and GPU archive sizes
+match the prior retained observations. Encode depth 25 was predeclared from
+the prior trace's minimum CPU admission, retaining the 32-worker budget;
+decode depth remained 25 for CPU and 4 for HIP. It is a configuration-controller
+correctness diagnostic, not a maximum-throughput benchmark. Every timing
+result remains inconclusive and is refused by the publication validator.
+
+Complete released-tool updates are scoped to
+[Ruff 0.16.10](https://pypi.org/project/ruff/0.16.10/),
+[clang-format 23.1.2](https://pypi.org/project/clang-format/23.1.2/),
+[CI Python 3.14.8](https://www.python.org/downloads/release/python-3148/)
+and the provenance-pinned
+[Vulnetix 3.108.4 action](https://github.com/Vulnetix/cli/releases/tag/v3.108.4).
+Their official release metadata was checked on October 2. CocoIndex Code remains at its current
+0.2.41 release, with its application dependency graph preserved. A proposed
+standalone transitive-library update was withdrawn without applying it.
+No app dependency graph is overridden to force individually newer libraries.
+The Codex app update check returned `unavailable` because of
+`missing current windows package family`; that is not confirmation of the
+latest installed release. Host-wide application, OS and driver upgrades remain
+unverified and have not been applied during unrelated host work.
+
+The initial configuration-controlled full profile passed all 32 selected
+commands, including the 36-format matrix, independent readers, packaging,
+sanitizer smoke and all-page GUI checks. All eight current page captures were
+reviewed without an observed layout defect. The frozen rerun after the parser
+correction also passed all 32 selected commands, with no timeout or output-limit
+breach. Its stored output is bounded tails, not a complete console transcript.
+Exact-SHA hosted assessment remains pending.
+The whole-repository audit, hosted security findings, controlled speed
+comparisons and release acceptance remain open.
+
 ## Bounds Review Progress
 
 The six baseline pointer-bounds results contain 21 reported flow variants.

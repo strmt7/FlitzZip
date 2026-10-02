@@ -7,13 +7,26 @@ CLI arguments, and archive-core resource limits.
 
 ## Resource Measurement Contract
 
-New native RAM benchmark records use schema two and identify GPU percentages
+New native RAM benchmark records use schema three and identify GPU percentages
 as `process_busiest_engine_pct`: the busiest Windows engine for the tested CLI
 process, across GPUs. Historical schema-one percentages summed independent
 engines and must not be interpreted as Task Manager-style GPU utilization.
 Raw historical evidence remains unchanged. The System GUI instead combines
 processes using the same physical engine and selects the busiest system engine.
 Unavailable or invalid counter data is not replaced with zero or a capped sum.
+Schema three additionally preserves pilot observations, fixed confirmation
+plans, all confirmation observations, exact worker/admission geometry and HIP
+transfer/allocation counters. Schema-one and schema-two historical records
+remain readable without fabricating these new fields. The graph validator
+recomputes schema-three safeguards from raw observations instead of trusting
+a saved quality label; incompatible or inconclusive records cannot become
+publication charts, including with `--allow-dirty`.
+
+Current charts show throughput derived from median elapsed time with the full
+observed minimum-to-maximum throughput range. Tooltips disclose sample count
+and elapsed-time sample SD. These ranges are not confidence intervals, and
+identical observations retain zero-width ranges. Historical charts preserve
+their original rendering.
 
 Native comparison rounds alternate CPU/GPU order when both lanes are enabled.
 `-InterRunPauseMs` requests a 250 ms pause by default between completed runs,
@@ -23,6 +36,83 @@ measurement schemes separate, including older records without these fields.
 Review individual phase times for order sensitivity and monotonic slowdown;
 repeat affected cases with recorded context before drawing conclusions. A
 short pause is not proof of idle resources or absence of thermal drift.
+
+### Scientific Sample Planning
+
+Before the pilot, `memory-benchmark --plan-only` resolves each lane and block's
+worker and queue geometry without generating data or reporting fabricated
+timing/GPU evidence. The controller freezes encode and decode depths, then
+preflights and executes every observation with those exact depths. Production
+RAM admission remains enforced: insufficient current headroom aborts the
+experiment instead of silently changing its configuration. `-InflightChunks`
+can predeclare an exact encode depth; zero selects current admission before
+freezing. It is never permission to exceed the host or worker budget.
+Configuration or exact-size changes abort at the first detected mismatch,
+including between pilot and confirmation; completed samples remain journaled.
+
+The default RAM controller uses a separate, fixed three-observation pilot for
+each enabled lane and block size. It then fixes the confirmation count for
+each case **before collecting any confirmation observations**. Both lanes
+receive the same count. Faster cases get enough planned repeats to reach
+30 seconds of measured compress/verify/extract time per lane. For each phase
+and the end-to-end total, pilot sample variation also requests
+`ceil((100 * sample_sd / mean / target_rse_pct)^2)` observations. The maximum
+of the duration request, phase requests and `-Iterations` is used, with a
+minimum of three and a default ceiling of 15. The uncapped request and any
+ceiling are recorded. These defaults are operational choices, not universal
+statistical constants.
+
+`-TargetRelativeStandardErrorPct` defaults to 2. This sample-planning formula
+assumes independent observations and is an approximation based on a small
+pilot. It is not a confidence interval, significance test or guarantee of
+precision. More repetitions reduce an independent mean's standard error;
+they do **not** necessarily reduce the underlying coefficient of variation.
+Serial correlation, thermal drift, shared-host contention and selection of
+the fastest among many candidates require additional controlled experiments
+before attributing a change or making a superiority claim.
+
+There is no stop-on-significance or stop-when-variance-looks-good rule during
+confirmation. Case order reverses on even rounds and CPU/GPU order alternates;
+an odd count has one extra first-position observation for the initial lane.
+The pilot is explicitly used for planning and is stored separately, never
+silently discarded as warm-up. No observations are trimmed, winsorized or
+excluded because of their speed. Mean, median, minimum, maximum, sample SD
+(denominator `n - 1`), CV and the independence-assuming RSE diagnostic describe
+the **whole** confirmation sample. A single observation has unavailable SD,
+not zero uncertainty. Pilot and confirmation are not pooled after sample
+size selection.
+
+A confirmation remains inconclusive if any phase or total exceeds
+`-MaxRelativeStdDevPct` (default 5), the planned precision diagnostic or
+duration floor is missed, resources or exact sizes change, or required
+resource counters are unavailable. A stable descriptive result still carries
+no confidence or statistical-significance claim. The displayed CPU/GPU mean
+time ratio is an observation, with archive sizes reported separately.
+`-FixedIterations` explicitly bypasses the pilot and prescribes exactly
+`-Iterations` confirmation observations; a one-run diagnostic stays
+inconclusive. Neither mode replaces controlled before/after comparisons.
+
+An exclusively created JSONL journal records the protocol, frozen plan,
+every completed observation and terminal sample failures. It is retained
+even without `-JsonOutput` under ignored `out/benchmark-samples`. With
+`-JsonOutput`, its name is the final JSON path plus `.samples.jsonl`.
+Correctness, subprocess and deadline failures abort instead of silently
+retrying or skipping the failed observation; no completed publication record
+is created. `-RunTimeoutSeconds` defaults to 300 and
+`-SuiteTimeoutSeconds` to 3600. Suite exhaustion is checked between samples;
+an already admitted sample can finish within its run deadline. Only the
+owned CLI is terminated, with a five-second termination wait. These limits
+do not promise cancellation of a stalled GPU driver or unrelated host work.
+Each redirected pipe is limited to 65,536 characters and excess output
+fails rather than being silently truncated. Journal/JSON writes are small
+diagnostic metadata; `disk_write_bytes=0` refers to archive/workload writes.
+
+The design follows the measurement practices in the
+[Google Benchmark user guide](https://google.github.io/benchmark/user_guide.html),
+[pyperf analysis documentation](https://pyperf.readthedocs.io/en/latest/analyze.html)
+and [NIST measures of scale](https://www.itl.nist.gov/div898/handbook/eda/section3/eda356.htm),
+checked on 2026-10-02. It does not import their implementations or use
+outlier removal to obtain a preferred result.
 
 ## Goals
 

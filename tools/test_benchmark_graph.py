@@ -46,7 +46,187 @@ def fixture_record() -> dict:
     }
 
 
+# Purpose: Build independently stored pilot and fixed confirmation fixtures with full current telemetry.
+# Inputs: None; timings are deterministic fixtures, never performance evidence.
+# Outputs: Returns a schema-three record whose confirmation stability can be recomputed.
+def sampling_fixture() -> dict:
+    record = fixture_record()
+    record.update(
+        schema_version=3,
+        gpu_utilization_metric="process_busiest_engine_pct",
+        lane_order="alternating_when_both",
+        inter_run_pause_ms=250,
+    )
+    for run in record["runs"]:
+        run.update(
+            archive_bytes=run["output_bytes"] + 1024,
+            workers=32,
+            inflight_chunks=32,
+            codec_workers=1,
+            decode_inflight_chunks=32,
+            decode_codec_workers=1,
+            resource_sample_count=50,
+            gpu_sample_count=25 if run["lane"] == "GPU" else 0,
+            gpu_h2d_bytes=4096,
+            gpu_d2h_bytes=2048,
+            gpu_device_allocation_bytes=8192,
+        )
+    record["pilot_runs"] = copy.deepcopy(record["runs"])
+    record["sampling_policy"] = {
+        "method": "pilot_fixed_confirmation",
+        "minimum_count": 3,
+        "maximum_count": 15,
+        "pilot_count": 3,
+        "minimum_measured_seconds": 1,
+        "target_relative_standard_error_pct": 2,
+        "max_relative_std_dev_pct": 5,
+        "discarded_sample_count": 0,
+        "warmup_count": 0,
+        "block_order": "reverse_on_even_iterations",
+        "inference": "descriptive_only_no_confidence_or_significance_claim",
+        "geometry_policy": "exact_depths_frozen_before_pilot_abort_on_admission_or_identity_change",
+        "geometry_plans": [
+            {
+                "case": f"{lane}:1024",
+                "workers": 32,
+                "inflight_chunks": 32,
+                "codec_workers": 1,
+                "decode_inflight_chunks": 32,
+                "decode_codec_workers": 1,
+            }
+            for lane in ("CPU", "GPU")
+        ],
+        "case_plans": [
+            {
+                "block_size_kib": 1024,
+                "requested_count": 3,
+                "confirmation_count": 3,
+                "count_capped": False,
+                "stopping_rule": "count_fixed_before_confirmation",
+            }
+        ],
+    }
+    return record
+
+
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Refuse stable-looking measurements that do not follow their frozen admission plan.
+    # Inputs: Valid evidence with missing, altered, duplicate or unrelated geometry plans.
+    # Outputs: Every configuration mismatch raises instead of producing a publishable chart.
+    def test_predeclared_geometry_is_checked_independently(self) -> None:
+        for mutation in ("missing", "changed", "duplicate", "unmatched"):
+            record = sampling_fixture()
+            plans = record["sampling_policy"]["geometry_plans"]
+            if mutation == "missing":
+                record["sampling_policy"].pop("geometry_policy")
+            elif mutation == "changed":
+                plans[0]["inflight_chunks"] = 31
+            elif mutation == "duplicate":
+                plans.append(copy.deepcopy(plans[0]))
+            else:
+                extra = copy.deepcopy(plans[0])
+                extra["case"] = "CPU:256"
+                plans.append(extra)
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, "geometry"):
+                graph.summarize_records([record], allow_dirty=False)
+
+    # Purpose: Preserve all timing variation and label inverse-median throughput precisely.
+    # Inputs: Complete fixed-size observations with small, deliberately nonzero timing differences.
+    # Outputs: Exact sample extrema, SD and range whiskers are retained without a confidence claim.
+    def test_current_charts_preserve_full_sample_dispersion(self) -> None:
+        record = sampling_fixture()
+        for run in record["runs"]:
+            for field in ("compress_seconds", "verify_seconds", "extract_seconds"):
+                run[field] *= {1: 0.99, 2: 1.0, 3: 1.01}[run["iteration"]]
+        identity, rows = graph.summarize_records([record], allow_dirty=False)
+        for lane, metric in rows[0]["metrics"].items():
+            timings = [
+                sum(run[field] for field in ("compress_seconds", "verify_seconds", "extract_seconds"))
+                for run in record["runs"]
+                if run["lane"] == lane
+            ]
+            self.assertEqual(metric["throughput_min_gib_s"], 10 / max(timings))
+            self.assertEqual(metric["throughput_max_gib_s"], 10 / min(timings))
+            self.assertEqual(metric["sample_count"], 3)
+            self.assertGreater(metric["elapsed_std_dev_seconds"], 0)
+        root = ET.fromstring(graph.render_svg(identity, rows))
+        ranges = root.findall(f'.//{{{graph.SVG}}}g[@class="sample-range"]')
+        self.assertEqual(len(ranges), 2)
+        for group in ranges:
+            self.assertIn("not a confidence interval", group.find(f"{{{graph.SVG}}}title").text)
+            self.assertEqual(len(group.findall(f"{{{graph.SVG}}}line")), 3)
+        self.assertIn(b"median elapsed time", graph.render_svg(identity, rows))
+
+    # Purpose: Keep identical observations honest instead of inventing a visual uncertainty width.
+    # Inputs: Zero-variance current fixtures and unchanged historical chart evidence.
+    # Outputs: Current ranges have zero width; historical schemas retain their original rendering.
+    def test_zero_variance_range_is_not_artificially_widened(self) -> None:
+        identity, rows = graph.summarize_records([sampling_fixture()], allow_dirty=False)
+        root = ET.fromstring(graph.render_svg(identity, rows))
+        for group in root.findall(f'.//{{{graph.SVG}}}g[@class="sample-range"]'):
+            line = group.find(f"{{{graph.SVG}}}line")
+            self.assertEqual(line.attrib["x1"], line.attrib["x2"])
+        identity, rows = graph.summarize_records([fixture_record()], allow_dirty=False)
+        self.assertNotIn(b"sample-range", graph.render_svg(identity, rows))
+
+    # Purpose: Enforce separate pilot retention and a prescribed complete confirmation count.
+    # Inputs: Stable evidence and mutations of the predeclared method, sample count and preservation fields.
+    # Outputs: Valid fixed experiments render; incomplete or undisclosed sampling fails closed.
+    def test_sampling_protocol_requires_complete_retained_observations(self) -> None:
+        record = sampling_fixture()
+        _, rows = graph.summarize_records([record], allow_dirty=False)
+        self.assertEqual(rows[0]["iterations"], 3)
+        fixed = copy.deepcopy(record)
+        fixed["pilot_runs"] = []
+        fixed["sampling_policy"].update(method="fixed_count", pilot_count=0)
+        graph.summarize_records([fixed], allow_dirty=False)
+        for field, value in (
+            ("discarded_sample_count", 1),
+            ("discarded_sample_count", False),
+            ("warmup_count", 1),
+            ("pilot_count", 2),
+            ("minimum_measured_seconds", float("nan")),
+            ("maximum_count", 2),
+            ("method", "stop_when_significant"),
+        ):
+            invalid = copy.deepcopy(record)
+            invalid["sampling_policy"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                graph.summarize_records([invalid], allow_dirty=False)
+        for field in ("pilot_runs", "runs"):
+            invalid = copy.deepcopy(record)
+            invalid[field].pop()
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                graph.summarize_records([invalid], allow_dirty=False)
+        invalid = copy.deepcopy(record)
+        invalid["sampling_policy"]["case_plans"][0]["confirmation_count"] = 4
+        with self.assertRaisesRegex(ValueError, "confirmation count"):
+            graph.summarize_records([invalid], allow_dirty=False)
+
+    # Purpose: Prevent slow tails, absent telemetry or resource changes from being hidden by a stored quality label.
+    # Inputs: Raw confirmation and pilot mutations plus a deliberately false stable summary.
+    # Outputs: Scientific raw-data validation rejects every incompatible or inconclusive record.
+    def test_raw_sampling_quality_is_recomputed_without_trimming(self) -> None:
+        for stage, field, value in (
+            ("runs", "compress_seconds", 100),
+            ("runs", "verify_seconds", 0),
+            ("runs", "workers", 16),
+            ("pilot_runs", "archive_bytes", 123),
+            ("pilot_runs", "inflight_chunks", 65),
+            ("runs", "resource_sample_count", None),
+            ("runs", "gpu_h2d_bytes", 0),
+            ("runs", "gpu_sample_count", 0),
+        ):
+            invalid = sampling_fixture()
+            invalid[stage][-1][field] = value
+            invalid["case_quality"] = [{"status": "descriptively_stable"}]
+            with self.subTest(stage=stage, field=field), self.assertRaises(ValueError):
+                graph.summarize_records([invalid], allow_dirty=False)
+        record = sampling_fixture()
+        record["sampling_policy"]["minimum_measured_seconds"] = 600
+        with self.assertRaisesRegex(ValueError, "measured confirmation time"):
+            graph.summarize_records([record], allow_dirty=False)
+
     # Purpose: Keep graphs from silently combining driver runtime changes or inventing old provenance.
     # Inputs: Identified, historical/missing, unavailable, mismatched, and malformed runtime versions.
     # Outputs: Matching records render; unknown/known and differing runtime identities cannot be combined.

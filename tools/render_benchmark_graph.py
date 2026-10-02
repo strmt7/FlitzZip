@@ -31,14 +31,192 @@ def runtime_version_identity(value: object) -> str | None:
     return value
 
 
+# Purpose: Validate declared descriptive thresholds and fixed sample counts before inspecting measurements.
+# Inputs: Policy is an untrusted schema-three sampling dictionary.
+# Outputs: Returns counts by block; raises ValueError on malformed bounds, discarded samples or unfrozen counts.
+def validate_sampling_plan(policy: object) -> dict:
+    if not isinstance(policy, dict) or policy.get("method") not in ("fixed_count", "pilot_fixed_confirmation"):
+        raise ValueError("missing or invalid sampling protocol")
+    for field, lower, upper in (("minimum_count", 1, 64), ("maximum_count", 1, 64), ("pilot_count", 0, 10)):
+        value = policy.get(field)
+        if type(value) is not int or not lower <= value <= upper:
+            raise ValueError("invalid sampling count bound")
+    for field, lower, upper in (
+        ("minimum_measured_seconds", 1, 600),
+        ("target_relative_standard_error_pct", 0.1, 25),
+        ("max_relative_std_dev_pct", 0.1, 50),
+    ):
+        value = policy.get(field)
+        if type(value) not in (int, float) or not math.isfinite(value) or not lower <= value <= upper:
+            raise ValueError("invalid sampling threshold")
+    if (
+        policy.get("discarded_sample_count") != 0
+        or type(policy.get("discarded_sample_count")) is not int
+        or policy.get("warmup_count") != 0
+        or type(policy.get("warmup_count")) is not int
+        or policy.get("inference") != "descriptive_only_no_confidence_or_significance_claim"
+        or policy.get("block_order") != "reverse_on_even_iterations"
+    ):
+        raise ValueError("sampling protocol must retain observations and disclose descriptive inference")
+    plans = policy.get("case_plans")
+    if not isinstance(plans, list) or not plans:
+        raise ValueError("missing fixed confirmation plans")
+    plan_by_block = {}
+    for plan in plans:
+        if not isinstance(plan, dict):
+            raise ValueError("invalid confirmation plan")
+        block, count, requested = (plan.get(key) for key in ("block_size_kib", "confirmation_count", "requested_count"))
+        if (
+            type(block) is not int
+            or block in plan_by_block
+            or type(count) is not int
+            or type(requested) is not int
+            or not policy["minimum_count"] <= count <= policy["maximum_count"]
+            or requested < count
+            or count != min(requested, policy["maximum_count"])
+            or type(plan.get("count_capped")) is not bool
+            or plan["count_capped"] != (requested > count)
+            or plan.get("stopping_rule") != "count_fixed_before_confirmation"
+        ):
+            raise ValueError("invalid fixed confirmation count")
+        plan_by_block[block] = count
+    return plan_by_block
+
+
+# Purpose: Verify predeclared admission geometry against every pilot and confirmation observation.
+# Inputs: The current record and its frozen per-lane, per-block planning policy.
+# Outputs: Rejects absent, duplicate, unmatched or changed geometry without modifying any observations.
+def validate_frozen_geometry(record: dict, policy: dict) -> None:
+    if policy.get("geometry_policy") != "exact_depths_frozen_before_pilot_abort_on_admission_or_identity_change":
+        raise ValueError("missing frozen geometry policy")
+    plans = policy.get("geometry_plans")
+    if not isinstance(plans, list) or not isinstance(record.get("pilot_runs"), list):
+        raise ValueError("missing frozen geometry plans or pilot sample")
+    fields = ("workers", "inflight_chunks", "codec_workers", "decode_inflight_chunks", "decode_codec_workers")
+    by_case = {}
+    for plan in plans:
+        if not isinstance(plan, dict) or not isinstance(plan.get("case"), str) or plan["case"] in by_case:
+            raise ValueError("invalid or duplicate frozen geometry plan")
+        if any(type(plan.get(field)) is not int or not 1 <= plan[field] <= 64 for field in fields):
+            raise ValueError("invalid frozen geometry bounds")
+        by_case[plan["case"]] = plan
+    cases = set()
+    for run in record["runs"] + record["pilot_runs"]:
+        case = f"{run.get('lane')}:{run.get('block_size_kib')}"
+        cases.add(case)
+        plan = by_case.get(case)
+        if plan is None or any(run.get(field) != plan[field] for field in fields):
+            raise ValueError("observation differs from frozen geometry")
+    if cases != set(by_case):
+        raise ValueError("frozen geometry plans do not cover exactly the observed cases")
+
+
+# Purpose: Recompute scientific descriptive safeguards from all retained confirmation observations.
+# Inputs: A schema-three record with separate pilot samples and already frozen confirmation plans.
+# Outputs: Returns policy identity; refuses incomplete, noisy or incompatible raw evidence without trimming.
+def validate_sampling_protocol(record: dict, allow_dirty: bool) -> tuple:
+    policy = record.get("sampling_policy")
+    plan_by_block = validate_sampling_plan(policy)
+    pilot = record.get("pilot_runs")
+    validate_frozen_geometry(record, policy)
+    adaptive = policy["method"] == "pilot_fixed_confirmation"
+    if (
+        not isinstance(pilot, list)
+        or (adaptive and policy["pilot_count"] < 3)
+        or (not adaptive and (pilot or policy["pilot_count"]))
+    ):
+        raise ValueError("invalid separate pilot sample")
+    if adaptive:
+        validate_record(dict(record, schema_version=2, runs=pilot), allow_dirty)
+    grouped = defaultdict(list)
+    for run in record["runs"]:
+        grouped[(run["block_size_kib"], run["lane"])].append(run)
+    if set(plan_by_block) != {block for block, _ in grouped}:
+        raise ValueError("confirmation plan does not cover the observed cases")
+    for (block, lane), runs in grouped.items():
+        count = plan_by_block[block]
+        if len(runs) != count or {run["iteration"] for run in runs} != set(range(1, count + 1)) or count < 3:
+            raise ValueError("confirmation sample is incomplete or insufficient")
+        pilots = [run for run in pilot if run["block_size_kib"] == block and run["lane"] == lane]
+        if adaptive and (
+            len(pilots) != policy["pilot_count"]
+            or {run["iteration"] for run in pilots} != set(range(1, policy["pilot_count"] + 1))
+        ):
+            raise ValueError("pilot sample is incomplete")
+        if {run["lane"] for run in pilot} - {run["lane"] for run in record["runs"]} or {
+            run["block_size_kib"] for run in pilot
+        } - set(plan_by_block):
+            raise ValueError("pilot contains unmatched cases")
+        for field in (
+            "input_bytes",
+            "output_bytes",
+            "archive_bytes",
+            "workers",
+            "inflight_chunks",
+            "codec_workers",
+            "decode_inflight_chunks",
+            "decode_codec_workers",
+        ):
+            values = [run.get(field) for run in runs + pilots]
+            if any(type(value) is not int or value < 1 for value in values) or len(set(values)) != 1:
+                raise ValueError("inconsistent exact sizes or resource policy")
+            if ("workers" in field or "chunks" in field) and values[0] > 64:
+                raise ValueError("resource policy exceeds production bound")
+        for run in runs + pilots:
+            if any(run[field] <= 0 for field in ("compress_seconds", "verify_seconds", "extract_seconds")):
+                raise ValueError("missing positive phase timing")
+            if (
+                type(run.get("resource_sample_count")) is not int
+                or run["resource_sample_count"] < 1
+                or (lane == "GPU" and (type(run.get("gpu_sample_count")) is not int or run["gpu_sample_count"] < 1))
+            ):
+                raise ValueError("resource counters unavailable")
+            if lane == "GPU" and any(
+                type(run.get(field)) is not int or run[field] < 1
+                for field in ("gpu_h2d_bytes", "gpu_d2h_bytes", "gpu_device_allocation_bytes")
+            ):
+                raise ValueError("GPU lane lacks HIP transfer or allocation evidence")
+            if run["archive_bytes"] <= run["output_bytes"]:
+                raise ValueError("serialized archive size is incomplete")
+        totals = [
+            sum(run[field] for field in ("compress_seconds", "verify_seconds", "extract_seconds")) for run in runs
+        ]
+        if sum(totals) < policy["minimum_measured_seconds"]:
+            raise ValueError("insufficient measured confirmation time")
+        phases = [
+            [run[field] for run in runs] for field in ("compress_seconds", "verify_seconds", "extract_seconds")
+        ] + [totals]
+        for values in phases:
+            if any(value <= 0 for value in values):
+                raise ValueError("missing positive phase timing")
+            cv = 100 * statistics.stdev(values) / statistics.mean(values)
+            if (
+                cv > policy["max_relative_std_dev_pct"]
+                or cv / math.sqrt(count) > policy["target_relative_standard_error_pct"]
+            ):
+                raise ValueError("confirmation measurements remain inconclusive")
+    return tuple(
+        policy[field]
+        for field in (
+            "method",
+            "minimum_count",
+            "maximum_count",
+            "pilot_count",
+            "minimum_measured_seconds",
+            "target_relative_standard_error_pct",
+            "max_relative_std_dev_pct",
+        )
+    )
+
+
 # Purpose: Reject malformed or unreviewed benchmark data before charting it.
-# Inputs: A parsed schema-one or schema-two record and a local-preview switch.
+# Inputs: A parsed historical or current RAM record and a local-preview switch.
 # Outputs: Returns normalized run groups or raises ValueError with the invalid field.
 def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
     schema = record.get("schema_version")
-    if type(schema) is not int or schema not in (1, 2) or record.get("benchmark_kind") != "suzip_ram":
+    if type(schema) is not int or schema not in (1, 2, 3) or record.get("benchmark_kind") != "suzip_ram":
         raise ValueError("unsupported RAM benchmark schema or kind")
-    if schema == 2 and record.get("gpu_utilization_metric") != "process_busiest_engine_pct":
+    if schema >= 2 and record.get("gpu_utilization_metric") != "process_busiest_engine_pct":
         raise ValueError("unsupported GPU utilization metric")
     lane_order = record.get("lane_order", "cpu_then_gpu")
     pause_ms = record.get("inter_run_pause_ms", 0)
@@ -83,7 +261,7 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
             raise ValueError("invalid benchmark lane")
         if run.get("memory_only") is not True or run.get("disk_write_bytes") != 0:
             raise ValueError("benchmark run is not RAM-only")
-        if schema == 2:
+        if schema >= 2:
             for field in ("gpu_avg_pct", "gpu_peak_pct"):
                 value = run.get(field)
                 if value is not None and (
@@ -116,12 +294,14 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
         if iteration in lane_runs:
             raise ValueError("duplicate lane iteration")
         lane_runs[iteration] = (output_bytes, seconds)
+    if schema == 3:
+        identity += (validate_sampling_protocol(record, allow_dirty),)
     return identity, groups
 
 
-# Purpose: Compute comparable medians while rejecting missing lanes and unstable encoded sizes.
+# Purpose: Derive throughput from median elapsed time without dropping observed timing variation.
 # Inputs: Validated records from the same binary and host, with at least three paired runs per case.
-# Outputs: Returns sorted chart rows with exact bytes and median end-to-end throughput.
+# Outputs: Returns exact bytes, median-time throughput, and all-sample dispersion for current records.
 def summarize_records(records: list[dict], allow_dirty: bool) -> tuple[tuple, list[dict]]:
     identity = None
     groups = defaultdict(lambda: defaultdict(dict))
@@ -154,6 +334,14 @@ def summarize_records(records: list[dict], allow_dirty: bool) -> tuple[tuple, li
                 "output_bytes": sizes.pop(),
                 "throughput_gib_s": (key[1] / 1024) / elapsed,
             }
+            if identity[5] == 3:
+                timings = [seconds for _, seconds in iterations.values()]
+                metrics[lane].update(
+                    throughput_min_gib_s=(key[1] / 1024) / max(timings),
+                    throughput_max_gib_s=(key[1] / 1024) / min(timings),
+                    elapsed_std_dev_seconds=statistics.stdev(timings),
+                    sample_count=len(timings),
+                )
         rows.append(
             {
                 "profile": key[0],
@@ -221,9 +409,37 @@ def add_lane_bar(parent: ET.Element, y: int, x: int, metric: dict, maximum: floa
     )
     label = f"{value:,.1f} MiB" if kind == "size" else f"{value:,.2f} GiB/s"
     add_text(parent, x + 275, y + 1, label, 13, fill="#263238")
+    if kind == "speed" and "throughput_min_gib_s" in metric:
+        add_sample_range(parent, y, x, metric, maximum)
 
 
-# Purpose: Build a reviewable two-panel graphic from exact size and paired median throughput data.
+# Purpose: Expose the full observed throughput range without implying a confidence interval.
+# Inputs: One lane's complete sample extrema, elapsed-time sample SD, count, and shared plot scale.
+# Outputs: Adds exact-scale range whiskers and an accessible evidence tooltip, including zero-width ranges.
+def add_sample_range(parent: ET.Element, y: int, x: int, metric: dict, maximum: float) -> None:
+    left = x + 260 * metric["throughput_min_gib_s"] / maximum
+    right = x + 260 * metric["throughput_max_gib_s"] / maximum
+    center = y - 4.5
+    group = ET.SubElement(parent, f"{{{SVG}}}g", {"class": "sample-range", "stroke": "#17252b"})
+    ET.SubElement(group, f"{{{SVG}}}title").text = (
+        f"All {metric['sample_count']} confirmation samples: "
+        f"{metric['throughput_min_gib_s']:.6f} to {metric['throughput_max_gib_s']:.6f} GiB/s; "
+        f"elapsed-time sample SD {metric['elapsed_std_dev_seconds']:.6f} s. "
+        "Observed min-max range; not a confidence interval."
+    )
+    for x1, x2, y1, y2 in (
+        (left, right, center, center),
+        (left, left, center - 4, center + 4),
+        (right, right, center - 4, center + 4),
+    ):
+        ET.SubElement(
+            group,
+            f"{{{SVG}}}line",
+            {"x1": f"{x1:.3f}", "x2": f"{x2:.3f}", "y1": str(y1), "y2": str(y2)},
+        )
+
+
+# Purpose: Plot exact size and throughput from paired median elapsed times with current-sample dispersion.
 # Inputs: One source/binary identity and validated chart rows.
 # Outputs: Returns deterministic UTF-8 SVG bytes without network access or third-party graphics packages.
 def render_svg(identity: tuple, rows: list[dict]) -> bytes:
@@ -246,6 +462,12 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
         "Paired forced-CPU and required-AMD-HIP SUZIP results. Left: exact archive size, lower is better. "
         "Right: median encode, verify, and decode throughput, higher is better. Synthetic workloads only."
     )
+    if identity[5] == 3:
+        root.find(f"{{{SVG}}}desc").text = (
+            "Paired forced-CPU and required-HIP RAM-only synthetic SUZIP results. "
+            "Left: exact archive bytes. Right: throughput from median elapsed time; "
+            "whiskers retain every confirmation sample's min-max range, not confidence intervals."
+        )
     ET.SubElement(root, f"{{{SVG}}}rect", {"width": "1200", "height": str(height), "fill": "#ffffff"})
     add_text(root, 32, 42, "SuperZip | measured native-format performance", 25, "bold", "#17252b")
     subtitle = "RAM-only synthetic workloads. Paired runs; no archive disk writes."
@@ -255,9 +477,14 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
     add_text(root, 318, 116, "Encoded size", 16, "bold")
     add_text(root, 318, 136, "Lower is better", 12, fill="#53656d")
     add_text(root, 786, 116, "End-to-end throughput", 16, "bold")
-    add_text(root, 786, 136, "Higher is better", 12, fill="#53656d")
+    speed_caption = "Median elapsed time; whiskers: all-sample min-max" if identity[5] == 3 else "Higher is better"
+    add_text(root, 786, 136, speed_caption, 12, fill="#53656d")
     max_size = max(metric["output_bytes"] / (1024 * 1024) for row in rows for metric in row["metrics"].values())
-    max_speed = max(metric["throughput_gib_s"] for row in rows for metric in row["metrics"].values())
+    max_speed = max(
+        metric.get("throughput_max_gib_s", metric["throughput_gib_s"])
+        for row in rows
+        for metric in row["metrics"].values()
+    )
     for index, row in enumerate(rows):
         top = 158 + index * 92
         ET.SubElement(
@@ -285,8 +512,12 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
         root,
         32,
         footer_y,
-        f"Median of at least {minimum_runs} paired runs | "
-        f"commit {identity[0][:12]} | binary SHA-256 {identity[1][:12]}...",
+        (
+            f"Median elapsed time of at least {minimum_runs} paired runs | "
+            if identity[5] == 3
+            else f"Median of at least {minimum_runs} paired runs | "
+        )
+        + f"commit {identity[0][:12]} | binary SHA-256 {identity[1][:12]}...",
         12,
         fill="#53656d",
     )

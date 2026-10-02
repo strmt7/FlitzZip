@@ -61,6 +61,7 @@ $cliHelp = & $cli --help
 if ($LASTEXITCODE -ne 0 -or -not ($cliHelp -match "superzip_cli --version")) {
     throw "CLI --help must advertise --version and exit successfully."
 }
+& (Join-Path $PSScriptRoot 'test_memory_benchmark_plan.ps1') -Configuration $Configuration
 
 foreach ($invalidVersion in @("01.0.0", "0.1.0+build.1", "v0.1.0", "latest")) {
     $acceptedInvalidVersion = $false

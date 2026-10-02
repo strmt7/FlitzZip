@@ -1,11 +1,20 @@
 param(
     [string]$Configuration = "Release",
     [int64]$SizeMiB = 10240,
-    [int]$Iterations = 3,
+    [ValidateRange(1, 64)] [int]$Iterations = 3,
+    [ValidateRange(3, 10)] [int]$PilotIterations = 3,
+    [ValidateRange(3, 64)] [int]$MaxIterations = 15,
+    [ValidateRange(1, 600)] [double]$MinimumMeasuredSeconds = 30,
+    [ValidateRange(0.1, 25)] [double]$TargetRelativeStandardErrorPct = 2,
+    [ValidateRange(0.1, 50)] [double]$MaxRelativeStdDevPct = 5,
+    [switch]$FixedIterations,
+    [ValidateRange(1, 3600)] [int]$RunTimeoutSeconds = 300,
+    [ValidateRange(1, 21600)] [int]$SuiteTimeoutSeconds = 3600,
     [ValidateSet("Memory", "Filesystem")] [string]$Mode = "Memory",
     [Alias("Profile")]
     [ValidateSet("Mixed", "Compressible", "Incompressible", "RepeatedRecord", "SparseRecord", "LongSparseRecord", "SegmentedRecords")] [string]$WorkloadProfile = "Mixed",
     [ValidateRange(1, 9)] [int]$CompressionLevel = 5,
+    [ValidateRange(0, 64)] [int]$InflightChunks = 0,
     [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)] [int[]]$BlockSizeKiB = @(256, 512, 1024, 2048, 4096, 8192, 16384),
     [ValidateRange(50, 5000)] [int]$SampleIntervalMs = 100,
     [ValidateRange(0, 1000)] [int]$InterRunPauseMs = 250,
@@ -19,13 +28,14 @@ param(
 )
 
 # Purpose: Compare forced-CPU and required-AMD-HIP performance on the same generated SUZIP workload.
-# Inputs: `Configuration` selects the built CLI, `SizeMiB` controls generated data size, `Iterations` controls repeated timed runs, `Mode` selects RAM-only performance benchmarking or bounded filesystem smoke, `WorkloadProfile` selects workload shape, `CompressionLevel` selects SUZIP effort, `BlockSizeKiB` selects production block sizes, `SampleIntervalMs` controls resource cadence, `InterRunPauseMs` pauses outside timing, `WorkRoot` selects filesystem-smoke storage, `ShowOperationStats` prints raw stats, skip switches disable a lane, and `JsonOutput` writes new evidence. The obsolete large-write switch is rejected.
-# Outputs: Prints per-operation CPU/GPU throughput plus aggregate speedup; optionally creates one JSON record; throws on correctness, lane-selection, memory-budget, or unsafe-disk-write failures.
+# Inputs: Workload, level and blocks prescribe cases. Iterations is the confirmation minimum; pilot duration/variance determines a fixed count within MaxIterations. FixedIterations bypasses planning. Descriptive time/variability/RSE limits, process/suite deadlines and resource cadence are configurable. Skip switches select lanes; JsonOutput reserves final evidence. Filesystem mode remains a capped correctness smoke.
+# Outputs: Prints descriptive throughput, exact sizes and measurement quality; preserves all samples in a journal and optionally creates final JSON. Correctness, telemetry-contract, subprocess or deadline failures abort without replacing prior evidence.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
 $MaxFilesystemSmokeMiB = 64
 $script:ShowOperationStatsEnabled = [bool]$ShowOperationStats
+. (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
 
 # Purpose: Emit benchmark text through the output pipeline instead of host-only writes.
 # Inputs: `Message` is a status, table, or diagnostic line.
@@ -91,7 +101,7 @@ public static class SuperZipProcessIoCounters
 }
 
 # Purpose: Parse one stable `superzip_cli` key/value statistics line.
-# Inputs: `Line` is one CLI output line containing `entries=... seconds=...`.
+# Inputs: Line contains measured seconds or an explicit plan_only=true admission record.
 # Outputs: Returns a dictionary of parsed keys and values.
 function ConvertFrom-StatsLine {
     param([Parameter(Mandatory = $true)][string]$Line)
@@ -102,7 +112,7 @@ function ConvertFrom-StatsLine {
             $result[$pair[0]] = $pair[1]
         }
     }
-    if (-not $result.ContainsKey("seconds")) {
+    if (-not $result.ContainsKey("seconds") -and $result['plan_only'] -ne 'true') {
         throw "CLI did not emit an operation statistics line: $Line"
     }
     return $result
@@ -236,6 +246,12 @@ function Get-GpuResourceSampler {
     } catch {
         return $null
     }
+}
+if (-not $FixedIterations -and $Iterations -gt $MaxIterations) {
+    throw 'The minimum confirmation count cannot exceed -MaxIterations.'
+}
+if (@($BlockSizeKiB | Sort-Object -Unique).Count -ne $BlockSizeKiB.Count) {
+    throw 'Block sizes must be unique so each case has an unambiguous sample plan.'
 }
 
 # Purpose: Balance CPU/GPU run order across rounds without changing either lane's product flags.
@@ -484,61 +500,32 @@ function Assert-GpuBackendStat {
 }
 
 # Purpose: Run a CLI command, sample resource utilization, and parse operation statistics.
-# Inputs: `Arguments` is the exact CLI argument vector to execute.
-# Outputs: Returns parsed statistics plus utilization samples; throws if the command fails.
+# Inputs: Arguments is the exact CLI vector; RunTimeoutSeconds bounds its owned process and each pipe is capped at 65536 characters.
+# Outputs: Returns parsed statistics and optional counters; terminates its owned CLI and throws on failure, timeout or excess output.
 function Invoke-SuperZipStat {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
-    if ($NoResourceCounters) {
-        $output = & $cli @Arguments
-        if ($LASTEXITCODE -ne 0) {
-            throw "superzip_cli failed with exit code $LASTEXITCODE while running: $($Arguments -join ' ')"
-        }
-        $statsLine = $output | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
-        if ($script:ShowOperationStatsEnabled) {
-            Write-Information "operation_stats $($Arguments -join ' ') :: $statsLine" -InformationAction Continue
-        }
-        $stats = ConvertFrom-StatsLine -Line $statsLine
-        foreach ($key in @(
-            "cpu_avg_pct",
-            "cpu_peak_pct",
-            "gpu_avg_pct",
-            "gpu_peak_pct",
-            "resource_sample_count",
-            "gpu_sample_count",
-            "resource_sample_mean_interval_ms",
-            "disk_active_avg_pct",
-            "disk_active_peak_pct",
-            "disk_read_avg_mib_s",
-            "disk_read_peak_mib_s",
-            "disk_write_avg_mib_s",
-            "disk_write_peak_mib_s",
-            "process_read_mib",
-            "process_write_mib"
-        )) {
-            $stats[$key] = $null
-        }
-        return $stats
-    }
-
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $cli
     $psi.Arguments = (($Arguments | ForEach-Object { ConvertTo-WindowsArgument -Value $_ }) -join ' ')
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    $gpuSampler = Get-GpuResourceSampler
+    $gpuSampler = if ($NoResourceCounters) { $null } else { Get-GpuResourceSampler }
     $process = [Diagnostics.Process]::Start($psi)
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
-    $initialIo = Get-ProcessIoTransfer -Process $process
-    $samples = [System.Collections.Generic.List[object]]::new()
-    $clock = [Diagnostics.Stopwatch]::StartNew()
-    $logicalProcessors = [Math]::Max(1, [Environment]::ProcessorCount)
-    $lastCpuMs = $process.TotalProcessorTime.TotalMilliseconds
-    $lastWallMs = $clock.Elapsed.TotalMilliseconds
     try {
+        $stdoutTask = Read-BoundedBenchmarkStream -Reader $process.StandardOutput
+        $stderrTask = Read-BoundedBenchmarkStream -Reader $process.StandardError
+        $initialIo = Get-ProcessIoTransfer -Process $process
+        $samples = [System.Collections.Generic.List[object]]::new()
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $logicalProcessors = [Math]::Max(1, [Environment]::ProcessorCount)
+        $lastCpuMs = $process.TotalProcessorTime.TotalMilliseconds
+        $lastWallMs = $clock.Elapsed.TotalMilliseconds
         while (-not $process.HasExited) {
             Start-Sleep -Milliseconds $SampleIntervalMs
+            if ($clock.Elapsed.TotalSeconds -ge $RunTimeoutSeconds) { throw "Benchmark subprocess exceeded ${RunTimeoutSeconds}s deadline." }
+            if ($stdoutTask.IsFaulted -or $stderrTask.IsFaulted) { throw 'Benchmark subprocess exceeded the bounded output contract.' }
+            if ($NoResourceCounters) { continue }
             $process.Refresh()
             $nowCpuMs = $process.TotalProcessorTime.TotalMilliseconds
             $nowWallMs = $clock.Elapsed.TotalMilliseconds
@@ -551,38 +538,41 @@ function Invoke-SuperZipStat {
             $lastWallMs = $nowWallMs
             $samples.Add((Get-ResourceSample -ProcessId $process.Id -CpuPct $cpuPct -GpuSampler $gpuSampler -ElapsedIntervalMs $deltaWallMs))
         }
+        $finalIo = Get-ProcessIoTransfer -Process $process
+        $remainingMs = [int][math]::Max(1, ($RunTimeoutSeconds * 1000) - $clock.Elapsed.TotalMilliseconds)
+        if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdoutTask, $stderrTask), $remainingMs)) {
+            throw 'Benchmark subprocess pipes exceeded the run deadline.'
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw "superzip_cli failed with exit code $($process.ExitCode): $stderr" }
+        $statsLine = $stdout -split "`r?`n" | Where-Object { $_ -match '^(entries|plan_only)=' } | Select-Object -Last 1
+        if ($script:ShowOperationStatsEnabled) {
+            Write-Information "operation_stats $($Arguments -join ' ') :: $statsLine" -InformationAction Continue
+        }
+        $stats = ConvertFrom-StatsLine -Line $statsLine
+        $resourceStats = Measure-ResourceSample -Samples $samples
+        foreach ($key in $resourceStats.Keys) { $stats[$key] = if ($NoResourceCounters) { $null } else { $resourceStats[$key] } }
+        foreach ($field in @('Read', 'Write')) {
+            $before = $initialIo."${field}Bytes"
+            $after = $finalIo."${field}Bytes"
+            $stats["process_$($field.ToLowerInvariant())_mib"] = if (-not $NoResourceCounters -and $null -ne $before -and $null -ne $after) {
+                ($after - $before) / 1MB
+            } else { $null }
+        }
+        return $stats
     } finally {
-        Close-GpuResourceSampler -Sampler $gpuSampler
+        try {
+            if (-not $process.HasExited) {
+                $process.Kill()
+                if (-not $process.WaitForExit(5000)) { throw 'Owned benchmark subprocess did not terminate within 5 seconds.' }
+            }
+        } finally {
+            Close-GpuResourceSampler -Sampler $gpuSampler
+            $process.Dispose()
+        }
     }
-    $finalIo = Get-ProcessIoTransfer -Process $process
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
-    $process.WaitForExit()
-    $exitCode = $process.ExitCode
-    $process.Dispose()
-    if ($exitCode -ne 0) {
-        throw "superzip_cli failed with exit code $exitCode while running: $($Arguments -join ' '): $stderr"
-    }
-    $statsLine = $stdout -split "`r?`n" | Where-Object { $_ -match '^entries=' } | Select-Object -Last 1
-    if ($script:ShowOperationStatsEnabled) {
-        Write-Information "operation_stats $($Arguments -join ' ') :: $statsLine" -InformationAction Continue
-    }
-    $stats = ConvertFrom-StatsLine -Line $statsLine
-    $resourceStats = Measure-ResourceSample -Samples $samples
-    foreach ($key in $resourceStats.Keys) {
-        $stats[$key] = $resourceStats[$key]
-    }
-    if ($null -ne $initialIo.ReadBytes -and $null -ne $finalIo.ReadBytes) {
-        $stats["process_read_mib"] = ($finalIo.ReadBytes - $initialIo.ReadBytes) / 1MB
-    } else {
-        $stats["process_read_mib"] = $null
-    }
-    if ($null -ne $initialIo.WriteBytes -and $null -ne $finalIo.WriteBytes) {
-        $stats["process_write_mib"] = ($finalIo.WriteBytes - $initialIo.WriteBytes) / 1MB
-    } else {
-        $stats["process_write_mib"] = $null
-    }
-    return $stats
 }
 
 # Purpose: Query available bytes on the filesystem backing a path.
@@ -870,15 +860,15 @@ function Invoke-MemoryBenchmarkLane {
         [Parameter(Mandatory = $true)][int]$Iteration,
         [Parameter(Mandatory = $true)][int]$BlockSizeKiB
     )
-    $stats = Invoke-SuperZipStat -Arguments @(
-        "memory-benchmark",
-        "--size-mib", "$SizeMiB",
-        "--profile", $WorkloadProfile,
-        $ModeFlag,
-        "--workers", "$script:BenchmarkWorkerCount",
-        "--block-size-kib", "$BlockSizeKiB",
-        "--compression-level", "$CompressionLevel"
-    )
+    $geometry = $script:BenchmarkGeometryPlans["${Lane}:$BlockSizeKiB"]
+    if ($null -eq $geometry) { throw "No frozen admission plan for ${Lane}:$BlockSizeKiB." }
+    $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $ModeFlag -BlockSizeKiB $BlockSizeKiB -Geometry $geometry)
+    $preflight = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+    Assert-BenchmarkGeometry -Stats $preflight -Expected $geometry -PlanOnly
+    $stats = Invoke-SuperZipStat -Arguments $arguments
+    Write-BenchmarkJournal -Path $script:BenchmarkJournalPath -Event @{ event = 'raw_operation'; lane = $Lane
+        block_size_kib = $BlockSizeKiB; iteration = $Iteration; stats = $stats }
+    Assert-BenchmarkGeometry -Stats $stats -Expected $geometry
 
     $expectedGpu = if ($ModeFlag -eq "--require-gpu") { "true" } else { "false" }
     if ($stats["gpu_used"] -ne $expectedGpu) {
@@ -894,6 +884,7 @@ function Invoke-MemoryBenchmarkLane {
         [double]$stats["archive_bytes"] -le [double]$stats["output_bytes"]) {
         throw "$Lane memory benchmark did not report a complete serialized archive size."
     }
+    Assert-MemoryBenchmarkStat -Stats $stats -ExpectedInputBytes ($SizeMiB * 1MB) -BlockSizeKiB $BlockSizeKiB
     $generationWork = Get-StatsNumber -Stats $stats -Key "source_generation_worker_seconds"
     $codecWork = Get-StatsNumber -Stats $stats -Key "codec_encode_worker_seconds"
     if ($null -eq $generationWork -or $generationWork -le 0 -or
@@ -1084,6 +1075,9 @@ function ConvertTo-RamBenchmarkRecord {
                 lane = $_.Lane
                 iteration = [int]$_.Iteration
                 block_size_kib = [int]$_.BlockSizeKiB
+                workers = ConvertTo-ExactBenchmarkCounter $_.Workers
+                inflight_chunks = ConvertTo-ExactBenchmarkCounter $_.InflightChunks
+                codec_workers = ConvertTo-ExactBenchmarkCounter $_.CodecWorkers
                 input_bytes = [int64]$_.InputBytes
                 output_bytes = [int64]$_.OutputBytes
                 archive_bytes = ConvertTo-ExactBenchmarkCounter $_.ArchiveBytes
@@ -1103,6 +1097,9 @@ function ConvertTo-RamBenchmarkRecord {
                 gpu_sample_count = $_.GpuSampleCount
                 resource_sample_mean_interval_ms = $_.ResourceSampleMeanIntervalMs
                 gpu_kernel_launches = ConvertTo-ExactBenchmarkCounter $_.GpuKernelLaunches
+                gpu_h2d_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuH2DMiB * 1MB)
+                gpu_d2h_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuD2HMiB * 1MB)
+                gpu_device_allocation_bytes = ConvertTo-ExactBenchmarkCounter ($_.GpuAllocMiB * 1MB)
                 gpu_kernel_ms = $_.GpuKernelMs
                 gpu_pattern_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPatternBlocks
                 gpu_prefix_blocks = ConvertTo-ExactBenchmarkCounter $_.GpuPrefixBlocks
@@ -1147,7 +1144,7 @@ function Write-BenchmarkJson {
     if (-not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    $json = $Record | ConvertTo-Json -Depth 6
+    $json = $Record | ConvertTo-Json -Depth 10
     $stream = [IO.FileStream]::new($fullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try {
         $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false))
@@ -1165,6 +1162,7 @@ function Get-RamBenchmarkSourceDirty {
     $relevant = @(
         'src', 'include', 'third_party', 'cmake', 'CMakeLists.txt',
         'tools/build.ps1', 'tools/bench.ps1', 'tools/render_benchmark_graph.py',
+        'tools/benchmark_statistics.ps1',
         'tools/test_benchmark_graph.py', 'tools/test_benchmark_reporting.ps1',
         'docs/performance-block-size-validation.md', 'docs/compression-level-and-benchmark-suite.md'
     )
@@ -1186,16 +1184,86 @@ if ($Mode -eq "Memory") {
         }
     }
 
-    $results = @()
-    for ($iteration = 1; $iteration -le [Math]::Max(1, $Iterations); ++$iteration) {
-        foreach ($blockSize in $BlockSizeKiB) {
-            foreach ($lane in @(Get-BenchmarkLaneOrder -Iteration $iteration -SkipCpu:$SkipCpu -SkipGpu:$SkipGpu)) {
-                if ($results.Count -gt 0 -and $InterRunPauseMs -gt 0) { Start-Sleep -Milliseconds $InterRunPauseMs }
-                $modeFlag = if ($lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' }
-                $results += Invoke-MemoryBenchmarkLane -Lane $lane -ModeFlag $modeFlag -Iteration $iteration -BlockSizeKiB $blockSize
+    $journalPath = if ($JsonOutput) { "$JsonOutput.samples.jsonl" } else {
+        Join-Path $repo ('out/benchmark-samples/' + [guid]::NewGuid().ToString('N') + '.jsonl')
+    }
+    Write-BenchmarkMessage "Raw observations journal: $journalPath"
+    $script:BenchmarkJournalPath = $journalPath
+    $script:BenchmarkSuiteClock = [Diagnostics.Stopwatch]::StartNew()
+    $samplingPolicy = [ordered]@{
+        method = if ($FixedIterations) { 'fixed_count' } else { 'pilot_fixed_confirmation' }
+        minimum_count = $Iterations; maximum_count = if ($FixedIterations) { $Iterations } else { $MaxIterations }
+        pilot_count = if ($FixedIterations) { 0 } else { $PilotIterations }
+        minimum_measured_seconds = $MinimumMeasuredSeconds
+        target_relative_standard_error_pct = $TargetRelativeStandardErrorPct
+        max_relative_std_dev_pct = $MaxRelativeStdDevPct
+        discarded_sample_count = 0; warmup_count = 0
+        inference = 'descriptive_only_no_confidence_or_significance_claim'
+        block_order = 'reverse_on_even_iterations'
+        run_timeout_seconds = $RunTimeoutSeconds; suite_timeout_seconds = $SuiteTimeoutSeconds
+    }
+    $startCommit = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot identify benchmark source commit.' }
+    $startBinaryHash = (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash
+    Write-BenchmarkJournal -Path $journalPath -Create -Event @{ event = 'protocol'; sampling_policy = $samplingPolicy
+        source_commit = $startCommit; binary_sha256 = $startBinaryHash; profile = $WorkloadProfile
+        size_mib = $SizeMiB; compression_level = $CompressionLevel; block_sizes_kib = $BlockSizeKiB }
+    $script:BenchmarkGeometryPlans = @{}
+    $script:BenchmarkSampleIdentities = @{}
+    foreach ($block in $BlockSizeKiB) {
+        foreach ($lane in @(Get-BenchmarkLaneOrder -Iteration 1 -SkipCpu:$SkipCpu -SkipGpu:$SkipGpu)) {
+            $flag = if ($lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' }
+            $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $flag -BlockSizeKiB $block -RequestedDepth $InflightChunks)
+            try {
+                $geometry = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+                Assert-BenchmarkGeometry -Stats $geometry -Expected $geometry -PlanOnly
+            } catch {
+                Write-BenchmarkJournal -Path $journalPath -Event @{ event = 'planning_failure'; lane = $lane
+                    block_size_kib = $block; cause = $_.Exception.Message }
+                throw
             }
+            $script:BenchmarkGeometryPlans["${lane}:$block"] = $geometry
         }
     }
+    $samplingPolicy.geometry_policy = 'exact_depths_frozen_before_pilot_abort_on_admission_or_identity_change'
+    $samplingPolicy.geometry_plans = @($script:BenchmarkGeometryPlans.GetEnumerator() | Sort-Object Name | ForEach-Object {
+        [ordered]@{ case = $_.Key; workers = [int]$_.Value.workers; inflight_chunks = [int]$_.Value.inflight_chunks
+            codec_workers = [int]$_.Value.codec_workers; decode_inflight_chunks = [int]$_.Value.decode_inflight_chunks
+            decode_codec_workers = [int]$_.Value.decode_codec_workers }
+    })
+    Write-BenchmarkJournal -Path $journalPath -Event @{ event = 'geometry_plan'; sampling_policy = $samplingPolicy }
+    $pilotResults = @()
+    if ($FixedIterations) {
+        $confirmationPlans = @($BlockSizeKiB | ForEach-Object { [ordered]@{ block_size_kib = $_
+            requested_count = $Iterations; confirmation_count = $Iterations; count_capped = $false
+            stopping_rule = 'count_fixed_before_confirmation' } })
+    } else {
+        $pilotPlans = @($BlockSizeKiB | ForEach-Object { @{ block_size_kib = $_; confirmation_count = $PilotIterations } })
+        $pilotResults = @(Invoke-BenchmarkPlannedSample -Plans $pilotPlans -Stage 'pilot' -JournalPath $journalPath)
+        $lanes = @(Get-BenchmarkLaneOrder -Iteration 1 -SkipCpu:$SkipCpu -SkipGpu:$SkipGpu)
+        $confirmationPlans = @(Get-BenchmarkConfirmationPlan -PilotRuns $pilotResults -Blocks $BlockSizeKiB -Lanes $lanes `
+            -MinimumCount $Iterations -MaximumCount $MaxIterations -MinimumSeconds $MinimumMeasuredSeconds `
+            -TargetRsePct $TargetRelativeStandardErrorPct)
+    }
+    $samplingPolicy.case_plans = $confirmationPlans
+    Write-BenchmarkJournal -Path $journalPath -Event @{ event = 'confirmation_plan'; sampling_policy = $samplingPolicy }
+    $results = @(Invoke-BenchmarkPlannedSample -Plans $confirmationPlans -Stage 'confirmation' -JournalPath $journalPath)
+    $quality = @($results | Group-Object Lane, BlockSizeKiB | ForEach-Object {
+        $evidence = Get-BenchmarkLaneEvidence -Runs $_.Group -MinimumSeconds $MinimumMeasuredSeconds `
+            -MaxCvPct $MaxRelativeStdDevPct -TargetRsePct $TargetRelativeStandardErrorPct
+        $lane = $_.Group[0].Lane
+        $block = $_.Group[0].BlockSizeKiB
+        $earlier = @($pilotResults | Where-Object { $_.Lane -eq $lane -and $_.BlockSizeKiB -eq $block })
+        if ($earlier.Count) {
+            $combined = Get-BenchmarkLaneEvidence -Runs @($earlier + $_.Group)
+            $evidence.issues = @($evidence.issues + @($combined.issues | Where-Object {
+                $_ -match '^(inconsistent_size|resource_policy_changed|missing_or_invalid_resource_policy|resource_counters_unavailable)'
+            }) | Sort-Object -Unique)
+        }
+        $evidence.block_size_kib = $_.Group[0].BlockSizeKiB
+        $evidence.status = if ($evidence.issues.Count) { 'inconclusive' } else { 'descriptively_stable' }
+        $evidence
+    })
 
     $summary = $results | Group-Object Lane, BlockSizeKiB | ForEach-Object {
         $group = $_.Group
@@ -1259,7 +1327,13 @@ if ($Mode -eq "Memory") {
     }
 
     Write-BenchmarkMessage ""
-    Write-BenchmarkMessage "SuperZip benchmark: $SizeMiB MiB $WorkloadProfile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB, $([Math]::Max(1, $Iterations)) iteration(s)"
+    Write-BenchmarkMessage "SuperZip benchmark: $SizeMiB MiB $WorkloadProfile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB; confirmation counts fixed before measurement."
+    Write-BenchmarkMessage 'All pilot and confirmation samples are retained. Statistics below describe confirmation only; no confidence or significance claim is made.'
+    foreach ($case in $quality) {
+        $cv = ($case.metrics.Values | ForEach-Object { $_.relative_std_dev_pct } | Measure-Object -Maximum).Maximum
+        Write-BenchmarkMessage ("Measurement quality: lane={0} block={1} samples={2} max_phase_cv_pct={3:N2} status={4} issues={5}" -f `
+            $case.lane, $case.block_size_kib, $case.sample_count, $cv, $case.status, ($case.issues -join ','))
+    }
     if ($NoResourceCounters) {
         Write-BenchmarkMessage "Resource sampling: disabled"
     } else {
@@ -1304,14 +1378,16 @@ if ($Mode -eq "Memory") {
             continue
         }
         $speedup = $cpu.TotalSeconds / $gpu.TotalSeconds
-        Write-BenchmarkMessage ("GPU end-to-end speedup vs forced CPU at {0} KiB blocks: {1:N2}x" -f $blockSize, $speedup)
-        if ($speedup -lt 1.0) {
-            Write-BenchmarkMessage "Note: required-HIP was slower than forced CPU on this memory workload; treat that as a real optimization finding, not a pass/fail benchmark target."
-        }
+        $caseQuality = @($quality | Where-Object { $_.block_size_kib -eq $blockSize })
+        $status = if (@($caseQuality | Where-Object { $_.status -ne 'descriptively_stable' }).Count) { 'inconclusive' } else { 'descriptive_only' }
+        Write-BenchmarkMessage ("Observed CPU/GPU mean end-to-end time ratio at {0} KiB: {1:N2}x; comparison={2}; archive sizes reported separately." -f $blockSize, $speedup, $status)
     }
     if ($JsonOutput) {
         $commit = (& git rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0) { throw "Cannot identify benchmark source commit." }
+        if ($commit -ne $startCommit -or (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash -ne $startBinaryHash) {
+            throw 'Benchmark source commit or binary changed during sampling; journal retained, final record refused.'
+        }
         $sourceDirty = Get-RamBenchmarkSourceDirty -RepositoryRoot $repo
         $cpuModel = $null
         try {
@@ -1335,6 +1411,16 @@ if ($Mode -eq "Memory") {
             -SizeMiB $SizeMiB -Level $CompressionLevel -SampleIntervalMs $SampleIntervalMs `
             -InterRunPauseMs $InterRunPauseMs `
             -CpuModel $cpuModel -GpuModel $gpuModel -HipRuntimeVersion $hipRuntimeVersion
+        $record.schema_version = 3
+        $record.sampling_policy = $samplingPolicy
+        $record.case_quality = $quality
+        $record.pilot_runs = @()
+        if ($pilotResults.Count) {
+            $pilotRecord = ConvertTo-RamBenchmarkRecord -Runs $pilotResults -Commit $commit -Dirty $sourceDirty `
+                -BinarySha256 $startBinaryHash -Profile $WorkloadProfile -SizeMiB $SizeMiB -Level $CompressionLevel `
+                -SampleIntervalMs $SampleIntervalMs -InterRunPauseMs $InterRunPauseMs
+            $record.pilot_runs = $pilotRecord.runs
+        }
         Write-BenchmarkJson -Record $record -Path $JsonOutput
         Write-BenchmarkMessage "Benchmark JSON created with source_dirty=$($record.source_dirty)."
     }

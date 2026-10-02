@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
 
 # Load only function definitions, without starting a workload or touching disk fixtures.
 $tokens = $null
@@ -11,6 +12,149 @@ $definitions = $ast.FindAll({ param($node)
 }, $false)
 foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
+}
+
+$distribution = Measure-BenchmarkDistribution -Values @(1, 2, 3)
+if ($distribution.count -ne 3 -or $distribution.mean_seconds -ne 2 -or
+    $distribution.sample_std_dev_seconds -ne 1 -or $distribution.relative_std_dev_pct -ne 50 -or
+    [math]::Abs($distribution.relative_standard_error_pct - (50 / [math]::Sqrt(3))) -gt 1e-12) {
+    throw 'Sample statistics do not use the scientific n-1 variance and independence-assuming RSE formulas.'
+}
+$tail = Measure-BenchmarkDistribution -Values @(1, 1, 1, 100)
+if ($tail.count -ne 4 -or $tail.mean_seconds -ne 25.75 -or $tail.max_seconds -ne 100 -or $tail.median_seconds -ne 1) {
+    throw 'A slow observation was discarded or given a different weight.'
+}
+if ($null -ne (Measure-BenchmarkDistribution -Values @(1)).sample_std_dev_seconds) {
+    throw 'Single-sample uncertainty was fabricated as zero.'
+}
+$offset = Measure-BenchmarkDistribution -Values @(1000000, 1000001, 1000002)
+if ($offset.sample_std_dev_seconds -ne 1) { throw 'Variance lost precision for large offsets.' }
+foreach ($invalid in @([double]::NaN, [double]::PositiveInfinity, 0, -1, 1e10)) {
+    $rejected = $false
+    try { Measure-BenchmarkDistribution -Values @(1, $invalid, 3) | Out-Null } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Invalid timing was silently removed instead of rejecting the sample.' }
+}
+
+# Purpose: Supply complete deterministic measurements to test planning without running compression.
+# Inputs: Lane, iteration, block size and seconds define one observation; all resource and size fields are controlled.
+# Outputs: Returns one fixture with complete scientific timing and evidence fields.
+function Get-PlanningRun {
+    param([string]$Lane = 'CPU', [int]$Iteration = 1, [int]$BlockSizeKiB = 256, [double]$Seconds = 1)
+    [pscustomobject]@{ Lane = $Lane; Iteration = $Iteration; BlockSizeKiB = $BlockSizeKiB
+        CompressSeconds = $Seconds; VerifySeconds = $Seconds; ExtractSeconds = $Seconds
+        InputBytes = 10GB; OutputBytes = 1024; ArchiveBytes = 4096
+        Workers = 32; InflightChunks = 32; CodecWorkers = 1; DecodeInflightChunks = 32; DecodeCodecWorkers = 1
+        ResourceSampleCount = 50; GpuSampleCount = 25 }
+}
+$pilot = @(foreach ($iteration in 1..3) { Get-PlanningRun -Iteration $iteration })
+$plan = @(Get-BenchmarkConfirmationPlan -PilotRuns $pilot -Blocks @(256) -Lanes @('CPU') `
+    -MinimumCount 3 -MaximumCount 15 -MinimumSeconds 30 -TargetRsePct 2)
+if ($plan[0].requested_count -ne 10 -or $plan[0].confirmation_count -ne 10 -or $plan[0].count_capped) {
+    throw 'Short workloads did not receive a duration-based fixed confirmation count.'
+}
+$pilot[1].CompressSeconds = 2
+$pilot[2].CompressSeconds = 3
+$plan = @(Get-BenchmarkConfirmationPlan -PilotRuns $pilot -Blocks @(256) -Lanes @('CPU') `
+    -MinimumCount 3 -MaximumCount 15 -MinimumSeconds 1 -TargetRsePct 2)
+if ($plan[0].requested_count -ne 625 -or $plan[0].confirmation_count -ne 15 -or -not $plan[0].count_capped) {
+    throw 'Noisy pilot planning failed to preserve the uncapped request and enforce the count ceiling.'
+}
+$evidence = Get-BenchmarkLaneEvidence -Runs $pilot -MinimumSeconds 1
+if ($evidence.issues -notcontains 'high_variability:CompressSeconds') { throw 'Noisy measurements were declared stable.' }
+$pilot[2].Workers = 16
+$pilot[0].ResourceSampleCount = $null
+$pilot[2].ArchiveBytes = 4097
+$evidence = Get-BenchmarkLaneEvidence -Runs $pilot -MinimumSeconds 1
+foreach ($issue in @('resource_policy_changed:Workers', 'resource_counters_unavailable', 'inconsistent_size:ArchiveBytes')) {
+    if ($evidence.issues -notcontains $issue) { throw "Missing measurement diagnostic: $issue" }
+}
+
+# Purpose: Substitute prescribed observations and record execution order for scheduler regression tests.
+# Inputs: Lane, mode flag, iteration and block size are supplied by the real scheduler.
+# Outputs: Returns a complete fixture or throws at the requested negative-control sample.
+function Invoke-MemoryBenchmarkLane {
+    param([string]$Lane, [string]$ModeFlag, [int]$Iteration, [int]$BlockSizeKiB)
+    if ($ModeFlag -ne $(if ($Lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' })) { throw 'Wrong lane mode.' }
+    if ($script:FailPlanningSample -and $Iteration -eq 2) { throw 'Intentional failed read-back fixture.' }
+    $run = Get-PlanningRun -Lane $Lane -Iteration $Iteration -BlockSizeKiB $BlockSizeKiB
+    if ($script:ChangePlanningGeometry -and $Iteration -eq 2) { $run.InflightChunks -= 1 }
+    return $run
+}
+$script:SkipCpu = $false; $script:SkipGpu = $false; $script:InterRunPauseMs = 0
+$script:BenchmarkSampleIdentities = @{}
+$journal = Join-Path $env:TEMP ('superzip-sample-journal-' + [guid]::NewGuid().ToString('N') + '.jsonl')
+try {
+    Write-BenchmarkJournal -Path $journal -Event @{ event = 'protocol' } -Create
+    $plans = @(@{ block_size_kib = 256; confirmation_count = 2 }, @{ block_size_kib = 512; confirmation_count = 1 })
+    $samples = @(Invoke-BenchmarkPlannedSample -Plans $plans -Stage confirmation -JournalPath $journal 6>$null)
+    $order = ($samples | ForEach-Object { "$($_.BlockSizeKiB):$($_.Lane):$($_.Iteration)" }) -join ','
+    if ($order -ne '256:CPU:1,256:GPU:1,512:CPU:1,512:GPU:1,256:GPU:2,256:CPU:2') {
+        throw 'Scheduler changed a frozen count, dropped a lane, or failed to counterbalance order.'
+    }
+    $events = @(Get-Content -LiteralPath $journal | ForEach-Object { $_ | ConvertFrom-Json })
+    if ($events.Count -ne 7 -or @($events | Where-Object { $_.event -eq 'sample' }).Count -ne 6) {
+        throw 'Completed observations were lost from the append-only journal.'
+    }
+    $threeRoundPlans = @(@{ block_size_kib = 256; confirmation_count = 3 }, @{ block_size_kib = 512; confirmation_count = 3 })
+    $threeRoundSamples = @(Invoke-BenchmarkPlannedSample -Plans $threeRoundPlans -Stage confirmation 6>$null)
+    $thirdRound = @($threeRoundSamples | Where-Object Iteration -eq 3)
+    if ($threeRoundPlans[0].block_size_kib -ne 256 -or $thirdRound[0].BlockSizeKiB -ne 256 -or
+        $threeRoundSamples[4].BlockSizeKiB -ne 512 -or $threeRoundSamples.Count -ne 12) {
+        throw 'Counterbalancing mutated the prescribed plan or failed to restore odd-round case order.'
+    }
+    $rejected = $false
+    try { Write-BenchmarkJournal -Path $journal -Event @{} -Create } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Sample journal replaced existing evidence.' }
+    $script:FailPlanningSample = $true
+    $rejected = $false
+    try { Invoke-BenchmarkPlannedSample -Plans $plans -Stage pilot -JournalPath $journal 6>$null | Out-Null } catch { $rejected = $true }
+    $events = @(Get-Content -LiteralPath $journal | ForEach-Object { $_ | ConvertFrom-Json })
+    if (-not $rejected -or $events[-1].event -ne 'failure' -or $events[-1].cause -ne 'Intentional failed read-back fixture.') {
+        throw 'A failed sample was silently retried or omitted from the journal.'
+    }
+    $script:FailPlanningSample = $false; $script:ChangePlanningGeometry = $true
+    $script:SkipGpu = $true; $script:BenchmarkSampleIdentities = @{}
+    $beforeCount = $events.Count
+    $rejected = $false
+    try {
+        Invoke-BenchmarkPlannedSample -Plans @(@{ block_size_kib = 256; confirmation_count = 3 }) `
+            -Stage confirmation -JournalPath $journal 6>$null | Out-Null
+    } catch { $rejected = $_.Exception.Message -match 'case identity changed' }
+    $after = @(Get-Content -LiteralPath $journal | ForEach-Object { $_ | ConvertFrom-Json })
+    if (-not $rejected -or $after.Count -ne ($beforeCount + 3) -or $after[-2].run.InflightChunks -ne 31 -or
+        $after[-1].event -ne 'failure') {
+        throw 'Configuration drift did not abort immediately while retaining the mismatched observation.'
+    }
+} finally { Remove-Item -LiteralPath $journal -Force }
+
+$script:SizeMiB = 10240
+$geometry = @{ plan_only = 'true'; input_bytes = "$(10GB)"; workers = '32'; inflight_chunks = '28'
+    codec_workers = '1'; decode_inflight_chunks = '4'; decode_codec_workers = '8' }
+Assert-BenchmarkGeometry -Stats $geometry -Expected $geometry -PlanOnly
+foreach ($key in @('workers', 'inflight_chunks', 'codec_workers', 'decode_inflight_chunks', 'decode_codec_workers')) {
+    foreach ($invalidValue in @($null, 'NaN', '0', '65', '1.5', '2')) {
+        $invalid = $geometry.Clone(); $invalid[$key] = $invalidValue
+        $rejected = $false
+        try { Assert-BenchmarkGeometry -Stats $invalid -Expected $geometry -PlanOnly } catch { $rejected = $true }
+        if (-not $rejected) { throw "Admission accepted changed or malformed geometry: $key" }
+    }
+}
+foreach ($key in @('seconds', 'gpu_used')) {
+    $invalid = $geometry.Clone(); $invalid[$key] = '0'
+    $rejected = $false
+    try { Assert-BenchmarkGeometry -Stats $invalid -Expected $geometry -PlanOnly } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Planning was treated as measured GPU or timing evidence.' }
+}
+$identities = @{}
+$first = Get-PlanningRun
+Assert-BenchmarkSampleIdentity -Run $first -Identities $identities
+foreach ($key in @('Workers', 'InflightChunks', 'CodecWorkers', 'DecodeInflightChunks', 'DecodeCodecWorkers',
+        'InputBytes', 'OutputBytes', 'ArchiveBytes')) {
+    $changed = Get-PlanningRun -Iteration 2
+    $changed.$key += 1
+    $rejected = $false
+    try { Assert-BenchmarkSampleIdentity -Run $changed -Identities $identities } catch { $rejected = $true }
+    if (-not $rejected) { throw "Sample identity tracking ignored $key." }
 }
 
 foreach ($prefix in @('gpu_', 'gpu_classification_', 'decode_')) {
@@ -355,19 +499,14 @@ if ($resource.resource_sample_count -ne 2 -or $resource.gpu_sample_count -ne 1 -
     throw 'Resource sampler lost actual cadence or valid GPU sample count.'
 }
 
-# Purpose: Substitute deterministic CLI output without launching a benchmark.
-# Inputs: Remaining arguments are deliberately ignored; the fixture is one valid stats row.
-# Outputs: Emits one stats row and sets a successful native exit status.
-function Invoke-FakeBenchmarkCli {
-    $global:LASTEXITCODE = 0
-    'entries=1 seconds=1 memory_only=true disk_write_bytes=0'
-}
-
-$script:cli = "Invoke-FakeBenchmarkCli"
+$script:cli = (Get-Command powershell -CommandType Application).Source
 $script:NoResourceCounters = $true
+$script:RunTimeoutSeconds = 5
+$script:SampleIntervalMs = 50
 foreach ($showStats in @($false, $true)) {
     $script:ShowOperationStatsEnabled = $showStats
-    $records = @(Invoke-SuperZipStat -Arguments @("memory-benchmark") 6>$null)
+    $records = @(Invoke-SuperZipStat -Arguments @('-NoProfile', '-Command',
+        "Write-Output 'entries=1 seconds=1 memory_only=true disk_write_bytes=0'") 6>$null)
     if ($records.Count -ne 1 -or $records[0] -isnot [hashtable]) {
         throw "Operation diagnostics corrupted the statistics return stream."
     }
@@ -375,6 +514,34 @@ foreach ($showStats in @($false, $true)) {
         $null -ne $records[0].resource_sample_count) {
         throw "Statistics or unavailable counter semantics changed."
     }
+    $line = 'plan_only=true input_bytes=10737418240 workers=32 inflight_chunks=25 codec_workers=1 decode_inflight_chunks=4 decode_codec_workers=8'
+    $plans = @(Invoke-SuperZipStat -Arguments @('-NoProfile', '-Command', "Write-Output '$line'") 6>$null)
+    if ($plans.Count -ne 1 -or $plans[0] -isnot [hashtable] -or $plans[0].plan_only -ne 'true' -or
+        $plans[0].ContainsKey('seconds') -or $plans[0].ContainsKey('gpu_used')) {
+        throw 'Planning output failed the complete subprocess-reader/parser path or fabricated measurement fields.'
+    }
+}
+$script:RunTimeoutSeconds = 1
+foreach ($command in @('Start-Sleep -Seconds 10', "[Console]::Write('x' * 70000); Start-Sleep -Seconds 10")) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $cause = $null
+    try { Invoke-SuperZipStat -Arguments @('-NoProfile', '-Command', $command) 6>$null | Out-Null }
+    catch { $cause = $_.Exception.Message }
+    if (-not $cause -or $cause -notmatch 'deadline|output' -or $clock.Elapsed.TotalSeconds -gt 8) {
+        throw "Benchmark subprocess timeout/output containment failed: $cause"
+    }
+}
+$script:RunTimeoutSeconds = 5
+$validMemoryStat = @{ memory_only = 'true'; input_bytes = "$(10GB)"; output_bytes = '1024'; archive_bytes = '4096'
+    disk_write_bytes = '0'; block_size_bytes = '262144'; workers = '32'; inflight_chunks = '32'; codec_workers = '1'
+    decode_inflight_chunks = '32'; decode_codec_workers = '1'; compress_seconds = '1'; verify_seconds = '1'; extract_seconds = '1' }
+Assert-MemoryBenchmarkStat -Stats $validMemoryStat -ExpectedInputBytes 10GB -BlockSizeKiB 256
+foreach ($key in $validMemoryStat.Keys) {
+    $invalid = $validMemoryStat.Clone()
+    $invalid.Remove($key)
+    $rejected = $false
+    try { Assert-MemoryBenchmarkStat -Stats $invalid -ExpectedInputBytes 10GB -BlockSizeKiB 256 } catch { $rejected = $true }
+    if (-not $rejected) { throw "Missing $key was silently cast to a valid benchmark value." }
 }
 foreach ($file in @('gpu_proof.ps1', 'gpu_diagnostic.ps1', 'transfer_diagnostics.ps1')) {
     $ast = [Management.Automation.Language.Parser]::ParseFile(
