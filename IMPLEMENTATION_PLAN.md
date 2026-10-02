@@ -33,8 +33,14 @@ without suppressing the scanner; GitHub now marks the fixture finding as fixed.
 The post-push audit at `65e40ef` still rejects 214 unapproved open code-scanning
 alerts; this is not final security acceptance. Bounded parallel byte comparison
 passes the corrected seven-command follow-up and 576 native tests under a
-distinct measurement protocol, preserving the serial baseline. Fresh dedicated-host statistics and verified binary build provenance
-remain the next performance-tooling tasks.
+distinct measurement protocol, preserving the serial baseline. The `0025ce9`
+diagnostic retained 42 pilots and 23 confirmations (650 GiB fully byte-checked)
+before an administrative stop: its declared 15-observation ceiling capped five
+case plans. It is incomplete evidence, not a completed scientific comparison.
+The next round extends existing artifact guards through every observation and
+estimates the complete confirmation wall budget before starting it, with a
+default ceiling of 64. Fresh independent dedicated-host statistics and verified
+binary build provenance remain the next performance-tooling tasks.
 
 The later migration commit `08519a5` fails hosted Windows tests under
 PowerShell 7 because absent process-environment values were restored as empty

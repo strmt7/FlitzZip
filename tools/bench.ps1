@@ -3,7 +3,7 @@ param(
     [int64]$SizeMiB = 10240,
     [ValidateRange(1, 64)] [int]$Iterations = 3,
     [ValidateRange(3, 10)] [int]$PilotIterations = 3,
-    [ValidateRange(3, 64)] [int]$MaxIterations = 15,
+    [ValidateRange(3, 64)] [int]$MaxIterations = 64,
     [ValidateRange(1, 600)] [double]$MinimumMeasuredSeconds = 30,
     [ValidateRange(0.1, 25)] [double]$TargetRelativeStandardErrorPct = 2,
     [ValidateRange(0.1, 50)] [double]$MaxRelativeStdDevPct = 5,
@@ -883,9 +883,10 @@ function Invoke-MemoryBenchmarkLane {
     $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $ModeFlag -BlockSizeKiB $BlockSizeKiB -Geometry $geometry)
     $preflight = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
     Assert-BenchmarkGeometry -Stats $preflight -Expected $geometry -PlanOnly
-    $stats = Invoke-SuperZipStat -Arguments $arguments
-    Write-BenchmarkJournal -Path $script:BenchmarkJournalPath -Event @{ event = 'raw_operation'; lane = $Lane
-        block_size_kib = $BlockSizeKiB; iteration = $Iteration; stats = $stats }
+    $observation = Invoke-FrozenMemoryBenchmark -Arguments $arguments -Expected $script:BenchmarkArtifactState `
+        -RepositoryRoot $repo -BinaryPath $cli -JournalPath $script:BenchmarkJournalPath `
+        -JournalContext @{ lane = $Lane; block_size_kib = $BlockSizeKiB; iteration = $Iteration }
+    $stats = $observation.Stats
     Assert-BenchmarkGeometry -Stats $stats -Expected $geometry
 
     $expectedGpu = if ($ModeFlag -eq "--require-gpu") { "true" } else { "false" }
@@ -936,6 +937,7 @@ function Invoke-MemoryBenchmarkLane {
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
         MeasurementProtocol = $stats['measurement_protocol']
+        MeasurementIdentity = $observation.Identity
         ValidationWorkerLimit = [int]$stats['validation_worker_limit']
         ValidatedBytes = [int64]$stats['validated_bytes']
         ValidationSeconds = [double]$stats['validation_seconds']
@@ -1106,6 +1108,8 @@ function ConvertTo-RamBenchmarkObservation {
         verify_seconds = $Run.VerifySeconds
         extract_seconds = $Run.ExtractSeconds
         measurement_protocol = $Run.MeasurementProtocol
+        measurement_identity = $Run.MeasurementIdentity
+        observation_wall_seconds = $Run.ObservationWallSeconds
         validation_worker_limit = $Run.ValidationWorkerLimit
         validated_bytes = ConvertTo-ExactBenchmarkCounter $Run.ValidatedBytes
         validation_seconds = $Run.ValidationSeconds
@@ -1217,6 +1221,51 @@ function Get-RamBenchmarkSourceDirty {
     return ($status.Count -gt 0)
 }
 
+# Purpose: Snapshot the observed checkout and actual CLI/app-local DLL bytes without recording private paths.
+# Inputs: RepositoryRoot is a Git checkout; BinaryPath identifies the tested CLI and its runtime directory.
+# Outputs: Returns ordered source/artifact identity, including dirty state; throws on unavailable inputs.
+function Get-RamBenchmarkArtifactState {
+    param([string]$RepositoryRoot, [string]$BinaryPath)
+    $commit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot identify benchmark source commit.' }
+    $dependencies = [ordered]@{}
+    foreach ($file in @(Get-ChildItem -LiteralPath (Split-Path -Parent $BinaryPath) -Filter '*.dll' -File | Sort-Object Name)) {
+        $dependencies[$file.Name] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    return [ordered]@{ source_commit = $commit; source_dirty = Get-RamBenchmarkSourceDirty -RepositoryRoot $RepositoryRoot
+        binary_sha256 = (Get-FileHash -LiteralPath $BinaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        binary_dependencies_sha256 = $dependencies }
+}
+
+# Purpose: Reject detected checkout, dirty-state, CLI or app-local runtime changes within one measurement cohort.
+# Inputs: Expected is the starting ordered identity; RepositoryRoot/BinaryPath resolve the current inputs.
+# Outputs: Throws on any mismatch rather than mixing observations or replacing the initial source identity.
+function Assert-RamBenchmarkArtifactState {
+    param([Collections.IDictionary]$Expected, [string]$RepositoryRoot, [string]$BinaryPath)
+    if ($null -eq $Expected) { throw 'Benchmark artifact identity was not frozen before sampling.' }
+    $current = Get-RamBenchmarkArtifactState -RepositoryRoot $RepositoryRoot -BinaryPath $BinaryPath
+    if (($Expected | ConvertTo-Json -Depth 4 -Compress) -cne ($current | ConvertTo-Json -Depth 4 -Compress)) {
+        throw 'Benchmark checkout, dirty source state, CLI or app-local runtime changed; journal retained.'
+    }
+}
+
+# Purpose: Execute one RAM observation between source/artifact consistency checks.
+# Inputs: Native Arguments, frozen Expected identity, repository/binary, optional JournalPath and case JournalContext.
+# Outputs: Journals returned native stats before post-checks; returns frozen stats/identity or propagates failure without retry.
+function Invoke-FrozenMemoryBenchmark {
+    param([string[]]$Arguments, [Collections.IDictionary]$Expected, [string]$RepositoryRoot, [string]$BinaryPath,
+        [string]$JournalPath, [Collections.IDictionary]$JournalContext)
+    Assert-RamBenchmarkArtifactState -Expected $Expected -RepositoryRoot $RepositoryRoot -BinaryPath $BinaryPath
+    $stats = Invoke-SuperZipStat -Arguments $Arguments
+    $raw = @{ event = 'raw_operation'; stats = $stats; expected_measurement_identity = $Expected }
+    if ($null -ne $JournalContext) {
+        foreach ($key in @('lane', 'block_size_kib', 'iteration')) { $raw[$key] = $JournalContext[$key] }
+    }
+    Write-BenchmarkJournal -Path $JournalPath -Event $raw
+    Assert-RamBenchmarkArtifactState -Expected $Expected -RepositoryRoot $RepositoryRoot -BinaryPath $BinaryPath
+    return @{ Stats = $stats; Identity = $Expected }
+}
+
 $laneCount = 0
 if (-not $SkipCpu) { ++$laneCount }
 if (-not $SkipGpu) { ++$laneCount }
@@ -1248,11 +1297,10 @@ if ($Mode -eq "Memory") {
         block_order = 'reverse_on_even_iterations'
         run_timeout_seconds = $RunTimeoutSeconds; suite_timeout_seconds = $SuiteTimeoutSeconds
     }
-    $startCommit = (& git rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot identify benchmark source commit.' }
-    $startBinaryHash = (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash
+    $script:BenchmarkArtifactState = Get-RamBenchmarkArtifactState -RepositoryRoot $repo -BinaryPath $cli
     Write-BenchmarkJournal -Path $journalPath -Create -Event @{ event = 'protocol'; sampling_policy = $samplingPolicy
-        source_commit = $startCommit; binary_sha256 = $startBinaryHash; profile = $WorkloadProfile
+        measurement_identity_policy = 'source-artifacts-around-observation-v1'; measurement_identity = $script:BenchmarkArtifactState
+        source_commit = $script:BenchmarkArtifactState.source_commit; binary_sha256 = $script:BenchmarkArtifactState.binary_sha256; profile = $WorkloadProfile
         size_mib = $SizeMiB; compression_level = $CompressionLevel; block_sizes_kib = $BlockSizeKiB }
     $script:BenchmarkGeometryPlans = @{}
     $script:BenchmarkSampleIdentities = @{}
@@ -1292,7 +1340,15 @@ if ($Mode -eq "Memory") {
             -TargetRsePct $TargetRelativeStandardErrorPct)
     }
     $samplingPolicy.case_plans = $confirmationPlans
+    if (-not $FixedIterations) {
+        $samplingPolicy.confirmation_wall_budget = Get-BenchmarkConfirmationWallBudget -PilotRuns $pilotResults `
+            -Plans $confirmationPlans -Lanes $lanes -RemainingSeconds ($SuiteTimeoutSeconds - $script:BenchmarkSuiteClock.Elapsed.TotalSeconds) `
+            -PauseSeconds ($InterRunPauseMs / 1000.0)
+    }
     Write-BenchmarkJournal -Path $journalPath -Event @{ event = 'confirmation_plan'; sampling_policy = $samplingPolicy }
+    if (-not $FixedIterations -and -not $samplingPolicy.confirmation_wall_budget.fits_in_remaining_time) {
+        throw 'Estimated confirmation wall time exceeds the remaining suite budget; pilots retained. Increase -SuiteTimeoutSeconds or reduce the prescribed workload.'
+    }
     $results = @(Invoke-BenchmarkPlannedSample -Plans $confirmationPlans -Stage 'confirmation' -JournalPath $journalPath)
     $quality = @($results | Group-Object Lane, BlockSizeKiB | ForEach-Object {
         $evidence = Get-BenchmarkLaneEvidence -Runs $_.Group -MinimumSeconds $MinimumMeasuredSeconds `
@@ -1428,13 +1484,10 @@ if ($Mode -eq "Memory") {
         $status = if (@($caseQuality | Where-Object { $_.status -ne 'descriptively_stable' }).Count) { 'inconclusive' } else { 'descriptive_only' }
         Write-BenchmarkMessage ("Observed CPU/GPU mean end-to-end time ratio at {0} KiB: {1:N2}x; comparison={2}; archive sizes reported separately." -f $blockSize, $speedup, $status)
     }
+    Assert-RamBenchmarkArtifactState -Expected $script:BenchmarkArtifactState -RepositoryRoot $repo -BinaryPath $cli
     if ($JsonOutput) {
-        $commit = (& git rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0) { throw "Cannot identify benchmark source commit." }
-        if ($commit -ne $startCommit -or (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash -ne $startBinaryHash) {
-            throw 'Benchmark source commit or binary changed during sampling; journal retained, final record refused.'
-        }
-        $sourceDirty = Get-RamBenchmarkSourceDirty -RepositoryRoot $repo
+        $commit = $script:BenchmarkArtifactState.source_commit
+        $sourceDirty = $script:BenchmarkArtifactState.source_dirty
         $cpuModel = $null
         try {
             $cpuModel = (Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name
@@ -1453,12 +1506,14 @@ if ($Mode -eq "Memory") {
             }
         }
         $record = ConvertTo-RamBenchmarkRecord -Runs $results -Commit $commit -Dirty $sourceDirty `
-            -BinarySha256 (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash -Profile $WorkloadProfile `
+            -BinarySha256 $script:BenchmarkArtifactState.binary_sha256 -Profile $WorkloadProfile `
             -SizeMiB $SizeMiB -Level $CompressionLevel -SampleIntervalMs $SampleIntervalMs `
             -InterRunPauseMs $InterRunPauseMs `
             -CpuModel $cpuModel -GpuModel $gpuModel -HipRuntimeVersion $hipRuntimeVersion
         $record.schema_version = 3
         $record.measurement_protocol = 'bytewise-regenerated-v2'
+        $record.measurement_identity_policy = 'source-artifacts-around-observation-v1'
+        $record.binary_dependencies_sha256 = $script:BenchmarkArtifactState.binary_dependencies_sha256
         $record.sampling_policy = $samplingPolicy
         $record.case_quality = $quality
         $record.pilot_runs = @()

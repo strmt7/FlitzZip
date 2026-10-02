@@ -39,6 +39,23 @@ it does not change production codec behavior or establish codec speedups.
 Process resource averages span the whole CLI lifetime, including validation;
 they are not phase-specific utilization measurements. A CRC collision fixture
 checks that the new pass requires byte equality rather than another checksum.
+
+The controller already checked starting commit and CLI hashes before writing
+final JSON. Current records additionally declare
+`measurement_identity_policy=source-artifacts-around-observation-v1`: the
+starting commit, relevant-source dirty state, CLI hash and all app-local DLL
+hashes are checked immediately before and after each observation and at final
+completion, including runs without JSON output. Each observation retains this
+identity and its complete controller `observation_wall_seconds`. Detected
+changes abort rather than relabeling the cohort. Dirty state is a boolean,
+not a digest of uncommitted contents; these boundary checks do not attest
+binary build inputs, externally loaded HIP runtimes/drivers or transient
+changes between checks. A separate verified build-input receipt remains open.
+Graph cohorts with these checks remain separate from historical endpoint-only
+records, which retain their original evidence.
+Returned native statistics are journaled before the post-observation check;
+if that check fails, raw evidence remains without becoming a valid sample.
+
 Schema three additionally preserves pilot observations, fixed confirmation
 plans, all confirmation observations, exact worker/admission geometry and HIP
 transfer/allocation counters. Schema-one and schema-two historical records
@@ -83,9 +100,20 @@ receive the same count. Faster cases get enough planned repeats to reach
 and the end-to-end total, pilot sample variation also requests
 `ceil((100 * sample_sd / mean / target_rse_pct)^2)` observations. The maximum
 of the duration request, phase requests and `-Iterations` is used, with a
-minimum of three and a default ceiling of 15. The uncapped request and any
+minimum of three and a default ceiling of 64. The uncapped request and any
 ceiling are recorded. These defaults are operational choices, not universal
 statistical constants.
+
+Before confirmation, the controller estimates its complete wall workload from
+the maximum pilot `observation_wall_seconds` for each lane/case, plus the
+configured inter-run pause, multiplied by its frozen confirmation count.
+This includes native byte validation and controller preparation/checks, which
+are excluded from product phase times. The estimate and remaining suite budget
+are journaled; an estimated overrun aborts with pilots retained and requires a
+new independently declared run with sufficient time. Counts never shrink to
+fit the budget. Observed maxima are not upper bounds or confidence limits;
+journal/report overhead and future slower observations can still exhaust the
+deadline. The graph validator recomputes the estimate from raw pilots.
 
 `-TargetRelativeStandardErrorPct` defaults to 2. This sample-planning formula
 assumes independent observations and is an approximation based on a small

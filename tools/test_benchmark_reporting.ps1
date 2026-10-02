@@ -694,4 +694,117 @@ if ($byteRun.measurement_protocol -ne 'bytewise-regenerated-v2' -or $byteRun.val
     $byteRun.validation_seconds -ne 2.5 -or $byteRun.wall_seconds -ne 5.5) {
     throw 'Bytewise validation evidence was lost during observation serialization.'
 }
+# Complete observation lifetimes include native validation and controller costs; frozen counts never shrink to fit.
+$wallPilots = @()
+foreach ($lane in @('CPU', 'GPU')) {
+    foreach ($seconds in $(if ($lane -eq 'CPU') { @(10.0, 12.0, 11.0) } else { @(8.0, 9.0, 8.5) })) {
+        $wallPilots += [pscustomobject]@{ Lane = $lane; BlockSizeKiB = 256; ObservationWallSeconds = $seconds }
+    }
+}
+$wallPlans = @(@{ block_size_kib = 256; confirmation_count = 6 })
+$wallBudget = Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots -Plans $wallPlans `
+    -Lanes @('CPU', 'GPU') -RemainingSeconds 129.0 -PauseSeconds 0.25
+if ($wallBudget.estimated_seconds -ne 129.0 -or -not $wallBudget.fits_in_remaining_time) {
+    throw 'Confirmation wall planning omitted a lane, validation lifetime, prescribed count or pause.'
+}
+$tooShort = Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots -Plans $wallPlans `
+    -Lanes @('CPU', 'GPU') -RemainingSeconds 128.999 -PauseSeconds 0.25
+if ($tooShort.fits_in_remaining_time -or $wallPlans[0].confirmation_count -ne 6) {
+    throw 'The confirmation wall planner changed a frozen count or admitted an insufficient budget.'
+}
+foreach ($invalidRemaining in @(0, -1, [double]::NaN, [double]::PositiveInfinity)) {
+    $rejected = $false
+    try {
+        Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots -Plans $wallPlans `
+            -Lanes @('CPU', 'GPU') -RemainingSeconds $invalidRemaining -PauseSeconds 0.25 | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw 'An invalid remaining wall budget was accepted.' }
+}
+foreach ($invalidCount in @(0, 3.5, 65)) {
+    $rejected = $false
+    try {
+        Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots `
+            -Plans @(@{ block_size_kib = 256; confirmation_count = $invalidCount }) `
+            -Lanes @('CPU') -RemainingSeconds 1000 -PauseSeconds 0 | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw 'An invalid frozen confirmation count was accepted.' }
+}
+$rejected = $false
+try {
+    Get-BenchmarkConfirmationWallBudget -PilotRuns @($wallPilots | Where-Object Lane -eq 'CPU') -Plans $wallPlans `
+        -Lanes @('CPU', 'GPU') -RemainingSeconds 1000 -PauseSeconds 0 | Out-Null
+} catch { $rejected = $true }
+if (-not $rejected) { throw 'A missing pilot lane silently reduced the wall budget.' }
+
+# Independent temporary bytes exercise mutation detection; they are not executable or performance fixtures.
+$artifactRoot = Join-Path $env:TEMP ('superzip-artifact-state-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $artifactRoot | Out-Null
+$artifactSource = Join-Path $artifactRoot 'src/codec.cpp'
+$artifactBinary = Join-Path $artifactRoot 'build/Release/fixture.exe'
+$artifactRuntime = Join-Path $artifactRoot 'build/Release/fixture.dll'
+$originalStatFunction = (Get-Item Function:\Invoke-SuperZipStat).ScriptBlock
+try {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $artifactSource), (Split-Path -Parent $artifactBinary) | Out-Null
+    [IO.File]::WriteAllText($artifactSource, 'source bytes')
+    [IO.File]::WriteAllText($artifactBinary, 'CLI bytes')
+    [IO.File]::WriteAllText($artifactRuntime, 'runtime bytes')
+    & git -C $artifactRoot init --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture Git initialization failed.' }
+    & git -C $artifactRoot add -- src/codec.cpp
+    if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture source staging failed.' }
+    & git -C $artifactRoot -c user.name='SuperZip Tests' -c user.email='tests@example.invalid' `
+        -c commit.gpgsign=false -c core.hooksPath=.git/no-hooks commit --quiet -m 'Artifact fixture source'
+    if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture commit failed.' }
+    $frozen = Get-RamBenchmarkArtifactState -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
+    if ($frozen.source_dirty -or $frozen.binary_dependencies_sha256.Count -ne 1 -or
+        ($frozen | ConvertTo-Json -Depth 4).Contains($artifactRoot)) { throw 'Artifact snapshot is dirty, incomplete or leaks a private path.' }
+    Assert-RamBenchmarkArtifactState -Expected $frozen -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
+    foreach ($mutationPath in @($artifactSource, $artifactBinary, $artifactRuntime)) {
+        $originalBytes = [IO.File]::ReadAllBytes($mutationPath)
+        [IO.File]::WriteAllText($mutationPath, 'mutated bytes')
+        $rejected = $false
+        try { Assert-RamBenchmarkArtifactState -Expected $frozen -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary }
+        catch { $rejected = $_.Exception.Message -match 'changed; journal retained' }
+        if (-not $rejected) { throw 'An observed source or artifact mutation was missed.' }
+        if ($mutationPath -eq $artifactSource) {
+            $dirtyStart = Get-RamBenchmarkArtifactState -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
+        }
+        [IO.File]::WriteAllBytes($mutationPath, $originalBytes)
+        Assert-RamBenchmarkArtifactState -Expected $frozen -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
+    }
+    $rejected = $false
+    try { Assert-RamBenchmarkArtifactState -Expected $dirtyStart -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw 'A dirty starting source was relabeled clean.' }
+    Set-Item Function:\Invoke-SuperZipStat -Value {
+        param([string[]]$Arguments)
+        if ($Arguments.Count -ne 1 -or $Arguments[0] -ne 'unit-fixture') { throw 'The observation arguments changed.' }
+        [IO.File]::WriteAllText($artifactBinary, 'changed during observation')
+        return @{ seconds = 0.5 }
+    }
+    $rejected = $false
+    $artifactJournal = Join-Path $artifactRoot 'observation.jsonl'
+    Write-BenchmarkJournal -Path $artifactJournal -Create -Event @{ event = 'protocol' }
+    try {
+        Invoke-FrozenMemoryBenchmark -Arguments @('unit-fixture') -Expected $frozen `
+            -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary -JournalPath $artifactJournal `
+            -JournalContext @{ lane = 'CPU'; block_size_kib = 256; iteration = 1 } | Out-Null
+    } catch { $rejected = $_.Exception.Message -match 'changed; journal retained' }
+    if (-not $rejected) { throw 'The post-observation artifact check did not execute.' }
+    $artifactEvents = @(Get-Content -LiteralPath $artifactJournal | ForEach-Object { $_ | ConvertFrom-Json })
+    $rawOperations = @($artifactEvents | Where-Object event -eq 'raw_operation')
+    if ($rawOperations.Count -ne 1 -or $rawOperations[0].stats.seconds -ne 0.5 -or
+        $rawOperations[0].lane -ne 'CPU' -or $rawOperations[0].block_size_kib -ne 256 -or
+        @($artifactEvents | Where-Object event -eq 'sample').Count -ne 0) {
+        throw 'Returned native evidence was lost or relabeled valid after a failed artifact check.'
+    }
+} finally {
+    Set-Item Function:\Invoke-SuperZipStat -Value $originalStatFunction
+    $resolvedArtifactRoot = [IO.Path]::GetFullPath($artifactRoot)
+    $artifactTempPrefix = [IO.Path]::GetFullPath($env:TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedArtifactRoot.StartsWith($artifactTempPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Refusing artifact fixture cleanup outside the temporary directory.'
+    }
+    Remove-Item -LiteralPath $resolvedArtifactRoot -Recurse -Force
+}
 Write-Output "benchmark_reporting status=passed"

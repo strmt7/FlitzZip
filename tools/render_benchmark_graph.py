@@ -251,6 +251,105 @@ def validate_integrity_protocol(record: dict) -> str:
     return protocol
 
 
+# Purpose: Recompute whether the prescribed confirmation workload fit its declared remaining wall budget.
+# Inputs: Current raw pilots, frozen case counts, pause duration and a maximum-observed-time budget estimate.
+# Outputs: Rejects missing, malformed or inconsistent budget evidence; makes no hard duration guarantee.
+def validate_confirmation_wall_budget(record: dict) -> None:
+    policy = record.get("sampling_policy", {})
+    if not isinstance(policy, dict):
+        raise ValueError("invalid confirmation wall budget policy")
+    if policy.get("method") == "fixed_count":
+        return
+    budget = policy.get("confirmation_wall_budget", {})
+    if not isinstance(budget, dict):
+        raise ValueError("invalid confirmation wall budget")
+    remaining = budget.get("remaining_seconds")
+    estimate = budget.get("estimated_seconds")
+    if (
+        budget.get("method") != "maximum_pilot_observation_wall_plus_pause_times_frozen_counts"
+        or type(remaining) not in (int, float)
+        or not math.isfinite(remaining)
+        or remaining <= 0
+        or type(policy.get("suite_timeout_seconds")) is not int
+        or remaining > policy["suite_timeout_seconds"]
+        or type(estimate) not in (int, float)
+        or not math.isfinite(estimate)
+        or estimate <= 0
+        or budget.get("fits_in_remaining_time") is not True
+        or estimate > remaining
+    ):
+        raise ValueError("invalid confirmation wall budget")
+    pilots = record.get("pilot_runs", [])
+    lanes = {run.get("lane") for run in pilots}
+    expected = 0.0
+    pause = record.get("inter_run_pause_ms", 0) / 1000
+    plans = policy.get("case_plans", [])
+    if not isinstance(plans, list) or any(not isinstance(plan, dict) for plan in plans):
+        raise ValueError("invalid confirmation wall budget plans")
+    for plan in plans:
+        count, block = plan.get("confirmation_count"), plan.get("block_size_kib")
+        if type(count) is not int or not 1 <= count <= 64:
+            raise ValueError("invalid confirmation wall budget count")
+        for lane in lanes:
+            seconds = [
+                run["observation_wall_seconds"]
+                for run in pilots
+                if run.get("lane") == lane and run.get("block_size_kib") == block
+            ]
+            if not seconds:
+                raise ValueError("confirmation wall budget lacks a pilot case")
+            expected += count * (max(seconds) + pause)
+    if not expected or not math.isclose(estimate, expected, rel_tol=1e-9, abs_tol=1e-9):
+        raise ValueError("confirmation wall budget differs from raw pilots")
+
+
+# Purpose: Keep cohorts with observation-time artifact checks separate from historical endpoint-only evidence.
+# Inputs: Source/CLI/app-local DLL identity and matching raw pilot/confirmation snapshots with controller wall times.
+# Outputs: Returns a grouping identity or rejects metadata; does not attest build inputs or HIP drivers.
+def validate_artifact_measurement_identity(record: dict) -> tuple:
+    policy = record.get("measurement_identity_policy", "historical-endpoint-only")
+    runs = record.get("runs", []) + record.get("pilot_runs", [])
+    if any(not isinstance(run, dict) for run in runs):
+        raise ValueError("invalid measurement identity observation")
+    if policy == "historical-endpoint-only":
+        if any(run.get("measurement_identity") is not None for run in runs):
+            raise ValueError("measurement identity policy declaration is missing")
+        return (policy,)
+    if policy != "source-artifacts-around-observation-v1":
+        raise ValueError("unsupported measurement identity policy")
+    dependencies = record.get("binary_dependencies_sha256")
+    if not isinstance(dependencies, dict) or any(
+        not isinstance(name, str)
+        or not name.lower().endswith(".dll")
+        or any(char in name for char in "/\\:")
+        or not isinstance(digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        for name, digest in dependencies.items()
+    ):
+        raise ValueError("invalid app-local runtime identity")
+    expected = {name: record.get(name) for name in ("source_commit", "source_dirty", "binary_sha256")}
+    expected["binary_dependencies_sha256"] = dependencies
+    for run in runs:
+        identity = run.get("measurement_identity")
+        wall = run.get("observation_wall_seconds")
+        native_wall = run.get("wall_seconds")
+        if (
+            not isinstance(identity, dict)
+            or type(identity.get("source_dirty")) is not bool
+            or identity != expected
+            or type(wall) not in (int, float)
+            or not math.isfinite(wall)
+            or type(native_wall) not in (int, float)
+            or not math.isfinite(native_wall)
+            or native_wall <= 0
+            or wall < native_wall
+            or wall <= 0
+        ):
+            raise ValueError("observation measurement identity or wall time changed")
+    validate_confirmation_wall_budget(record)
+    return (policy, tuple(sorted(dependencies.items())))
+
+
 # Purpose: Reject malformed or unreviewed benchmark data before charting it.
 # Inputs: A parsed historical or current RAM record and a local-preview switch.
 # Outputs: Returns normalized run groups or raises ValueError with the invalid field.
@@ -294,6 +393,7 @@ def validate_record(record: dict, allow_dirty: bool) -> tuple[tuple, dict]:
         pause_ms,
         runtime_version_identity(record.get("hip_runtime_version")),
         validate_integrity_protocol(record),
+        validate_artifact_measurement_identity(record),
     )
     groups = defaultdict(lambda: defaultdict(dict))
     runs = record.get("runs")

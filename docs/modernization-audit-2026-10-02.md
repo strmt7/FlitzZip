@@ -809,6 +809,54 @@ Evidence remains in `out/parallel-validation-followup-result-20261002.json` and
 `out/parallel-validation-verification-result-20261002.json`. New RAM measurements
 are pending; this refinement is not a measured product codec speedup.
 
+## Round Eighteen: Complete Observation Lifetimes And Artifact Guards
+
+The clean `0025ce9` Mixed level-five diagnostic completed 42 pilots and 23
+confirmations before an administrative stop. Its predeclared maximum of 15
+confirmations capped five of seven plans; the pilot requested up to 34. Every
+completed observation remains in the original journal, totaling 650 GiB of
+independently byte-checked source with exact archive sizes matching the serial
+validation baseline. No completed sample was discarded or promoted into a
+replacement experiment. This incomplete diagnostic is ineligible for a final
+comparison or publication graph. Validation costs were 3.95–5.79 seconds,
+compared with 24.60–26.49 seconds in the separate serial diagnostic; these are
+development overhead observations, not a controlled product codec speedup.
+The abort receipt and raw evidence remain in ignored
+`out/parallel-validation-scientific-mixed-abort-receipt-20261002.json` and
+`out/parallel-validation-scientific-mixed-20261002.json.samples.jsonl`.
+
+The controller already froze starting commit and CLI hashes and checked them
+before final JSON. The next refinement extends those checks around each native
+observation, includes relevant-source dirty state and app-local DLL hashes, and
+enforces the final check without JSON output. Raw observations carry the frozen
+identity and complete controller wall duration. Graph validation keeps this
+evidence separate from historical endpoint-only records. This is not a verified
+build-input receipt: uncommitted content hashes, externally loaded runtimes and
+drivers remain outside its scope.
+
+The default confirmation ceiling rises to 64. Frozen plans are checked against
+remaining time using complete pilot observation lifetimes, including independent
+validation and controller costs, plus configured pauses. An estimated overrun
+retains the pilots and refuses confirmation without changing counts. Observed
+maxima are estimates, not statistical upper bounds; existing deadlines still
+apply. A replacement study must have a new predeclared policy and new paths.
+
+All seven hosted workflows pass for `0025ce9`; its intermediate snapshot does
+not establish final acceptance. The post-push audit still rejects 213 unapproved
+open alerts. Broader source review, a verified build-input receipt, independent
+corpus comparisons and release gates remain open.
+
+Corrected full verification passes all 31 selected local commands, including
+576 native tests, the 36-format matrix, interoperability, fresh GUI smoke and
+screenshot review, bounded fuzzing and packaging. The initial overlong Python
+contract comment and unused test-mock argument were fixed without weakening
+lint; both failed results remain retained. The successful bounded result is
+`out/observation-guards-full-corrected-result-20261003.json`; its response tail
+is truncated, with no timeout or total output-limit failure. A subsequent
+focused refinement journals returned native statistics before the
+post-observation artifact check, preserving raw evidence if provenance fails
+without converting it into a valid observation.
+
 ## Bounds Review Progress
 
 The six baseline pointer-bounds results contain 21 reported flow variants.

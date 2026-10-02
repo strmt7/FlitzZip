@@ -203,6 +203,36 @@ function Get-BenchmarkConfirmationPlan {
     }
 }
 
+# Purpose: Estimate the frozen confirmation workload from complete pilot observation lifetimes, including validation.
+# Inputs: PilotRuns carry measured controller wall seconds; Plans fix counts, Lanes select cases, and remaining/pause seconds are finite budgets.
+# Outputs: Returns an auditable maximum-observed-time estimate and fit decision, not a confidence or hard upper bound.
+function Get-BenchmarkConfirmationWallBudget {
+    param([object[]]$PilotRuns, [object[]]$Plans, [string[]]$Lanes, [double]$RemainingSeconds, [double]$PauseSeconds)
+    if ([double]::IsNaN($RemainingSeconds) -or [double]::IsInfinity($RemainingSeconds) -or $RemainingSeconds -le 0 -or
+        [double]::IsNaN($PauseSeconds) -or [double]::IsInfinity($PauseSeconds) -or $PauseSeconds -lt 0 -or
+        -not $Plans.Count -or -not $Lanes.Count) { throw 'Invalid confirmation wall budget inputs.' }
+    $estimated = 0.0
+    foreach ($plan in $Plans) {
+        $count = [double]$plan.confirmation_count
+        if ([double]::IsNaN($count) -or [double]::IsInfinity($count) -or $count -lt 1 -or $count -gt 64 -or
+            $count -ne [math]::Floor($count)) { throw 'Invalid frozen confirmation count.' }
+        foreach ($lane in $Lanes) {
+            $runs = @($PilotRuns | Where-Object { $_.BlockSizeKiB -eq $plan.block_size_kib -and $_.Lane -eq $lane })
+            if (-not $runs.Count) { throw 'Confirmation wall budget is missing a pilot case.' }
+            $seconds = @($runs | ForEach-Object { $_.ObservationWallSeconds })
+            foreach ($value in $seconds) {
+                if ($null -eq $value -or [double]::IsNaN([double]$value) -or [double]::IsInfinity([double]$value) -or
+                    $value -le 0) { throw 'Invalid pilot observation wall time.' }
+            }
+            $estimated += $count * (($seconds | Measure-Object -Maximum).Maximum + $PauseSeconds)
+        }
+    }
+    return [ordered]@{ method = 'maximum_pilot_observation_wall_plus_pause_times_frozen_counts'
+        estimated_seconds = $estimated; remaining_seconds = $RemainingSeconds
+        fits_in_remaining_time = ($estimated -le $RemainingSeconds)
+        estimate_limit = 'Observed maxima are not upper bounds; runtime deadlines still apply.' }
+}
+
 # Purpose: Append auditable observations or predeclared plans without replacing existing evidence.
 # Inputs: Path is an optional new JSONL journal, Event is bounded metadata, and Create reserves it exclusively.
 # Outputs: Flushes one UTF-8 line per event; throws on collision or write failure.
@@ -221,7 +251,7 @@ function Write-BenchmarkJournal {
 
 # Purpose: Collect a prescribed sample without changing its count in response to observed confirmation timings.
 # Inputs: Plans fix each case count; Stage separates pilot and confirmation; lanes alternate and block order reverses.
-# Outputs: Returns all observations; journals each completed sample and records any terminal failure before rethrowing.
+# Outputs: Returns all observations with complete controller wall times; journals completed samples and terminal failures.
 function Invoke-BenchmarkPlannedSample {
     param([object[]]$Plans, [string]$Stage, [string]$JournalPath)
     $runs = [Collections.Generic.List[object]]::new()
@@ -240,7 +270,10 @@ function Invoke-BenchmarkPlannedSample {
                         throw "Benchmark suite exceeded ${SuiteTimeoutSeconds}s deadline; incomplete experiment retained."
                     }
                     $flag = if ($lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' }
+                    $observationClock = [Diagnostics.Stopwatch]::StartNew()
                     $run = Invoke-MemoryBenchmarkLane -Lane $lane -ModeFlag $flag -Iteration $iteration -BlockSizeKiB $plan.block_size_kib
+                    Add-Member -InputObject $run -NotePropertyName ObservationWallSeconds `
+                        -NotePropertyValue $observationClock.Elapsed.TotalSeconds -Force
                     Write-BenchmarkJournal -Path $JournalPath -Event @{ event = 'sample'; stage = $Stage; run = $run; recorded_utc = [datetime]::UtcNow.ToString('o') }
                     Assert-BenchmarkSampleIdentity -Run $run -Identities $script:BenchmarkSampleIdentities
                     $runs.Add($run)

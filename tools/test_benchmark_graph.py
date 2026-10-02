@@ -109,7 +109,96 @@ def sampling_fixture() -> dict:
     return record
 
 
+# Purpose: Model one complete current cohort with frozen artifact snapshots and independently checkable wall planning.
+# Inputs: None; values are deterministic test fixtures and never performance evidence.
+# Outputs: Returns paired pilots/confirmations, declared app-local hashes and a maximum-pilot-time budget.
+def artifact_fixture() -> dict:
+    record = sampling_fixture()
+    record.update(
+        measurement_protocol="bytewise-regenerated-v2",
+        measurement_identity_policy="source-artifacts-around-observation-v1",
+        binary_dependencies_sha256={"fixture.dll": "c" * 64},
+    )
+    identity = {
+        key: record[key] for key in ("source_commit", "source_dirty", "binary_sha256", "binary_dependencies_sha256")
+    }
+    for run in record["runs"] + record["pilot_runs"]:
+        run.update(
+            measurement_protocol="bytewise-regenerated-v2",
+            validation_worker_limit=run["workers"],
+            validated_bytes=run["input_bytes"],
+            validation_seconds=2.5,
+            wall_seconds=10.0,
+            measurement_identity=copy.deepcopy(identity),
+            observation_wall_seconds=12.0,
+        )
+    record["sampling_policy"].update(
+        suite_timeout_seconds=300,
+        confirmation_wall_budget={
+            "method": "maximum_pilot_observation_wall_plus_pause_times_frozen_counts",
+            "remaining_seconds": 200,
+            "estimated_seconds": 73.5,
+            "fits_in_remaining_time": True,
+        },
+    )
+    return record
+
+
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Require the raw artifact cohort and observation lifetime, preserving historical compatibility honestly.
+    # Inputs: One current record with independently mutated source, binary, runtime and wall-time fields.
+    # Outputs: Rejects all identity changes and missing policy declarations before publishing a chart.
+    def test_frozen_artifact_observation_identity(self) -> None:
+        record = artifact_fixture()
+        graph.validate_record(record, False)
+        for collection in ("runs", "pilot_runs"):
+            for field, value in (
+                ("source_commit", "d" * 40),
+                ("source_dirty", 0),
+                ("binary_sha256", "d" * 64),
+                ("binary_dependencies_sha256", {"fixture.dll": "d" * 64}),
+            ):
+                mutated = copy.deepcopy(record)
+                mutated[collection][0]["measurement_identity"][field] = value
+                with self.assertRaisesRegex(ValueError, "measurement identity"):
+                    graph.validate_record(mutated, False)
+            for wall in (None, True, float("nan"), float("inf"), 9.5):
+                mutated = copy.deepcopy(record)
+                mutated[collection][0]["observation_wall_seconds"] = wall
+                with self.assertRaisesRegex(ValueError, "measurement identity"):
+                    graph.validate_record(mutated, False)
+        missing = copy.deepcopy(record)
+        missing.pop("measurement_identity_policy")
+        with self.assertRaisesRegex(ValueError, "policy declaration"):
+            graph.validate_record(missing, False)
+        for name in ("../fixture.dll", "C:fixture.dll", "fixture.exe"):
+            mutated = copy.deepcopy(record)
+            mutated["binary_dependencies_sha256"] = {name: "c" * 64}
+            with self.assertRaisesRegex(ValueError, "runtime identity"):
+                graph.validate_record(mutated, False)
+
+    # Purpose: Derive confirmation wall cost from the raw pilot lifetimes rather than trusting a saved fit label.
+    # Inputs: A valid frozen count with malformed, forged or insufficient budget metadata.
+    # Outputs: Rejects every disagreement; historical records remain readable without invented budget fields.
+    def test_confirmation_wall_budget_evidence(self) -> None:
+        record = artifact_fixture()
+        for field, value in (
+            ("method", "discard_slow_pilots"),
+            ("remaining_seconds", 60),
+            ("remaining_seconds", 301),
+            ("estimated_seconds", 72),
+            ("estimated_seconds", float("nan")),
+            ("fits_in_remaining_time", False),
+        ):
+            mutated = copy.deepcopy(record)
+            mutated["sampling_policy"]["confirmation_wall_budget"][field] = value
+            with self.assertRaisesRegex(ValueError, "confirmation wall budget"):
+                graph.validate_record(mutated, False)
+        missing = copy.deepcopy(record)
+        missing["sampling_policy"].pop("confirmation_wall_budget")
+        with self.assertRaisesRegex(ValueError, "confirmation wall budget"):
+            graph.validate_record(missing, False)
+
     # Purpose: Reject CRC-only, partial, or malformed observations labeled as fully bytewise validated.
     # Inputs: Current sampling fixtures with independent protocol and coverage mutations.
     # Outputs: Requires all pilots/confirmations to match and keeps historical protocols incompatible.
