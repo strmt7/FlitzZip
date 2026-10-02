@@ -192,9 +192,11 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
 
 
 def source_digest(entries: list[tuple[str, Path]]) -> str:
-    """Purpose: Fingerprint indexable bytes. Inputs: ordered entries. Outputs: SHA-256 hex digest."""
+    """Purpose: Fingerprint indexable bytes.
+    Inputs: live path/source entries in any Git inventory order.
+    Outputs: canonical SHA-256, unchanged by staging alone."""
     digest = hashlib.sha256()
-    for name, source in entries:
+    for name, source in sorted(entries, key=lambda entry: entry[0]):
         digest.update(name.encode("utf-8", "surrogateescape") + b"\0")
         with source.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):

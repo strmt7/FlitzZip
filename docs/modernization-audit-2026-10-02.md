@@ -198,3 +198,69 @@ audit nevertheless failed: 208 unapproved open scanner records remain, including
 six Zstandard pointer-bounds alerts. Deployment count was zero. The inventory
 and failure log are retained under ignored `out/fresh-audit-post-push-app-*`;
 neither test success nor green workflows resolves that backlog.
+
+## Round Five: Stable Semantic Index Identity
+
+The next actual search refused the index after staging/committing new context
+sources. A real temporary Git checkout reproduced the cause: Git emitted
+untracked `z.py` before tracked `a.py`, then reversed that inventory order after
+staging without changing either file's bytes. The previous digest hashed the
+enumeration order, creating a false freshness mismatch.
+
+The digest now sorts repository paths before hashing their names and exact
+bytes. A real-Git regression proves unchanged staging preserves the fingerprint
+and a subsequent content mutation invalidates it. This removes a demonstrated
+unnecessary refresh; it does not bypass actual source/config freshness checks.
+All 26 context/search contracts and the changed-function gate pass. The frozen
+follow-up full profile passed all 32 required commands; its eight current GUI
+page screenshots were reviewed without an observed layout defect. Exact-SHA
+hosted verification for this follow-up remains pending.
+
+## Codec Workspace Observation And Next Admission Work
+
+A bounded, below-normal-priority diagnostic loaded the identity-verified
+production `libzstd.dll` (`10507`) and exercised its real reusable-context ABI.
+Two seeded fixtures (random bytes and a repeated 4 KiB random record), eight
+block lengths (4 KiB plus all seven production choices), and efforts 1 through
+9 produced 144 exact readbacks. Archive data stayed in RAM; JSON evidence stayed
+in ignored output. This was a memory observation, not a throughput benchmark.
+
+| Input block | Largest observed retained context | Three input-sized buffers |
+| --- | --- | --- |
+| 4 KiB | 106,520 bytes | 12,288 bytes |
+| 256 KiB | 3,138,584 bytes | 786,432 bytes |
+| 1 MiB | 11,002,904 bytes | 3,145,728 bytes |
+| 16 MiB | 11,002,904 bytes | 50,331,648 bytes |
+
+The existing documentation's small-window workspace gap is therefore reproduced.
+These context observations exclude caller buffers and metadata and are not
+worst-case bounds on arbitrary input. The pinned DLL also exports the one-shot
+`ZSTD_estimateCCtxSize` API; its level-nine estimate is 13,100,056 bytes under the
+upstream header contract. That contract excludes streaming and does not bound
+total process memory. No runtime API or admission behavior has yet changed.
+
+Keep the four-block cap while deriving aggregate worker/context, candidate-buffer
+excess, metadata, queue and optional-fallback admission. Production and RAM
+validation must share the eventual policy. Source-hashed, expiring local notes
+preserve this lead without promoting a hypothesis to acceptance. The raw
+observations and estimate records are `out/fresh-audit-workspace-*-20261002.json`.
+
+## Bounds Review Progress
+
+The six baseline pointer-bounds results contain 21 reported flow variants.
+Seven relevant generated dependency files were compared byte-for-byte with the
+original source archive; all match, and the archive hash matches recorded
+provenance. The separate documented downstream patches remain outside this set.
+
+| Reported variants | Inspected boundary |
+| --- | --- |
+| Ten xxHash reads | COVER/FASTCOVER builders retain `0 <= tail <= capacity`; their initial content span ends at allocation end. Shrink iterations bound their span by the successfully finalized dictionary size. xxHash consumes 32-byte stripes and only reads 8/4/1-byte tails when that many bytes remain. |
+| Eight header writes | The ordinary frame path rejects capacity below six bytes; raw blocks check payload plus the three-byte header; split compressed blocks check the three-byte header before entropy encoding. Error returns propagate before advancing output. |
+| Three RLE writes | The target-size and both split routes reach the same helper, whose explicit capacity-below-four rejection precedes the header and `op[3]` write. |
+
+The current product runtime resolves compression/decompression ABI functions,
+not dictionary-training exports. That observation limits product reachability;
+it does not establish safety of every exported dependency API. The added guarded
+production-DLL regressions are finite dynamic evidence, not complete proof of
+all internal branches or a substitute for static triage. These six alerts remain
+open; no finding was dismissed or scanner coverage narrowed by this review.

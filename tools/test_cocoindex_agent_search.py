@@ -234,6 +234,26 @@ class CocoIndexAgentSearchTests(unittest.TestCase):
             self.assertFalse((mirror / "removed.py").exists())
             self.assertEqual((mirror / "new.py").read_bytes(), (repo / "new.py").read_bytes())
 
+    def test_staging_new_source_preserves_fingerprint_until_live_bytes_change(self):
+        """Purpose: Prevent needless refresh after Git staging.
+        Inputs: a real checkout moving an unchanged file from untracked to staged.
+        Outputs: stable digest across ordering changes, invalidated by source mutation."""
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            subprocess.run(["git", "init", "--quiet", str(repo)], check=True, timeout=30)
+            (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "--", "a.py"], cwd=repo, check=True, timeout=30)
+            (repo / "z.py").write_text("z = 1\n", encoding="utf-8")
+            before = tracked_files(repo)
+            original_digest = source_digest(before)
+            subprocess.run(["git", "add", "--", "z.py"], cwd=repo, check=True, timeout=30)
+            after = tracked_files(repo)
+            self.assertEqual({name for name, _ in before}, {name for name, _ in after})
+            self.assertNotEqual([name for name, _ in before], [name for name, _ in after])
+            self.assertEqual(original_digest, source_digest(after))
+            (repo / "z.py").write_text("z = 2\n", encoding="utf-8")
+            self.assertNotEqual(original_digest, source_digest(tracked_files(repo)))
+
 
 if __name__ == "__main__":
     unittest.main()
