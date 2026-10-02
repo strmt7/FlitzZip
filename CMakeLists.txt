@@ -796,8 +796,10 @@ endif()
 
 if(SUPERZIP_BUILD_TESTS)
   enable_testing()
-  add_executable(
-    superzip_tests
+  # Compile tests alongside the app targets; only their final executable needs
+  # the CLI/GUI prerequisites used by process-level regression cases.
+  add_library(
+    superzip_test_objects OBJECT
     tests/cpp/test_main.cpp
     tests/cpp/test_archive_roundtrip.cpp
     tests/cpp/test_archive_verification.cpp
@@ -861,14 +863,16 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_zstd_compat.cpp
     tests/cpp/test_zip_compat.cpp
     tests/cpp/test_zip_verification.cpp)
-  target_link_libraries(superzip_tests PRIVATE superzip_core gdi32 user32)
-  superzip_copy_zstd_runtime(superzip_tests)
-  superzip_copy_wimlib_runtime(superzip_tests)
+  target_link_libraries(superzip_test_objects PRIVATE superzip_core)
   target_compile_definitions(
-    superzip_tests
+    superzip_test_objects
     PRIVATE
       SUPERZIP_TEST_GUI_BUILT=$<TARGET_EXISTS:SuperZip>
       SUPERZIP_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+  add_executable(superzip_tests $<TARGET_OBJECTS:superzip_test_objects>)
+  target_link_libraries(superzip_tests PRIVATE superzip_core gdi32 user32)
+  superzip_copy_zstd_runtime(superzip_tests)
+  superzip_copy_wimlib_runtime(superzip_tests)
   add_dependencies(superzip_tests superzip_cli)
   if(TARGET SuperZip)
     add_dependencies(superzip_tests SuperZip)

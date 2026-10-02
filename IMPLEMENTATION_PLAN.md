@@ -1,5 +1,24 @@
 # SuperZip Enterprise Implementation Plan
 
+## Continuation Checkpoint
+
+The [October 2 development handoff](docs/development-handoff.md) is the current
+entry point for continuing this work. It records the accepted implementation
+baseline, current hosted blockers, the unfinished bounds-review batch, evidence
+locations, ordered implementation workstreams and release acceptance gates.
+Read it before interpreting the older iteration entries below: those entries
+retain dated evidence and can describe superseded versions, counts or deferrals.
+
+The implementation baseline is `e6848d1` on `main`. Its 31 full-profile local
+checks and all seven selected hosted workflows pass. GitHub confirms the two
+private-header alerts fixed, but the completed-analysis inventory still contains
+210 open alerts, including 208 outside the existing Scorecard residual policy.
+The handoff round separates native test object compilation from CLI/GUI executable
+prerequisites to remove an observed build-order barrier without reducing CodeQL
+coverage. This is a scheduling repair, not a measured hosted speedup or a codec
+change. No bounds regression implementation was added. Release 0.8.0 remains
+held until the remaining gates pass and the maintainer approves publication.
+
 ## Current Modernization Sequence
 
 The modernization work proceeds serially. Imported scanner alerts are being
@@ -542,12 +561,14 @@ open. Release 0.8.0 remains unpublished pending the maintainer's green light.
    supported configurations. Track reviewed files and unresolved areas rather
    than implying unchecked code is complete. Every fix needs regression
    evidence, renewed affected checks, and exact-commit post-push verification.
-   Dedicated security work remains deferred until the maintainer resumes it;
-   deferred checks cannot count as passed or support a clean-security claim.
+   Imported finding remediation has resumed; the comprehensive final Codex
+   Security workflow remains uncompleted. Deferred or unavailable checks cannot
+   count as passed or support a clean-security claim.
 8. Push a coherent verified commit, reconcile all dependency PRs, wait for all
    required workflows including release fuzzing, audit remaining alerts and
-   deployments, then publish a new appropriately bumped release. Do not alter
-   findings merely to manufacture a target alert count.
+   deployments, then prepare release 0.8.0 and pause for the maintainer's explicit
+   publication approval. Do not alter findings merely to manufacture a target
+   alert count.
 
 ## Direction
 

@@ -43,6 +43,52 @@ source. Removing tests or vendored translation units would reduce coverage,
 not repair an idle delay. Ordinary VS 2022 compilation took 289 seconds; its
 non-traced build is not a drop-in replacement for the CodeQL database build.
 
+## October 2 Test Compilation Scheduling
+
+The completed `e6848d1` security run `36984122605`, C++ job `110765127423`,
+provides a fresh baseline. GitHub's job API and timestamped logs show:
+
+| Stage | Start/end UTC | Duration |
+| --- | --- | ---: |
+| Whole C++ job | 08:27:27-08:48:53 | 21m26s |
+| Initialize | 08:27:36-08:28:22 | 46s |
+| Traced build | 08:28:22-08:43:16 | 14m54s |
+| Finalize/analyze/upload step | 08:43:16-08:48:46 | 5m30s |
+
+The core library completed at 08:34:21. Its dependents completed at 08:34:46
+(CLI) and 08:37:22 (GUI). Main native test compilation began at 08:37:22;
+the test executable completed at 08:43:16. These completion timestamps identify
+an ordering barrier, not independent target CPU costs. The legacy fault-test
+target compiled earlier and is not part of the delayed main test target.
+
+`superzip_tests` needs the CLI/GUI built for process-level regression cases,
+but its source compilation does not need those executables. Moving its unchanged
+source list into `superzip_test_objects` allows that compilation to compete for
+the same admitted workers alongside the app targets. The final executable keeps
+the original prerequisites, runtime copies, core linkage and CTest identity;
+the object target receives the original fixture/GUI definitions and core usage
+requirements. There is no test removal, unity-build aggregation, precompiled
+object cache, changed optimization mode or split CodeQL database.
+
+GitHub's [analysis-duration guidance](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/analysis-takes-too-long)
+offers resource tuning, language parallelism, scope/schedule changes and query
+selection. Languages already have separate jobs; this repository keeps its full
+manual C++ build, both query suites and push-time scans. The completed job used
+`--threads=4 --ram=14433` for finalization and queries. Guessing more resources,
+dropping tests/vendor code or removing queries is not a defensible speed repair.
+
+The generated CMake graph confirms all 63 source files in the object target,
+with no CLI/GUI dependency there and both prerequisites retained at the final
+executable. All eight selected local checks pass, including 565 HIP-enabled
+native tests, four CTest targets and unpublished package validation. A fresh
+isolated CPU-only target build passes 564 native tests and builds both app
+prerequisites without weakening the production HIP configuration.
+
+Compare the next exact hosted build/analysis stages and source-coverage diagnostics.
+Shared worker contention can offset earlier compilation; removing the barrier
+does not yet prove a wall-time gain or guarantee a sub-20-minute job. A comparison
+between different source revisions/runners is diagnostic, not a controlled speedup.
+
 ## Changes And Preserved Boundaries
 
 - The stateless offline Greenbone integration workflow now cancels a superseded
