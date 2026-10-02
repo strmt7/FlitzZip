@@ -84,6 +84,11 @@ The reviewed help corpus clustered into:
   password recovery, split-set extraction, direct edit-in-archive, shell
   extension behavior, and locked-file compression unless the feature is built
   and tested.
+- Preferences need an actual backend consumer, not only persisted state and a
+  clickable switch. The former solid-mode, timestamp, source-deletion and
+  deletion-confirmation controls had no such consumer and are no longer exposed.
+  Old saved values are ignored and omitted on Apply. Compression keeps source
+  files; format metadata follows the existing adapter contract.
 - Create, extract, verify, benchmark, install, uninstall, and CLI paths need
   explicit tests. A working GUI path does not replace scriptable validation.
 - Security-sensitive options remain explicit opt-ins. Defender scanning,

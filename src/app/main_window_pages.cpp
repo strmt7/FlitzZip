@@ -266,12 +266,8 @@ void MainWindow::draw_compress_page(HDC dc, const RECT& rect, const UiState& sta
     stroke_rect(dc, advanced, kBorder);
     SelectObject(dc, small_font_);
     draw_text(dc, RECT{advanced.left + scale(16), advanced.top + scale(12), advanced.right, advanced.top + scale(36)},
-              L"Advanced", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              L"Verification", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
-    draw_toggle(dc, layout.solid_archive, L"Solid archive", state.solid_archive, ToggleId::SolidArchive);
-    draw_toggle(dc, layout.store_timestamps, L"Store timestamps", state.store_timestamps, ToggleId::StoreTimestamps);
-    draw_toggle(dc, layout.delete_after_compression, L"Delete files after compression", state.delete_after_compression,
-                ToggleId::DeleteAfterCompression);
     draw_toggle(dc, layout.verify, L"Verify SUZIP/ZIP after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
 
@@ -1022,8 +1018,6 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     SelectObject(dc, tiny_font_);
     draw_toggle(dc, layout.open_destination_after_operation, L"Open destination folder after operation",
                 state.open_destination_after_operation, ToggleId::OpenDestinationAfterOperation);
-    draw_toggle(dc, layout.confirm_before_deleting, L"Confirm before deleting files", state.confirm_before_deleting,
-                ToggleId::ConfirmBeforeDeleting);
     draw_toggle(dc, layout.show_operation_summary, L"Show operation summary", state.show_operation_summary,
                 ToggleId::ShowOperationSummary);
     draw_toggle(dc, layout.sha, L"SHA-256 integrity check", state.integrity_hash_opt_in, ToggleId::IntegrityHash);

@@ -99,8 +99,42 @@ counterevidence: 50 comments describe active SIMD operations, two explain
 128-bit arithmetic, one documents an active SVE prefetch signature, and two
 explain constant-initializer requirements. These are static triage results,
 not fixes, GitHub closures or an all-vendor safety claim. No comments, scan
-rules or exclusions were changed to lower the count. The other commented-code
-alerts still require independent review. GPU phase diagnosis, aggregate CPU
+rules or exclusions were changed to lower the count. The other 37 commented-code
+alerts now have individual static reviews: five describe macros, an enum or
+prose, while 32 retain inactive-code or control-flow questions for further
+review. The v0.5 review maps original locations through the accepted constructor
+patch rather than treating stale line numbers as current evidence.
+
+All seven hosted checks for `47e7240` passed, including fuzzing, security and the
+dispatched graph validation. Its security analysis nevertheless added eight
+test-harness alerts, bringing the observed open count to 218. Three identify
+source-file inclusions, four identify exact-zero floating-point assertions, and
+one flags the allocator fixture's direct byte-count allocation. Workflow success
+therefore remains distinct from alert acceptance. The follow-up test target
+compiles the same patched dependency files directly in isolated object files;
+allocator interception does not reach the real allocator or product DLL. Timing
+tests use exact zero classification rather than accepting small nonzero work.
+The allocator alert has static counterevidence against its unsafe-arithmetic
+claim; it remains open and is not described as a repaired vulnerability.
+
+Product review also found four GUI preferences with no backend consumer: solid
+mode, timestamp policy, source deletion and deletion confirmation. Their controls,
+state and persistence are removed without changing archive behavior or deleting
+source files. GUI migration smoke checks both true and false obsolete values,
+their removal on Apply, and preservation of supported effort preferences.
+The GUI-only batch passed all six selected checks, including 560 native tests,
+seven legacy failure-path groups and all-page GUI smoke; normal and compact
+screenshots were inspected. An earlier attempt escalated and failed, but its
+bounded output omitted the initial error. That cause remains unproven; the later
+pass is not presented as a diagnosed repair of that earlier failure. The combined
+follow-up batch passes all nine selected commands: hygiene, changed-language
+lint, HIP Release build, native and legacy tests, function contracts, security
+policy checks, all-page GUI smoke, MSI identity and unpublished package validation.
+Normal and compact screenshots were inspected. These are local correctness
+results; automatic closure of the seven changed test-harness alerts still
+requires the next hosted analysis.
+
+GPU phase diagnosis, aggregate CPU
 workspace accounting, final repeated licensed-software comparisons and graphs,
 end-user documentation, remote security acceptance and the final audit remain
 open. Release 0.8.0 remains unpublished pending the maintainer's green light.

@@ -622,7 +622,7 @@ TEST_CASE(owned_decode_worker_stage_accumulation) {
     REQUIRE_TRUE(std::abs(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::OutputAllocation)] - 4.0) <
                  1e-12);
     REQUIRE_TRUE(std::abs(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)] - 8.0) < 1e-12);
-    REQUIRE_EQ(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::Materialization)], 0.0);
+    REQUIRE_EQ(std::fpclassify(stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::Materialization)]), FP_ZERO);
     REQUIRE_EQ(stats.encode_chunks + stats.decode_chunks + stats.kernel_launches, 0U);
 }
 
@@ -640,8 +640,8 @@ TEST_CASE(worker_stage_timing_overflow_remains_unavailable) {
     const auto stats = superzip::snapshot_gpu_telemetry(telemetry);
     REQUIRE_TRUE(std::isnan(stats.encode_stage_worker_seconds[0]));
     REQUIRE_TRUE(std::isnan(stats.owned_decode_stage_worker_seconds[0]));
-    REQUIRE_EQ(stats.encode_stage_worker_seconds[1], 0.0);
-    REQUIRE_EQ(stats.owned_decode_stage_worker_seconds[1], 0.0);
+    REQUIRE_EQ(std::fpclassify(stats.encode_stage_worker_seconds[1]), FP_ZERO);
+    REQUIRE_EQ(std::fpclassify(stats.owned_decode_stage_worker_seconds[1]), FP_ZERO);
 }
 
 // Purpose: Observe the shared production allocation, materialization and host-CRC stages without changing bytes.
@@ -667,7 +667,7 @@ TEST_CASE(owned_decode_production_stage_timing) {
         REQUIRE_TRUE(empty.bytes().empty());
         for (const auto value :
              superzip::snapshot_gpu_telemetry(*options.telemetry).owned_decode_stage_worker_seconds) {
-            REQUIRE_EQ(value, 0.0);
+            REQUIRE_EQ(std::fpclassify(value), FP_ZERO);
         }
         const auto started = std::chrono::steady_clock::now();
         const auto decoded = superzip::decode_owned_chunk(input, std::span(&block, 1U), input.size(), options);

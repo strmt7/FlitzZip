@@ -53,6 +53,12 @@ against the reference direction.
 - Work starts on a background thread and updates progress through coalesced
   repaint requests.
 - Text is ellipsized or wrapped instead of overflowing.
+- Every visible preference must reach a supported production behavior. Solid
+  mode, timestamp policy and source deletion are not configurable features in
+  the current adapters; the former no-op controls and deletion-confirmation
+  preference have been removed. Old saved keys are ignored and omitted on the
+  next Apply, never promoted into newly destructive behavior. Compression keeps
+  its source files; archive metadata follows each format's existing contract.
 - The applied `Show operation summary` preference is captured when an archive
   job starts. After success, failure, or cancellation, it opens History with
   that job's latest primary result selected and visible, clearing filters that

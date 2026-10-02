@@ -66,9 +66,6 @@ struct CompressLayout {
     RECT method{};
     RECT block_size{};
     RECT advanced{};
-    RECT solid_archive{};
-    RECT store_timestamps{};
-    RECT delete_after_compression{};
     RECT verify{};
     RECT security{};
     RECT sha{};
@@ -119,7 +116,6 @@ struct SettingsLayout {
     RECT log_retention{};
     RECT open_log_file{};
     RECT open_destination_after_operation{};
-    RECT confirm_before_deleting{};
     RECT show_operation_summary{};
 };
 

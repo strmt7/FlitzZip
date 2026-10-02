@@ -177,15 +177,6 @@ bool MainWindow::handle_compress_click(const RECT& content, int x, int y) {
         }
         return true;
     }
-    if (contains_point(layout.solid_archive, x, y)) {
-        return toggle_bool_setting(&UiState::solid_archive, ToggleId::SolidArchive);
-    }
-    if (contains_point(layout.store_timestamps, x, y)) {
-        return toggle_bool_setting(&UiState::store_timestamps, ToggleId::StoreTimestamps);
-    }
-    if (contains_point(layout.delete_after_compression, x, y)) {
-        return toggle_bool_setting(&UiState::delete_after_compression, ToggleId::DeleteAfterCompression);
-    }
     if (contains_point(layout.verify, x, y)) {
         return toggle_bool_setting(&UiState::verify_after_write_opt_in, ToggleId::VerifyAfterWrite);
     }
@@ -557,9 +548,6 @@ bool MainWindow::handle_settings_click(const RECT& content, int x, int y) {
     }
     if (contains_point(layout.open_destination_after_operation, x, y)) {
         return toggle_bool_setting(&UiState::open_destination_after_operation, ToggleId::OpenDestinationAfterOperation);
-    }
-    if (contains_point(layout.confirm_before_deleting, x, y)) {
-        return toggle_bool_setting(&UiState::confirm_before_deleting, ToggleId::ConfirmBeforeDeleting);
     }
     if (contains_point(layout.show_operation_summary, x, y)) {
         return toggle_bool_setting(&UiState::show_operation_summary, ToggleId::ShowOperationSummary);

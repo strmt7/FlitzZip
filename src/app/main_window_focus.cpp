@@ -157,9 +157,6 @@ void MainWindow::add_compress_focus_targets(std::vector<FocusTarget>& targets, c
         append_focus_target(targets, FocusTargetKind::CompressMethod, layout.method);
         append_focus_target(targets, FocusTargetKind::CompressBlockSize, layout.block_size);
     }
-    append_focus_target(targets, FocusTargetKind::CompressSolidArchive, layout.solid_archive);
-    append_focus_target(targets, FocusTargetKind::CompressStoreTimestamps, layout.store_timestamps);
-    append_focus_target(targets, FocusTargetKind::CompressDeleteAfterCompression, layout.delete_after_compression);
     append_focus_target(targets, FocusTargetKind::CompressVerifyAfterWrite, layout.verify);
     append_focus_target(targets, FocusTargetKind::CompressIntegrityHash, layout.sha);
     append_focus_target(targets, FocusTargetKind::CompressDefenderScan, layout.defender);
@@ -195,7 +192,6 @@ void MainWindow::add_settings_focus_targets(std::vector<FocusTarget>& targets, c
     append_focus_target(targets, FocusTargetKind::SettingsRestoreDefaults, layout.restore_defaults);
     append_focus_target(targets, FocusTargetKind::SettingsApply, layout.apply);
     append_focus_target(targets, FocusTargetKind::SettingsOpenDestination, layout.open_destination_after_operation);
-    append_focus_target(targets, FocusTargetKind::SettingsConfirmDelete, layout.confirm_before_deleting);
     append_focus_target(targets, FocusTargetKind::SettingsShowSummary, layout.show_operation_summary);
     append_focus_target(targets, FocusTargetKind::SettingsIntegrityHash, layout.sha);
     append_focus_target(targets, FocusTargetKind::SettingsDefenderScan, layout.defender);

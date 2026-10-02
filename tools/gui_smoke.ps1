@@ -396,7 +396,7 @@ function Wait-GuiLogEvent {
     throw "GUI command did not report '$Message' within five seconds."
 }
 
-# Purpose: Verify legacy preference/effort migration and current-key precedence through actual GUI loads and Apply.
+# Purpose: Verify legacy preference/effort migration, obsolete no-op removal and current-key precedence through actual GUI loads and Apply.
 # Inputs: Exe is the built GUI; SettingsPath is the fixed redirected smoke-only settings file.
 # Outputs: Checks independent launches, cleans only owned processes/settings, and throws on incorrect persistence.
 function Assert-PublicationSettingsMigration {
@@ -419,6 +419,10 @@ function Assert-PublicationSettingsMigration {
     }
     $cases += @{ Values = @{ compressionLevel = 0 }; Expected = $true; Effort = 1 }
     $cases += @{ Values = @{ compressionLevel = 10 }; Expected = $true; Effort = 9 }
+    foreach ($value in @($false, $true)) {
+        $cases += @{ Values = @{ solidArchive = $value; storeTimestamps = $value; deleteAfterCompression = $value;
+                confirmBeforeDeleting = $value; compressionLevel = 7 }; Expected = $true; Effort = 7 }
+    }
     foreach ($case in $cases) {
         $document = $case.Values.Clone()
         if (-not $document.ContainsKey('schema')) { $document.schema = 'superzip.settings.v2' }
@@ -451,6 +455,11 @@ function Assert-PublicationSettingsMigration {
             }
             if ($saved.PSObject.Properties.Name -contains 'verifyMetadataBeforeExtract') {
                 throw 'Applied settings retained the obsolete extraction metadata key.'
+            }
+            foreach ($key in @('solidArchive', 'storeTimestamps', 'deleteAfterCompression', 'confirmBeforeDeleting')) {
+                if ($saved.PSObject.Properties.Name -contains $key) {
+                    throw "Applied settings retained the unsupported no-op key: $key"
+                }
             }
         } finally {
             if (-not $owned.HasExited) {
@@ -517,7 +526,7 @@ function Assert-OperationSummary {
         if ($scenario -ne 'Enabled') {
             Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
             Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
-            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+            Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
             $length = (Get-Item -LiteralPath $logPath).Length
             Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
             Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
@@ -525,7 +534,7 @@ function Assert-OperationSummary {
             Assert-SettingsValue -Path $SettingsPath -Name 'openDestinationAfterOperation' -Expected ($scenario -eq 'Failure')
             if ($scenario -eq 'Disabled') {
                 # An unapplied enable must not change the next job's captured preference.
-                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+                Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
                 Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
             } else {
                 Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 4 -Synchronous
@@ -577,7 +586,7 @@ function Assert-OperationSummary {
         Assert-DesignRectHasColor -Path $path -Dpi $Dpi -Left 1 -Top $top -Right 4 -Bottom ($top + 42) -ExpectedRed 214 -ExpectedGreen 34 -ExpectedBlue 45 -Tolerance 8 -MinPixels 100 -ClientOffsetX $offset.X -ClientOffsetY $offset.Y
     }
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
-    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 261 -Synchronous
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 194 -Synchronous
     $length = (Get-Item -LiteralPath $logPath).Length
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
@@ -907,7 +916,7 @@ function Assert-CompactFormLayout {
         $length = (Get-Item -LiteralPath $logPath).Length
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 875 -DesignY 508 -Synchronous
         Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied and saved'
-        Assert-SettingsValue -Path $SettingsPath -Name 'confirmBeforeDeleting' -Expected (-not $original.confirmBeforeDeleting)
+        Assert-SettingsValue -Path $SettingsPath -Name 'showOperationSummary' -Expected (-not $original.showOperationSummary)
         Assert-SettingsValue -Path $SettingsPath -Name 'logRetentionIndex' -Expected 0
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 175 -DesignY 227 -Synchronous
         Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 650 -DesignY 440 -Synchronous
@@ -1149,24 +1158,18 @@ try {
     Assert-CompressionEffortSelection -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 406
-    Start-Sleep -Milliseconds 80
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 438
-    Start-Sleep -Milliseconds 80
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 560 -DesignY 406
-    Start-Sleep -Milliseconds 80
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 560 -DesignY 438
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 432
     Start-Sleep -Milliseconds 140
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 548
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 512
     Start-Sleep -Milliseconds 140
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 548
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 512
     Start-Sleep -Milliseconds 140
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 583
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 547
     Start-Sleep -Milliseconds 140
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 583
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 547
     Start-Sleep -Milliseconds 140
     # Zstandard is outside the formats that support read-back verification.
-    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 560 -DesignY 438
+    Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 432
     Start-Sleep -Milliseconds 140
     $expectedZstd = Join-Path $smokeDestination "SuperZip-output.zst"
     Remove-Item -LiteralPath $expectedZstd -Force -ErrorAction SilentlyContinue
@@ -1416,7 +1419,6 @@ try {
     foreach ($point in @(
         @(175, 193),
         @(175, 227),
-        @(175, 261),
         @(650, 193),
         @(175, 376),
         @(175, 412),

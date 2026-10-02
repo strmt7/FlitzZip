@@ -42,13 +42,9 @@ enum class ToggleId {
     IntegrityHash,
     DefenderScan,
     GpuRequired,
-    SolidArchive,
-    StoreTimestamps,
-    DeleteAfterCompression,
     ValidateBeforePublish,
     OpenDestinationAfterExtract,
     OpenDestinationAfterOperation,
-    ConfirmBeforeDeleting,
     ShowOperationSummary,
 };
 
@@ -90,9 +86,6 @@ enum class FocusTargetKind {
     CompressLevel,
     CompressMethod,
     CompressBlockSize,
-    CompressSolidArchive,
-    CompressStoreTimestamps,
-    CompressDeleteAfterCompression,
     CompressVerifyAfterWrite,
     CompressIntegrityHash,
     CompressDefenderScan,
@@ -114,7 +107,6 @@ enum class FocusTargetKind {
     SystemUpdateSpeed,
     SystemIoDrive,
     SettingsOpenDestination,
-    SettingsConfirmDelete,
     SettingsShowSummary,
     SettingsIntegrityHash,
     SettingsDefenderScan,
@@ -177,11 +169,7 @@ struct AppSettings {
     int log_retention_index = 0;
     int performance_update_seconds = 3;
     bool open_destination_after_operation = false;
-    bool confirm_before_deleting = true;
     bool show_operation_summary = true;
-    bool solid_archive = true;
-    bool store_timestamps = true;
-    bool delete_after_compression = false;
     bool validate_before_publish = true;
     bool open_destination_after_extract = false;
     bool gpu_required = true;
@@ -221,11 +209,7 @@ struct UiState {
     int io_drive_index = 0;
     int performance_update_seconds = 3;
     bool open_destination_after_operation = false;
-    bool confirm_before_deleting = true;
     bool show_operation_summary = true;
-    bool solid_archive = true;
-    bool store_timestamps = true;
-    bool delete_after_compression = false;
     bool validate_before_publish = true;
     bool open_destination_after_extract = false;
     bool prefer_suzip = true;

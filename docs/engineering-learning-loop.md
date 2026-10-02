@@ -322,6 +322,20 @@ vulnerability. Normative agent rules remain in the operating guide.
 
 ## Adding A New Lesson
 
+Visible preferences must be traced through settings capture and the actual job
+before being described as features. `tools/gui_smoke.ps1` exercises Apply and
+legacy migration, including true/false obsolete no-op values. Never activate an
+old saved deletion preference when removing unsupported state. The October 2
+cleanup removes four controls without introducing source deletion.
+
+Compile fault-injected dependency sources directly in a separate object target,
+with allocator interception confined to those objects. Do not include `.c`
+files from wrapper sources or leak interception into the fixture's real allocator
+or product DLL. Legacy allocation-failure tests must still fail on the original
+defect. For untouched telemetry, test exact zero classification rather than
+using a tolerance that could admit recorded work; retain separate checks for
+non-finite or overflowing timings.
+
 HIP event timing now has bounded accumulation and a persistent unavailable
 state. Encode and owned-decode worker intervals use the same overflow contract;
 never restore unchecked timing `fetch_add` or sum overlapping worker intervals

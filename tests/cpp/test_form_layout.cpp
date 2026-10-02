@@ -27,17 +27,13 @@ template <std::size_t N> void require_separate(const std::array<RECT, N>& contro
 void require_compress(const superzip::app::CompressLayout& layout) {
     require_contained(layout.advanced, layout.area);
     require_contained(layout.security, layout.area);
-    for (const auto& rect :
-         {layout.solid_archive, layout.store_timestamps, layout.delete_after_compression, layout.verify}) {
-        require_contained(rect, layout.advanced);
-    }
+    require_contained(layout.verify, layout.advanced);
     require_contained(layout.sha, layout.security);
     require_contained(layout.defender, layout.security);
     REQUIRE_TRUE(layout.security.bottom < layout.start.top);
     REQUIRE_TRUE(layout.advanced.bottom < layout.start.top);
     require_separate(std::array{layout.archive_name, layout.destination, layout.format, layout.compression_level,
-                                layout.method, layout.block_size, layout.solid_archive, layout.store_timestamps,
-                                layout.delete_after_compression, layout.verify, layout.sha, layout.defender,
+                                layout.method, layout.block_size, layout.verify, layout.sha, layout.defender,
                                 layout.stop, layout.start},
                      layout.area);
 }
@@ -63,8 +59,7 @@ void require_settings(const superzip::app::SettingsLayout& layout) {
         require_contained(panel, layout.area);
         REQUIRE_TRUE(panel.bottom < layout.apply.top);
     }
-    for (const auto& rect :
-         {layout.open_destination_after_operation, layout.confirm_before_deleting, layout.show_operation_summary}) {
+    for (const auto& rect : {layout.open_destination_after_operation, layout.show_operation_summary}) {
         require_contained(rect, layout.general);
     }
     for (const auto& rect : {layout.sha, layout.defender, layout.gpu}) {
@@ -76,10 +71,9 @@ void require_settings(const superzip::app::SettingsLayout& layout) {
     for (const auto& rect : {layout.log_level, layout.log_retention, layout.open_log_file}) {
         require_contained(rect, layout.logging);
     }
-    require_separate(std::array{layout.open_destination_after_operation, layout.confirm_before_deleting,
-                                layout.show_operation_summary, layout.sha, layout.defender, layout.gpu, layout.verify,
-                                layout.memory_policy, layout.log_level, layout.log_retention, layout.open_log_file,
-                                layout.restore_defaults, layout.apply},
+    require_separate(std::array{layout.open_destination_after_operation, layout.show_operation_summary, layout.sha,
+                                layout.defender, layout.gpu, layout.verify, layout.memory_policy, layout.log_level,
+                                layout.log_retention, layout.open_log_file, layout.restore_defaults, layout.apply},
                      layout.area);
 }
 }  // namespace
@@ -105,7 +99,7 @@ TEST_CASE(form_layout_preserves_default_control_and_dropdown_coordinates) {
     REQUIRE_EQ(compress.format.bottom, 248);
     REQUIRE_EQ(compress.destination.left, 657);
     REQUIRE_EQ(compress.advanced.top, 344);
-    REQUIRE_EQ(compress.security.top, 484);
+    REQUIRE_EQ(compress.security.top, 448);
     REQUIRE_EQ(compress.start.top, 650);
     const auto extract = superzip::app::make_extract_layout(content, 96);
     REQUIRE_EQ(extract.overwrite_policy.left, 657);

@@ -694,11 +694,7 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
     state.log_retention_index = settings.log_retention_index;
     state.performance_update_seconds = normalize_performance_update_seconds(settings.performance_update_seconds);
     state.open_destination_after_operation = settings.open_destination_after_operation;
-    state.confirm_before_deleting = settings.confirm_before_deleting;
     state.show_operation_summary = settings.show_operation_summary;
-    state.solid_archive = settings.solid_archive;
-    state.store_timestamps = settings.store_timestamps;
-    state.delete_after_compression = settings.delete_after_compression;
     state.validate_before_publish = settings.validate_before_publish;
     state.open_destination_after_extract = settings.open_destination_after_extract;
     state.gpu_required = settings.gpu_required;
@@ -722,11 +718,7 @@ AppSettings settings_from_state(const UiState& state) {
     settings.log_retention_index = std::clamp(state.log_retention_index, 0, 2);
     settings.performance_update_seconds = normalize_performance_update_seconds(state.performance_update_seconds);
     settings.open_destination_after_operation = state.open_destination_after_operation;
-    settings.confirm_before_deleting = state.confirm_before_deleting;
     settings.show_operation_summary = state.show_operation_summary;
-    settings.solid_archive = state.solid_archive;
-    settings.store_timestamps = state.store_timestamps;
-    settings.delete_after_compression = state.delete_after_compression;
     settings.validate_before_publish = state.validate_before_publish;
     settings.open_destination_after_extract = state.open_destination_after_extract;
     settings.gpu_required = state.gpu_required;
@@ -748,10 +740,7 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
            left.log_retention_index == right.log_retention_index &&
            left.performance_update_seconds == right.performance_update_seconds &&
            left.open_destination_after_operation == right.open_destination_after_operation &&
-           left.confirm_before_deleting == right.confirm_before_deleting &&
-           left.show_operation_summary == right.show_operation_summary && left.solid_archive == right.solid_archive &&
-           left.store_timestamps == right.store_timestamps &&
-           left.delete_after_compression == right.delete_after_compression &&
+           left.show_operation_summary == right.show_operation_summary &&
            left.validate_before_publish == right.validate_before_publish &&
            left.open_destination_after_extract == right.open_destination_after_extract &&
            left.gpu_required == right.gpu_required && left.overwrite == right.overwrite &&
@@ -762,7 +751,8 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
 
 // Purpose: Parse a settings JSON document into a validated snapshot.
 // Inputs: `json` is the complete UTF-8 settings document.
-// Outputs: Returns defaulted settings, preserving legacy effort and publication preferences.
+// Outputs: Returns defaulted settings, preserving legacy effort/publication preferences and ignoring obsolete no-op
+// keys.
 AppSettings parse_settings_json(std::string_view json) {
     AppSettings settings;
     const bool migrate_format_rows = settings_uses_v1_format_rows(json);
@@ -787,13 +777,7 @@ AppSettings parse_settings_json(std::string_view json) {
         json_int_setting(json, "performanceUpdateSeconds", settings.performance_update_seconds, 1, 10));
     settings.open_destination_after_operation =
         json_bool_setting(json, "openDestinationAfterOperation", settings.open_destination_after_operation);
-    settings.confirm_before_deleting =
-        json_bool_setting(json, "confirmBeforeDeleting", settings.confirm_before_deleting);
     settings.show_operation_summary = json_bool_setting(json, "showOperationSummary", settings.show_operation_summary);
-    settings.solid_archive = json_bool_setting(json, "solidArchive", settings.solid_archive);
-    settings.store_timestamps = json_bool_setting(json, "storeTimestamps", settings.store_timestamps);
-    settings.delete_after_compression =
-        json_bool_setting(json, "deleteAfterCompression", settings.delete_after_compression);
     settings.validate_before_publish =
         json_bool_setting(json, "validateBeforePublish",
                           json_bool_setting(json, "verifyMetadataBeforeExtract", settings.validate_before_publish));
@@ -824,11 +808,7 @@ std::string settings_to_json(const AppSettings& settings) {
         << "  \"logRetentionIndex\": " << settings.log_retention_index << ",\n"
         << "  \"performanceUpdateSeconds\": " << settings.performance_update_seconds << ",\n"
         << "  \"openDestinationAfterOperation\": " << bool_text(settings.open_destination_after_operation) << ",\n"
-        << "  \"confirmBeforeDeleting\": " << bool_text(settings.confirm_before_deleting) << ",\n"
         << "  \"showOperationSummary\": " << bool_text(settings.show_operation_summary) << ",\n"
-        << "  \"solidArchive\": " << bool_text(settings.solid_archive) << ",\n"
-        << "  \"storeTimestamps\": " << bool_text(settings.store_timestamps) << ",\n"
-        << "  \"deleteAfterCompression\": " << bool_text(settings.delete_after_compression) << ",\n"
         << "  \"validateBeforePublish\": " << bool_text(settings.validate_before_publish) << ",\n"
         << "  \"openDestinationAfterExtract\": " << bool_text(settings.open_destination_after_extract) << ",\n"
         << "  \"gpuRequired\": " << bool_text(settings.gpu_required) << ",\n"

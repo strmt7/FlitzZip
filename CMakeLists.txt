@@ -877,15 +877,36 @@ if(SUPERZIP_BUILD_TESTS)
   if(WIN32)
     # Compile the production dependency sources with a deterministic allocator
     # interposer; no alternate decoder implementation is used by these tests.
+    add_library(
+      superzip_zstd_legacy_fault_objects OBJECT
+      "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v05.c"
+      "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v06.c"
+      "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v07.c")
+    target_include_directories(
+      superzip_zstd_legacy_fault_objects PRIVATE tests/zstd
+                                                "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+    target_compile_definitions(
+      superzip_zstd_legacy_fault_objects
+      PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
+              _CRT_SECURE_NO_WARNINGS)
+    set(_legacy_allocator_header
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/zstd/intercept_allocations.h")
+    if(MSVC)
+      target_compile_options(
+        superzip_zstd_legacy_fault_objects
+        PRIVATE "/FI${_legacy_allocator_header}")
+    else()
+      target_compile_options(
+        superzip_zstd_legacy_fault_objects
+        PRIVATE -include "${_legacy_allocator_header}")
+    endif()
     add_executable(
       superzip_zstd_legacy_tests
       tests/cpp/test_main.cpp
       tests/cpp/test_zstd_legacy_failures.cpp
       tests/zstd/fault_allocator.c
       tests/zstd/legacy_driver.c
-      tests/zstd/legacy_v05.c
-      tests/zstd/legacy_v06.c
-      tests/zstd/legacy_v07.c
+      $<TARGET_OBJECTS:superzip_zstd_legacy_fault_objects>
       "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/error_private.c"
       "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/xxhash.c")
     target_include_directories(

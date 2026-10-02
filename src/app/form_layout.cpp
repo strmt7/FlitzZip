@@ -40,16 +40,10 @@ CompressLayout make_compress_layout(const RECT& rect, UINT dpi) {
     layout.compression_level = RECT{mid, layout.area.top + scale(124), mid + field_w, layout.area.top + scale(174)};
     layout.method = RECT{left, layout.area.top + scale(194), left + field_w, layout.area.top + scale(244)};
     layout.block_size = RECT{mid, layout.area.top + scale(194), mid + field_w, layout.area.top + scale(244)};
-    layout.advanced = RECT{left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(390)};
-    layout.solid_archive = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(48),
-                                layout.advanced.left + scale(310), layout.advanced.top + scale(76)};
-    layout.store_timestamps = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(80),
-                                   layout.advanced.left + scale(310), layout.advanced.top + scale(108)};
-    layout.delete_after_compression = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(48),
-                                           layout.advanced.left + scale(680), layout.advanced.top + scale(76)};
-    layout.verify = RECT{layout.advanced.left + scale(342), layout.advanced.top + scale(80),
-                         layout.advanced.left + scale(710), layout.advanced.top + scale(108)};
-    layout.security = RECT{left, layout.area.top + scale(410), layout.area.right, layout.area.top + scale(528)};
+    layout.advanced = RECT{left, layout.area.top + scale(270), layout.area.right, layout.area.top + scale(354)};
+    layout.verify = RECT{layout.advanced.left + scale(18), layout.advanced.top + scale(42),
+                         layout.advanced.right - scale(18), layout.advanced.top + scale(74)};
+    layout.security = RECT{left, layout.area.top + scale(374), layout.area.right, layout.area.top + scale(492)};
     layout.sha = RECT{layout.security.left + scale(18), layout.security.top + scale(46),
                       layout.security.left + scale(420), layout.security.top + scale(78)};
     layout.defender = RECT{layout.security.left + scale(18), layout.security.top + scale(82),
@@ -63,15 +57,11 @@ CompressLayout make_compress_layout(const RECT& rect, UINT dpi) {
         layout.format.bottom = layout.compression_level.bottom = layout.area.top + scale(158);
         layout.method.top = layout.block_size.top = layout.area.top + scale(170);
         layout.method.bottom = layout.block_size.bottom = layout.area.top + scale(216);
-        layout.advanced = {left, layout.area.top + scale(230), left + half, layout.area.top + scale(400)};
+        layout.advanced = {left, layout.area.top + scale(230), left + half, layout.area.top + scale(342)};
         layout.security = {layout.advanced.right + scale(18), layout.advanced.top, layout.area.right,
                            layout.advanced.bottom};
-        int top = layout.advanced.top + scale(42);
-        for (RECT* toggle :
-             {&layout.solid_archive, &layout.store_timestamps, &layout.delete_after_compression, &layout.verify}) {
-            *toggle = {layout.advanced.left + scale(18), top, layout.advanced.right - scale(18), top + scale(28)};
-            top += scale(30);
-        }
+        layout.verify = {layout.advanced.left + scale(18), layout.advanced.top + scale(42),
+                         layout.advanced.right - scale(18), layout.advanced.top + scale(74)};
         layout.sha = {layout.security.left + scale(18), layout.security.top + scale(42),
                       layout.security.right - scale(18), layout.security.top + scale(70)};
         layout.defender = {layout.sha.left, layout.sha.bottom + scale(6), layout.sha.right,
@@ -156,10 +146,8 @@ SettingsLayout make_settings_layout(const RECT& rect, UINT dpi) {
                                 layout.logging.right - scale(18), layout.logging.top + scale(118)};
     layout.open_destination_after_operation = RECT{layout.general.left + scale(18), layout.general.top + scale(48),
                                                    layout.general.right - scale(16), layout.general.top + scale(78)};
-    layout.confirm_before_deleting = RECT{layout.general.left + scale(18), layout.general.top + scale(82),
-                                          layout.general.right - scale(16), layout.general.top + scale(112)};
-    layout.show_operation_summary = RECT{layout.general.left + scale(18), layout.general.top + scale(116),
-                                         layout.general.right - scale(16), layout.general.top + scale(146)};
+    layout.show_operation_summary = RECT{layout.general.left + scale(18), layout.general.top + scale(82),
+                                         layout.general.right - scale(16), layout.general.top + scale(112)};
 
     if (layout.area.right - layout.area.left < scale(940)) {
         const int general_right = layout.area.left + (layout.area.right - layout.area.left - scale(18)) / 2;
@@ -167,8 +155,8 @@ SettingsLayout make_settings_layout(const RECT& rect, UINT dpi) {
         layout.general.right = layout.security.right = general_right;
         layout.performance.left += shift;
         layout.logging.left += shift;
-        for (RECT* toggle : {&layout.open_destination_after_operation, &layout.confirm_before_deleting,
-                             &layout.show_operation_summary, &layout.sha, &layout.defender, &layout.gpu}) {
+        for (RECT* toggle : {&layout.open_destination_after_operation, &layout.show_operation_summary, &layout.sha,
+                             &layout.defender, &layout.gpu}) {
             toggle->right = general_right - scale(16);
         }
         layout.verify.left = layout.performance.left + scale(18);
