@@ -191,7 +191,6 @@ OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& so
                                     int compression_level, const ProgressCallback& progress_callback);
 std::wstring compression_block_size_text(int index);
 std::uint32_t compression_block_size_bytes(int index);
-std::wstring memory_policy_text(int index);
 std::wstring log_level_text(int index);
 std::wstring log_retention_text(int index);
 void apply_settings_to_state(const AppSettings& settings, UiState& state);

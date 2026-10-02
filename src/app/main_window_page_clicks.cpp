@@ -552,10 +552,6 @@ bool MainWindow::handle_settings_click(const RECT& content, int x, int y) {
     if (contains_point(layout.show_operation_summary, x, y)) {
         return toggle_bool_setting(&UiState::show_operation_summary, ToggleId::ShowOperationSummary);
     }
-    if (contains_point(layout.memory_policy, x, y)) {
-        open_dropdown(DropdownId::SettingsMemoryPolicy);
-        return true;
-    }
     if (contains_point(layout.log_level, x, y)) {
         open_dropdown(DropdownId::SettingsLogLevel);
         return true;

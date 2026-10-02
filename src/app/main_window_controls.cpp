@@ -285,8 +285,6 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
     case DropdownId::SystemIoDrive: {
         return performance_io_drive_rect(make_system_layout(content, dpi_).monitor);
     }
-    case DropdownId::SettingsMemoryPolicy:
-        return settings_layout(content).memory_policy;
     case DropdownId::SettingsLogLevel:
         return settings_layout(content).log_level;
     case DropdownId::SettingsLogRetention:

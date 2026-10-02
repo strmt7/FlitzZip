@@ -111,7 +111,6 @@ struct SettingsLayout {
     RECT defender{};
     RECT gpu{};
     RECT verify{};
-    RECT memory_policy{};
     RECT log_level{};
     RECT log_retention{};
     RECT open_log_file{};

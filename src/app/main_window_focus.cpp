@@ -197,7 +197,6 @@ void MainWindow::add_settings_focus_targets(std::vector<FocusTarget>& targets, c
     append_focus_target(targets, FocusTargetKind::SettingsDefenderScan, layout.defender);
     append_focus_target(targets, FocusTargetKind::SettingsGpuRequired, layout.gpu);
     append_focus_target(targets, FocusTargetKind::SettingsVerifyAfterWrite, layout.verify);
-    append_focus_target(targets, FocusTargetKind::SettingsMemoryPolicy, layout.memory_policy);
     append_focus_target(targets, FocusTargetKind::SettingsLogLevel, layout.log_level);
     append_focus_target(targets, FocusTargetKind::SettingsLogRetention, layout.log_retention);
     append_focus_target(targets, FocusTargetKind::SettingsOpenLogFile, layout.open_log_file);

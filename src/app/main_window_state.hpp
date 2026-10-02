@@ -60,7 +60,6 @@ enum class DropdownId {
     HistoryStatus,
     GpuUpdateSpeed,
     SystemIoDrive,
-    SettingsMemoryPolicy,
     SettingsLogLevel,
     SettingsLogRetention,
 };
@@ -112,7 +111,6 @@ enum class FocusTargetKind {
     SettingsDefenderScan,
     SettingsGpuRequired,
     SettingsVerifyAfterWrite,
-    SettingsMemoryPolicy,
     SettingsLogLevel,
     SettingsLogRetention,
     SettingsOpenLogFile,
@@ -164,7 +162,6 @@ struct AppSettings {
     int compression_format_index = 0;
     int compression_level_index = kDefaultCompressionLevelIndex;
     int compression_block_size_index = kDefaultCompressionBlockSizeIndex;
-    int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
     int performance_update_seconds = 3;
@@ -200,7 +197,6 @@ struct UiState {
     int compression_format_index = 0;
     int compression_level_index = kDefaultCompressionLevelIndex;
     int compression_block_size_index = kDefaultCompressionBlockSizeIndex;
-    int memory_policy_index = 0;
     int log_level_index = 0;
     int log_retention_index = 0;
     int selected_history_index = -1;

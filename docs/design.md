@@ -56,8 +56,10 @@ against the reference direction.
 - Every visible preference must reach a supported production behavior. Solid
   mode, timestamp policy and source deletion are not configurable features in
   the current adapters; the former no-op controls and deletion-confirmation
-  preference have been removed. Old saved keys are ignored and omitted on the
-  next Apply, never promoted into newly destructive behavior. Compression keeps
+  preference have been removed. The former Memory policy selector likewise
+  had no production consumer; resource admission remains automatic rather than
+  presenting unsupported speed/memory choices. Old saved keys are ignored and
+  omitted on the next Apply, never promoted into newly destructive behavior. Compression keeps
   its source files; archive metadata follows each format's existing contract.
 - The applied `Show operation summary` preference is captured when an archive
   job starts. After success, failure, or cancellation, it opens History with

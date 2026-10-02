@@ -132,11 +132,7 @@ SettingsLayout make_settings_layout(const RECT& rect, UINT dpi) {
                       layout.security.right - scale(16), layout.security.top + scale(152)};
     layout.verify = RECT{layout.performance.left + scale(18), layout.performance.top + scale(48),
                          layout.performance.right - scale(18), layout.performance.top + scale(80)};
-    const int performance_half_right =
-        layout.performance.left + (layout.performance.right - layout.performance.left) / 2;
     const int logging_half_right = layout.logging.left + (layout.logging.right - layout.logging.left) / 2;
-    layout.memory_policy = RECT{layout.performance.left + scale(18), layout.performance.top + scale(94),
-                                performance_half_right, layout.performance.top + scale(140)};
     layout.log_level = RECT{layout.logging.left + scale(18), layout.logging.top + scale(48), logging_half_right,
                             layout.logging.top + scale(94)};
     layout.log_retention = RECT{layout.logging.left + scale(18), layout.logging.top + scale(106), logging_half_right,
@@ -160,8 +156,6 @@ SettingsLayout make_settings_layout(const RECT& rect, UINT dpi) {
             toggle->right = general_right - scale(16);
         }
         layout.verify.left = layout.performance.left + scale(18);
-        layout.memory_policy.left = layout.performance.left + scale(18);
-        layout.memory_policy.right = layout.performance.right - scale(18);
         layout.log_level.left = layout.log_retention.left = layout.logging.left + scale(18);
         layout.log_level.right = layout.log_retention.right = layout.open_log_file.left - scale(12);
     }

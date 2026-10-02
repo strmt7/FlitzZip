@@ -65,15 +65,13 @@ void require_settings(const superzip::app::SettingsLayout& layout) {
     for (const auto& rect : {layout.sha, layout.defender, layout.gpu}) {
         require_contained(rect, layout.security);
     }
-    for (const auto& rect : {layout.verify, layout.memory_policy}) {
-        require_contained(rect, layout.performance);
-    }
+    require_contained(layout.verify, layout.performance);
     for (const auto& rect : {layout.log_level, layout.log_retention, layout.open_log_file}) {
         require_contained(rect, layout.logging);
     }
     require_separate(std::array{layout.open_destination_after_operation, layout.show_operation_summary, layout.sha,
-                                layout.defender, layout.gpu, layout.verify, layout.memory_policy, layout.log_level,
-                                layout.log_retention, layout.open_log_file, layout.restore_defaults, layout.apply},
+                                layout.defender, layout.gpu, layout.verify, layout.log_level, layout.log_retention,
+                                layout.open_log_file, layout.restore_defaults, layout.apply},
                      layout.area);
 }
 }  // namespace
@@ -122,7 +120,7 @@ TEST_CASE(form_layout_compact_controls_keep_native_usable_sizes) {
     REQUIRE_EQ(compress.start.bottom - compress.start.top, 36);
     const auto settings = superzip::app::make_settings_layout(content, 96);
     REQUIRE_TRUE(settings.log_level.right - settings.log_level.left >= 210);
-    REQUIRE_TRUE(settings.memory_policy.right - settings.memory_policy.left >= 360);
+    REQUIRE_TRUE(settings.verify.right - settings.verify.left >= 360);
     REQUIRE_TRUE(settings.log_level.right < settings.open_log_file.left);
 }
 

@@ -152,6 +152,17 @@ below 0.5%, and the busiest GPU engine was below 0.8%; in-run counters are
 retained with the diagnostic evidence. One repeat per configuration does not
 establish a timing trend, new speedup or multi-GPU hardware-support claim.
 
+The remaining Settings trace found one further nonfunctional preference:
+Memory policy changed only a label and saved index, not any archive allocation
+or scheduling policy. Its control, focus target, state and persistence are
+removed; automatic production resource admission is unchanged. Migration smoke
+now checks all three obsolete index values and preservation of effort 7.
+Log level and retention retain verified consumers in the production log path.
+All six selected GUI follow-up checks pass, including the 563 native tests,
+seven legacy groups and all-page smoke. Normal and compact page captures were
+inspected after the smoke process closed. No codec behavior or benchmark path
+changed in this follow-up.
+
 GPU phase diagnosis, aggregate CPU
 workspace accounting, final repeated licensed-software comparisons and graphs,
 end-user documentation, remote security acceptance and the final audit remain

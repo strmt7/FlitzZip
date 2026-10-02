@@ -415,13 +415,16 @@ function Assert-PublicationSettingsMigration {
         $cases += @{ Values = @{ schema = 'superzip.settings.v3'; compressionLevel = $effort; compressionLevelIndex = 4 }; Expected = $true; Effort = $effort }
     }
     foreach ($invalid in @($null, 'invalid', 1.5, 2147483648)) {
-        $cases += @{ Values = @{ compressionLevel = $invalid; memoryPolicyIndex = 1 }; Expected = $true; Effort = 5 }
+        $cases += @{ Values = @{ compressionLevel = $invalid }; Expected = $true; Effort = 5 }
     }
     $cases += @{ Values = @{ compressionLevel = 0 }; Expected = $true; Effort = 1 }
     $cases += @{ Values = @{ compressionLevel = 10 }; Expected = $true; Effort = 9 }
     foreach ($value in @($false, $true)) {
         $cases += @{ Values = @{ solidArchive = $value; storeTimestamps = $value; deleteAfterCompression = $value;
                 confirmBeforeDeleting = $value; compressionLevel = 7 }; Expected = $true; Effort = 7 }
+    }
+    foreach ($index in 0..2) {
+        $cases += @{ Values = @{ memoryPolicyIndex = $index; compressionLevel = 7 }; Expected = $true; Effort = 7 }
     }
     foreach ($case in $cases) {
         $document = $case.Values.Clone()
@@ -456,7 +459,7 @@ function Assert-PublicationSettingsMigration {
             if ($saved.PSObject.Properties.Name -contains 'verifyMetadataBeforeExtract') {
                 throw 'Applied settings retained the obsolete extraction metadata key.'
             }
-            foreach ($key in @('solidArchive', 'storeTimestamps', 'deleteAfterCompression', 'confirmBeforeDeleting')) {
+            foreach ($key in @('solidArchive', 'storeTimestamps', 'deleteAfterCompression', 'confirmBeforeDeleting', 'memoryPolicyIndex')) {
                 if ($saved.PSObject.Properties.Name -contains $key) {
                     throw "Applied settings retained the unsupported no-op key: $key"
                 }
@@ -1429,7 +1432,6 @@ try {
         Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX $point[0] -DesignY $point[1]
         Start-Sleep -Milliseconds 140
     }
-    $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-MemoryPolicy" -OpenX 700 -OpenY 247 -SelectX 700 -SelectY 318 -MenuLeft 622 -MenuTop 274 -MenuRight 887 -MenuBottom 372 -BasePath $basePath -Extension $extension
     foreach ($rowY in @(424, 456, 488)) {
         $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Settings-LogLevel-$rowY" -OpenX 700 -OpenY 384 -SelectX 700 -SelectY $rowY -MenuLeft 622 -MenuTop 412 -MenuRight 887 -MenuBottom 510 -BasePath $basePath -Extension $extension
     }
@@ -1438,7 +1440,6 @@ try {
     }
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1110 -DesignY 666
     Start-Sleep -Milliseconds 250
-    Assert-SettingsValue -Path $smokeSettingsFile -Name "memoryPolicyIndex" -Expected 1
     Assert-SettingsValue -Path $smokeSettingsFile -Name "logLevelIndex" -Expected 2
     Assert-SettingsValue -Path $smokeSettingsFile -Name "logRetentionIndex" -Expected 2
 

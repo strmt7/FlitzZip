@@ -550,18 +550,6 @@ template <std::size_t Count> std::wstring option_text(int index, const std::arra
     return std::wstring(labels[normalized]);
 }
 
-// Purpose: Return the visible memory-policy label.
-// Inputs: `index` is the mutable preferences selection.
-// Outputs: Returns a session preference label.
-std::wstring memory_policy_text(int index) {
-    constexpr std::array<std::wstring_view, 3> labels{
-        L"Balanced",
-        L"Maximum speed",
-        L"Reduced memory use",
-    };
-    return option_text(index, labels);
-}
-
 // Purpose: Return the visible log-level label.
 // Inputs: `index` is the mutable preferences selection.
 // Outputs: Returns a session preference label.
@@ -689,7 +677,6 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
     state.compression_format_index = settings.compression_format_index;
     state.compression_level_index = settings.compression_level_index;
     state.compression_block_size_index = settings.compression_block_size_index;
-    state.memory_policy_index = settings.memory_policy_index;
     state.log_level_index = settings.log_level_index;
     state.log_retention_index = settings.log_retention_index;
     state.performance_update_seconds = normalize_performance_update_seconds(settings.performance_update_seconds);
@@ -713,7 +700,6 @@ AppSettings settings_from_state(const UiState& state) {
     settings.compression_level_index = std::clamp(state.compression_level_index, 0, kCompressionLevelOptionCount - 1);
     settings.compression_block_size_index =
         std::clamp(state.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
-    settings.memory_policy_index = std::clamp(state.memory_policy_index, 0, 2);
     settings.log_level_index = std::clamp(state.log_level_index, 0, 2);
     settings.log_retention_index = std::clamp(state.log_retention_index, 0, 2);
     settings.performance_update_seconds = normalize_performance_update_seconds(state.performance_update_seconds);
@@ -736,8 +722,7 @@ bool settings_equal(const AppSettings& left, const AppSettings& right) {
     return left.compression_format_index == right.compression_format_index &&
            left.compression_level_index == right.compression_level_index &&
            left.compression_block_size_index == right.compression_block_size_index &&
-           left.memory_policy_index == right.memory_policy_index && left.log_level_index == right.log_level_index &&
-           left.log_retention_index == right.log_retention_index &&
+           left.log_level_index == right.log_level_index && left.log_retention_index == right.log_retention_index &&
            left.performance_update_seconds == right.performance_update_seconds &&
            left.open_destination_after_operation == right.open_destination_after_operation &&
            left.show_operation_summary == right.show_operation_summary &&
@@ -770,7 +755,6 @@ AppSettings parse_settings_json(std::string_view json) {
     settings.compression_level_index = persisted_effort - kMinCompressionLevel;
     settings.compression_block_size_index = json_int_setting(
         json, "compressionBlockSizeIndex", settings.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
-    settings.memory_policy_index = json_int_setting(json, "memoryPolicyIndex", settings.memory_policy_index, 0, 2);
     settings.log_level_index = json_int_setting(json, "logLevelIndex", settings.log_level_index, 0, 2);
     settings.log_retention_index = json_int_setting(json, "logRetentionIndex", settings.log_retention_index, 0, 2);
     settings.performance_update_seconds = normalize_performance_update_seconds(
@@ -803,7 +787,6 @@ std::string settings_to_json(const AppSettings& settings) {
         << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
         << "  \"compressionLevel\": " << compression_level_value(settings.compression_level_index) << ",\n"
         << "  \"compressionBlockSizeIndex\": " << settings.compression_block_size_index << ",\n"
-        << "  \"memoryPolicyIndex\": " << settings.memory_policy_index << ",\n"
         << "  \"logLevelIndex\": " << settings.log_level_index << ",\n"
         << "  \"logRetentionIndex\": " << settings.log_retention_index << ",\n"
         << "  \"performanceUpdateSeconds\": " << settings.performance_update_seconds << ",\n"
@@ -1043,8 +1026,6 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
         }
         return drives;
     }
-    case DropdownId::SettingsMemoryPolicy:
-        return {memory_policy_text(0), memory_policy_text(1), memory_policy_text(2)};
     case DropdownId::SettingsLogLevel:
         return {log_level_text(0), log_level_text(1), log_level_text(2)};
     case DropdownId::SettingsLogRetention:
@@ -1080,8 +1061,6 @@ int dropdown_selected_index(const UiState& state, DropdownId id) {
         return performance_update_index_for_seconds(state.performance_update_seconds);
     case DropdownId::SystemIoDrive:
         return normalize_io_drive_index(state.io_drive_index);
-    case DropdownId::SettingsMemoryPolicy:
-        return state.memory_policy_index;
     case DropdownId::SettingsLogLevel:
         return state.log_level_index;
     case DropdownId::SettingsLogRetention:

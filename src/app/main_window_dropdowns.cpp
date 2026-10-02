@@ -137,13 +137,6 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
 void apply_settings_dropdown_selection(UiState& state, DropdownId id, int option_index,
                                        DropdownSelectionFeedback& feedback) {
     switch (id) {
-    case DropdownId::SettingsMemoryPolicy:
-        state.memory_policy_index = std::clamp(option_index, 0, 2);
-        state.status = "Memory policy changed";
-        feedback.add_log = true;
-        feedback.log_severity = LogSeverity::Debug;
-        feedback.log_message = "Memory policy changed";
-        break;
     case DropdownId::SettingsLogLevel:
         state.log_level_index = std::clamp(option_index, 0, 2);
         state.status = "Log level changed";

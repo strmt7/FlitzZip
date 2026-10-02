@@ -1012,7 +1012,7 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_text(
         dc,
         RECT{performance.left + scale(16), performance.top + scale(12), performance.right, performance.top + scale(36)},
-        L"Performance", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        L"Verification", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, RECT{logging.left + scale(16), logging.top + scale(12), logging.right, logging.top + scale(36)},
               L"Logging", kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, tiny_font_);
@@ -1025,7 +1025,6 @@ void MainWindow::draw_settings_page(HDC dc, const RECT& rect, const UiState& sta
     draw_toggle(dc, layout.gpu, L"Require AMD GPU acceleration", state.gpu_required, ToggleId::GpuRequired);
     draw_toggle(dc, layout.verify, L"Verify SUZIP/ZIP after write", state.verify_after_write_opt_in,
                 ToggleId::VerifyAfterWrite);
-    draw_field(dc, layout.memory_policy, L"Memory policy", memory_policy_text(state.memory_policy_index), true);
     draw_field(dc, layout.log_level, L"Log level", log_level_text(state.log_level_index), true);
     draw_field(dc, layout.log_retention, L"Log retention", log_retention_text(state.log_retention_index), true);
     draw_button(dc, layout.open_log_file, L"Open log file", false);
