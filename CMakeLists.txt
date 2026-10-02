@@ -570,6 +570,7 @@ if(SUPERZIP_ENABLE_HIP)
               "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
               "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1"
               "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm_toolchain.ps1"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tools/process_environment.ps1"
               "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm-sdk-lock.json"
       COMMENT "${comment}"
       VERBATIM)

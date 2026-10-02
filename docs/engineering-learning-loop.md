@@ -254,6 +254,12 @@ the Security tab, released artifacts, or the product UI again.
   selector row and must be backed by the core extension registry. Focused C++
   tests reject grouped visible alias labels while still allowing engineering
   docs to describe grouped backend support.
+- Process-local environment restoration must distinguish absent and empty
+  values across Windows PowerShell and PowerShell 7. Compiler scopes, build
+  scheduling and GUI-smoke cleanup use `tools/process_environment.ps1`;
+  `tools/test_process_environment.ps1` covers exact restoration after success,
+  exceptions and nested scopes. A passing check under one shell does not
+  establish the other shell's behavior.
 - Installer process waits are bounded. `tools\security_scan.ps1` rejects
   release workflow edits that restore unbounded `Start-Process -Wait` calls for
   MSI install/repair/uninstall smoke tests, and the MSI smoke timeout must remain

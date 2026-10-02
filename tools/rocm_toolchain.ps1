@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot 'process_environment.ps1')
+
 # Purpose: Read the shared whole-distribution lock used by local builds and hosted provisioning.
 # Inputs: None; reads the repository-owned JSON beside this helper.
 # Outputs: Returns pinned distribution metadata; propagates malformed or unavailable input errors.
@@ -57,12 +59,5 @@ function Invoke-RocmCompilerEnvironment {
         HIP_DEVICE_LIB_PATH = (Join-Path $Root 'lib/llvm/amdgcn/bitcode')
         LLVM_PATH = (Join-Path $Root 'lib/llvm')
     }
-    $previous = @{}
-    foreach ($name in $settings.Keys) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
-    try {
-        foreach ($name in $settings.Keys) { [Environment]::SetEnvironmentVariable($name, $settings[$name], 'Process') }
-        & $Action
-    } finally {
-        foreach ($name in $settings.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
-    }
+    Invoke-SuperZipProcessEnvironment -Settings $settings -Action $Action
 }

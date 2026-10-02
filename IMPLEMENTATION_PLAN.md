@@ -23,6 +23,15 @@ assessment remains pending. The wider audit, security backlog, eligible corpus c
 scientific SDK timing and release acceptance remain open. Release 0.8.0
 remains held for completed gates and explicit publication approval.
 
+The later migration commit `08519a5` fails hosted Windows tests under
+PowerShell 7 because absent process-environment values were restored as empty
+values. The shared fix now restores exact caller state for HIP compilation,
+build scheduling and GUI cleanup, and removes remaining `C:` Program Files
+assumptions from tool discovery. Cross-shell regressions and all 33 full local
+commands pass; exact-SHA hosted assessment of the fix remains pending. Fresh
+hosted SDK/HIP qualification and complete benchmark build-input provenance
+remain prerequisites for the next release/performance assessment.
+
 ## Fresh Audit And Measurement Rounds
 
 The [fresh October 2 audit](docs/modernization-audit-2026-10-02.md) restarts

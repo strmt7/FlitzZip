@@ -32,7 +32,7 @@ function Assert-SingleLine {
 }
 
 # Purpose: Find Visual Studio's vcvarsall.bat across hosted CI and local installations.
-# Inputs: None; probes VSINSTALLDIR, vswhere, and known Visual Studio edition paths.
+# Inputs: None; probes VSINSTALLDIR, vswhere, and edition paths under Windows' Program Files folders.
 # Outputs: Returns the absolute path to vcvarsall.bat or throws when the C++ toolset is unavailable.
 function Find-VcvarsAll {
     $roots = New-Object System.Collections.Generic.List[string]
@@ -45,8 +45,6 @@ function Find-VcvarsAll {
     if ($programFilesX86) {
         $vswhereCandidates += (Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe")
     }
-    $vswhereCandidates += "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-
     $vswhere = $vswhereCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if ($vswhere) {
         $detectedRoots = & $vswhere -all -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
@@ -57,9 +55,12 @@ function Find-VcvarsAll {
         }
     }
 
-    foreach ($majorVersion in @("18", "2022")) {
-        foreach ($edition in @("Enterprise", "Professional", "Community", "BuildTools")) {
-            $roots.Add("C:\Program Files\Microsoft Visual Studio\$majorVersion\$edition")
+    $programFiles = [Environment]::GetFolderPath("ProgramFiles")
+    if ($programFiles) {
+        foreach ($majorVersion in @("18", "2022")) {
+            foreach ($edition in @("Enterprise", "Professional", "Community", "BuildTools")) {
+                $roots.Add((Join-Path $programFiles "Microsoft Visual Studio\$majorVersion\$edition"))
+            }
         }
     }
 

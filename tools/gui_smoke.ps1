@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'process_environment.ps1')
 $repo = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $repo "build\$Configuration\SuperZip.exe"
 if (-not (Test-Path $exe)) {
@@ -1508,13 +1509,18 @@ try {
     if ($previousDpiContext -ne [IntPtr]::Zero) {
         [void][SuperZipNativeUi]::SetThreadDpiAwarenessContext($previousDpiContext)
     }
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_DESTINATION", $previousSmokeDestination, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FILE_SELECTION", $previousSmokeFiles, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_FOLDER_SELECTION", $previousSmokeFolder, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS", $previousSmokeAutoClose, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_CLOSE_FILE", $previousSmokeCloseFile, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT", $previousSmokeSettingsRedirect, "Process")
-    [Environment]::SetEnvironmentVariable("SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN", $previousSmokeShellOpen, "Process")
+    $smokeEnvironment = @{
+        SUPERZIP_GUI_SMOKE_DESTINATION = $previousSmokeDestination
+        SUPERZIP_GUI_SMOKE_FILE_SELECTION = $previousSmokeFiles
+        SUPERZIP_GUI_SMOKE_FOLDER_SELECTION = $previousSmokeFolder
+        SUPERZIP_GUI_SMOKE_AUTO_CLOSE_MS = $previousSmokeAutoClose
+        SUPERZIP_GUI_SMOKE_CLOSE_FILE = $previousSmokeCloseFile
+        SUPERZIP_GUI_SMOKE_SETTINGS_REDIRECT = $previousSmokeSettingsRedirect
+        SUPERZIP_GUI_SMOKE_SUPPRESS_SHELL_OPEN = $previousSmokeShellOpen
+    }
+    foreach ($name in $smokeEnvironment.Keys) {
+        Set-SuperZipProcessEnvironmentValue -Name $name -Value $smokeEnvironment[$name] -Confirm:$false -WhatIf:$false
+    }
     Remove-Item -LiteralPath $smokeCloseFile -Force -ErrorAction SilentlyContinue
     if ($cleanupFailure) {
         throw $cleanupFailure

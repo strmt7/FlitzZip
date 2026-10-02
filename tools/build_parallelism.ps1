@@ -1,4 +1,5 @@
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
+. (Join-Path $PSScriptRoot 'process_environment.ps1')
 
 # Purpose: Admit compiler workers from available RAM instead of an arbitrary fixed CPU cap.
 # Inputs: Requested is CMAKE_BUILD_PARALLEL_LEVEL; ProcessorCount is logical CPUs; AvailableMiB is free RAM.
@@ -34,12 +35,5 @@ function Invoke-SuperZipParallelBuild {
         CMAKE_BUILD_PARALLEL_LEVEL = [string]$Jobs; MultiProcMaxCount = [string]$Jobs
         UseMultiToolTask = 'true'; EnforceProcessCountAcrossBuilds = 'true'
     }
-    $previous = @{}
-    foreach ($name in $settings.Keys) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
-    try {
-        foreach ($name in $settings.Keys) { [Environment]::SetEnvironmentVariable($name, $settings[$name], 'Process') }
-        & $Action
-    } finally {
-        foreach ($name in $settings.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
-    }
+    Invoke-SuperZipProcessEnvironment -Settings $settings -Action $Action
 }

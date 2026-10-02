@@ -56,6 +56,11 @@ dependency scans all use that same selected root. See the
 [repeatable ROCm setup](rocm-toolchain.md) for custom locations, archive reuse,
 integrity checks and compiler-only environment isolation.
 
+Visual Studio edition fallbacks and the .NET SDK probe used for WiX derive
+Program Files locations from Windows' known folders. They do not assume the OS
+or applications are on `C:`. Configured Visual Studio roots and .NET PATH
+candidates continue to support custom installation layouts.
+
 If `tools\build.ps1 -VcvarsVersion` is empty, the HIP object compile helper
 enumerates installed MSVC toolsets under the discovered Visual Studio instance,
 prefers a HIP-compatible toolset when one is present, and falls back to the

@@ -265,6 +265,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
         '^tools/(bootstrap_rocm_sdk|test_bootstrap_rocm_sdk)\.py$',
+        '^tools/(process_environment|test_process_environment)\.ps1$',
         '^tools/rocm-sdk-lock\.json$',
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
         '^tools/(fuzz_memory|test_fuzz_memory)\.py$',

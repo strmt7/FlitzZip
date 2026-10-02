@@ -596,6 +596,46 @@ release targets using separate SDK and build directories containing spaces;
 `out/rocm10-production-six-targets-result-20261002.json` records the bounded pass.
 The independent scientific comparison using the corrected statistics remains open.
 
+## Round Twelve: Installation Path Discovery
+
+A fresh CocoIndex search routed installation discovery to the WiX helper and
+HIP compiler wrapper; exact source inspection found remaining `C:` drive
+assumptions in their Program Files fallbacks. Both now use Windows' known
+Program Files folders. Visual Studio's configured root and `vswhere` discovery,
+and .NET's PATH candidates and SDK-capability probe, remain intact. No machine
+installation or global setting changes. Actual .NET SDK discovery succeeds
+without installing WiX, and all 33 full verification commands pass; evidence is
+`out/portable-discovery-full-verification-result-20261002.json`. Exact-SHA hosted
+assessment remains pending; alternate-machine qualification is not established
+by this local change. Regular hosted workflows use CPU-only builds, so fresh
+hosted whole-SDK provisioning and HIP compilation still require separate
+qualification before release.
+
+## Round Thirteen: Cross-Shell Environment Restoration
+
+Hosted Windows CI fails for `08519a5` on both runner images with
+`Compiler scope leaked its HIP_PATH setting into runtime work.` The failure
+reproduces locally under PowerShell 7.6.5: passing a previously absent value to
+the .NET setter through PowerShell leaves an empty environment value. Windows
+PowerShell 5.1's passing result does not establish PowerShell 7 compatibility.
+
+One shared process-environment helper now explicitly removes absent values and
+restores populated or host-supported empty values. HIP compilation, parallel
+build scheduling and GUI-smoke cleanup use it. Regression checks cover absent,
+empty and populated caller states, nested scopes, action output and exception
+preservation, and invalid-name rejection before mutation. These checks pass
+under Windows PowerShell and PowerShell 7; the original ROCm and build scheduling
+tests also pass under PowerShell 7. All 33 full verification commands pass,
+including the native tests, all-page GUI smoke, format matrix, interoperability,
+bounded fuzzing and packaging. The result is recorded separately in
+`out/cross-shell-full-verification-result-20261002.json`. The next exact-SHA
+hosted assessment remains pending. The failed hosted run remains recorded;
+the first migration commit is not final acceptance.
+
+Before new scientific timing, extend clean-source detection to include the SDK
+lock and shared build/compiler helpers. Fresh hosted whole-SDK provisioning
+and HIP compilation also remain separate release qualification work.
+
 ## Bounds Review Progress
 
 The six baseline pointer-bounds results contain 21 reported flow variants.

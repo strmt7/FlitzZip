@@ -10,10 +10,14 @@ $repo = Split-Path -Parent $PSScriptRoot
 $toolPath = Join-Path $repo "out\tools\wix"
 
 # Purpose: Find a dotnet host with an SDK, preferring the x64 installation on Windows.
-# Inputs: None; probes known Windows x64 path and then PATH candidates.
+# Inputs: None; probes Windows' Program Files folder and then PATH candidates.
 # Outputs: Returns the dotnet executable path or throws when no SDK-capable host is available.
 function Find-DotnetSdk {
-    $candidates = @("C:\Program Files\dotnet\dotnet.exe")
+    $candidates = @()
+    $programFiles = [Environment]::GetFolderPath("ProgramFiles")
+    if ($programFiles) {
+        $candidates += (Join-Path $programFiles "dotnet\dotnet.exe")
+    }
     $commands = Get-Command dotnet -All -ErrorAction SilentlyContinue
     foreach ($command in $commands) {
         if ($command.Source -and ($candidates -notcontains $command.Source)) {

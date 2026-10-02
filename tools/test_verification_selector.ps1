@@ -165,7 +165,8 @@ foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/local_smoke.s
 
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
 foreach ($path in @('tools/rocm_toolchain.ps1', 'tools/bootstrap_rocm_sdk.py', 'tools/test_bootstrap_rocm_sdk.py',
-        'tools/test_rocm_toolchain.ps1', 'tools/rocm-sdk-lock.json', 'tools/compile_hip_object.ps1')) {
+        'tools/test_rocm_toolchain.ps1', 'tools/rocm-sdk-lock.json', 'tools/compile_hip_object.ps1',
+        'tools/process_environment.ps1', 'tools/test_process_environment.ps1')) {
     $rocmPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
     Assert-Selector $rocmPlan.scope.touchesVerification "ROCm build/provisioning inputs require compiler and verifier coverage: $path"
     Assert-Selector (Test-RequiredCommand -Plan $rocmPlan -Id 'rocm-bootstrap-tests') "ROCm provisioning needs offline preservation and archive-boundary tests: $path"

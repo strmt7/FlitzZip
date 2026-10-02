@@ -9,6 +9,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
 & (Join-Path $PSScriptRoot "test_hip_architecture.ps1")
 & (Join-Path $PSScriptRoot "test_rocm_toolchain.ps1")
+& (Join-Path $PSScriptRoot "test_process_environment.ps1")
 & (Join-Path $PSScriptRoot "test_cmake_toolchain.ps1")
 $ctestExe = Join-Path (Split-Path -Parent (Find-CMake -RepoRoot $repo)) 'ctest.exe'
 $build = Join-Path $repo "build"
