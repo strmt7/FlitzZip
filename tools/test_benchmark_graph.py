@@ -147,6 +147,38 @@ class BenchmarkGraphTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "bytewise validation"):
                     graph.validate_record(mutated, False)
 
+    # Purpose: Keep parallel validation geometry explicit and separate from the serial historical protocol.
+    # Inputs: Complete current observations plus missing, fractional, boolean and changed worker limits.
+    # Outputs: Accepts valid v2 coverage, rejects malformed budgets and refuses mixed protocol identities.
+    def test_parallel_bytewise_worker_budget(self) -> None:
+        record = sampling_fixture()
+        record["measurement_protocol"] = "bytewise-regenerated-v2"
+        for run in record["runs"] + record["pilot_runs"]:
+            run.update(
+                measurement_protocol="bytewise-regenerated-v2",
+                validation_worker_limit=run["workers"],
+                validated_bytes=run["input_bytes"],
+                validation_seconds=2.5,
+                wall_seconds=10.0,
+            )
+        identity, _ = graph.validate_record(record, False)
+        serial = copy.deepcopy(record)
+        serial["measurement_protocol"] = "bytewise-regenerated-v1"
+        for run in serial["runs"] + serial["pilot_runs"]:
+            run["measurement_protocol"] = "bytewise-regenerated-v1"
+            run.pop("validation_worker_limit")
+        self.assertNotEqual(identity, graph.validate_record(serial, False)[0])
+        for collection in ("runs", "pilot_runs"):
+            for value in (None, True, 0, 65, 32.5, 31):
+                mutated = copy.deepcopy(record)
+                mutated[collection][0]["validation_worker_limit"] = value
+                with self.assertRaisesRegex(ValueError, "validation worker budget"):
+                    graph.validate_record(mutated, False)
+        missing = copy.deepcopy(record)
+        missing.pop("measurement_protocol")
+        with self.assertRaisesRegex(ValueError, "protocol declaration"):
+            graph.validate_record(missing, False)
+
     # Purpose: Refuse stable-looking measurements that do not follow their frozen admission plan.
     # Inputs: Valid evidence with missing, altered, duplicate or unrelated geometry plans.
     # Outputs: Every configuration mismatch raises instead of producing a publishable chart.

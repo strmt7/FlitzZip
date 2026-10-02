@@ -667,14 +667,17 @@ foreach ($invalid in @('NaN', 'nan', 'Infinity', '-Infinity', '0', '-1')) {
     try { Assert-GpuDiagnosticStat -Stats $diagnostic } catch { $rejected = $true }
     if (-not $rejected) { throw 'A diagnostic accepted invalid timing.' }
 }
-$byteStats = @{ measurement_protocol = 'bytewise-regenerated-v1'; validated_bytes = 10GB
+$byteStats = @{ measurement_protocol = 'bytewise-regenerated-v2'; validated_bytes = 10GB
+    workers = 32; validation_worker_limit = 32
     validation_seconds = 2.5; wall_seconds = 5.5 }
 Assert-BytewiseBenchmarkValidation -Stats $byteStats -ExpectedInputBytes 10GB
-foreach ($mutation in @('measurement_protocol', 'validated_bytes', 'validation_seconds', 'wall_seconds')) {
+foreach ($mutation in @('measurement_protocol', 'validated_bytes', 'validation_seconds', 'wall_seconds',
+        'workers', 'validation_worker_limit')) {
     $invalid = $byteStats.Clone()
     $invalid[$mutation] = $(switch ($mutation) {
         measurement_protocol { 'crc-only-historical' }; validated_bytes { 10GB - 1 }
         validation_seconds { [double]::NaN }; wall_seconds { 1.0 }
+        workers { 0 }; validation_worker_limit { 33 }
     })
     $rejected = $false
     try { Assert-BytewiseBenchmarkValidation -Stats $invalid -ExpectedInputBytes 10GB } catch { $rejected = $true }
@@ -682,10 +685,12 @@ foreach ($mutation in @('measurement_protocol', 'validated_bytes', 'validation_s
 }
 $fixtureRun.ArchiveBytes = 171102811
 $fixtureRun | Add-Member -NotePropertyMembers @{
-    MeasurementProtocol = 'bytewise-regenerated-v1'; ValidatedBytes = 10GB; ValidationSeconds = 2.5; WallSeconds = 5.5
+    MeasurementProtocol = 'bytewise-regenerated-v2'; ValidatedBytes = 10GB; ValidationSeconds = 2.5; WallSeconds = 5.5
+    Workers = 32; ValidationWorkerLimit = 32
 }
 $byteRun = ConvertTo-RamBenchmarkObservation -Run $fixtureRun -SizeMiB 10240
-if ($byteRun.measurement_protocol -ne 'bytewise-regenerated-v1' -or $byteRun.validated_bytes -ne 10GB -or
+if ($byteRun.measurement_protocol -ne 'bytewise-regenerated-v2' -or $byteRun.validated_bytes -ne 10GB -or
+    $byteRun.validation_worker_limit -ne $fixtureRun.Workers -or
     $byteRun.validation_seconds -ne 2.5 -or $byteRun.wall_seconds -ne 5.5) {
     throw 'Bytewise validation evidence was lost during observation serialization.'
 }

@@ -214,21 +214,27 @@ def validate_sampling_protocol(record: dict, allow_dirty: bool) -> tuple:
 # Outputs: Returns a protocol identity or rejects missing coverage, changed protocol or invalid validation cost.
 def validate_integrity_protocol(record: dict) -> str:
     protocol = record.get("measurement_protocol", "crc-only-historical")
-    if protocol not in ("crc-only-historical", "bytewise-regenerated-v1"):
+    bytewise_protocols = ("bytewise-regenerated-v1", "bytewise-regenerated-v2")
+    if protocol not in ("crc-only-historical", *bytewise_protocols):
         raise ValueError("unsupported integrity measurement protocol")
     runs, pilots = record.get("runs"), record.get("pilot_runs", [])
     if not isinstance(runs, list) or not isinstance(pilots, list):
         raise ValueError("invalid integrity observation collections")
     if protocol == "crc-only-historical":
         if any(
-            isinstance(run, dict) and run.get("measurement_protocol") == "bytewise-regenerated-v1"
-            for run in runs + pilots
+            isinstance(run, dict) and run.get("measurement_protocol") in bytewise_protocols for run in runs + pilots
         ):
             raise ValueError("bytewise validation protocol declaration is missing")
         return protocol
     for run in runs + pilots:
         if not isinstance(run, dict):
             raise ValueError("invalid bytewise validation observation")
+        if protocol == "bytewise-regenerated-v2" and (
+            type(run.get("validation_worker_limit")) is not int
+            or not 1 <= run["validation_worker_limit"] <= 64
+            or run["validation_worker_limit"] != run.get("workers")
+        ):
+            raise ValueError("invalid bytewise validation worker budget")
         validation, wall = run.get("validation_seconds"), run.get("wall_seconds")
         if (
             run.get("measurement_protocol") != protocol

@@ -857,7 +857,11 @@ function Assert-BytewiseBenchmarkValidation {
     param([Collections.IDictionary]$Stats, [int64]$ExpectedInputBytes)
     $validation = Get-StatsNumber -Stats $Stats -Key 'validation_seconds'
     $wall = Get-StatsNumber -Stats $Stats -Key 'wall_seconds'
-    if ($Stats['measurement_protocol'] -ne 'bytewise-regenerated-v1' -or
+    $workers = Get-StatsNumber -Stats $Stats -Key 'workers'
+    $validationWorkers = Get-StatsNumber -Stats $Stats -Key 'validation_worker_limit'
+    if ($Stats['measurement_protocol'] -ne 'bytewise-regenerated-v2' -or
+        $null -eq $workers -or $workers -lt 1 -or $workers -gt 64 -or $workers -ne [math]::Floor($workers) -or
+        $validationWorkers -ne $workers -or
         [string]$Stats['validated_bytes'] -cne $ExpectedInputBytes.ToString([Globalization.CultureInfo]::InvariantCulture) -or
         $null -eq $validation -or $validation -le 0 -or $null -eq $wall -or $wall -lt $validation) {
         throw 'Native benchmark requires complete bytewise validation and separate validation/wall timing evidence.'
@@ -932,6 +936,7 @@ function Invoke-MemoryBenchmarkLane {
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
         MeasurementProtocol = $stats['measurement_protocol']
+        ValidationWorkerLimit = [int]$stats['validation_worker_limit']
         ValidatedBytes = [int64]$stats['validated_bytes']
         ValidationSeconds = [double]$stats['validation_seconds']
         WallSeconds = [double]$stats['wall_seconds']
@@ -1037,6 +1042,7 @@ function ConvertTo-RamBenchmarkObservation {
     if ($null -ne $Run.MeasurementProtocol) {
         Assert-BytewiseBenchmarkValidation -Stats @{
             measurement_protocol = $Run.MeasurementProtocol; validated_bytes = $Run.ValidatedBytes
+            workers = $Run.Workers; validation_worker_limit = $Run.ValidationWorkerLimit
             validation_seconds = $Run.ValidationSeconds; wall_seconds = $Run.WallSeconds
         } -ExpectedInputBytes ($SizeMiB * 1MB)
     }
@@ -1100,6 +1106,7 @@ function ConvertTo-RamBenchmarkObservation {
         verify_seconds = $Run.VerifySeconds
         extract_seconds = $Run.ExtractSeconds
         measurement_protocol = $Run.MeasurementProtocol
+        validation_worker_limit = $Run.ValidationWorkerLimit
         validated_bytes = ConvertTo-ExactBenchmarkCounter $Run.ValidatedBytes
         validation_seconds = $Run.ValidationSeconds
         wall_seconds = $Run.WallSeconds
@@ -1451,7 +1458,7 @@ if ($Mode -eq "Memory") {
             -InterRunPauseMs $InterRunPauseMs `
             -CpuModel $cpuModel -GpuModel $gpuModel -HipRuntimeVersion $hipRuntimeVersion
         $record.schema_version = 3
-        $record.measurement_protocol = 'bytewise-regenerated-v1'
+        $record.measurement_protocol = 'bytewise-regenerated-v2'
         $record.sampling_policy = $samplingPolicy
         $record.case_quality = $quality
         $record.pilot_runs = @()

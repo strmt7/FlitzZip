@@ -1,8 +1,10 @@
 #include "cli/memory_benchmark_source.hpp"
 #include "core/result.hpp"
+#include "core/resource_limits.hpp"
 
 #include <algorithm>
 #include <array>
+#include <future>
 #include <string>
 
 namespace superzip::cli {
@@ -184,6 +186,42 @@ void validate_memory_benchmark_bytes(std::span<const std::byte> decoded, std::ui
                                std::to_string(global_offset + offset + (mismatch.first - actual.begin())));
         }
         offset += count;
+    }
+}
+
+// Purpose: Regenerate disjoint reference ranges concurrently without copying or retaining decoded output.
+// Inputs: Stable decoded storage, validated source geometry, profile, and admitted aggregate CPU workers.
+// Outputs: Compares every byte with at most 64 KiB scratch per task; joins readers before any error escapes.
+void validate_memory_benchmark_bytes_parallel(std::span<const std::byte> decoded, std::uint64_t global_offset,
+                                              std::uint64_t total_bytes, std::string_view profile,
+                                              std::uint32_t workers) {
+    if (workers == 0U || workers > kMaxArchiveWorkers) {
+        throw ArchiveError("memory benchmark validation worker limit is outside [1, 64]");
+    }
+    if (global_offset > total_bytes || decoded.size() > total_bytes - global_offset) {
+        throw ArchiveError("memory benchmark validation range exceeds source size");
+    }
+    // Match the existing parallel CRC grain to avoid launching tasks for tiny byte ranges.
+    constexpr std::size_t minimum_task_bytes = 8U * 1024U * 1024U;
+    const auto count = std::max<std::size_t>(1U, std::min<std::size_t>(workers, decoded.size() / minimum_task_bytes));
+    const auto stride = decoded.size() / count;
+    const auto compare_part = [decoded, global_offset, total_bytes, profile, stride, count](std::size_t index) {
+        const auto offset = stride * index;
+        const auto extent = index + 1U == count ? decoded.size() - offset : stride;
+        std::vector<std::byte> scratch;
+        validate_memory_benchmark_bytes(decoded.subspan(offset, extent), global_offset + offset, total_bytes, profile,
+                                        scratch);
+    };
+    std::vector<std::future<void>> pending;
+    pending.reserve(count - 1U);
+    for (std::size_t index = 1U; index < count; ++index) {
+        pending.push_back(std::async(std::launch::async, compare_part, index));
+    }
+    // Future destruction joins remaining tasks on launch/caller/get failures. Ordered gets preserve the
+    // earliest failing range; its serial comparison reports the first differing byte within that range.
+    compare_part(0U);
+    for (auto& task : pending) {
+        task.get();
     }
 }
 

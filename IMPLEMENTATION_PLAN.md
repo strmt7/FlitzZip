@@ -29,9 +29,12 @@ size and all-profile native fixtures. The corrected batch passes 33 full local
 verification commands and 574 native tests. The new protocol separates validation
 costs and telemetry, rejects incomplete graph evidence and preserves historical
 CRC-only records. A hosted Semgrep finding in the SDK test fixture is remediated
-without suppressing the scanner; same-SHA hosted confirmation remains pending.
-Serial validation overhead, fresh dedicated-host statistics and verified binary
-build provenance are the next performance-tooling tasks.
+without suppressing the scanner; GitHub now marks the fixture finding as fixed.
+The post-push audit at `65e40ef` still rejects 214 unapproved open code-scanning
+alerts; this is not final security acceptance. Bounded parallel byte comparison
+passes the corrected seven-command follow-up and 576 native tests under a
+distinct measurement protocol, preserving the serial baseline. Fresh dedicated-host statistics and verified binary build provenance
+remain the next performance-tooling tasks.
 
 The later migration commit `08519a5` fails hosted Windows tests under
 PowerShell 7 because absent process-environment values were restored as empty

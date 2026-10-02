@@ -8,6 +8,8 @@
 
 #include <array>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -27,6 +29,19 @@ bool validation_rejected(std::span<const std::byte> bytes, std::uint64_t offset,
         return true;
     }
     return false;
+}
+
+// Purpose: Inspect parallel integrity failures without accepting unrelated exceptions.
+// Inputs: Borrowed bytes, source geometry/profile and an explicit CPU worker limit.
+// Outputs: Returns the ArchiveError message, or an empty string when the complete comparison succeeds.
+std::string parallel_validation_error(std::span<const std::byte> bytes, std::uint64_t offset, std::uint64_t total,
+                                      std::string_view profile, std::uint32_t workers) {
+    try {
+        superzip::cli::validate_memory_benchmark_bytes_parallel(bytes, offset, total, profile, workers);
+    } catch (const superzip::ArchiveError& error) {
+        return error.what();
+    }
+    return {};
 }
 }  // namespace
 
@@ -68,6 +83,51 @@ TEST_CASE(memory_benchmark_source_rejects_crc_collision) {
     std::vector<std::byte> scratch;
     superzip::cli::validate_memory_benchmark_bytes(original, 0, 640U, "Compressible", scratch);
     REQUIRE_TRUE(validation_rejected(collision, 0, 640U, "Compressible"));
+    REQUIRE_TRUE(!parallel_validation_error(collision, 0, 640U, "Compressible", 64U).empty());
+}
+
+// Purpose: Exercise real parallel partitions, reference tails and deterministic first-error reporting.
+// Inputs: All profiles with an unaligned three-task extent, serial/two/max worker limits and corrupt boundaries.
+// Outputs: Requires byte equality, rejects each corrupted partition and preserves the earliest failing offset.
+TEST_CASE(memory_benchmark_source_parallel_partitions) {
+    constexpr std::size_t extent = 24U * 1024U * 1024U + 123U;
+    constexpr std::uint64_t offset = 1048559U;
+    constexpr auto total = offset + extent + 17U;
+    const auto stride = extent / 3U;
+    std::vector<std::byte> bytes(extent);
+    for (const auto profile : profiles) {
+        superzip::cli::fill_memory_benchmark_chunk(bytes, offset, total, profile);
+        for (const auto workers : {1U, 2U, 64U}) {
+            REQUIRE_TRUE(parallel_validation_error(bytes, offset, total, profile, workers).empty());
+        }
+        for (const auto corrupt_at : {std::size_t{0}, stride, 2U * stride, extent - 1U}) {
+            bytes[corrupt_at] ^= std::byte{1};
+            REQUIRE_EQ(parallel_validation_error(bytes, offset, total, profile, 64U),
+                       "memory benchmark byte validation mismatch at virtual offset " +
+                           std::to_string(offset + corrupt_at));
+            bytes[corrupt_at] ^= std::byte{1};
+        }
+        bytes[stride] ^= std::byte{1};
+        bytes.back() ^= std::byte{1};
+        REQUIRE_EQ(parallel_validation_error(bytes, offset, total, profile, 64U),
+                   "memory benchmark byte validation mismatch at virtual offset " + std::to_string(offset + stride));
+    }
+}
+
+// Purpose: Reject invalid parallel budgets and overflowing ranges before spawning borrowed-buffer readers.
+// Inputs: Empty/tiny sources, invalid worker counts, overflowing geometry and an unsupported nonempty profile.
+// Outputs: Requires explicit errors; valid empty input and the one-byte tail remain accepted.
+TEST_CASE(memory_benchmark_source_parallel_admission) {
+    const std::array<std::byte, 1> zero{};
+    REQUIRE_TRUE(parallel_validation_error({}, 0, 0, "Mixed", 64U).empty());
+    REQUIRE_TRUE(parallel_validation_error(zero, 0, 10U, "Compressible", 1U).empty());
+    REQUIRE_TRUE(!parallel_validation_error(zero, 0, 10U, "Mixed", 0U).empty());
+    REQUIRE_TRUE(!parallel_validation_error(zero, 0, 10U, "Mixed", 65U).empty());
+    REQUIRE_TRUE(!parallel_validation_error(zero, 0, 0, "Mixed", 1U).empty());
+    REQUIRE_TRUE(!parallel_validation_error(zero, std::numeric_limits<std::uint64_t>::max(),
+                                            std::numeric_limits<std::uint64_t>::max(), "Mixed", 1U)
+                      .empty());
+    REQUIRE_TRUE(!parallel_validation_error(zero, 0, 10U, "Unknown", 1U).empty());
 }
 
 // Purpose: Exercise source regeneration against actual production owned CPU decoding for every profile.

@@ -782,9 +782,32 @@ this is not evidence of an exploitable product extractor. The fixture now writes
 its independently declared paths/bytes with exclusive creation instead of
 calling `extractall()`. Production archive inspection, installation preservation
 and the fixture's actual provisioning calls remain exercised. Same-SHA hosted
-confirmation of this remediation is pending; no scanner exclusion is added.
+confirmation now marks that finding fixed; no scanner exclusion is added.
+Windows CI and lint pass at `65e40ef`, while the broader hosted security and
+fuzzing runs remain pending at the intermediate snapshot. The post-push audit
+rejects 214 unapproved open code-scanning alerts. A fixed fixture finding does
+not resolve that backlog or establish final security acceptance.
 A verified binary-build receipt, broader corpus comparisons and final release
 acceptance remain open.
+
+The next protocol, `bytewise-regenerated-v2`, retains the complete byte comparison
+but partitions reference generation across the admitted CPU worker budget.
+Partitions contain at least 8 MiB, matching the existing parallel CRC policy;
+each owns at most 64 KiB scratch. One decoded chunk remains live, and all readers
+join before its storage is released, including exceptional exits. Decode and
+comparison run consecutively, with separate telemetry from the timed phases.
+The reserve covers the maximum 64 worker-local buffers. Raw observations record
+`validation_worker_limit`, and graph validation rejects missing/changed budgets
+and mixed v1/v2 protocols. A reporting fixture initially omitted the new worker
+metadata and was corrected. The follow-up verifier passes all seven selected
+commands, including the HIP Release build, 576 native tests, reporting, graph
+contracts and function documentation. Automatic full escalation also completes
+format interoperability, GUI smoke, bounded fuzzing and packaging; its original
+nonzero wrapper status remains retained rather than relabeled as a clean run.
+All eight main GUI screenshots were reviewed, and PowerShell 7 reporting passes.
+Evidence remains in `out/parallel-validation-followup-result-20261002.json` and
+`out/parallel-validation-verification-result-20261002.json`. New RAM measurements
+are pending; this refinement is not a measured product codec speedup.
 
 ## Bounds Review Progress
 

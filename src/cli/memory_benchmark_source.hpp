@@ -23,4 +23,11 @@ void validate_memory_benchmark_bytes(std::span<const std::byte> decoded, std::ui
                                      std::uint64_t total_bytes, std::string_view profile,
                                      std::vector<std::byte>& scratch);
 
+// Purpose: Compare independent source ranges within an explicit CPU worker and scratch-memory budget.
+// Inputs: Stable borrowed decoded bytes, virtual geometry/profile, and an admitted worker limit in [1, 64].
+// Outputs: Checks every byte or throws; all readers finish before return, including exceptional exits.
+void validate_memory_benchmark_bytes_parallel(std::span<const std::byte> decoded, std::uint64_t global_offset,
+                                              std::uint64_t total_bytes, std::string_view profile,
+                                              std::uint32_t workers);
+
 }  // namespace superzip::cli

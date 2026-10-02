@@ -32,8 +32,8 @@ namespace {
 
 constexpr std::uint64_t kCliMiB = 1024ULL * 1024ULL;
 // Reserve the independent validation output and reference scratch in addition to normal benchmark headroom.
-constexpr std::uint64_t kMemoryBenchmarkReserveBytes =
-    1024ULL * 1024ULL * 1024ULL + superzip::kMaxArchiveChunkBytes + kMemoryBenchmarkReferenceBytes;
+constexpr std::uint64_t kMemoryBenchmarkReserveBytes = 1024ULL * 1024ULL * 1024ULL + superzip::kMaxArchiveChunkBytes +
+                                                       superzip::kMaxArchiveWorkers * kMemoryBenchmarkReferenceBytes;
 constexpr std::array<int, 5> kBenchmarkCompressionLevels{1, 3, superzip::kDefaultCompressionLevel, 7, 9};
 constexpr std::array<std::uint32_t, 7> kBenchmarkBlockSizes{
     256U * 1024U, 512U * 1024U, 1024U * 1024U, 2048U * 1024U, 4096U * 1024U, 8192U * 1024U, 16384U * 1024U,
@@ -645,9 +645,9 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)]
         << " seconds=" << stats.seconds << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
         << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
-        << " extract_seconds=" << result.extract_seconds << " measurement_protocol=bytewise-regenerated-v1"
-        << " validated_bytes=" << result.validated_bytes << " validation_seconds=" << result.validation_seconds
-        << " wall_seconds=" << result.wall_seconds
+        << " extract_seconds=" << result.extract_seconds << " measurement_protocol=bytewise-regenerated-v2"
+        << " validation_worker_limit=" << result.stats.workers << " validated_bytes=" << result.validated_bytes
+        << " validation_seconds=" << result.validation_seconds << " wall_seconds=" << result.wall_seconds
         << " source_generation_worker_seconds=" << result.source_generation_worker_seconds
         << " codec_encode_worker_seconds=" << result.codec_encode_worker_seconds
         << " compress_mib_s=" << mib_per_second(stats.input_bytes, result.compress_seconds)
@@ -668,8 +668,6 @@ void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archi
                                        const superzip::GpuCodecOptions& options, MemoryBenchmarkResult& result) {
     const auto started = std::chrono::steady_clock::now();
     {
-        std::vector<std::byte> scratch;
-        scratch.reserve(kMemoryBenchmarkReferenceBytes);
         auto offset = window_offset;
         for (const auto& chunk : archive) {
             auto decoded = superzip::decode_owned_chunk(chunk.encoded.payload, chunk.encoded.blocks,
@@ -677,7 +675,8 @@ void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archi
             if (decoded.bytes().size() != chunk.uncompressed_size || (options.require_gpu && !decoded.gpu_used)) {
                 throw superzip::ArchiveError("memory benchmark byte validation size/backend mismatch");
             }
-            validate_memory_benchmark_bytes(decoded.bytes(), offset, total_bytes, profile, scratch);
+            validate_memory_benchmark_bytes_parallel(decoded.bytes(), offset, total_bytes, profile,
+                                                     options.worker_count);
             result.validated_bytes = checked_add_cli_u64(result.validated_bytes, chunk.uncompressed_size,
                                                          "memory benchmark validation byte count overflows");
             offset = checked_add_cli_u64(offset, chunk.uncompressed_size, "memory benchmark source offset overflows");
