@@ -129,6 +129,10 @@ TEST_CASE(gpu_block_batch_hip_identity) {
     for (int level = 1; level <= 9; ++level) {
         check_batch_identity(lengths, {.block_size = 256U * 1024U, .compression_level = level});
     }
+    constexpr std::array<std::uint32_t, 13> crc_edges{
+        1U, 127U, 128U, 129U, 255U, 256U, 257U, 8191U, 8192U, 8193U, 32767U, 32768U, 32769U,
+    };
+    check_batch_identity(crc_edges, {.block_size = 256U * 1024U, .compression_level = 5});
     for (std::uint32_t size = 256U * 1024U; size <= superzip::kMaxArchiveBlockBytes; size *= 2U) {
         const std::array<std::uint32_t, 4> edges{3, size - 1U, size, 65537};
         check_batch_identity(edges, {.block_size = size, .compression_level = 9});

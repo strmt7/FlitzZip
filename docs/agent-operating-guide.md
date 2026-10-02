@@ -474,6 +474,9 @@ tools\package.ps1 -Configuration Release
   weakening assertions, or changing file-sharing policy to conceal it.
 - Keep memory bounded. Do not read whole archives or whole large files into memory when streaming APIs are available.
 - Prefer deterministic behavior over hidden global state. Options must be explicit and safe by default.
+- Empty codec jobs must still validate metadata before returning. GPU-use flags
+  must describe dispatched nonempty work, not merely a selected backend; retain
+  regressions for borrowed/owned input, empty output, and malformed empty layouts.
 - Keep dependencies minimal and pinned. New runtime dependencies require maintainer approval and a security rationale.
 - Keep public errors actionable without revealing private paths beyond the user-selected path that failed.
 - Keep comments concise and useful. Avoid restating syntax.

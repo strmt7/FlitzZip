@@ -537,6 +537,7 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/huffman_lookup.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/sparse_pattern_block.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/checksum.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core/crc32_operators.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/resource_limits.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/core/result.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/gpu_codec.hpp"
@@ -546,6 +547,7 @@ if(SUPERZIP_ENABLE_HIP)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/dictionary_matcher.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/sparse_pattern_device.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/hip_codec_support.hpp"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/crc32_device.hpp"
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
       "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1")
 

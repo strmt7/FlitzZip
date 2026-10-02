@@ -424,7 +424,7 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options) {
 
 // Purpose: Encode borrowed input using validated CPU/HIP policy and transactional GPU telemetry.
 // Inputs: `input` remains readable until return; `options` selects effort, block sizing, and backend requirements.
-// Outputs: Returns owned encoded bytes; required-HIP failures throw and never silently select CPU encoding.
+// Outputs: Returns owned encoded bytes; empty input reports no GPU work, and required-HIP failures never fall back.
 EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
     reject_oversized_codec_span(input.size(), "codec input");
@@ -436,7 +436,7 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
             auto encoded = encode_chunk_hip(input, hip_options);
-            encoded.gpu_used = true;
+            encoded.gpu_used = !encoded.blocks.empty();
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return encoded;
         } catch (const GpuError&) {
@@ -457,7 +457,7 @@ EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOption
 
 // Purpose: Encode owned chunk memory through HIP when available and preserve CPU fallback semantics.
 // Inputs: `input` owns uncompressed bytes and `options` selects backend, block size, workers, and telemetry.
-// Outputs: Returns encoded blocks, payload, and source CRC; may move raw HIP payload bytes from `input`.
+// Outputs: Returns encoded blocks/payload/CRC; empty input reports no GPU work, and raw payload may move from input.
 EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
     reject_oversized_codec_span(input.size(), "codec input");
@@ -469,7 +469,7 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
         try {
             auto encoded = encode_owned_chunk_hip(input, hip_options);
-            encoded.gpu_used = true;
+            encoded.gpu_used = !encoded.blocks.empty();
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return encoded;
         } catch (const GpuError&) {
@@ -526,8 +526,8 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
 
 // Purpose: Decode one native SUZIP chunk through HIP when allowed, otherwise through the CPU codec.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output` is exact decoded storage, and `options` selects backend.
-// Outputs: Writes `output` and returns true for successful HIP execution; throws on malformed metadata or required-GPU
-// absence.
+// Outputs: Writes output and returns true only for nonempty HIP work; malformed metadata or required-GPU absence
+// throws.
 bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                   std::span<std::byte> output, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
@@ -546,7 +546,7 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
             reject_cpu_only_blocks_for_hip(blocks, "decode");
             decode_chunk_hip(payload, blocks, output, hip_options);
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return true;
+            return !output.empty();
         } catch (const GpuError&) {
             if (options.require_gpu) {
                 throw;
@@ -566,7 +566,8 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
 
 // Purpose: Compute one decoded SUZIP chunk CRC through HIP when allowed, otherwise through CPU decode and CRC.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output_size` is decoded bytes, and `options` selects backend.
-// Outputs: Returns CRC plus GPU-use flag; throws on malformed metadata, oversized output, or required-GPU absence.
+// Outputs: Returns CRC and a nonempty-GPU-work flag; malformed metadata, oversized output or required-GPU absence
+// throws.
 DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                   std::uint64_t output_size, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
@@ -587,7 +588,7 @@ DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<
             reject_cpu_only_blocks_for_hip(blocks, "CRC verification");
             auto decoded = DecodedChunkCrc{
                 .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
-                .gpu_used = true,
+                .gpu_used = output_size != 0U,
             };
             publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
             return decoded;

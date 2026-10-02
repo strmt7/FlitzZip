@@ -1,11 +1,11 @@
 #include "core/checksum.hpp"
+#include "core/crc32_operators.hpp"
 #include "core/resource_limits.hpp"
 
 #include <algorithm>
 #include <future>
 #include <vector>
 
-#include <array>
 #include <limits>
 
 #include "7zCrc.h"
@@ -13,52 +13,11 @@
 namespace superzip {
 namespace {
 
-// Purpose: Multiply a GF(2) matrix by a vector for CRC combination.
-// Inputs: `matrix` is a 32-row operator and `vector` is the CRC state.
-// Outputs: Returns the transformed CRC state.
-std::uint32_t gf2_matrix_times(const std::array<std::uint32_t, 32>& matrix, std::uint32_t vector) {
-    std::uint32_t sum = 0;
-    std::size_t index = 0;
-    while (vector != 0U) {
-        if ((vector & 1U) != 0U) {
-            sum ^= matrix[index];
-        }
-        vector >>= 1U;
-        ++index;
-    }
-    return sum;
-}
-
-// Purpose: Square a GF(2) matrix operator for CRC combination.
-// Inputs: `matrix` is the operator to square.
-// Outputs: Returns an operator for twice as many zero bits.
-std::array<std::uint32_t, 32> gf2_matrix_square(const std::array<std::uint32_t, 32>& matrix) {
-    std::array<std::uint32_t, 32> square{};
-    for (std::size_t i = 0; i < square.size(); ++i) {
-        square[i] = gf2_matrix_times(matrix, matrix[i]);
-    }
-    return square;
-}
-
 // Purpose: Reuse CRC zero-byte operators for every bit of the supported 64-bit concatenated length.
 // Inputs: None; the fixed ZIP polynomial determines all operators and initialization is thread-safe.
 // Outputs: Returns an immutable 8 KiB table; no per-call allocation or mutable length cache is used.
 const auto& crc_byte_operators() {
-    static const auto operators = [] {
-        std::array<std::array<std::uint32_t, 32>, std::numeric_limits<std::uint64_t>::digits> powers{};
-        std::array<std::uint32_t, 32> bit_operator{};
-        bit_operator[0] = 0xEDB88320U;
-        std::uint32_t row = 1U;
-        for (std::size_t index = 1U; index < bit_operator.size(); ++index) {
-            bit_operator[index] = row;
-            row <<= 1U;
-        }
-        powers[0] = gf2_matrix_square(gf2_matrix_square(gf2_matrix_square(bit_operator)));
-        for (std::size_t index = 1U; index < powers.size(); ++index) {
-            powers[index] = gf2_matrix_square(powers[index - 1U]);
-        }
-        return powers;
-    }();
+    static const auto operators = crc_detail::make_byte_operators<std::numeric_limits<std::uint64_t>::digits>();
     return operators;
 }
 
@@ -100,7 +59,7 @@ std::uint32_t crc32_combine(std::uint32_t first_crc, std::uint32_t second_crc, s
     auto crc = first_crc;
     for (std::size_t index = 0U; second_len != 0U; ++index) {
         if ((second_len & 1U) != 0U) {
-            crc = gf2_matrix_times(operators[index], crc);
+            crc = crc_detail::matrix_times(operators.powers[index], crc);
         }
         second_len >>= 1U;
     }

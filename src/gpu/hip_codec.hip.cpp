@@ -1,6 +1,7 @@
 #include "gpu/gpu_codec.hpp"
 #include "gpu/hip_device.hpp"
 #include "gpu/hip_codec_support.hpp"
+#include "gpu/crc32_device.hpp"
 #include "gpu/dictionary_device.hpp"
 #include "gpu/sparse_pattern_candidate.hpp"
 #include "gpu/dictionary_candidate.hpp"
@@ -534,26 +535,27 @@ __global__ void apply_sparse_patches_kernel(const std::byte* payload, const Devi
     }
 }
 
-// Purpose: Compute one finalized CRC-32 value per fixed-size segment of a device buffer.
-// Inputs: `input`/`input_len` describe device bytes, `segments` is a device output table, and `segment_count` bounds
-// `segment_bytes` sets the launch geometry. Outputs: Writes ordered segment CRCs and lengths for GF(2) concatenation.
+// Purpose: Cooperatively checksum each fixed-size device segment without a long per-thread serial chain.
+// Inputs: input/input_len and output segments are valid device storage; one 256-thread block handles each segment.
+// Outputs: Writes ordered finalized CRCs and lengths with unchanged compact metadata and bounded shared storage.
 __global__ void crc32_segments_kernel(const std::byte* input, std::size_t input_len, DeviceCrcSegment* segments,
                                       std::uint32_t segment_count, std::uint32_t segment_bytes) {
-    const auto segment_index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    const auto segment_index = static_cast<std::uint32_t>(blockIdx.x);
     if (segment_index >= segment_count) {
         return;
     }
-    const auto start = static_cast<std::size_t>(segment_index) * segment_bytes;
-    const auto end = min(start + static_cast<std::size_t>(segment_bytes), input_len);
+    const auto segment_start = static_cast<std::size_t>(segment_index) * segment_bytes;
+    const auto length =
+        static_cast<std::uint32_t>(min(static_cast<std::size_t>(segment_bytes), input_len - segment_start));
+    const auto stride = (length + kCrcSegmentThreads - 1U) / kCrcSegmentThreads;
+    const auto start = min(static_cast<std::uint32_t>(threadIdx.x) * stride, length);
+    const auto end = min(start + stride, length);
     std::uint32_t crc = 0xFFFFFFFFU;
     for (std::size_t pos = start; pos < end; ++pos) {
-        const auto octet = static_cast<std::uint8_t>(input[pos]);
+        const auto octet = static_cast<std::uint8_t>(input[segment_start + pos]);
         crc = kDeviceCrc32Table[(crc ^ octet) & 0xFFU] ^ (crc >> 8U);
     }
-    segments[segment_index] = DeviceCrcSegment{
-        .crc32 = crc ^ 0xFFFFFFFFU,
-        .length = static_cast<std::uint32_t>(end - start),
-    };
+    publish_cooperative_crc32(crc ^ 0xFFFFFFFFU, end - start, segments, segment_index);
 }
 
 struct CrcInputRange {
@@ -561,22 +563,25 @@ struct CrcInputRange {
     std::uint32_t length;
 };
 
-// Purpose: Checksum independent source ranges in a single HIP launch without crossing file/block boundaries.
-// Inputs: input and ranges are validated device storage; segment_count bounds the output table.
-// Outputs: Writes one finalized CRC and byte count per range, in stable input order.
+// Purpose: Cooperatively checksum independent ranges without crossing file/block boundaries.
+// Inputs: input/ranges are valid device storage; one 256-thread block handles each range of at most 32 KiB.
+// Outputs: Writes one finalized CRC and byte count per range with bounded shared storage and stable input order.
 __global__ void crc32_independent_ranges_kernel(const std::byte* input, const CrcInputRange* ranges,
                                                 DeviceCrcSegment* segments, std::uint32_t segment_count) {
-    const auto index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    const auto index = static_cast<std::uint32_t>(blockIdx.x);
     if (index >= segment_count) {
         return;
     }
     const auto range = ranges[index];
+    const auto stride = (range.length + kCrcSegmentThreads - 1U) / kCrcSegmentThreads;
+    const auto start = min(static_cast<std::uint32_t>(threadIdx.x) * stride, range.length);
+    const auto end = min(start + stride, range.length);
     std::uint32_t checksum = 0xFFFFFFFFU;
-    for (std::uint32_t pos = 0; pos < range.length; ++pos) {
+    for (std::uint32_t pos = start; pos < end; ++pos) {
         const auto octet = static_cast<std::uint8_t>(input[range.offset + pos]);
         checksum = kDeviceCrc32Table[(checksum ^ octet) & 0xFFU] ^ (checksum >> 8U);
     }
-    segments[index] = DeviceCrcSegment{.crc32 = checksum ^ 0xFFFFFFFFU, .length = range.length};
+    publish_cooperative_crc32(checksum ^ 0xFFFFFFFFU, end - start, segments, index);
 }
 
 // Purpose: Locate the decoded block that contains one output byte offset.
@@ -601,20 +606,23 @@ __device__ std::uint32_t find_decoded_block(const DeviceBlock* blocks, std::uint
     return block_count;
 }
 
-// Purpose: Compute finalized CRC-32 values for decoded-stream segments without a decoded temporary buffer.
-// Inputs: `payload`/`blocks` describe HIP-supported encoded data, `output_len` bounds decoded bytes, and `segments`
-// receives one CRC result per selected-size decoded segment; `segment_bytes` sets that geometry.
-// Outputs: Writes ordered segment CRCs and lengths for host-side CRC concatenation.
+// Purpose: Cooperatively checksum simple decoded streams without allocating a decoded temporary buffer.
+// Inputs: payload/blocks/output_len describe a validated raw/fill/pattern layout; each block handles one segment.
+// Outputs: Writes ordered segment CRCs/lengths, with uniform barriers even for empty per-thread tails.
 __global__ void decoded_crc32_segments_kernel(const std::byte* payload, const DeviceBlock* blocks,
                                               std::uint32_t block_count, std::size_t output_len,
                                               DeviceCrcSegment* segments, std::uint32_t segment_count,
                                               std::uint32_t segment_bytes) {
-    const auto segment_index = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    const auto segment_index = static_cast<std::uint32_t>(blockIdx.x);
     if (segment_index >= segment_count) {
         return;
     }
-    const auto start = static_cast<std::size_t>(segment_index) * segment_bytes;
-    const auto end = min(start + static_cast<std::size_t>(segment_bytes), output_len);
+    const auto segment_start = static_cast<std::size_t>(segment_index) * segment_bytes;
+    const auto length =
+        static_cast<std::uint32_t>(min(static_cast<std::size_t>(segment_bytes), output_len - segment_start));
+    const auto stride = (length + kCrcSegmentThreads - 1U) / kCrcSegmentThreads;
+    const auto start = segment_start + min(static_cast<std::uint32_t>(threadIdx.x) * stride, length);
+    const auto end = segment_start + min(static_cast<std::uint32_t>(threadIdx.x + 1U) * stride, length);
     std::uint32_t crc = 0xFFFFFFFFU;
     auto block_index = find_decoded_block(blocks, block_count, start);
     std::size_t pos = start;
@@ -661,10 +669,7 @@ __global__ void decoded_crc32_segments_kernel(const std::byte* payload, const De
             break;
         }
     }
-    segments[segment_index] = DeviceCrcSegment{
-        .crc32 = crc ^ 0xFFFFFFFFU,
-        .length = static_cast<std::uint32_t>(end - start),
-    };
+    publish_cooperative_crc32(crc ^ 0xFFFFFFFFU, static_cast<std::uint32_t>(end - start), segments, segment_index);
 }
 
 // Purpose: Run integer-heavy work over a device buffer for the standalone GPU diagnostic.
@@ -758,8 +763,8 @@ std::uint32_t compute_crc32_device(const std::byte* device_input, std::uint64_t 
     HipDeviceMemoryReservation reservation(segment_bytes, action);
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc CRC segments");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
-    constexpr int threads = 256;
-    const auto grid = static_cast<unsigned int>((segments + threads - 1U) / threads);
+    constexpr auto threads = kCrcSegmentThreads;
+    const auto grid = segments;
     auto events = make_hip_event_pair("create crc32_segments_kernel events");
     launch_measured_kernel(crc32_segments_kernel, grid, threads, 0, hipStreamPerThread, events,
                            "launch crc32_segments_kernel", device_input, static_cast<std::size_t>(input_len),
@@ -805,8 +810,8 @@ std::vector<std::uint32_t> compute_block_crc32_device(const std::byte* device_in
               "hipMemcpy batch CRC ranges");
     record_gpu_h2d_bytes(telemetry, range_bytes);
     const auto count = static_cast<std::uint32_t>(ranges.size());
-    constexpr unsigned int threads = 256;
-    const auto grid = (count + threads - 1U) / threads;
+    constexpr auto threads = kCrcSegmentThreads;
+    const auto grid = count;
     auto events = make_hip_event_pair("create independent CRC events");
     launch_measured_kernel(crc32_independent_ranges_kernel, grid, threads, 0, hipStreamPerThread, events,
                            "launch independent CRC kernel", device_input, device_ranges.get(), device_segments.get(),
@@ -846,8 +851,8 @@ std::uint32_t compute_decoded_crc32_device(const std::byte* device_payload, cons
     HipDeviceMemoryReservation reservation(segment_bytes, action);
     HipDeviceBuffer<DeviceCrcSegment> device_segments(segment_bytes, "hipMalloc decoded CRC segments");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(segment_bytes));
-    constexpr int threads = 256;
-    const auto grid = static_cast<unsigned int>((segments + threads - 1U) / threads);
+    constexpr auto threads = kCrcSegmentThreads;
+    const auto grid = segments;
     auto events = make_hip_event_pair("create decoded_crc32_segments_kernel events");
     launch_measured_kernel(decoded_crc32_segments_kernel, grid, threads, 0, hipStreamPerThread, events,
                            "launch decoded_crc32_segments_kernel", device_payload, device_blocks, block_count,
@@ -1294,11 +1299,12 @@ EncodedBlockBatch encode_owned_block_batch_hip(std::vector<std::byte>& input, st
 
 // Purpose: Decode GPU-supported block kinds into a caller-provided host buffer through AMD HIP.
 // Inputs: `payload` and `blocks` are validated archive metadata, `output` is exact decoded storage, and `options`
-// supplies telemetry. Outputs: Writes decoded bytes into `output`; throws `GpuError` when CPU-only blocks require
-// the CPU codec.
+// supplies telemetry. Outputs: Validates even empty layouts; writes decoded bytes or throws for invalid/CPU-only
+// blocks.
 void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                       std::span<std::byte> output, const GpuCodecOptions& options) {
     if (output.empty()) {
+        validate_decode_layout(payload, blocks, 0U, options.block_size);
         return;
     }
     for (const auto& block : blocks) {
@@ -1349,10 +1355,11 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
 
 // Purpose: Verify a decoded chunk by checksumming GPU-supported block metadata directly in VRAM.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output_size` is decoded byte count, and `options` supplies
-// telemetry. Outputs: Returns ZIP-compatible CRC-32 while copying back only compact CRC segment metadata.
+// telemetry. Outputs: Validates even empty layouts, then returns CRC while copying back only compact segment metadata.
 std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                     std::uint64_t output_size, const GpuCodecOptions& options) {
     if (output_size == 0) {
+        validate_decode_layout(payload, blocks, 0U, options.block_size);
         return 0;
     }
     if (output_size > kMaxArchiveChunkBytes) {

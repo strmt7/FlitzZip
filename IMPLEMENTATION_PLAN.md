@@ -33,6 +33,15 @@ acceptance criteria, not completed improvements or a clean security assessment.
    pinned one-shot decoder already uses stack contexts, and the candidate did
    not establish a repeatable gain. Independent-frame error and selective-decode
    regressions are retained; the experimental runtime API is not production code.
+   The subsequent [cooperative CRC review](docs/benchmarks/2026-10-02-cooperative-crc-review.md)
+   shortens resident GPU CRC serial chains while preserving ordered IEEE CRCs,
+   compact result geometry, and archive bytes. It also repairs empty-job GPU
+   work identity and empty-layout validation. All 555 native tests and 28 full
+   local gates pass; three seven-block CPU/GPU sweeps cover the candidate.
+   Alternating diagnostics establish profile-dependent verification gains,
+   not a general application speedup. Mixed extraction remains slightly slower
+   and needs stage-level investigation before final performance acceptance.
+   Six-target HIP compilation is not six-device runtime validation.
    Native pipeline and RAM-benchmark buffer admission now share an overflow-safe
    physical-memory policy. It rejects insufficient/unknown capacity instead of
    forcing one window, and removes the benchmark's two-buffer discount.

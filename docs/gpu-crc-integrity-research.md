@@ -149,6 +149,22 @@ The [diagnostic comparison](benchmarks/2026-09-30-crc-readiness.md) separates
 the isolated combination speedup from whole-operation results. Reducing host
 work does not establish faster GPU kernels or a universal application speedup.
 
+## Cooperative Device Segments
+
+The [October 2026 review](benchmarks/2026-10-02-cooperative-crc-review.md)
+replaces long per-thread CRC segments with 256-thread ordered cooperative
+reductions. It preserves result geometry and the archive polynomial, using
+bounded 2 KiB device constants and 2 KiB shared storage per block. CPU and HIP
+share private operator generation; no runtime dependency is added. Independent
+byte oracles and boundary tests cover all three changed CRC paths.
+
+Default-block paired diagnostics show repeatable GPU verification gains with
+unchanged within-lane archive sizes. Compression gains are modest and variable,
+and Mixed extraction remains slightly slower despite not calling the new CRC
+kernels. The review records that unresolved difference and counter failures.
+These are diagnostics, not final release graphs or proof that classification,
+transfers, extraction or broad hardware portability are solved.
+
 ## Future Implementation Gate
 
 Additional GPU integrity algorithms or broader GPU CRC reductions should be

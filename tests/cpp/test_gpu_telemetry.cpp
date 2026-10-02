@@ -35,6 +35,46 @@ TEST_CASE(gpu_host_pinned_counters_are_backend_independent) {
     REQUIRE_EQ(stats.kernel_launches, 0U);
 }
 
+// Purpose: Report no GPU work for empty jobs while still rejecting invalid empty decoded layouts.
+// Inputs: Required-HIP borrowed/owned inputs and empty outputs, plus zero/positive-length malformed blocks.
+// Outputs: Requires zero dispatch/allocation/transfer telemetry and ArchiveError before invalid layouts are accepted.
+TEST_CASE(gpu_empty_jobs_preserve_validation_and_work_identity) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    superzip::GpuCodecOptions options;
+    options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    const auto borrowed = superzip::encode_chunk({}, options);
+    const auto owned = superzip::encode_owned_chunk({}, options);
+    REQUIRE_TRUE(!borrowed.gpu_used && !owned.gpu_used);
+    REQUIRE_TRUE(borrowed.source_crc32_available && owned.source_crc32_available);
+    REQUIRE_EQ(borrowed.source_crc32, 0U);
+    REQUIRE_EQ(owned.source_crc32, 0U);
+    REQUIRE_TRUE(!superzip::decode_chunk({}, {}, {}, options));
+    const auto checked = superzip::crc_decoded_chunk({}, {}, 0U, options);
+    REQUIRE_TRUE(!checked.gpu_used);
+    REQUIRE_EQ(checked.crc32, 0U);
+    for (const auto length : {0U, 1U}) {
+        const superzip::BlockDescriptor block{.kind = superzip::BlockKind::Fill, .uncompressed_len = length};
+        bool decode_rejected = false;
+        bool crc_rejected = false;
+        try {
+            (void)superzip::decode_chunk({}, std::span(&block, 1U), {}, options);
+        } catch (const superzip::ArchiveError&) {
+            decode_rejected = true;
+        }
+        try {
+            (void)superzip::crc_decoded_chunk({}, std::span(&block, 1U), 0U, options);
+        } catch (const superzip::ArchiveError&) {
+            crc_rejected = true;
+        }
+        REQUIRE_TRUE(decode_rejected && crc_rejected);
+    }
+    const auto stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
+    REQUIRE_EQ(stats.encode_chunks + stats.decode_chunks + stats.kernel_launches, 0U);
+    REQUIRE_EQ(stats.h2d_bytes + stats.d2h_bytes + stats.device_allocation_bytes, 0U);
+}
+
 // Purpose: Verify actual copied host output is checksummed with the admitted parallel CPU budget after HIP decode.
 // Inputs: Required-HIP raw blocks with an irregular tail and a multi-task checksum extent.
 // Outputs: Requires full byte equality and serial CRC equality; no device-produced CRC substitutes for host validation.

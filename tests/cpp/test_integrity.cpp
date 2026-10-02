@@ -5,6 +5,7 @@
 #include "core/integrity.hpp"
 #include "core/result.hpp"
 #include "core/trusted_runtime.hpp"
+#include "gpu/gpu_codec.hpp"
 
 #include "7zCrc.h"
 
@@ -145,6 +146,123 @@ TEST_CASE(crc32_parallel_output_matches_oracle_and_worker_bounds) {
     for (const auto size : {0U, 1U, 1024U, 8U * 1024U * 1024U + 1U}) {
         REQUIRE_EQ(superzip::crc32_parallel(bytes.first(size), 64U), superzip::crc32(bytes.first(size)));
     }
+}
+
+// Purpose: Verify cooperative source and decoded HIP CRCs against an independent polynomial oracle.
+// Inputs: Unaligned deterministic bytes at lane, segment, chunk-policy, and block tails; HIP absence skips this case.
+// Outputs: Requires exact device CRCs and restored bytes without accepting CPU fallback or changing source storage.
+TEST_CASE(gpu_crc32_cooperative_source_and_decode_boundaries) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::array<std::size_t, 25> lengths{
+        0U,
+        1U,
+        2U,
+        31U,
+        32U,
+        33U,
+        127U,
+        128U,
+        129U,
+        255U,
+        256U,
+        257U,
+        8191U,
+        8192U,
+        8193U,
+        32767U,
+        32768U,
+        32769U,
+        65535U,
+        65536U,
+        65537U,
+        8U * 1024U * 1024U - 1U,
+        8U * 1024U * 1024U,
+        8U * 1024U * 1024U + 1U,
+        16U * 1024U * 1024U + 19U,
+    };
+    std::vector<std::byte> storage(lengths.back() + 3U);
+    std::uint32_t state = 0xA569EB13U;
+    for (auto& byte : storage) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        byte = static_cast<std::byte>(state & 255U);
+    }
+    for (const auto length : lengths) {
+        const auto bytes = std::span(storage).subspan(3U, length);
+        const auto expected = bitwise_crc32(bytes, 0U);
+        superzip::GpuCodecOptions options;
+        options.block_size = superzip::kMaxArchiveBlockBytes;
+        options.compression_level = 1;
+        options.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        const auto encoded = superzip::encode_chunk(bytes, options);
+        REQUIRE_EQ(encoded.gpu_used, !bytes.empty());
+        REQUIRE_TRUE(encoded.source_crc32_available);
+        REQUIRE_EQ(encoded.source_crc32, expected);
+        const auto checked = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, bytes.size(), options);
+        REQUIRE_EQ(checked.gpu_used, !bytes.empty());
+        REQUIRE_EQ(checked.crc32, expected);
+        std::vector<std::byte> decoded(bytes.size());
+        superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, options);
+        REQUIRE_TRUE(std::ranges::equal(decoded, bytes));
+        const auto stats = superzip::snapshot_gpu_telemetry(*options.telemetry);
+        REQUIRE_TRUE(bytes.empty() || stats.kernel_launches > 0U);
+    }
+}
+
+// Purpose: Verify device-only CRC composition when simple decoded segments cross unequal block boundaries.
+// Inputs: Independently constructed raw/fill/seven-byte-pattern blocks, including a large final segment tail.
+// Outputs: Requires the bitwise oracle and corruption sensitivity without materializing through production decode.
+TEST_CASE(gpu_crc32_cooperative_simple_decoded_block_boundaries) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    constexpr std::array<std::uint32_t, 9> lengths{
+        1U, 31U, 255U, 257U, 8191U, 8193U, 32767U, 32769U, 8U * 1024U * 1024U + 3U,
+    };
+    constexpr std::array<std::byte, 7> motif{
+        std::byte{13}, std::byte{0}, std::byte{254}, std::byte{91}, std::byte{1}, std::byte{137}, std::byte{73},
+    };
+    std::vector<superzip::BlockDescriptor> blocks;
+    std::vector<std::byte> payload;
+    std::vector<std::byte> decoded;
+    for (std::size_t index = 0U; index < lengths.size(); ++index) {
+        superzip::BlockDescriptor block;
+        block.uncompressed_len = lengths[index];
+        block.encoded_offset = payload.size();
+        block.fill_value = static_cast<std::uint8_t>(index * 29U);
+        block.kind = index % 3U == 0U   ? superzip::BlockKind::Raw
+                     : index % 3U == 1U ? superzip::BlockKind::Fill
+                                        : superzip::BlockKind::Pattern;
+        if (block.kind == superzip::BlockKind::Pattern) {
+            payload.insert(payload.end(), motif.begin(), motif.end());
+            block.encoded_len = motif.size();
+        }
+        for (std::uint32_t pos = 0U; pos < lengths[index]; ++pos) {
+            const auto byte = block.kind == superzip::BlockKind::Raw
+                                  ? static_cast<std::byte>((pos * 73U + index) & 255U)
+                              : block.kind == superzip::BlockKind::Fill ? static_cast<std::byte>(block.fill_value)
+                                                                        : motif[pos % motif.size()];
+            decoded.push_back(byte);
+            if (block.kind == superzip::BlockKind::Raw) {
+                payload.push_back(byte);
+                ++block.encoded_len;
+            }
+        }
+        blocks.push_back(block);
+    }
+    superzip::GpuCodecOptions options;
+    options.block_size = superzip::kMaxArchiveBlockBytes;
+    const auto expected = bitwise_crc32(decoded, 0U);
+    const auto checked = superzip::crc_decoded_chunk(payload, blocks, decoded.size(), options);
+    REQUIRE_TRUE(checked.gpu_used);
+    REQUIRE_EQ(checked.crc32, expected);
+    payload[0] ^= std::byte{1};
+    const auto corrupted = superzip::crc_decoded_chunk(payload, blocks, decoded.size(), options);
+    REQUIRE_TRUE(corrupted.gpu_used);
+    REQUIRE_TRUE(corrupted.crc32 != expected);
 }
 
 // Purpose: Verify disabled integrity mode performs no hashing work.
