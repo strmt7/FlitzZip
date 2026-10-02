@@ -7,6 +7,13 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Statistical uncertainty must preserve fractional measurements and remain
+  invariant when timing units change. Windows PowerShell overload selection can
+  turn `Math.Max(0, doubleVariance)` into an integer calculation; use the typed
+  floating-point boundary. Reporting regressions require nonzero fractional
+  sample deviation, scale-invariant CV/RSE and variance-driven pilot counts.
+  Corrections retain raw observations and disclose invalid earlier plans rather
+  than trimming samples or appending post hoc confirmations.
 - Development context must expose partial reads and stale synthesis instead of
   quietly treating either as current knowledge. The bounded reader caches only
   fully emitted exact windows in an explicitly retained context. Source mutation,

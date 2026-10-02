@@ -2,22 +2,25 @@
 
 ## Continuation Checkpoint
 
-The [October 2 development handoff](docs/development-handoff.md) is the current
-entry point for continuing this work. It records the accepted implementation
-baseline, current hosted blockers, the unfinished bounds-review batch, evidence
-locations, ordered implementation workstreams and release acceptance gates.
-Read it before interpreting the older iteration entries below: those entries
-retain dated evidence and can describe superseded versions, counts or deferrals.
+The [fresh October 2 audit](docs/modernization-audit-2026-10-02.md) is the current
+continuation entry point. The [earlier development handoff](docs/development-handoff.md)
+retains the preceding security inventory and unfinished release gates. Older
+entries below preserve dated evidence and may describe superseded versions,
+counts or pending checks; they are not the current acceptance summary.
 
-The implementation baseline is `e6848d1` on `main`. Its 31 full-profile local
-checks and all seven selected hosted workflows pass. GitHub confirms the two
-private-header alerts fixed, but the completed-analysis inventory still contains
-210 open alerts, including 208 outside the existing Scorecard residual policy.
-The handoff round separates native test object compilation from CLI/GUI executable
-prerequisites to remove an observed build-order barrier without reducing CodeQL
-coverage. This is a scheduling repair, not a measured hosted speedup or a codec
-change. No bounds regression implementation was added. Release 0.8.0 remains
-held until the remaining gates pass and the maintainer approves publication.
+The accepted source checkpoint is `25ff5ae` on `main`; all seven selected hosted
+workflows pass for that SHA. Later local experiments are described separately in
+the fresh audit. Operation-owned HIP input caching passes correctness but does
+not establish a benefit and is removed. Its 42 pilots and 88 confirmations are
+retained as diagnostic evidence after discovering incorrect fractional variance
+in the shared benchmark planner. The statistics correction and regression tests
+are the current implementation batch; all 30 full local verification commands
+pass, including 570 native tests. Its hosted assessment remains pending. The
+complete official ROCm 10 Windows distribution is provisioned in isolation;
+its component versions differ from the release-note table and are under review.
+The wider audit, security backlog, eligible corpus comparisons, SDK integration
+and release acceptance remain open. Release 0.8.0
+remains held for completed gates and explicit publication approval.
 
 ## Fresh Audit And Measurement Rounds
 

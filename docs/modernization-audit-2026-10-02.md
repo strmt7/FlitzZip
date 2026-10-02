@@ -395,12 +395,160 @@ work. The source remains explicitly dirty in this development diagnostic.
 Thirty-six host samples retain unavailable-counter and collection-error records.
 One-sample timing attribution remains inconclusive, and the independent graph
 validator refuses publication even when dirty-source preview is allowed.
-Exact-SHA hosted assessment for this new round remains pending.
+All seven selected hosted workflows pass on `25ff5ae`, including the explicitly
+dispatched benchmark graph, both Windows test lanes, security and sanitizer
+fuzzing. This establishes hosted workflow completion for the build-dependency
+round, not closure of the existing security-alert backlog or release acceptance.
 
 The broader modernization now explicitly includes review of previous special
 cases for consolidation into shared contracts and ownership/resource policies.
 Format semantics, required-HIP boundaries and measured correctness remain the
 criteria for retaining necessary exceptions.
+
+## Round Nine: Bounded Operation-Owned HIP Input Reuse
+
+The next candidate moves the existing HIP allocation/reservation helpers into
+one shared header and adds a bounded operation-owned input cache. Production
+large-file encoding, small-file batches and RAM benchmarks use the same factory,
+lease owner and admission policy. Required HIP enables reuse; forced CPU and
+optional fallback retain the existing direct path. No external runtime dependency,
+archive format, input upload or compression selection policy changes.
+
+Active, idle and pending buffers share the admitted queue cap; each allocation
+fits the native chunk limit. Idle storage retains its global device reservation
+until a checked physical free succeeds. Returns validate the pointer, exact
+extent, unique lease identity, selected device and borrowing thread before
+synchronizing the per-thread stream. Checked operation closure precedes final
+publication, and failed destructor cleanup retains conservative admission.
+These contracts follow AMD's
+[stream synchronization documentation](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___stream.html).
+They do not establish validation on every GPU or driver failure mode.
+
+The initial HIP build and real ownership/concurrent-readback tests pass. One
+policy test incorrectly treated default codec options as optional HIP; the
+default is required HIP. Correcting that test is followed by all 30 full-profile
+checks and 573 passing native tests. Further review preserves hardware-free
+construction/closure for empty operations in CPU-only validation; an actual
+MSVC fixture compiles the production pool with HIP disabled and requires an
+explicit error on nonempty GPU acquisition. The refined product suite has 574
+passing native tests, and all 12 selected product checks pass, including
+interoperability, the format matrix, security policy, sanitizer smoke and
+unpublished packaging. Changed-code lint and function contracts also pass.
+
+The candidate is rejected and removed from production after diagnostic timing
+failed to establish a useful improvement. Its implementation and application
+bundle remain under ignored local evidence, with hashes and a source patch.
+The checked-in production paths are restored to `25ff5ae`; the experiment adds
+no runtime cache, allocator header or format behavior to the accepted product.
+
+The comparison preserves an immutable application baseline and the candidate's
+binary identity. It uses canonical parsing, counters, deadlines, geometry and
+statistics, with 10 GiB Mixed input, level five and all seven block sizes.
+Encode/decode geometry is fixed at 32 workers, 25 encode windows with one codec
+worker each, and four decode windows with eight codec workers each. Three pilot
+rounds produce 42 observations. A private controller fails after recording its
+fixed plan because PowerShell cannot measure an ordered dictionary's key as a
+property. The recovery projects the numeric property explicitly and normalizes
+JSON geometry to a dictionary. Admission, retained identities, recomputed plans,
+all 88 scheduled confirmations and serialization are checked before resumption.
+The original aborted journal stays byte-identical; a separate recovery journal
+references its digest. Every pilot and confirmation observation remains retained.
+
+All 130 measured operations complete byte-exact HIP readback, unchanged exact
+archive sizes, `memory_only=true` and `disk_write_bytes=0`. The following means
+are diagnostic descriptions of the complete confirmation sample. Positive
+changes mean longer candidate compression time; they are not significance or
+regression claims.
+
+| Block KiB | Pairs | Baseline mean seconds | Candidate mean seconds | Candidate time change | Exact archive bytes |
+| --- | --- | --- | --- | --- | --- |
+| 256 | 8 | 4.770969 | 5.010114 | +5.01% | 4572118255 |
+| 512 | 6 | 4.847045 | 4.937897 | +1.87% | 4567776791 |
+| 1024 | 6 | 4.583490 | 4.608620 | +0.55% | 4546487579 |
+| 2048 | 6 | 4.507455 | 4.441810 | -1.46% | 4535842123 |
+| 4096 | 6 | 4.088757 | 4.135212 | +1.14% | 4530520631 |
+| 8192 | 6 | 3.982880 | 4.062240 | +1.99% | 4527857731 |
+| 16384 | 6 | 3.960428 | 4.013427 | +1.34% | 4526528555 |
+
+Reanalysis exposes a production statistics defect: `Math.Max(0, m2)` selects an
+integer overload on Windows PowerShell and rounds small Welford variance sums
+to zero. Consequently the original standard deviations, quality diagnostics and
+pilot requests are invalid. The separate corrected analysis changes no raw data
+and removes no samples. Correct pilot requests are 62 at 256 KiB and seven at
+512 KiB, rather than 55 and six; the actual confirmation schedule therefore
+fails the corrected plan at 512 KiB. No post hoc samples are appended. Correct
+compression CVs include 9.58% for the 256 KiB candidate and 8.24%/6.68% for the
+2048 KiB baseline/candidate. These data support no acceptance claim.
+
+The monitor retains 146 host snapshots without a terminal failure, but 69 contain
+counter errors or invalid entries. Available RAM stays above 26 GiB. GPU engine
+aggregation sometimes exceeds 100%; the private controller does not timestamp
+each observation, so exact alignment with background host activity is unavailable.
+Per-operation counters and HIP telemetry remain recorded. Allocation telemetry
+falls by 7040 MiB of cumulative traffic per operation, while the nested allocation
+worker interval remains approximately seven seconds. Cumulative allocation bytes
+are not peak VRAM, and worker intervals are not elapsed time. This is insufficient
+benefit to retain the additional ownership implementation. Broader operation-owned
+scratch reuse remains a profiling hypothesis, not a validated improvement.
+
+Local evidence: `out/gpu-input-comparison-20261002.samples.jsonl` (original
+pilot and abort), `out/gpu-input-comparison-resumed-20261002.samples.jsonl`,
+`out/gpu-input-comparison-resumed-20261002.json` (original faulty analysis),
+`out/gpu-input-comparison-corrected-analysis-20261002.json` (corrected descriptive
+analysis), and `out/gpu-input-rejected-candidate-20261002/` (preserved candidate).
+None is a published benchmark or release artifact.
+
+The initial whole-tool freshness review found Windows HIP SDK 7.2 on
+[AMD's official download page](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html).
+That legacy download stream is superseded for this migration by the maintainer's
+explicit ROCm Core SDK 10 request and AMD's native Windows tarball distribution.
+The comparison above kept the previous compiler/runtime unchanged. Bundled
+components are never individually overwritten.
+
+## Round Ten: Fractional Benchmark Variance
+
+The shared Welford calculation now uses `Math.Max(0.0, m2)`, preserving double
+precision through the nonnegative variance clamp. A focused regression first
+reproduces the old zero-variance failure, then passes after the correction.
+Tests cover fractional timings at three unit scales, CV/RSE invariance and a
+fractional pilot that must request 21 confirmations rather than three. Existing
+slow-tail retention, single-sample uncertainty, invalid-input rejection, count
+capping and frozen scheduling checks continue to pass. The first new fixture
+needed parentheses around arithmetic array elements before it reached the
+intended variance assertion; that fixture correction is retained in the record.
+The production input-cache experiment is removed before the final frozen checks.
+The HIP rebuild and all 30 commands in full intermediate verification pass,
+including 570 native tests, the 36-format matrix, independent interoperability,
+bounded sanitizer fuzzing, packaging and all-page GUI smoke. Current normal and
+compact screenshots for all eight pages were reviewed. Exact-SHA hosted
+assessment of this statistics repair remains pending. No timing advantage is
+claimed.
+
+## Round Eleven: ROCm Core SDK 10 Distribution Validation
+
+The maintainer explicitly authorizes migration to the complete ROCm 10
+distribution. AMD's [release notes](https://rocm.docs.amd.com/en/docs-10.0.0/about/release-notes.html)
+and [installation guide](https://rocmdocs.amd.com/en/latest/install/rocm.html)
+were checked before provisioning. The complete official Windows multiarchitecture
+tarball downloaded over HTTPS and extracted into an isolated ignored workspace
+directory. No existing SDK, driver, security setting or global environment was
+changed. All 14,990 archive entries were checked for unsafe Windows paths,
+collisions, links and bounded sizes before extraction.
+
+The downloaded archive is 4,796,456,804 bytes with locally observed SHA-256
+`ebe454fe9ad663655177462187a4c86c72fd0537638f6cbea34660ddebf40056`.
+This digest is not an independently published AMD checksum. Its manifest reports
+`rocm_version=10.0.0` and `rocm_package_version=10.0.0rc4`, while its compiler
+reports HIP `7.15.26333-6b0e43f341` and AMD Clang `23.0.0git`; the bundled runtime
+reports `10.0.3581.0`. The release notes instead list HIP 10 and LLVM 24. This
+distribution discrepancy requires investigation before feature/version gates or
+new performance claims can rely on the documented versions. Component files
+remain exactly as supplied by AMD; no component substitution is authorized.
+
+Local evidence includes `out/rocm10-archive-inventory-20261002.json`,
+`out/rocm10-extraction-result-20261002.json` and the extracted upstream
+`share/therock/therock_manifest.json`. Product integration and the scientific
+comparison using the corrected statistics remain open.
 
 ## Bounds Review Progress
 

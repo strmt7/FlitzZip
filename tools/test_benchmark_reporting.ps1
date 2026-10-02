@@ -24,6 +24,17 @@ $tail = Measure-BenchmarkDistribution -Values @(1, 1, 1, 100)
 if ($tail.count -ne 4 -or $tail.mean_seconds -ne 25.75 -or $tail.max_seconds -ne 100 -or $tail.median_seconds -ne 1) {
     throw 'A slow observation was discarded or given a different weight.'
 }
+# Fractional timings must retain variance and the same CV when the time unit changes.
+foreach ($scale in @(0.001, 1.0, 1000.0)) {
+    $fractional = Measure-BenchmarkDistribution -Values @((4.0 * $scale), (4.1 * $scale), (4.2 * $scale))
+    $expectedSd = 0.1 * $scale
+    $expectedCv = 100.0 * 0.1 / 4.1
+    if ([math]::Abs($fractional.sample_std_dev_seconds - $expectedSd) -gt $expectedSd * 1e-10 -or
+        [math]::Abs($fractional.relative_std_dev_pct - $expectedCv) -gt 1e-10 -or
+        [math]::Abs($fractional.relative_standard_error_pct - $expectedCv / [math]::Sqrt(3.0)) -gt 1e-10) {
+        throw 'Fractional timing variance or unit-independent uncertainty was lost.'
+    }
+}
 if ($null -ne (Measure-BenchmarkDistribution -Values @(1)).sample_std_dev_seconds) {
     throw 'Single-sample uncertainty was fabricated as zero.'
 }
@@ -45,6 +56,17 @@ function Get-PlanningRun {
         InputBytes = 10GB; OutputBytes = 1024; ArchiveBytes = 4096
         Workers = 32; InflightChunks = 32; CodecWorkers = 1; DecodeInflightChunks = 32; DecodeCodecWorkers = 1
         ResourceSampleCount = 50; GpuSampleCount = 25 }
+}
+$fractionalPilot = @(foreach ($seconds in @(1.0, 1.1, 1.2)) { Get-PlanningRun -Seconds $seconds })
+$fractionalPlan = @(Get-BenchmarkConfirmationPlan -PilotRuns $fractionalPilot -Blocks @(256) -Lanes @('CPU') `
+    -MinimumCount 3 -MaximumCount 30 -MinimumSeconds 1 -TargetRsePct 2)
+if ($fractionalPlan[0].requested_count -ne 21 -or $fractionalPlan[0].confirmation_count -ne 21 -or
+    $fractionalPlan[0].count_capped) {
+    throw 'Fractional pilot variance did not increase the fixed confirmation count.'
+}
+$fractionalEvidence = Get-BenchmarkLaneEvidence -Runs $fractionalPilot -MinimumSeconds 1
+if ($fractionalEvidence.issues -notcontains 'high_variability:CompressSeconds') {
+    throw 'Fractional noisy measurements were declared stable.'
 }
 $pilot = @(foreach ($iteration in 1..3) { Get-PlanningRun -Iteration $iteration })
 $plan = @(Get-BenchmarkConfirmationPlan -PilotRuns $pilot -Blocks @(256) -Lanes @('CPU') `

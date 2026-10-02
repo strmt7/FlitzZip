@@ -129,7 +129,7 @@ function Measure-BenchmarkDistribution {
     $sorted = @($Values | Sort-Object)
     $middle = [int][math]::Floor($count / 2)
     $median = if ($count % 2) { $sorted[$middle] } else { ($sorted[$middle - 1] + $sorted[$middle]) / 2 }
-    $sd = if ($count -gt 1) { [math]::Sqrt([math]::Max(0, $m2) / ($count - 1)) } else { $null }
+    $sd = if ($count -gt 1) { [math]::Sqrt([math]::Max(0.0, $m2) / ($count - 1)) } else { $null }
     $cv = if ($null -ne $sd) { 100 * $sd / $mean } else { $null }
     [ordered]@{
         count = $count; mean_seconds = $mean; median_seconds = $median
