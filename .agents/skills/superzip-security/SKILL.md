@@ -46,6 +46,14 @@ Single-agent and Codex Security worker policy:
   workers and do not reduce audit quality; prefer serial execution when the
   maintainer asks for efficient subscription usage.
 
+Imported quality findings:
+
+- Preserve one evidence record per alert and separate quality observations from
+  confirmed vulnerabilities. Follow the header and assertion-configuration lessons
+  in `docs/engineering-learning-loop.md`; do not remove useful code or apply
+  blanket guards to satisfy a heuristic. Run `superzip_zstd_header_contracts`
+  through the native test wrapper when changing dependency inclusion contracts.
+
 Smart security-scan triggers:
 
 - Trigger `tools/security_scan.ps1` in addition to the selected verification

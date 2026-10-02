@@ -27,6 +27,13 @@ the Security tab, released artifacts, or the product UI again.
   explicitly preserves LF bytes on Windows and verifies them before atomic
   replacement. CMake fixtures cover repeat configuration and preservation of
   interrupted input/output files. Upstream provenance and licenses stay intact.
+- Header-guard remediation must preserve intentional re-inclusion contracts.
+  Zstandard separates public and static-only APIs; xxHash additionally supports
+  public-then-inline inclusion. Do not blanket-wrap these headers or remove
+  assertion-only helpers because a Release build erases their callers. The
+  isolated C/C++ regression proves the original private-header redefinition,
+  repaired repeated inclusion, and unchanged late opt-in before accepting the
+  two private guards. Quality recommendations alone are not vulnerability proof.
 - Whole-language lint expansion must retain newly added changed files instead
   of replacing the change set with tracked files alone. CMake routing covers
   owned fixtures and nested lists throughout the repository; production-selector

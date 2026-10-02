@@ -41,7 +41,8 @@ function(prepare_fixture name output)
     COMMAND
       "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}" --
       "zstd-1.5.7/lib/legacy/zstd_v05.c" "zstd-1.5.7/lib/legacy/zstd_legacy.h"
-      "zstd-1.5.7/lib/common/allocations.h"
+      "zstd-1.5.7/lib/common/allocations.h" "zstd-1.5.7/lib/dictBuilder/cover.h"
+      "zstd-1.5.7/lib/compress/hist.h"
     WORKING_DIRECTORY "${root}"
     RESULT_VARIABLE extraction_result)
   if(NOT extraction_result EQUAL 0)
@@ -83,31 +84,24 @@ endfunction()
 
 prepare_fixture(fresh fresh)
 superzip_patch_zstd_legacy("${fresh}")
-file(SHA256 "${fresh}/lib/legacy/zstd_v05.c" decoder_after)
-file(SHA256 "${fresh}/lib/legacy/zstd_legacy.h" header_after)
-file(SHA256 "${fresh}/lib/common/allocations.h" allocations_after)
+set(BOUNDARIES
+    "lib/legacy/zstd_v05.c" "lib/legacy/zstd_legacy.h"
+    "lib/common/allocations.h" "lib/dictBuilder/cover.h" "lib/compress/hist.h")
+foreach(boundary IN LISTS BOUNDARIES)
+  string(MAKE_C_IDENTIFIER "${boundary}" key)
+  file(SHA256 "${fresh}/${boundary}" "before_${key}")
+endforeach()
 superzip_patch_zstd_legacy("${fresh}")
-file(SHA256 "${fresh}/lib/legacy/zstd_v05.c" decoder_repeat)
-file(SHA256 "${fresh}/lib/legacy/zstd_legacy.h" header_repeat)
-file(SHA256 "${fresh}/lib/common/allocations.h" allocations_repeat)
-if(NOT decoder_after STREQUAL decoder_repeat
-   OR NOT header_after STREQUAL header_repeat
-   OR NOT allocations_after STREQUAL allocations_repeat)
-  message(FATAL_ERROR "Dependency patch is not idempotent")
-endif()
-
-prepare_fixture(drift drift)
-file(APPEND "${drift}/lib/legacy/zstd_v05.c" "\n/* fixture source drift */\n")
-require_rejection("${drift}" "Zstandard patch source identity mismatch")
-
-prepare_fixture(allocations-drift allocations_drift)
-file(APPEND "${allocations_drift}/lib/common/allocations.h"
-     "\n/* fixture source drift */\n")
-require_rejection(
-  "${allocations_drift}" "Zstandard patch source identity mismatch"
-  "lib/common/allocations.h")
-
-foreach(boundary IN ITEMS "lib/legacy/zstd_v05.c" "lib/common/allocations.h")
+foreach(boundary IN LISTS BOUNDARIES)
+  string(MAKE_C_IDENTIFIER "${boundary}" key)
+  file(SHA256 "${fresh}/${boundary}" repeated)
+  if(NOT "${before_${key}}" STREQUAL repeated)
+    message(FATAL_ERROR "Dependency patch is not idempotent: ${boundary}")
+  endif()
+  prepare_fixture("drift-${key}" drift)
+  file(APPEND "${drift}/${boundary}" "\n/* fixture source drift */\n")
+  require_rejection("${drift}" "Zstandard patch source identity mismatch"
+                    "${boundary}")
   foreach(phase IN ITEMS input output)
     string(MAKE_C_IDENTIFIER "${boundary}" boundary_name)
     prepare_fixture("interrupted-${boundary_name}-${phase}" interrupted)

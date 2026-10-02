@@ -158,11 +158,38 @@ function(superzip_patch_zstd_custom_allocator source_dir)
     "${content}")
 endfunction()
 
-# Purpose: Apply the production dependency's allocation repairs reproducibly.
+# Purpose: Guard a private dependency header without changing its declarations.
+# Inputs: header is an extracted source; guard/anchor identify the insertion;
+# original_hash/patched_hash pin both complete identities. Outputs: Publishes
+# verified generated source or rejects drift/interruption.
+function(superzip_patch_zstd_header_guard header guard anchor original_hash
+         patched_hash)
+  file(READ "${header}" content)
+  string(CONCAT guarded_anchor "#ifndef ${guard}\n#define ${guard}\n\n"
+                "${anchor}")
+  string(REPLACE "${anchor}" "${guarded_anchor}" content "${content}")
+  string(APPEND content "\n#endif /* ${guard} */\n")
+  superzip_write_verified_zstd_patch("${header}" "${original_hash}"
+                                     "${patched_hash}" "${content}")
+endfunction()
+
+# Purpose: Apply the production dependency's source repairs reproducibly.
 # Inputs: source_dir is the extracted root of the verified upstream archive.
 # Outputs: Patches generated files or fails closed; leaves provenance untouched.
 function(superzip_patch_zstd_legacy source_dir)
   superzip_patch_zstd_v05("${source_dir}")
   superzip_patch_zstd_initializer("${source_dir}")
   superzip_patch_zstd_custom_allocator("${source_dir}")
+  superzip_patch_zstd_header_guard(
+    "${source_dir}/lib/dictBuilder/cover.h"
+    ZSTD_COVER_H
+    "#ifndef ZDICT_STATIC_LINKING_ONLY\n"
+    "6e2906e7e5c486a5b7f479f60210ff67d068b2c58744ad6a936ba5a9f4a23755"
+    "432323ee0a02dbfb49abb146137fc152142df20b4223e1a8a5f6f6303a8eeed5")
+  superzip_patch_zstd_header_guard(
+    "${source_dir}/lib/compress/hist.h"
+    ZSTD_HIST_H
+    "/* --- dependencies --- */\n"
+    "9e3363e69d5fa35c1f6e8d2970c6c2453c06fd8a8ab3cc516a14c77d07cdea35"
+    "982484a96936e53fcca4c179e522fcb253608c93c2301ca636a3b29e1128b099")
 endfunction()

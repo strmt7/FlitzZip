@@ -67,3 +67,19 @@ initialization, the unchanged standard allocator, and matched release. CMake
 fixtures additionally cover the helper's drift, idempotence and interrupted-write
 boundaries. SuperZip currently uses the standard allocator; attacker-triggerable
 reachability through a custom allocator is not established by these tests.
+
+## Private Header Inclusion
+
+The extracted `dictBuilder/cover.h` and `compress/hist.h` now receive ordinary
+include guards through the same identity-checked recipe. Declarations, macros,
+copyrights and license notices are unchanged. This is a compile-time quality
+repair; it is not evidence of an attacker-triggerable runtime vulnerability or
+a compression speedup.
+
+`superzip_zstd_header_contracts` extracts an isolated, verified source fixture.
+It compiles the same contract as C and C++, first proving the original COVER
+redefinition on repeated inclusion, then accepting the repaired private headers.
+It also verifies public-then-static Zstandard, dictionary and FSE inclusion,
+public-then-inline xxHash inclusion, and repeated allocation-header inclusion.
+These deliberately staged headers remain unchanged. Patch fixtures cover all
+five transformed files for idempotence, drift and interrupted-write preservation.

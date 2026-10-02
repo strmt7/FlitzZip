@@ -48,6 +48,19 @@ probe passes every byte check but shows no reliable end-to-end cache gain. Produ
 allocation policy is unchanged; concurrent runtime waits remain a profiling
 target rather than a claimed fix.
 
+The private-header batch adds verified include guards only to Zstandard's
+`cover.h` and `hist.h`. All five downstream transformations pass fresh extraction,
+idempotence, source-drift and interrupted-write checks. An isolated six-build
+C/C++ fixture rejects the original COVER redefinition and accepts repaired
+repeated inclusion while preserving public-then-static/inline API contracts.
+All six automatic workflows for `8085b5c` pass. The private-header batch passes
+all 31 full-profile commands, including native and allocator-failure tests,
+the 36-format matrix, independent readers, sanitizer smoke, eight-page GUI
+review and unpublished HIP package validation. Pinned DevSkim reports no result
+in the patch recipe. Hosted closure of the two header alerts remains pending;
+no alert is dismissed, scanner disabled or compression-performance improvement
+claimed.
+
 The [2026-10-01 archive engineering review](docs/archive-engineering-review.md)
 compares selected practices from six established open-source projects and orders
 the remaining work by security risk, aggregate resource accounting, measured CPU

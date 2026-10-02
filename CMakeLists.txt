@@ -884,7 +884,7 @@ if(SUPERZIP_BUILD_TESTS)
       "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v07.c")
     target_include_directories(
       superzip_zstd_legacy_fault_objects PRIVATE tests/zstd
-                                                "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+                                                 "${SUPERZIP_ZSTD_LIBRARY_DIR}")
     target_compile_definitions(
       superzip_zstd_legacy_fault_objects
       PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
@@ -892,13 +892,11 @@ if(SUPERZIP_BUILD_TESTS)
     set(_legacy_allocator_header
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/zstd/intercept_allocations.h")
     if(MSVC)
-      target_compile_options(
-        superzip_zstd_legacy_fault_objects
-        PRIVATE "/FI${_legacy_allocator_header}")
+      target_compile_options(superzip_zstd_legacy_fault_objects
+                             PRIVATE "/FI${_legacy_allocator_header}")
     else()
-      target_compile_options(
-        superzip_zstd_legacy_fault_objects
-        PRIVATE -include "${_legacy_allocator_header}")
+      target_compile_options(superzip_zstd_legacy_fault_objects
+                             PRIVATE -include "${_legacy_allocator_header}")
     endif()
     add_executable(
       superzip_zstd_legacy_tests
@@ -923,8 +921,21 @@ if(SUPERZIP_BUILD_TESTS)
         "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
         "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_zstd_legacy_patch.cmake")
+    string(CONCAT _zstd_header_contract
+                  "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/"
+                  "test_zstd_header_contracts.cmake")
+    add_test(
+      NAME superzip_zstd_header_contracts
+      COMMAND
+        "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DGENERATOR=${CMAKE_GENERATOR}"
+        "-DGENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
+        "-DGENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}" -P
+        "${_zstd_header_contract}")
     set_tests_properties(superzip_zstd_legacy_tests superzip_zstd_legacy_patch
                          PROPERTIES TIMEOUT 60)
+    set_tests_properties(superzip_zstd_header_contracts PROPERTIES TIMEOUT 150)
   endif()
 endif()
 
