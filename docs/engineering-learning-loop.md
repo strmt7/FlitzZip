@@ -7,6 +7,14 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- A complete SDK migration must align compiler, headers, libraries and
+  dependency scans on one explicit root. Distribution and component versions
+  are recorded separately; bundled components are never individually patched.
+  `test_rocm_toolchain.ps1` verifies compiler-environment restoration and hosted
+  policy, while `test_bootstrap_rocm_sdk.py` exercises corrupt archives, changed
+  caches, timeouts and preservation. Compiler-only settings must not leak into
+  application execution; a newer SDK's `LLVM_PATH` caused a reproducible runtime
+  access violation on one driver configuration despite successful compilation.
 - Statistical uncertainty must preserve fractional measurements and remain
   invariant when timing units change. Windows PowerShell overload selection can
   turn `Math.Max(0, doubleVariance)` into an integer calculation; use the typed
@@ -248,8 +256,9 @@ the Security tab, released artifacts, or the product UI again.
   docs to describe grouped backend support.
 - Installer process waits are bounded. `tools\security_scan.ps1` rejects
   release workflow edits that restore unbounded `Start-Process -Wait` calls for
-  HIP SDK setup or MSI install/repair/uninstall smoke tests, and the MSI smoke timeout
-  must remain 300 seconds by default.
+  MSI install/repair/uninstall smoke tests, and the MSI smoke timeout must remain
+  300 seconds by default. Whole-SDK provisioning uses the shared contained
+  extraction path and finite download/inventory bounds.
 - Standalone fuzz targets must link every transitive source dependency, and the
   local Docker driver must turn native failures into a nonzero PowerShell exit.
   `tools\security_scan.ps1` enforces both rules so sanitizer linker failures

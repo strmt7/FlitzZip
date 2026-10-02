@@ -7,11 +7,13 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot,
     [string]$Arch = "gfx1201",
+    [string]$HipPath = "",
     [string]$VcvarsVersion = ""
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "hip_architecture.ps1")
+. (Join-Path $PSScriptRoot "rocm_toolchain.ps1")
 $Arch = Resolve-HipArchitecture -Architecture $Arch
 
 # Purpose: Reject values that cannot be safely embedded in the generated cmd.exe command line.
@@ -239,14 +241,8 @@ function Invoke-HipCompile {
     return $compilerExitCode
 }
 
-if (-not $env:HIP_PATH) {
-    throw "HIP_PATH is not set."
-}
-
-$hipcc = Join-Path $env:HIP_PATH "bin\hipcc.exe"
-if (-not (Test-Path $hipcc)) {
-    throw "hipcc.exe not found at $hipcc"
-}
+$sdkRoot = Resolve-RocmSdkRoot -RepoRoot $RepoRoot -RequestedPath $HipPath
+$hipcc = Join-Path $sdkRoot "bin\hipcc.exe"
 
 if ($VcvarsVersion -and $VcvarsVersion -notmatch '^[0-9]+(\.[0-9]+)*$') {
     throw "VcvarsVersion must be empty or a dotted MSVC toolset version such as 14.44."
@@ -269,6 +265,7 @@ $availableToolsets = @(Get-MsvcToolsetVersion -VcvarsAll $vcvars)
 $vcvarsCandidates = @(Resolve-VcvarsVersionCandidate -AvailableVersions $availableToolsets -RequestedVersion $VcvarsVersion)
 
 $attempts = New-Object System.Collections.Generic.List[string]
+Invoke-RocmCompilerEnvironment -Root $sdkRoot -Action {
 foreach ($candidate in $vcvarsCandidates) {
     $label = if ($candidate) { $candidate } else { "default" }
     $exitCode = Invoke-HipCompile -VcvarsAll $vcvars -CandidateVersion $candidate -HipccPath $hipcc -IncludePath $include
@@ -279,3 +276,4 @@ foreach ($candidate in $vcvarsCandidates) {
 }
 
 throw "hipcc failed for all MSVC toolset candidates ($($attempts -join '; '))."
+}

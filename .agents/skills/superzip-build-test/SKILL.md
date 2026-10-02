@@ -64,7 +64,10 @@ Rules:
   bytes, compression ratio, CPU/GPU mode, and RAM-only/disk-write evidence.
 - Do not launch the GUI unless the user has been warned first.
 - Use CLI smoke tests for archive validation.
-- Keep `HIP_PATH`, Visual Studio, and architecture configurable.
+- Keep SDK location, Visual Studio, and architecture configurable. Use the
+  complete SDK pinned in `tools/rocm-sdk-lock.json` and the shared provisioner;
+  never replace individual bundled components. Read `docs/rocm-toolchain.md`
+  for custom `-HipPath` setup and compiler-only environment scope.
 - Never commit build output, archives, binaries, logs, or secrets.
 - Pinned upstream provenance archives under `third_party/upstream/**` are the
   only source-controlled archive exception. Do not commit extracted `.dll`,
@@ -104,8 +107,8 @@ Rules:
   `tools\build.ps1 -Configuration Release -MsiInstallScope perUser`; never
   publish that per-user MSI as a product release.
 - Installer launch and release-validation waits must be bounded. MSI
-  install/uninstall smoke phases default to 300 seconds, and HIP SDK installer
-  setup must fail explicitly on timeout. Windows UAC consent is OS-owned and
+  install/uninstall smoke phases default to 300 seconds, and whole-SDK
+  provisioning must fail explicitly on timeout. Windows UAC consent is OS-owned and
   cannot be timed from inside the MSI.
 - Product installers must expose a user-visible `Create Desktop shortcut`
   option. Treat silent shortcut creation as an installer bug.

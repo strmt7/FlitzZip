@@ -31,8 +31,12 @@ tools/package.ps1 -Configuration Release
 
 The compiler supports multiple target images as documented in
 [Clang HIP support](https://clang.llvm.org/docs/HIPSupport.html).
-The selected families appear in AMD's
+The original target selection used AMD's
 [HIP SDK 7.1.1 Windows support table](https://rocm.docs.amd.com/projects/install-on-windows/en/docs-7.1.1/reference/system-requirements.html).
+Current GPU, OS and driver prerequisites must be checked against AMD's
+[ROCm 10 compatibility selector](https://rocm.docs.amd.com/en/docs-10.0.0/compatibility/compatibility-matrix.html)
+and the [selected whole SDK](rocm-toolchain.md); historical support is not
+current hardware qualification.
 An unsupported target or incompatible SDK must fail compilation, not silently
 drop a target. This does not add support for non-AMD GPUs, unlisted GPU
 families, unsupported operating systems, or arbitrary driver versions.
@@ -43,6 +47,12 @@ images in the main, static-prefix, adaptive-prefix, and experimental dictionary
 objects. Other targets are compile-validated, not hardware-tested. Timing,
 correctness, and memory behavior on additional GPUs remain release validation
 work; a fat binary alone cannot prove them.
+
+On October 2, all five production HIP objects and their dependency scans also
+compiled for all six targets with the complete pinned ROCm 10 distribution.
+Both SDK and isolated build directories contained spaces. The migrated main
+build passed 570 native tests and the full local verifier on the available
+`gfx1201`. Other target hardware remains untested.
 
 ## Installation
 
@@ -55,8 +65,9 @@ The Windows elevation prompt is controlled by the operating system before the
 per-machine MSI can make changes. The MSI cannot shorten that OS-owned prompt
 from inside the package. SuperZip-owned installer launchers, release validation,
 and smoke tests must therefore use bounded waits around the installer process:
-MSI install, repair, and uninstall phases fail after 300 seconds, and hosted HIP SDK
-installer setup has its own explicit timeout.
+MSI install, repair, and uninstall phases fail after 300 seconds. Whole-SDK
+provisioning separately bounds download, inventory and contained extraction;
+it does not launch an installer or request elevation.
 
 The MSI exposes `Create Desktop shortcut` as an optional installer feature. Do
 not use CPack's unconditional `CPACK_CREATE_DESKTOP_LINKS`; the desktop shortcut
@@ -100,21 +111,22 @@ AMD HIP SDK.
 
 ## Repository Inputs
 
-Before running a HIP-enabled hosted release, configure these repository
-variables:
+The local and hosted HIP build use the complete distribution pinned in
+`tools/rocm-sdk-lock.json`, provisioned by `tools/bootstrap_rocm_sdk.py`. See
+[the ROCm toolchain contract](rocm-toolchain.md) for portable setup, provenance
+and observed component versions. An arbitrary preinstalled `hipcc.exe` cannot
+bypass the pinned SDK requirement. The former HIP installer URL/checksum
+repository variables are no longer used.
 
-- `HIP_SDK_INSTALLER_URL`: repository variable containing the AMD HIP SDK
-  installer URL accepted from AMD's download page.
-- `HIP_SDK_INSTALLER_SHA256`: repository variable containing the expected SHA-256
-  digest of that installer.
+Before running a hosted release, configure this repository variable:
+
 - `WIX_OSMF_EULA_ID`: repository variable set to `wix7` after the maintainer has
   accepted the WiX v7 OSMF EULA.
 
 Do not use GitHub Actions environments for release inputs in this repository:
 environment-gated jobs can create deployment records, and SuperZip workflows
-must never create deployments. Do not put the HIP installer values in
-repository secrets; Zizmor requires secrets to be environment-gated, and
-environments are forbidden here.
+must never create deployments. Public pinned distribution metadata belongs in
+the shared repository lock; credentials do not.
 
 Do not commit AMD installer URLs, driver packages, credentials, or local
 download paths to the repository.
@@ -152,8 +164,8 @@ An upstream website link or a passing notice-text check alone is insufficient.
 
 The workflow performs:
 
-- HIP SDK installation and checksum verification when `HIP_PATH` is not already
-  present on the runner.
+- Complete pinned ROCm SDK provisioning, SHA-256 verification and safe archive
+  inventory through the same tool used by local developers and agents.
 - HIP-enabled build and C++ tests.
 - Local repository security scan.
 - Portable package staging, dependency check, SUZIP/ZIP/TAR/TAR.GZ/TAR.BZ2/Gzip/Bzip2/Unix Compress/CPIO/CPIO.GZ/AR/DEB

@@ -160,56 +160,18 @@ runs:
             "REPLACE_RELEASE_TAG=$releaseTag" | Add-Content -LiteralPath $env:GITHUB_ENV
         }
 
-    - name: Install AMD HIP SDK
+    - name: Provision complete ROCm Core SDK
       if: inputs.enable_hip == 'true'
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        if ($env:HIP_PATH -and (Test-Path -LiteralPath (Join-Path $env:HIP_PATH "bin\hipcc.exe"))) {
-            Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $env:HIP_PATH "bin")
-            return
-        }
-        if (-not $env:HIP_SDK_INSTALLER_URL) {
-            throw "HIP_SDK_INSTALLER_URL repository variable is required for HIP-enabled hosted release builds."
-        }
-        if (-not $env:HIP_SDK_INSTALLER_SHA256) {
-            throw "HIP_SDK_INSTALLER_SHA256 repository variable is required for HIP-enabled hosted release builds."
-        }
-        if ($env:HIP_SDK_INSTALLER_URL -match "[`r`n]" -or $env:HIP_SDK_INSTALLER_SHA256 -match "[`r`n]") {
-            throw "HIP SDK installer inputs must be single-line values."
-        }
-        if ($env:HIP_SDK_INSTALLER_SHA256 -notmatch '^[0-9A-Fa-f]{64}$') {
-            throw "HIP_SDK_INSTALLER_SHA256 must be a 64-character SHA-256 digest."
-        }
-        $installer = Join-Path $env:RUNNER_TEMP "amd-hip-sdk-installer.exe"
-        Invoke-WebRequest -Uri $env:HIP_SDK_INSTALLER_URL -OutFile $installer
-        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
-        if ($actualHash -ne $env:HIP_SDK_INSTALLER_SHA256.ToLowerInvariant()) {
-            throw "HIP SDK installer SHA-256 mismatch."
-        }
-        $installLog = Join-Path $env:RUNNER_TEMP "amd-hip-sdk-install.log"
-        $hipInstallTimeoutSeconds = 20 * 60
-        $process = Start-Process -FilePath $installer -ArgumentList @("-install", "-log", $installLog) -PassThru
-        if (-not $process.WaitForExit($hipInstallTimeoutSeconds * 1000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            $timeoutMessage = "AMD HIP SDK installer timed out after $hipInstallTimeoutSeconds seconds."
-            $timeoutMessage += " Check whether an installer or elevation prompt was left unanswered."
-            $timeoutMessage += " See $installLog."
-            throw $timeoutMessage
-        }
-        $process.Refresh()
-        if ($process.ExitCode -ne 0) {
-            throw "AMD HIP SDK installer failed with exit code $($process.ExitCode). See $installLog."
-        }
-        $hipRoot = Get-ChildItem -LiteralPath "C:\Program Files\AMD\ROCm" -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bin\hipcc.exe") } |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-        if (-not $hipRoot) {
-            throw "AMD HIP SDK installation completed but hipcc.exe was not found under C:\Program Files\AMD\ROCm."
-        }
-        Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$($hipRoot.FullName)"
-        Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $hipRoot.FullName "bin")
+        $sdkRoot = python tools/bootstrap_rocm_sdk.py
+        if ($LASTEXITCODE -ne 0) { throw "Complete ROCm SDK provisioning failed." }
+        . ./tools/rocm_toolchain.ps1
+        $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$sdkRoot"
+        # Compiler-only environment is scoped by compile_hip_object.ps1.
+        # Product execution continues to use the trusted driver runtime.
 
     - name: Toolchain diagnostics
       shell: pwsh
@@ -226,7 +188,9 @@ runs:
             if (-not $env:HIP_PATH) {
                 throw "HIP_PATH must be set before HIP release validation can run."
             }
-            Get-Command hipcc -ErrorAction SilentlyContinue | Select-Object Source,Version
+            $hipcc = Join-Path $env:HIP_PATH "bin/hipcc.exe"
+            & $hipcc --version
+            if ($LASTEXITCODE -ne 0) { throw "Selected ROCm compiler diagnostics failed." }
         }
 
     - name: Setup .NET for WiX

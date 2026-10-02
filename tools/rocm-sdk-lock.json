@@ -1,0 +1,15 @@
+{
+  "version": "10.0.0",
+  "archive_name": "therock-dist-windows-multiarch-10.0.0.tar.gz",
+  "url": "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-windows-multiarch-10.0.0.tar.gz",
+  "sha256": "ebe454fe9ad663655177462187a4c86c72fd0537638f6cbea34660ddebf40056",
+  "archive_bytes": 4796456804,
+  "unpacked_bytes": 14611332178,
+  "members": 14990,
+  "digest_origin": "Locally observed from the official AMD HTTPS distribution on 2026-10-02; not an independently published AMD checksum",
+  "release_notes": "https://rocm.docs.amd.com/en/docs-10.0.0/about/release-notes.html",
+  "installation_guide": "https://rocmdocs.amd.com/en/latest/install/rocm.html",
+  "observed_package_version": "10.0.0rc4",
+  "observed_hip_version": "7.15.26333-6b0e43f341",
+  "observed_clang_version": "23.0.0git"
+}

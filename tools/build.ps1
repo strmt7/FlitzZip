@@ -7,6 +7,7 @@ param(
     [ValidateSet("", "Visual Studio 17 2022", "Visual Studio 18 2026")]
     [string]$Generator = "",
     [string]$HipArch = "gfx1201",
+    [string]$HipPath = "",
     [string]$VcvarsVersion = "",
     [string]$PackageVersion = "",
     [string]$MsiProductIdentity = "",
@@ -20,6 +21,7 @@ $build = Join-Path $repo "build"
 . (Join-Path $PSScriptRoot "hip_architecture.ps1")
 . (Join-Path $PSScriptRoot "build_parallelism.ps1")
 . (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
+. (Join-Path $PSScriptRoot "rocm_toolchain.ps1")
 
 # Purpose: Invoke a native executable and promote non-zero process exits to PowerShell failures.
 # Inputs: FilePath is the executable; Arguments is the argv array; Operation is the diagnostic label.
@@ -119,6 +121,10 @@ $configureArgs = @(
     "-DSUPERZIP_BUILD_GUI=ON",
     "-DSUPERZIP_BUILD_TESTS=ON"
 )
+if (-not $CpuOnlyValidation) {
+    $sdkRoot = Resolve-RocmSdkRoot -RepoRoot $repo -RequestedPath $HipPath
+    $configureArgs += "-DSUPERZIP_HIP_PATH=$sdkRoot"
+}
 Invoke-NativeTool -FilePath $cmake -Arguments $configureArgs -Operation "CMake configure"
 
 if (-not $ConfigureOnly) {

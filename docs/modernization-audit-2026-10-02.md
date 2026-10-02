@@ -520,9 +520,9 @@ The production input-cache experiment is removed before the final frozen checks.
 The HIP rebuild and all 30 commands in full intermediate verification pass,
 including 570 native tests, the 36-format matrix, independent interoperability,
 bounded sanitizer fuzzing, packaging and all-page GUI smoke. Current normal and
-compact screenshots for all eight pages were reviewed. Exact-SHA hosted
-assessment of this statistics repair remains pending. No timing advantage is
-claimed.
+compact screenshots for all eight pages were reviewed. All seven selected hosted
+workflows pass for the statistics repair at `cf4d124`. Final acceptance and the
+wider audit remain open. No timing advantage is claimed.
 
 ## Round Eleven: ROCm Core SDK 10 Distribution Validation
 
@@ -547,8 +547,54 @@ remain exactly as supplied by AMD; no component substitution is authorized.
 
 Local evidence includes `out/rocm10-archive-inventory-20261002.json`,
 `out/rocm10-extraction-result-20261002.json` and the extracted upstream
-`share/therock/therock_manifest.json`. Product integration and the scientific
-comparison using the corrected statistics remain open.
+`share/therock/therock_manifest.json`.
+
+The repository now shares one whole-distribution lock and provisioner across
+local development and hosted releases. Roots derive from the checkout, external
+installation configuration or explicit `-HipPath`/`--parent` arguments. No
+personal installation path is committed. The provisioner supports safe fresh
+extraction, byte-exact manual-install adoption, critical-input cache checks,
+collision preservation and bounded HTTPS download/inventory/extraction. Actual
+fresh provisioning also passes at a different directory containing spaces.
+
+CMake passes its selected root explicitly to each HIP compiler/dependency pass.
+The build script refreshes that root on configure, removing the old environment
+versus CMake-cache mismatch. Compiler-only AMD settings are scoped and restored
+on success and failure. An isolated probe compiles and preprocesses all six
+release targets with MSVC 14.44 and returns byte-exact output on the available
+`gfx1201`. MSVC 14.51 instead reports conflicting host/device math declarations.
+No AMD or Microsoft package/header is patched to force compatibility.
+
+Runtime isolation identifies a concrete environment hazard: the same fixture
+loads the same System32 runtime, but crashes with `0xC0000005` when the new SDK's
+`LLVM_PATH` remains present and passes when it is unset. The helper confines that
+setting to compilation. This observation covers one host/driver configuration,
+not every AMD system. Current driver runtime file version is `10.0.3679.0` and
+its HIP runtime API reports `70260201`; these are distinct version namespaces.
+
+The migrated product build and 570 native tests pass. The first full check stops
+at the retired installer's timeout-message guard; the policy is then migrated to
+the shared provisioner's finite download/inventory/extraction and environment
+isolation guarantees. Offline regressions cover timeouts, excessive/short data,
+hash mismatches, changed SDK bytes, path collisions and preservation. The security
+scan and lint pass after this correction. The second full verification passes
+all 33 commands, including the 36-format matrix, independent interoperability,
+bounded sanitizer fuzzing and packaging. Current normal and compact screenshots
+for all eight pages were reviewed. Exact-SHA hosted assessment remains pending.
+Existing HIP events measure elapsed telemetry;
+disabling their timing blindly would invalidate those measurements. No new SDK
+speedup or archive-ratio advantage is claimed.
+
+Additional local evidence is `out/rocm10-adoption-result-20261002.json`,
+`out/rocm10-portable-provisioning-result-20261002.json` and
+`out/rocm10-compatibility-20261002/result-scoped-six-targets.json`. The first full
+failure remains recorded in `out/rocm10-full-verification-result-20261002.json`.
+The corrected pass is recorded separately in
+`out/rocm10-full-verification-corrected-result-20261002.json`.
+All five production HIP objects and dependency scans also compiled for all six
+release targets using separate SDK and build directories containing spaces;
+`out/rocm10-production-six-targets-result-20261002.json` records the bounded pass.
+The independent scientific comparison using the corrected statistics remains open.
 
 ## Bounds Review Progress
 

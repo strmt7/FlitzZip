@@ -681,6 +681,28 @@ function Test-InstallerPackagingScriptPolicy {
     }
 }
 
+# Purpose: Keep whole-SDK provisioning bounded and isolated from product launch environments.
+# Inputs: ReleaseAction is hosted workflow text; reads the shared repository provisioning implementation.
+# Outputs: Throws when provisioning, finite resource guards or compiler-only environment isolation are absent.
+function Test-RocmProvisioningPolicy {
+    param([Parameter(Mandatory = $true)][string]$ReleaseAction)
+    if ($ReleaseAction -notmatch 'python\s+tools/bootstrap_rocm_sdk\.py' -or
+        $ReleaseAction -match 'HIP_SDK_INSTALLER|setx\s') {
+        throw 'Hosted HIP releases must use the complete pinned distribution provisioner without global installation changes.'
+    }
+    if ($ReleaseAction -match 'GITHUB_ENV[^\r\n]*(?:LLVM_PATH|HIP_DEVICE_LIB_PATH)') {
+        throw 'Compiler-only ROCm environment must not persist into hosted product execution.'
+    }
+    $provisioner = [IO.File]::ReadAllText((Join-Path $repo 'tools/bootstrap_rocm_sdk.py'))
+    foreach ($pattern in @('time\.monotonic\(\)\s*\+\s*[1-9][0-9]*',
+            'timeout\s*=\s*[1-9][0-9]*', 'timeout_seconds\s*=\s*[1-9][0-9]*',
+            'run_bounded_command', 'total\s*>\s*lock\["archive_bytes"\]', 'validate_member', 'SHA-256 mismatch')) {
+        if ($provisioner -notmatch $pattern) {
+            throw "Whole-SDK provisioning lost a required lifetime, byte, archive or containment guard: $pattern"
+        }
+    }
+}
+
 # Purpose: Verify release workflow MSI validation uses per-machine bounded paths.
 # Inputs: ReleaseAction is the composite release action YAML text.
 # Outputs: Throws when hosted release validation can publish unchecked MSI output.
@@ -699,9 +721,7 @@ function Test-InstallerReleaseActionPolicy {
     if ($releaseAction -match 'Start-Process\s+(?:-FilePath\s+)?msiexec\.exe[^\r\n]*-Wait') {
         throw "Release MSI smoke tests must use a bounded WaitForExit timeout, not unbounded Start-Process -Wait."
     }
-    if ($releaseAction -notmatch 'AMD HIP SDK installer timed out after \$hipInstallTimeoutSeconds seconds') {
-        throw "Release workflow must fail stale HIP SDK installer waits with an explicit bounded-timeout message."
-    }
+    Test-RocmProvisioningPolicy -ReleaseAction $ReleaseAction
     if ($releaseAction -notmatch '\[int\]\$TimeoutSeconds\s*=\s*300') {
         throw "Release MSI install/repair/uninstall smoke tests must default to a 300-second stale-wait timeout."
     }

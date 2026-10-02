@@ -488,15 +488,34 @@ if(SUPERZIP_ENABLE_HIP)
       FATAL_ERROR "This project currently wires HIP through the Windows ROCm "
                   "toolchain only.")
   endif()
-  if(NOT DEFINED ENV{HIP_PATH})
-    message(
-      FATAL_ERROR
-        "HIP_PATH is not set. Install AMD ROCm/HIP for Windows or pass "
-        "SUPERZIP_ENABLE_HIP=OFF.")
-  endif()
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm-sdk-lock.json"
+       SUPERZIP_ROCM_LOCK)
+  string(JSON SUPERZIP_ROCM_REQUIRED_VERSION GET "${SUPERZIP_ROCM_LOCK}"
+         version)
   set(SUPERZIP_HIP_PATH
       "$ENV{HIP_PATH}"
-      CACHE PATH "AMD ROCm/HIP installation path")
+      CACHE PATH "Complete pinned ROCm Core SDK installation path")
+  set(SUPERZIP_ROCM_MANIFEST
+      "${SUPERZIP_HIP_PATH}/share/therock/therock_manifest.json")
+  if(NOT EXISTS "${SUPERZIP_ROCM_MANIFEST}")
+    message(
+      FATAL_ERROR "The complete pinned ROCm Core SDK manifest is required.")
+  endif()
+  file(READ "${SUPERZIP_ROCM_MANIFEST}" SUPERZIP_ROCM_METADATA LIMIT 1048576)
+  string(
+    JSON
+    SUPERZIP_ROCM_VERSION
+    ERROR_VARIABLE
+    SUPERZIP_ROCM_VERSION_ERROR
+    GET
+    "${SUPERZIP_ROCM_METADATA}"
+    rocm_version)
+  if(SUPERZIP_ROCM_VERSION_ERROR OR NOT SUPERZIP_ROCM_VERSION STREQUAL
+                                    SUPERZIP_ROCM_REQUIRED_VERSION)
+    message(
+      FATAL_ERROR
+        "This build requires ROCm Core SDK ${SUPERZIP_ROCM_REQUIRED_VERSION}.")
+  endif()
   set(SUPERZIP_HIPCC "${SUPERZIP_HIP_PATH}/bin/hipcc.exe")
   set(SUPERZIP_HIP_LIB "${SUPERZIP_HIP_PATH}/lib/amdhip64.lib")
   if(NOT EXISTS "${SUPERZIP_HIPCC}")
@@ -544,12 +563,14 @@ if(SUPERZIP_ENABLE_HIP)
         powershell -NoProfile -ExecutionPolicy Bypass -File
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1" -Source
         "${CMAKE_CURRENT_SOURCE_DIR}/${source}" -Output "${output}" -RepoRoot
-        "${CMAKE_CURRENT_SOURCE_DIR}" -Arch "${SUPERZIP_HIP_ARCH}"
-        -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
+        "${CMAKE_CURRENT_SOURCE_DIR}" -Arch "${SUPERZIP_HIP_ARCH}" -HipPath
+        "${SUPERZIP_HIP_PATH}" -VcvarsVersion "${SUPERZIP_VCVARS_VERSION}"
         -DependencyFile "${output}.d"
       DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${source}"
               "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_hip_object.ps1"
               "${CMAKE_CURRENT_SOURCE_DIR}/tools/hip_architecture.ps1"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm_toolchain.ps1"
+              "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm-sdk-lock.json"
       COMMENT "${comment}"
       VERBATIM)
   endfunction()
@@ -862,12 +883,12 @@ if(SUPERZIP_BUILD_TESTS)
     # Guard-page regressions call the exact DLL built for the product, including
     # dictionary builders that are exported but not used by archive dispatch.
     add_executable(superzip_zstd_bounds_tests tests/cpp/test_main.cpp
-                                            tests/cpp/test_zstd_bounds.cpp)
+                                              tests/cpp/test_zstd_bounds.cpp)
     target_include_directories(superzip_zstd_bounds_tests
                                PRIVATE tests/cpp "${SUPERZIP_ZSTD_LIBRARY_DIR}")
     target_compile_definitions(
       superzip_zstd_bounds_tests PRIVATE ZSTD_DLL_IMPORT=1 NOMINMAX
-                                        WIN32_LEAN_AND_MEAN)
+                                         WIN32_LEAN_AND_MEAN)
     target_link_libraries(superzip_zstd_bounds_tests PRIVATE libzstd_shared)
     superzip_copy_zstd_runtime(superzip_zstd_bounds_tests)
     add_test(NAME superzip_zstd_bounds_tests COMMAND superzip_zstd_bounds_tests)

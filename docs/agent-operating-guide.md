@@ -421,7 +421,10 @@ profile:
 tools\verify_changes.ps1 -IncludeUntracked -Full
 ```
 
-The normal local build remains HIP-enabled and requires `HIP_PATH` when the plan
+The normal local build remains HIP-enabled and uses the complete pinned ROCm
+distribution. Provision it through `tools/bootstrap_rocm_sdk.py`; an explicit
+`-HipPath` or external `HIP_PATH` can select the same complete SDK at a custom
+location. See [the portable toolchain contract](rocm-toolchain.md). When the plan
 selects a product build:
 
 ```powershell
@@ -705,8 +708,8 @@ For simple private helpers, one compact line is acceptable if it still covers pu
   installer scope, product identity, or version metadata.
 - SuperZip-owned installer launch, release, and smoke-test paths must use
   bounded waits. MSI install, repair, and uninstall phases default to a 300-second
-  timeout, and HIP SDK installer setup in hosted release validation must time
-  out explicitly instead of waiting indefinitely. The Windows UAC consent prompt
+  timeout, and whole-SDK download, inventory and extraction in hosted release
+  validation must time out explicitly instead of waiting indefinitely. The Windows UAC consent prompt
   is OS-owned and cannot be timed from inside the MSI; do not claim otherwise.
 - Installer UI must offer an explicit `Create Desktop shortcut` choice. Keep
   the option visible to the user instead of silently creating or suppressing the

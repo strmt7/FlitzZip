@@ -55,8 +55,11 @@ reports missing prerequisites clearly, and records the expected runtime DLL in
 Development systems additionally need:
 
 - Visual Studio C++ build tools.
+- Python 3.14 for the shared development and provisioning tools.
 - CMake 4.4.3, provisioned and checksum-verified by the build tools.
-- AMD HIP SDK for Windows with `HIP_PATH` pointing at the SDK root.
+- The complete ROCm Core SDK 10.0.0 Windows distribution, provisioned using the
+  [shared local/hosted toolchain](docs/rocm-toolchain.md). `-HipPath` supports a
+  custom installation directory; compiler settings are process-scoped.
 
 ## Build
 
@@ -76,6 +79,7 @@ and [GitHub runner images](https://github.com/actions/runner-images).
 The normal local build is HIP-enabled:
 
 ```powershell
+py -3 tools/bootstrap_rocm_sdk.py
 tools/build.ps1 -Configuration Release -HipArch gfx1201
 tools/test.ps1 -Configuration Release
 build/Release/superzip_cli.exe dependency-check

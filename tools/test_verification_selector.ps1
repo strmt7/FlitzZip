@@ -164,6 +164,13 @@ foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/local_smoke.s
 }
 
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
+foreach ($path in @('tools/rocm_toolchain.ps1', 'tools/bootstrap_rocm_sdk.py', 'tools/test_bootstrap_rocm_sdk.py',
+        'tools/test_rocm_toolchain.ps1', 'tools/rocm-sdk-lock.json', 'tools/compile_hip_object.ps1')) {
+    $rocmPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector $rocmPlan.scope.touchesVerification "ROCm build/provisioning inputs require compiler and verifier coverage: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $rocmPlan -Id 'rocm-bootstrap-tests') "ROCm provisioning needs offline preservation and archive-boundary tests: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $rocmPlan -Id 'release-build') "ROCm changes must rebuild the HIP product: $path"
+}
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "security-scan") "workflow changes must run security scan"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "lint") "workflow changes must wait for lint"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "benchmark-graph") "workflow changes must wait for benchmark graph validation"

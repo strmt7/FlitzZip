@@ -46,13 +46,15 @@ loader dialog.
 
 ## Build Discovery
 
-Build scripts discover:
-
-- CMake from common Visual Studio and system locations.
-- ROCm/HIP SDK from `HIP_PATH`.
-- `hipcc.exe` from `%HIP_PATH%\bin`.
-- `amdhip64.lib` from `%HIP_PATH%\lib`.
-- A compatible Visual Studio toolset through `vcvarsall.bat`.
+Build scripts use one pinned CMake distribution in the checkout's ignored tool
+cache and discover supported Visual Studio installations through `vswhere`.
+The complete ROCm Core SDK is provisioned by
+`py -3 tools/bootstrap_rocm_sdk.py` from the shared distribution lock. SDK root
+selection accepts an explicit `-HipPath`, prefers the pinned checkout cache,
+then examines `HIP_PATH`. Headers, import libraries, compiler invocation and
+dependency scans all use that same selected root. See the
+[repeatable ROCm setup](rocm-toolchain.md) for custom locations, archive reuse,
+integrity checks and compiler-only environment isolation.
 
 If `tools\build.ps1 -VcvarsVersion` is empty, the HIP object compile helper
 enumerates installed MSVC toolsets under the discovered Visual Studio instance,
@@ -61,7 +63,8 @@ Visual Studio default only when no preferred toolset is installed. Use an
 explicit `-VcvarsVersion` for toolchain qualification or reproducing a compiler
 issue; do not hardcode developer-machine paths.
 
-Development builds default to the single `gfx1201` target. Use
+Development builds default to the single `gfx1201` target; this is an explicit
+build preset, not GPU discovery or a guarantee for another host. Use
 `tools/build.ps1 -HipArch <gfx...>` for another supported target, or pass a
 quoted comma-separated subset. Product releases use `-HipArch release` to
 embed six target images in the same Windows x64 binaries. The exact preset,
