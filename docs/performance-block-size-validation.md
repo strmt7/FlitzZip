@@ -163,6 +163,18 @@ materialization, resident CRC and cleanup still need separate phase evidence;
 do not attribute the result to an unmeasured device or runtime mechanism.
 These diagnostics are not final comparison graphs or release throughput claims.
 
+HIP device-memory plans now use independent, synchronized accounting for each
+runtime device ordinal. The acquired identity survives reservation moves and
+cleanup; no device is selected implicitly. The existing free-memory guard and
+capacity epoch remain in place for each adapter, and idle ledger entries are
+removed. Synthetic tests cover unequal capacities, concurrent same-device
+admission, pressure, invalid counters, overflow and release errors without
+allocating that VRAM. This is not multi-device hardware validation or complete
+process-memory containment. AMD notes that
+[Windows HIP memory counters](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___memory.html)
+may account only for allocations in the current process; neither a snapshot
+nor this ledger reserves physical memory against other applications.
+
 ### Dispatch-Bound Timing (2026-09-08)
 
 Production codec and diagnostic launches now attach their start/stop events

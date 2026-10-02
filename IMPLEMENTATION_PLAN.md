@@ -131,8 +131,26 @@ follow-up batch passes all nine selected commands: hygiene, changed-language
 lint, HIP Release build, native and legacy tests, function contracts, security
 policy checks, all-page GUI smoke, MSI identity and unpublished package validation.
 Normal and compact screenshots were inspected. These are local correctness
-results; automatic closure of the seven changed test-harness alerts still
-requires the next hosted analysis.
+results. All six automatically triggered workflows for `b472181` passed, and
+the next hosted C/C++ analysis closed all seven changed test-harness alerts.
+The fresh October 2 inventory contains 211 open code-scanning alerts;
+Dependabot and open pull-request counts are zero. No alerts were dismissed.
+
+The follow-up resource review identifies a cross-device accounting defect:
+independent HIP adapters shared one aggregate capacity and reservation count.
+The production ledger now keys both by the acquired device ordinal; owners
+retain that identity through moves and cleanup. Three hardware-independent
+regressions cover unequal-device admission, concurrent plans, live pressure,
+invalid counters, unsigned limits and invalid releases. All 29 full-profile
+local checks pass, including 563 native tests, seven legacy failure-path groups,
+the format matrix, independent interoperability, bounded sanitizer smoke and
+unpublished package validation. Normal and compact page captures were inspected.
+The 10 GiB Mixed RAM sweep at effort 5 completed all 14 CPU/GPU lanes across
+the seven production block sizes, with verified output, `memory_only=true` and
+`disk_write_bytes=0`. Pre-run CPU utilization was 2.4-6.0%, disk activity stayed
+below 0.5%, and the busiest GPU engine was below 0.8%; in-run counters are
+retained with the diagnostic evidence. One repeat per configuration does not
+establish a timing trend, new speedup or multi-GPU hardware-support claim.
 
 GPU phase diagnosis, aggregate CPU
 workspace accounting, final repeated licensed-software comparisons and graphs,

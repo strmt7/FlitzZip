@@ -2,6 +2,7 @@
 
 #include "gpu/gpu_codec.hpp"
 #include "gpu/hip_device.hpp"
+#include "gpu/device_memory_budget.hpp"
 
 #include "core/result.hpp"
 #include "core/dictionary_block.hpp"
@@ -197,17 +198,11 @@ inline std::size_t checked_multiply_bytes(std::size_t count, std::size_t bytes_p
     return count * bytes_per_item;
 }
 
-struct HipDeviceReservationState {
-    std::mutex mutex;
-    std::size_t reserved_bytes = 0;
-    std::size_t capacity_bytes = 0;
-};
-
 // Purpose: Return the process-wide HIP memory admission state shared by all codec translation units.
 // Inputs: None.
-// Outputs: Returns a singleton whose mutex serializes aggregate VRAM reservations.
-inline HipDeviceReservationState& hip_device_reservation_state() {
-    static HipDeviceReservationState state;
+// Outputs: Returns a synchronized singleton with independent accounting for each selected device.
+inline DeviceMemoryBudget& hip_device_reservation_state() {
+    static DeviceMemoryBudget state;
     return state;
 }
 
@@ -215,30 +210,22 @@ class HipDeviceMemoryReservation {
   public:
     HipDeviceMemoryReservation() = default;
 
-    // Purpose: Atomically reserve planned device bytes against live and process-wide VRAM limits.
+    // Purpose: Reserve planned bytes against the calling thread's selected device, never another GPU's capacity.
     // Inputs: `required_bytes` is the direct allocation plan and `action` labels admission failures.
-    // Outputs: Owns an aggregate reservation until destruction or throws before any allocation occurs.
+    // Outputs: Retains the acquired device identity until release; throws before any device allocation occurs.
     HipDeviceMemoryReservation(std::size_t required_bytes, const char* action) {
         if (required_bytes == 0U) {
             return;
         }
-        auto& state = hip_device_reservation_state();
-        std::scoped_lock lock(state.mutex);
+        int device = -1;
+        check_hip(hipGetDevice(&device), "hipGetDevice for VRAM reservation");
         std::size_t free_bytes = 0;
         std::size_t total_bytes = 0;
         check_hip(hipMemGetInfo(&free_bytes, &total_bytes), "hipMemGetInfo");
-        const auto reserve_target =
-            std::max<std::size_t>(static_cast<std::size_t>(kDeviceMemoryReserveFloorBytes), total_bytes / 20U);
-        const auto reserve = std::min<std::size_t>(free_bytes / 4U, reserve_target);
-        const auto usable_free_bytes = free_bytes - reserve;
-        if (state.reserved_bytes == 0U) {
-            state.capacity_bytes = usable_free_bytes;
-        }
-        if (required_bytes > usable_free_bytes || state.reserved_bytes > state.capacity_bytes ||
-            required_bytes > state.capacity_bytes - state.reserved_bytes) {
+        if (!hip_device_reservation_state().try_reserve(device, required_bytes, free_bytes, total_bytes)) {
             throw GpuError(std::string(action) + ": insufficient aggregate AMD GPU VRAM reservation");
         }
-        state.reserved_bytes += required_bytes;
+        device_ = device;
         bytes_ = required_bytes;
     }
 
@@ -248,9 +235,8 @@ class HipDeviceMemoryReservation {
     // Purpose: Transfer one aggregate reservation without changing the global reserved byte count.
     // Inputs: `other` relinquishes ownership.
     // Outputs: This object releases the reservation on destruction; `other` becomes empty.
-    HipDeviceMemoryReservation(HipDeviceMemoryReservation&& other) noexcept : bytes_(other.bytes_) {
-        other.bytes_ = 0;
-    }
+    HipDeviceMemoryReservation(HipDeviceMemoryReservation&& other) noexcept
+        : device_(std::exchange(other.device_, -1)), bytes_(std::exchange(other.bytes_, 0U)) {}
 
     // Purpose: Replace this reservation with another while releasing any currently owned bytes.
     // Inputs: `other` relinquishes ownership.
@@ -258,8 +244,8 @@ class HipDeviceMemoryReservation {
     HipDeviceMemoryReservation& operator=(HipDeviceMemoryReservation&& other) noexcept {
         if (this != &other) {
             release();
-            bytes_ = other.bytes_;
-            other.bytes_ = 0;
+            device_ = std::exchange(other.device_, -1);
+            bytes_ = std::exchange(other.bytes_, 0U);
         }
         return *this;
     }
@@ -272,22 +258,19 @@ class HipDeviceMemoryReservation {
     }
 
   private:
-    // Purpose: Return owned bytes to the global reservation manager exactly once.
-    // Inputs: Uses `bytes_`; zero means no reservation.
-    // Outputs: Mutates process-wide accounting and clears this owner without throwing.
+    // Purpose: Return owned bytes to the acquired device's reservation manager exactly once.
+    // Inputs: Uses the retained device ordinal and `bytes_`; zero means no reservation.
+    // Outputs: Releases only that device's accounting and clears this owner without changing HIP selection.
     void release() noexcept {
         if (bytes_ == 0U) {
             return;
         }
-        auto& state = hip_device_reservation_state();
-        std::scoped_lock lock(state.mutex);
-        state.reserved_bytes = bytes_ > state.reserved_bytes ? 0U : state.reserved_bytes - bytes_;
-        if (state.reserved_bytes == 0U) {
-            state.capacity_bytes = 0U;
-        }
+        (void)hip_device_reservation_state().release(device_, bytes_);
+        device_ = -1;
         bytes_ = 0U;
     }
 
+    int device_ = -1;
     std::size_t bytes_ = 0;
 };
 

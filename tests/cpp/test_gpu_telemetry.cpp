@@ -2,6 +2,7 @@
 
 #include "gpu/gpu_codec.hpp"
 #include "gpu/hip_device.hpp"
+#include "gpu/device_memory_budget.hpp"
 #include "gpu/pinned_host_budget.hpp"
 #include "core/checksum.hpp"
 #include "core/decoded_chunk.hpp"
@@ -15,6 +16,82 @@
 #include <limits>
 #include <thread>
 #include <utility>
+
+// Purpose: Isolate unequal GPU capacities instead of charging one adapter's work to another.
+// Inputs: Simulated memory snapshots from two device ordinals; no GPU hardware or allocations are used.
+// Outputs: Requires independent admission, retained same-device caps, live pressure rejection and clean epoch reset.
+TEST_CASE(device_memory_budget_isolates_adapters) {
+    superzip::DeviceMemoryBudget budget;
+    REQUIRE_TRUE(budget.try_reserve(0, 500U, 1000U, 1000U));
+    REQUIRE_TRUE(budget.try_reserve(1, 1000U, 2000U, 2000U));
+    REQUIRE_EQ(budget.reserved_bytes(0), 500U);
+    REQUIRE_EQ(budget.reserved_bytes(1), 1000U);
+    REQUIRE_TRUE(!budget.try_reserve(0, 251U, 1000U, 1000U));
+    REQUIRE_TRUE(!budget.try_reserve(1, 501U, 2000U, 2000U));
+    REQUIRE_TRUE(!budget.try_reserve(0, 100U, 100U, 1000U));
+    REQUIRE_TRUE(budget.try_reserve(0, 250U, 1000U, 1000U));
+    REQUIRE_TRUE(budget.release(1, 1000U));
+    REQUIRE_EQ(budget.reserved_bytes(0), 750U);
+    REQUIRE_TRUE(budget.release(0, 750U));
+    REQUIRE_TRUE(budget.try_reserve(0, 1500U, 2000U, 2000U));
+    REQUIRE_TRUE(budget.release(0, 1500U));
+    REQUIRE_EQ(budget.reserved_bytes(0), 0U);
+    REQUIRE_EQ(budget.reserved_bytes(1), 0U);
+}
+
+// Purpose: Reject invalid counters and release errors without overflow or lost live reservations.
+// Inputs: Zero/negative identity, unknown/impossible memory, over-release and maximum unsigned byte counts.
+// Outputs: Requires unchanged accounting after rejection and exact admission up to the reserve boundary.
+TEST_CASE(device_memory_budget_rejects_invalid_accounting) {
+    superzip::DeviceMemoryBudget budget;
+    for (const auto device : {-1, 0}) {
+        REQUIRE_TRUE(!budget.try_reserve(device, 0U, 1000U, 1000U));
+        REQUIRE_TRUE(!budget.try_reserve(device, 1U, 0U, 0U));
+        REQUIRE_TRUE(!budget.try_reserve(device, 1U, 1001U, 1000U));
+    }
+    REQUIRE_TRUE(!budget.try_reserve(-1, 1U, 1000U, 1000U));
+    REQUIRE_TRUE(budget.try_reserve(0, 1U, 1U, 1U));
+    REQUIRE_TRUE(!budget.release(0, 0U));
+    REQUIRE_TRUE(!budget.release(0, 2U));
+    REQUIRE_TRUE(!budget.release(1, 1U));
+    REQUIRE_EQ(budget.reserved_bytes(0), 1U);
+    REQUIRE_TRUE(budget.release(0, 1U));
+    REQUIRE_TRUE(!budget.release(0, 1U));
+    const auto maximum = std::numeric_limits<std::size_t>::max();
+    const auto admitted = maximum - maximum / 20U;
+    REQUIRE_TRUE(!budget.try_reserve(0, maximum, maximum, maximum));
+    REQUIRE_TRUE(budget.try_reserve(0, admitted, maximum, maximum));
+    REQUIRE_TRUE(!budget.try_reserve(0, 1U, maximum, maximum));
+    REQUIRE_TRUE(budget.release(0, admitted));
+}
+
+// Purpose: Serialize concurrent plans separately for each device without over-admitting either adapter.
+// Inputs: Sixteen joined workers each request 25 bytes from a 150-byte usable simulated device budget.
+// Outputs: Requires exactly six accepted plans per device and zero outstanding bytes after matched releases.
+TEST_CASE(device_memory_budget_concurrent_admission) {
+    superzip::DeviceMemoryBudget budget;
+    std::barrier phase(16);
+    std::array<std::atomic<unsigned int>, 2> accepted{};
+    {
+        std::vector<std::jthread> workers;
+        for (int worker = 0; worker < 16; ++worker) {
+            workers.emplace_back([&, device = worker % 2] {
+                const auto owned = budget.try_reserve(device, 25U, 200U, 200U);
+                if (owned) {
+                    accepted[static_cast<std::size_t>(device)].fetch_add(1U);
+                }
+                phase.arrive_and_wait();
+                if (owned && !budget.release(device, 25U)) {
+                    accepted[static_cast<std::size_t>(device)].store(99U);
+                }
+            });
+        }
+    }
+    for (int device = 0; device < 2; ++device) {
+        REQUIRE_EQ(accepted[static_cast<std::size_t>(device)].load(), 6U);
+        REQUIRE_EQ(budget.reserved_bytes(device), 0U);
+    }
+}
 
 // Purpose: Keep host-output counters callable without a HIP backend or device initialization.
 // Inputs: Optional telemetry, zero counts, and distinct cumulative allocation/output values.
