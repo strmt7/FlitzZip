@@ -359,6 +359,9 @@ function Get-SuperZipLocalVerificationCommand {
 
     if ($scope.touchesLintSurface -or $scope.fullEscalationRequired) {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "language-lint" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/lint.ps1", "-CppMode", "Changed", "-IncludeUntracked") -Reason "changed docs, workflow, script, CMake, or C/C++ surfaces require the fast language linter lane")
+        if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(lint|test_lint_routing)\.ps1$', '^tools/superzip_verification\.psm1$'))) {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "lint-routing-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_lint_routing.ps1") -Reason "changed/all/configuration lint routing must retain newly added files and cover owned CMake fixtures")
+        }
     }
 
     if ($touchesBenchmarkGraph -or $scope.fullEscalationRequired) {

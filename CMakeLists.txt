@@ -276,6 +276,8 @@ if(WIN32)
       FATAL_ERROR "Pinned Zstandard source was not found after extraction: "
                   "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
   endif()
+  include(cmake/PatchZstdLegacy.cmake)
+  superzip_patch_zstd_legacy("${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
   # Build the upstream C library without its CLI/test/assembler project. MSVC
   # uses the portable decoder; upstream disables its GNU assembly here.
   set(SUPERZIP_ZSTD_LIBRARY_DIR "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/lib")
@@ -872,6 +874,37 @@ if(SUPERZIP_BUILD_TESTS)
     add_dependencies(superzip_tests SuperZip)
   endif()
   add_test(NAME superzip_tests COMMAND superzip_tests)
+  if(WIN32)
+    # Compile the production dependency sources with a deterministic allocator
+    # interposer; no alternate decoder implementation is used by these tests.
+    add_executable(
+      superzip_zstd_legacy_tests
+      tests/cpp/test_main.cpp
+      tests/cpp/test_zstd_legacy_failures.cpp
+      tests/zstd/fault_allocator.c
+      tests/zstd/legacy_driver.c
+      tests/zstd/legacy_v05.c
+      tests/zstd/legacy_v06.c
+      tests/zstd/legacy_v07.c
+      "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/error_private.c"
+      "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/xxhash.c")
+    target_include_directories(
+      superzip_zstd_legacy_tests PRIVATE tests/cpp tests/zstd
+                                         "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+    target_compile_definitions(
+      superzip_zstd_legacy_tests
+      PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
+              _CRT_SECURE_NO_WARNINGS)
+    add_test(NAME superzip_zstd_legacy_tests COMMAND superzip_zstd_legacy_tests)
+    add_test(
+      NAME superzip_zstd_legacy_patch
+      COMMAND
+        "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_zstd_legacy_patch.cmake")
+    set_tests_properties(superzip_zstd_legacy_tests superzip_zstd_legacy_patch
+                         PROPERTIES TIMEOUT 60)
+  endif()
 endif()
 
 if(SUPERZIP_BUILD_FUZZERS)

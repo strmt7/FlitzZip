@@ -72,6 +72,39 @@ measurements and unresolved allocator/transfer questions are retained outside
 the checkout; no experimental workspace or its unused tests remain in product
 source. The accepted production path and its 560-test suite are restored.
 
+The next dependency batch repairs three reproduced legacy Zstandard failure
+paths: v0.5 buffered-context construction now rejects an inner allocation
+failure, cross-version initialization retains its previous owner until a
+replacement succeeds, and dictionary initialization errors are propagated.
+The pinned upstream archive and licenses are unchanged. A hash-checked CMake
+recipe applies the repairs to the production dependency sources; fresh
+extraction, idempotence, source drift and interrupted-write fixtures validate
+that recipe. Seven allocator-fault regression groups compile the same decoder
+sources, not a copied alternative implementation.
+
+All 31 full-profile local commands pass for this batch, including the 560
+existing native tests, seven new legacy failure-path test groups, the patch
+fixture, format matrix, independent interoperability, bounded sanitizer smoke,
+MCP tests and unpublished package validation. All eight GUI pages were inspected.
+An earlier low-memory run failed 42 existing tests: 38 reported the unchanged
+80% physical-memory admission guard, with four downstream assertions unable
+to reach their intended path. Those failures remain in the local evidence;
+the subsequent run used adequate available RAM without stopping other work
+or weakening resource checks. Lint routing now includes owned nested CMake
+files and retains new files when a configuration change expands lint scope;
+production-router tests cover both behaviors without expanding docs-only work.
+
+A separate 55-alert xxHash commented-code review retains exact per-alert
+counterevidence: 50 comments describe active SIMD operations, two explain
+128-bit arithmetic, one documents an active SVE prefetch signature, and two
+explain constant-initializer requirements. These are static triage results,
+not fixes, GitHub closures or an all-vendor safety claim. No comments, scan
+rules or exclusions were changed to lower the count. The other commented-code
+alerts still require independent review. GPU phase diagnosis, aggregate CPU
+workspace accounting, final repeated licensed-software comparisons and graphs,
+end-user documentation, remote security acceptance and the final audit remain
+open. Release 0.8.0 remains unpublished pending the maintainer's green light.
+
 1. Refresh dependency graphs and pinned provenance. Current local checks cover
    updated Python locks, LZMA SDK 26.03, miniz 3.1.2, Lhasa 0.6.0, native build,
    tests, 36-format routing, and independent format interoperability. Hosted

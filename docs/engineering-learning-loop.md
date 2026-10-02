@@ -16,6 +16,22 @@ the Security tab, released artifacts, or the product UI again.
   authorizes blanket dismissals, source filtering or rewriting correct code to
   satisfy a heuristic. Preserve unresolved paths as review work and continue
   independent product improvements instead of repeating unchanged scans.
+- Decoder constructors must return a complete owner or release every partial
+  allocation. A version transition must initialize its replacement before
+  destroying the old owner and publish pointer/version identity together only
+  after success. The Zstandard legacy regressions exercise both allocation
+  failures, every shipped transition, dictionary errors, retry and destruction
+  against the production dependency source, not a copied decoder.
+- Downstream dependency fixes must survive fresh archive extraction and reject
+  source drift. The Zstandard patch pins complete original/derived file hashes,
+  explicitly preserves LF bytes on Windows and verifies them before atomic
+  replacement. CMake fixtures cover repeat configuration and preservation of
+  interrupted input/output files. Upstream provenance and licenses stay intact.
+- Whole-language lint expansion must retain newly added changed files instead
+  of replacing the change set with tracked files alone. CMake routing covers
+  owned fixtures and nested lists throughout the repository; production-selector
+  regressions cover changed, all and configuration-triggered modes without
+  duplicating the routing policy.
 - MCP command trees need aggregate committed-memory containment, not merely
   a per-process output limit or sampled RAM allowance. Regression tests query
   the actual child job and prove that two individually admissible allocations

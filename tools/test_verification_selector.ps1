@@ -103,6 +103,9 @@ Assert-Selector $docsPlan.scope.docsOnly "docs-only changes must be classified a
 Assert-Selector (-not $docsPlan.scope.fullEscalationRequired) "docs-only changes must not escalate"
 Assert-Selector ((Get-RequiredCommandId -Plan $docsPlan).Count -eq 2) "docs-only changes must require changed hygiene and language lint"
 Assert-Selector (Test-RequiredCommand -Plan $docsPlan -Id "language-lint") "docs-only changes must run markdown lint through the language linter"
+Assert-Selector (-not (Test-RequiredCommand -Plan $docsPlan -Id "lint-routing-tests")) "docs-only changes must not rerun unchanged routing implementation tests"
+$lintPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/lint.ps1")
+Assert-Selector (Test-RequiredCommand -Plan $lintPlan -Id "lint-routing-tests") "linter implementation changes must test production file routing"
 $base64Index = [Array]::IndexOf([object[]]$docsPlan.requiredLocalCommands[0].arguments, "-ChangedPathBase64")
 Assert-Selector ($base64Index -ge 0) "hygiene command must use deterministic Base64 JSON path handoff"
 $decodedPaths = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($docsPlan.requiredLocalCommands[0].arguments[$base64Index + 1])) | ConvertFrom-Json

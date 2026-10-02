@@ -137,7 +137,7 @@ function Test-LintConfigChange {
 
 # Purpose: Build a lint target set from changed files, or all tracked files when requested.
 # Inputs: Changed paths, all-file pathspecs, file patterns, config patterns, and `ForceAll`.
-# Outputs: Returns repository-relative lint target paths.
+# Outputs: Returns unique targets, retaining new changed files even when the scope expands to all tracked files.
 function Get-LintTargetFile {
     param(
         [string[]]$ChangedPath,
@@ -148,7 +148,9 @@ function Get-LintTargetFile {
     )
 
     if ($ForceAll.IsPresent -or (Test-LintConfigChange -Path $ChangedPath -Pattern $ConfigPattern)) {
-        return Get-TrackedLintFile -Pathspec $AllPathspec
+        $targets = @(Get-TrackedLintFile -Pathspec $AllPathspec)
+        $targets += @(Select-LintFile -Path $ChangedPath -Pattern $FilePattern)
+        return @($targets | Sort-Object -Unique)
     }
     return Select-LintFile -Path $ChangedPath -Pattern $FilePattern
 }
@@ -242,8 +244,8 @@ try {
 
     $cmakeFiles = Get-LintTargetFile `
         -ChangedPath $changedFiles `
-        -AllPathspec @("CMakeLists.txt", "cmake/*.cmake", "cmake/**/*.cmake") `
-        -FilePattern @("^CMakeLists\.txt$", "^cmake/.*\.cmake$") `
+        -AllPathspec @("*CMakeLists.txt", "*.cmake", ":(exclude)third_party/**") `
+        -FilePattern @("^(?!third_party/)(?:.*/)?CMakeLists\.txt$", "^(?!third_party/).*\.cmake$") `
         -ForceAll:($CppMode -eq "All")
     if ($cmakeFiles.Count -gt 0) {
         Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name "cmake-lint" -VenvPath $LintVenvPath) -Arguments $cmakeFiles -Label "cmake-lint"
@@ -253,7 +255,8 @@ try {
 
     if ($CppMode -ne "Off") {
         $cppFiles = if ($CppMode -eq "All") {
-            Select-SuperZipCppLintFile -Path (Get-TrackedLintFile -Pathspec @("src/*", "tests/*", "fuzz/*"))
+            $allCppFiles = @(Get-TrackedLintFile -Pathspec @("src/*", "tests/*", "fuzz/*")) + $changedFiles
+            Select-SuperZipCppLintFile -Path $allCppFiles
         } else {
             Select-SuperZipCppLintFile -Path $changedFiles
         }

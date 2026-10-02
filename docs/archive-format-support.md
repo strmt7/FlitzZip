@@ -278,7 +278,7 @@ routes the decoded stream through the native TAR scanner, so TAR paths are
 validated in a full first pass before destination writes.
 
 Zstandard support is single-file when used as `.zst` or `.zstd`. SuperZip loads
-the bundled official libzstd 1.5.7 DLL from the executable directory, validates
+the SuperZip-built libzstd 1.5.7 DLL from the executable directory, validates
 the runtime version, creates frames with the libzstd content checksum enabled,
 and extracts through a bounded-window streaming decoder. `.tar.zst`/`.tzst` is
 multi-entry because the TAR stream supplies the entry table; SuperZip validates
@@ -1048,7 +1048,7 @@ flowchart TD
 
 ## Zstandard Security Contract
 
-The Zstandard path is in-process through the bundled official libzstd 1.5.7 DLL
+The Zstandard path is in-process through the SuperZip-built libzstd 1.5.7 DLL
 and follows the same publication rules as the other stream adapters:
 
 1. `.zst`/`.zstd` accepts exactly one source file and derives one safe output
