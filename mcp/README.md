@@ -35,7 +35,36 @@ No model workers or automatic scans are launched by connection or discovery.
 Windows children use below-normal priority without CPU affinity/rate limits.
 Indirect Windows PowerShell launches use a child-only compatible module path,
 not the inherited PowerShell 7 paths; neither setting changes the caller or
-unrelated host tasks. Build/check RAM admission follows the shared operating guide.
+unrelated host tasks.
+
+## Memory Containment
+
+Every command samples current available physical RAM, keeps at least 2 GiB and
+half the available RAM for host headroom, and requires a 2 GiB admitted budget.
+The same admission arithmetic is regression-tested against
+`tools/local_resources.ps1`; unknown counters or insufficient capacity refuse
+execution. Windows then enforces the admitted byte ceiling across the complete
+command tree through `JOB_OBJECT_LIMIT_JOB_MEMORY`, not a per-child allowance.
+This limits aggregate committed memory, not total host working-set usage or
+GPU VRAM. The server's small bounded transport buffers are outside that job.
+
+The child starts suspended. Its kill-on-close and memory limits are queried
+back, assignment must succeed, and only its verified primary thread is resumed.
+Launch failure reaps the suspended child and closes owned handles/pipes; a
+descendant cannot launch ahead of containment. Only our child is affected.
+No CPU quota, affinity, breakaway permission or working-set throttling is set.
+Normal exit, cancellation, timeout and output-limit handling retain the existing
+tree cleanup. Results include `job_memory_limit_bytes`; allocation denial remains
+a command failure, never a passed or deferred check.
+
+Command execution requires Windows; discovery, framing and pure protocol tests
+do not. Other platforms fail before spawning instead of advertising an
+unenforced aggregate cap. Tool callers cannot supply a larger budget or change
+the command allowlist. Build and analysis tools still need their own
+RAM-admitted scheduling/native limits; a job ceiling is containment, not proof
+that their estimates fit every invocation. See Microsoft's
+[job memory contract](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information)
+and [suspended-process flag](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags).
 
 Verification tools plan intermediate development checkpoints without reducing
 local test coverage. `wait_relevant_workflows`, its opportunistic variant, and
@@ -55,7 +84,8 @@ py -3 -m unittest discover -s mcp -p test_superzip_mcp.py -v
 
 Tests exercise current discovery, legacy initialization, schemas, result/error
 shapes, invalid requests, cancellation, real stdio framing, output limits,
-timeouts, and Windows descendant containment. Full verification selects this
+timeouts, shared RAM-policy parity, actual aggregate parent/descendant allocation
+denial, fail-closed launch, and Windows descendant containment. Full verification selects this
 suite automatically. No network transport, resources, prompts, sampling,
 elicitation, subscriptions, or optional MCP extensions are advertised.
 

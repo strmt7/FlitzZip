@@ -7,6 +7,28 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Reduce scanning backlogs by root-cause batch, not alert-count targets. Separate
+  code defects, quality observations and verified false positives; retain an
+  alert-to-evidence record and confirm actual fixes on the pushed SHA. An upstream
+  borrowed stack pointer is not a dangling pointer when all success/error paths
+  join its users before destruction. Likewise, a provenance digest is not a
+  credential just because a token-pattern rule matches it. Neither observation
+  authorizes blanket dismissals, source filtering or rewriting correct code to
+  satisfy a heuristic. Preserve unresolved paths as review work and continue
+  independent product improvements instead of repeating unchanged scans.
+- MCP command trees need aggregate committed-memory containment, not merely
+  a per-process output limit or sampled RAM allowance. Regression tests query
+  the actual child job and prove that two individually admissible allocations
+  cannot exceed their shared ceiling. Suspended launch prevents descendants
+  escaping before assignment, and injected assignment/resume failures prove
+  fail-closed cleanup. Pure admission tests match the PowerShell policy;
+  nonfinite deadlines cannot silently disable time limits.
+- Archive numeric fields must use bounded, typed conversion and exact wire
+  widths, not varargs formatting. CPIO keeps eight uppercase ASCII hex digits
+  at every uint32 boundary; TAR reuses its octal writer with six checksum digits,
+  NUL and space. Independent field and checksum oracles accompany roundtrip and
+  interoperability checks; changing an API name alone is not security evidence.
+
 - Native worker admission now caps both active windows and the floor share of
   workers per window. Ceiling division could exceed the requested aggregate;
   a one-worker minimum alone could also exceed it when queue depth was larger

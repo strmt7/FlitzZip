@@ -5,17 +5,18 @@
 #include "core/archive_format.hpp"
 #include "core/result.hpp"
 #include "cpio/cpio_adapter.hpp"
+#include "cpio/cpio_numeric.hpp"
 #include "gzip/gzip_adapter.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -72,10 +73,13 @@ std::uint64_t count_regular_files(const std::filesystem::path& root) {
 // Inputs: `header` receives bytes and `value` is the field value.
 // Outputs: Appends exactly eight ASCII hex bytes.
 void append_test_cpio_hex(std::string& header, std::uint32_t value) {
-    std::array<char, 9> encoded{};
-    const int written = std::snprintf(encoded.data(), encoded.size(), "%08X", value);
-    REQUIRE_EQ(written, 8);
-    header.append(encoded.data(), 8U);
+    constexpr std::string_view digits = "0123456789ABCDEF";
+    std::array<char, 8> encoded{};
+    for (std::size_t i = 0; i < encoded.size(); ++i) {
+        encoded[encoded.size() - 1U - i] = digits[value & 15U];
+        value >>= 4U;
+    }
+    header.append(encoded.data(), encoded.size());
 }
 
 // Purpose: Compute new ASCII CPIO padding for a section length.
@@ -148,6 +152,41 @@ void write_one_entry_cpio(const std::filesystem::path& archive, std::string_view
 }
 
 }  // namespace
+
+// Purpose: Check the production hex writer over every field width and unsigned boundary.
+// Inputs: Fixed literal oracles, powers of two and their neighbors, and 65,536 deterministic 32-bit values.
+// Outputs: Requires exactly eight uppercase ASCII bytes matching a separately constructed nibble oracle.
+TEST_CASE(cpio_numeric_fields_have_exact_full_range_encoding) {
+    for (const auto& [value, expected] :
+         std::array<std::pair<std::uint32_t, std::string_view>, 7>{{{0U, "00000000"},
+                                                                    {15U, "0000000F"},
+                                                                    {16U, "00000010"},
+                                                                    {0xABCDEFU, "00ABCDEF"},
+                                                                    {0x12345678U, "12345678"},
+                                                                    {0x80000000U, "80000000"},
+                                                                    {0xFFFFFFFFU, "FFFFFFFF"}}}) {
+        const auto encoded = superzip::detail::encode_cpio_hex_field(value);
+        REQUIRE_EQ(std::string_view(encoded.data(), encoded.size()), expected);
+    }
+    // Purpose: Compare independent encoders; inputs: full-width integer; outputs: requires byte identity.
+    auto check_value = [](std::uint32_t value) {
+        std::string reference;
+        append_test_cpio_hex(reference, value);
+        const auto encoded = superzip::detail::encode_cpio_hex_field(value);
+        REQUIRE_EQ(std::string_view(encoded.data(), encoded.size()), std::string_view(reference));
+    };
+    for (unsigned bit = 0; bit < 32U; ++bit) {
+        const auto value = std::uint32_t{1} << bit;
+        check_value(value - 1U);
+        check_value(value);
+        check_value(value + 1U);
+    }
+    std::uint32_t value = 0x67452301U;
+    for (std::size_t i = 0; i < 65536U; ++i) {
+        value = value * 1664525U + 1013904223U;
+        check_value(value);
+    }
+}
 
 // Purpose: Use the same explicit legacy decoder in seekable CPIO and both CPIO.GZ passes.
 // Inputs: Independently encoded ANSI names with padding and a following ASCII entry.

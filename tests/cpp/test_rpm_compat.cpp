@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -199,10 +198,14 @@ void write_rpm_name_payload(const std::filesystem::path& path, std::string_view 
                                                    static_cast<std::uint32_t>(member.size() + 1U),
                                                    0U};
         output << "070701";
-        for (const auto field : fields) {
-            std::array<char, 9> hex{};
-            REQUIRE_EQ(std::snprintf(hex.data(), hex.size(), "%08X", field), 8);
-            output.write(hex.data(), 8);
+        for (auto field : fields) {
+            constexpr std::string_view digits = "0123456789ABCDEF";
+            std::array<char, 8> hex{};
+            for (std::size_t i = 0; i < hex.size(); ++i) {
+                hex[hex.size() - 1U - i] = digits[field & 15U];
+                field >>= 4U;
+            }
+            output.write(hex.data(), static_cast<std::streamsize>(hex.size()));
         }
         output.write(member.data(), static_cast<std::streamsize>(member.size()));
         output.put('\0');

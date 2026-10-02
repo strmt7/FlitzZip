@@ -231,7 +231,142 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(discovery["id"], "probe")
 
 
+class MemoryAdmissionTests(unittest.TestCase):
+    def test_invalid_limits_cannot_disable_deadlines_or_start_children(self) -> None:
+        """Purpose: Prevent unbounded checks; inputs: nonfinite deadlines or invalid byte limits; outputs: no child."""
+        cases = [{"timeout_seconds": value} for value in (float("nan"), float("inf"), -float("inf"), 0, -1, True, "1")]
+        cases += [{name: value} for name in ("max_output_bytes", "response_tail_bytes") for value in (0, -1, True, 1.5)]
+        for limits in cases:
+            with self.subTest(limits=limits), mock.patch.object(superzip_mcp.subprocess, "Popen") as child:
+                with self.assertRaises(ValueError):
+                    superzip_mcp.run_bounded_command(["unused"], **limits)
+                child.assert_not_called()
+
+    def test_shared_ram_policy_boundaries_and_invalid_inputs(self) -> None:
+        """Purpose: Check portable admission arithmetic; inputs: synthetic MiB; outputs: exact budgets or refusal."""
+        for available in (0, 2048, 4095):
+            with self.subTest(available=available), self.assertRaisesRegex(RuntimeError, "Insufficient available RAM"):
+                superzip_mcp.resolve_memory_budget_mib(available)
+        for available in (4096, 4097, 8192, 32769, 1048576):
+            with self.subTest(available=available):
+                self.assertEqual(superzip_mcp.resolve_memory_budget_mib(available), available // 2)
+        for available, required in ((True, 1), (-1, 1), (2.5, 1), (4096, False), (4096, 0), (4096, 1.5)):
+            with self.subTest(available=available, required=required), self.assertRaises(ValueError):
+                superzip_mcp.resolve_memory_budget_mib(available, required)
+        self.assertEqual(superzip_mcp.resolve_memory_budget_mib(2049, 1), 1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows shared PowerShell RAM policy parity")
+    def test_python_and_powershell_admission_are_identical(self) -> None:
+        """Purpose: Prevent cross-language policy drift; inputs: same synthetic hosts; outputs: identical decisions."""
+        script = (
+            ". ./tools/local_resources.ps1; "
+            "foreach ($available in @(0,2048,4095,4096,4097,8192,32769,1048576)) { "
+            "try { Resolve-SuperZipLocalMemoryBudget -AvailableMiB $available } catch { 'refused' } }"
+        )
+        result = superzip_mcp.run_bounded_command(["powershell", "-NoProfile", "-Command", script], timeout_seconds=15)
+        self.assertEqual(result["exit_code"], 0, result["stderr"])
+        self.assertEqual(result["stdout"].splitlines(), ["refused"] * 3 + ["2048", "2048", "4096", "16384", "524288"])
+
+    def test_nonwindows_launch_refuses_uncontained_execution(self) -> None:
+        """Purpose: Fail closed outside the supported command platform; inputs: POSIX platform; outputs: no child."""
+        with (
+            mock.patch.object(superzip_mcp.os, "name", "posix"),
+            mock.patch.object(superzip_mcp.subprocess, "Popen") as child,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Windows aggregate job-memory containment"):
+                superzip_mcp.run_bounded_command(["unused"])
+            child.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows native counter admission")
+    def test_invalid_or_overbudget_override_never_starts_child(self) -> None:
+        """Purpose: Refuse RAM overrides before launch; inputs: malformed/oversized budgets; outputs: no child."""
+        for budget in (0, -1, True, 1.5, 1 << 64):
+            with self.subTest(budget=budget), mock.patch.object(superzip_mcp.subprocess, "Popen") as child:
+                with self.assertRaises(ValueError):
+                    superzip_mcp.run_bounded_command(["unused"], memory_limit_bytes=budget)
+                child.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows real memory counter failure")
+    def test_unavailable_ram_refuses_before_launch(self) -> None:
+        """Purpose: Preserve counter failures; inputs: failed native RAM query; outputs: no fallback or child."""
+        kernel32 = mock.Mock()
+        kernel32.GlobalMemoryStatusEx.return_value = False
+        with (
+            mock.patch.object(superzip_mcp.ctypes, "WinDLL", return_value=kernel32),
+            mock.patch.object(superzip_mcp.subprocess, "Popen") as child,
+        ):
+            with self.assertRaisesRegex(OSError, "available physical RAM query failed"):
+                superzip_mcp.run_bounded_command(["unused"])
+            child.assert_not_called()
+
+
+@unittest.skipUnless(os.name == "nt", "Windows-native command execution and aggregate job memory")
 class BoundedChildTests(unittest.TestCase):
+    def test_memory_limit_is_applied_before_child_can_spawn(self) -> None:
+        """Purpose: Verify startup containment; inputs: child querying its job; outputs: exact shared ceiling."""
+        script = (
+            "import ctypes,sys; from ctypes import wintypes; sys.path.insert(0,'mcp'); "
+            "from superzip_mcp import _JobObjectExtendedLimitInformation; "
+            "k=ctypes.WinDLL('kernel32',use_last_error=True); "
+            "k.QueryInformationJobObject.argtypes=[wintypes.HANDLE,ctypes.c_int,"
+            "ctypes.c_void_p,wintypes.DWORD,ctypes.c_void_p]; "
+            "v=_JobObjectExtendedLimitInformation(); "
+            "assert k.QueryInformationJobObject(None,9,ctypes.byref(v),ctypes.sizeof(v),None); "
+            "print(v.job_memory_limit); print(v.basic_limit_information.limit_flags)"
+        )
+        result = superzip_mcp.run_bounded_command(
+            [sys.executable, "-c", script], timeout_seconds=10, memory_limit_bytes=128 * superzip_mcp.MIB
+        )
+        self.assertEqual(result["exit_code"], 0, result["stderr"])
+        self.assertEqual(result["job_memory_limit_bytes"], 128 * superzip_mcp.MIB)
+        self.assertEqual(result["stdout"].splitlines(), [str(128 * superzip_mcp.MIB), str(0x2200)])
+
+    def test_aggregate_memory_denies_descendant_allocation(self) -> None:
+        """Purpose: Prove the cap covers parent and descendant together; inputs: two 48 MiB buffers under 96 MiB.
+        Outputs: Each buffer fits alone; a nested buffer is denied while the first remains held, without host stress.
+        """
+        allocation = "import sys; b=bytearray(48*1024*1024); print('allocated',flush=True)"
+        standalone = superzip_mcp.run_bounded_command(
+            [sys.executable, "-c", allocation], timeout_seconds=10, memory_limit_bytes=96 * superzip_mcp.MIB
+        )
+        self.assertEqual(standalone["exit_code"], 0, standalone["stderr"])
+        descendant = (
+            "import sys\n"
+            "try: b=bytearray(48*1024*1024)\n"
+            "except MemoryError: print('memory denied',flush=True); sys.exit(42)\n"
+            "print('unexpected allocation',flush=True); sys.exit(0)"
+        )
+        parent = (
+            "import subprocess,sys; b=bytearray(48*1024*1024); "
+            "p=subprocess.run([sys.executable,'-c',sys.argv[1]]); sys.exit(p.returncode)"
+        )
+        aggregate = superzip_mcp.run_bounded_command(
+            [sys.executable, "-c", parent, descendant], timeout_seconds=10, memory_limit_bytes=96 * superzip_mcp.MIB
+        )
+        self.assertEqual(aggregate["exit_code"], 42, aggregate)
+        self.assertIn("memory denied", aggregate["stdout"])
+        self.assertFalse(aggregate["timed_out"])
+
+    def test_failed_containment_never_executes_child(self) -> None:
+        """Purpose: Prove fail-closed launch; inputs: injected assignment failure; outputs: no child marker or leak."""
+        with tempfile.TemporaryDirectory(prefix="superzip-mcp-") as temporary:
+            marker = Path(temporary) / "uncontained.txt"
+            script = "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('ran')"
+            with (
+                mock.patch.object(superzip_mcp, "ChildContainment", side_effect=RuntimeError("test: containment")),
+                self.assertRaisesRegex(RuntimeError, "test: containment"),
+            ):
+                superzip_mcp.run_bounded_command([sys.executable, "-c", script, str(marker)])
+            self.assertFalse(marker.exists())
+
+    def test_failed_resume_releases_contained_child(self) -> None:
+        """Purpose: Prove launch unwinding; inputs: injected primary-thread failure; outputs: no command execution."""
+        with (
+            mock.patch.object(superzip_mcp, "resume_owned_child", side_effect=RuntimeError("test: resume")),
+            self.assertRaisesRegex(RuntimeError, "test: resume"),
+        ):
+            superzip_mcp.run_bounded_command([sys.executable, "-c", "raise RuntimeError('must not run')"])
+
     def test_cancellation_terminates_real_child(self) -> None:
         """Purpose: Prove cancellation reaches the process owner; inputs: sleeping child; outputs: bounded exit."""
         cancellation = threading.Event()

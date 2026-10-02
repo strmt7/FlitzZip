@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <fstream>
 #include <string_view>
 
@@ -55,10 +54,7 @@ std::array<char, 512> make_test_tar_header(std::string_view path, char typeflag,
     for (const auto ch : header) {
         checksum += static_cast<unsigned char>(ch);
     }
-    std::array<char, 8> encoded{};
-    std::snprintf(encoded.data(), encoded.size(), "%06o", checksum);
-    std::copy(encoded.begin(), encoded.begin() + 6, header.begin() + 148);
-    header[154] = '\0';
+    put_test_tar_octal(header, 148, 7, checksum);
     header[155] = ' ';
     return header;
 }
@@ -83,6 +79,41 @@ void write_one_entry_tar(const std::filesystem::path& archive, std::string_view 
 }
 
 }  // namespace
+
+// Purpose: Check the production checksum's exact wire width and terminators without reusing its formatter.
+// Inputs: A created TAR archive with a normal binary file; the checksum oracle sums bytes with a blanked field.
+// Outputs: Requires six ASCII octal digits, NUL and space, and an independently reconstructed checksum.
+TEST_CASE(tar_writer_checksum_preserves_exact_wire_encoding) {
+    const auto root = test_temp_dir("tar-checksum-wire");
+    const auto source = root / "payload.bin";
+    {
+        std::ofstream output(source, std::ios::binary);
+        for (unsigned i = 0; i < 256U; ++i) {
+            output.put(static_cast<char>(i));
+        }
+    }
+    const auto archive = root / "output.tar";
+    (void)superzip::compress_tar({source}, archive);
+    {
+        std::ifstream input(archive, std::ios::binary);
+        std::array<char, 512> header{};
+        input.read(header.data(), static_cast<std::streamsize>(header.size()));
+        REQUIRE_EQ(input.gcount(), static_cast<std::streamsize>(header.size()));
+        std::uint32_t encoded = 0;
+        for (std::size_t i = 148U; i < 154U; ++i) {
+            REQUIRE_TRUE(header[i] >= '0' && header[i] <= '7');
+            encoded = encoded * 8U + static_cast<unsigned>(header[i] - '0');
+        }
+        REQUIRE_EQ(header[154], '\0');
+        REQUIRE_EQ(header[155], ' ');
+        std::uint32_t expected = 0;
+        for (std::size_t i = 0; i < header.size(); ++i) {
+            expected += i >= 148U && i < 156U ? 32U : static_cast<unsigned char>(header[i]);
+        }
+        REQUIRE_EQ(encoded, expected);
+    }
+    std::filesystem::remove_all(root);
+}
 
 // Purpose: Preserve declared PAX encodings while leaving unmarked legacy TAR names unchanged.
 // Inputs: An independently serialized PAX record with UTF-8 or BINARY names and an unmarked USTAR control.

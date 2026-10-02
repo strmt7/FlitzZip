@@ -8,11 +8,10 @@ commands that leak secrets or launch the GUI.
 
 from __future__ import annotations
 
-import contextlib
 import ctypes
 import json
+import math
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -30,6 +29,10 @@ MAX_RESPONSE_CHARACTERS = 12_000
 CHILD_TIMEOUT_SECONDS = 900.0
 COMMAND_TIMEOUT_SECONDS = {"verify_changes": 3600.0, "wait_final_commit_workflows": 4500.0}
 READ_CHUNK_BYTES = 64 * 1024
+MIB = 1024 * 1024
+CREATE_SUSPENDED = 0x00000004
+JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 PROTOCOL_VERSION = "2026-07-28"
 LEGACY_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "superzip-mcp", "version": "0.2.0"}
@@ -180,23 +183,143 @@ class _JobObjectExtendedLimitInformation(ctypes.Structure):
     ]
 
 
+class _MemoryStatus(ctypes.Structure):
+    _fields_ = [
+        ("length", wintypes.DWORD),
+        ("memory_load", wintypes.DWORD),
+        ("total_physical", ctypes.c_ulonglong),
+        ("available_physical", ctypes.c_ulonglong),
+        ("total_page_file", ctypes.c_ulonglong),
+        ("available_page_file", ctypes.c_ulonglong),
+        ("total_virtual", ctypes.c_ulonglong),
+        ("available_virtual", ctypes.c_ulonglong),
+        ("available_extended_virtual", ctypes.c_ulonglong),
+    ]
+
+
+class _ThreadEntry(ctypes.Structure):
+    _fields_ = [
+        ("size", wintypes.DWORD),
+        ("usage", wintypes.DWORD),
+        ("thread_id", wintypes.DWORD),
+        ("process_id", wintypes.DWORD),
+        ("base_priority", wintypes.LONG),
+        ("delta_priority", wintypes.LONG),
+        ("flags", wintypes.DWORD),
+    ]
+
+
+def resolve_memory_budget_mib(available_mib: int, required_mib: int = 2048) -> int:
+    """Purpose: Mirror the shared PowerShell RAM admission policy with integer arithmetic.
+    Inputs: available_mib is free physical RAM; required_mib is the positive minimum safe job budget.
+    Outputs: Returns at most half free RAM while retaining 2 GiB; raises on unknown or insufficient capacity.
+    """
+    if type(available_mib) is not int or available_mib < 0 or type(required_mib) is not int or required_mib <= 0:
+        raise ValueError("RAM admission requires nonnegative available and positive required integer MiB")
+    budget = max(0, available_mib - max(2048, (available_mib + 1) // 2))
+    if budget < required_mib:
+        raise RuntimeError(
+            f"Insufficient available RAM for local work: {available_mib} MiB available, "
+            f"{budget} MiB admitted, {required_mib} MiB required."
+        )
+    return budget
+
+
+def admit_child_memory_bytes(requested_bytes: int | None = None) -> int:
+    """Purpose: Sample current Windows RAM before launching an owned command tree.
+    Inputs: Optional smaller positive internal test budget; callers cannot exceed ordinary shared-policy admission.
+    Outputs: Returns job committed-memory ceiling; raises before launch if counters, capacity, or platform fail.
+    """
+    if os.name != "nt":
+        raise RuntimeError("SuperZip command execution requires Windows aggregate job-memory containment")
+    if requested_bytes is not None and (type(requested_bytes) is not int or requested_bytes <= 0):
+        raise ValueError("requested job memory must be a positive integer byte count")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MemoryStatus)]
+    kernel32.GlobalMemoryStatusEx.restype = wintypes.BOOL
+    status = _MemoryStatus(length=ctypes.sizeof(_MemoryStatus))
+    if not kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        raise OSError(ctypes.get_last_error(), "available physical RAM query failed")
+    budget_bytes = resolve_memory_budget_mib(status.available_physical // MIB) * MIB
+    if requested_bytes is not None and requested_bytes > budget_bytes:
+        raise ValueError("requested job memory exceeds current shared-policy RAM admission")
+    return budget_bytes if requested_bytes is None else requested_bytes
+
+
+def resume_owned_child(process: subprocess.Popen[bytes]) -> None:
+    """Purpose: Resume only the primary thread of our newly created, contained suspended Windows child.
+    Inputs: process retains its live process handle; no child code has executed yet.
+    Outputs: Resumes one verified owned thread or raises; never resumes a thread not verified as owned.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ThreadEntry)]
+    kernel32.Thread32First.restype = wintypes.BOOL
+    kernel32.Thread32Next.argtypes = kernel32.Thread32First.argtypes
+    kernel32.Thread32Next.restype = wintypes.BOOL
+    kernel32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenThread.restype = wintypes.HANDLE
+    kernel32.GetProcessIdOfThread.argtypes = [wintypes.HANDLE]
+    kernel32.GetProcessIdOfThread.restype = wintypes.DWORD
+    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+    kernel32.ResumeThread.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000004, 0)
+    if snapshot == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_last_error(), "owned child thread snapshot failed")
+    try:
+        entry = _ThreadEntry(size=ctypes.sizeof(_ThreadEntry))
+        found = kernel32.Thread32First(snapshot, ctypes.byref(entry))
+        thread_ids = []
+        while found:
+            if entry.process_id == process.pid:
+                thread_ids.append(entry.thread_id)
+            entry.size = ctypes.sizeof(_ThreadEntry)
+            found = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+        if ctypes.get_last_error() != 18:
+            raise OSError(ctypes.get_last_error(), "owned child thread enumeration failed")
+        if len(thread_ids) != 1 or process.poll() is not None:
+            raise RuntimeError("suspended child must have exactly one live owned thread")
+        # Query ownership through the opened handle as well as the read-only snapshot.
+        thread = kernel32.OpenThread(0x00000802, False, thread_ids[0])
+        if not thread:
+            raise OSError(ctypes.get_last_error(), "owned child thread open failed")
+        try:
+            if kernel32.GetProcessIdOfThread(thread) != process.pid:
+                raise RuntimeError("suspended child thread ownership changed")
+            if kernel32.ResumeThread(thread) != 1:
+                raise RuntimeError("owned child primary thread did not have one initial suspend count")
+        finally:
+            kernel32.CloseHandle(thread)
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
 class ChildContainment:
     """Own process-tree containment for one allowlisted child command."""
 
-    def __init__(self, process: subprocess.Popen[bytes]) -> None:
-        """Purpose: Put a child in a kill-on-close Windows job or a dedicated POSIX process group.
-        Inputs: process is the newly started allowlisted child.
-        Outputs: Stores containment ownership or kills the child and raises if Windows containment cannot be applied.
+    def __init__(self, process: subprocess.Popen[bytes], memory_limit_bytes: int) -> None:
+        """Purpose: Put a suspended child in a verified memory-limited, kill-on-close Windows job.
+        Inputs: process is our newly created suspended child; memory_limit_bytes is RAM-admitted committed memory.
+        Outputs: Stores containment or raises; the launch owner must terminate and reap on failure before resuming.
         """
         self._handle: int | None = None
         self._kernel32: object | None = None
-        if os.name != "nt":
-            return
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
         kernel32.CreateJobObjectW.restype = wintypes.HANDLE
         kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
         kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+        ]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
         kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
@@ -206,20 +329,30 @@ class ChildContainment:
 
         handle = kernel32.CreateJobObjectW(None, None)
         information = _JobObjectExtendedLimitInformation()
-        information.basic_limit_information.limit_flags = 0x00002000
+        information.basic_limit_information.limit_flags = (
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_JOB_MEMORY
+        )
+        information.job_memory_limit = memory_limit_bytes
         configured = handle and kernel32.SetInformationJobObject(
             handle,
             9,
             ctypes.byref(information),
             ctypes.sizeof(information),
         )
-        assigned = configured and kernel32.AssignProcessToJobObject(handle, wintypes.HANDLE(process._handle))
+        actual = _JobObjectExtendedLimitInformation()
+        queried = configured and kernel32.QueryInformationJobObject(
+            handle, 9, ctypes.byref(actual), ctypes.sizeof(actual), None
+        )
+        verified = (
+            queried
+            and actual.basic_limit_information.limit_flags == information.basic_limit_information.limit_flags
+            and actual.job_memory_limit == memory_limit_bytes
+        )
+        assigned = verified and kernel32.AssignProcessToJobObject(handle, wintypes.HANDLE(process._handle))
         if not assigned:
             error = ctypes.get_last_error()
             if handle:
                 kernel32.CloseHandle(handle)
-            process.kill()
-            process.wait(timeout=5)
             raise RuntimeError(f"child process containment failed ({error})")
         self._handle = handle
         self._kernel32 = kernel32
@@ -231,9 +364,6 @@ class ChildContainment:
         """
         if self._handle is not None and self._kernel32 is not None:
             self._kernel32.TerminateJobObject(self._handle, 1)
-        elif os.name != "nt":
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
         if process.poll() is None:
             process.kill()
 
@@ -331,22 +461,29 @@ def run_bounded_command(
     max_output_bytes: int = MAX_CHILD_OUTPUT_BYTES,
     response_tail_bytes: int = MAX_RESPONSE_TAIL_BYTES,
     cancellation: threading.Event | None = None,
+    memory_limit_bytes: int | None = None,
 ) -> dict[str, object]:
-    """Purpose: Run one allowlisted command with process-tree, time, and streaming-output limits.
-    Inputs: command is fixed argv; limits bound work; optional cancellation stops only this command's tree.
-    Outputs: Returns bounded outcome; Windows children use below-normal priority and compatible module discovery.
+    """Purpose: Run one allowlisted command with aggregate memory, process-tree, time, and streaming-output limits.
+    Inputs: Fixed argv and positive limits; cancellation stops only this tree; optional smaller RAM bound is internal.
+    Outputs: Returns bounded outcome and admitted job-memory bytes; no child runs before verified containment.
     """
-    if timeout_seconds <= 0 or max_output_bytes <= 0 or response_tail_bytes <= 0:
-        raise ValueError("child command limits must be positive")
-    creation_options: dict[str, object]
-    if os.name == "nt":
-        creation_options = {
-            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW
-            | subprocess.BELOW_NORMAL_PRIORITY_CLASS,
-        }
-    else:
-        creation_options = {"start_new_session": True}
+    if (
+        type(timeout_seconds) not in (int, float)
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+        or type(max_output_bytes) is not int
+        or max_output_bytes <= 0
+        or type(response_tail_bytes) is not int
+        or response_tail_bytes <= 0
+    ):
+        raise ValueError("child command limits require a finite positive deadline and positive integer byte counts")
+    admitted_bytes = admit_child_memory_bytes(memory_limit_bytes)
+    creation_options = {
+        "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+        | subprocess.CREATE_NO_WINDOW
+        | subprocess.BELOW_NORMAL_PRIORITY_CLASS
+        | CREATE_SUSPENDED,
+    }
     process = subprocess.Popen(
         list(command),
         cwd=ROOT,
@@ -356,7 +493,21 @@ def run_bounded_command(
         env=child_environment(command),
         **creation_options,
     )
-    containment = ChildContainment(process)
+    containment = None
+    try:
+        containment = ChildContainment(process, admitted_bytes)
+        resume_owned_child(process)
+    except BaseException:
+        if containment is not None:
+            containment.close()
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+        raise
     output = BoundedOutput(max_output_bytes, response_tail_bytes)
     assert process.stdout is not None and process.stderr is not None
     readers = [
@@ -402,6 +553,7 @@ def run_bounded_command(
         "output_truncated": stdout_truncated or stderr_truncated,
         "output_limit_exceeded": output.limit_exceeded.is_set(),
         "timed_out": timed_out,
+        "job_memory_limit_bytes": admitted_bytes,
     }
 
 

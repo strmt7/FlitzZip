@@ -366,6 +366,14 @@ Guidelines, and SEI CERT C++.
   not permission to run unbounded. Do not cap CPU availability or disable the
   OOM safeguards. This contains the fuzz container, not unrelated Docker or
   Windows work. See [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/).
+- Local MCP commands enforce the shared RAM admission as a Windows Job Object
+  committed-memory ceiling over the whole descendant tree. The suspended child
+  must be assigned to its verified memory-limited, kill-on-close job before
+  resuming; no CPU quota, affinity or breakaway permission is allowed. Missing
+  counters, admission or containment fail closed before command work. This is
+  not a RAM guarantee for commands launched outside MCP, GPU VRAM, unrelated
+  jobs or the server's bounded transport. Keep standalone tool limits and
+  admission checks; see [MCP memory containment](../mcp/README.md#memory-containment).
 - Prefer `BelowNormal` priority for this task's long builds and analyses,
   including CodeQL, without CPU affinity or fixed CPU-rate caps. The local
   verifier lowers only its own process while invoking correctness children,

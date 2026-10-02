@@ -17,7 +17,6 @@
 #include <chrono>
 #include <cctype>
 #include <charconv>
-#include <cstdio>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -193,17 +192,15 @@ void put_tar_number(std::array<char, kTarBlockSize>& header, std::size_t offset,
 
 // Purpose: Encode the TAR checksum field after all other header fields are populated.
 // Inputs: `header` is one mutable 512-byte TAR header.
-// Outputs: Writes the checksum field in-place.
+// Outputs: Writes six octal digits, NUL and space; the fixed header bounds the checksum below 8^6.
 void finalize_tar_checksum(std::array<char, kTarBlockSize>& header) {
+    static_assert(kTarBlockSize * 255U < (1U << 18U));
     std::fill(header.begin() + 148, header.begin() + 156, ' ');
     std::uint32_t checksum = 0;
     for (const auto byte : header) {
         checksum += static_cast<unsigned char>(byte);
     }
-    std::array<char, 8> encoded{};
-    std::snprintf(encoded.data(), encoded.size(), "%06o", checksum);
-    std::copy(encoded.begin(), encoded.begin() + 6, header.begin() + 148);
-    header[154] = '\0';
+    put_tar_number(header, 148, 7, checksum);
     header[155] = ' ';
 }
 

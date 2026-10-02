@@ -1,4 +1,5 @@
 #include "cpio/cpio_adapter.hpp"
+#include "cpio/cpio_numeric.hpp"
 
 #include "core/file_manifest.hpp"
 #include "core/file_publish.hpp"
@@ -12,7 +13,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstdio>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -189,14 +189,10 @@ CpioHeader parse_cpio_header(const std::array<char, kCpioHeaderBytes>& header) {
 
 // Purpose: Format one eight-digit uppercase hexadecimal CPIO field.
 // Inputs: `output` receives bytes and `value` is a 32-bit header field.
-// Outputs: Appends exactly eight hex digits or throws if formatting fails.
+// Outputs: Appends exactly eight ASCII uppercase hex digits, with checked conversion and no varargs formatting.
 void append_cpio_hex_field(std::string& output, std::uint32_t value) {
-    std::array<char, 9> encoded{};
-    const int written = std::snprintf(encoded.data(), encoded.size(), "%08X", value);
-    if (written != 8) {
-        throw ArchiveError("failed to encode CPIO header field");
-    }
-    output.append(encoded.data(), 8U);
+    const auto encoded = detail::encode_cpio_hex_field(value);
+    output.append(encoded.data(), encoded.size());
 }
 
 // Purpose: Build one SVR4 new ASCII CPIO header.

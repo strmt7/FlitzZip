@@ -12,6 +12,27 @@ the remaining work by security risk, aggregate resource accounting, measured CPU
 and HIP costs, product parity, and final publication. It records research and
 acceptance criteria, not completed improvements or a clean security assessment.
 
+The October 2 numeric-field and MCP containment batch passes all 30 selected
+full-profile local commands: 557 native tests, 24 MCP tests, the 36-format matrix,
+independent interoperability, bounded sanitizer smoke and unpublished package
+validation. All eight GUI pages were inspected after the smoke process closed.
+CPIO uses checked, fixed-width integer conversion; TAR reuses its bounded octal
+writer. Independent wire-format oracles cover uint32 boundaries, 65,536 CPIO
+values and the TAR checksum. MCP launches remain suspended until aggregate
+committed-memory containment is verified; actual parent/descendant allocation
+tests and launch-failure regressions cover the new boundary. These are correctness
+and hardening results, not new speed or compression-ratio measurements.
+
+The pre-push GitHub snapshot has 216 open alerts, including 183 in the pinned
+Zstandard source, six owned numeric-formatting alerts addressed by this batch,
+six SDK fixed-size-copy warnings, 18 verified provenance-hash matches, one CMake
+compiler-probe warning and two existing Scorecard residuals. Four Zstandard
+dictionary-job lifetime alerts have retained static join-before-destruction
+counterevidence; their GitHub state is unchanged. This is not a completed audit
+or permission to suppress rules. Hosted confirmation, the rest of the scanner
+backlog, CPU/GPU workspace accounting, mixed-profile extraction diagnosis, final
+comparisons/charts, end-user documentation and release acceptance remain open.
+
 1. Refresh dependency graphs and pinned provenance. Current local checks cover
    updated Python locks, LZMA SDK 26.03, miniz 3.1.2, Lhasa 0.6.0, native build,
    tests, 36-format routing, and independent format interoperability. Hosted

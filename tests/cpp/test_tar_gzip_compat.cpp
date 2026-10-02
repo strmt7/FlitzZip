@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -60,10 +59,7 @@ std::array<char, 512> make_test_tar_header(std::string_view path, char typeflag,
     for (const auto ch : header) {
         checksum += static_cast<unsigned char>(ch);
     }
-    std::array<char, 8> encoded{};
-    std::snprintf(encoded.data(), encoded.size(), "%06o", checksum);
-    std::copy(encoded.begin(), encoded.begin() + 6, header.begin() + 148);
-    header[154] = '\0';
+    put_test_tar_octal(header, 148, 7, checksum);
     header[155] = ' ';
     return header;
 }
