@@ -2,6 +2,15 @@
 
 ## Continuation Checkpoint
 
+The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.
+Its Mixed RAM study retained 42 pilots and all 134 prescribed confirmations,
+with bytewise validation and unchanged sizes. Original report export failed
+after measurement; the shared export repair and independently checked recovered
+report are described in round nineteen of the audit. Three GPU cases remain
+inconclusive and the complete publication graph is refused. Keep the controller
+failure, telemetry limits and 213-alert audit failure visible. Portable GPU
+build defaults and successful native-build input receipts remain next work.
+
 The [fresh October 2 audit](docs/modernization-audit-2026-10-02.md) is the current
 continuation entry point. The [earlier development handoff](docs/development-handoff.md)
 retains the preceding security inventory and unfinished release gates. Older

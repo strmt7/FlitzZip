@@ -7,6 +7,14 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- A complete measurement journal does not prove that final report export
+  succeeded. Confirmation and pilot records now use one frozen-identity
+  exporter, exercised with and without pilots through the production caller.
+  A removed local variable survived in the former pilot-only branch and caused
+  export to fail after 176 observations. Preserve the original failed exit and
+  journal; label any recovered report, retain every observation, and independently
+  compare its values and statistics rather than rerunning or silently relabeling
+  that failure as a successful controller run.
 - A complete SDK migration must align compiler, headers, libraries and
   dependency scans on one explicit root. Distribution and component versions
   are recorded separately; bundled components are never individually patched.

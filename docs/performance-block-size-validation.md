@@ -474,6 +474,14 @@ Not allowed during development:
 
 ## Acceptance Gates
 
+The October Mixed study and its failed-export recovery are recorded in
+[round nineteen of the modernization audit](modernization-audit-2026-10-02.md#round-nineteen-completed-measurements-and-report-export-repair).
+Its full raw journal is retained; three larger-block GPU cases remain
+inconclusive. Compression phase time includes generated-source preparation
+inside owned encode tasks. Generation and encoding worker totals overlap, so
+they must not be subtracted from elapsed wall time or presented as phase shares.
+Independent bytewise validation and controller costs are separately recorded.
+
 A block-size or performance change is not complete until:
 
 - `tools\build.ps1 -Configuration Release` passes.

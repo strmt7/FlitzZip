@@ -1180,6 +1180,36 @@ function ConvertTo-RamBenchmarkRecord {
     }
 }
 
+# Purpose: Serialize confirmation and pilot observations through one frozen-identity boundary.
+# Inputs: RecordArguments carry the shared workload metadata; ArtifactState is the pre-sampling identity.
+# Outputs: Returns a version-three study retaining both stages, sampling policy and quality evidence.
+function ConvertTo-RamBenchmarkStudyRecord {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$RecordArguments,
+        [Parameter(Mandatory = $true)]$ArtifactState,
+        [object[]]$PilotRuns = @(),
+        [Parameter(Mandatory = $true)]$SamplingPolicy,
+        [Parameter(Mandatory = $true)][object[]]$CaseQuality
+    )
+    $arguments = $RecordArguments.Clone()
+    $arguments.Commit = $ArtifactState.source_commit
+    $arguments.Dirty = $ArtifactState.source_dirty
+    $arguments.BinarySha256 = $ArtifactState.binary_sha256
+    $record = ConvertTo-RamBenchmarkRecord @arguments
+    $record.schema_version = 3
+    $record.measurement_protocol = 'bytewise-regenerated-v2'
+    $record.measurement_identity_policy = 'source-artifacts-around-observation-v1'
+    $record.binary_dependencies_sha256 = $ArtifactState.binary_dependencies_sha256
+    $record.sampling_policy = $SamplingPolicy
+    $record.case_quality = $CaseQuality
+    $record.pilot_runs = @()
+    if ($PilotRuns.Count) {
+        $arguments.Runs = $PilotRuns
+        $record.pilot_runs = (ConvertTo-RamBenchmarkRecord @arguments).runs
+    }
+    return $record
+}
+
 # Purpose: Create one evidence file without replacing any existing benchmark record.
 # Inputs: `Record` is a validated RAM-only benchmark dictionary and `Path` is a new JSON destination.
 # Outputs: Writes UTF-8 JSON exactly once or throws on a path collision or I/O failure.
@@ -1486,8 +1516,6 @@ if ($Mode -eq "Memory") {
     }
     Assert-RamBenchmarkArtifactState -Expected $script:BenchmarkArtifactState -RepositoryRoot $repo -BinaryPath $cli
     if ($JsonOutput) {
-        $commit = $script:BenchmarkArtifactState.source_commit
-        $sourceDirty = $script:BenchmarkArtifactState.source_dirty
         $cpuModel = $null
         try {
             $cpuModel = (Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name
@@ -1505,24 +1533,14 @@ if ($Mode -eq "Memory") {
                 if ($runtimeLine) { $hipRuntimeVersion = $runtimeLine.Substring('hip_runtime_version='.Length) }
             }
         }
-        $record = ConvertTo-RamBenchmarkRecord -Runs $results -Commit $commit -Dirty $sourceDirty `
-            -BinarySha256 $script:BenchmarkArtifactState.binary_sha256 -Profile $WorkloadProfile `
-            -SizeMiB $SizeMiB -Level $CompressionLevel -SampleIntervalMs $SampleIntervalMs `
-            -InterRunPauseMs $InterRunPauseMs `
-            -CpuModel $cpuModel -GpuModel $gpuModel -HipRuntimeVersion $hipRuntimeVersion
-        $record.schema_version = 3
-        $record.measurement_protocol = 'bytewise-regenerated-v2'
-        $record.measurement_identity_policy = 'source-artifacts-around-observation-v1'
-        $record.binary_dependencies_sha256 = $script:BenchmarkArtifactState.binary_dependencies_sha256
-        $record.sampling_policy = $samplingPolicy
-        $record.case_quality = $quality
-        $record.pilot_runs = @()
-        if ($pilotResults.Count) {
-            $pilotRecord = ConvertTo-RamBenchmarkRecord -Runs $pilotResults -Commit $commit -Dirty $sourceDirty `
-                -BinarySha256 $startBinaryHash -Profile $WorkloadProfile -SizeMiB $SizeMiB -Level $CompressionLevel `
-                -SampleIntervalMs $SampleIntervalMs -InterRunPauseMs $InterRunPauseMs
-            $record.pilot_runs = $pilotRecord.runs
+        $recordArguments = @{
+            Runs = $results; Profile = $WorkloadProfile; SizeMiB = $SizeMiB; Level = $CompressionLevel
+            SampleIntervalMs = $SampleIntervalMs; InterRunPauseMs = $InterRunPauseMs
+            CpuModel = $cpuModel; GpuModel = $gpuModel; HipRuntimeVersion = $hipRuntimeVersion
         }
+        $record = ConvertTo-RamBenchmarkStudyRecord -RecordArguments $recordArguments `
+            -ArtifactState $script:BenchmarkArtifactState -PilotRuns $pilotResults `
+            -SamplingPolicy $samplingPolicy -CaseQuality $quality
         Write-BenchmarkJson -Record $record -Path $JsonOutput
         Write-BenchmarkMessage "Benchmark JSON created with source_dirty=$($record.source_dirty)."
     }

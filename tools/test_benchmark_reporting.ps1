@@ -318,6 +318,38 @@ if ($record.schema_version -ne 2 -or $record.gpu_utilization_metric -ne 'process
     $record.runs[0].owned_decode_stage_worker_seconds.crc -ne 0.75) {
     throw 'RAM benchmark JSON lost provenance, exact size, or unavailable counter semantics.'
 }
+$studyArguments = @{
+    Runs = @($fixtureRun); Profile = 'SparseRecord'; SizeMiB = 10240; Level = 5
+    SampleIntervalMs = 100; InterRunPauseMs = 250; HipRuntimeVersion = '10.0.3679.0'
+}
+$studyIdentity = [ordered]@{
+    source_commit = 'a' * 40; source_dirty = $false; binary_sha256 = 'b' * 64
+    binary_dependencies_sha256 = [ordered]@{ 'libzstd.dll' = 'c' * 64 }
+}
+foreach ($includePilots in @($false, $true)) {
+    $studyPilots = if ($includePilots) { @($fixtureRun) } else { @() }
+    $study = ConvertTo-RamBenchmarkStudyRecord -RecordArguments $studyArguments -ArtifactState $studyIdentity `
+        -PilotRuns $studyPilots -SamplingPolicy @{ method = 'unit-fixture' } -CaseQuality @(@{ status = 'unit-fixture' })
+    $studyJson = $study | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    if ($studyJson.schema_version -ne 3 -or $studyJson.source_dirty -ne $false -or
+        $studyJson.binary_sha256 -ne ('b' * 64) -or $studyJson.source_commit -ne ('a' * 40) -or
+        $studyJson.binary_dependencies_sha256.'libzstd.dll' -ne ('c' * 64) -or
+        $studyJson.measurement_identity_policy -ne 'source-artifacts-around-observation-v1' -or
+        $studyJson.runs.Count -ne 1 -or $studyJson.pilot_runs.Count -ne [int]$includePilots -or
+        $studyArguments.ContainsKey('BinarySha256')) {
+        throw 'The production study export lost frozen identity, either stage, or mutated caller metadata.'
+    }
+    if ($includePilots -and ($studyJson.pilot_runs[0].archive_bytes -ne $studyJson.runs[0].archive_bytes -or
+        $studyJson.pilot_runs[0].compress_seconds -ne $studyJson.runs[0].compress_seconds)) {
+        throw 'Study export altered the pilot observation.'
+    }
+}
+$studyCalls = @($ast.FindAll({ param($node)
+    $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -eq 'ConvertTo-RamBenchmarkStudyRecord'
+}, $true))
+if ($studyCalls.Count -ne 1) { throw 'The measurement controller must use the tested shared study exporter.' }
+
 $jsonPath = Join-Path $env:TEMP ("superzip-benchmark-json-" + [guid]::NewGuid().ToString('N') + '.json')
 try {
     Write-BenchmarkJson -Record $record -Path $jsonPath

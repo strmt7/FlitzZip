@@ -876,3 +876,62 @@ it does not establish safety of every exported dependency API. The added guarded
 production-DLL regressions are finite dynamic evidence, not complete proof of
 all internal branches or a substitute for static triage. These six alerts remain
 open; no finding was dismissed or scanner coverage narrowed by this review.
+
+## Round Nineteen: Completed Measurements And Report Export Repair
+
+The clean `d2a44ca` Mixed level-five study completed all 42 pilots and 134
+frozen confirmations across both lanes and all seven block sizes. Counts were
+10/11/9/6/6/15/10 per lane, respectively; none reached the 64-observation cap.
+Every observation compared all 10,737,418,240 bytes against the independently
+regenerated reference, for 1,889,785,610,240 validated bytes in total. All sizes
+match the preceding byte-validation baseline, with RAM-only execution and zero
+workload disk writes. No completed observation was discarded.
+
+Final JSON export failed with `Cannot bind argument to parameter 'BinarySha256'
+because it is an empty string.` A stale variable remained in the pilot export
+branch. The original controller exit remains a failure. A shared study exporter
+now supplies the same frozen identity to both stages; regressions exercise
+pilot-based and fixed-count exports and verify the production caller uses it.
+The recovered report labels its origin, original failed exit, journal hash and
+missing CPU model. PowerShell 7 recovery preserves the journal's numeric values;
+independent Python recalculation matches every retained phase timing, exact size,
+identity, native transfer/allocation counter and all descriptive statistics.
+It does not constitute successful completion of the original controller.
+
+| Block KiB | Confirmations per lane | CPU mean phase-total seconds | HIP mean phase-total seconds | CPU archive bytes | HIP archive bytes | Comparison status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 256 | 10 | 8.8433 | 6.0456 | 4,518,088,166 | 4,572,118,255 | Descriptive thresholds met |
+| 512 | 11 | 8.4452 | 5.9513 | 4,517,025,225 | 4,567,776,791 | Descriptive thresholds met |
+| 1024 | 9 | 8.7336 | 5.5565 | 4,516,534,055 | 4,546,487,579 | Descriptive thresholds met |
+| 2048 | 6 | 9.0832 | 5.2852 | 4,516,280,994 | 4,535,842,123 | Descriptive thresholds met |
+| 4096 | 6 | 9.5151 | 5.1552 | 4,516,153,879 | 4,530,520,631 | Inconclusive |
+| 8192 | 15 | 9.6103 | 5.0376 | 4,516,089,518 | 4,527,857,731 | Inconclusive |
+| 16384 | 10 | 9.7605 | 5.0774 | 4,516,058,195 | 4,526,528,555 | Inconclusive |
+
+These are generated Mixed data on one RX 9070 XT with ROCm runtime 10.0.3679.0,
+32 admitted workers and the recorded frozen pipeline geometry. Sizes differ
+between CPU and HIP; this is not an equal-output-size comparison. Phase total
+sums compression, verification and extraction, excluding independent bytewise
+validation, admission and controller overhead. Compression includes source
+generation inside owned encode tasks. Separate generation/encoding worker
+intervals overlap and cannot be subtracted from wall time. No confidence,
+significance, SDK-caused speedup, filesystem throughput or other-hardware claim
+follows from this study.
+
+GPU verification/extraction variability exceeded the declared thresholds at
+4096 KiB, and extraction variability exceeded them at 8192/16384 KiB. The graph
+validator refuses the complete record with `confirmation measurements remain
+inconclusive`; no successful subset was selected for publication. The separate
+host monitor retained 486 readings, including 498 invalid counters across 64
+readings and 62 collection errors. GPU values are unavailable in two readings.
+Its actual cadence was 3.58–7.36 seconds. Minimum free RAM was 24,001,335,296
+bytes; page reads peaked at 1579.36 per second and disk queue at 0.7834.
+Those limits prevent a claim of perfect host isolation; their causes are not
+established, and affected timing samples remain retained.
+
+Ignored evidence: `out/observation-guards-scientific-mixed-20261003.json.samples.jsonl`,
+`out/observation-guards-scientific-mixed-recovered-20261003.json`,
+`out/observation-guards-scientific-independent-audit-20261003.json`, the original
+bounded failure receipt and complete host-context journal. All seven selected
+hosted workflows now pass at `d2a44ca`; the 213-alert post-push audit remains
+failed. This is an intermediate checkpoint, not release acceptance.
