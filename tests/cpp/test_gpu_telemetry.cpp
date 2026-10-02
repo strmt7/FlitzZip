@@ -772,7 +772,7 @@ TEST_CASE(worker_stage_timing_overflow_remains_unavailable) {
 
 // Purpose: Exercise nested timings through the same CPU, optional-GPU and required-GPU production dispatch.
 // Inputs: One bounded input and empty work use independent operation telemetry in each available backend mode.
-// Outputs: Requires unchanged source CRC/bytes, positive GPU detail within its enclosing stage, and CPU zeros.
+// Outputs: Requires unchanged source CRC/bytes, exact microsecond containment, finite reported detail and CPU zeros.
 TEST_CASE(gpu_classification_production_stage_timing) {
     std::vector<std::byte> input(1024U * 1024U);
     for (std::size_t index = 0; index < input.size(); ++index) {
@@ -815,8 +815,16 @@ TEST_CASE(gpu_classification_production_stage_timing) {
         }
         if (encoded.gpu_used) {
             REQUIRE_TRUE(total > 0.0);
-            REQUIRE_TRUE(total <= stats.encode_stage_worker_seconds[static_cast<std::size_t>(
-                                      superzip::GpuEncodeStage::DeviceClassification)]);
+            std::uint64_t raw_total = 0;
+            for (const auto& value : options.telemetry->classification_stage_worker_microseconds) {
+                raw_total += value.load(std::memory_order_relaxed);
+            }
+            const auto raw_parent = options.telemetry
+                                        ->encode_stage_worker_microseconds[static_cast<std::size_t>(
+                                            superzip::GpuEncodeStage::DeviceClassification)]
+                                        .load(std::memory_order_relaxed);
+            REQUIRE_TRUE(raw_parent != std::numeric_limits<std::uint64_t>::max());
+            REQUIRE_TRUE(raw_total > 0U && raw_total <= raw_parent);
         } else {
             REQUIRE_EQ(std::fpclassify(total), FP_ZERO);
         }

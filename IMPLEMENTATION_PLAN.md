@@ -19,6 +19,25 @@ coverage. This is a scheduling repair, not a measured hosted speedup or a codec
 change. No bounds regression implementation was added. Release 0.8.0 remains
 held until the remaining gates pass and the maintainer approves publication.
 
+## Fresh Audit And Measurement Rounds
+
+The [fresh October 2 audit](docs/modernization-audit-2026-10-02.md) restarts
+the review at `6d0ba97`, with explicit subsystem coverage and current hosted
+state rather than treating historical work as final acceptance. The first
+input-only stream-allocation experiment passed correctness and retained exact
+archive sizes across 27 required-HIP RAM diagnostics, but did not establish
+a reliable compression improvement. It was removed from production.
+
+The next batch adds guard-page regression coverage against the production
+Zstandard DLL for dictionary suffix hashing, COVER/FASTCOVER direct/optimized
+training and shrinking, and frame source/destination capacities. All three
+focused groups pass. A fixed-extent hash input also simplifies the C/C++
+header-inclusion fixture. A reproduced floating-point timing-test flake now
+uses exact counters or a rounding-only allowance. All 29 full-profile commands
+and the final five-command assertion rerun pass; hosted assessment remains
+pending. The 21-flow static bounds review, whole-repository audit and
+wider performance/compression work remain open.
+
 ## Current Modernization Sequence
 
 The modernization work proceeds serially. Imported scanner alerts are being

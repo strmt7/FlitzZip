@@ -18,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <fstream>
+#include <limits>
 #include <iostream>
 #include <iterator>
 #include <sstream>
@@ -1710,8 +1711,13 @@ TEST_CASE(suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks) {
         classification_total += value;
     }
     REQUIRE_TRUE(classification_total > 0.0);
-    REQUIRE_TRUE(classification_total <= compressed.gpu_runtime.encode_stage_worker_seconds[static_cast<std::size_t>(
-                                             superzip::GpuEncodeStage::DeviceClassification)]);
+    const auto classification_parent =
+        compressed.gpu_runtime
+            .encode_stage_worker_seconds[static_cast<std::size_t>(superzip::GpuEncodeStage::DeviceClassification)];
+    // Four converted microsecond counters may round above their independently converted parent by a few ULPs.
+    const auto rounding_allowance = 8.0 * std::numeric_limits<double>::epsilon() * classification_parent;
+    REQUIRE_TRUE(classification_total <= classification_parent ||
+                 classification_total - classification_parent <= rounding_allowance);
 
     const auto index = read_test_archive_index(archive);
     REQUIRE_TRUE(!archive_contains_block_kind(index, superzip::BlockKind::Deflate));

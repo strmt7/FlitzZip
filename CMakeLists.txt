@@ -879,6 +879,19 @@ if(SUPERZIP_BUILD_TESTS)
   endif()
   add_test(NAME superzip_tests COMMAND superzip_tests)
   if(WIN32)
+    # Guard-page regressions call the exact DLL built for the product, including
+    # dictionary builders that are exported but not used by archive dispatch.
+    add_executable(superzip_zstd_bounds_tests tests/cpp/test_main.cpp
+                                            tests/cpp/test_zstd_bounds.cpp)
+    target_include_directories(superzip_zstd_bounds_tests
+                               PRIVATE tests/cpp "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+    target_compile_definitions(
+      superzip_zstd_bounds_tests PRIVATE ZSTD_DLL_IMPORT=1 NOMINMAX
+                                        WIN32_LEAN_AND_MEAN)
+    target_link_libraries(superzip_zstd_bounds_tests PRIVATE libzstd_shared)
+    superzip_copy_zstd_runtime(superzip_zstd_bounds_tests)
+    add_test(NAME superzip_zstd_bounds_tests COMMAND superzip_zstd_bounds_tests)
+    set_tests_properties(superzip_zstd_bounds_tests PROPERTIES TIMEOUT 60)
     # Compile the production dependency sources with a deterministic allocator
     # interposer; no alternate decoder implementation is used by these tests.
     add_library(

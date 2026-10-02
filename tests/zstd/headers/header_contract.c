@@ -1,5 +1,4 @@
 /* Public inclusion must not prevent a later static/inline API opt-in. */
-#include <string.h>
 #include "zstd.h"
 #include "zdict.h"
 #include "common/fse.h"
@@ -28,18 +27,16 @@
 #endif
 
 /* Purpose: Require complete private API types and inline hash linkage.
- * Inputs: argc/argv are the standard program arguments; header identity is
+ * Inputs: A fixed byte array with an explicit extent; header identity is
  * selected by the isolated CMake fixture, not by runtime input.
  * Outputs: Produces a linkable fixture only when every contract remains valid. */
-int main(int argc, char** argv) {
-    if (argc < 1) {
-        return 1;
-    }
+int main(void) {
+    const unsigned char input[] = {0, 1, 127, 128, 254, 255, 42, 17, 0};
     (void)sizeof(ZSTD_compressionParameters);
     (void)sizeof(ZDICT_cover_params_t);
     (void)sizeof(FSE_CState_t);
     (void)sizeof(COVER_segment_t);
     (void)sizeof(&HIST_count);
     (void)HIST_WKSP_SIZE;
-    return (int)(XXH64(argv[0], strlen(argv[0]), 0) & 1);
+    return (int)(XXH64(input, sizeof(input), 0) & 1);
 }
