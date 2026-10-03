@@ -9,8 +9,11 @@
 namespace superzip::cli {
 
 struct MemoryBenchmarkOptions {
-    // Borrowed immutable snapshot; caller retains it through all joined tasks. Empty selects generated profiles.
+    // Borrowed immutable snapshot; caller retains it through all joined tasks. Empty requires metadata or generated
+    // input.
     std::span<const std::byte> source;
+    // Metadata-only planning reserves this future resident input; measured runs require the actual snapshot.
+    std::uint64_t corpus_bytes = 0;
     std::string expected_source_sha256;
     std::uint64_t size_mib = 10240;
     std::string profile = "Mixed";
@@ -25,6 +28,7 @@ struct MemoryBenchmarkOptions {
 };
 
 struct MemoryBenchmarkPlan {
+    std::string expected_source_sha256;
     std::uint64_t input_bytes = 0;
     std::uint32_t workers = 0;
     std::uint32_t inflight_chunks = 0;

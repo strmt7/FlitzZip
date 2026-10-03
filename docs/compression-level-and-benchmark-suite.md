@@ -309,22 +309,55 @@ Corpus records declare `measurement_protocol=bytewise-corpus-v1`,
 codec/pipeline measurements, not filesystem archive timings. The existing
 `source_generation_worker_seconds` field measures input preparation/copying
 for this lane. Generated profiles keep `bytewise-regenerated-v2` and their
-10 GiB minimum; `--source-file` excludes `--size-mib`, `--profile` and the
-allocation-free `--plan-only` mode.
+10 GiB minimum; `--source-file` excludes `--size-mib` and `--profile`.
+With `--plan-only`, the CLI inspects only file extent and reserves its future
+resident storage before admission. It reports `data_source=corpus-metadata`,
+`expected_source_sha256` and `source_identity_verified=false`; it does not load
+or authenticate the payload, run codecs, or emit timing/GPU proof. Measured
+execution still authenticates the actual resident snapshot before timing.
 
-This entry point is a single observation. The current scientific controller
-and graph protocol remain generated-profile tools; corpus confirmations and
-publication admission are not yet integrated. Do not combine the protocols or
-publish a speed claim from a single corpus invocation. Corpus provenance,
-permissions, transformations and representativeness need independent review;
-the permission-checked manifest boundary in `tools/run_archive_comparison.py`
-provides that evidence for its supported comparisons. A digest authenticates
-bytes, not permissions or workload representativeness.
+The native entry point is a single observation. `tools/bench.ps1` also accepts
+`-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together for a scientific
+exact-file study. These exclude explicit `-SizeMiB`, `-Profile` and filesystem
+mode. Admission uses the canonical permission-checked manifest verifier in
+`tools/run_archive_comparison.py`; no data is acquired automatically. Select
+one exact filename from that reviewed flat-file manifest:
+
+```powershell
+tools/bench.ps1 -CorpusManifest reviewed-manifest.json -CorpusRoot reviewed-inputs -CorpusFile sample.csv -CompressionLevel 5 -JsonOutput out/corpus-study.json
+```
+
+The same pilot planning, frozen confirmation counts, alternating lanes,
+resource sampling, deadlines and no-discard statistics apply. The controller
+freezes exact source bytes, manifest and permission-catalog hashes around each
+observation. Native results enter the journal before post-observation guards;
+mutation aborts the study while retaining returned evidence. Input copying is
+included in encode preparation; file loading, authentication and controller
+guards remain outside product phase timings. Controller wall time includes
+those costs for suite-budget planning. Owned timing processes use normal
+priority even when the enclosing correctness/analysis process runs below normal.
+
+Corpus study schema 4 records `size_mib=null`, natural `input_bytes`, public
+provenance and source identity on every pilot and confirmation. Physical input
+paths are excluded from report metadata. Generated studies retain schema 3.
+The existing generated-profile graph/publication validator does not admit
+schema 4; corpus publication and representative comparator measurements remain
+outstanding. Do not combine protocols or publish a speed claim from a single
+invocation. Small inputs may hit the iteration/time/variability limits and
+remain inconclusive; the controller retains every sample and never extends
+confirmation counts in response to favorable or unfavorable results. Raw GPU
+blocks are valid for incompressible corpora, but actual required-HIP encoding,
+decoding and kernel telemetry remain mandatory. A digest authenticates bytes,
+not permissions or workload representativeness.
 
 `tools/test_memory_benchmark_corpus.ps1` exercises all seven block sizes in CPU
 and available HIP lanes with a clearly generated correctness fixture, nine
 argument/identity/input rejection cases and a path containing spaces and a
-Unicode character. It verifies actual HIP encode/decode work when available;
+Unicode character. It also verifies metadata-only planning and exercises the
+production controller with three pilots and three confirmations per backend.
+These remain generated correctness fixtures, never benchmark evidence.
+`-ControllerOnly` selects that direct consumer when unchanged native block
+contracts already passed. It verifies actual HIP encode/decode work when available;
 `-RequireHip` makes absence fail. Its timings are unqualified. The standard
 native driver includes this contract; fixture payload writes stay below 64 MiB.
 

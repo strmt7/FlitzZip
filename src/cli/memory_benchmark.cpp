@@ -131,7 +131,7 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
 }
 
 // Purpose: Resolve bounded in-flight work for the memory-only benchmark pipeline.
-// Inputs: `workers` is the aggregate worker count; options specify effort, block size, and fallback policy.
+// Inputs: Aggregate workers and options; metadata-only corpus planning also reserves future resident source bytes.
 // Outputs: Returns a depth admitted by production workspace policy plus benchmark reserve, or throws ArchiveError.
 std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const MemoryBenchmarkOptions& options) {
     superzip::HostPipelineWorkspace workspace;
@@ -140,9 +140,11 @@ std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const Mem
             superzip::kMaxArchiveChunkBytes,
             {.block_size = options.block_size, .compression_level = options.compression_level}, workers);
     }
-    const auto limit = superzip::resolve_host_pipeline_inflight_limit(superzip::query_host_memory_snapshot(),
-                                                                      superzip::kMaxArchiveChunkBytes,
-                                                                      kMemoryBenchmarkReserveBytes, workspace);
+    const auto limit = superzip::resolve_host_pipeline_inflight_limit(
+        superzip::query_host_memory_snapshot(), superzip::kMaxArchiveChunkBytes,
+        checked_add_cli_u64(kMemoryBenchmarkReserveBytes, options.source.empty() ? options.corpus_bytes : 0U,
+                            "benchmark source reserve overflows"),
+        workspace);
     const auto admitted = superzip::resolve_worker_inflight_limit(workers, limit);
     if (options.inflight_chunks > admitted) {
         throw superzip::ArchiveError("requested benchmark inflight depth exceeds current host/worker admission; "
@@ -523,14 +525,15 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 // Inputs: Options select generated geometry or a <=64 MiB immutable corpus with expected SHA-256 and backend policy.
 // Outputs: Returns checked input bytes or throws on invalid arguments; pipeline admission follows before allocation.
 std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& options) {
-    if (options.source.empty() && options.size_mib < 10240U) {
+    const bool corpus = options.corpus_bytes != 0U || !options.source.empty();
+    if (!corpus && options.size_mib < 10240U) {
         throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
     }
     constexpr std::array<std::string_view, 7> profiles{"Mixed",           "Compressible", "Incompressible",
                                                        "RepeatedRecord",  "SparseRecord", "LongSparseRecord",
                                                        "SegmentedRecords"};
-    if ((options.source.empty() && std::ranges::find(profiles, options.profile) == profiles.end()) ||
-        (!options.source.empty() && options.profile != "Corpus")) {
+    if ((!corpus && std::ranges::find(profiles, options.profile) == profiles.end()) ||
+        (corpus && options.profile != "Corpus")) {
         throw superzip::ArchiveError("unknown memory benchmark profile: " + options.profile);
     }
     if (options.compression_level < superzip::kMinCompressionLevel ||
@@ -550,17 +553,21 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
         options.decode_inflight_chunks > superzip::kMaxInflightArchiveChunks) {
         throw superzip::ArchiveError("benchmark inflight depth exceeds SuperZip resource limit");
     }
-    if (options.source.empty()) {
+    if (!corpus) {
         if (!options.expected_source_sha256.empty()) {
             throw superzip::ArchiveError("source SHA-256 requires a preloaded corpus");
         }
         return checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
     }
-    if (options.source.size() > kMemoryBenchmarkCorpusMaxBytes || options.expected_source_sha256.size() != 64U ||
+    const auto corpus_bytes = options.source.empty() ? options.corpus_bytes : options.source.size();
+    if (options.corpus_bytes != 0U && !options.source.empty() && options.source.size() != options.corpus_bytes) {
+        throw superzip::ArchiveError("corpus size differs from preflight metadata");
+    }
+    if (corpus_bytes > kMemoryBenchmarkCorpusMaxBytes || options.expected_source_sha256.size() != 64U ||
         options.expected_source_sha256.find_first_not_of("0123456789abcdef") != std::string::npos) {
         throw superzip::ArchiveError("corpus requires at most 64 MiB and a lowercase SHA-256 identity");
     }
-    return options.source.size();
+    return corpus_bytes;
 }
 
 // Purpose: Authenticate the actual preloaded snapshot before timing, without rereading a source pathname.
@@ -585,6 +592,7 @@ std::string validate_memory_benchmark_source_identity(const MemoryBenchmarkOptio
 MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options) {
     MemoryBenchmarkPlan plan;
     plan.input_bytes = validate_memory_benchmark_options(options);
+    plan.expected_source_sha256 = options.expected_source_sha256;
     plan.workers = resolve_memory_benchmark_workers(options.workers);
     plan.inflight_chunks = resolve_memory_benchmark_inflight(plan.workers, options);
     const auto chunk_count = plan.input_bytes / superzip::kMaxArchiveChunkBytes +
@@ -617,7 +625,11 @@ void print_memory_benchmark_plan(const MemoryBenchmarkPlan& plan) {
     std::cout << "plan_only=true input_bytes=" << plan.input_bytes << " workers=" << plan.workers
               << " inflight_chunks=" << plan.inflight_chunks << " codec_workers=" << plan.codec_workers
               << " decode_inflight_chunks=" << plan.decode_inflight_chunks
-              << " decode_codec_workers=" << plan.decode_codec_workers << "\n";
+              << " decode_codec_workers=" << plan.decode_codec_workers
+              << " data_source=" << (plan.expected_source_sha256.empty() ? "generated" : "corpus-metadata")
+              << " expected_source_sha256="
+              << (plan.expected_source_sha256.empty() ? "unavailable" : plan.expected_source_sha256)
+              << " source_identity_verified=false\n";
 }
 
 // Purpose: Print one machine-readable memory benchmark result line.
@@ -719,6 +731,9 @@ void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archi
 // Inputs: Options select profile or stable preloaded corpus, expected hash, backend, workers, block size and effort.
 // Outputs: Returns exact size, timing, integrity, and GPU telemetry statistics or throws on any failed phase.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
+    if (options.corpus_bytes != 0U && options.source.empty()) {
+        throw superzip::ArchiveError("measured corpus execution requires a resident source snapshot");
+    }
     const auto plan = plan_memory_benchmark(options);
     const auto total_bytes = plan.input_bytes;
     const auto workers = plan.workers;

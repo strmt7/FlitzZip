@@ -1,5 +1,6 @@
 # Scientific descriptive statistics and pilot-based sample planning for RAM benchmarks.
 # No measured observation is trimmed, winsorized, or excluded as an outlier.
+. (Join-Path $PSScriptRoot 'benchmark_corpus.ps1')
 
 # Purpose: Drain an owned subprocess pipe asynchronously while bounding retained text and allocation growth.
 # Inputs: Reader is one redirected stdout/stderr stream; the character ceiling is 65536 per pipe.
@@ -54,11 +55,14 @@ function Assert-MemoryBenchmarkStat {
 }
 
 # Purpose: Build identical planning and measurement arguments with optional exact queue depths.
-# Inputs: Backend flag and block identify the case; Geometry is its previously frozen admission plan.
+# Inputs: Backend/block identify the case; the admitted corpus or generated settings supply input; Geometry freezes admission.
 # Outputs: Returns CLI arguments without changing workload, effort or worker policy between stages.
 function Get-MemoryBenchmarkArgument {
     param([string]$ModeFlag, [int]$BlockSizeKiB, [AllowNull()][Collections.IDictionary]$Geometry, [int]$RequestedDepth = 0)
-    $arguments = @('memory-benchmark', '--size-mib', "$SizeMiB", '--profile', $WorkloadProfile, $ModeFlag,
+    $source = if ($null -ne $script:BenchmarkCorpus) {
+        @('--source-file', $script:BenchmarkCorpus.path, '--source-sha256', $script:BenchmarkCorpus.source_sha256)
+    } else { @('--size-mib', "$SizeMiB", '--profile', $WorkloadProfile) }
+    $arguments = @('memory-benchmark') + $source + @($ModeFlag,
         '--workers', "$script:BenchmarkWorkerCount", '--block-size-kib', "$BlockSizeKiB", '--compression-level', "$CompressionLevel")
     if ($null -ne $Geometry) {
         $arguments += @('--inflight', "$($Geometry.inflight_chunks)", '--decode-inflight', "$($Geometry.decode_inflight_chunks)")
@@ -70,13 +74,14 @@ function Get-MemoryBenchmarkArgument {
 
 # Purpose: Reject malformed admission plans and changes in a prescribed execution geometry.
 # Inputs: Stats is CLI planning or measurement output; Expected is the fixed case configuration.
-# Outputs: Returns normally only for exact input bytes and five bounded integer resource settings.
+# Outputs: Requires exact source identity, input bytes and five bounded integer resource settings; metadata never proves timing.
 function Assert-BenchmarkGeometry {
     param([Collections.IDictionary]$Stats, [Collections.IDictionary]$Expected, [switch]$PlanOnly)
     if ($PlanOnly -and ($Stats['plan_only'] -ne 'true' -or $Stats.Contains('gpu_used') -or $Stats.Contains('seconds'))) {
         throw 'Admission planning must not masquerade as measured timing or GPU evidence.'
     }
-    if ((Get-StatsNumber -Stats $Stats -Key 'input_bytes') -ne ($SizeMiB * 1MB)) { throw 'Admission plan input size differs.' }
+    if ((Get-StatsNumber -Stats $Stats -Key 'input_bytes') -ne (Get-BenchmarkInputByteCount $SizeMiB)) { throw 'Admission plan input size differs.' }
+    Assert-BenchmarkCorpusStat -Stats $Stats -PlanOnly:$PlanOnly
     foreach ($key in @('workers', 'inflight_chunks', 'codec_workers', 'decode_inflight_chunks', 'decode_codec_workers')) {
         $value = Get-StatsNumber -Stats $Stats -Key $key
         if ($null -eq $value -or $value -lt 1 -or $value -gt 64 -or $value -ne [math]::Floor($value) -or
@@ -94,7 +99,7 @@ function Assert-BenchmarkSampleIdentity {
     if ($null -eq $Identities) { throw 'Benchmark sample identity tracking was not initialized.' }
     $case = "$($Run.Lane):$($Run.BlockSizeKiB)"
     $fields = @('Workers', 'InflightChunks', 'CodecWorkers', 'DecodeInflightChunks', 'DecodeCodecWorkers',
-        'InputBytes', 'OutputBytes', 'ArchiveBytes')
+        'InputBytes', 'OutputBytes', 'ArchiveBytes', 'MeasurementProtocol', 'DataSource', 'SourceSha256')
     if (-not $Identities.Contains($case)) {
         $identity = @{}
         foreach ($field in $fields) { $identity[$field] = $Run.$field }

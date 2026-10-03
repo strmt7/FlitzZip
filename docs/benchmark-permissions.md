@@ -61,8 +61,11 @@ Beta builds, paid editions and new codec modules need separate review.
   *HIGGS* (2014), UCI Machine Learning Repository,
   [DOI 10.24432/C5V312](https://doi.org/10.24432/C5V312), and link the
   [license](https://creativecommons.org/licenses/by/4.0/). Document splits and
-  transformations. This is a large numeric-table workload, not a mixed-file
-  replacement by itself. It has not been downloaded or benchmarked here.
+  transformations. The [official UCI description](https://archive.ics.uci.edu/dataset/280/higgs)
+  states that these data come from Monte Carlo simulations. They are an
+  authentic published numeric dataset, not empirical detector observations or
+  a representative mixed-file replacement by themselves. No HIGGS payload has
+  been downloaded or benchmarked in this development round.
 - **Other corpora: unreviewed.** Public download access, a benchmark-tool
   license, or another reviewer's use does not license a dataset. Verify every
   constituent before use; do not copy review-site archives or media.

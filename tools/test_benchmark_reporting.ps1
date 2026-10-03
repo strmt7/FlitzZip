@@ -729,6 +729,54 @@ if ($byteRun.measurement_protocol -ne 'bytewise-regenerated-v2' -or $byteRun.val
     $byteRun.validation_seconds -ne 2.5 -or $byteRun.wall_seconds -ne 5.5) {
     throw 'Bytewise validation evidence was lost during observation serialization.'
 }
+# Corpus fixtures exercise natural byte counts and strict protocol separation without timing a product.
+$script:BenchmarkCorpus = [pscustomobject]@{ path = 'owned fixture with spaces.bin'; input_bytes = 16777253
+    source_sha256 = ('1' * 64); provenance = @{ name = 'generated offline fixture'; file = @{ transformation = 'generated fixture' } } }
+try {
+    $corpusGeometry = $geometry.Clone()
+    $corpusGeometry.input_bytes = '16777253'
+    $corpusGeometry.data_source = 'corpus-metadata'
+    $corpusGeometry.expected_source_sha256 = ('1' * 64)
+    $corpusGeometry.source_identity_verified = 'false'
+    Assert-BenchmarkGeometry -Stats $corpusGeometry -Expected $corpusGeometry -PlanOnly
+    $corpusArguments = @(Get-MemoryBenchmarkArgument -ModeFlag '--require-gpu' -BlockSizeKiB 256 -Geometry $corpusGeometry)
+    if ($corpusArguments -contains '--size-mib' -or $corpusArguments -contains '--profile' -or
+        $corpusArguments -notcontains '--source-file' -or $corpusArguments -notcontains ('1' * 64)) {
+        throw 'Corpus controller substituted generated input arguments.'
+    }
+    foreach ($key in @('expected_source_sha256', 'source_identity_verified', 'data_source', 'input_bytes')) {
+        $invalid = $corpusGeometry.Clone(); $invalid[$key] = 'invalid'
+        $rejected = $false
+        try { Assert-BenchmarkGeometry -Stats $invalid -Expected $corpusGeometry -PlanOnly } catch { $rejected = $true }
+        if (-not $rejected) { throw "Corpus metadata admission accepted invalid $key." }
+    }
+    $corpusRun = $fixtureRun.PSObject.Copy()
+    $corpusRun.InputBytes = 16777253; $corpusRun.ValidatedBytes = 16777253
+    $corpusRun.OutputBytes = 1024; $corpusRun.ArchiveBytes = 2048
+    $corpusRun.MeasurementProtocol = 'bytewise-corpus-v1'
+    $corpusRun | Add-Member -NotePropertyMembers @{ DataSource = 'preloaded'; SourceSha256 = ('1' * 64) }
+    $corpusRecordArguments = $studyArguments.Clone(); $corpusRecordArguments.Runs = @($corpusRun)
+    $corpusStudy = ConvertTo-RamBenchmarkStudyRecord -RecordArguments $corpusRecordArguments -ArtifactState $studyIdentity `
+        -PilotRuns @($corpusRun) -SamplingPolicy @{ method = 'fixture'; discarded_sample_count = 0 } -CaseQuality @(@{ status = 'inconclusive' })
+    if ($corpusStudy.schema_version -ne 4 -or $null -ne $corpusStudy.size_mib -or
+        $corpusStudy.input_bytes -ne 16777253 -or $corpusStudy.runs[0].source_sha256 -cne ('1' * 64) -or
+        $corpusStudy.pilot_runs[0].measurement_protocol -cne 'bytewise-corpus-v1' -or
+        ($corpusStudy | ConvertTo-Json -Depth 10) -match 'owned fixture with spaces') {
+        throw 'Corpus serialization rounded, relabeled or lost its source identity, or leaked a private path.'
+    }
+    foreach ($key in @('SourceSha256', 'DataSource', 'MeasurementProtocol')) {
+        $invalidRun = $corpusRun.PSObject.Copy(); $invalidRun.$key = 'invalid'
+        $rejected = $false
+        try { ConvertTo-RamBenchmarkObservation -Run $invalidRun -SizeMiB 10240 | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw "Corpus serialization accepted invalid $key." }
+    }
+    $sourceIdentities = @{}
+    Assert-BenchmarkSampleIdentity -Run $corpusRun -Identities $sourceIdentities
+    $changed = $corpusRun.PSObject.Copy(); $changed.SourceSha256 = ('2' * 64)
+    $rejected = $false
+    try { Assert-BenchmarkSampleIdentity -Run $changed -Identities $sourceIdentities } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Cross-sample corpus hash drift was ignored.' }
+} finally { $script:BenchmarkCorpus = $null }
 # Complete observation lifetimes include native validation and controller costs; frozen counts never shrink to fit.
 $wallPilots = @()
 foreach ($lane in @('CPU', 'GPU')) {
@@ -828,6 +876,47 @@ try {
         $rawOperations[0].lane -ne 'CPU' -or $rawOperations[0].block_size_kib -ne 256 -or
         @($artifactEvents | Where-Object event -eq 'sample').Count -ne 0) {
         throw 'Returned native evidence was lost or relabeled valid after a failed artifact check.'
+    }
+    # Isolate corpus guards with controlled native/artifact doubles; retain all returned raw evidence on mutation.
+    $originalArtifactGuard = (Get-Item Function:\Assert-RamBenchmarkArtifactState).ScriptBlock
+    $metadataPaths = @((Join-Path $artifactRoot 'manifest.json'), (Join-Path $artifactRoot 'catalog.json'))
+    foreach ($path in $metadataPaths) { [IO.File]::WriteAllText($path, '{"scope":"owned offline fixture"}') }
+    $script:BenchmarkCorpus = [pscustomobject]@{ path = $artifactSource; input_bytes = (Get-Item -LiteralPath $artifactSource).Length
+        source_sha256 = (Get-FileHash -LiteralPath $artifactSource -Algorithm SHA256).Hash.ToLowerInvariant()
+        manifest_path = $metadataPaths[0]; catalog_path = $metadataPaths[1]
+        provenance = @{ manifest_sha256 = (Get-FileHash -LiteralPath $metadataPaths[0] -Algorithm SHA256).Hash.ToLowerInvariant()
+            permission_catalog_sha256 = (Get-FileHash -LiteralPath $metadataPaths[1] -Algorithm SHA256).Hash.ToLowerInvariant() } }
+    try {
+        Set-Item Function:\Assert-RamBenchmarkArtifactState -Value {
+            param($Expected, $RepositoryRoot, $BinaryPath)
+            if ($null -eq $Expected -or $RepositoryRoot -cne $artifactRoot -or $BinaryPath -cne $artifactBinary) {
+                throw 'Corpus guard fixture received incorrect artifact context.'
+            }
+        }
+        foreach ($target in @($artifactSource) + $metadataPaths) {
+            $original = [IO.File]::ReadAllBytes($target)
+            Set-Item Function:\Invoke-SuperZipStat -Value {
+                param([string[]]$Arguments)
+                if ($Arguments.Count -ne 1 -or $Arguments[0] -ne 'unit-fixture') { throw 'Corpus guard fixture arguments changed.' }
+                $changed = [IO.File]::ReadAllBytes($target); $changed[0] = $changed[0] -bxor 1
+                [IO.File]::WriteAllBytes($target, $changed)
+                return @{ seconds = 0.25 }
+            }
+            try {
+                $rejected = $false
+                try { Invoke-FrozenMemoryBenchmark -Arguments @('unit-fixture') -Expected $frozen -RepositoryRoot $artifactRoot `
+                    -BinaryPath $artifactBinary -JournalPath $artifactJournal | Out-Null } catch {
+                    $rejected = $_.Exception.Message -eq 'Corpus bytes or permission metadata changed; journal retained.'
+                }
+                $last = Get-Content -LiteralPath $artifactJournal | Select-Object -Last 1 | ConvertFrom-Json
+                if (-not $rejected -or $last.event -ne 'raw_operation' -or $last.stats.seconds -ne 0.25) {
+                    throw 'Corpus mutation lost native evidence or escaped the post-observation guard.'
+                }
+            } finally { [IO.File]::WriteAllBytes($target, $original) }
+        }
+    } finally {
+        Set-Item Function:\Assert-RamBenchmarkArtifactState -Value $originalArtifactGuard
+        $script:BenchmarkCorpus = $null
     }
 } finally {
     Set-Item Function:\Invoke-SuperZipStat -Value $originalStatFunction

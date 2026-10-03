@@ -281,6 +281,13 @@ weekly schedule, and manual dispatch.
 
 ## Benchmarking
 
+For reviewed exact-file CPU/HIP RAM studies, the scientific controller accepts
+`-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together. It preserves natural
+byte counts, source identity and every pilot/confirmation observation; noisy
+or short studies remain explicitly inconclusive. See the
+[corpus protocol and command](docs/compression-level-and-benchmark-suite.md#native-suite).
+These studies do not change the historical graph evidence below.
+
 **Historical evidence:** the graphs below describe earlier engineering runs,
 not the current source or a release-ready product ranking. The Silesia series
 is excluded from new runs and headline comparisons after its dataset-rights

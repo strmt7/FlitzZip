@@ -106,7 +106,7 @@ void usage() {
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
-        << "  superzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> "
+        << "  superzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> [--plan-only] "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
@@ -839,10 +839,10 @@ int run_extract_command(const std::vector<std::string>& args) {
     return 0;
 }
 
-// Purpose: Preload a bounded corpus snapshot before any measured benchmark phase.
-// Inputs: User-selected regular file; the 64 MiB cap and current host headroom apply before allocation.
-// Outputs: Owns exact bytes or throws on invalid size/read; no payload is written to storage.
-std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path& path) {
+// Purpose: Inspect corpus extent without allocating or authenticating its payload.
+// Inputs: User-selected regular file; the 1..64 MiB corpus boundary applies.
+// Outputs: Returns checked metadata bytes or throws; this does not verify the source SHA-256.
+std::size_t memory_benchmark_corpus_size(const std::filesystem::path& path) {
     if (!std::filesystem::is_regular_file(path)) {
         throw superzip::ArchiveError("benchmark source must be a regular file");
     }
@@ -851,12 +851,21 @@ std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path&
     if (!input || length <= 0 || length > static_cast<std::streamoff>(superzip::cli::kMemoryBenchmarkCorpusMaxBytes)) {
         throw superzip::ArchiveError("benchmark corpus must contain 1..67108864 bytes");
     }
-    const auto size = static_cast<std::size_t>(length);
+    return static_cast<std::size_t>(length);
+}
+
+// Purpose: Preload a bounded corpus snapshot before any measured benchmark phase.
+// Inputs: User-selected file and its checked metadata extent; host headroom applies before allocation.
+// Outputs: Owns exact bytes or throws on invalid size/read; no payload is written to storage.
+std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path& path, std::size_t size) {
+    if (size == 0U || size > superzip::cli::kMemoryBenchmarkCorpusMaxBytes) {
+        throw superzip::ArchiveError("benchmark corpus extent is outside resource limits");
+    }
     if (size > superzip::safe_host_memory_growth_bytes(superzip::query_host_memory_snapshot()) / 2U) {
         throw superzip::ArchiveError("benchmark corpus exceeds current host memory headroom");
     }
+    std::ifstream input(path, std::ios::binary);
     std::vector<std::byte> bytes(size);
-    input.seekg(0);
     input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     const bool complete = static_cast<bool>(input);
     const auto extra = input.peek();
@@ -912,12 +921,15 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
     }
     std::vector<std::byte> source;
     if (source_file) {
-        if (generated_geometry || plan_only || options.expected_source_sha256.empty()) {
+        if (generated_geometry || options.expected_source_sha256.empty()) {
             throw superzip::ArchiveError(
-                "--source-file requires --source-sha256 and excludes --size-mib, --profile and --plan-only");
+                "--source-file requires --source-sha256 and excludes --size-mib and --profile");
         }
-        source = load_memory_benchmark_corpus(*source_file);
-        options.source = source;
+        options.corpus_bytes = memory_benchmark_corpus_size(*source_file);
+        if (!plan_only) {
+            source = load_memory_benchmark_corpus(*source_file, static_cast<std::size_t>(options.corpus_bytes));
+            options.source = source;
+        }
         options.profile = "Corpus";
     }
     if (plan_only) {

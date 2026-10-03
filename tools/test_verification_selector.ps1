@@ -484,4 +484,10 @@ Assert-Selector $duplicateStatus.complete "newer cancelled duplicate must not hi
 $duplicateStatus = Test-SelectedWorkflowCompletion -Runs @($newerCancelled, $olderCancelled) -WorkflowName @("lint")
 Assert-Selector ($duplicateStatus.failed.Count -eq 1) "all-cancelled workflow runs must still fail closed"
 
+$corpusPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/benchmark_corpus.py', 'tools/benchmark_corpus.ps1', 'tools/test_benchmark_corpus.py')
+Assert-Selector (($corpusPlan.requiredLocalCommands.id -contains 'benchmark-corpus-admission-test') -and
+    ($corpusPlan.requiredLocalCommands.id -contains 'benchmark-reporting-test') -and
+    ($corpusPlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
+    ($corpusPlan.requiredLocalCommands.id -notcontains 'benchmark-tooling-tests')) 'corpus admission changes must select their own contracts and controller, without unrelated native or graph suites'
+
 Write-Output "Verification selector self-test passed."

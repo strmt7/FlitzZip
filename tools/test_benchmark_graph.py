@@ -548,6 +548,10 @@ class BenchmarkGraphTests(unittest.TestCase):
         current["schema_version"] = True
         with self.assertRaisesRegex(ValueError, "schema"):
             graph.summarize_records([current], allow_dirty=False)
+        current["schema_version"] = 4
+        current["measurement_protocol"] = "bytewise-corpus-v1"
+        with self.assertRaisesRegex(ValueError, "unsupported RAM benchmark schema"):
+            graph.summarize_records([current], allow_dirty=False)
 
     # Purpose: Reject invalid utilization in the corrected resource schema without rewriting historical evidence.
     # Inputs: Schema-two records with a nonfinite, negative, excessive, or nonnumeric GPU percentage.

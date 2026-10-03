@@ -1,4 +1,4 @@
-param([string]$Configuration = 'Release', [switch]$RequireHip)
+param([string]$Configuration = 'Release', [switch]$RequireHip, [switch]$ControllerOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $cli = Join-Path $root "build/$Configuration/superzip_cli.exe"
@@ -36,6 +36,66 @@ function Invoke-MemoryCorpusProbe {
     }
 }
 
+# Purpose: Exercise the production controller and scheduler with this explicitly generated correctness snapshot.
+# Inputs: Existing bounded fixture path/hash, owned fixture directory and actual HIP availability.
+# Outputs: Requires three pilots and three confirmations per backend, exact schema-four bytes and complete journals.
+function Test-MemoryCorpusController {
+    param([string]$Path, [string]$Hash, [string]$Fixture, [bool]$Hip)
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'tools/bench.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'Controller integration could not parse the production functions.' }
+    foreach ($definition in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $metadata = Join-Path $Fixture 'owned-fixture-metadata.json'
+    [IO.File]::WriteAllText($metadata, '{"scope":"generated correctness fixture; no permission or performance claim"}')
+    $metadataHash = (Get-FileHash -LiteralPath $metadata -Algorithm SHA256).Hash.ToLowerInvariant()
+    $script:BenchmarkCorpus = [pscustomobject]@{ path = $Path; source_sha256 = $Hash; input_bytes = 16777253
+        manifest_path = $metadata; catalog_path = $metadata
+        provenance = @{ name = 'generated controller correctness fixture'; manifest_sha256 = $metadataHash
+            permission_catalog_sha256 = $metadataHash; file = @{ name = 'owned-fixture'; transformation = 'generated correctness fixture' } } }
+    try {
+        $script:repo = $root; $script:SizeMiB = 10240; $script:WorkloadProfile = 'Corpus'; $script:CompressionLevel = 5
+        $script:SkipCpu = $false; $SkipGpu = -not $Hip; $script:NoResourceCounters = $true
+        $script:SampleIntervalMs = 50; $script:InterRunPauseMs = 0; $script:RunTimeoutSeconds = 60; $script:SuiteTimeoutSeconds = 300
+        $script:BenchmarkWorkerCount = 2; $script:BenchmarkGeometryPlans = @{}; $script:BenchmarkSampleIdentities = @{}
+        $script:BenchmarkDiskCounterPaths = @(); $script:BenchmarkSuiteClock = [Diagnostics.Stopwatch]::StartNew()
+        $script:BenchmarkBuildReceipt = $null
+        $script:NativeBuildReceiptTool = Join-Path $root 'tools/native_build_receipt.py'
+        $script:BenchmarkArtifactState = Get-RamBenchmarkArtifactState -RepositoryRoot $root -BinaryPath $cli -Receipt ([ref]$script:BenchmarkBuildReceipt)
+        $script:BenchmarkJournalPath = Join-Path $Fixture 'controller.jsonl'
+        Write-BenchmarkJournal -Path $script:BenchmarkJournalPath -Create -Event @{ event = 'correctness_fixture'; performance_evidence = $false }
+        foreach ($lane in @(Get-BenchmarkLaneOrder -Iteration 1 -SkipGpu:$SkipGpu)) {
+            $flag = if ($lane -eq 'CPU') { '--force-cpu' } else { '--require-gpu' }
+            $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $flag -BlockSizeKiB 8192 -RequestedDepth 1)
+            $geometry = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+            Assert-BenchmarkGeometry -Stats $geometry -Expected $geometry -PlanOnly
+            $script:BenchmarkGeometryPlans["${lane}:8192"] = $geometry
+        }
+        $pilot = @(Invoke-BenchmarkPlannedSample -Plans @(@{ block_size_kib = 8192; confirmation_count = 3 }) -Stage pilot -JournalPath $script:BenchmarkJournalPath)
+        $lanes = @(Get-BenchmarkLaneOrder -Iteration 1 -SkipGpu:$SkipGpu)
+        $plans = @(Get-BenchmarkConfirmationPlan -PilotRuns $pilot -Blocks @(8192) -Lanes $lanes -MinimumCount 3 -MaximumCount 3 -MinimumSeconds 1 -TargetRsePct 2)
+        $runs = @(Invoke-BenchmarkPlannedSample -Plans $plans -Stage confirmation -JournalPath $script:BenchmarkJournalPath)
+        $study = ConvertTo-RamBenchmarkStudyRecord -RecordArguments @{
+            Runs = $runs; Profile = 'Corpus'; SizeMiB = 10240; Level = 5; SampleIntervalMs = 50
+        } -ArtifactState $script:BenchmarkArtifactState -PilotRuns $pilot -SamplingPolicy @{ method = 'correctness_fixture'; discarded_sample_count = 0 } -CaseQuality @(@{ status = 'inconclusive'; reason = 'generated correctness fixture without resource sampling' })
+        $events = @(Get-Content -LiteralPath $script:BenchmarkJournalPath | ForEach-Object { $_ | ConvertFrom-Json })
+        if ($study.schema_version -ne 4 -or $null -ne $study.size_mib -or $study.input_bytes -ne 16777253 -or
+            $study.runs.Count -ne (3 * $lanes.Count) -or $study.pilot_runs.Count -ne (3 * $lanes.Count) -or
+            @($events | Where-Object event -eq 'raw_operation').Count -ne (6 * $lanes.Count) -or
+            @($events | Where-Object event -eq 'sample').Count -ne (6 * $lanes.Count)) {
+            throw 'Production controller lost or relabeled a corpus correctness observation.'
+        }
+        foreach ($run in @($study.runs + $study.pilot_runs)) {
+            if ($run.input_bytes -ne 16777253 -or $run.validated_bytes -ne 16777253 -or $run.source_sha256 -cne $Hash -or
+                $run.measurement_protocol -cne 'bytewise-corpus-v1' -or -not $run.memory_only -or $run.disk_write_bytes -ne 0) {
+                throw 'Production controller failed corpus source identity or RAM-only contracts.'
+            }
+        }
+        Write-Output "Corpus controller integration passed: $($pilot.Count) pilots, $($runs.Count) frozen confirmations; correctness evidence only."
+    } finally { $script:BenchmarkCorpus = $null; $script:BenchmarkSuiteClock = $null }
+}
+
 $owned = [IO.Path]::GetFullPath((Join-Path $root 'out/memory-corpus-tests'))
 $fixture = Join-Path $owned ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
@@ -52,47 +112,61 @@ try {
     if ($RequireHip -and -not $hip) { throw 'Corpus integration requires actual compiled and available HIP.' }
     $modes = @('--force-cpu')
     if ($hip) { $modes += '--require-gpu' }
-    foreach ($mode in $modes) {
-        foreach ($block in @(256, 512, 1024, 2048, 4096, 8192, 16384)) {
-            $arguments = @('memory-benchmark') + $source + @($mode, '--workers', '2', '--inflight', '1', '--decode-inflight', '1', '--block-size-kib', "$block", '--compression-level', '5')
-            $result = Invoke-MemoryCorpusProbe -Argument $arguments
-            if ($result.exit_code -ne 0 -or $result.stderr -or
-                $result.stdout -notmatch 'input_bytes=16777253 ' -or $result.stdout -notmatch 'validated_bytes=16777253 ' -or
-                $result.stdout -notmatch "source_sha256=$hash " -or $result.stdout -notmatch 'measurement_protocol=bytewise-corpus-v1 ' -or
-                $result.stdout -notmatch 'data_source=preloaded ' -or $result.stdout -notmatch 'memory_only=true disk_write_bytes=0') {
-                throw "Corpus integration failed: $mode block=$block exit=$($result.exit_code) $($result.stderr)"
+    if (-not $ControllerOnly) {
+        foreach ($mode in $modes) {
+            foreach ($block in @(256, 512, 1024, 2048, 4096, 8192, 16384)) {
+                $arguments = @('memory-benchmark') + $source + @($mode, '--workers', '2', '--inflight', '1', '--decode-inflight', '1', '--block-size-kib', "$block", '--compression-level', '5')
+                $plan = Invoke-MemoryCorpusProbe -Argument ($arguments + '--plan-only')
+                if ($plan.exit_code -ne 0 -or $plan.stderr -or $plan.stdout -notmatch '^plan_only=true input_bytes=16777253 ' -or
+                    $plan.stdout -notmatch 'data_source=corpus-metadata ' -or $plan.stdout -notmatch "expected_source_sha256=$hash " -or
+                    $plan.stdout -notmatch 'source_identity_verified=false' -or $plan.stdout -match 'gpu_used=|seconds=|memory_only=') {
+                    throw 'Corpus metadata planning must expose exact, unauthenticated configuration without measured evidence.'
+                }
+                $result = Invoke-MemoryCorpusProbe -Argument $arguments
+                if ($result.exit_code -ne 0 -or $result.stderr -or
+                    $result.stdout -notmatch 'input_bytes=16777253 ' -or $result.stdout -notmatch 'validated_bytes=16777253 ' -or
+                    $result.stdout -notmatch "source_sha256=$hash " -or $result.stdout -notmatch 'measurement_protocol=bytewise-corpus-v1 ' -or
+                    $result.stdout -notmatch 'data_source=preloaded ' -or $result.stdout -notmatch 'memory_only=true disk_write_bytes=0') {
+                    throw "Corpus integration failed: $mode block=$block exit=$($result.exit_code) $($result.stderr)"
+                }
+                $expectedGpu = if ($mode -eq '--require-gpu') { 'true' } else { 'false' }
+                if ($result.stdout -notmatch "gpu_used=$expectedGpu ") { throw 'Corpus backend identity disagrees with requested lane.' }
+                if ($mode -eq '--require-gpu' -and ($result.stdout -notmatch 'gpu_encode_chunks=[1-9][0-9]* ' -or
+                        $result.stdout -notmatch 'gpu_decode_chunks=[1-9][0-9]* ' -or $result.stdout -notmatch 'gpu_kernel_launches=[1-9][0-9]* ')) {
+                    throw 'Corpus required-HIP lane must report actual encode/decode work and kernel launches.'
+                }
+                Write-Output "Corpus correctness passed: mode=$mode block_kib=$block exact_bytes=16777253; timings are unqualified."
             }
-            $expectedGpu = if ($mode -eq '--require-gpu') { 'true' } else { 'false' }
-            if ($result.stdout -notmatch "gpu_used=$expectedGpu ") { throw 'Corpus backend identity disagrees with requested lane.' }
-            if ($mode -eq '--require-gpu' -and ($result.stdout -notmatch 'gpu_encode_chunks=[1-9][0-9]* ' -or
-                    $result.stdout -notmatch 'gpu_decode_chunks=[1-9][0-9]* ' -or $result.stdout -notmatch 'gpu_kernel_launches=[1-9][0-9]* ')) {
-                throw 'Corpus required-HIP lane must report actual encode/decode work and kernel launches.'
+        }
+        $unverified = Invoke-MemoryCorpusProbe -Argument @('memory-benchmark', '--source-file', $path, '--source-sha256', ('0' * 64), '--force-cpu', '--plan-only')
+        if ($unverified.exit_code -ne 0 -or $unverified.stderr -or $unverified.stdout -notmatch 'source_identity_verified=false' -or
+            $unverified.stdout -notmatch ('expected_source_sha256=' + ('0' * 64)) -or $unverified.stdout -match 'source_sha256=\S+.*source_identity_verified=true') {
+            throw 'Metadata-only planning must not claim authentication of an unchecked source hash.'
+        }
+        $empty = Join-Path $fixture 'empty.bin'
+        [IO.File]::WriteAllBytes($empty, [byte[]]@())
+        $bad = @(
+            @{ arguments = @('--source-file', $path); cause = 'requires --source-sha256' },
+            @{ arguments = $source + @('--profile', 'Mixed'); cause = 'excludes --size-mib' },
+            @{ arguments = $source + @('--size-mib', '10240'); cause = 'excludes --size-mib' },
+            @{ arguments = $source + @('--source-file', $path); cause = 'duplicate --source-file' },
+            @{ arguments = @('--source-file', $path, '--source-sha256', ('0' * 64)); cause = 'differs from expected identity' },
+            @{ arguments = @('--source-file', $path, '--source-sha256', $hash.ToUpperInvariant()); cause = 'lowercase SHA-256' },
+            @{ arguments = @('--source-sha256', $hash); cause = 'requires a preloaded corpus' },
+            @{ arguments = @('--source-file', $empty, '--source-sha256', $hash); cause = '1..67108864' },
+            @{ arguments = @('--source-file', $fixture, '--source-sha256', $hash); cause = 'regular file' }
+        )
+        foreach ($case in $bad) {
+            $result = Invoke-MemoryCorpusProbe -Argument (@('memory-benchmark', '--force-cpu') + $case.arguments)
+            if ($result.exit_code -ne 1 -or -not $result.stderr.Contains($case.cause) -or $result.stdout) {
+                throw "Corpus rejection disagrees with expected boundary: $($case.cause)"
             }
-            Write-Output "Corpus correctness passed: mode=$mode block_kib=$block exact_bytes=16777253; timings are unqualified."
         }
+        Write-Output "Corpus integration passed: $($modes.Count * 7) metadata plans and backend/block cases, 9 rejection cases; GPU qualified=$hip."
     }
-    $empty = Join-Path $fixture 'empty.bin'
-    [IO.File]::WriteAllBytes($empty, [byte[]]@())
-    $bad = @(
-        @{ arguments = @('--source-file', $path); cause = 'requires --source-sha256' },
-        @{ arguments = $source + @('--profile', 'Mixed'); cause = 'excludes --size-mib' },
-        @{ arguments = $source + @('--size-mib', '10240'); cause = 'excludes --size-mib' },
-        @{ arguments = $source + @('--plan-only'); cause = 'excludes --size-mib' },
-        @{ arguments = @('--source-file', $path, '--source-sha256', ('0' * 64)); cause = 'differs from expected identity' },
-        @{ arguments = @('--source-file', $path, '--source-sha256', $hash.ToUpperInvariant()); cause = 'lowercase SHA-256' },
-        @{ arguments = @('--source-sha256', $hash); cause = 'requires a preloaded corpus' },
-        @{ arguments = @('--source-file', $empty, '--source-sha256', $hash); cause = '1..67108864' },
-        @{ arguments = @('--source-file', $fixture, '--source-sha256', $hash); cause = 'regular file' }
-    )
-    foreach ($case in $bad) {
-        $result = Invoke-MemoryCorpusProbe -Argument (@('memory-benchmark', '--force-cpu') + $case.arguments)
-        if ($result.exit_code -ne 1 -or -not $result.stderr.Contains($case.cause) -or $result.stdout) {
-            throw "Corpus rejection disagrees with expected boundary: $($case.cause)"
-        }
-    }
+    Test-MemoryCorpusController -Path $path -Hash $hash -Fixture $fixture -Hip $hip
     $after = Invoke-MemoryCorpusProbe -Argument @('gpu-info')
     if ($hip -and ($after.exit_code -ne 0 -or $after.stdout -notmatch 'available=true')) { throw 'HIP readiness lost after corpus integration.' }
-    Write-Output "Corpus integration passed: $($modes.Count * 7) backend/block cases, 9 rejection cases; GPU qualified=$hip."
 } finally {
     $prefix = $owned.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not [IO.Path]::GetFullPath($fixture).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {

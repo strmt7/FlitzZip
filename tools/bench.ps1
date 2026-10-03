@@ -13,6 +13,9 @@ param(
     [ValidateSet("Memory", "Filesystem")] [string]$Mode = "Memory",
     [Alias("Profile")]
     [ValidateSet("Mixed", "Compressible", "Incompressible", "RepeatedRecord", "SparseRecord", "LongSparseRecord", "SegmentedRecords")] [string]$WorkloadProfile = "Mixed",
+    [string]$CorpusManifest,
+    [string]$CorpusRoot,
+    [string]$CorpusFile,
     [ValidateRange(1, 9)] [int]$CompressionLevel = 5,
     [ValidateRange(0, 64)] [int]$InflightChunks = 0,
     [ValidateSet(256, 512, 1024, 2048, 4096, 8192, 16384)] [int[]]$BlockSizeKiB = @(256, 512, 1024, 2048, 4096, 8192, 16384),
@@ -27,7 +30,7 @@ param(
     [switch]$AllowLargeDiskWrites
 )
 
-# Purpose: Compare forced-CPU and required-AMD-HIP performance on the same generated SUZIP workload.
+# Purpose: Compare forced-CPU and required-AMD-HIP performance on identical generated or reviewed exact-file SUZIP inputs.
 # Inputs: Workload, level and blocks prescribe cases. Iterations is the confirmation minimum; pilot duration/variance determines a fixed count within MaxIterations. FixedIterations bypasses planning. Descriptive time/variability/RSE limits, process/suite deadlines and resource cadence are configurable. Skip switches select lanes; JsonOutput reserves final evidence. Filesystem mode remains a capped correctness smoke.
 # Outputs: Prints descriptive throughput, exact sizes and measurement quality; preserves all samples in a journal and optionally creates final JSON. Correctness, telemetry-contract, subprocess or deadline failures abort without replacing prior evidence.
 $ErrorActionPreference = "Stop"
@@ -56,7 +59,12 @@ if ($SkipCpu -and $SkipGpu) {
 if ($AllowLargeDiskWrites) {
     throw "-AllowLargeDiskWrites is obsolete. Development benchmarks must be RAM-only; use -Mode Memory for CPU/GPU benchmarking and tools/storage_smoke.ps1 for the small filesystem path."
 }
-if ($Mode -eq "Memory" -and $SizeMiB -lt 10240) {
+$corpusRequested = [bool]($CorpusManifest -or $CorpusRoot -or $CorpusFile)
+if ($corpusRequested -and (-not $CorpusManifest -or -not $CorpusRoot -or -not $CorpusFile -or
+    $Mode -ne 'Memory' -or $PSBoundParameters.ContainsKey('SizeMiB') -or $PSBoundParameters.ContainsKey('WorkloadProfile'))) {
+    throw 'Corpus mode requires -CorpusManifest, -CorpusRoot and -CorpusFile together; it excludes filesystem mode, -SizeMiB and -Profile.'
+}
+if ($Mode -eq "Memory" -and -not $corpusRequested -and $SizeMiB -lt 10240) {
     throw "Benchmark workload must be at least 10240 MiB (10 GiB) for meaningful CPU/GPU comparison."
 }
 if ($Mode -eq "Filesystem" -and $SizeMiB -gt $MaxFilesystemSmokeMiB) {
@@ -514,6 +522,7 @@ function Invoke-SuperZipStat {
     $gpuSampler = if ($NoResourceCounters) { $null } else { Get-GpuResourceSampler }
     $process = [Diagnostics.Process]::Start($psi)
     try {
+        $process.PriorityClass = [Diagnostics.ProcessPriorityClass]::Normal
         $stdoutTask = Read-BoundedBenchmarkStream -Reader $process.StandardOutput
         $stderrTask = Read-BoundedBenchmarkStream -Reader $process.StandardError
         $initialIo = Get-ProcessIoTransfer -Process $process
@@ -860,7 +869,8 @@ function Assert-BytewiseBenchmarkValidation {
     $wall = Get-StatsNumber -Stats $Stats -Key 'wall_seconds'
     $workers = Get-StatsNumber -Stats $Stats -Key 'workers'
     $validationWorkers = Get-StatsNumber -Stats $Stats -Key 'validation_worker_limit'
-    if ($Stats['measurement_protocol'] -ne 'bytewise-regenerated-v2' -or
+    Assert-BenchmarkCorpusStat -Stats $Stats
+    if ($Stats['measurement_protocol'] -cne (Get-BenchmarkMeasurementProtocol) -or
         $null -eq $workers -or $workers -lt 1 -or $workers -gt 64 -or $workers -ne [math]::Floor($workers) -or
         $validationWorkers -ne $workers -or
         [string]$Stats['validated_bytes'] -cne $ExpectedInputBytes.ToString([Globalization.CultureInfo]::InvariantCulture) -or
@@ -904,8 +914,8 @@ function Invoke-MemoryBenchmarkLane {
         [double]$stats["archive_bytes"] -le [double]$stats["output_bytes"]) {
         throw "$Lane memory benchmark did not report a complete serialized archive size."
     }
-    Assert-MemoryBenchmarkStat -Stats $stats -ExpectedInputBytes ($SizeMiB * 1MB) -BlockSizeKiB $BlockSizeKiB
-    Assert-BytewiseBenchmarkValidation -Stats $stats -ExpectedInputBytes ($SizeMiB * 1MB)
+    Assert-MemoryBenchmarkStat -Stats $stats -ExpectedInputBytes (Get-BenchmarkInputByteCount $SizeMiB) -BlockSizeKiB $BlockSizeKiB
+    Assert-BytewiseBenchmarkValidation -Stats $stats -ExpectedInputBytes (Get-BenchmarkInputByteCount $SizeMiB)
     $generationWork = Get-StatsNumber -Stats $stats -Key "source_generation_worker_seconds"
     $codecWork = Get-StatsNumber -Stats $stats -Key "codec_encode_worker_seconds"
     if ($null -eq $generationWork -or $generationWork -le 0 -or
@@ -919,7 +929,7 @@ function Invoke-MemoryBenchmarkLane {
     $ownedDecodeStages = Read-BenchmarkWorkerStageSet -Stats $stats -Prefix 'decode_' -Lane $Lane `
         -Stages @('allocation', 'materialization', 'crc')
     if ($ModeFlag -eq "--require-gpu") {
-        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -ne "Incompressible")
+        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -notin @('Incompressible', 'Corpus'))
         if ($gpuEncodeStages['readiness'] -le 0 -or $gpuEncodeStages['classification'] -le 0) {
             throw "$Lane memory benchmark did not report the required HIP encode work stages."
         }
@@ -938,6 +948,8 @@ function Invoke-MemoryBenchmarkLane {
         VerifySeconds = [double]$stats["verify_seconds"]
         ExtractSeconds = [double]$stats["extract_seconds"]
         MeasurementProtocol = $stats['measurement_protocol']
+        DataSource = $stats['data_source']
+        SourceSha256 = $stats['source_sha256']
         MeasurementIdentity = $observation.Identity
         ValidationWorkerLimit = [int]$stats['validation_worker_limit']
         ValidatedBytes = [int64]$stats['validated_bytes']
@@ -1045,12 +1057,14 @@ function ConvertTo-RamBenchmarkObservation {
     if ($null -ne $Run.MeasurementProtocol) {
         Assert-BytewiseBenchmarkValidation -Stats @{
             measurement_protocol = $Run.MeasurementProtocol; validated_bytes = $Run.ValidatedBytes
+            data_source = $Run.DataSource; source_sha256 = $Run.SourceSha256
             workers = $Run.Workers; validation_worker_limit = $Run.ValidationWorkerLimit
             validation_seconds = $Run.ValidationSeconds; wall_seconds = $Run.WallSeconds
-        } -ExpectedInputBytes ($SizeMiB * 1MB)
+        } -ExpectedInputBytes (Get-BenchmarkInputByteCount $SizeMiB)
     }
+    if ($null -ne $script:BenchmarkCorpus -and $null -eq $Run.MeasurementProtocol) { throw 'Corpus report requires authenticated bytewise observations.' }
     if ($Run.MemoryOnly -ne "true" -or $Run.DiskWriteBytes -ne 0 -or
-        $Run.InputBytes -ne ($SizeMiB * 1MB) -or $Run.OutputBytes -lt 0 -or
+        $Run.InputBytes -ne (Get-BenchmarkInputByteCount $SizeMiB) -or $Run.OutputBytes -lt 0 -or
         $Run.ArchiveBytes -le $Run.OutputBytes -or
         [double]::IsNaN($Run.SourceGenerationWorkerSeconds) -or
         [double]::IsInfinity($Run.SourceGenerationWorkerSeconds) -or
@@ -1109,6 +1123,8 @@ function ConvertTo-RamBenchmarkObservation {
         verify_seconds = $Run.VerifySeconds
         extract_seconds = $Run.ExtractSeconds
         measurement_protocol = $Run.MeasurementProtocol
+        data_source = $Run.DataSource
+        source_sha256 = $Run.SourceSha256
         measurement_identity = $Run.MeasurementIdentity
         observation_wall_seconds = $Run.ObservationWallSeconds
         validation_worker_limit = $Run.ValidationWorkerLimit
@@ -1160,7 +1176,7 @@ function ConvertTo-RamBenchmarkRecord {
     )
     $runtimeVersion = ConvertTo-HipRuntimeVersionEvidence -Value $HipRuntimeVersion
     $orderedRuns = @($Runs | ForEach-Object { ConvertTo-RamBenchmarkObservation -Run $_ -SizeMiB $SizeMiB })
-    return [ordered]@{
+    $record = [ordered]@{
         schema_version = 2
         benchmark_kind = "suzip_ram"
         gpu_utilization_metric = "process_busiest_engine_pct"
@@ -1179,11 +1195,20 @@ function ConvertTo-RamBenchmarkRecord {
         resource_sample_interval_ms = $SampleIntervalMs
         runs = $orderedRuns
     }
+    if ($null -ne $script:BenchmarkCorpus) {
+        $record.schema_version = 4
+        $record.profile = 'Corpus'
+        $record.size_mib = $null
+        $record.input_bytes = [int64]$script:BenchmarkCorpus.input_bytes
+        $record.corpus = $script:BenchmarkCorpus.provenance
+        $record.corpus_identity_policy = 'sha256-before-after-observation-v1'
+    }
+    return $record
 }
 
 # Purpose: Serialize confirmation and pilot observations through one frozen-identity boundary.
 # Inputs: RecordArguments carry the shared workload metadata; ArtifactState is the pre-sampling identity.
-# Outputs: Returns a version-three study retaining both stages, sampling policy and quality evidence.
+# Outputs: Returns a generated version-three or corpus version-four study retaining every stage and its identity.
 function ConvertTo-RamBenchmarkStudyRecord {
     param(
         [Parameter(Mandatory = $true)][hashtable]$RecordArguments,
@@ -1197,8 +1222,8 @@ function ConvertTo-RamBenchmarkStudyRecord {
     $arguments.Dirty = $ArtifactState.source_dirty
     $arguments.BinarySha256 = $ArtifactState.binary_sha256
     $record = ConvertTo-RamBenchmarkRecord @arguments
-    $record.schema_version = 3
-    $record.measurement_protocol = 'bytewise-regenerated-v2'
+    if ($null -eq $script:BenchmarkCorpus) { $record.schema_version = 3 }
+    $record.measurement_protocol = Get-BenchmarkMeasurementProtocol
     $record.measurement_identity_policy = 'native-build-receipt-around-observation-v2'
     $record.binary_dependencies_sha256 = $ArtifactState.binary_dependencies_sha256
     $record.native_build_receipt_sha256 = $ArtifactState.native_build_receipt_sha256
@@ -1248,7 +1273,8 @@ function Get-RamBenchmarkSourceDirty {
         'tools/build_parallelism.ps1', 'tools/local_resources.ps1',
         'tools/native_build_provenance.py', 'tools/native_build_receipt.py',
         'resources/app', 'resources/brand', 'resources/licenses', 'LICENSE',
-        'tools/benchmark_statistics.ps1',
+        'tools/benchmark_statistics.ps1', 'tools/benchmark_corpus.ps1', 'tools/benchmark_corpus.py',
+        'tools/benchmark_permissions.json', 'tools/benchmark_comparators.py', 'tools/run_archive_comparison.py',
         'tools/test_benchmark_graph.py', 'tools/test_benchmark_reporting.ps1',
         'docs/performance-block-size-validation.md', 'docs/compression-level-and-benchmark-suite.md'
     )
@@ -1303,16 +1329,23 @@ function Invoke-FrozenMemoryBenchmark {
     param([string[]]$Arguments, [Collections.IDictionary]$Expected, [string]$RepositoryRoot, [string]$BinaryPath,
         [string]$JournalPath, [Collections.IDictionary]$JournalContext)
     Assert-RamBenchmarkArtifactState -Expected $Expected -RepositoryRoot $RepositoryRoot -BinaryPath $BinaryPath
+    Assert-BenchmarkCorpusIdentity
     $stats = Invoke-SuperZipStat -Arguments $Arguments
     $raw = @{ event = 'raw_operation'; stats = $stats; expected_measurement_identity = $Expected }
     if ($null -ne $JournalContext) {
         foreach ($key in @('lane', 'block_size_kib', 'iteration')) { $raw[$key] = $JournalContext[$key] }
     }
     Write-BenchmarkJournal -Path $JournalPath -Event $raw
+    Assert-BenchmarkCorpusIdentity
     Assert-RamBenchmarkArtifactState -Expected $Expected -RepositoryRoot $RepositoryRoot -BinaryPath $BinaryPath
     return @{ Stats = $stats; Identity = $Expected }
 }
 
+if ($corpusRequested) {
+    $script:BenchmarkCorpus = Import-ReviewedBenchmarkCorpus -RepositoryRoot $repo -Manifest $CorpusManifest -Root $CorpusRoot -File $CorpusFile
+    Assert-BenchmarkCorpusIdentity
+    $WorkloadProfile = 'Corpus'
+}
 $laneCount = 0
 if (-not $SkipCpu) { ++$laneCount }
 if (-not $SkipGpu) { ++$laneCount }
@@ -1354,7 +1387,9 @@ if ($Mode -eq "Memory") {
         measurement_identity_policy = 'native-build-receipt-around-observation-v2'; measurement_identity = $script:BenchmarkArtifactState
         native_build_receipt = $script:BenchmarkBuildReceipt
         source_commit = $script:BenchmarkArtifactState.source_commit; binary_sha256 = $script:BenchmarkArtifactState.binary_sha256; profile = $WorkloadProfile
-        size_mib = $SizeMiB; compression_level = $CompressionLevel; block_sizes_kib = $BlockSizeKiB }
+        size_mib = $(if ($corpusRequested) { $null } else { $SizeMiB }); input_bytes = (Get-BenchmarkInputByteCount $SizeMiB)
+        measurement_protocol = (Get-BenchmarkMeasurementProtocol); corpus = $(if ($corpusRequested) { $script:BenchmarkCorpus.provenance } else { $null })
+        compression_level = $CompressionLevel; block_sizes_kib = $BlockSizeKiB }
     $script:BenchmarkGeometryPlans = @{}
     $script:BenchmarkSampleIdentities = @{}
     foreach ($block in $BlockSizeKiB) {

@@ -87,8 +87,20 @@ reporting contracts pass. Local verification follows the maintainer's affected
 component scope; the unrelated full native driver is not reported as run. The
 [corpus lane contract](docs/compression-level-and-benchmark-suite.md#native-suite)
 keeps single-observation entry points separate from scientific confirmation
-and publication: those corpus controller integrations, representative datasets
-and actual comparative measurements remain outstanding.
+and publication. The follow-up connects exact-file inputs to the existing
+scientific controller using the shared permission-manifest admission boundary.
+Metadata-only native plans reserve future resident input and explicitly decline
+to authenticate it. Every actual observation authenticates its resident source;
+the controller freezes source, manifest and permission catalog around the run,
+journaling native evidence before post-checks. Corpus schema 4 preserves natural
+byte counts and every pilot/confirmation without changing generated schema 3
+or its publication admission. The current HIP Release build, all 14 CPU/HIP
+block cases, metadata plans and nine rejection cases pass. The actual controller
+passes six pilots and six frozen confirmations using a clearly generated
+correctness fixture; offline reporting/admission contracts pass. Timing producers
+now explicitly use normal priority. The fixture results are correctness evidence,
+not performance claims. Representative datasets, actual comparative measurements,
+corpus publication and final hosted acceptance remain outstanding.
 
 ### Earlier Checkpoint Evidence
 
