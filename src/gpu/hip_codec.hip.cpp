@@ -889,24 +889,40 @@ std::vector<DeviceBlock> build_decode_device_blocks(std::span<const BlockDescrip
     return host_blocks;
 }
 
-// Purpose: Build GPU decode plans for every prefix-coded segment in one decoded chunk.
+// Purpose: Count the independently decoded prefix segments in one validated device block.
+// Inputs: `block` has bounded decoded length and a recognized native block kind.
+// Outputs: Returns zero for other kinds or the exact static/adaptive/Huffman segment count.
+std::uint32_t prefix_decode_segment_count(const DeviceBlock& block) {
+    if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuPrefix) &&
+        block.kind != static_cast<std::uint8_t>(BlockKind::GpuAdaptivePrefix) &&
+        block.kind != static_cast<std::uint8_t>(BlockKind::GpuHuffman)) {
+        return 0U;
+    }
+    return (block.uncompressed_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+}
+
+// Purpose: Build GPU decode plans with one exact allocation for every prefix segment in a decoded chunk.
 // Inputs: `host_blocks` is the validated device-block table with decoded output offsets.
-// Outputs: Returns one decode plan per 4 KiB prefix segment.
+// Outputs: Returns ordered 4 KiB plans without per-block vector growth.
 std::vector<PrefixDecodeSegment> build_prefix_decode_segments(std::span<const DeviceBlock> host_blocks) {
     std::vector<PrefixDecodeSegment> plans;
+    // A validated segment count cannot exceed the chunk's bounded decoded byte count.
+    const auto plan_count = std::accumulate(
+        host_blocks.begin(), host_blocks.end(), std::size_t{0},
+        [](std::size_t total, const DeviceBlock& block) { return total + prefix_decode_segment_count(block); });
+    plans.reserve(plan_count);
     for (const auto& block : host_blocks) {
-        const bool adaptive = block.kind == static_cast<std::uint8_t>(BlockKind::GpuAdaptivePrefix);
-        const bool huffman = block.kind == static_cast<std::uint8_t>(BlockKind::GpuHuffman);
-        if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuPrefix) && !adaptive && !huffman) {
+        const auto segment_count = prefix_decode_segment_count(block);
+        if (segment_count == 0U) {
             continue;
         }
-        const auto segment_count = (block.uncompressed_len + kGpuPrefixSegmentBytes - 1U) / kGpuPrefixSegmentBytes;
+        const bool adaptive = block.kind == static_cast<std::uint8_t>(BlockKind::GpuAdaptivePrefix);
+        const bool huffman = block.kind == static_cast<std::uint8_t>(BlockKind::GpuHuffman);
         const auto table_offset =
             block.encoded_offset + (huffman    ? static_cast<std::uint64_t>(kGpuHuffmanLookupBytes)
                                     : adaptive ? static_cast<std::uint64_t>(kGpuAdaptivePrefixCodebookBytes)
                                                : 0U);
         const auto table_bytes = static_cast<std::uint64_t>(segment_count + 1U) * sizeof(std::uint32_t);
-        plans.reserve(plans.size() + segment_count);
         for (std::uint32_t segment = 0; segment < segment_count; ++segment) {
             const auto decoded_offset = static_cast<std::uint64_t>(segment) * kGpuPrefixSegmentBytes;
             const auto remaining = block.uncompressed_len - static_cast<std::uint32_t>(decoded_offset);

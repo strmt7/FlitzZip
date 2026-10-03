@@ -1107,3 +1107,21 @@ ownership/parity and broker contracts. Complete bounded evidence is retained in
 truncation. A console-only Unicode display failure after the successful verifier
 was corrected by reading that retained JSON; the checks were not repeated.
 Hosted qualification of the new filters remains pending.
+
+## Round Twenty-Four: Prefix Decode Metadata Allocation
+
+The host planner no longer grows its vector once per coded block. A bounded
+prepass counts static/adaptive/Huffman segments and reserves once, preserving
+all plan fields. [Component evidence](gpu-prefix-plan-validation.md) records
+allocation traffic, every raw timing sample and the independent noisy-case
+confirmation. Generated-descriptor MSVC microtimings are explicitly separate
+from in-app HIP and archive throughput; no compression-ratio or kernel-speed
+claim follows from them. The full RAM-only archive sweep remains a release
+claim gate, not a repeated unrelated workload in this host-metadata cycle.
+
+The final HIP Release build, all 14 selected prefix/Huffman tests and changed-code
+quality gates pass under the maintainer's focused-test direction. The successful
+build receipt also validates the final native input/output contents. Both frozen
+host-study series pass without dropping observations. No unchanged GUI, package
+or compatibility-format smoke is repeated. Exact-commit hosted qualification
+remains pending.
