@@ -1186,3 +1186,39 @@ with other API counts, transfers and allocation requests unchanged. Private
 capture/comparison errors are corrected using retained evidence, without repeated
 native runs. Exact-commit hosted checks and the post-push audit remain pending;
 the preceding audit still rejects 211 open security alerts.
+
+## Round Twenty-Eight: Reusable Native Component Verification
+
+The canonical planner now routes the reviewed HIP entropy encoder mechanism to
+17 deduplicated direct cases, and registered test-file-only changes to their own
+cases. It no longer treats a test-file edit as a production parser change that
+automatically requires the full format matrix, compatibility smoke and fuzzing.
+Shared/unmapped native inputs and explicit broad selection retain the existing
+full driver. Separately changed compiler-helper contracts remain selected when
+the component driver is used; duplicate helpers are omitted only for the full
+driver that already executes them.
+
+Native substring filters exposed a real overlap: `zip_compat_roundtrip` also
+matches `gzip_compat_roundtrip`. The runner now supports `=case_name` while
+preserving existing substring/default behavior. Eight executable contracts
+compile the exact runner with a controlled registry; selector/executor contracts
+cover registration coverage, deduplication, required-HIP readiness, exact output
+and immediate failure. The component driver validates the current build receipt.
+
+All 12 selected local commands pass, including the HIP Release build, controlled
+runner, planner/CI/runner/checkpoint contracts, lint, source contracts and policy.
+The first attempt stops on an automatic PowerShell variable naming warning;
+the local variable is corrected. A later live driver check exposes PowerShell
+5.1's nested root-array pipeline behavior. The shared decoder is corrected and
+single/multiple/invalid path contracts pass in both supported shells. The live
+driver then runs exactly two selected registered cases successfully. Only the
+affected tool contracts and changed-file quality gates need refreshing after
+these tool-only corrections; no repeated codec workload, GUI or package smoke
+is justified.
+
+The [native routing contract](targeted-verification.md#native-component-selection)
+records the partial coverage map and remaining hosted broad-test work. Evidence
+is retained in `out/native-selection-corrected-component-verification-20261003.json`
+and `out/native-selection-corrected-live-driver-20261003.json`. Hosted assessment
+of this routing batch remains pending; the preceding post-push audit still
+rejects 211 open security alerts. The broader modernization goal remains active.

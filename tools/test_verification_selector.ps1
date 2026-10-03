@@ -146,6 +146,29 @@ Assert-Selector ($sourcePlan.manualLocalCommands.Count -eq 0) "ordinary non-perf
 Assert-Selector (-not $sourcePlan.workflowWaitPolicy.deferAllowed) "final source acceptance must not defer workflow waiting"
 Assert-Selector ($sourcePlan.workflowWaitPolicy.recommendedMode -eq "final") "source acceptance must recommend final wait"
 
+$entropyPlan = Get-SuperZipVerificationPlan -ChangedPath @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
+$entropyCommand = @($entropyPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')
+Assert-Selector ($entropyCommand.Count -eq 1 -and 'tools/native_component_tests.ps1' -in $entropyCommand[0].arguments) 'reviewed encoder mechanisms must select the component driver once'
+Assert-Selector (-not (Test-SuperZipToolContractCommand -Command $entropyCommand[0])) 'native component execution must not enter the offline tool lane'
+foreach ($testPath in @('tests/cpp/test_zip_compat.cpp', 'tests/cpp/test_archive_roundtrip.cpp', 'tests/cpp/test_path_safety.cpp')) {
+    $testOnlyPlan = Get-SuperZipVerificationPlan -ChangedPath @($testPath)
+    $testCommand = @($testOnlyPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests')[0]
+    Assert-Selector ('tools/native_component_tests.ps1' -in $testCommand.arguments) "registered test edits select their own cases: $testPath"
+    foreach ($id in @('compatibility-interop-smoke', 'format-matrix-smoke', 'short-fuzz-smoke', 'gui-smoke', 'package-smoke')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $testOnlyPlan -Id $id)) "test-only edits must not select unrelated product work: $testPath / $id"
+    }
+}
+$nativeToolPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/native_test_selection.ps1', 'tools/native_component_tests.ps1')
+Assert-Selector (Test-RequiredCommand -Plan $nativeToolPlan -Id 'native-selection-contracts') 'component driver changes require actual selection/execution contracts'
+Assert-Selector (-not (Test-RequiredCommand -Plan $nativeToolPlan -Id 'unit-tests')) 'component driver contracts do not require an unchanged native suite'
+$nativeRunnerPlan = Get-SuperZipVerificationPlan -ChangedPath @('tests/cpp/test_main.cpp')
+Assert-Selector (Test-RequiredCommand -Plan $nativeRunnerPlan -Id 'native-runner-contracts') 'runner source changes require compiled production registry contracts'
+Assert-Selector (-not (Test-RequiredCommand -Plan $nativeRunnerPlan -Id 'unit-tests')) 'runner-only edits must not repeat unrelated codec cases'
+$sharedNativePlan = Get-SuperZipVerificationPlan -ChangedPath @('src/gpu/hip_codec_support.hpp', 'tools/rocm_toolchain.ps1')
+Assert-Selector (-not (Test-RequiredCommand -Plan $sharedNativePlan -Id 'rocm-toolchain-tests')) 'full native driver already executes compiler contracts'
+$componentToolPlan = Get-SuperZipVerificationPlan -ChangedPath @('src/gpu/hip_codec_static_prefix.hip.cpp', 'tools/rocm_toolchain.ps1')
+Assert-Selector (Test-RequiredCommand -Plan $componentToolPlan -Id 'rocm-toolchain-tests') 'component driver must retain separately changed compiler contracts'
+
 $gpuPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/gpu/dictionary_candidate.cpp")
 Assert-Selector $gpuPlan.scope.touchesPerformance "GPU codec changes must retain performance verification"
 Assert-Selector (-not (Test-Workflow -Plan $gpuPlan -Name "benchmark-graph")) "GPU source alone must not wait for a path-filtered graph workflow"

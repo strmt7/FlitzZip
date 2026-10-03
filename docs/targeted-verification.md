@@ -78,7 +78,7 @@ repository-relative paths and produces:
 | Change area | Required local verification | Relevant post-push workflows |
 | --- | --- | --- |
 | Docs only | changed-file hygiene, language lint | `lint` |
-| C++ source, tests, CMake | hygiene, language lint, Release build, C++ tests, changed-code refactor audit | `lint`, `windows-ci` |
+| C++ source, tests, CMake | hygiene, language lint, Release build, affected native mechanism or full native driver, changed-code refactor audit | `lint`, `windows-ci` |
 | Archive parser, path safety, extraction publication | C++ checks plus external compatibility interop smoke, registry-wide format matrix smoke, security scan, and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
 | GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci` |
 | Workflows, security scanners, release actions | hygiene, language lint, security scan | `lint`, `security`, scanner-specific workflows, `scorecard` |
@@ -97,8 +97,44 @@ Tool contracts have explicit component/dependency patterns in the canonical
 planner. Production build inputs require a build; receipt fixture edits select
 receipt regressions without rebuilding unrelated codec code. Fuzz build and
 production resource changes retain their actual bounded sanitizer smoke.
-Native test execution already includes four toolchain helper contracts, so the
+The full native driver already includes four toolchain helper contracts, so the
 planner does not add duplicate standalone invocations of those same helpers.
+The component driver does not execute them; separately changed helper contracts
+remain selected.
+
+### Native Component Selection
+
+`tools/native_test_selection.ps1` owns the reviewed dependency mapping and reads
+case names from the main test target's CMake source registration. The initial
+production mapping covers static-prefix and adaptive/Huffman encoder files and
+their required-HIP integration consumers: 17 unique cases. A batch changing
+both files runs their union once. Registered test-file-only changes select all
+recognized cases in those files; they do not trigger unrelated format-matrix,
+fuzz, GUI or package work. Shared headers, other unmapped production mechanisms,
+separate native test targets and explicit `-Full` keep the full native driver.
+Add reviewed dependency mappings as further mechanisms are investigated.
+
+The component driver validates the current successful native build receipt
+before running. HIP-dependent cohorts require a compiled backend and an
+available device before and after execution. It invokes exact names using the
+native runner's `=case_name` filter, verifies one requested case per invocation
+and stops at the first failure. Existing substring filters and the default
+complete registry remain compatible. Duplicate names, unsupported registration
+syntax, empty selections and invalid changed-path metadata fail explicitly.
+The path decoder is checked under Windows PowerShell 5.1 and PowerShell 7.
+
+Changes to the native test runner itself select eight controlled executable
+contracts, compiling the actual runner source with three fixture registrations.
+They cover default/substring/exact selection, failing cases, missing and empty
+exact names, and extra arguments. They do not require rerunning every archive
+fixture. The hosted component lane admits this runner source dependency; it
+compiles the small contract fixture and keeps product builds in the native lane.
+
+This is an incremental coverage map, not proof that all native source families
+have fine-grained routing. Hosted Windows CI still uses its broad CPU-validation
+driver and unconditional compatibility matrix; narrowing those safely remains
+separate work. A local required-HIP cohort must never be relabeled as passed
+GPU qualification on a hosted runner without hardware.
 
 Path count alone does not widen a documentation batch. An unknown path fails
 planning with its name and a classification request, rather than guessing that

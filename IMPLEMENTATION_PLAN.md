@@ -13,6 +13,13 @@ whole-operation timing. Hosted checks remain intermediate qualification. The
 security backlog remains 211 open alerts, and release 0.8.0 remains held. Use
 the fresh audit's latest round for continuation; dated checkpoints are history.
 
+The newest development batch adds reusable
+[native component selection](docs/targeted-verification.md#native-component-selection):
+reviewed entropy encoders select 17 cases, registered test-file-only edits select
+their own cases, and runner changes select eight controlled registry contracts.
+Exact filters avoid substring collisions. Shared/unmapped inputs retain broad
+coverage; further source mappings and hosted cycle improvements remain open.
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.

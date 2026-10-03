@@ -30,19 +30,25 @@ void register_test(std::string name, TestFn fn) {
     registry().push_back(Test{std::move(name), std::move(fn)});
 }
 
-// Purpose: Execute registered tests, optionally filtered by substring.
-// Inputs: `argc`/`argv` may contain one filter string.
+// Purpose: Execute registered tests, optionally filtered by substring or exact name.
+// Inputs: `argc`/`argv` may contain one filter; a leading '=' requests exact selection.
 // Outputs: Returns zero for passing selected tests, one for failures, or two for invalid arguments/selections.
 int main(int argc, char** argv) {
     if (argc > 2) {
-        std::cerr << "Expected at most one test-name substring filter\n";
+        std::cerr << "Expected at most one test-name filter\n";
         return 2;
     }
     const std::string filter = argc > 1 ? argv[1] : "";
+    const bool exact = !filter.empty() && filter.front() == '=';
+    const std::string requested = exact ? filter.substr(1) : filter;
+    if (exact && requested.empty()) {
+        std::cerr << "Exact test-name filter cannot be empty\n";
+        return 2;
+    }
     int failed = 0;
     std::size_t selected = 0;
     for (const auto& test : registry()) {
-        if (!filter.empty() && test.name.find(filter) == std::string::npos) {
+        if (exact ? test.name != requested : (!requested.empty() && test.name.find(requested) == std::string::npos)) {
             continue;
         }
         ++selected;

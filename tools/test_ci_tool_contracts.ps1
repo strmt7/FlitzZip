@@ -27,4 +27,6 @@ Assert-CiContractPlan -Path 'tools/test_native_build_receipt.py' -Required @('na
 Assert-CiContractPlan -Path 'tools/build.ps1' -Required @('native-build-receipt-tests', 'rocm-toolchain-tests')
 Assert-CiContractPlan -Path 'src/core/checksum.cpp' -Required @()
 Assert-CiContractPlan -Path 'tools/verify_changes.ps1' -Required @('verification-runner-tests')
+Assert-CiContractPlan -Path 'tools/native_component_tests.ps1' -Required @('native-selection-contracts')
+Assert-CiContractPlan -Path 'tests/cpp/test_main.cpp' -Required @('native-runner-contracts')
 Write-Output 'CI component projection inclusion/exclusion contracts passed.'

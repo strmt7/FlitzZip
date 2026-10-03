@@ -1,5 +1,6 @@
 $Script:SuperZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
+. (Join-Path $PSScriptRoot 'native_test_selection.ps1')
 
 # Purpose: Convert a path to the repository-relative slash form used by the verification classifier.
 # Inputs: `Path` may be absolute, relative, slash-separated, or backslash-separated.
@@ -273,6 +274,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
+        '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
@@ -288,12 +290,12 @@ function Get-SuperZipVerificationScope {
     $touchesArchiveParser = Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^src/(ar|arc|arj|base64|bzip2|cab|cpio|gzip|hqx|iso|lha|lzip|lzma|macbinary|rpm|sevenzip|tar|unix_compress|uue|wim|xar|xxe|xz|zip|zstd)/',
         '^src/core/(archive|archive_format|archive_index|archive_name_encoding|file_manifest|file_publish|path_safety|result|progress)\.',
-        '^tests/cpp/test_.*(compat|archive|path|format).*\.cpp$',
         '^fuzz/'
     )
     $touchesSecurityBoundary = $touchesArchiveParser -or (Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows)\.ps1$',
+        '^tools/native_component_tests\.ps1$',
         '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report)\.py$',
         '^\.github/'
     ))
@@ -354,6 +356,10 @@ function Get-SuperZipVerificationScope {
 function Get-SuperZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tests/cpp/test_main\.cpp$', '^tools/test_native_runner\.ps1$')
+           Command = (Get-SuperZipVerificationCommand -Id 'native-runner-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_runner.ps1') -Reason 'the exact production test runner must preserve default/substring selection and reject invalid exact filters') }
+        @{ Pattern = @('^tools/(native_test_selection|native_component_tests|test_native_selection)\.ps1$', '^tools/superzip_verification\.psm1$', '^CMakeLists\.txt$')
+           Command = (Get-SuperZipVerificationCommand -Id 'native-selection-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_selection.ps1') -Reason 'native component selection must preserve registry coverage, exact execution, HIP readiness and failure propagation') }
         @{ Pattern = @('^tools/(ci_tool_contracts|test_ci_tool_contracts)\.ps1$', '^\.github/workflows/(component-contracts|windows-ci)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'ci-tool-contracts-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_ci_tool_contracts.ps1') -Reason 'CI projection must retain affected tool contracts without executing product or timing workloads') }
         @{ Pattern = @('^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|build)\.ps1$', '^tools/rocm-sdk-lock\.json$')
@@ -448,7 +454,22 @@ function Get-SuperZipLocalVerificationCommand {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "release-build" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/build.ps1", "-Configuration", "Release") -Reason "compiled product, CMake, package, GUI, or broad verification changes require a Release build")
     }
     if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/test\.ps1$'))) {
-        Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "unit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`$ErrorActionPreference = 'Stop'; & ./tools/test.ps1 -Configuration Release; if (Test-Path variable:\LASTEXITCODE) { exit `$LASTEXITCODE }") -Reason "compiled product or shared verification changes require the C++ test harness with CI-equivalent native exit propagation")
+        $nativeSelection = Get-SuperZipNativeTestSelection -Paths $paths -Full:$scope.fullEscalationRequired
+        $usesFullNativeDriver = $nativeSelection.mode -eq 'full'
+        if ($nativeSelection.mode -eq 'runner') {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id 'native-runner-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_runner.ps1') -Reason 'native test runner changes require its controlled exact/substring/default registry contracts')
+        } elseif ($usesFullNativeDriver) {
+            $nativeArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "`$ErrorActionPreference = 'Stop'; & ./tools/test.ps1 -Configuration Release; if (Test-Path variable:\LASTEXITCODE) { exit `$LASTEXITCODE }")
+            $nativeReason = 'unmapped/shared native dependencies or explicit broad qualification require the full native driver'
+        } else {
+            $pathJson = ConvertTo-Json -InputObject @($paths) -Compress
+            $encodedPaths = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pathJson))
+            $nativeArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/native_component_tests.ps1', '-Configuration', 'Release', '-ChangedPathBase64', $encodedPaths)
+            $nativeReason = "reviewed native components: $($nativeSelection.components -join ', '); $($nativeSelection.tests.Count) unique cases"
+        }
+        if ($nativeSelection.mode -ne 'runner') {
+            Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id 'unit-tests' -Stage 'local' -Executable 'powershell' -Arguments $nativeArguments -Reason $nativeReason)
+        }
     }
     if ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesVerification -or $scope.fullEscalationRequired) {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "changed-refactor-audit" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/refactor_audit.ps1", "-ChangedOnly", "-CheckContracts", "-MaxFunctionLines", "120", "-MaxComplexityMarkers", "35", "-FailOnFindings") -Reason "changed source and verification code must stay small, documented, and reviewable")
@@ -475,7 +496,7 @@ function Get-SuperZipLocalVerificationCommand {
     }
     foreach ($command in @(Get-SuperZipToolVerificationCommand -Scope $Scope -Paths $Paths)) {
         # tools/test.ps1 already executes these identical helper contracts before CTest.
-        if ($seen.Contains('unit-tests') -and $command.id -in @('rocm-toolchain-tests',
+        if ($seen.Contains('unit-tests') -and $usesFullNativeDriver -and $command.id -in @('rocm-toolchain-tests',
                 'hip-architecture-tests', 'process-environment-tests', 'cmake-toolchain-tests')) { continue }
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command $command
     }

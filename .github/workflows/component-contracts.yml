@@ -13,6 +13,7 @@ on:
       - docs/comparative-benchmark-methodology.md
       - resources/benchmarks/**
       - src/cli/**
+      - tests/cpp/test_main.cpp
       - .github/workflows/component-contracts.yml
       - .github/workflows/security-code-scanning.yml
       - .github/requirements/**
