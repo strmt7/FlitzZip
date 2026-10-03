@@ -135,6 +135,22 @@ Gitleaks history/working-tree and TruffleHog history steps in
 [security run 37100463323](https://github.com/strmt7/SuperZip/actions/runs/37100463323).
 Each alert has its own evidence comment. No rule, scan scope or test was removed.
 
+On October 3, [alert 1754](https://github.com/strmt7/SuperZip/security/code-scanning/1754)
+and [alert 1753](https://github.com/strmt7/SuperZip/security/code-scanning/1753)
+were individually confirmed to match the pinned `archive_sha256` and
+`member.sha256` in `household-power-source.json` at `5c1101f`. These are locally
+observed public dataset digests, not credentials or publisher-signed hashes.
+The actual acquisition authenticated the complete 20,640,916-byte official ZIP
+and its 132,960,755-byte member, including complete-member CRC. The producer in
+`tools/acquire_benchmark_corpus.py` compares complete bytes against these fields
+before writing excerpts. Gitleaks history/working-tree and TruffleHog history
+passed for the exact SHA in
+[run 37114057563](https://github.com/strmt7/SuperZip/actions/runs/37114057563).
+Both alerts have specific false-positive comments within GitHub's 280-character
+limit; the initial oversized comment was rejected before changing any alert.
+The subsequent audit still reported 209 unapproved open alerts. No broader
+disposition, scanner exclusion or source-pin removal followed this review.
+
 ## Scanner Dependency Remediation
 
 On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in

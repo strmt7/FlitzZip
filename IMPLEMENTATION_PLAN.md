@@ -109,7 +109,7 @@ excerpts without padding, repetition or conversion. Their combined payload is
 tool feeds the canonical permission-manifest boundary, with explicit network,
 decode, output and lifetime limits. Five offline acquisition contracts and the
 actual official-source acquisition pass. Attribution and exact ranges remain
-with ignored payloads. These are empirical numeric inputs; performance studies,
+with ignored payloads. Acquisition establishes empirical numeric provenance;
 other workload classes and corpus publication are still outstanding. See the
 [source and methodology](docs/benchmarks/corpora.md).
 
@@ -120,8 +120,21 @@ label separately and bases GPU compressed-block requirements on admitted corpus
 state. Focused reporting contracts now execute the production parameter block
 and initialization statements, covering all seven generated profiles, complete
 corpus admission and ambiguous or incomplete argument rejection. These checks
-pass without rebuilding unchanged native code. Actual empirical measurements
-and broader workload qualification remain outstanding.
+pass without rebuilding unchanged native code.
+
+The [first empirical CPU/HIP diagnostic](docs/benchmarks/household-power-diagnostic-2026-10-03.md)
+then completed all three excerpts at level 5 and 8192 KiB blocks: 18 pilots and
+384 confirmations, with every raw native observation independently checked.
+CPU archives were smaller for every excerpt. All paired timing comparisons
+remain inconclusive under the unchanged policy; only last-excerpt HIP met all
+descriptive lane requirements. The input-allocation counter includes VRAM
+admission and allocation, so the next profiling batch must separate those costs
+before choosing a production change. Dictionary ratio coverage also remains a
+priority. No samples, thresholds or required-HIP semantics were weakened. Two
+new public corpus-hash alerts were individually verified as false positives,
+with exact-commit secret scans passing; the subsequent open-alert audit still
+fails at 209. Broader workloads, block/effort sweeps, eligible comparators,
+corpus publication and final hosted acceptance remain outstanding.
 
 ### Earlier Checkpoint Evidence
 
