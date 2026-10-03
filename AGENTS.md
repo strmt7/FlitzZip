@@ -86,9 +86,12 @@ tools\verification_plan.ps1 -IncludeUntracked
 tools\verify_changes.ps1 -IncludeUntracked
 ```
 
-Use `tools\verify_changes.ps1 -IncludeUntracked -Full` when the classifier
-escalates, a targeted check fails, or a wider defect is suspected. Do not
-replace required tests with a narrower passing check. Explicit maintainer
+Batch related changes and run the affected component contracts and direct
+consumers. A tooling/skill edit, path count, or failed focused check does not
+justify unrelated product tests. Diagnose failures before widening coverage;
+classify unknown paths before execution. Use `-Full` only for explicitly
+selected broad coverage supported by cross-component impact. Do not replace
+required tests with a narrower passing check. Explicit maintainer
 deferrals must remain recorded as deferred, never passed; do not weaken the
 verifier or remove scanners to hide them.
 

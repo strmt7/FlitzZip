@@ -170,9 +170,11 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 - Before choosing local tests, security scans, GUI smoke, fuzzing, benchmarks,
   or post-push workflow waits, read `docs/targeted-verification.md` and run
   `tools\verification_plan.ps1 -IncludeUntracked`. Use the selected checks
-  instead of broad habit-driven gates. If the plan escalates, a targeted check
-  fails, changed paths are unknown, or a wider bug is suspected, use the full
-  verification profile automatically with `tools\verify_changes.ps1 -Full`.
+  instead of broad habit-driven gates. Batch related edits and select changed
+  mechanisms and their direct consumers. Diagnose a failed check before
+  widening coverage; classify unknown paths before execution. Tooling changes
+  and path count alone do not justify unrelated checks. Use `-Full` only for
+  explicitly selected broad coverage supported by cross-component impact.
   Choose `-Checkpoint intermediate` whenever further development is planned,
   including workflow/verifier/MCP/skill edits and full local escalation. Check
   the pushed SHA once in opportunistic mode, including long-running fuzzing,
@@ -413,9 +415,9 @@ tools\bootstrap_lint_env.ps1 -PythonPath <path-to-python.exe>
 tools\lint.ps1 -CppMode Changed -IncludeUntracked
 ```
 
-If a larger bug is suspected, changed paths are broad or unknown, verification
-tooling changed, or a targeted check fails, the system must run the full local
-profile:
+When evidence establishes cross-component impact, explicitly select the wider
+coverage needed. The full local profile remains available for that decision;
+an ordinary tool change or failed lint check does not select it automatically:
 
 ```powershell
 tools\verify_changes.ps1 -IncludeUntracked -Full
@@ -904,9 +906,9 @@ read a paper or permission to republish its figures.
 3. Add or update tests for behavior, security boundaries, and regressions.
 4. Run `tools\verification_plan.ps1 -IncludeUntracked`, then run the selected
    targeted checks with `tools\verify_changes.ps1 -IncludeUntracked`.
-5. Escalate automatically to `tools\verify_changes.ps1 -IncludeUntracked -Full`
-   when the plan requires it, a targeted check fails, or a wider bug is
-   suspected.
+5. Diagnose a failed mechanism before widening coverage. Classify unknown
+   paths before executing a plan. Select `-Full` explicitly only when evidence
+   establishes cross-component impact requiring broad coverage.
 6. Choose intermediate/final checkpoint intent autonomously. Sample intermediate
    pushes once, keep implementing independent work while runs are active, and
    retain unfinished checks/audits as pending. Use a final checkpoint for a real

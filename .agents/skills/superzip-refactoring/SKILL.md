@@ -30,8 +30,9 @@ Required sequence:
 3. Make one focused structural change at a time.
 4. Run `tools/verification_plan.ps1 -IncludeUntracked`.
 5. Run the selected checks with `tools/verify_changes.ps1 -IncludeUntracked`.
-6. Use `tools/verify_changes.ps1 -IncludeUntracked -Full` when the plan
-   escalates, a targeted check fails, or the refactor points to a wider bug.
+6. Diagnose failed focused checks before widening coverage. Batch related
+   changes; test affected mechanisms and direct consumers. Use `-Full` only
+   for explicitly selected broad coverage supported by cross-component impact.
 7. Choose planner/verifier `-Checkpoint intermediate` when further work remains,
    including full local escalation. Sample the pushed SHA once opportunistically
    and continue independent work with pending gates recorded. Final review/handoff

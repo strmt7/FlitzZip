@@ -1,0 +1,61 @@
+name: component-contracts
+
+on:
+  push:
+    paths: &contract-inputs
+      - tools/**
+      - mcp/**
+      - .agents/skills/**
+      - AGENTS.md
+      - docs/benchmarks/**
+      - docs/benchmark-permissions.md
+      - docs/benchmark-research.md
+      - docs/comparative-benchmark-methodology.md
+      - resources/benchmarks/**
+      - src/cli/**
+      - .github/workflows/component-contracts.yml
+      - .github/workflows/security-code-scanning.yml
+      - .github/requirements/**
+      - .github/codeql/**
+      - .github/openvas/**
+      - .github/workflows/greenbone-openvas-vulnetix.yml
+  pull_request:
+    paths: *contract-inputs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: component-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tool-contracts:
+    name: Test changed development mechanisms
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout comparison history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test changed tool contracts
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          $base = if ($env:EVENT_NAME -eq 'pull_request') { $env:PR_BASE } else { $env:PUSH_BASE }
+          if ($base -and $base -notmatch '^0{40}$') {
+            if ($base -notmatch '^[0-9a-f]{40}$') { throw 'Invalid comparison commit.' }
+            tools/ci_tool_contracts.ps1 -BaseRef $base -HeadRef HEAD
+          } elseif ($env:EVENT_NAME -eq 'push') {
+            $paths = @(git ls-files)
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate initial branch inputs.' }
+            tools/ci_tool_contracts.ps1 -ChangedPath $paths
+          } else {
+            tools/ci_tool_contracts.ps1 -BaseRef HEAD~1 -HeadRef HEAD
+          }

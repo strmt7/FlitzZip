@@ -11,12 +11,13 @@ launching the full profile. Controlled first-command, later-command and manual
 failures exercise the actual runner without building or launching the product.
 Explicit `-Full` remains available for demonstrated wider impact.
 
-The classifier's separate blanket expansion for tooling/skill changes remains
-the next routing repair; it is not yet removed. For this runner-only batch,
-the maintainer's focused-testing direction defers that blanket full profile.
-Run the runner contracts, selector contracts, changed-file lint/hygiene and
-function-contract audit. Preserve scanner failures and pending hosted checks;
-this focused pass must not be described as a complete product requalification.
+The next routing batch replaces blanket tooling/skill and path-count expansion
+with component/dependency patterns. Unknown paths fail planning for review.
+Inclusion and exclusion regressions cover receipt producers versus fixtures,
+compiler helpers, agent tools, MCP containment, scanner contracts and explicit
+broad coverage. Toolchain helpers already invoked by the native test driver are
+not repeated separately. Preserve scanner failures and pending hosted checks;
+a focused pass must not be described as complete product requalification.
 
 SuperZip records concrete engineering mistakes as enforceable repository
 invariants. The goal is not more process; it is to convert verified failures

@@ -2,7 +2,37 @@ name: windows-ci
 
 on:
   push:
+    paths: &native-inputs
+      - .github/workflows/windows-ci.yml
+      - CMakeLists.txt
+      - LICENSE
+      - cmake/**
+      - src/**
+      - fuzz/**
+      - tests/**
+      - third_party/**
+      - resources/app/**
+      - resources/brand/**
+      - resources/licenses/**
+      - tools/build.ps1
+      - tools/test.ps1
+      - tools/compile_hip_object.ps1
+      - tools/hip_architecture.ps1
+      - tools/rocm_toolchain.ps1
+      - tools/rocm-sdk-lock.json
+      - tools/process_environment.ps1
+      - tools/cmake_toolchain.ps1
+      - tools/build_parallelism.ps1
+      - tools/local_resources.ps1
+      - tools/version.ps1
+      - tools/generate_brand_logo_header.ps1
+      - tools/superzip_brand_logo.psm1
+      - tools/generate_license_notices_header.ps1
+      - tools/native_build_provenance.py
+      - tools/native_build_receipt.py
+      - tools/bootstrap_rocm_sdk.py
   pull_request:
+    paths: *native-inputs
   workflow_dispatch:
 
 permissions:
@@ -46,34 +76,13 @@ jobs:
       - name: Build
         shell: pwsh
         run: tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
-      - name: Post-push audit regression tests
-        shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_github_post_push_audit.ps1
-      - name: Native invocation receipt regressions
-        # Validate actual configured CPU outputs as well as failure fixtures.
-        # CTest also exercises the production writer in both GPU modes.
+      - name: Validate actual native invocation receipt
+        # Mechanism regressions run in the component-contracts lane when changed.
+        # This check binds every native build to its actual configured outputs.
         shell: pwsh
         run: |
-          python -m unittest tools.test_native_build_provenance tools.test_native_build_receipt
-          if ($LASTEXITCODE -ne 0) { throw "Native build receipt regressions failed." }
           python tools/native_build_receipt.py validate --configuration Release
           if ($LASTEXITCODE -ne 0) { throw "Configured CPU build receipt is stale or incomplete." }
-      - name: Scanner provenance and coverage regression tests
-        shell: pwsh
-        run: |
-          python -m unittest tools.test_semgrep_coverage tools.test_devskim_provenance tools.test_devskim_report
-          if ($LASTEXITCODE -ne 0) { throw "Scanner provenance or coverage regressions failed." }
-      - name: Agent context and mandatory skill contracts
-        shell: pwsh
-        run: |
-          python -m unittest tools.test_agent_context tools.test_cocoindex_agent_search
-          if ($LASTEXITCODE -ne 0) { throw "Agent context or mandatory skill contracts failed." }
-      - name: Refactor inventory regression tests
-        shell: pwsh
-        run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_refactor_audit.ps1
-          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell refactor audit regressions failed." }
-          tools/test_refactor_audit.ps1
       - name: Test
         shell: pwsh
         run: tools/test.ps1

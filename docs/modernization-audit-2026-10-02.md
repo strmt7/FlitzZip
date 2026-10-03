@@ -1058,6 +1058,28 @@ real-runner cases cover early/later/manual failures, success, explicit full
 selection and the legacy no-escalation switch. Runner/selector contracts,
 changed-file lint/hygiene and function contracts form this focused batch;
 the blanket full profile is explicitly deferred by that maintainer direction.
-The classifier's independent blanket tooling expansion remains next work.
 Product binaries are unchanged by this runner batch, and no benchmark,
 product rebuild, GUI smoke or package rebuild is repeated for it.
+
+The companion routing batch replaces blanket tooling and path-count expansion
+with component/dependency contracts. Unknown paths fail planning for explicit
+classification. Receipt producers require builds, while receipt fixture edits
+select regressions without unrelated codec tests. Compiler helpers are tested
+directly and are not repeated when the native test driver already invokes them.
+MCP and agent-tool changes select their own containment/context contracts.
+
+The new hosted component lane projects offline contracts from that same planner
+over the push/PR range. Native Windows CI is restricted to native inputs and its
+own workflow; actual build receipt validation remains mandatory. Tool regression
+steps move to the component lane rather than disappearing. GitHub path-filter
+limits and future required-check configuration still require explicit review.
+The first integrated local run passes all ten selected commands without product
+rebuild, GUI/package smoke or timed workloads. CI projection regressions also
+pass under Windows PowerShell 5.1 and PowerShell 7. An empty-array fixture parsing
+issue was corrected; the actual lane successfully executes the runner contracts
+as its sole selected command. The final frozen source passes all ten selected
+commands; the complete ignored log is retained at
+`out/component-routing-frozen-verification-20261003.log`. All seven workflows
+for the preceding `f2a3455` checkpoint pass, and GitHub confirms alerts 1741 and
+1746 fixed. Hosted assessment of the new routing lane and a fresh remaining-alert
+count are still pending at this source checkpoint.

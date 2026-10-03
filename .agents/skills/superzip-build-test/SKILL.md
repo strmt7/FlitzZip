@@ -12,8 +12,10 @@ tools/verification_plan.ps1 -IncludeUntracked
 tools/verify_changes.ps1 -IncludeUntracked
 ```
 
-Use the full profile only when the plan escalates, the change is broad or
-unknown, verification tooling changed, or a targeted command fails:
+Batch related changes and test their affected mechanisms and direct consumers.
+Diagnose failed checks and classify unknown paths before widening coverage.
+Tooling edits and path count alone do not justify unrelated suites. Explicit
+broad coverage remains available when cross-component impact requires it:
 
 ```powershell
 tools/verify_changes.ps1 -IncludeUntracked -Full
@@ -57,7 +59,7 @@ Manual lanes remain available when the plan selects them:
 Rules:
 
 - Do not run broad checks merely because they exist. Run the plan-selected
-  checks, then escalate automatically when evidence points to a wider problem.
+  checks, then widen the selected coverage only when evidence points to a wider problem.
 - Enterprise-quality changes are not complete until the selected verifier proves
   the changed behavior, resource bounds, function-contract gate, and security
   invariants. Performance-sensitive claims must include input bytes, output

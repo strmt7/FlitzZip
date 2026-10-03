@@ -92,10 +92,11 @@ Assert-Selector ($emptyPaths.Count -eq 0) "clean git output must normalize to an
 foreach ($path in @('tools/fuzz_resources.ps1', 'tools/test_fuzz_resources.ps1',
         'tools/fuzz_memory.py', 'tools/test_fuzz_memory.py')) {
     $resourcePlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
-    Assert-Selector $resourcePlan.scope.fullEscalationRequired 'fuzz resource boundaries must receive full verification'
-    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id 'fuzz-resource-tests') 'fuzz admission tests must remain selected'
-    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id 'fuzz-memory-tests') 'cgroup limit regressions must remain selected'
-    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id 'short-fuzz-smoke') 'resource changes must exercise real sanitizer targets'
+    Assert-Selector (-not $resourcePlan.scope.fullEscalationRequired) 'fuzz resource boundaries require focused resource contracts'
+    $resourceContract = if ($path -match '\.ps1$') { 'fuzz-resource-tests' } else { 'fuzz-memory-tests' }
+    Assert-Selector (Test-RequiredCommand -Plan $resourcePlan -Id $resourceContract) 'changed resource mechanism must retain its regressions'
+    $expectsIntegration = $path -notmatch '/test_'
+    Assert-Selector ((Test-RequiredCommand -Plan $resourcePlan -Id 'short-fuzz-smoke') -eq $expectsIntegration) 'production resource changes require actual sanitizer admission; test-only changes do not'
 }
 
 $docsPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md")
@@ -152,15 +153,23 @@ foreach ($path in @("src/core/archive_name_encoding.cpp", "src/core/archive_name
     Assert-Selector (Test-LongRunningWorkflow -Plan $encodingPlan -Name "fuzzing") "name decoding changes must observe fuzzing: $path"
 }
 
-foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/local_smoke.sh", ".clusterfuzzlite/Dockerfile", ".clusterfuzzlite/project.yaml", "tools/test_verification_selector.ps1", "tools/build_parallelism.ps1", "tools/test_build_parallelism.ps1", "tools/refactor_audit.ps1", "tools/test_refactor_audit.ps1")) {
-    $buildGraphPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
-    Assert-Selector $buildGraphPlan.scope.touchesVerification "independent build graph and verifier tests must be classified as verification tooling: $path"
-    Assert-Selector $buildGraphPlan.scope.fullEscalationRequired "verification build inputs must escalate: $path"
-    Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "verification-selector-self-test") "verification build inputs must test the selector: $path"
-    Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "refactor-audit-tests") "verification build inputs must test the source inventory: $path"
-    Assert-Selector (Test-RequiredCommand -Plan $buildGraphPlan -Id "build-parallelism-test") "verification build inputs must test bounded scheduling: $path"
-    Assert-Selector (Test-LongRunningWorkflow -Plan $buildGraphPlan -Name "fuzzing") "verification build inputs must observe Linux build and fuzzing: $path"
-    Assert-Selector $buildGraphPlan.workflowWaitPolicy.immediateRequired "verification build inputs must require final workflow waiting: $path"
+$componentCases = @(
+    @('.clusterfuzzlite/build.sh', 'short-fuzz-smoke'),
+    @('.clusterfuzzlite/local_smoke.sh', 'fuzz-memory-tests'),
+    @('.clusterfuzzlite/Dockerfile', 'fuzz-resource-tests'),
+    @('.clusterfuzzlite/project.yaml', 'short-fuzz-smoke'),
+    @('tools/test_verification_selector.ps1', 'verification-selector-self-test'),
+    @('tools/build_parallelism.ps1', 'build-parallelism-test'),
+    @('tools/test_build_parallelism.ps1', 'build-parallelism-test'),
+    @('tools/refactor_audit.ps1', 'refactor-audit-tests'),
+    @('tools/test_refactor_audit.ps1', 'refactor-audit-tests')
+)
+foreach ($case in $componentCases) {
+    $componentPlan = Get-SuperZipVerificationPlan -ChangedPath @($case[0])
+    Assert-Selector (-not $componentPlan.scope.fullEscalationRequired) "tool changes must select component contracts, not all product checks: $($case[0])"
+    Assert-Selector (Test-RequiredCommand -Plan $componentPlan -Id $case[1]) "required component contract missing: $($case[0])"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $componentPlan -Id 'gui-smoke')) "tool changes must not launch the GUI: $($case[0])"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $componentPlan -Id 'package-smoke')) "tool changes must not package the product: $($case[0])"
 }
 
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
@@ -169,19 +178,27 @@ foreach ($path in @('tools/native_build_provenance.py', 'tools/native_build_rece
     $receiptPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
     Assert-Selector $receiptPlan.scope.touchesVerification "Receipt producer/consumer changes require verification coverage: $path"
     Assert-Selector (Test-RequiredCommand -Plan $receiptPlan -Id 'native-build-receipt-tests') "Receipt contracts must be executable: $path"
-    Assert-Selector (Test-RequiredCommand -Plan $receiptPlan -Id 'release-build') "Changed receipt inputs require a current product build: $path"
+    $expectsBuild = $path -match '^tools/native_build_'
+    Assert-Selector ((Test-RequiredCommand -Plan $receiptPlan -Id 'release-build') -eq $expectsBuild) "only production receipt inputs require rebuilding artifacts: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $receiptPlan -Id 'unit-tests')) "receipt-only changes must not rerun unrelated codec tests: $path"
 }
 foreach ($path in @('tools/rocm_toolchain.ps1', 'tools/bootstrap_rocm_sdk.py', 'tools/test_bootstrap_rocm_sdk.py',
         'tools/test_rocm_toolchain.ps1', 'tools/rocm-sdk-lock.json', 'tools/compile_hip_object.ps1',
         'tools/process_environment.ps1', 'tools/test_process_environment.ps1')) {
     $rocmPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
     Assert-Selector $rocmPlan.scope.touchesVerification "ROCm build/provisioning inputs require compiler and verifier coverage: $path"
-    Assert-Selector (Test-RequiredCommand -Plan $rocmPlan -Id 'rocm-bootstrap-tests') "ROCm provisioning needs offline preservation and archive-boundary tests: $path"
-    Assert-Selector (Test-RequiredCommand -Plan $rocmPlan -Id 'release-build') "ROCm changes must rebuild the HIP product: $path"
+    $expectedContract = switch -Regex ($path) {
+        'bootstrap_rocm_sdk|rocm-sdk-lock' { 'rocm-bootstrap-tests'; break }
+        'process_environment' { 'process-environment-tests'; break }
+        default { 'rocm-toolchain-tests' }
+    }
+    Assert-Selector (Test-RequiredCommand -Plan $rocmPlan -Id $expectedContract) "ROCm changes require their component contracts: $path"
+    $expectsBuild = $path -notmatch '/test_'
+    Assert-Selector ((Test-RequiredCommand -Plan $rocmPlan -Id 'release-build') -eq $expectsBuild) "only production build inputs require rebuilding artifacts: $path"
 }
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "security-scan") "workflow changes must run security scan"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "lint") "workflow changes must wait for lint"
-Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "benchmark-graph") "workflow changes must wait for benchmark graph validation"
+Assert-Selector (-not (Test-Workflow -Plan $workflowPlan -Name "benchmark-graph")) "scanner workflow changes must not dispatch unrelated graph validation"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "security") "workflow changes must wait for security"
 Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "scorecard") "workflow changes must wait for scorecard"
 Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must require post-push audit"
@@ -198,7 +215,7 @@ Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tes
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "scanner-coverage-tests") "workflow changes must test complete scanner coverage evidence"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-provenance-tests") "workflow changes must test exact scanner package provenance"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-report-tests") "workflow changes must test lossless scanner report publication"
-Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests") "workflow changes must test broker authorization and masking"
+Assert-Selector (-not (Test-RequiredCommand -Plan $workflowPlan -Id "greenbone-config-tests")) "scanner workflow changes must not test an unrelated broker"
 
 foreach ($path in @("tools/semgrep_coverage.py", "tools/test_semgrep_coverage.py")) {
     $coveragePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
@@ -228,12 +245,18 @@ foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_ru
 
 foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh")) {
     $redactionPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
-    Assert-Selector $redactionPlan.scope.fullEscalationRequired "secret report publication changes must escalate: $path"
+    Assert-Selector (-not $redactionPlan.scope.fullEscalationRequired) "secret report changes require their contracts, not product-wide tests: $path"
     Assert-Selector (Test-RequiredCommand -Plan $redactionPlan -Id "secret-report-tests") "redaction changes must execute their regressions: $path"
     Assert-Selector (Test-Workflow -Plan $redactionPlan -Name "security") "redaction changes must require hosted scanner validation: $path"
 }
 
 $packagingPlan = Get-SuperZipVerificationPlan -ChangedPath @("CMakeLists.txt")
+foreach ($inputPath in @('LICENSE', 'resources/licenses/license-notices.json')) {
+    $inputPlan = Get-SuperZipVerificationPlan -ChangedPath @($inputPath)
+    Assert-Selector $inputPlan.scope.touchesNativeBuildInputs "compiled license inputs must retain build identity: $inputPath"
+    Assert-Selector (Test-RequiredCommand -Plan $inputPlan -Id 'release-build') "compiled license inputs must rebuild their actual outputs: $inputPath"
+    Assert-Selector (Test-Workflow -Plan $inputPlan -Name 'windows-ci') "compiled license inputs must retain hosted build coverage: $inputPath"
+}
 Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "msi-identity-smoke") "packaging changes must run MSI identity smoke"
 Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "package-smoke") "packaging changes must run package smoke"
 Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packaging changes must wait for windows-ci"
@@ -241,16 +264,22 @@ Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packagi
 $mcpPlan = Get-SuperZipVerificationPlan -ChangedPath @("mcp/superzip_mcp.py")
 foreach ($agentToolPath in @("tools/agent_context.py", "tools/test_agent_context.py", "tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py")) {
     $agentToolPlan = Get-SuperZipVerificationPlan -ChangedPath @($agentToolPath)
-    Assert-Selector $agentToolPlan.scope.fullEscalationRequired "agent context and routing changes must escalate"
+    Assert-Selector (-not $agentToolPlan.scope.fullEscalationRequired) "agent context and routing changes require their own contracts"
     Assert-Selector (Test-RequiredCommand -Plan $agentToolPlan -Id "agent-context-contracts") "agent tool changes must exercise real context and search receipt contracts"
-    Assert-Selector (Test-RequiredCommand -Plan $agentToolPlan -Id "verification-selector-self-test") "agent tool routing must retain selector coverage"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $agentToolPlan -Id "verification-selector-self-test")) "unchanged planner must not be retested for an agent tool implementation change"
 }
-Assert-Selector $mcpPlan.scope.fullEscalationRequired "MCP verifier-adjacent changes must escalate"
+Assert-Selector (-not $mcpPlan.scope.fullEscalationRequired) "MCP changes must target bounded child contracts"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-python-compile") "MCP changes must compile Python"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-bounded-child-tests") "MCP changes must test bounded child execution"
-Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "verification-selector-self-test") "MCP/verifier changes must self-test selector"
+Assert-Selector (-not (Test-RequiredCommand -Plan $mcpPlan -Id "verification-selector-self-test")) "MCP implementation changes must not retest an unchanged planner"
 
-$verifierPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/superzip_verification.psm1")
+$focusedVerifierPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/superzip_verification.psm1')
+Assert-Selector (-not $focusedVerifierPlan.scope.fullEscalationRequired) 'planner changes must execute routing contracts without global escalation'
+foreach ($id in @('release-build', 'unit-tests', 'gui-smoke', 'package-smoke', 'short-fuzz-smoke')) {
+    Assert-Selector (-not (Test-RequiredCommand -Plan $focusedVerifierPlan -Id $id)) "planner-only changes must not select unrelated product command: $id"
+}
+# Explicit broad coverage remains available; this fixture is not the default tooling plan.
+$verifierPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/superzip_verification.psm1") -SuspectGlobalBug
 foreach ($runnerPath in @('tools/verify_changes.ps1', 'tools/test_verification_runner.ps1')) {
     $runnerPlan = Get-SuperZipVerificationPlan -ChangedPath @($runnerPath) -Checkpoint intermediate
     Assert-Selector (Test-RequiredCommand -Plan $runnerPlan -Id 'verification-runner-tests') "runner changes must execute actual failure-propagation contracts: $runnerPath"
@@ -267,7 +296,7 @@ Assert-Selector $verifierPlan.workflowWaitPolicy.immediateRequired "verification
 Assert-Selector (-not $verifierPlan.workflowWaitPolicy.deferAllowed) "verification changes must not allow deferred workflow waiting by default"
 
 foreach ($path in @('docs/targeted-verification.md', 'src/core/checksum.cpp', '.github/workflows/security-code-scanning.yml',
-        'mcp/superzip_mcp.py', '.agents/skills/superzip-build-test/SKILL.md', 'tools/superzip_verification.psm1', 'unexpected/new-area.file')) {
+        'mcp/superzip_mcp.py', '.agents/skills/superzip-build-test/SKILL.md', 'tools/superzip_verification.psm1')) {
     $finalPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint final
     $intermediatePlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
     Assert-Selector $intermediatePlan.workflowWaitPolicy.deferAllowed "intermediate checkpoints must permit nonblocking observation: $path"
@@ -287,13 +316,21 @@ Assert-Selector ($fullIntermediate.scope.fullEscalationRequired -and $fullInterm
 foreach ($path in @("tools/github_post_push_audit.ps1", "tools/test_github_post_push_audit.ps1")) {
     $auditPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
-    Assert-Selector $auditPlan.scope.fullEscalationRequired "post-push audit changes must escalate: $path"
+    Assert-Selector (-not $auditPlan.scope.fullEscalationRequired) "post-push audit changes must target API failure contracts: $path"
     Assert-Selector (Test-RequiredCommand -Plan $auditPlan -Id "github-post-push-audit-tests") "post-push audit changes must run their offline regressions: $path"
 }
 
-$unknownPlan = Get-SuperZipVerificationPlan -ChangedPath @("unexpected/new-area.file")
-Assert-Selector $unknownPlan.scope.fullEscalationRequired "unknown paths must escalate"
-Assert-Selector ($unknownPlan.scope.unknownPaths.Count -eq 1) "unknown path must be reported"
+$unknownScope = Get-SuperZipVerificationScope -ChangedPath @('unexpected/new-area.file')
+Assert-Selector $unknownScope.requiresClassificationReview 'unknown paths require classification before execution'
+Assert-Selector (-not $unknownScope.fullEscalationRequired) 'unknown paths are not evidence that unrelated checks are relevant'
+$unknownRejected = $false
+try { Get-SuperZipVerificationPlan -ChangedPath @('unexpected/new-area.file') | Out-Null }
+catch { $unknownRejected = $_.Exception.Message -match 'Classify these changed paths' }
+Assert-Selector $unknownRejected 'unknown paths must fail planning rather than silently omit checks'
+$manyDocs = @(1..30 | ForEach-Object { "docs/fixture-$_.md" })
+$manyDocsPlan = Get-SuperZipVerificationPlan -ChangedPath $manyDocs
+Assert-Selector (-not $manyDocsPlan.scope.fullEscalationRequired) 'path count alone must not turn a documentation batch into product testing'
+Assert-Selector ($manyDocsPlan.requiredLocalCommands.Count -eq 2) 'documentation batches retain only hygiene and language lint'
 
 $forcedPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md") -SuspectGlobalBug
 Assert-Selector $forcedPlan.scope.fullEscalationRequired "SuspectGlobalBug must escalate even for docs"
