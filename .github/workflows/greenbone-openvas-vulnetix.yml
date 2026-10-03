@@ -9,6 +9,7 @@ on:
       - .github/requirements/requirements-gvm-tools-linux.txt
   pull_request:
     paths: *scanner-inputs
+  workflow_dispatch:
 
 permissions:
   contents: read # allow checkout and scan artifact collection

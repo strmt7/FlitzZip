@@ -108,6 +108,10 @@ function Invoke-WaiterSmoke {
 }
 
 $emptyPaths = @(Select-SuperZipUniquePath -Path @($null, "", " "))
+foreach ($workflow in @('fuzzing', 'greenbone-openvas-vulnetix')) {
+    $source = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) ".github/workflows/$workflow.yml") -Raw
+    Assert-Selector ($source -match '(?m)^  workflow_dispatch:\s*$') "final qualification must support manual dispatch when path filters omit a run: $workflow"
+}
 Assert-Selector ($emptyPaths.Count -eq 0) "clean git output must normalize to an empty path set without binding errors"
 
 foreach ($path in @('tools/fuzz_resources.ps1', 'tools/test_fuzz_resources.ps1',
