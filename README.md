@@ -82,7 +82,6 @@ The normal local build is HIP-enabled:
 py -3 tools/bootstrap_rocm_sdk.py
 tools/build.ps1 -Configuration Release -HipArch gfx1201
 tools/test.ps1 -Configuration Release
-build/Release/superzip_cli.exe dependency-check
 ```
 
 Single-target development builds remain supported. For the multi-target
@@ -151,83 +150,92 @@ Do not publish a per-user MSI as a product release.
 
 ## CLI
 
+Examples use PowerShell. From the extracted portable package, select the
+executable once; `&` invokes the path stored in `$SuperZip`, including paths
+containing spaces:
+
 ```powershell
-build/Release/superzip_cli.exe dependency-check
-build/Release/superzip_cli.exe gpu-info
-build/Release/superzip_cli.exe formats
-build/Release/superzip_cli.exe identify archive.tar
-build/Release/superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
-build/Release/superzip_cli.exe compress --format suzip --require-gpu --output archive.suzip path\to\folder
-build/Release/superzip_cli.exe compress --format suzip --require-gpu --verify-after-write --output archive.suzip path\to\folder
-build/Release/superzip_cli.exe extract --format suzip --require-gpu --output restored archive.suzip
-build/Release/superzip_cli.exe compress --format zip --output archive.zip path\to\folder
-build/Release/superzip_cli.exe extract --format zip --output restored archive.zip
-build/Release/superzip_cli.exe extract --format zipx --output restored archive.zipx
-build/Release/superzip_cli.exe compress --format tar --output archive.tar path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.tar
-build/Release/superzip_cli.exe compress --format tar.gz --output archive.tar.gz path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.tar.gz
-build/Release/superzip_cli.exe compress --format tar.bz2 --output archive.tar.bz2 path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.tar.bz2
-build/Release/superzip_cli.exe extract --output restored archive.tar.xz
-build/Release/superzip_cli.exe compress --format tar.zst --output archive.tar.zst path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.tar.zst
-build/Release/superzip_cli.exe compress --format gz --output file.txt.gz file.txt
-build/Release/superzip_cli.exe extract --output restored file.txt.gz
-build/Release/superzip_cli.exe compress --format bz2 --output file.txt.bz2 file.txt
-build/Release/superzip_cli.exe extract --output restored file.txt.bz2
-build/Release/superzip_cli.exe extract --output restored file.txt.xz
-build/Release/superzip_cli.exe extract --output restored file.txt.lzma
-build/Release/superzip_cli.exe compress --format zst --output file.txt.zst file.txt
-build/Release/superzip_cli.exe extract --output restored file.txt.zst
-build/Release/superzip_cli.exe compress --format z --output file.txt.Z file.txt
-build/Release/superzip_cli.exe extract --output restored file.txt.Z
-build/Release/superzip_cli.exe extract --output restored file.txt.b64
-build/Release/superzip_cli.exe extract --output restored file.txt.hqx
-build/Release/superzip_cli.exe extract --format macbinary --output restored file.macbin
-build/Release/superzip_cli.exe extract --output restored file.txt.xxe
-build/Release/superzip_cli.exe extract --output restored file.txt.uue
-build/Release/superzip_cli.exe compress --format cpio --output archive.cpio path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.cpio
-build/Release/superzip_cli.exe compress --format cpio.gz --output archive.cpgz path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.cpgz
-build/Release/superzip_cli.exe compress --format ar --output archive.ar path\to\folder
-build/Release/superzip_cli.exe extract --output restored archive.ar
-build/Release/superzip_cli.exe extract --format deb --output restored package.deb
-build/Release/superzip_cli.exe extract --format iso --output restored image.iso
-build/Release/superzip_cli.exe extract --format rpm --output restored package.rpm
-build/Release/superzip_cli.exe extract --format cab --output restored package.cab
-build/Release/superzip_cli.exe extract --format 7z --output restored archive.7z
-build/Release/superzip_cli.exe extract --format arj --output restored archive.arj
-build/Release/superzip_cli.exe extract --format arc --output restored archive.arc
-build/Release/superzip_cli.exe extract --format lha --output restored archive.lzh
-build/Release/superzip_cli.exe extract --format wim --output restored image.wim
-build/Release/superzip_cli.exe extract --format xar --output restored archive.xar
-build/Release/superzip_cli.exe verify --sha256 archive.suzip
+$SuperZip = (Resolve-Path ".\superzip_cli.exe").Path
+& $SuperZip --help
 ```
 
-Use `--require-gpu` for `.suzip` operations that must fail instead of falling
-back to the CPU validation path. In required-GPU mode, native `.suzip` data must
-be encoded with HIP-supported block kinds; archives that require CPU deflate are
-rejected instead of being partially decoded by miniz. Extraction refuses to
-overwrite by default. Use `--force-cpu` only for diagnostics and CPU/GPU
-benchmarks on a HIP-enabled build. Optional `--verify-after-write`, `--sha256`,
-and `--defender-scan` flags add post-write archive validation, integrity
-hashing, and Microsoft Defender checks without making those extra passes
-implicit.
-ZIP, ZIPX, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.LZ, Gzip, Bzip2, XZ, LZMA, lzip,
-Unix Compress, Base64, BinHex, MacBinary, XXEncode, UUE, CAB, 7z, ARJ, SEA ARC/ARK, LHA/LZH, WIM, XAR, CPIO,
-CPIO.GZ, AR, DEB, ISO, and RPM compatibility are deliberately separate from
-SUZIP tuning.
-`--require-gpu`, `--force-cpu`, worker controls, block-size controls, and
-`--verify-after-write` are accepted only on native `.suzip` commands because
-compatibility formats do not use the AMD HIP SUZIP codec.
-`--compression-level <1-9>` also controls the CPU-backed ZIP, Gzip, Bzip2,
-Zstandard, TAR.GZ, TAR.BZ2, TAR.ZST, and CPIO.GZ writers. Uncompressed TAR,
-CPIO, and AR containers and the fixed-policy Unix Compress writer reject that
-flag rather than ignore it. `extract` defaults to auto-detection for implemented archive
-formats. Recognized but unsupported formats fail explicitly instead of using
-external tools or hidden fallbacks.
+For a source build, use `.\build\Release\superzip_cli.exe` in the assignment
+instead. Input and output paths below are examples; quote paths containing
+spaces. Commands return `0` on success, `1` on operation or option-validation
+failure and `2` when a missing or unknown command prints usage.
+
+### Check readiness and inspect archives
+
+```powershell
+& $SuperZip dependency-check
+& $SuperZip gpu-info
+& $SuperZip formats
+& $SuperZip identify "archive.tar"
+```
+
+`dependency-check` checks runtime prerequisites; `gpu-info` reports the HIP
+backend. `formats` lists the build's create/extract capabilities, while
+`identify` detects an archive's format without extracting it.
+
+### Create and restore a native GPU archive
+
+```powershell
+& $SuperZip compress --format suzip --require-gpu --verify-after-write --output "archive.suzip" "path\to\folder"
+& $SuperZip verify --require-gpu --sha256 "archive.suzip"
+& $SuperZip extract --require-gpu --output "restored" "archive.suzip"
+```
+
+`--require-gpu` makes an unavailable HIP backend or a CPU-only native block
+method fail explicitly. `--verify-after-write` adds an archive read-back pass;
+`verify` checks an existing archive. `--sha256` additionally hashes the selected
+path; a hash alone does not establish authenticity. Extraction detects the
+format automatically and refuses accidental overwrite by default.
+
+### Work with compatibility formats
+
+```powershell
+& $SuperZip compress --format zip --compression-level 5 --output "archive.zip" "path\to\folder"
+& $SuperZip compress --format tar.zst --compression-level 5 --output "archive.tar.zst" "path\to\folder"
+& $SuperZip compress --format zst --compression-level 5 --output "file.txt.zst" "file.txt"
+& $SuperZip extract --output "restored" "archive.7z"
+```
+
+Choose `--format` when creating an archive. Folder/container formats such as
+ZIP and TAR variants differ from single-file streams such as Gzip, Bzip2 and
+Zstandard. Extraction normally needs no format flag; use an explicit format
+when necessary, for example `--format macbinary`. The
+[format support matrix](docs/archive-format-support.md) documents every format,
+alias and method limit, including extraction-only formats. Compatibility
+adapters run on the CPU and do not use native SUZIP GPU tuning options.
+
+### Commands and options
+
+| Command | Purpose |
+| --- | --- |
+| `--help`, `--version` | Show syntax or build version. |
+| `dependency-check`, `gpu-info` | Check prerequisites and HIP availability. |
+| `formats`, `identify <archive>` | Inspect supported capabilities or detect a file's format. |
+| `compress`, `extract` | Create an archive or restore its contents. |
+| `verify <archive>` | Validate SUZIP, ZIP or supported ZIPX contents. |
+| `gpu-diagnostic` | Run a bounded HIP diagnostic workload. |
+| `memory-benchmark`, `benchmark-suite` | Measure native RAM-only workloads; see [Benchmarking](#benchmarking). |
+
+| Option | Scope and behavior |
+| --- | --- |
+| `--output <path>` | Required destination for compression or extraction. |
+| `--format <name>` | Select creation format or override extraction auto-detection. |
+| `--compression-level <1-9>` | Native SUZIP and CPU ZIP, Gzip, Bzip2, Zstandard, TAR.GZ, TAR.BZ2, TAR.ZST and CPIO.GZ writers. Uncompressed TAR, CPIO, AR and fixed-policy Unix Compress reject it. |
+| `--require-gpu`, `--force-cpu` | Native SUZIP only; mutually exclusive. Use forced CPU for diagnostics or comparisons. |
+| `--workers`, `--inflight`, `--block-size-kib` | Native operation controls; consult `--help` for each command's accepted options and ranges. |
+| `--verify-after-write` | SUZIP or ZIP creation; adds post-write archive validation. |
+| `--overwrite` | Extraction only; explicitly allow replacement of existing files. |
+| `--validate-before-publish` | Extraction; validate through the guarded publication path before finalizing output. |
+| `--sha256`, `--defender-scan` | Optional integrity hashing or bounded Microsoft Defender checks; additional passes are explicit. |
+| `--name-encoding utf8\|system` | Compatibility extraction filename decoding; format-specific restrictions apply. |
+
+Recognized but unsupported formats or methods fail explicitly. Full command
+syntax comes from `& $SuperZip --help`; native format semantics and CPU/GPU
+limits are documented in the [SUZIP specification](docs/native-suzip-format.md).
 
 ## GUI
 
@@ -416,10 +424,11 @@ smoke payload of at most 64 MiB; use `tools/storage_smoke.ps1` for the normal
 archive write/read path.
 
 The built-in CLI benchmark suite gives a numerical system score and can tune
-the production block size while staying RAM-only:
+the production block size while staying RAM-only. Use the executable selected
+in the [CLI setup](#cli):
 
 ```powershell
-build/Release/superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
+& $SuperZip benchmark-suite --profile Mixed --compression-level 5 --tune
 ```
 
 See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
