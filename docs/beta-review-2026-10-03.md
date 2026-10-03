@@ -64,6 +64,16 @@ checksums, source offering and installer qualification.
 
 ## Held Acceptance And Follow-Up Work
 
+The latest [finding review](security-finding-review-2026-10-03.md) covers
+`8cb3f4d`: all ten security jobs succeed, while the required post-push audit
+fails on 195 unapproved alerts (183 CodeQL and 12 DevSkim). The two residual
+Scorecard findings are separately approved. Passive benchmark reports no
+longer have open DevSkim findings; actual code, tests and configuration remain
+scanned. This does not clear the security gate or requalify the historical
+packages described above. The current development CLI differs from the
+original candidate after a benchmark-observation guard change; the historical
+measurements and package hashes retain their original identities.
+
 - Open unapproved code-scanning alerts remain an acceptance failure. They are
   not all independently proved vulnerabilities, but cannot be declared fixed,
   dismissed or suppressed merely to qualify this beta. The final hosted audit

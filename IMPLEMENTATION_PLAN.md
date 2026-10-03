@@ -2,6 +2,17 @@
 
 ## Continuation Checkpoint
 
+The October 3 scanner input-role batch is hosted-qualified at `8cb3f4d`:
+all ten security jobs pass, and no open DevSkim result remains in the guarded
+passive benchmark-report directory. Source, test and configuration findings
+remain scanned. The complete post-push incident audit still fails with 195
+unapproved open alerts; its history retains earlier manual dispositions.
+The [current finding review](docs/security-finding-review-2026-10-03.md)
+records the four optimizer worker-lifetime contracts, maps all six critical
+pointer alerts to their 21 flow variants, and verifies unchanged production-DLL
+guard-page evidence without repeating unrelated product tests. None of these
+alerts was dismissed and the beta remains held.
+
 Recent production batches reduce prefix-plan allocations, remove dictionary
 validation allocations and skip unused mixed HIP materialization walks. The
 [materialization study](docs/gpu-materialization-skip-validation.md) separates
