@@ -519,3 +519,14 @@ TEST_CASE(trusted_runtime_rejects_path_bearing_module_names) {
     REQUIRE_TRUE(rejected);
 }
 #endif
+
+// Purpose: Verify snapshot SHA-256 independently at empty, short and multi-update boundaries.
+// Inputs: Published empty/abc vectors and 1048577 ASCII a bytes with a Python hashlib reference digest.
+// Outputs: Requires exact hexadecimal digests with no filesystem input.
+TEST_CASE(integrity_sha256_snapshot_vectors_and_update_boundary) {
+    REQUIRE_EQ(superzip::sha256_bytes({}), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    const std::array<std::byte, 3> abc{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+    REQUIRE_EQ(superzip::sha256_bytes(abc), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    const std::vector<std::byte> multiple(1048577U, std::byte{'a'});
+    REQUIRE_EQ(superzip::sha256_bytes(multiple), "4a3f0c0c213adea174f9a3d4c13177315b588bdb2e9c1012d3d0bf0453ca0f6a");
+}

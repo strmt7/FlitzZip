@@ -71,6 +71,24 @@ not an archive throughput claim. Canonical dependency routing now selects these
 headers and matcher/device implementations keep broader qualification. Whole
 archive timing, representative corpora and exact-commit hosted checks remain
 outstanding; unchanged checks are reused during this development cycle.
+All six observed hosted workflows pass at `498f1e9`, including required Windows,
+complete-SDK ROCm and security analysis. This does not clear the open-alert audit.
+
+The next batch adds an explicit exact-byte corpus lane to the native RAM
+benchmark. It preloads a bounded file, authenticates the resident snapshot with
+the shared SHA-256 implementation and independently compares every decoded byte
+against that source. Generated profiles retain their existing minimum and
+protocol. The initial HIP build, 12 source/hash cases, 14 CPU/HIP block-size
+integration cases and nine rejection cases pass. The final HIP build and corpus
+CLI cohort also pass after loader refinements, including Unicode paths and
+actual encode/decode telemetry. Hygiene, language lint, changed-function audit,
+repository security policy, ten allocation-free planning probes and benchmark
+reporting contracts pass. Local verification follows the maintainer's affected
+component scope; the unrelated full native driver is not reported as run. The
+[corpus lane contract](docs/compression-level-and-benchmark-suite.md#native-suite)
+keeps single-observation entry points separate from scientific confirmation
+and publication: those corpus controller integrations, representative datasets
+and actual comparative measurements remain outstanding.
 
 ### Earlier Checkpoint Evidence
 

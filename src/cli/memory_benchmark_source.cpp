@@ -98,10 +98,18 @@ const std::vector<std::byte>& long_sparse_record_motif() {
 
 // Purpose: Fill a benchmark chunk with deterministic compressed-pattern or incompressible data.
 // Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,
-// and `profile` selects data shape.
-// Outputs: Writes benchmark bytes into `buffer` without filesystem access.
+// `profile` selects generated data shape; optional source is a stable exact-size preloaded snapshot.
+// Outputs: Copies source bytes or generates benchmark bytes without filesystem access; invalid extents throw.
 void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t global_offset, std::uint64_t total_bytes,
-                                 std::string_view profile) {
+                                 std::string_view profile, std::span<const std::byte> source) {
+    if (!source.empty()) {
+        if (source.size() != total_bytes || global_offset > total_bytes ||
+            buffer.size() > total_bytes - global_offset) {
+            throw ArchiveError("memory benchmark source range exceeds preloaded snapshot");
+        }
+        std::copy_n(source.begin() + static_cast<std::ptrdiff_t>(global_offset), buffer.size(), buffer.begin());
+        return;
+    }
     if (profile == "SegmentedRecords") {
         fill_segmented_record_chunk(buffer, global_offset);
         return;
@@ -166,21 +174,26 @@ void fill_memory_benchmark_chunk(std::vector<std::byte>& buffer, std::uint64_t g
     }
 }
 
-// Purpose: Compare every decoded byte with independently regenerated source using bounded reference storage.
-// Inputs: Decoded bytes, exact virtual offset/size and profile; scratch is reusable reference storage.
+// Purpose: Compare every decoded byte with generated or preloaded source using bounded reference storage.
+// Inputs: Decoded bytes, exact offset/size/profile, reusable scratch and optional immutable source snapshot.
 // Outputs: Returns after full equality, or throws ArchiveError with the first differing virtual byte offset.
 void validate_memory_benchmark_bytes(std::span<const std::byte> decoded, std::uint64_t global_offset,
                                      std::uint64_t total_bytes, std::string_view profile,
-                                     std::vector<std::byte>& scratch) {
-    if (global_offset > total_bytes || decoded.size() > total_bytes - global_offset) {
+                                     std::vector<std::byte>& scratch, std::span<const std::byte> source) {
+    if ((!source.empty() && source.size() != total_bytes) || global_offset > total_bytes ||
+        decoded.size() > total_bytes - global_offset) {
         throw ArchiveError("memory benchmark validation range exceeds source size");
     }
     for (std::size_t offset = 0; offset < decoded.size();) {
         const auto count = std::min(kMemoryBenchmarkReferenceBytes, decoded.size() - offset);
-        scratch.resize(count);
-        fill_memory_benchmark_chunk(scratch, global_offset + offset, total_bytes, profile);
+        if (source.empty()) {
+            scratch.resize(count);
+            fill_memory_benchmark_chunk(scratch, global_offset + offset, total_bytes, profile);
+        }
+        const auto reference = source.empty() ? std::span<const std::byte>(scratch)
+                                              : source.subspan(static_cast<std::size_t>(global_offset) + offset, count);
         const auto actual = decoded.subspan(offset, count);
-        const auto mismatch = std::mismatch(actual.begin(), actual.end(), scratch.begin());
+        const auto mismatch = std::mismatch(actual.begin(), actual.end(), reference.begin());
         if (mismatch.first != actual.end()) {
             throw ArchiveError("memory benchmark byte validation mismatch at virtual offset " +
                                std::to_string(global_offset + offset + (mismatch.first - actual.begin())));
@@ -189,28 +202,29 @@ void validate_memory_benchmark_bytes(std::span<const std::byte> decoded, std::ui
     }
 }
 
-// Purpose: Regenerate disjoint reference ranges concurrently without copying or retaining decoded output.
-// Inputs: Stable decoded storage, validated source geometry, profile, and admitted aggregate CPU workers.
+// Purpose: Compare disjoint source ranges concurrently without copying or retaining decoded output.
+// Inputs: Stable decoded/source storage, validated geometry, profile and admitted aggregate CPU workers.
 // Outputs: Compares every byte with at most 64 KiB scratch per task; joins readers before any error escapes.
 void validate_memory_benchmark_bytes_parallel(std::span<const std::byte> decoded, std::uint64_t global_offset,
                                               std::uint64_t total_bytes, std::string_view profile,
-                                              std::uint32_t workers) {
+                                              std::uint32_t workers, std::span<const std::byte> source) {
     if (workers == 0U || workers > kMaxArchiveWorkers) {
         throw ArchiveError("memory benchmark validation worker limit is outside [1, 64]");
     }
-    if (global_offset > total_bytes || decoded.size() > total_bytes - global_offset) {
+    if ((!source.empty() && source.size() != total_bytes) || global_offset > total_bytes ||
+        decoded.size() > total_bytes - global_offset) {
         throw ArchiveError("memory benchmark validation range exceeds source size");
     }
     // Match the existing parallel CRC grain to avoid launching tasks for tiny byte ranges.
     constexpr std::size_t minimum_task_bytes = 8U * 1024U * 1024U;
     const auto count = std::max<std::size_t>(1U, std::min<std::size_t>(workers, decoded.size() / minimum_task_bytes));
     const auto stride = decoded.size() / count;
-    const auto compare_part = [decoded, global_offset, total_bytes, profile, stride, count](std::size_t index) {
+    const auto compare_part = [decoded, global_offset, total_bytes, profile, stride, count, source](std::size_t index) {
         const auto offset = stride * index;
         const auto extent = index + 1U == count ? decoded.size() - offset : stride;
         std::vector<std::byte> scratch;
         validate_memory_benchmark_bytes(decoded.subspan(offset, extent), global_offset + offset, total_bytes, profile,
-                                        scratch);
+                                        scratch, source);
     };
     std::vector<std::future<void>> pending;
     pending.reserve(count - 1U);

@@ -3,11 +3,15 @@
 #include "core/archive.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string>
 
 namespace superzip::cli {
 
 struct MemoryBenchmarkOptions {
+    // Borrowed immutable snapshot; caller retains it through all joined tasks. Empty selects generated profiles.
+    std::span<const std::byte> source;
+    std::string expected_source_sha256;
     std::uint64_t size_mib = 10240;
     std::string profile = "Mixed";
     bool require_gpu = false;
@@ -30,6 +34,7 @@ struct MemoryBenchmarkPlan {
 };
 
 struct MemoryBenchmarkResult {
+    std::string source_sha256;
     superzip::OperationStats stats;
     std::uint64_t archive_bytes = 0;
     std::uint32_t codec_workers = 1;

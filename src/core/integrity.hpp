@@ -1,10 +1,17 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <filesystem>
 #include <string>
 
 namespace superzip {
+
+// Purpose: Hash an immutable in-memory snapshot without reading a pathname again.
+// Inputs: Borrowed bytes remain stable until return; empty input is valid.
+// Outputs: Returns lowercase SHA-256 or throws ArchiveError on provider failure.
+std::string sha256_bytes(std::span<const std::byte> bytes);
 
 enum class IntegrityMode {
     Disabled,

@@ -18,13 +18,13 @@ constexpr std::array<std::string_view, 7> profiles{"Mixed",           "Compressi
                                                    "SegmentedRecords"};
 
 // Purpose: Distinguish expected integrity rejection from unrelated exceptions.
-// Inputs: Bytes and their claimed source geometry/profile.
+// Inputs: Bytes, claimed geometry/profile and optional immutable exact-size source.
 // Outputs: Returns true only for ArchiveError from the bytewise source validator.
 bool validation_rejected(std::span<const std::byte> bytes, std::uint64_t offset, std::uint64_t total,
-                         std::string_view profile) {
+                         std::string_view profile, std::span<const std::byte> source = {}) {
     std::vector<std::byte> scratch;
     try {
-        superzip::cli::validate_memory_benchmark_bytes(bytes, offset, total, profile, scratch);
+        superzip::cli::validate_memory_benchmark_bytes(bytes, offset, total, profile, scratch, source);
     } catch (const superzip::ArchiveError&) {
         return true;
     }
@@ -32,12 +32,13 @@ bool validation_rejected(std::span<const std::byte> bytes, std::uint64_t offset,
 }
 
 // Purpose: Inspect parallel integrity failures without accepting unrelated exceptions.
-// Inputs: Borrowed bytes, source geometry/profile and an explicit CPU worker limit.
+// Inputs: Borrowed bytes, geometry/profile, worker limit and optional stable source snapshot.
 // Outputs: Returns the ArchiveError message, or an empty string when the complete comparison succeeds.
 std::string parallel_validation_error(std::span<const std::byte> bytes, std::uint64_t offset, std::uint64_t total,
-                                      std::string_view profile, std::uint32_t workers) {
+                                      std::string_view profile, std::uint32_t workers,
+                                      std::span<const std::byte> source = {}) {
     try {
-        superzip::cli::validate_memory_benchmark_bytes_parallel(bytes, offset, total, profile, workers);
+        superzip::cli::validate_memory_benchmark_bytes_parallel(bytes, offset, total, profile, workers, source);
     } catch (const superzip::ArchiveError& error) {
         return error.what();
     }
@@ -168,4 +169,36 @@ TEST_CASE(memory_benchmark_source_owned_hip_roundtrip) {
         REQUIRE_EQ(decoded.bytes().size(), 256U * 1024U + 37U);
         superzip::cli::validate_memory_benchmark_bytes(decoded.bytes(), 1048559U, 4U * 1024U * 1024U, profile, scratch);
     }
+}
+
+// Purpose: Validate exact borrowed source ranges without cyclic expansion or regeneration.
+// Inputs: An unaligned 17 MiB snapshot, sliced copies, invalid geometry and two separated corrupt bytes.
+// Outputs: Requires exact fill/comparison, zero reference scratch and deterministic parallel corruption rejection.
+TEST_CASE(memory_benchmark_preloaded_source_ranges_and_corruption) {
+    std::vector<std::byte> source(17U * 1024U * 1024U + 37U), scratch;
+    superzip::cli::fill_memory_benchmark_chunk(source, 0, source.size(), "Mixed");
+    for (const auto offset : {0U, 65533U, 8388607U}) {
+        std::vector<std::byte> copy(65537U);
+        superzip::cli::fill_memory_benchmark_chunk(copy, offset, source.size(), "Corpus", source);
+        REQUIRE_TRUE(std::equal(copy.begin(), copy.end(), source.begin() + offset));
+        superzip::cli::validate_memory_benchmark_bytes(copy, offset, source.size(), "Corpus", scratch, source);
+    }
+    REQUIRE_TRUE(scratch.empty());
+    REQUIRE_TRUE(parallel_validation_error(source, 0, source.size(), "Corpus", 4U, source).empty());
+    REQUIRE_TRUE(validation_rejected(std::span(source).first(1), 0, source.size() - 1U, "Corpus", source));
+    REQUIRE_TRUE(validation_rejected(std::span(source).first(1), source.size(), source.size(), "Corpus", source));
+    REQUIRE_TRUE(!parallel_validation_error(source, 0, source.size() - 1U, "Corpus", 4U, source).empty());
+    auto decoded = source;
+    decoded[65536U] ^= std::byte{1};
+    decoded.back() ^= std::byte{1};
+    const auto error = parallel_validation_error(decoded, 0, source.size(), "Corpus", 4U, source);
+    REQUIRE_TRUE(error.find("virtual offset 65536") != std::string::npos);
+    std::vector<std::byte> too_long(2U);
+    bool rejected = false;
+    try {
+        superzip::cli::fill_memory_benchmark_chunk(too_long, source.size() - 1U, source.size(), "Corpus", source);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
 }

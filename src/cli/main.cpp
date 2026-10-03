@@ -1,4 +1,6 @@
 #include "cli/memory_benchmark.hpp"
+#include "cli/memory_benchmark_source.hpp"
+#include "core/host_memory_budget.hpp"
 #include "ar/ar_adapter.hpp"
 #include "arc/arc_adapter.hpp"
 #include "arj/arj_adapter.hpp"
@@ -41,6 +43,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -103,6 +106,9 @@ void usage() {
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
+        << "  superzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> "
+           "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
+        << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords] "
            "[--workers "
@@ -833,17 +839,56 @@ int run_extract_command(const std::vector<std::string>& args) {
     return 0;
 }
 
-// Purpose: Execute `memory-benchmark` after parsing bounded options.
+// Purpose: Preload a bounded corpus snapshot before any measured benchmark phase.
+// Inputs: User-selected regular file; the 64 MiB cap and current host headroom apply before allocation.
+// Outputs: Owns exact bytes or throws on invalid size/read; no payload is written to storage.
+std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path& path) {
+    if (!std::filesystem::is_regular_file(path)) {
+        throw superzip::ArchiveError("benchmark source must be a regular file");
+    }
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    const auto length = input.tellg();
+    if (!input || length <= 0 || length > static_cast<std::streamoff>(superzip::cli::kMemoryBenchmarkCorpusMaxBytes)) {
+        throw superzip::ArchiveError("benchmark corpus must contain 1..67108864 bytes");
+    }
+    const auto size = static_cast<std::size_t>(length);
+    if (size > superzip::safe_host_memory_growth_bytes(superzip::query_host_memory_snapshot()) / 2U) {
+        throw superzip::ArchiveError("benchmark corpus exceeds current host memory headroom");
+    }
+    std::vector<std::byte> bytes(size);
+    input.seekg(0);
+    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    const bool complete = static_cast<bool>(input);
+    const auto extra = input.peek();
+    if (!complete || input.bad() || extra != std::char_traits<char>::eof()) {
+        throw superzip::ArchiveError("benchmark corpus read failed or its size changed");
+    }
+    return bytes;
+}
+
+// Purpose: Execute `memory-benchmark` after parsing generated or exact corpus options.
 // Inputs: `args` is the full argument vector beginning with `memory-benchmark`.
-// Outputs: Returns zero with measured telemetry or an explicit allocation-free plan; throws on invalid admission.
+// Outputs: Returns measured telemetry or a generated allocation-free plan; throws on invalid identity/admission.
 int run_memory_benchmark_command(const std::vector<std::string>& args) {
     superzip::cli::MemoryBenchmarkOptions options;
     bool plan_only = false;
+    bool generated_geometry = false;
+    std::optional<std::filesystem::path> source_file;
     for (std::size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--size-mib") {
+            generated_geometry = true;
             options.size_mib = require_u32_arg(args, i, "--size-mib");
         } else if (args[i] == "--profile") {
+            generated_geometry = true;
             options.profile = require_arg(args, i, "--profile");
+        } else if (args[i] == "--source-file") {
+            if (source_file) {
+                throw superzip::ArchiveError("duplicate --source-file");
+            }
+            const auto value = require_arg(args, i, "--source-file");
+            source_file = std::filesystem::path(std::u8string(value.begin(), value.end()));
+        } else if (args[i] == "--source-sha256") {
+            options.expected_source_sha256 = require_arg(args, i, "--source-sha256");
         } else if (args[i] == "--require-gpu") {
             options.require_gpu = true;
         } else if (args[i] == "--force-cpu") {
@@ -864,6 +909,16 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
         } else {
             throw superzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
         }
+    }
+    std::vector<std::byte> source;
+    if (source_file) {
+        if (generated_geometry || plan_only || options.expected_source_sha256.empty()) {
+            throw superzip::ArchiveError(
+                "--source-file requires --source-sha256 and excludes --size-mib, --profile and --plan-only");
+        }
+        source = load_memory_benchmark_corpus(*source_file);
+        options.source = source;
+        options.profile = "Corpus";
     }
     if (plan_only) {
         superzip::cli::print_memory_benchmark_plan(superzip::cli::plan_memory_benchmark(options));

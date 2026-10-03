@@ -278,6 +278,56 @@ not RAM-only throughput measurements or a universal compression claim.
 
 ### Native Suite
 
+The native `memory-benchmark` command also accepts an explicit preloaded corpus
+lane. Supply an existing regular file of 1..64 MiB and its expected lowercase
+SHA-256. The CLI preloads the file with host-memory admission, then hashes the
+actual resident snapshot before any measured phase. A mismatch stops codec
+execution. The pipeline processes its exact byte count without cycling,
+padding, newline conversion or generated-profile substitution. The caller
+retains the immutable source until all tasks have joined.
+
+```powershell
+$corpus = 'corpus.bin'
+$sha = (Get-FileHash -LiteralPath $corpus -Algorithm SHA256).Hash.ToLowerInvariant()
+build/Release/superzip_cli.exe memory-benchmark --source-file $corpus --source-sha256 $sha --force-cpu --compression-level 5 --block-size-kib 8192
+build/Release/superzip_cli.exe memory-benchmark --source-file $corpus --source-sha256 $sha --require-gpu --compression-level 5 --block-size-kib 8192
+```
+
+Corpus loading and SHA-256 authentication occur outside product phase timings.
+Source-to-owned-input copying is included in encode preparation, using the same
+production owned codec pipeline. Host admission uses a fresh physical snapshot
+after loading; resident source storage is already reflected in used RAM. Each
+decoded byte is independently compared with the immutable source after the
+normal encode, CRC verification and extraction phases. Required-HIP validation
+still requires actual GPU decoding.
+
+Corpus records declare `measurement_protocol=bytewise-corpus-v1`,
+`data_source=preloaded`, the exact `source_sha256`, `input_bytes`,
+`validated_bytes`, modeled native `archive_bytes`, backend telemetry,
+`memory_only=true` and `disk_write_bytes=0`. The virtual archive entry remains
+`memory-benchmark.bin`, matching the existing model. These are warm resident
+codec/pipeline measurements, not filesystem archive timings. The existing
+`source_generation_worker_seconds` field measures input preparation/copying
+for this lane. Generated profiles keep `bytewise-regenerated-v2` and their
+10 GiB minimum; `--source-file` excludes `--size-mib`, `--profile` and the
+allocation-free `--plan-only` mode.
+
+This entry point is a single observation. The current scientific controller
+and graph protocol remain generated-profile tools; corpus confirmations and
+publication admission are not yet integrated. Do not combine the protocols or
+publish a speed claim from a single corpus invocation. Corpus provenance,
+permissions, transformations and representativeness need independent review;
+the permission-checked manifest boundary in `tools/run_archive_comparison.py`
+provides that evidence for its supported comparisons. A digest authenticates
+bytes, not permissions or workload representativeness.
+
+`tools/test_memory_benchmark_corpus.ps1` exercises all seven block sizes in CPU
+and available HIP lanes with a clearly generated correctness fixture, nine
+argument/identity/input rejection cases and a path containing spaces and a
+Unicode character. It verifies actual HIP encode/decode work when available;
+`-RequireHip` makes absence fail. Its timings are unqualified. The standard
+native driver includes this contract; fixture payload writes stay below 64 MiB.
+
 The built-in suite is intentionally RAM-only. It uses the same generated
 workload, block codec, worker allocation, and required-GPU policy as
 `memory-benchmark`, then prints one `suite_case` line per candidate and one

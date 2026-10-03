@@ -456,6 +456,23 @@ IntegrityResult hash_directory(const std::filesystem::path& path, IntegrityObjec
 
 }  // namespace
 
+// Purpose: Compute SHA-256 over the exact borrowed snapshot with bounded provider updates.
+// Inputs: Immutable bytes, including empty input; no filesystem access occurs.
+// Outputs: Returns lowercase hexadecimal or throws ArchiveError; all CNG resources are released.
+std::string sha256_bytes(std::span<const std::byte> bytes) {
+#ifndef _WIN32
+    throw ArchiveError("SHA-256 integrity hashing is currently implemented through Windows CNG");
+#else
+    Sha256Hasher hasher;
+    for (std::size_t offset = 0; offset < bytes.size();) {
+        const auto count = std::min(kIntegrityBufferBytes, bytes.size() - offset);
+        hasher.update(bytes.subspan(offset, count));
+        offset += count;
+    }
+    return hasher.finish_hex();
+#endif
+}
+
 // Purpose: Optionally compute the standard SHA-256 digest for one regular file.
 // Inputs: `path` is an existing regular file and `mode` selects disabled or SHA-256 hashing.
 // Outputs: Returns digest and counters, or throws `ArchiveError` when the enabled target cannot be hashed.

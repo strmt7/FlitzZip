@@ -2,6 +2,7 @@
 #include "cli/memory_benchmark_source.hpp"
 
 #include "core/checksum.hpp"
+#include "core/integrity.hpp"
 #include "core/archive_index.hpp"
 #include "core/decoded_chunk.hpp"
 #include "core/host_memory_budget.hpp"
@@ -209,9 +210,9 @@ void append_memory_archive_index(std::span<const MemoryArchiveChunk> archive, su
     }
 }
 
-// Purpose: Encode one synthetic memory-workload window without writing benchmark data to storage.
+// Purpose: Encode one generated or preloaded memory-workload window without payload storage writes.
 // Inputs: `window_offset`/`window_bytes` select the bounded window, `total_bytes` preserves deterministic data shape,
-// `inflight`, `options`, and `codec_options` define backend policy, and `result` receives counters.
+// `inflight` and codec options bound work; options retain the stable source/profile, and result receives counters.
 // Outputs: Returns an in-memory archive window with per-chunk CRC and separated worker-stage timings.
 std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t window_offset, std::uint64_t window_bytes,
                                                                std::uint64_t total_bytes, std::uint32_t inflight,
@@ -226,13 +227,14 @@ std::vector<MemoryArchiveChunk> encode_memory_benchmark_window(std::uint64_t win
         const auto want = std::min<std::uint64_t>(superzip::kMaxArchiveChunkBytes, window_bytes - offset);
         const auto chunk_offset = window_offset + offset;
         const auto profile = options.profile;
+        const auto source = options.source;
         pending_encode.push_back(PendingMemoryEncode{
             .index = static_cast<std::size_t>(index),
             .result = std::async(std::launch::async,
-                                 [chunk_offset, total_bytes, profile, want, codec_options]() {
+                                 [chunk_offset, total_bytes, profile, want, codec_options, source]() {
                                      const auto generation_started = std::chrono::steady_clock::now();
                                      std::vector<std::byte> input(static_cast<std::size_t>(want));
-                                     fill_memory_benchmark_chunk(input, chunk_offset, total_bytes, profile);
+                                     fill_memory_benchmark_chunk(input, chunk_offset, total_bytes, profile, source);
                                      const auto codec_started = std::chrono::steady_clock::now();
                                      auto encoded = superzip::encode_owned_chunk(std::move(input), codec_options);
                                      const auto encoded_at = std::chrono::steady_clock::now();
@@ -518,16 +520,17 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 }
 
 // Purpose: Validate RAM benchmark arguments before host admission and any codec allocation.
-// Inputs: `options` selects size in MiB, effort, block size, and mutually exclusive backend policies.
+// Inputs: Options select generated geometry or a <=64 MiB immutable corpus with expected SHA-256 and backend policy.
 // Outputs: Returns checked input bytes or throws on invalid arguments; pipeline admission follows before allocation.
 std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& options) {
-    if (options.size_mib < 10240U) {
+    if (options.source.empty() && options.size_mib < 10240U) {
         throw superzip::ArchiveError("memory benchmark workload must be at least 10240 MiB (10 GiB)");
     }
     constexpr std::array<std::string_view, 7> profiles{"Mixed",           "Compressible", "Incompressible",
                                                        "RepeatedRecord",  "SparseRecord", "LongSparseRecord",
                                                        "SegmentedRecords"};
-    if (std::ranges::find(profiles, options.profile) == profiles.end()) {
+    if ((options.source.empty() && std::ranges::find(profiles, options.profile) == profiles.end()) ||
+        (!options.source.empty() && options.profile != "Corpus")) {
         throw superzip::ArchiveError("unknown memory benchmark profile: " + options.profile);
     }
     if (options.compression_level < superzip::kMinCompressionLevel ||
@@ -547,8 +550,31 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
         options.decode_inflight_chunks > superzip::kMaxInflightArchiveChunks) {
         throw superzip::ArchiveError("benchmark inflight depth exceeds SuperZip resource limit");
     }
-    const auto total_bytes = checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
-    return total_bytes;
+    if (options.source.empty()) {
+        if (!options.expected_source_sha256.empty()) {
+            throw superzip::ArchiveError("source SHA-256 requires a preloaded corpus");
+        }
+        return checked_multiply_cli_u64(options.size_mib, kCliMiB, "memory benchmark size overflows");
+    }
+    if (options.source.size() > kMemoryBenchmarkCorpusMaxBytes || options.expected_source_sha256.size() != 64U ||
+        options.expected_source_sha256.find_first_not_of("0123456789abcdef") != std::string::npos) {
+        throw superzip::ArchiveError("corpus requires at most 64 MiB and a lowercase SHA-256 identity");
+    }
+    return options.source.size();
+}
+
+// Purpose: Authenticate the actual preloaded snapshot before timing, without rereading a source pathname.
+// Inputs: Validated options with immutable source bytes and the expected SHA-256; generated sources have no digest.
+// Outputs: Returns the verified digest or throws on mismatch before codec work begins.
+std::string validate_memory_benchmark_source_identity(const MemoryBenchmarkOptions& options) {
+    if (options.source.empty()) {
+        return {};
+    }
+    const auto digest = superzip::sha256_bytes(options.source);
+    if (digest != options.expected_source_sha256) {
+        throw superzip::ArchiveError("preloaded corpus SHA-256 differs from expected identity");
+    }
+    return digest;
 }
 
 }  // namespace
@@ -645,7 +671,10 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << decode_stages[static_cast<std::size_t>(superzip::OwnedDecodeStage::HostChecksum)]
         << " seconds=" << stats.seconds << " throughput_mib_s=" << mib_per_second(stats.input_bytes, stats.seconds)
         << " compress_seconds=" << result.compress_seconds << " verify_seconds=" << result.verify_seconds
-        << " extract_seconds=" << result.extract_seconds << " measurement_protocol=bytewise-regenerated-v2"
+        << " extract_seconds=" << result.extract_seconds
+        << " measurement_protocol=" << (result.source_sha256.empty() ? "bytewise-regenerated-v2" : "bytewise-corpus-v1")
+        << " data_source=" << (result.source_sha256.empty() ? "generated" : "preloaded")
+        << " source_sha256=" << (result.source_sha256.empty() ? "unavailable" : result.source_sha256)
         << " validation_worker_limit=" << result.stats.workers << " validated_bytes=" << result.validated_bytes
         << " validation_seconds=" << result.validation_seconds << " wall_seconds=" << result.wall_seconds
         << " source_generation_worker_seconds=" << result.source_generation_worker_seconds
@@ -661,11 +690,12 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
 }
 
 // Purpose: Check every archived chunk against its exact source outside timed product phases.
-// Inputs: One bounded archive window, source geometry/profile, and backend policy with isolated telemetry.
+// Inputs: One bounded archive window, geometry/profile, stable optional source and isolated backend telemetry.
 // Outputs: Accumulates byte-validation cost/count; throws on wrong bytes or hidden required-HIP fallback.
 void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archive, std::uint64_t window_offset,
                                        std::uint64_t total_bytes, std::string_view profile,
-                                       const superzip::GpuCodecOptions& options, MemoryBenchmarkResult& result) {
+                                       std::span<const std::byte> source, const superzip::GpuCodecOptions& options,
+                                       MemoryBenchmarkResult& result) {
     const auto started = std::chrono::steady_clock::now();
     {
         auto offset = window_offset;
@@ -676,7 +706,7 @@ void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archi
                 throw superzip::ArchiveError("memory benchmark byte validation size/backend mismatch");
             }
             validate_memory_benchmark_bytes_parallel(decoded.bytes(), offset, total_bytes, profile,
-                                                     options.worker_count);
+                                                     options.worker_count, source);
             result.validated_bytes = checked_add_cli_u64(result.validated_bytes, chunk.uncompressed_size,
                                                          "memory benchmark validation byte count overflows");
             offset = checked_add_cli_u64(offset, chunk.uncompressed_size, "memory benchmark source offset overflows");
@@ -686,7 +716,7 @@ void validate_memory_benchmark_archive(std::span<const MemoryArchiveChunk> archi
 }
 
 // Purpose: Execute a bounded, RAM-only archive workload with independent encode, verify, and extract phases.
-// Inputs: `options` selects the benchmark profile, size, backend policy, workers, block size, and effort.
+// Inputs: Options select profile or stable preloaded corpus, expected hash, backend, workers, block size and effort.
 // Outputs: Returns exact size, timing, integrity, and GPU telemetry statistics or throws on any failed phase.
 MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options) {
     const auto plan = plan_memory_benchmark(options);
@@ -705,6 +735,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     };
 
     MemoryBenchmarkResult result;
+    result.source_sha256 = validate_memory_benchmark_source_identity(options);
     result.stats.input_bytes = total_bytes;
     result.stats.workers = workers;
     result.stats.inflight_chunks = inflight;
@@ -761,7 +792,8 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         }
         result.extract_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
-        validate_memory_benchmark_archive(archive, offset, total_bytes, options.profile, validation_options, result);
+        validate_memory_benchmark_archive(archive, offset, total_bytes, options.profile, options.source,
+                                          validation_options, result);
         offset += current_window;
     }
     if (result.validated_bytes != total_bytes) {
