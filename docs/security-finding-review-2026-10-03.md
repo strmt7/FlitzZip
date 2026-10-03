@@ -1,5 +1,65 @@
 # Security Finding Review — 3 October 2026
 
+## Latest Individual Metadata Triage
+
+At `ed3ea0f`, five DevSkim results were individually reviewed and dismissed as
+false positives with separate GitHub audit comments. This is a disposition,
+not automatic scanner closure or a vulnerability fix. No source/test path,
+rule or raw result was excluded. Security run `37140763492` has now completed
+successfully with all ten jobs passing. The source-condition repair at that
+commit automatically fixed alerts 1495–1500 and 1527–1530. Their fresh API
+states are `fixed`, with no dismissal, and the exact-SHA lint, Windows CI,
+ROCm qualification and Scorecard workflows also pass.
+
+| Alert | Verified metadata role |
+| --- | --- |
+| [8245](https://github.com/strmt7/SuperZip/security/code-scanning/8245) | The Gitleaks policy quotes the public Git-blob SHA-256 of `tests/cpp/test_sdk_byte_access.cpp`. |
+| [8246](https://github.com/strmt7/SuperZip/security/code-scanning/8246) | The policy quotes the public Git-blob SHA-256 of `tests/cpp/sdk_byte_access_checks.hpp`. |
+| [8247](https://github.com/strmt7/SuperZip/security/code-scanning/8247) | The corpus descriptor records the observed public dataset-member digest. |
+| [8248](https://github.com/strmt7/SuperZip/security/code-scanning/8248) | The corpus descriptor records the observed public UCI archive digest. |
+| [1755](https://github.com/strmt7/SuperZip/security/code-scanning/1755) | The graph renderer registers the required SVG XML namespace; it does not fetch that identifier. |
+
+The checksum review bound each alert's current path, highlighted source line,
+rule and commit to the complete committed file. Both source digests match their
+Git blobs. The authentic acquisition receipt matches the corpus descriptor's
+archive/member sizes and hashes and records complete-member CRC verification.
+The digests are observed reproducibility values, not credentials or
+publisher-signed values. The same-commit secret job passed Gitleaks history,
+Gitleaks working-tree and TruffleHog history scanning before disposition.
+
+The SVG review checked the complete renderer's namespace registration and XML
+construction, its imports and absence of HTTP-client or URL-fetch operations.
+[W3C's namespace definition](https://www.w3.org/TR/SVG2/struct.html#Namespace)
+requires `http://www.w3.org/2000/svg`; changing that identifier to HTTPS would
+change the XML namespace. Python's
+[namespace registration API](https://docs.python.org/3/library/xml.etree.elementtree.html#xml.etree.ElementTree.register_namespace)
+registers serialization prefixes and does not download a document.
+
+The new review helper initially compared raw Windows CRLF bytes with a Git
+blob, although the existing production reviewer already normalizes only CRLF
+to LF. The helper was corrected to use that same contract, while retaining
+exact committed identities. A second binding check caught escaped dots in
+the Gitleaks regex and the corpus member/archive alert ordering; comments
+were corrected against live source locations before any external mutation.
+Neither failed check changed an alert or repository line-ending policy.
+
+The inventory after metadata disposition and before CodeQL completion had
+192 records and 190 unapproved findings. After CodeQL's ten automatic fixes,
+the fresh inventory contains 182 records: 173 CodeQL, seven DevSkim and two
+approved Scorecard results. Thus 180 unapproved findings remain, including
+all six critical pointer reports. Every open CodeQL/DevSkim instance identifies
+`ed3ea0ffe29b00e25e941d3fcf4804463d9fb4c3`.
+The six fixed-width SDK copies and serial test allocator remain open;
+metadata dispositions do not extend to them. Private complete reviews and API
+responses are retained in `out/metadata-finding-dispositions-20261003.json`
+and `out/metadata-finding-disposition-results-20261003.json`. Individual fixed
+states and the successful hosted run are frozen in
+`out/zstd-condition-hosted-closure-20261003.json`. The fresh post-scan audit
+still fails with `Unapproved code-scanning alerts are open: 180`; scanner
+success and these individual closures do not establish beta acceptance.
+
+## Earlier Hosted Review
+
 This review concerns source `8cb3f4d` and
 [security run 37134688991](https://github.com/strmt7/SuperZip/actions/runs/37134688991).
 All ten security jobs succeeded. The required post-push audit failed because

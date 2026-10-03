@@ -140,6 +140,12 @@ CodeQL C++ retains 60 minutes, compared with 20 minutes for the observed
 
 ## Finding Triage
 
+The [latest individual review](security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
+records five metadata/namespace false-positive dispositions at `ed3ea0f`.
+Each has its own source/producer evidence and GitHub audit comment. They are
+not automatic closures or code-finding exemptions; all remaining source and
+test findings stay in the review queue.
+
 Keep all scanners enabled and retain their raw reports. A green workflow means
 the scanner completed, not that GitHub has zero open alerts. Inspect alerts for
 the exact pushed SHA and record whether each result is actionable, a verified

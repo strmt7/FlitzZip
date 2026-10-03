@@ -1,5 +1,15 @@
 # Zstandard Condition Cleanup — 3 October 2026
 
+## Hosted Resolution
+
+[Security run 37140763492](https://github.com/strmt7/SuperZip/actions/runs/37140763492)
+passes all ten jobs at `ed3ea0f`. Fresh API checks confirm all ten reports below
+are automatically `fixed`, with no manual dismissal. Exact-SHA lint, Windows
+CI, ROCm qualification and Scorecard workflows also pass. After five separately
+reviewed metadata dispositions, the post-scan audit still reports 180
+unapproved findings, including all six critical pointer reports. Beta
+acceptance remains blocked; this is an intermediate source qualification.
+
 This batch addresses source clarity and redundant cleanup in the pinned
 Zstandard 1.5.7 build. It does not claim to repair a demonstrated dangling
 pointer, buffer overflow or archive corruption. The upstream archive remains
@@ -53,8 +63,8 @@ checks for this shared CMake path. Those gates are deferred for this intermediat
 batch under the maintainer's explicit component-only direction, not reported as
 passed. Final accumulated beta qualification remains required. No production,
 test or configuration path was excluded, no rule disabled, and no alert manually
-dismissed. Automatic closure of the ten reports requires the new hosted scan;
-the other findings remain unresolved.
+dismissed by this source repair. The hosted scan now confirms automatic closure
+of these ten reports; the other findings remain unresolved.
 
 Private evidence under `out/` records the HIP build, passing component checks,
 original failures, repaired patch contract, lint and policy checks. It is not

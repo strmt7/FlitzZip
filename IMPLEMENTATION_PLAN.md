@@ -2,15 +2,26 @@
 
 ## Continuation Checkpoint
 
-The next security batch clarifies equivalent Zstandard cleanup and logical
+Individual metadata triage at `ed3ea0f` has settled five verified DevSkim false
+positives with specific audit comments and same-commit secret-scan evidence.
+The [review](docs/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
+retains complete source identities, acquisition evidence and corrected helper
+bindings. No source/test exclusion or code-finding disposition was added.
+The completed security run now confirms automatic closure of all ten reports
+from the preceding source batch, with no manual CodeQL dismissal. All ten
+security jobs and exact-SHA lint, Windows CI, ROCm qualification and Scorecard
+workflows pass. The fresh audit still fails with 180 unapproved findings.
+All six critical reports and the final beta acceptance gate remain unresolved.
+
+The preceding security batch clarifies equivalent Zstandard cleanup and logical
 conditions covering ten open CodeQL reports. Its pinned generated-source
 transformations retain the original archive, fail on drift and support both
 fresh extraction and the exact earlier constructor repair. Affected dependency
-contracts and 15 direct-consumer cases pass; hosted closure is pending. The
+contracts and 15 direct-consumer cases pass; hosted closure is confirmed. The
 [review](docs/zstd-condition-cleanup-2026-10-03.md) records remaining gates and
 the fixture correction. The broad native/package plan is not marked passed:
 this intermediate batch follows the maintainer's component-only verification
-direction. The last completed security run at `cb17445` passed all ten jobs;
+direction. The completed security run at `ed3ea0f` passed all ten jobs;
 the finding inventory still blocks beta acceptance.
 
 The [modern compression research review](docs/modern-compression-research-2026-10-03.md)
