@@ -654,13 +654,14 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
     )
     ET.SubElement(root, f"{{{SVG}}}title", {"id": "title"}).text = "SuperZip RAM-only benchmark"
     ET.SubElement(root, f"{{{SVG}}}desc", {"id": "desc"}).text = (
-        "Paired forced-CPU and required-AMD-HIP SUZIP results. Left: exact archive size, lower is better. "
+        "Paired forced-CPU and required-AMD-HIP SUZIP results. Left: exact encoded payload size, lower is better. "
         "Right: median encode, verify, and decode throughput, higher is better. Synthetic workloads only."
     )
     if identity[5] == 3:
         root.find(f"{{{SVG}}}desc").text = (
             "Paired forced-CPU and required-HIP RAM-only synthetic SUZIP results. "
-            "Left: exact archive bytes. Right: throughput from median elapsed time; "
+            "Left: exact encoded payload bytes, excluding archive metadata. "
+            "Right: throughput from median elapsed time; "
             "whiskers retain every confirmation sample's min-max range, not confidence intervals."
         )
     ET.SubElement(root, f"{{{SVG}}}rect", {"width": "1200", "height": str(height), "fill": "#ffffff"})

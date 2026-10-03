@@ -102,6 +102,12 @@ jobs:
           done
           python tools/render_benchmark_graph.py "${arguments[@]}" --output resources/benchmarks/native-cpu-hip.svg --check
           grep -Fq 'resources/benchmarks/native-cpu-hip.svg' README.md
+      - name: Regenerate reviewed beta native comparison
+        run: |
+          python tools/render_benchmark_graph.py \
+            --input docs/benchmarks/data/beta-mixed-l5-b8192-20261003.json \
+            --output resources/benchmarks/beta-native-cpu-hip.svg --check
+          grep -Fq 'resources/benchmarks/beta-native-cpu-hip.svg' README.md
       - name: Regenerate reviewed application comparison
         shell: bash
         run: |

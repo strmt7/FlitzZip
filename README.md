@@ -281,14 +281,28 @@ weekly schedule, and manual dispatch.
 
 ## Benchmarking
 
+![Qualified synthetic native CPU/HIP comparison](resources/benchmarks/beta-native-cpu-hip.svg)
+
+The [3 October beta block-size report](docs/benchmarks/native-beta-blocks-2026-10-03.md)
+retains all **42 pilots and 112 confirmations** from seven independent 10 GiB
+RAM-only Mixed studies at level 5. Only the 8 MiB case met every declared timing
+quality threshold; all six inconclusive cases remain in the report. Its observed
+CPU/GPU mean compress + verify + extract time ratio was **2.0094**, while the GPU
+archive was **11,768,213 bytes (0.2606%) larger**. GPU extraction alone was slower.
+The plot uses encoded payload bytes and throughput from median combined elapsed
+time, with the full observed range; the report gives full modeled archive bytes,
+mean times, sample SD, exact counts, HIP telemetry and source/binary identity.
+This synthetic workload result establishes neither competitor superiority nor a
+before/after improvement. Broader beta qualification remains in progress.
+
 For reviewed exact-file CPU/HIP RAM studies, the scientific controller accepts
 `-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together. It preserves natural
 byte counts, source identity and every pilot/confirmation observation; noisy
 or short studies remain explicitly inconclusive. See the
 [corpus protocol and command](docs/compression-level-and-benchmark-suite.md#native-suite).
-These studies do not change the historical graph evidence below.
+These studies remain separate from generated-profile measurements.
 
-**Historical evidence:** the graphs below describe earlier engineering runs,
+**Historical evidence:** the linked graphs describe earlier engineering runs,
 not the current source or a release-ready product ranking. The Silesia series
 is excluded from new runs and headline comparisons after its dataset-rights
 review. Licensed replacements, additional applications and the final
@@ -296,7 +310,7 @@ five-run-per-point refresh are in preparation. See the
 [permission decisions](docs/benchmark-permissions.md) and
 [research and methodology](docs/benchmark-research.md).
 
-![Measured archive application comparison against 7-Zip and Zstandard](resources/benchmarks/application-comparison.svg)
+[Historical application comparison graph](resources/benchmarks/application-comparison.svg).
 
 The [Silesia application comparison report](docs/benchmarks/comparison-silesia-2026-09-29.md)
 shows exact test-system specifications and five-run ZIP/Zstandard results.
@@ -306,7 +320,7 @@ commands, hashes, host load, and limits. SuperZip is not uniformly faster or
 smaller: the official Zstd CLI was faster on both single-file cases. These
 compatibility-format results do not measure native HIP compression.
 
-![Measured archive size versus creation time across five effort settings](resources/benchmarks/effort-tradeoff.svg)
+[Historical compatibility effort graph](resources/benchmarks/effort-tradeoff.svg).
 
 The [size-versus-time effort study](docs/benchmarks/comparison-effort-2026-09-29.md)
 compares SuperZip ZIP and ZST output with 7-Zip and Zstandard on the same
@@ -314,7 +328,7 @@ Silesia inputs. Each point has ten timed runs, exact archive bytes, and
 independently verified extraction. Higher effort sometimes costs far more time
 for a smaller file; equal numeric levels do not imply equal work across tools.
 
-![Measured native CPU and GPU archive size and throughput](resources/benchmarks/native-cpu-hip.svg)
+[Historical native CPU/HIP graph](resources/benchmarks/native-cpu-hip.svg).
 
 This snapshot uses three paired RAM-only 10 GiB runs per case, 16 MiB blocks,
 an AMD Ryzen 9 9950X, and an AMD Radeon RX 9070 XT. It measures median
@@ -327,7 +341,7 @@ was unavailable, so that case supports wall-time comparisons only. These
 results do not predict performance on other files or hardware. The
 `benchmark-graph` workflow regenerates and checks the image from those records.
 
-![Native archive size and compression time by CPU and GPU effort](resources/benchmarks/native-effort-tradeoff.svg)
+[Historical native effort graph](resources/benchmarks/native-effort-tradeoff.svg).
 
 The [native effort report](docs/benchmarks/native-effort-2026-09-29.md) compares
 five settings on the same 10 GiB RAM-only Mixed workload. GPU archives have

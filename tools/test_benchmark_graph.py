@@ -460,6 +460,9 @@ class BenchmarkGraphTests(unittest.TestCase):
             self.assertGreater(metric["elapsed_std_dev_seconds"], 0)
         root = ET.fromstring(graph.render_svg(identity, rows))
         ranges = root.findall(f'.//{{{graph.SVG}}}g[@class="sample-range"]')
+        self.assertIn("encoded payload bytes, excluding archive metadata", root.find(f"{{{graph.SVG}}}desc").text)
+        self.assertEqual(rows[0]["metrics"]["GPU"]["output_bytes"], record["runs"][1]["output_bytes"])
+        self.assertNotEqual(rows[0]["metrics"]["GPU"]["output_bytes"], record["runs"][1]["archive_bytes"])
         self.assertEqual(len(ranges), 2)
         for group in ranges:
             self.assertIn("not a confidence interval", group.find(f"{{{graph.SVG}}}title").text)
@@ -626,6 +629,7 @@ class BenchmarkGraphTests(unittest.TestCase):
         self.assertEqual(first.count(b"\n"), first.count(b"\r\n"))
         root = ET.fromstring(first)
         self.assertEqual(root.attrib["role"], "img")
+        self.assertIn("encoded payload size", root.find(f"{{{graph.SVG}}}desc").text)
         self.assertIn(b"Synthetic workloads only", first)
         self.assertIn(b"171,079,680 encoded bytes", first)
 

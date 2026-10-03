@@ -297,14 +297,23 @@ versioning, existing-archive readability and required-HIP semantics preserved.
 Superiority over other archive applications is a research target, not an
 unmeasured acceptance claim.
 
-Freeze the candidate scope after the next evidence-backed codec batch, then run
-the applicable benchmark matrix on the frozen source and binaries. Include all
+The intermediate beta product scope is frozen at `e950e06035959b81938ca7bb64c45d64980b545f`.
+Run the applicable benchmark matrix on those native inputs and binaries. Include all
 production block sizes, declared effort settings, representative permission-
 checked corpora, supported-format coverage and eligible comparator cases.
 Separate timed RAM codec studies from bounded filesystem interoperability
 checks; preserve every sample and identify missing or inconclusive cells.
 Use the accumulated change range for beta qualification, rather than repeating
 unrelated full suites during each small iteration.
+
+The [level-5 block-size qualification](docs/benchmarks/native-beta-blocks-2026-10-03.md)
+now retains 42 pilots and 112 confirmations across all seven production sizes.
+Every observation passed byte-exact validation. Only 8 MiB met every declared
+timing-quality safeguard; all six inconclusive cases and the earlier 29-pilot
+budget-aborted setup remain documented. GPU archive sizes were larger for all
+seven synthetic Mixed cases. The qualified plot uses encoded payload bytes;
+the report separately gives full modeled archive bytes. Effort/profile/corpus,
+comparator, format, package/MSI and final hosted acceptance are still pending.
 
 Refresh README claims, benchmark reports and reproducible plots from that
 candidate's evidence. Prepare a concrete version proposal, changelog, x64 HIP
