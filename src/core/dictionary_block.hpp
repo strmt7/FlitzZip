@@ -34,11 +34,11 @@ inline std::uint32_t read_dictionary_offset(std::span<const std::byte> table, st
     return value;
 }
 
-// Purpose: Validate a version-four dictionary block before either CPU or HIP decoding.
-// Inputs: `payload` contains cumulative segment offsets followed by independent LZ4 blocks; `decoded_size` is exact.
-// Outputs: Returns disjoint bounded segment spans or throws on invalid framing and resource extents.
-inline std::vector<DictionarySegmentSpan> parse_dictionary_segments(std::span<const std::byte> payload,
-                                                                    std::uint32_t decoded_size) {
+// Purpose: Validate dictionary framing and optionally append spans directly to private decode preparation.
+// Inputs: Exact decoded size, immutable offsets/LZ4 payload, and optional disjoint private scratch to discard on error.
+// Outputs: Checks every extent without allocating when scratch is null; otherwise appends spans, possibly before error.
+inline void scan_dictionary_segments(std::span<const std::byte> payload, std::uint32_t decoded_size,
+                                     std::vector<DictionarySegmentSpan>* scratch = nullptr) {
     if (decoded_size == 0U || decoded_size > kMaxArchiveBlockBytes) {
         throw ArchiveError("GPU dictionary block decoded size is invalid");
     }
@@ -54,8 +54,12 @@ inline std::vector<DictionarySegmentSpan> parse_dictionary_segments(std::span<co
     if (previous != 0U) {
         throw ArchiveError("GPU dictionary block table must start at zero");
     }
-    std::vector<DictionarySegmentSpan> spans;
-    spans.reserve(segment_count);
+    if (scratch != nullptr) {
+        if (segment_count > scratch->max_size() - scratch->size()) {
+            throw ArchiveError("GPU dictionary segment count exceeds scratch limits");
+        }
+        scratch->reserve(scratch->size() + segment_count);
+    }
     std::size_t decoded_offset = 0U;
     for (std::size_t segment = 0U; segment < segment_count; ++segment) {
         const auto next = read_dictionary_offset(table, segment + 1U);
@@ -64,18 +68,29 @@ inline std::vector<DictionarySegmentSpan> parse_dictionary_segments(std::span<co
         if (next <= previous || next > encoded_size || next - previous > capacity) {
             throw ArchiveError("GPU dictionary block segment extent is invalid");
         }
-        spans.push_back(DictionarySegmentSpan{
-            .encoded_offset = static_cast<std::uint32_t>(table_bytes + previous),
-            .encoded_size = next - previous,
-            .decoded_offset = static_cast<std::uint32_t>(decoded_offset),
-            .decoded_size = static_cast<std::uint32_t>(decoded_len),
-        });
+        if (scratch != nullptr) {
+            scratch->push_back(DictionarySegmentSpan{
+                .encoded_offset = static_cast<std::uint32_t>(table_bytes + previous),
+                .encoded_size = next - previous,
+                .decoded_offset = static_cast<std::uint32_t>(decoded_offset),
+                .decoded_size = static_cast<std::uint32_t>(decoded_len),
+            });
+        }
         decoded_offset += decoded_len;
         previous = next;
     }
     if (previous != encoded_size) {
         throw ArchiveError("GPU dictionary block payload has trailing bytes");
     }
+}
+
+// Purpose: Preserve the owning dictionary parser API for CPU decode and independent readers.
+// Inputs: Serialized dictionary payload and its exact bounded decoded size.
+// Outputs: Returns all validated spans or throws; private partial preparation never escapes.
+inline std::vector<DictionarySegmentSpan> parse_dictionary_segments(std::span<const std::byte> payload,
+                                                                    std::uint32_t decoded_size) {
+    std::vector<DictionarySegmentSpan> spans;
+    scan_dictionary_segments(payload, decoded_size, &spans);
     return spans;
 }
 

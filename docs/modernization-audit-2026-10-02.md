@@ -1125,3 +1125,22 @@ build receipt also validates the final native input/output contents. Both frozen
 host-study series pass without dropping observations. No unchanged GUI, package
 or compatibility-format smoke is repeated. Exact-commit hosted qualification
 remains pending.
+
+## Round Twenty-Five: Allocation-Free Dictionary Validation
+
+The dictionary framing scanner supports validation without a vector and direct
+collection into private scratch. The owning CPU parser preserves its API and
+error behavior; HIP collection reserves its full plan once. Every original
+framing/resource check remains, and no partial scratch is published on failure.
+[Seven-size allocation evidence](gpu-prefix-plan-validation.md#dictionary-block-plan-preparation)
+uses independently byte-verified LZ4 frames and matching old/new segment fields.
+At 256 KiB, validation allocations fall from 342 to zero and plan allocations
+from 361 to one; these are fixture-specific host counts, not archive speed claims.
+
+The frozen HIP build, 15 selected dictionary tests, changed-code quality gates
+and repository security policy pass. Explicit test registration and one expected
+message were corrected after focused failures, whose logs remain separate.
+Only that new test registration changes CMake; unrelated installer/package and
+blanket-suite checks are excluded under the maintainer's direction. The preceding
+`a02e0bb` checkpoint passes all four hosted runs. This new source batch still
+needs exact-commit hosted qualification and post-push audit.

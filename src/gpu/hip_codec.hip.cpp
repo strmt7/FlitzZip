@@ -942,21 +942,31 @@ std::vector<PrefixDecodeSegment> build_prefix_decode_segments(std::span<const De
     return plans;
 }
 
-// Purpose: Translate validated archive dictionary blocks into absolute device-buffer segment spans.
+// Purpose: Collect dictionary spans directly into one reserved private device-buffer plan.
 // Inputs: `payload` is the complete encoded chunk and `blocks` contains decoded output offsets.
 // Outputs: Returns bounded non-overlapping spans for the shared HIP dictionary decoder.
 std::vector<DictionarySegmentSpan> build_dictionary_decode_segments(std::span<const std::byte> payload,
                                                                     std::span<const DeviceBlock> blocks) {
     std::vector<DictionarySegmentSpan> plans;
+    // Validated decoded extents bound the complete plan count before scratch allocation.
+    const auto plan_count =
+        std::accumulate(blocks.begin(), blocks.end(), std::size_t{0}, [](std::size_t total, const DeviceBlock& block) {
+            return total + (block.kind == static_cast<std::uint8_t>(BlockKind::GpuDictionary)
+                                ? (static_cast<std::size_t>(block.uncompressed_len) + kGpuDictionarySegmentBytes - 1U) /
+                                      kGpuDictionarySegmentBytes
+                                : 0U);
+        });
+    plans.reserve(plan_count);
     for (const auto& block : blocks) {
         if (block.kind != static_cast<std::uint8_t>(BlockKind::GpuDictionary)) {
             continue;
         }
         const auto block_payload = payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
-        for (auto segment : parse_dictionary_segments(block_payload, block.uncompressed_len)) {
-            segment.encoded_offset += static_cast<std::uint32_t>(block.encoded_offset);
-            segment.decoded_offset += static_cast<std::uint32_t>(block.output_offset);
-            plans.push_back(segment);
+        const auto begin = plans.size();
+        scan_dictionary_segments(block_payload, block.uncompressed_len, &plans);
+        for (std::size_t index = begin; index < plans.size(); ++index) {
+            plans[index].encoded_offset += static_cast<std::uint32_t>(block.encoded_offset);
+            plans[index].decoded_offset += static_cast<std::uint32_t>(block.output_offset);
         }
     }
     return plans;

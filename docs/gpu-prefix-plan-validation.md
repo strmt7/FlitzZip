@@ -1,4 +1,4 @@
-# GPU Prefix Decode Plan Preparation
+# GPU Decode Plan Preparation
 
 The GPU decoder now reserves its complete prefix segment table once. Previously
 it called `reserve(current_size + next_block_segments)` for every coded block,
@@ -102,3 +102,64 @@ The prototype observations are retained separately. During fixture preparation,
 an initial allocation assertion incorrectly omitted MSVC's allocator overhead;
 it was corrected to inspect logical vector capacity, allocation count and actual
 requested bytes. No product defect or measured sample was hidden by that correction.
+
+## Dictionary Block Plan Preparation
+
+Dictionary validation now uses the same scanner as span collection, with no
+output vector. HIP preparation preallocates its final plan and collects directly
+into it, avoiding a temporary vector per block. CPU readers retain the owning
+`parse_dictionary_segments` API. All framing checks remain: decoded-size bounds,
+complete offset tables, zero first offset, strictly increasing bounded extents,
+per-segment LZ4 capacity and exact payload consumption.
+
+Collection uses private scratch, which callers discard on error. No partial plan
+is returned to CPU readers or submitted to HIP. The input must remain immutable
+and disjoint from scratch; source buffers and scratch have separate owners in
+production. Count admission guards vector limits before appending.
+
+An isolated Release allocation probe compiles the exact old/new host functions
+and matching structures. Its inputs describe 128 MiB minus 1,357 bytes at every
+production block size: every third block is raw, and other blocks contain real,
+independent LZ4 frames produced by the pinned library. Every frame is independently
+decompressed and byte-checked before the probe. The final block has a short coded
+tail. Every old/new span offset and length matches.
+
+| Block KiB | Dictionary blocks | Validation allocations before / after | Plan allocations before / after |
+| ---: | ---: | ---: | ---: |
+| 256 | 342 | 342 / 0 | 361 / 1 |
+| 512 | 171 | 171 / 0 | 190 / 1 |
+| 1024 | 86 | 86 / 0 | 105 / 1 |
+| 2048 | 43 | 43 / 0 | 62 / 1 |
+| 4096 | 22 | 22 / 0 | 41 / 1 |
+| 8192 | 11 | 11 / 0 | 30 / 1 |
+| 16384 | 6 | 6 / 0 | 25 / 1 |
+
+At 256 KiB, cumulative plan allocation traffic falls from 98,915 to 21,927 bytes,
+including observed allocator overhead. This is neither peak retained RAM nor a
+throughput result. The probe uses generated data and actual LZ4 frames; it does
+not compare compression ratio or competitors, and executes no HIP kernels.
+
+The final HIP Release build passes 15 relevant tests: two new framing/scratch
+contracts, existing decoder admission and malformed token cases, independent
+writers, CPU/HIP CRC and decoding through the 128 MiB chunk boundary, independent
+version-four archive corpus reads, mixed archives and all nine writer efforts.
+Changed-file lint, function contracts and repository security policy also pass.
+The sole CMake edit registers the new test file. Under the maintainer's focused
+verification direction, unchanged installer/package checks and the blanket native
+driver are excluded; the affected cohort replaces that driver. No scanners are
+removed or run twice.
+
+The first build exposed missing explicit CMake test registration; the first
+registered run then exposed an expected error string omitting the word `table`.
+Both failures remain recorded, followed by the corrected frozen passing run.
+An isolated-probe compile error from declaring two different vector types in one
+`auto` declaration was also corrected before any probe result was collected.
+These setup/fixture errors do not establish a product decoding defect.
+
+Ignored evidence:
+
+- `out/dictionary-plan-allocation-identity-20261003.jsonl`
+- `out/dictionary-plan-study-generation-20261003.log`
+- `out/dictionary-plan-component-verification-20261003.json`
+- `out/dictionary-plan-final-component-verification-20261003.json`
+- `out/dictionary-plan-frozen-component-verification-20261003.json`

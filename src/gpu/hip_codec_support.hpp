@@ -513,8 +513,8 @@ inline void validate_gpu_dictionary_payload(std::span<const std::byte> payload, 
     if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
         throw ArchiveError("GPU dictionary decode block exceeds payload buffer");
     }
-    static_cast<void>(parse_dictionary_segments(
-        payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block.uncompressed_len));
+    scan_dictionary_segments(payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len),
+                             block.uncompressed_len);
 }
 
 // Purpose: Admit a repeated-pattern block before a HIP kernel reads its motif.
