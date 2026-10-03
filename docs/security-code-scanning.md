@@ -125,6 +125,19 @@ either rule. Dismiss confirmed false positives with a specific GitHub audit
 comment; do not dismiss unresolved findings or change the source to evade a
 pattern.
 
+The October 3 beta records contain two source-file SHA-256 fields whose names
+include `sdk_byte_access`. Gitleaks' generic API-key detector reported 32
+occurrences. Each digest matches both its recorded Git blob and current source
+bytes. The maintainer authorized exclusions for verified metadata only, with
+actual code findings retained. `.github/gitleaks.toml` extends every default
+rule and admits only those two exact filename/digest pairs within the dated
+beta record paths. Changed values, authentication fields, extra same-line
+content and unrelated paths remain detectable. The pinned 8.30.1 scanner passed
+the complete local history with this policy and five real scanner boundary
+checks; hosted history and working-tree acceptance still require a new run.
+DevSkim findings require their separate per-alert evidence and disposition;
+this policy does not suppress them or any code findings.
+
 On October 3, 2026, [alert 1742](https://github.com/strmt7/SuperZip/security/code-scanning/1742)
 was confirmed to match the public ROCm archive SHA-256 pin, which
 `download_archive` verifies against archive bytes. [Alert 1743](https://github.com/strmt7/SuperZip/security/code-scanning/1743)

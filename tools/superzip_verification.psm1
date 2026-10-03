@@ -264,6 +264,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
+        '^tools/test_gitleaks_policy\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
@@ -300,6 +301,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows|release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/native_component_tests\.ps1$',
         '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report)\.py$',
+        '^tools/test_gitleaks_policy\.py$',
         '^\.github/'
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
@@ -413,6 +415,8 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "devskim-provenance-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_devskim_provenance") -Reason "scanner download limits and exact size/hash verification must use one canonical provenance record") }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(devskim_report|test_devskim_report)\.py$')
            Command = (Get-SuperZipVerificationCommand -Id "devskim-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_devskim_report") -Reason "SARIF publication must preserve all findings, repair only empty optional excerpts, and reject unexpected source content") }
+        @{ Pattern = @('^\.github/gitleaks\.toml$', '^\.github/workflows/security-code-scanning\.yml$', '^tools/test_gitleaks_policy\.py$')
+           Command = (Get-SuperZipVerificationCommand -Id 'gitleaks-policy-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_gitleaks_policy') -Reason 'reviewed checksum exceptions must retain default rules and reject authentication fields, changed values and unrelated paths') }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$', '^tools/scan_trufflehog\.sh$')
            Command = (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities") }
         @{ Pattern = @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')

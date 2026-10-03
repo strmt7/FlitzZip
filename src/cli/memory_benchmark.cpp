@@ -788,12 +788,14 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
             verify_repeated_record_payloads(archive);
         }
 
+        // Verification checks archive integrity; source-byte comparison is measured separately from codec phases.
         phase_started = std::chrono::steady_clock::now();
         verify_memory_benchmark_archive(archive, inflight, options.profile, codec_options, result);
         result.verify_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - phase_started).count();
 
         phase_started = std::chrono::steady_clock::now();
+        // Retain the owned decode pool across windows, then include its final release in extraction time.
         if (codec_options.require_gpu && !codec_options.host_output_pool) {
             codec_options.host_output_pool = superzip::make_owned_decode_pool(codec_options);
         }
@@ -819,6 +821,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         throw superzip::ArchiveError("memory benchmark archive payload count differs from encoded chunks");
     }
     std::ostringstream serialized_index(std::ios::out | std::ios::binary);
+    // Model the native index/footer in RAM so archive size and finalization cost include container overhead.
     superzip::write_archive_index(serialized_index, modeled_index);
     result.archive_bytes = checked_add_cli_u64(result.stats.output_bytes, serialized_index.view().size(),
                                                "memory benchmark archive size overflows");

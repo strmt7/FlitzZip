@@ -310,6 +310,12 @@ foreach ($path in @("tools/benchmark_cache.py", "tools/test_benchmark_cache.py",
     Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "gui-smoke")) "benchmark tooling alone must not launch the GUI: $path"
 }
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "secret-report-tests") "workflow changes must test secret artifact redaction"
+foreach ($path in @('.github/gitleaks.toml', 'tools/test_gitleaks_policy.py')) {
+    $secretPolicyPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $secretPolicyPlan -Id 'gitleaks-policy-tests') "checksum policy must test its narrow exceptions: $path"
+    Assert-Selector (Test-Workflow -Plan $secretPolicyPlan -Name 'security') "checksum policy must exercise the hosted secret scanners: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $secretPolicyPlan -Id 'release-build')) "secret scanner policy alone must not rebuild the product: $path"
+}
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "scanner-coverage-tests") "workflow changes must test complete scanner coverage evidence"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-provenance-tests") "workflow changes must test exact scanner package provenance"
 Assert-Selector (Test-RequiredCommand -Plan $workflowPlan -Id "devskim-report-tests") "workflow changes must test lossless scanner report publication"

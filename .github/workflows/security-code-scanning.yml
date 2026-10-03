@@ -404,10 +404,10 @@ jobs:
       - name: Prepare secret scan reports
         shell: bash
         run: mkdir -p reports/secrets
-      - name: Verify secret report redaction
+      - name: Verify secret policies and report redaction
         id: report-safety
         shell: bash
-        run: python -m unittest tools.test_redact_trufflehog
+        run: python -m unittest tools.test_redact_trufflehog tools.test_gitleaks_policy
       - name: Run Gitleaks against git history
         if: ${{ !cancelled() && steps.report-safety.outcome == 'success' }}
         shell: bash
@@ -417,7 +417,7 @@ jobs:
             -v "$PWD:/repo" \
             -w /repo \
             ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
-            git . --redact --verbose --exit-code 1 --report-format json --report-path reports/secrets/gitleaks-git.json
+            git . --config .github/gitleaks.toml --redact --verbose --exit-code 1 --report-format json --report-path reports/secrets/gitleaks-git.json
       - name: Run Gitleaks against working tree
         if: ${{ !cancelled() && steps.report-safety.outcome == 'success' }}
         shell: bash
@@ -427,7 +427,7 @@ jobs:
             -v "$PWD:/repo" \
             -w /repo \
             ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb \
-            dir . --redact --verbose --exit-code 1 --report-format json --report-path reports/secrets/gitleaks-dir.json
+            dir . --config .github/gitleaks.toml --redact --verbose --exit-code 1 --report-format json --report-path reports/secrets/gitleaks-dir.json
       - name: Run TruffleHog against git history
         if: ${{ !cancelled() && steps.report-safety.outcome == 'success' }}
         shell: bash
