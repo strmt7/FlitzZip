@@ -307,6 +307,49 @@ class BenchmarkGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "confirmation wall budget"):
             graph.validate_record(missing, False)
 
+    # Purpose: Admit complete bounded studies above the historical 64-run limit without weakening evidence checks.
+    # Inputs: Deterministic paired fixtures, prescribed extended counts, and malformed budget/count mutations.
+    # Outputs: Validates all retained observations and rejects incomplete samples, oversized counts and forged budgets.
+    def test_extended_confirmation_counts(self) -> None:
+        record = artifact_fixture()
+        templates = record["runs"][:2]
+        record["runs"] = [
+            dict(copy.deepcopy(run), iteration=iteration)
+            for iteration in range(1, 66)
+            for run in (templates if iteration % 2 else reversed(templates))
+        ]
+        policy = record["sampling_policy"]
+        policy["maximum_count"] = graph.MAX_CONFIRMATION_COUNT
+        policy["case_plans"][0].update(requested_count=65, confirmation_count=65)
+        policy["suite_timeout_seconds"] = 3600
+        policy["confirmation_wall_budget"].update(estimated_seconds=65 * 24.5, remaining_seconds=2000)
+        _, rows = graph.summarize_records([record], allow_dirty=False)
+        self.assertEqual(rows[0]["iterations"], 65)
+        self.assertEqual(len(record["runs"]), 130)
+        for field, value in (("maximum_count", 1025), ("minimum_count", 1025)):
+            invalid = copy.deepcopy(policy)
+            invalid[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "count bound"):
+                graph.validate_sampling_plan(invalid)
+        for requested in (20_000_000_000, graph.MAX_EXACT_REQUESTED_COUNT):
+            capped = copy.deepcopy(policy)
+            capped["case_plans"][0].update(
+                requested_count=requested, confirmation_count=graph.MAX_CONFIRMATION_COUNT, count_capped=True
+            )
+            self.assertEqual(graph.validate_sampling_plan(capped), {1024: 1024})
+        invalid = copy.deepcopy(policy)
+        invalid["case_plans"][0].update(requested_count=2**53, confirmation_count=1024, count_capped=True)
+        with self.assertRaisesRegex(ValueError, "confirmation count"):
+            graph.validate_sampling_plan(invalid)
+        incomplete = copy.deepcopy(record)
+        incomplete["runs"].pop()
+        with self.assertRaisesRegex(ValueError, "confirmation sample is incomplete"):
+            graph.validate_record(incomplete, False)
+        forged = copy.deepcopy(record)
+        forged["sampling_policy"]["confirmation_wall_budget"]["estimated_seconds"] -= 1
+        with self.assertRaisesRegex(ValueError, "differs from raw pilots"):
+            graph.validate_record(forged, False)
+
     # Purpose: Reject CRC-only, partial, or malformed observations labeled as fully bytewise validated.
     # Inputs: Current sampling fixtures with independent protocol and coverage mutations.
     # Outputs: Requires all pilots/confirmations to match and keeps historical protocols incompatible.

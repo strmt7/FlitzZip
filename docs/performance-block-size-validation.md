@@ -111,9 +111,15 @@ receive the same count. Faster cases get enough planned repeats to reach
 and the end-to-end total, pilot sample variation also requests
 `ceil((100 * sample_sd / mean / target_rse_pct)^2)` observations. The maximum
 of the duration request, phase requests and `-Iterations` is used, with a
-minimum of three and a default ceiling of 64. The uncapped request and any
-ceiling are recorded. These defaults are operational choices, not universal
-statistical constants.
+minimum of three and a default ceiling of 1,024. `-MaxIterations` may prescribe
+a smaller ceiling (3..1,024); `-Iterations` admits 1..1,024 for explicit
+fixed-count diagnostics. The larger bounded ceiling lets short empirical
+workloads request enough observations without being limited to 64. It bounds
+retained metadata and execution count; it is not a statistical constant or a
+guarantee of precision. Uncapped requests remain separately recorded as exact
+integers, including requests above the execution ceiling. Requests beyond the
+exact double-integer range fail with pilots retained, rather than wrapping or
+inventing a count. Historical studies retain their original declared ceilings.
 
 Before confirmation, the controller estimates its complete wall workload from
 the maximum pilot `observation_wall_seconds` for each lane/case, plus the

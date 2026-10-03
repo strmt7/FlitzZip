@@ -18,6 +18,8 @@ except ModuleNotFoundError:
     from native_build_receipt import validate_receipt
 
 SVG = "http://www.w3.org/2000/svg"
+MAX_CONFIRMATION_COUNT = 1024
+MAX_EXACT_REQUESTED_COUNT = 2**53 - 1
 ET.register_namespace("", SVG)
 
 
@@ -42,7 +44,11 @@ def runtime_version_identity(value: object) -> str | None:
 def validate_sampling_plan(policy: object) -> dict:
     if not isinstance(policy, dict) or policy.get("method") not in ("fixed_count", "pilot_fixed_confirmation"):
         raise ValueError("missing or invalid sampling protocol")
-    for field, lower, upper in (("minimum_count", 1, 64), ("maximum_count", 1, 64), ("pilot_count", 0, 10)):
+    for field, lower, upper in (
+        ("minimum_count", 1, MAX_CONFIRMATION_COUNT),
+        ("maximum_count", 1, MAX_CONFIRMATION_COUNT),
+        ("pilot_count", 0, 10),
+    ):
         value = policy.get(field)
         if type(value) is not int or not lower <= value <= upper:
             raise ValueError("invalid sampling count bound")
@@ -76,6 +82,7 @@ def validate_sampling_plan(policy: object) -> dict:
             or block in plan_by_block
             or type(count) is not int
             or type(requested) is not int
+            or requested > MAX_EXACT_REQUESTED_COUNT
             or not policy["minimum_count"] <= count <= policy["maximum_count"]
             or requested < count
             or count != min(requested, policy["maximum_count"])
@@ -293,7 +300,7 @@ def validate_confirmation_wall_budget(record: dict) -> None:
         raise ValueError("invalid confirmation wall budget plans")
     for plan in plans:
         count, block = plan.get("confirmation_count"), plan.get("block_size_kib")
-        if type(count) is not int or not 1 <= count <= 64:
+        if type(count) is not int or not 1 <= count <= MAX_CONFIRMATION_COUNT:
             raise ValueError("invalid confirmation wall budget count")
         for lane in lanes:
             seconds = [

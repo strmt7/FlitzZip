@@ -350,6 +350,14 @@ blocks are valid for incompressible corpora, but actual required-HIP encoding,
 decoding and kernel telemetry remain mandatory. A digest authenticates bytes,
 not permissions or workload representativeness.
 
+The controller now admits up to 1,024 confirmations per case, with that default
+maximum declared before the pilot. A short case's duration/precision request
+may therefore exceed the former 64-observation ceiling. The complete pilot
+wall-time estimate still includes validation, controller costs and pauses;
+an insufficient suite budget aborts before confirmation instead of reducing
+counts. `-SuiteTimeoutSeconds` must be sufficient for the declared study.
+This change does not extend or relabel completed historical measurements.
+
 `tools/test_memory_benchmark_corpus.ps1` exercises all seven block sizes in CPU
 and available HIP lanes with a clearly generated correctness fixture, nine
 argument/identity/input rejection cases and a path containing spaces and a

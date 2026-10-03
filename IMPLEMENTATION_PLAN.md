@@ -154,6 +154,14 @@ failed harness attempt is retained; its corrected study fixed confirmation
 counts from pilots and did not trim or extend measurements. See the
 [candidate decisions](docs/benchmarks/household-power-diagnostic-2026-10-03.md#rejected-dictionary-sort-candidates).
 
+The scientific controller now admits up to 1,024 confirmations instead of 64,
+still freezing counts from separate pilots and rejecting a wall-time overrun
+before confirmation. Boundary contracts retain large uncapped requests without
+PowerShell's integer-overload overflow, preserve every observation above 64,
+and independently validate complete graph evidence. This is measurement
+reliability work, not an application speedup. Prior studies keep their original
+counts and inconclusive labels; their observations are not extended retrospectively.
+
 The diagnostic checkpoint also exposed a routing mismatch: narrative benchmark
 prose selected a hosted graph workflow whose event filter covers data inputs.
 The focused correction narrows only that narrative classification, retaining
@@ -277,6 +285,34 @@ identical. Timing attribution and adaptive repetition remain open; this is
 neither whole-repo acceptance nor a claimed compression speedup.
 
 ## Current Modernization Sequence
+
+### Next Intermediate Beta Review
+
+On 3 October 2026 the maintainer requested a bounded intermediate beta review
+before the entire modernization program is complete. Demonstrable correctness,
+scientific validity and maintainability improvements may be retained without a
+speedup; measured performance and compression ratio remain the priority.
+Native format, packaging, codec and kernel evolution is authorized, with
+versioning, existing-archive readability and required-HIP semantics preserved.
+Superiority over other archive applications is a research target, not an
+unmeasured acceptance claim.
+
+Freeze the candidate scope after the next evidence-backed codec batch, then run
+the applicable benchmark matrix on the frozen source and binaries. Include all
+production block sizes, declared effort settings, representative permission-
+checked corpora, supported-format coverage and eligible comparator cases.
+Separate timed RAM codec studies from bounded filesystem interoperability
+checks; preserve every sample and identify missing or inconclusive cells.
+Use the accumulated change range for beta qualification, rather than repeating
+unrelated full suites during each small iteration.
+
+Refresh README claims, benchmark reports and reproducible plots from that
+candidate's evidence. Prepare a concrete version proposal, changelog, x64 HIP
+package/MSI validation and a known-limitations list, including unresolved
+security findings and incomplete qualification. Present the candidate for
+maintainer review before beta tagging or publication; the green light has not
+yet been given. The existing held release does not become qualified by this
+milestone. Routine development commits can continue while preparation proceeds.
 
 The maintainer requests consistent shared contracts, ownership patterns and
 policies across codecs, headers, functions and tools. Subsequent rounds must

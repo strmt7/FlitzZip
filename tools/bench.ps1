@@ -1,9 +1,9 @@
 param(
     [string]$Configuration = "Release",
     [int64]$SizeMiB = 10240,
-    [ValidateRange(1, 64)] [int]$Iterations = 3,
+    [ValidateRange(1, 1024)] [int]$Iterations = 3,
     [ValidateRange(3, 10)] [int]$PilotIterations = 3,
-    [ValidateRange(3, 64)] [int]$MaxIterations = 64,
+    [ValidateRange(3, 1024)] [int]$MaxIterations = 1024,
     [ValidateRange(1, 600)] [double]$MinimumMeasuredSeconds = 30,
     [ValidateRange(0.1, 25)] [double]$TargetRelativeStandardErrorPct = 2,
     [ValidateRange(0.1, 50)] [double]$MaxRelativeStdDevPct = 5,

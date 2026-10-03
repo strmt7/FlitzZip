@@ -75,6 +75,34 @@ function Test-BenchmarkProfileBinding {
 }
 Test-BenchmarkProfileBinding -ScriptAst $ast
 
+# Purpose: Exercise the production count parameters and minimum/maximum guard without launching workloads.
+# Inputs: ScriptAst supplies the exact parameter block and count admission statement.
+# Outputs: Admits bounded short-workload counts and rejects invalid ranges before any codec execution.
+function Test-BenchmarkCountBinding {
+    param([Management.Automation.Language.ScriptBlockAst]$ScriptAst)
+    $guards = @($ScriptAst.EndBlock.Statements | Where-Object {
+        $_.Extent.Text.StartsWith('if (-not $FixedIterations -and $Iterations -gt $MaxIterations)')
+    })
+    if ($guards.Count -ne 1) { throw 'Count binding fixture cannot locate the production admission guard.' }
+    $entry = [scriptblock]::Create(($ScriptAst.ParamBlock.Extent.Text + "`n" + $guards[0].Extent.Text +
+        "`n" + '[pscustomobject]@{ minimum = $Iterations; maximum = $MaxIterations }'))
+    $defaults = & $entry
+    if ($defaults.minimum -ne 3 -or $defaults.maximum -ne 1024) { throw 'Production count defaults changed.' }
+    foreach ($count in @(65, 250, 1024)) {
+        $bound = & $entry -Iterations $count -MaxIterations $count
+        if ($bound.minimum -ne $count -or $bound.maximum -ne $count) { throw 'A bounded count was not admitted.' }
+    }
+    foreach ($arguments in @(@{ Iterations = 0 }, @{ Iterations = 1025 }, @{ MaxIterations = 2 },
+            @{ MaxIterations = 1025 }, @{ Iterations = 300; MaxIterations = 250 })) {
+        $rejected = $false
+        try { & $entry @arguments | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'An invalid confirmation count was admitted.' }
+    }
+    $fixed = & $entry -Iterations 300 -MaxIterations 250 -FixedIterations
+    if ($fixed.minimum -ne 300) { throw 'Fixed-count diagnostics unexpectedly used the pilot ceiling.' }
+}
+Test-BenchmarkCountBinding -ScriptAst $ast
+
 $distribution = Measure-BenchmarkDistribution -Values @(1, 2, 3)
 if ($distribution.count -ne 3 -or $distribution.mean_seconds -ne 2 -or
     $distribution.sample_std_dev_seconds -ne 1 -or $distribution.relative_std_dev_pct -ne 50 -or
@@ -184,6 +212,15 @@ try {
     if ($threeRoundPlans[0].block_size_kib -ne 256 -or $thirdRound[0].BlockSizeKiB -ne 256 -or
         $threeRoundSamples[4].BlockSizeKiB -ne 512 -or $threeRoundSamples.Count -ne 12) {
         throw 'Counterbalancing mutated the prescribed plan or failed to restore odd-round case order.'
+    }
+    $extendedPlan = @(@{ block_size_kib = 256; confirmation_count = 65 })
+    $extendedSamples = @(Invoke-BenchmarkPlannedSample -Plans $extendedPlan -Stage confirmation -JournalPath $journal 6>$null)
+    $extendedEvents = @(Get-Content -LiteralPath $journal | ForEach-Object { $_ | ConvertFrom-Json })
+    if ($extendedSamples.Count -ne 130 -or $extendedEvents.Count -ne 137 -or
+        $extendedPlan[0].confirmation_count -ne 65 -or $extendedSamples[-1].Iteration -ne 65 -or
+        $extendedSamples[126].Lane -ne 'GPU' -or $extendedSamples[127].Lane -ne 'CPU' -or
+        $extendedSamples[128].Lane -ne 'CPU' -or $extendedSamples[129].Lane -ne 'GPU') {
+        throw 'Extended confirmation lost observations, changed its count or failed to alternate lane order.'
     }
     $rejected = $false
     try { Write-BenchmarkJournal -Path $journal -Event @{} -Create } catch { $rejected = $true }
@@ -383,6 +420,29 @@ $studyArguments = @{
     Runs = @($fixtureRun); Profile = 'SparseRecord'; SizeMiB = 10240; Level = 5
     SampleIntervalMs = 100; InterRunPauseMs = 250; HipRuntimeVersion = '10.0.3679.0'
 }
+$shortPilot = @(foreach ($lane in @('CPU', 'GPU')) {
+    foreach ($iteration in 1..3) {
+        Get-PlanningRun -Lane $lane -Iteration $iteration -Seconds $(if ($lane -eq 'CPU') { 0.04 } else { 0.15 })
+    }
+})
+$shortPlan = @(Get-BenchmarkConfirmationPlan -PilotRuns $shortPilot -Blocks @(256) -Lanes @('CPU', 'GPU') `
+    -MinimumCount 3 -MaximumCount 1024 -MinimumSeconds 30 -TargetRsePct 2)
+if ($shortPlan[0].requested_count -ne 250 -or $shortPlan[0].confirmation_count -ne 250 -or $shortPlan[0].count_capped) {
+    throw 'Paired short workloads were limited to 64 observations or planned from only the slower lane.'
+}
+$tinyPilot = @(foreach ($iteration in 1..3) { Get-PlanningRun -Iteration $iteration -Seconds 1e-8 })
+$tinyPlan = @(Get-BenchmarkConfirmationPlan -PilotRuns $tinyPilot -Blocks @(256) -Lanes @('CPU') `
+    -MinimumCount 3 -MaximumCount 1024 -MinimumSeconds 600 -TargetRsePct 2)
+if ($tinyPlan[0].requested_count -ne 20000000000 -or $tinyPlan[0].confirmation_count -ne 1024 -or -not $tinyPlan[0].count_capped) {
+    throw 'A large pilot request overflowed or was silently reduced instead of retaining its explicit ceiling.'
+}
+$unrepresentable = @(foreach ($iteration in 1..3) { Get-PlanningRun -Iteration $iteration -Seconds 1e-20 })
+$rejected = $false
+try {
+    Get-BenchmarkConfirmationPlan -PilotRuns $unrepresentable -Blocks @(256) -Lanes @('CPU') `
+        -MinimumCount 3 -MaximumCount 1024 -MinimumSeconds 30 -TargetRsePct 2 | Out-Null
+} catch { $rejected = $_.Exception.Message -match 'exact supported integer range' }
+if (-not $rejected) { throw 'An unrepresentable confirmation request was rounded or wrapped into a valid count.' }
 $studyIdentity = [ordered]@{
     source_commit = 'a' * 40; source_dirty = $false; binary_sha256 = 'b' * 64
     binary_dependencies_sha256 = [ordered]@{ 'libzstd.dll' = 'c' * 64 }
@@ -863,7 +923,18 @@ foreach ($invalidRemaining in @(0, -1, [double]::NaN, [double]::PositiveInfinity
     } catch { $rejected = $true }
     if (-not $rejected) { throw 'An invalid remaining wall budget was accepted.' }
 }
-foreach ($invalidCount in @(0, 3.5, 65)) {
+$extendedWallPlans = @(@{ block_size_kib = 256; confirmation_count = 250 })
+$extendedWallBudget = Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots -Plans $extendedWallPlans `
+    -Lanes @('CPU', 'GPU') -RemainingSeconds 5375 -PauseSeconds 0.25
+if ($extendedWallBudget.estimated_seconds -ne 5375 -or -not $extendedWallBudget.fits_in_remaining_time) {
+    throw 'Extended confirmation counts lost a lane or escaped complete wall-time admission.'
+}
+$extendedTooShort = Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots -Plans $extendedWallPlans `
+    -Lanes @('CPU', 'GPU') -RemainingSeconds 5374.999 -PauseSeconds 0.25
+if ($extendedTooShort.fits_in_remaining_time -or $extendedWallPlans[0].confirmation_count -ne 250) {
+    throw 'Extended confirmation counts changed to fit an insufficient wall-time budget.'
+}
+foreach ($invalidCount in @(0, 3.5, 1025)) {
     $rejected = $false
     try {
         Get-BenchmarkConfirmationWallBudget -PilotRuns $wallPilots `

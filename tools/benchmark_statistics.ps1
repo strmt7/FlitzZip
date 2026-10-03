@@ -187,13 +187,15 @@ function Get-BenchmarkLaneEvidence {
 }
 
 # Purpose: Freeze a paired confirmation count using only the separate pilot sample.
-# Inputs: PilotRuns, enabled lanes, requested count, count ceiling, duration floor and assumed independent RSE target.
-# Outputs: Returns one immutable plan per block size; capped requests are recorded rather than declared converged.
+# Inputs: PilotRuns, enabled lanes, requested count, a 3..1024 count ceiling, duration floor and assumed independent RSE target.
+# Outputs: Returns one immutable plan per block size; retains uncapped exact-integer requests or rejects unrepresentable requests.
 function Get-BenchmarkConfirmationPlan {
     param([object[]]$PilotRuns, [int[]]$Blocks, [string[]]$Lanes,
-        [int]$MinimumCount, [int]$MaximumCount, [double]$MinimumSeconds, [double]$TargetRsePct)
+        [ValidateRange(1, 1024)][int]$MinimumCount, [ValidateRange(3, 1024)][int]$MaximumCount,
+        [ValidateRange(1, 600)][double]$MinimumSeconds, [ValidateRange(0.1, 25)][double]$TargetRsePct)
+    if ($MinimumCount -gt $MaximumCount) { throw 'The minimum confirmation count cannot exceed the maximum.' }
     foreach ($block in $Blocks) {
-        $requested = [math]::Max(3, $MinimumCount)
+        $requested = [math]::Max(3.0, [double]$MinimumCount)
         foreach ($lane in $Lanes) {
             $runs = @($PilotRuns | Where-Object { $_.BlockSizeKiB -eq $block -and $_.Lane -eq $lane })
             $evidence = Get-BenchmarkLaneEvidence -Runs $runs
@@ -202,8 +204,11 @@ function Get-BenchmarkConfirmationPlan {
                 $requested = [math]::Max($requested, [math]::Ceiling([math]::Pow($metric.relative_std_dev_pct / $TargetRsePct, 2)))
             }
         }
-        [ordered]@{ block_size_kib = $block; requested_count = [int]$requested
-            confirmation_count = [int][math]::Min($MaximumCount, $requested)
+        if ([double]::IsNaN($requested) -or [double]::IsInfinity($requested) -or $requested -gt 9007199254740991) {
+            throw 'Pilot confirmation request exceeds the exact supported integer range; pilots retained.'
+        }
+        [ordered]@{ block_size_kib = $block; requested_count = [int64]$requested
+            confirmation_count = [int][math]::Min([double]$MaximumCount, $requested)
             count_capped = ($requested -gt $MaximumCount); stopping_rule = 'count_fixed_before_confirmation' }
     }
 }
@@ -219,7 +224,7 @@ function Get-BenchmarkConfirmationWallBudget {
     $estimated = 0.0
     foreach ($plan in $Plans) {
         $count = [double]$plan.confirmation_count
-        if ([double]::IsNaN($count) -or [double]::IsInfinity($count) -or $count -lt 1 -or $count -gt 64 -or
+        if ([double]::IsNaN($count) -or [double]::IsInfinity($count) -or $count -lt 1 -or $count -gt 1024 -or
             $count -ne [math]::Floor($count)) { throw 'Invalid frozen confirmation count.' }
         foreach ($lane in $Lanes) {
             $runs = @($PilotRuns | Where-Object { $_.BlockSizeKiB -eq $plan.block_size_kib -and $_.Lane -eq $lane })
