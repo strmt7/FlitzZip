@@ -1,6 +1,7 @@
 $Script:SuperZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
 . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
+. (Join-Path $PSScriptRoot 'native_ci.ps1')
 
 # Purpose: Convert a path to the repository-relative slash form used by the verification classifier.
 # Inputs: `Path` may be absolute, relative, slash-separated, or backslash-separated.
@@ -275,6 +276,7 @@ function Get-SuperZipVerificationScope {
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
         '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
+        '^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
@@ -356,13 +358,15 @@ function Get-SuperZipVerificationScope {
 function Get-SuperZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$', '^tools/superzip_verification\.psm1$', '^\.github/workflows/(windows-ci|rocm-qualification)\.yml$')
+           Command = (Get-SuperZipVerificationCommand -Id 'native-ci-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_ci.ps1') -Reason 'hosted CPU/HIP routing, event ranges and conditional native/matrix work must match real workflow contracts') }
         @{ Pattern = @('^tests/cpp/test_main\.cpp$', '^tools/test_native_runner\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id 'native-runner-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_runner.ps1') -Reason 'the exact production test runner must preserve default/substring selection and reject invalid exact filters') }
         @{ Pattern = @('^tools/(native_test_selection|native_component_tests|test_native_selection)\.ps1$', '^tools/superzip_verification\.psm1$', '^CMakeLists\.txt$')
            Command = (Get-SuperZipVerificationCommand -Id 'native-selection-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_selection.ps1') -Reason 'native component selection must preserve registry coverage, exact execution, HIP readiness and failure propagation') }
         @{ Pattern = @('^tools/(ci_tool_contracts|test_ci_tool_contracts)\.ps1$', '^\.github/workflows/(component-contracts|windows-ci)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'ci-tool-contracts-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_ci_tool_contracts.ps1') -Reason 'CI projection must retain affected tool contracts without executing product or timing workloads') }
-        @{ Pattern = @('^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|build)\.ps1$', '^tools/rocm-sdk-lock\.json$')
+        @{ Pattern = @('^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|build)\.ps1$', '^tools/rocm-sdk-lock\.json$', '^\.github/workflows/rocm-qualification\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'rocm-toolchain-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_rocm_toolchain.ps1') -Reason 'changed compiler scoping requires the production ROCm environment contracts') }
         @{ Pattern = @('^tools/(hip_architecture|test_hip_architecture|compile_hip_object|build)\.ps1$', '^cmake/ResolveHipArchitecture\.cmake$')
            Command = (Get-SuperZipVerificationCommand -Id 'hip-architecture-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_hip_architecture.ps1') -Reason 'changed target resolution requires explicit and portable architecture contracts') }
@@ -575,11 +579,13 @@ function Get-SuperZipVerificationPlan {
     $longRunningWorkflows = New-Object System.Collections.ArrayList
     $workflowSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $longRunningSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $hostedNative = Get-SuperZipHostedWorkflowSelection -Paths $paths -Full:$scope.fullEscalationRequired
     foreach ($pair in @(
         @("component-contracts", (@($local | Where-Object { Test-SuperZipToolContractCommand -Command $_ }).Count -gt 0)),
         @("lint", ($scope.touchesLintSurface -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/workflows/benchmark-graph\.yml$', '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$')))),
-        @("windows-ci", ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.touchesNativeBuildInputs -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/workflows/windows-ci\.yml$')))),
+        @('windows-ci', $hostedNative.windows),
+        @('rocm-qualification', $hostedNative.rocm),
         @("security", ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("greenbone-openvas-vulnetix", ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-(vulnetix|live)\.yml$', '^\.github/requirements/requirements-gvm-tools-linux\.txt$')))),
         @("scorecard", ($scope.touchesWorkflow -or $scope.fullEscalationRequired))
@@ -650,5 +656,10 @@ Export-ModuleMember -Function `
     Test-SuperZipAllPath, `
     Get-SuperZipVerificationScope, `
     Get-SuperZipVerificationPlan, `
+    Get-SuperZipHostedWorkflowSelection, `
+    Get-SuperZipHostedNativePlan, `
+    Get-SuperZipNativeCiEvent, `
+    Invoke-SuperZipHostedNativeTest, `
+    Assert-SuperZipCpuValidationReceipt, `
     Test-SuperZipToolContractCommand, `
     Invoke-SuperZipVerificationCommand

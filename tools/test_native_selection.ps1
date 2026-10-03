@@ -91,8 +91,8 @@ function Invoke-NativeFixtureCli {
     $script:NativeFixtureCalls.Add("cli:$Argument")
     $global:LASTEXITCODE = 0
     $checks = @($script:NativeFixtureCalls | Where-Object { $_ -eq 'cli:gpu-info' }).Count
-    if ($script:NativeFixtureHipMode -eq 'not-compiled') { 'hip_compiled=false' } else { 'hip_compiled=true' }
-    if ($script:NativeFixtureHipMode -eq 'unavailable' -or ($script:NativeFixtureHipMode -eq 'lost' -and $checks -gt 1)) {
+    if ($script:NativeFixtureHipMode -in @('not-compiled', 'cpu-only')) { 'hip_compiled=false' } else { 'hip_compiled=true' }
+    if ($script:NativeFixtureHipMode -in @('unavailable', 'cpu-only') -or ($script:NativeFixtureHipMode -eq 'lost' -and $checks -gt 1)) {
         'available=false'
     } else { 'available=true' }
 }
@@ -128,6 +128,16 @@ foreach ($mode in @('not-compiled', 'unavailable', 'lost')) {
     $expectedCalls = if ($mode -eq 'lost') { 'cli:gpu-info|case:first|case:second|cli:gpu-info' } else { 'cli:gpu-info' }
     Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq $expectedCalls) "actual HIP readiness rejection: $mode"
 }
+$script:NativeFixtureHipMode = 'ready'
+Assert-NativeSelectionRejected { Invoke-SuperZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -CpuOnlyValidation } 'CPU-only binary'
+$script:NativeFixtureHipMode = 'cpu-only'
+$script:NativeFixtureCalls.Clear()
+$cpuOutput = @(Invoke-SuperZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -CpuOnlyValidation)
+Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first|case:second|cli:gpu-info') 'explicit CPU validation retains exact cases and backend checks'
+Assert-NativeSelection (@($cpuOutput | Where-Object { $_ -match 'GPU assertions are not qualified' }).Count -eq 1) 'CPU results must not imply GPU qualification'
+Assert-NativeSelectionRejected { Invoke-SuperZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli } 'requires a compiled HIP backend'
+Assert-SuperZipCpuValidationReceipt -Receipt ([pscustomobject]@{ recipe = @{ SUPERZIP_ENABLE_HIP = 'OFF' } })
+Assert-NativeSelectionRejected { Assert-SuperZipCpuValidationReceipt -Receipt ([pscustomobject]@{ recipe = @{ SUPERZIP_ENABLE_HIP = 'ON' } }) } 'HIP OFF'
 $script:NativeFixtureHipMode = 'ready'
 foreach ($cases in @(@(), @('first', 'first'))) {
     $invalid = [pscustomobject]@{ mode = 'component'; tests = $cases; requireHip = $true }

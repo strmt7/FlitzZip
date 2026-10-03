@@ -1,6 +1,28 @@
 name: rocm-qualification
 
 on:
+  push:
+    paths: &hip-inputs
+      - .github/workflows/rocm-qualification.yml
+      - CMakeLists.txt
+      - cmake/**
+      - src/gpu/**
+      - src/core/*.hpp
+      - third_party/**
+      - tools/build.ps1
+      - tools/compile_hip_object.ps1
+      - tools/hip_architecture.ps1
+      - tools/rocm_toolchain.ps1
+      - tools/rocm-sdk-lock.json
+      - tools/process_environment.ps1
+      - tools/cmake_toolchain.ps1
+      - tools/build_parallelism.ps1
+      - tools/local_resources.ps1
+      - tools/bootstrap_rocm_sdk.py
+      - tools/native_build_provenance.py
+      - tools/native_build_receipt.py
+  pull_request:
+    paths: *hip-inputs
   workflow_dispatch:
     inputs:
       runner:
@@ -16,13 +38,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: rocm-qualification-${{ github.ref }}-${{ inputs.runner }}
+  group: rocm-qualification-${{ github.ref }}-${{ inputs.runner || 'windows-2025-vs2026' }}
   cancel-in-progress: true
 
 jobs:
   compile-link:
     name: Compile and link the pinned native ROCm toolchain
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner || 'windows-2025-vs2026' }}
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -53,6 +75,14 @@ jobs:
       - name: Compile and link all release targets
         shell: pwsh
         run: tools/build.ps1 -Configuration Release -HipArch release
+      - name: Validate required-HIP build receipt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $receipt = python tools/native_build_receipt.py validate --configuration Release --require-hip
+          if ($LASTEXITCODE -ne 0) { throw 'HIP qualification requires a current successful native receipt.' }
+          $identity = ($receipt -join [Environment]::NewLine) | ConvertFrom-Json
+          Write-Output "HIP receipt SHA-256: $($identity.receipt_sha256); native inputs: $($identity.inputs_sha256)."
       - name: Record compile qualification limits
         shell: pwsh
         run: |

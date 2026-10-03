@@ -15,6 +15,8 @@ on:
       - src/cli/**
       - tests/cpp/test_main.cpp
       - .github/workflows/component-contracts.yml
+      - .github/workflows/windows-ci.yml
+      - .github/workflows/rocm-qualification.yml
       - .github/workflows/security-code-scanning.yml
       - .github/requirements/**
       - .github/codeql/**

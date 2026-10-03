@@ -12,10 +12,15 @@ on:
       - tests/**
       - third_party/**
       - resources/app/**
+      - resources/design/**
       - resources/brand/**
       - resources/licenses/**
       - tools/build.ps1
       - tools/test.ps1
+      - tools/gui_smoke.ps1
+      - tools/SuperZip.GuiSmoke.*.psm1
+      - tools/generate_app_icon.ps1
+      - tools/verify_brand_assets.ps1
       - tools/compile_hip_object.ps1
       - tools/hip_architecture.ps1
       - tools/rocm_toolchain.ps1
@@ -31,6 +36,7 @@ on:
       - tools/native_build_provenance.py
       - tools/native_build_receipt.py
       - tools/bootstrap_rocm_sdk.py
+      - '!src/gpu/*.hip.cpp'
   pull_request:
     paths: *native-inputs
   workflow_dispatch:
@@ -64,7 +70,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Select affected hosted native work
+        id: native_plan
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
+            -PullRequestBase $env:PR_BASE -GitHubOutput $env:GITHUB_OUTPUT
       - name: Toolchain diagnostics
+        if: steps.native_plan.outputs.native_build == 'true'
         shell: pwsh
         run: |
           & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
@@ -74,9 +92,11 @@ jobs:
             -property installationPath
           Get-Command cmake | Select-Object Source,Version
       - name: Build
+        if: steps.native_plan.outputs.native_build == 'true'
         shell: pwsh
         run: tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
       - name: Validate actual native invocation receipt
+        if: steps.native_plan.outputs.native_build == 'true'
         # Mechanism regressions run in the component-contracts lane when changed.
         # This check binds every native build to its actual configured outputs.
         shell: pwsh
@@ -84,11 +104,20 @@ jobs:
           python tools/native_build_receipt.py validate --configuration Release
           if ($LASTEXITCODE -ne 0) { throw "Configured CPU build receipt is stale or incomplete." }
       - name: Test
+        if: steps.native_plan.outputs.native_tests == 'true'
         shell: pwsh
-        run: tools/test.ps1
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
+            -PullRequestBase $env:PR_BASE -RunTests
       - name: CLI format compatibility matrix
+        if: steps.native_plan.outputs.format_matrix == 'true'
         shell: pwsh
         run: tools/format_matrix_smoke.ps1
-      - name: Security scan
+      - name: Affected repository policy scan
+        if: steps.native_plan.outputs.policy_scan == 'true' && matrix.os == 'windows-2022'
         shell: pwsh
         run: tools/security_scan.ps1

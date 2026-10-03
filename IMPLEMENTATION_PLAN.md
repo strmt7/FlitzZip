@@ -20,6 +20,13 @@ their own cases, and runner changes select eight controlled registry contracts.
 Exact filters avoid substring collisions. Shared/unmapped inputs retain broad
 coverage; further source mappings and hosted cycle improvements remain open.
 
+Hosted [native work](docs/targeted-verification.md#hosted-native-work) now follows
+canonical step admission and complete Git event ranges. HIP implementation edits
+select real complete-SDK compilation instead of unrelated CPU-only tests.
+Registered test edits use exact CPU-validation cohorts, format/policy scans remain
+conditional, and CPU results explicitly leave GPU assertions unqualified. Local
+routing contracts pass; exact-commit hosted qualification remains pending.
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.

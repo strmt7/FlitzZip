@@ -131,10 +131,46 @@ fixture. The hosted component lane admits this runner source dependency; it
 compiles the small contract fixture and keeps product builds in the native lane.
 
 This is an incremental coverage map, not proof that all native source families
-have fine-grained routing. Hosted Windows CI still uses its broad CPU-validation
-driver and unconditional compatibility matrix; narrowing those safely remains
-separate work. A local required-HIP cohort must never be relabeled as passed
-GPU qualification on a hosted runner without hardware.
+have fine-grained routing. A local required-HIP cohort must never be relabeled as
+passed GPU qualification on a hosted runner without hardware.
+
+### Hosted Native Work
+
+`tools/ci_native_plan.ps1` projects build, native runtime, format-matrix and
+repository-policy decisions from the same canonical planner. Pushes use the
+complete event base; pull requests use their event base against the checked-out
+merge result. Initial pushes classify tracked files, and manual dispatch remains
+explicit broad CPU qualification. Missing or malformed bases fail rather than
+silently using an arbitrary preceding commit. Checkout retains comparison history.
+
+Windows CI executes only admitted steps. Registered test-only changes use their
+component cohort; runner-only changes retain their compiled registry contracts
+in the component lane. Format-matrix smoke runs when selected for a production
+parser/routing mechanism or explicit broad qualification. Selected repository
+policy checks remain on one Windows matrix leg, since their logic is independent
+of compiler generation. Other lint, SAST, fuzz and release coverage remains in
+its existing lanes and under its own admission rules.
+
+HIP implementation files are excluded from the CPU-only build's event filter.
+They instead trigger `rocm-qualification`, which provisions the complete pinned
+SDK, compiles and links all release targets, and validates the current required-HIP
+build receipt. GPU sources, shared GPU/core headers, vendored dependencies and
+compiler/provisioning inputs admit that qualification; shared/CPU inputs still
+admit Windows CI. The path exclusions follow
+[GitHub's ordered path-filter rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore).
+Planner/filter parity checks cover every current HIP translation unit declared
+in CMake, mixed CPU/HIP batches and future nested paths.
+
+Hosted component execution explicitly uses `-CpuOnlyValidation`. Both its
+receipt and CLI must prove HIP is disabled; the mode rejects a HIP-enabled local
+build. The runner records exact selected invocations and states that GPU
+assertions are unqualified. It does not enable CPU fallback in a required-GPU
+archive operation. Physical HIP correctness and RAM timing remain local/device
+qualification; compiling all architectures does not prove execution on them.
+
+Shared or unmapped source mechanisms still use the broad native driver. Compiler
+or SDK changes with known wider behavior require explicit broad qualification;
+metadata-only workflow/tool changes do not justify rebuilding the application.
 
 Path count alone does not widen a documentation batch. An unknown path fails
 planning with its name and a classification request, rather than guessing that

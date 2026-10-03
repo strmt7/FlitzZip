@@ -1222,3 +1222,43 @@ is retained in `out/native-selection-corrected-component-verification-20261003.j
 and `out/native-selection-corrected-live-driver-20261003.json`. Hosted assessment
 of this routing batch remains pending; the preceding post-push audit still
 rejects 211 open security alerts. The broader modernization goal remains active.
+
+## Round Twenty-Nine: Hosted Work Follows Native Mechanisms
+
+Fresh completed step evidence for `6a089e8` shows Windows CI took 448 seconds on
+VS 2026 and 343 seconds on VS 2022. Builds account for 337/258 seconds, blanket
+native tests 55/37, unconditional format matrix 30/25, and policy scans 9/7.
+Both jobs, component contracts, lint and scorecard pass; security remains running
+at this intermediate observation. These are one checkpoint's hosted timings,
+not a measured improvement from the following change.
+
+The hosted native entry now projects its build/runtime/matrix/policy admissions
+from the canonical planner and complete event range. Test-only edits select
+their exact registered cases. Runner-only edits select controlled registry
+contracts in the component lane. The matrix and policy scan remain selected for
+their actual mechanisms or manual broad qualification; compiler-independent
+policy checks run on one matrix leg. No scanner is removed or finding suppressed.
+
+CPU-only CI cannot compile HIP implementation files. Those now trigger complete
+pinned-SDK provisioning and actual all-release-target HIP compile/link validation,
+with a required-HIP invocation receipt. Shared dependency changes retain both
+compile boundaries. Hosted component invocations explicitly report CPU-only
+validation and unqualified GPU assertions. Current HIP-enabled receipts and
+binaries cannot opt into that mode; the actual local entry rejects its HIP-ON
+receipt before invoking any selected case.
+
+Twelve selected local commands pass, without a product rebuild, GUI/package
+smoke or timing workload. Routing contracts cover real YAML filter parity,
+CMake HIP sources, event ranges, manual/initial events, command deduplication,
+failure propagation and explicit backend states. A plural PowerShell function
+name is corrected after the first linter rejection. Frozen follow-up gates cover
+the added required-HIP receipt step and documentation. The new hosted CPU
+component branch and automatic HIP job still require actual hosted assessment;
+offline contracts are not presented as their runtime success.
+
+Evidence remains under `out/hosted-native-routing-corrected-verification-20261003.json`
+and `out/native-ci-baseline-job-timings-20261003.json`.
+[Routing and measurement limits](targeted-verification.md#hosted-native-work)
+preserve the remaining partial dependency map and hardware qualification needs.
+The security backlog and broader frontend/format/performance/release work remain
+open; the goal is not complete.

@@ -86,27 +86,33 @@ function Get-SuperZipNativeTestSelection {
 }
 
 # Purpose: Require a compiled, available HIP backend before and after GPU-dependent component cases.
-# Inputs: Cli is the current built executable, whose successful native receipt is checked by the caller.
-# Outputs: Throws if actual HIP readiness is absent; does not enable CPU fallback.
+# Inputs: Cli is receipt-validated; CpuOnlyValidation explicitly requires a backend compiled without HIP.
+# Outputs: Requires actual HIP readiness normally, or rejects any HIP backend in declared CPU-only validation.
 function Assert-SuperZipNativeSelectionHip {
-    param([Parameter(Mandatory = $true)][string]$Cli)
+    param([Parameter(Mandatory = $true)][string]$Cli, [switch]$CpuOnlyValidation)
     $info = @(& $Cli gpu-info)
+    if ($CpuOnlyValidation.IsPresent) {
+        if ($LASTEXITCODE -ne 0 -or $info -notcontains 'hip_compiled=false' -or $info -notcontains 'available=false') {
+            throw 'CPU-only native validation requires a CPU-only binary; GPU qualification cannot be bypassed.'
+        }
+        return
+    }
     if ($LASTEXITCODE -ne 0 -or $info -notcontains 'hip_compiled=true' -or $info -notcontains 'available=true') {
         throw 'Native HIP component selection requires a compiled HIP backend and an available device.'
     }
 }
 
 # Purpose: Execute each selected native case once and stop immediately on failure or registry disagreement.
-# Inputs: Selection is a validated component plan; TestRunner/Cli are receipt-validated production executables.
-# Outputs: Forwards test output and confirms exact one-case success, with HIP readiness when required.
+# Inputs: Selection and binaries are validated; CpuOnlyValidation requires an explicit HIP-OFF build receipt.
+# Outputs: Confirms exact cases and backend state; CPU-only completion never qualifies GPU assertions.
 function Invoke-SuperZipNativeTestSelection {
     param([Parameter(Mandatory = $true)]$Selection,
-          [Parameter(Mandatory = $true)][string]$TestRunner, [string]$Cli)
+          [Parameter(Mandatory = $true)][string]$TestRunner, [string]$Cli, [switch]$CpuOnlyValidation)
     if ($Selection.mode -ne 'component' -or -not $Selection.tests.Count -or
         @($Selection.tests | Sort-Object -Unique).Count -ne $Selection.tests.Count) {
         throw 'Native component execution requires a nonempty unique selection.'
     }
-    if ($Selection.requireHip) { Assert-SuperZipNativeSelectionHip -Cli $Cli }
+    if ($Selection.requireHip -or $CpuOnlyValidation.IsPresent) { Assert-SuperZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation }
     foreach ($name in $Selection.tests) {
         $output = @(& $TestRunner "=$name")
         $exitCode = $LASTEXITCODE
@@ -117,6 +123,20 @@ function Invoke-SuperZipNativeTestSelection {
             throw "Selected native case did not run exactly once and pass: $name (exit $exitCode)."
         }
     }
-    if ($Selection.requireHip) { Assert-SuperZipNativeSelectionHip -Cli $Cli }
-    Write-Output "Native component tests passed: $($Selection.tests.Count) cases; components=$($Selection.components -join ',')."
+    if ($Selection.requireHip -or $CpuOnlyValidation.IsPresent) { Assert-SuperZipNativeSelectionHip -Cli $Cli -CpuOnlyValidation:$CpuOnlyValidation }
+    if ($CpuOnlyValidation.IsPresent) {
+        Write-Output "CPU-only component validation completed: $($Selection.tests.Count) invocations; GPU assertions are not qualified."
+    } else {
+        Write-Output "Native component tests passed: $($Selection.tests.Count) cases; components=$($Selection.components -join ',')."
+    }
+}
+
+# Purpose: Prevent hosted CPU validation from weakening a required-HIP product invocation.
+# Inputs: Receipt is already validated against current files and output bytes.
+# Outputs: Rejects CPU-only mode unless the successful build explicitly configured HIP OFF.
+function Assert-SuperZipCpuValidationReceipt {
+    param([Parameter(Mandatory = $true)]$Receipt)
+    if ($Receipt.recipe.SUPERZIP_ENABLE_HIP -ne 'OFF') {
+        throw 'CPU-only native validation requires a receipt configured with HIP OFF.'
+    }
 }
