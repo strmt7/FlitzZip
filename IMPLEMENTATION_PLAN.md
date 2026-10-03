@@ -43,16 +43,20 @@ The real CPU cohort exposed an incorrect `gpu-info` exit expectation; its guard
 and fixtures now match the unavailable exit contract. Manual hosted validation
 can select a reviewed commit range, retaining broad qualification when empty.
 
-The release-policy batch binds the composite action to the workflow commit
-with GitHub's self-repository syntax and shares identity/replacement/title guards
+The release-policy batch shares identity/replacement/title guards
 between hygiene and security scanning. Release orchestration selects offline
 policy contracts; actual packaging producers retain artifact qualification.
 All 12 selected local requirements pass, with six unchanged checks reused after
 correcting a selector assertion. The shared policy also passes PowerShell 7.
 At `be30316`, Windows CI and ROCm qualification pass. Two SDK DevSkim alerts are
 [individually reviewed false positives](docs/security-code-scanning.md#finding-triage).
-Hosted disposition of the release-action finding and other security work remain
-pending; release publication remains held.
+Hosted actionlint and Semgrep reject the newer self-repository syntax. The
+follow-up removes the single-use composite action and declares its 15 stages
+directly in the workflow. Structured parity verifies identical run bodies,
+tool versions and arguments; conditions use the same exported string inputs.
+The workflow token is limited to metadata/publishing stages. All 13 selected
+follow-up local checks and the official actionlint 1.7.12 binary pass. Hosted
+qualification remains pending; release publication remains held.
 
 ### Earlier Checkpoint Evidence
 

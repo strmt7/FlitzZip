@@ -336,13 +336,13 @@ foreach ($releasePath in @('.github/workflows/release.yml', 'tools/release_workf
         Assert-Selector (Test-Workflow -Plan $releasePlan -Name 'scorecard') 'release workflow changes retain hosted Scorecard'
     }
 }
-foreach ($producerPath in @('CMakeLists.txt', 'tools/package.ps1', '.github/actions/windows-release/action.yml')) {
+foreach ($producerPath in @('CMakeLists.txt', 'tools/package.ps1')) {
     $producerPlan = Get-SuperZipVerificationPlan -ChangedPath @($producerPath)
     foreach ($id in @('release-build', 'msi-identity-smoke', 'package-smoke')) {
         Assert-Selector (Test-RequiredCommand -Plan $producerPlan -Id $id) "actual release producers retain artifact qualification: $producerPath/$id"
     }
 }
-foreach ($releasePath in @('.github/workflows/release.yml', '.github/actions/windows-release/action.yml')) {
+foreach ($releasePath in @('.github/workflows/release.yml')) {
     Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $releasePath) "release policy inputs must trigger hosted component contracts: $releasePath"
 }
 foreach ($inputPath in @('LICENSE', 'resources/licenses/license-notices.json')) {

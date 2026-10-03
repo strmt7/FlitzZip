@@ -83,7 +83,7 @@ $definition = $policy.Find({ param($node)
 }, $false)
 if ($null -eq $definition) { throw 'ROCm release provisioning policy is missing.' }
 . ([scriptblock]::Create($definition.Extent.Text))
-foreach ($workflowPath in @('.github/actions/windows-release/action.yml', '.github/workflows/rocm-qualification.yml')) {
+foreach ($workflowPath in @('.github/workflows/release.yml', '.github/workflows/rocm-qualification.yml')) {
     $workflow = [IO.File]::ReadAllText((Join-Path $repo $workflowPath))
     Test-RocmProvisioningPolicy -WorkflowText $workflow
     foreach ($invalid in @($workflow.Replace('python tools/bootstrap_rocm_sdk.py', 'python other_tool.py'),

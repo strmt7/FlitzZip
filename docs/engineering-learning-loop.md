@@ -516,3 +516,9 @@ security scanning. Offline mutation contracts check commit binding and guard
 removal. Select these contracts for orchestration changes; rebuilding unchanged
 artifacts cannot validate an Actions reference. Keep artifact qualification for
 actual packaging producers.
+
+Verify new GitHub syntax with the actual latest stable scanners before changing
+production workflows. actionlint 1.7.12 and the current Semgrep action-pin rule
+do not recognize `$/`. The release pipeline now declares its stages directly
+in workflow source, preserving commands and pinned tools without a redundant
+local action or scanner exception.

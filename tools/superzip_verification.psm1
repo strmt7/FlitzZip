@@ -304,7 +304,7 @@ function Get-SuperZipVerificationScope {
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-SuperZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/superzip_brand_logo')
-    $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$', '^\.github/actions/windows-release/')
+    $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$')
     $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^\.clang-format$',
         '^\.github/.*\.ya?ml$',
@@ -359,7 +359,7 @@ function Get-SuperZipVerificationScope {
 function Get-SuperZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
-        @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^\.github/workflows/release\.yml$', '^\.github/actions/windows-release/action\.yml$')
+        @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^\.github/workflows/release\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'release-workflow-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_release_workflow_policy.ps1') -Reason 'release action identity and replacement/title safeguards require their offline contracts without publishing artifacts') }
         @{ Pattern = @('^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$', '^tools/superzip_verification\.psm1$', '^\.github/workflows/(windows-ci|rocm-qualification)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'native-ci-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_ci.ps1') -Reason 'hosted CPU/HIP routing, event ranges and conditional native/matrix work must match real workflow contracts') }
@@ -369,7 +369,7 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'native-selection-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_selection.ps1') -Reason 'native component selection must preserve registry coverage, exact execution, HIP readiness and failure propagation') }
         @{ Pattern = @('^tools/(ci_tool_contracts|test_ci_tool_contracts)\.ps1$', '^\.github/workflows/(component-contracts|windows-ci)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'ci-tool-contracts-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_ci_tool_contracts.ps1') -Reason 'CI projection must retain affected tool contracts without executing product or timing workloads') }
-        @{ Pattern = @('^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|build)\.ps1$', '^tools/rocm-sdk-lock\.json$', '^\.github/workflows/rocm-qualification\.yml$')
+        @{ Pattern = @('^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|build)\.ps1$', '^tools/rocm-sdk-lock\.json$', '^\.github/workflows/(rocm-qualification|release)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'rocm-toolchain-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_rocm_toolchain.ps1') -Reason 'changed compiler scoping requires the production ROCm environment contracts') }
         @{ Pattern = @('^tools/(hip_architecture|test_hip_architecture|compile_hip_object|build)\.ps1$', '^cmake/ResolveHipArchitecture\.cmake$')
            Command = (Get-SuperZipVerificationCommand -Id 'hip-architecture-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_hip_architecture.ps1') -Reason 'changed target resolution requires explicit and portable architecture contracts') }

@@ -26,7 +26,7 @@ function Assert-ReleasePolicyMutation {
 }
 
 try {
-    foreach ($relative in @('.github/workflows/release.yml', '.github/actions/windows-release/action.yml')) {
+    foreach ($relative in @('.github/workflows/release.yml')) {
         $destination = Join-Path $fixtureRoot $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination
@@ -36,20 +36,21 @@ try {
         & $validator -RepoRoot $fixtureRoot
     }
     $workflow = '.github/workflows/release.yml'
-    $action = '.github/actions/windows-release/action.yml'
     foreach ($mutation in @(
-            @($workflow, 'uses: $/.github/actions/windows-release', 'uses: ./.github/actions/windows-release', 'Assert-ReleaseWorkflowIdentity'),
+            @($workflow, 'uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97', 'uses: ./.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
+            @($workflow, 'uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97', 'uses: $/.github/actions/untrusted', 'Assert-ReleaseWorkflowIdentity'),
+            @($workflow, '      - name: Checkout', "      - name: Before checkout`n        run: Write-Output before`n      - name: Checkout", 'Assert-ReleaseWorkflowIdentity'),
             @($workflow, 'ref: ${{ github.sha }}', 'ref: main', 'Assert-ReleaseWorkflowIdentity'),
             @($workflow, 'persist-credentials: false', 'persist-credentials: true', 'Assert-ReleaseWorkflowIdentity'),
-            @($workflow, 'replacement_acknowledgement: ${{ inputs.replacement_acknowledgement }}', 'replacement_acknowledgement: unused', 'Assert-ReleaseReplacementSafeguard'),
+            @($workflow, 'REPLACEMENT_ACKNOWLEDGEMENT: ${{ inputs.replacement_acknowledgement }}', 'REPLACEMENT_ACKNOWLEDGEMENT: unused', 'Assert-ReleaseReplacementSafeguard'),
             @($workflow, 'MSI replacements get a fresh ProductCode from the release run identity', 'MSI replacement', 'Assert-ReleaseReplacementSafeguard'),
-            @($action, 'Replacement tag tracking mismatch', 'Unchecked tag', 'Assert-ReleaseReplacementSafeguard'),
-            @($action, 'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"', 'MsiProductIdentity = "fixed"', 'Assert-ReleaseReplacementSafeguard'),
-            @($action, 'Replacement is exceptional', '# SuperZip $env:RELEASE_TAG', 'Assert-ReleaseNotesDoNotDuplicateTitle'))) {
+            @($workflow, 'Replacement tag tracking mismatch', 'Unchecked tag', 'Assert-ReleaseReplacementSafeguard'),
+            @($workflow, 'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"', 'MsiProductIdentity = "fixed"', 'Assert-ReleaseReplacementSafeguard'),
+            @($workflow, 'Replacement is exceptional', '# SuperZip $env:RELEASE_TAG', 'Assert-ReleaseNotesDoNotDuplicateTitle'))) {
         Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $mutation[0] -Original $mutation[1] `
             -Replacement $mutation[2] -Validator $mutation[3]
     }
-    foreach ($relative in @($workflow, $action)) {
+    foreach ($relative in @($workflow)) {
         $file = Join-Path $fixtureRoot $relative
         $text = Get-Content -LiteralPath $file -Raw
         Remove-Item -LiteralPath $file

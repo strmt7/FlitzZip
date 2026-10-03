@@ -89,8 +89,8 @@ repository-relative paths and produces:
 | Performance-sensitive code | normal correctness checks; RAM-only benchmark is manual before claims | workflow set from touched source |
 
 Release orchestration alone does not alter compiled artifacts or MSI inputs.
-Its workflow reference and safeguards are tested directly. Changes to the
-composite packaging action, CMake, package scripts or installer producers still
+Its source-bound stages and safeguards are tested directly. Changes to
+CMake, package scripts or installer producers still
 require the artifact checks; publication remains a separate acceptance step.
 
 ### Explicit Broad Coverage And Classification

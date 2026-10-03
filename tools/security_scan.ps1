@@ -706,7 +706,7 @@ function Test-InstallerScopePolicy {
         -MsiIdentityTool $msiIdentityTool `
         -VerificationSelector $verificationSelector
 
-    $releaseAction = Get-Content -LiteralPath (Join-Path $repo ".github\actions\windows-release\action.yml") -Raw
+    $releaseAction = Get-Content -LiteralPath (Join-Path $repo '.github/workflows/release.yml') -Raw
     Test-InstallerReleaseActionPolicy -ReleaseAction $releaseAction
 }
 

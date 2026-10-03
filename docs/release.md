@@ -4,11 +4,12 @@ SuperZip releases are created by `.github/workflows/release.yml`. The workflow
 is manual-only, versioned with SemVer, and publishes either a beta prerelease or
 a stable GitHub release.
 
-The composite action uses `$/` to resolve from the exact workflow commit, as
-documented in [GitHub's self-repository action syntax](https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/).
-This requires Actions runner 2.336.0 or newer. The workspace checkout still
-uses `github.sha`: the action runs repository build scripts from that workspace.
-`tools/release_workflow_policy.ps1` checks both identities and preserves the
+Release stages are declared directly in the workflow, whose workspace checkout
+uses `github.sha`. Third-party actions use full commit pins. The single-use
+local action has been removed: the latest stable actionlint 1.7.12 rejects
+GitHub's newer `$/` syntax ([upstream issue](https://github.com/rhysd/actionlint/issues/711)),
+and the current Semgrep action-pin rule also flags it. No scanner is suppressed.
+`tools/release_workflow_policy.ps1` checks the checkout identity and preserves the
 replacement acknowledgement and release-note guards. Its offline contracts
 never publish a release or run an installer.
 

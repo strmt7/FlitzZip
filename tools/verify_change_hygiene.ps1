@@ -213,7 +213,7 @@ function Test-ChangedWorkflowPolicy {
     }
     Assert-NoGithubContextInRunBlock -Path $Path -Lines $lines
     Assert-NoFragilePowerShellGalleryBootstrap -Path $Path -Lines $lines
-    if ($Path -in @(".github/workflows/release.yml", ".github/actions/windows-release/action.yml")) {
+    if ($Path -eq '.github/workflows/release.yml') {
         Assert-ReleaseReplacementSafeguard -RepoRoot $repo
         Assert-ReleaseWorkflowIdentity -RepoRoot $repo
         Assert-ReleaseNotesDoNotDuplicateTitle -RepoRoot $repo
