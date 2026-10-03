@@ -118,10 +118,11 @@ $script:NativeFixtureHipMode = 'ready'
 function Invoke-NativeFixtureCli {
     param([string]$Argument)
     $script:NativeFixtureCalls.Add("cli:$Argument")
-    $global:LASTEXITCODE = 0
+    $global:LASTEXITCODE = if ($script:NativeFixtureHipMode -eq 'cpu-only') { 1 }
+        elseif ($script:NativeFixtureHipMode -eq 'cpu-error') { 2 } else { 0 }
     $checks = @($script:NativeFixtureCalls | Where-Object { $_ -eq 'cli:gpu-info' }).Count
-    if ($script:NativeFixtureHipMode -in @('not-compiled', 'cpu-only')) { 'hip_compiled=false' } else { 'hip_compiled=true' }
-    if ($script:NativeFixtureHipMode -in @('unavailable', 'cpu-only') -or ($script:NativeFixtureHipMode -eq 'lost' -and $checks -gt 1)) {
+    if ($script:NativeFixtureHipMode -in @('not-compiled', 'cpu-only', 'cpu-success', 'cpu-error')) { 'hip_compiled=false' } else { 'hip_compiled=true' }
+    if ($script:NativeFixtureHipMode -in @('unavailable', 'cpu-only', 'cpu-success', 'cpu-error') -or ($script:NativeFixtureHipMode -eq 'lost' -and $checks -gt 1)) {
         'available=false'
     } else { 'available=true' }
 }
@@ -164,6 +165,13 @@ $script:NativeFixtureCalls.Clear()
 $cpuOutput = @(Invoke-SuperZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -CpuOnlyValidation)
 Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info|case:first|case:second|cli:gpu-info') 'explicit CPU validation retains exact cases and backend checks'
 Assert-NativeSelection (@($cpuOutput | Where-Object { $_ -match 'GPU assertions are not qualified' }).Count -eq 1) 'CPU results must not imply GPU qualification'
+foreach ($mode in @('cpu-success', 'cpu-error')) {
+    $script:NativeFixtureHipMode = $mode
+    $script:NativeFixtureCalls.Clear()
+    Assert-NativeSelectionRejected { Invoke-SuperZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli -CpuOnlyValidation } 'CPU-only binary'
+    Assert-NativeSelection (($script:NativeFixtureCalls -join '|') -eq 'cli:gpu-info') "CPU info exit status must match the CLI unavailable contract: $mode"
+}
+$script:NativeFixtureHipMode = 'cpu-only'
 Assert-NativeSelectionRejected { Invoke-SuperZipNativeTestSelection -Selection $controlled -TestRunner Invoke-NativeFixtureCase -Cli Invoke-NativeFixtureCli } 'requires a compiled HIP backend'
 Assert-SuperZipCpuValidationReceipt -Receipt ([pscustomobject]@{ recipe = @{ SUPERZIP_ENABLE_HIP = 'OFF' } })
 Assert-NativeSelectionRejected { Assert-SuperZipCpuValidationReceipt -Receipt ([pscustomobject]@{ recipe = @{ SUPERZIP_ENABLE_HIP = 'ON' } }) } 'HIP OFF'

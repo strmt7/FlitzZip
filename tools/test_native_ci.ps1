@@ -93,20 +93,35 @@ if ($LASTEXITCODE -ne 0) { throw 'Event contract requires the checked-out compar
 $push = Get-SuperZipNativeCiEvent -EventName push -PushBase $base
 $pr = Get-SuperZipNativeCiEvent -EventName pull_request -PullRequestBase $base
 Assert-NativeCi (($push.paths -join '|') -eq ($pr.paths -join '|')) 'push/PR use the complete authoritative range'
+$targetedManual = Get-SuperZipNativeCiEvent -EventName workflow_dispatch -DispatchBase $base
+Assert-NativeCi (-not $targetedManual.full -and ($targetedManual.paths -join '|') -eq ($push.paths -join '|')) 'reviewed manual ranges use the same canonical comparison without blanket qualification'
 foreach ($invalid in @('', 'HEAD~1', 'invalid', ('0' * 40))) {
     $rejected = $false
     try { Get-SuperZipNativeCiEvent -EventName pull_request -PullRequestBase $invalid | Out-Null } catch { $rejected = $true }
     Assert-NativeCi $rejected 'missing/malformed event bases must fail instead of testing a guessed range'
+    if ($invalid) {
+        $rejected = $false
+        try { Get-SuperZipNativeCiEvent -EventName workflow_dispatch -DispatchBase $invalid | Out-Null } catch { $rejected = $true }
+        Assert-NativeCi $rejected 'manual ranges reject non-SHA and zero bases'
+    }
 }
+$rejected = $false
+try { Get-SuperZipNativeCiEvent -EventName push -PushBase $base -DispatchBase $base | Out-Null } catch { $rejected = $true }
+Assert-NativeCi $rejected 'manual comparison metadata cannot replace a push event base'
 $workflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/windows-ci.yml') -Raw
 foreach ($output in @('native_build', 'native_tests', 'format_matrix', 'policy_scan')) {
     Assert-NativeCi ($workflow.Contains("steps.native_plan.outputs.$output == 'true'")) "actual workflow honors $output admission"
 }
 Assert-NativeCi ($workflow.Contains('fetch-depth: 0')) 'the event base must be available'
+Assert-NativeCi ([regex]::Matches($workflow, 'DISPATCH_BASE: \$\{\{ inputs\.comparison_base \}\}').Count -eq 2 -and
+    [regex]::Matches($workflow, '-DispatchBase \$env:DISPATCH_BASE').Count -eq 2) 'planning and execution share the reviewed manual base'
 Assert-NativeCi ($workflow.Contains('tools/security_scan.ps1') -and $workflow.Contains("matrix.os == 'windows-2022'")) 'selected policy checks remain without duplicating compiler-independent scans'
 $hipWorkflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/rocm-qualification.yml') -Raw
 Assert-NativeCi ($hipWorkflow.Contains('--require-hip') -and $hipWorkflow.Contains("inputs.runner || 'windows-2025-vs2026'")) 'automatic HIP compilation uses an explicit runner and actual required-HIP receipt'
 $entry = Join-Path $PSScriptRoot 'ci_native_plan.ps1'
+$rejected = $false
+try { & $entry -ChangedPath 'tests/cpp/test_dictionary_block.cpp' -DispatchBase $base | Out-Null } catch { $rejected = $true }
+Assert-NativeCi $rejected 'the real entry rejects ignored manual comparison metadata'
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-native-ci-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 $outputPath = Join-Path $fixtureRoot 'outputs.txt'

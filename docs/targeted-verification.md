@@ -173,7 +173,10 @@ in CMake, mixed CPU/HIP batches and future nested paths.
 
 Hosted component execution explicitly uses `-CpuOnlyValidation`. Both its
 receipt and CLI must prove HIP is disabled; the mode rejects a HIP-enabled local
-build. The runner records exact selected invocations and states that GPU
+build. `gpu-info` reports unavailable HIP with exit code 1; CPU validation
+requires that exit and both false state fields, while required-HIP validation
+requires exit 0 and both true fields. Other exit/state combinations fail.
+The runner records exact selected invocations and states that GPU
 assertions are unqualified. It does not enable CPU fallback in a required-GPU
 archive operation. Physical HIP correctness and RAM timing remain local/device
 qualification; compiling all architectures does not prove execution on them.
@@ -181,6 +184,13 @@ qualification; compiling all architectures does not prove execution on them.
 Shared or unmapped source mechanisms still use the broad native driver. Compiler
 or SDK changes with known wider behavior require explicit broad qualification;
 metadata-only workflow/tool changes do not justify rebuilding the application.
+
+Manual Windows CI runs may set `comparison_base` to a reviewed complete commit
+SHA to classify that base through the checked-out head. Empty input preserves
+explicit broad qualification. Planning and execution consume the same base;
+malformed/zero bases and attempts to replace push/PR metadata are rejected.
+This permits actual component integration checks after a tooling repair without
+silently defaulting to unrelated archive suites.
 
 Path count alone does not widen a documentation batch. An unknown path fails
 planning with its name and a classification request, rather than guessing that

@@ -35,6 +35,14 @@ entropy/sparse batch) and keeps sparse test registrations consistent in CPU-only
 and HIP builds. Inventory checks reject unknown build-conditional registrations;
 GPU assertions still require actual HIP execution.
 
+The sparse collector now shares its operation-owned timing events across
+completed count/gather intervals. Its HIP build and 12 affected cases pass;
+[instrumented evidence](docs/gpu-sparse-event-reuse-validation.md) verifies fewer
+event lifecycles and preserved output/resource requests without a speed claim.
+The real CPU cohort exposed an incorrect `gpu-info` exit expectation; its guard
+and fixtures now match the unavailable exit contract. Manual hosted validation
+can select a reviewed commit range, retaining broad qualification when empty.
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.

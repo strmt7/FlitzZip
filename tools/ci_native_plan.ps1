@@ -5,13 +5,14 @@ param(
     [string[]]$ChangedPath = @(), [string]$BaseRef = '', [string]$HeadRef = 'HEAD',
     [switch]$Full, [switch]$RunTests, [string]$GitHubOutput = '',
     [ValidateSet('push', 'pull_request', 'workflow_dispatch')][string]$EventName,
-    [string]$PushBase = '', [string]$PullRequestBase = ''
+    [string]$PushBase = '', [string]$PullRequestBase = '', [string]$DispatchBase = ''
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'superzip_verification.psm1') -Force
+if ($DispatchBase -and -not $EventName) { throw 'A manual comparison base requires an explicit workflow_dispatch event.' }
 if ($EventName) {
     if ($ChangedPath.Count -or $BaseRef) { throw 'Select an explicit change range or a Git event, not both.' }
-    $nativeEvent = Get-SuperZipNativeCiEvent -EventName $EventName -PushBase $PushBase -PullRequestBase $PullRequestBase
+    $nativeEvent = Get-SuperZipNativeCiEvent -EventName $EventName -PushBase $PushBase -PullRequestBase $PullRequestBase -DispatchBase $DispatchBase
     $paths = $nativeEvent.paths
     $Full = $Full.IsPresent -or $nativeEvent.full
 } else { $paths = @(Get-SuperZipChangedPath -ChangedPath $ChangedPath -BaseRef $BaseRef -HeadRef $HeadRef) }

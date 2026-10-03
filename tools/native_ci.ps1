@@ -41,14 +41,16 @@ function Get-SuperZipHostedNativePlan {
 }
 
 # Purpose: Resolve a complete trusted Git event range without accepting shell expressions as revisions.
-# Inputs: EventName and GitHub-provided push/PR SHAs; manual runs explicitly request broad qualification.
+# Inputs: EventName and complete event SHAs; manual runs are broad unless DispatchBase selects a reviewed range.
 # Outputs: Returns changed paths and broad intent; rejects missing/malformed bases or unavailable Git evidence.
 function Get-SuperZipNativeCiEvent {
     param([ValidateSet('push', 'pull_request', 'workflow_dispatch')][string]$EventName,
-          [string]$PushBase, [string]$PullRequestBase)
-    if ($EventName -eq 'workflow_dispatch') { return [pscustomobject]@{ paths = @('README.md'); full = $true } }
-    $base = if ($EventName -eq 'pull_request') { $PullRequestBase } else { $PushBase }
-    if ($base -notmatch '^[0-9a-f]{40}$' -or ($EventName -eq 'pull_request' -and $base -match '^0{40}$')) {
+          [string]$PushBase, [string]$PullRequestBase, [string]$DispatchBase)
+    if ($DispatchBase -and $EventName -ne 'workflow_dispatch') { throw 'A manual comparison base requires workflow_dispatch.' }
+    if ($EventName -eq 'workflow_dispatch' -and -not $DispatchBase) { return [pscustomobject]@{ paths = @('README.md'); full = $true } }
+    $base = if ($EventName -eq 'pull_request') { $PullRequestBase }
+        elseif ($EventName -eq 'workflow_dispatch') { $DispatchBase } else { $PushBase }
+    if ($base -notmatch '^[0-9a-f]{40}$' -or ($EventName -ne 'push' -and $base -match '^0{40}$')) {
         throw 'Hosted native selection requires a valid complete event base SHA.'
     }
     if ($base -match '^0{40}$') {

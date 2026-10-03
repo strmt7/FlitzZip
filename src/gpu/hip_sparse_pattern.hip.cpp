@@ -98,6 +98,7 @@ void validate_sparse_candidates(std::uint32_t input_bytes, std::span<const Spars
 // Purpose: Collect exact, size-admitted mismatch lists for all sparse candidates in a chunk.
 // Inputs: A resident HIP chunk, its byte extent, ordered candidates, and optional telemetry.
 // Outputs: Returns aligned unordered patch lists with two launches at most; no candidate is silently truncated.
+// One operation-owned event pair measures completed count/gather intervals without sharing handles.
 std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std::byte* device_input,
                                                                        std::uint32_t input_bytes,
                                                                        std::span<const SparseCandidate> candidates,
@@ -129,7 +130,7 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
               "hipMemcpy sparse candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
     check_hip(hipMemsetAsync(device_counts.get(), 0, count_bytes, hipStreamPerThread), "hipMemset sparse counts");
-    auto events = make_hip_event_pair("create sparse count events");
+    const auto events = make_hip_event_pair("create sparse collection events");
     launch_measured_kernel(count_sparse_positions_kernel, grid, kThreads, 0, hipStreamPerThread, events,
                            "launch sparse count kernel", device_input, device_candidates.get(), device_counts.get());
     finish_measured_kernel(telemetry, events, "synchronize sparse count kernel");
@@ -169,7 +170,6 @@ std::vector<std::vector<std::uint32_t>> collect_positions_device_batch(const std
               "hipMemcpy admitted sparse candidates");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(candidate_bytes));
     check_hip(hipMemsetAsync(device_cursors.get(), 0, count_bytes, hipStreamPerThread), "hipMemset sparse cursors");
-    events = make_hip_event_pair("create sparse gather events");
     launch_measured_kernel(gather_sparse_positions_kernel, grid, kThreads, 0, hipStreamPerThread, events,
                            "launch sparse gather kernel", device_input, device_candidates.get(), device_cursors.get(),
                            device_positions.get());

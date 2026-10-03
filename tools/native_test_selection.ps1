@@ -124,7 +124,7 @@ function Assert-SuperZipNativeSelectionHip {
     param([Parameter(Mandatory = $true)][string]$Cli, [switch]$CpuOnlyValidation)
     $info = @(& $Cli gpu-info)
     if ($CpuOnlyValidation.IsPresent) {
-        if ($LASTEXITCODE -ne 0 -or $info -notcontains 'hip_compiled=false' -or $info -notcontains 'available=false') {
+        if ($LASTEXITCODE -ne 1 -or $info -notcontains 'hip_compiled=false' -or $info -notcontains 'available=false') {
             throw 'CPU-only native validation requires a CPU-only binary; GPU qualification cannot be bypassed.'
         }
         return

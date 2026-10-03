@@ -26,6 +26,14 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Test doubles must preserve the production CLI's exit contract. The first
+  hosted CPU component invocation rejected an honest HIP-OFF binary because
+  its guard expected exit 0 from `gpu-info`; the actual CLI returns 1 when
+  unavailable. CPU validation now requires exit 1 and both false state fields,
+  with regressions rejecting unexpected success/error statuses. Required-HIP
+  validation remains exit 0 with compiled and available state. Actual hosted
+  integration remains separate from passing controlled command fixtures.
+
 - Source registrations are not necessarily compiled registrations. A sparse
   device-admission test was registered only under `SUPERZIP_ENABLE_HIP`, although
   CPU-only CI selected its exact name from source. Its registration now exists

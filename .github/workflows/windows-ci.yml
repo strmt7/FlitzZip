@@ -40,6 +40,12 @@ on:
   pull_request:
     paths: *native-inputs
   workflow_dispatch:
+    inputs:
+      comparison_base:
+        description: Complete base commit SHA for affected native checks; empty runs broad qualification
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -78,9 +84,10 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PUSH_BASE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          DISPATCH_BASE: ${{ inputs.comparison_base }}
         run: |
           tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
-            -PullRequestBase $env:PR_BASE -GitHubOutput $env:GITHUB_OUTPUT
+            -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE -GitHubOutput $env:GITHUB_OUTPUT
       - name: Toolchain diagnostics
         if: steps.native_plan.outputs.native_build == 'true'
         shell: pwsh
@@ -110,9 +117,10 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PUSH_BASE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          DISPATCH_BASE: ${{ inputs.comparison_base }}
         run: |
           tools/ci_native_plan.ps1 -EventName $env:EVENT_NAME -PushBase $env:PUSH_BASE `
-            -PullRequestBase $env:PR_BASE -RunTests
+            -PullRequestBase $env:PR_BASE -DispatchBase $env:DISPATCH_BASE -RunTests
       - name: CLI format compatibility matrix
         if: steps.native_plan.outputs.format_matrix == 'true'
         shell: pwsh
