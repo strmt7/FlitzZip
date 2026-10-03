@@ -14,6 +14,32 @@ function ConvertFrom-SuperZipNativeSelectionPath {
     return $paths
 }
 
+# Purpose: Prevent source inventories from selecting registrations absent in a supported Windows build.
+# Inputs: Text and Source identify a registered test source; only positive Windows platform guards are known.
+# Outputs: Rejects conditional registrations with unknown configuration truth; conditions inside test bodies remain valid.
+function Assert-SuperZipNativeRegistrationCondition {
+    param([string]$Text, [string]$Source)
+    $conditions = [Collections.Generic.List[bool]]::new()
+    foreach ($line in ($Text -split '\r?\n')) {
+        if ($line -match '^\s*#\s*(if|ifdef|ifndef)\b(?<condition>.*)$') {
+            $directive = $Matches[1]
+            $condition = $Matches['condition'].Trim()
+            $known = ($directive -eq 'ifdef' -and $condition -eq '_WIN32') -or
+                ($directive -eq 'if' -and $condition -match '^defined\s*\(\s*_WIN32\s*\)$')
+            $conditions.Add(-not $known)
+        } elseif ($line -match '^\s*#\s*(else|elif)\b') {
+            if (-not $conditions.Count) { throw "Unbalanced native test condition: $Source" }
+            $conditions[$conditions.Count - 1] = $true
+        } elseif ($line -match '^\s*#\s*endif\b') {
+            if (-not $conditions.Count) { throw "Unbalanced native test condition: $Source" }
+            $conditions.RemoveAt($conditions.Count - 1)
+        } elseif ($line -match '^\s*TEST_CASE\s*\(' -and $conditions.Contains($true)) {
+            throw "Native test registration has an unsupported build condition: $Source"
+        }
+    }
+    if ($conditions.Count) { throw "Unbalanced native test condition: $Source" }
+}
+
 # Purpose: Read the authoritative sources registered in the main native test target.
 # Inputs: Root is a checkout containing the existing CMake object target and TEST_CASE registrations.
 # Outputs: Returns unique source/name records; rejects missing registrations and duplicate names.
@@ -28,6 +54,7 @@ function Get-SuperZipNativeTestInventory {
     $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($source in $sources) {
         $text = Get-Content -LiteralPath (Join-Path $Root $source) -Raw
+        Assert-SuperZipNativeRegistrationCondition -Text $text -Source $source
         $cases = [regex]::Matches($text, '(?m)^TEST_CASE\((?<name>\w+)\)\s*\{')
         if ($cases.Count -ne [regex]::Matches($text, '(?m)^\s*TEST_CASE\s*\(').Count) {
             throw "Native test source contains unsupported registration syntax: $source"
@@ -54,7 +81,12 @@ function Get-SuperZipNativeTestSelection {
         @{ id = 'hip-entropy-encode'; paths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
            rules = @(
                @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_(prefix_reference|gpu_(prefix_|huffman_|entropy_efforts_|efforts_preserve_dictionary_)|required_gpu_(prefix_|huffman_))' },
-               @{ source = 'tests/cpp/test_gpu_block_batch.cpp'; pattern = '^gpu_block_batch_hip_identity$' }) }
+               @{ source = 'tests/cpp/test_gpu_block_batch.cpp'; pattern = '^gpu_block_batch_hip_identity$' }) },
+        @{ id = 'hip-sparse-candidate'; paths = @('src/gpu/sparse_pattern_candidate.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')
+           rules = @(
+               @{ source = 'tests/cpp/test_sparse_pattern_block.cpp'; pattern = '^(sparse_pattern_|long_sparse_pattern_)' },
+               @{ source = 'tests/cpp/test_archive_roundtrip.cpp'; pattern = '^suzip_(sparse_pattern_cpu_reader_roundtrip|long_sparse_pattern_v7_reader_roundtrip|long_sparse_pattern_writer_selects_v7)$' },
+               @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_gpu_(entropy_efforts_preserve_per_block_winners|efforts_preserve_dictionary_candidates_after_entropy_gain)$' }) }
     )
     $native = @($Paths | Where-Object { $_ -match '^(src|tests|fuzz)/|^CMakeLists\.txt$|^cmake/|^third_party/' })
     if (-not $native.Count) { return $broad }

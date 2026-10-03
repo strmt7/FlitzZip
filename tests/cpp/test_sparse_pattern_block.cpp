@@ -319,11 +319,11 @@ TEST_CASE(sparse_pattern_hip_batch_preserves_block_offsets) {
     REQUIRE_EQ(decoded, input);
 }
 
-#if SUPERZIP_ENABLE_HIP
 // Purpose: Reject caller-provided gather offsets before they reach HIP allocation or launch.
 // Inputs: A candidate with valid source bounds but nonzero output-only fields.
-// Outputs: Both forged offset and patch count fail with `GpuError` without touching the borrowed pointer.
+// Outputs: HIP builds reject both forgeries before borrowing input; CPU builds confirm backend unavailability.
 TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
+#if SUPERZIP_ENABLE_HIP
     std::array<std::byte, 32U> input{};
     std::array<superzip::sparse_pattern::SparseCandidate, 1U> candidates{{{
         .source_offset = 0U,
@@ -344,5 +344,7 @@ TEST_CASE(sparse_pattern_hip_batch_rejects_prepopulated_output_fields) {
         }
         REQUIRE_TRUE(rejected);
     }
-}
+#else
+    REQUIRE_TRUE(!superzip::query_gpu_info().available);
 #endif
+}

@@ -71,6 +71,7 @@ foreach ($path in $paths) {
 }
 foreach ($case in @(
     @{ path = 'tests/cpp/test_dictionary_block.cpp'; build = $true; mode = 'component'; matrix = $false },
+    @{ path = 'tests/cpp/test_sparse_pattern_block.cpp'; build = $true; mode = 'component'; matrix = $false },
     @{ path = 'tests/cpp/test_zip_compat.cpp'; build = $true; mode = 'component'; matrix = $false },
     @{ path = 'src/zip/zip_adapter.cpp'; build = $true; mode = 'full'; matrix = $true },
     @{ path = 'tests/cpp/test_main.cpp'; build = $true; mode = 'none'; matrix = $false },

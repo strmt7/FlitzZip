@@ -26,6 +26,13 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Source registrations are not necessarily compiled registrations. A sparse
+  device-admission test was registered only under `SUPERZIP_ENABLE_HIP`, although
+  CPU-only CI selected its exact name from source. Its registration now exists
+  in both builds, with configuration-specific assertions inside the body. The
+  inventory rejects unknown registration conditions and preserves supported
+  positive Windows guards. GPU assertions remain explicitly unqualified in CPU CI.
+
 - Offline test fixtures must create and clean their own temporary directories.
   The hosted native-routing contracts initially passed locally but failed on a
   fresh runner because their output fixture assumed ignored `out/` already

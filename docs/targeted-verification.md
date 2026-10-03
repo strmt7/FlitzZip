@@ -107,8 +107,12 @@ remain selected.
 `tools/native_test_selection.ps1` owns the reviewed dependency mapping and reads
 case names from the main test target's CMake source registration. The initial
 production mapping covers static-prefix and adaptive/Huffman encoder files and
-their required-HIP integration consumers: 17 unique cases. A batch changing
-both files runs their union once. Registered test-file-only changes select all
+their required-HIP integration consumers: 17 unique cases. Sparse candidate
+selection and HIP count/gather files select 12 cases covering admission, patch
+layout, short/long motifs, independent CPU/HIP readers, version-seven writer
+publication and per-block competition. A combined entropy/sparse batch selects
+27 unique cases, sharing two competition cases instead of repeating them.
+Registered test-file-only changes select all
 recognized cases in those files; they do not trigger unrelated format-matrix,
 fuzz, GUI or package work. Shared headers, other unmapped production mechanisms,
 separate native test targets and explicit `-Full` keep the full native driver.
@@ -121,6 +125,12 @@ native runner's `=case_name` filter, verifies one requested case per invocation
 and stops at the first failure. Existing substring filters and the default
 complete registry remain compatible. Duplicate names, unsupported registration
 syntax, empty selections and invalid changed-path metadata fail explicitly.
+Registrations must be present in both supported CPU-only and HIP Windows builds.
+The inventory rejects build-conditional registrations except positive `_WIN32`
+guards; configuration-dependent bodies remain valid. A sparse direct-device
+case now keeps one registration in both builds, with its CPU body confirming
+backend unavailability. CPU-only completion still leaves GPU assertions
+unqualified; it cannot qualify the forgery rejection exercised by HIP builds.
 The path decoder is checked under Windows PowerShell 5.1 and PowerShell 7.
 
 Changes to the native test runner itself select eight controlled executable

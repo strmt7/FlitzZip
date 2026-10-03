@@ -36,6 +36,23 @@ Assert-NativeSelection ($entropy.mode -eq 'component' -and $entropy.requireHip -
 Assert-NativeSelection ('suzip_gpu_entropy_efforts_preserve_per_block_winners' -in $entropy.tests -and
     'suzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain' -in $entropy.tests) 'direct encoder integration consumers'
 Assert-NativeSelection ('suzip_gpu_mixed_materialization_skips_unaligned_prefix_windows' -notin $entropy.tests) 'unrelated manual decoder fixture exclusion'
+$sparsePaths = @('src/gpu/sparse_pattern_candidate.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')
+$sparse = Get-SuperZipNativeTestSelection -Paths $sparsePaths
+Assert-NativeSelection ($sparse.mode -eq 'component' -and $sparse.requireHip -and $sparse.tests.Count -eq 12) 'reviewed sparse candidate cohort and required HIP'
+foreach ($name in @('sparse_pattern_hip_batch_rejects_prepopulated_output_fields',
+        'sparse_pattern_hip_batch_preserves_block_offsets', 'long_sparse_pattern_required_hip_roundtrip',
+        'suzip_sparse_pattern_cpu_reader_roundtrip', 'suzip_long_sparse_pattern_v7_reader_roundtrip',
+        'suzip_long_sparse_pattern_writer_selects_v7')) {
+    Assert-NativeSelection ($name -in $sparse.tests) "sparse direct admission, layout and archive consumer coverage: $name"
+}
+$gpuBatch = Get-SuperZipNativeTestSelection -Paths ($entropyPaths + $sparsePaths)
+Assert-NativeSelection ($gpuBatch.tests.Count -eq 27 -and $gpuBatch.requireHip) 'entropy/sparse batch shares two competition cases without repetition'
+Assert-NativeSelection ('gpu_block_batch_hip_identity' -notin $sparse.tests -and
+    'suzip_gpu_prefix_packing_matches_reference' -notin $sparse.tests) 'sparse changes exclude unrelated encoder and standalone batch fixtures'
+foreach ($shared in @('src/gpu/sparse_pattern_candidate.hpp', 'src/gpu/sparse_pattern_device.hpp',
+        'src/core/sparse_pattern_block.cpp')) {
+    Assert-NativeSelection ((Get-SuperZipNativeTestSelection -Paths ($sparsePaths + $shared)).mode -eq 'full') "unmapped sparse shared/parser input retains broader coverage: $shared"
+}
 $repeated = Get-SuperZipNativeTestSelection -Paths ($entropyPaths + $entropyPaths + 'docs/design.md')
 Assert-NativeSelection (($repeated.tests -join '|') -eq ($entropy.tests -join '|')) 'batch union deduplicates cases'
 foreach ($shared in @('src/gpu/hip_codec_support.hpp', 'src/gpu/hip_codec.hip.cpp', 'CMakeLists.txt',
@@ -63,6 +80,18 @@ try {
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample_longer) {}")
     $overlapping = Get-SuperZipNativeTestSelection -Paths @('tests/cpp/test_fixture.cpp') -Root $fixtureRoot
     Assert-NativeSelection ($overlapping.tests.Count -eq 2) 'overlapping names remain distinct exact cases'
+    foreach ($conditional in @("#if SUPERZIP_ENABLE_HIP`nTEST_CASE(sample) {}`n#endif",
+            "#ifdef _WIN32`n#if SUPERZIP_ENABLE_HIP`nTEST_CASE(sample) {}`n#endif`n#endif",
+            "#ifdef _WIN32`n#else`nTEST_CASE(sample) {}`n#endif")) {
+        [IO.File]::WriteAllText($fixtureSource, $conditional)
+        Assert-NativeSelectionRejected { Get-SuperZipNativeTestInventory -Root $fixtureRoot } 'unsupported build condition'
+    }
+    foreach ($portable in @("#ifdef _WIN32`nTEST_CASE(sample) {}`n#endif",
+            "#if defined(_WIN32)`nTEST_CASE(sample) {}`n#endif",
+            "TEST_CASE(sample) {`n#if SUPERZIP_ENABLE_HIP`n// optional body`n#endif`n}")) {
+        [IO.File]::WriteAllText($fixtureSource, $portable)
+        Assert-NativeSelection (@(Get-SuperZipNativeTestInventory -Root $fixtureRoot).Count -eq 1) 'Windows registration and build-conditional bodies remain compatible'
+    }
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`n  TEST_CASE(indented) {}")
     Assert-NativeSelectionRejected { Get-SuperZipNativeTestInventory -Root $fixtureRoot } 'unsupported registration syntax'
     [IO.File]::WriteAllText($fixtureSource, "TEST_CASE(sample) {}`nTEST_CASE(sample) {}")

@@ -29,6 +29,12 @@ routing contracts pass. Windows CI passed at `7a3cc5b`; the component lane
 exposed a fixture directory assumption on fresh checkouts. Its focused repair
 uses an owned temporary directory; hosted requalification remains pending.
 
+The repaired fixture passes hosted component contracts at `1ee39f1`. The next
+batch extends sparse candidate routing to 12 direct cases (27 for a combined
+entropy/sparse batch) and keeps sparse test registrations consistent in CPU-only
+and HIP builds. Inventory checks reject unknown build-conditional registrations;
+GPU assertions still require actual HIP execution.
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.
