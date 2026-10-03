@@ -2,6 +2,22 @@
 
 ## Continuation Checkpoint
 
+The next security batch clarifies equivalent Zstandard cleanup and logical
+conditions covering ten open CodeQL reports. Its pinned generated-source
+transformations retain the original archive, fail on drift and support both
+fresh extraction and the exact earlier constructor repair. Affected dependency
+contracts and 15 direct-consumer cases pass; hosted closure is pending. The
+[review](docs/zstd-condition-cleanup-2026-10-03.md) records remaining gates and
+the fixture correction. The broad native/package plan is not marked passed:
+this intermediate batch follows the maintainer's component-only verification
+direction. The last completed security run at `cb17445` passed all ten jobs;
+the finding inventory still blocks beta acceptance.
+
+The [modern compression research review](docs/modern-compression-research-2026-10-03.md)
+records 2026 EuroSys and ASPLOS work plus relevant 2025 papers, with exact
+lossless boundaries and ranked experiments. Research and minor performance
+changes remain secondary to closing the security backlog.
+
 GPU entropy selection now measures candidate sizes without allocating offsets
 for losing blocks and prepares only the final winner's offset table. The
 [component study](docs/gpu-entropy-selection-validation.md) verifies one fewer

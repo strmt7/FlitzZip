@@ -76,6 +76,11 @@ compatible with making it the default SuperZip release codec today.
 
 ## Practical Roadmap
 
+The [October 2026 lossless-compression review](modern-compression-research-2026-10-03.md)
+adds recent primary research on invariant bits, bitmap layouts, compact lookup
+tables and GPU data movement. Its experiments are hypotheses; resolving open
+security findings remains the immediate priority.
+
 1. Continue hardening the existing HIP block-classification, GPU pattern, GPU
    materialization, and fused CRC path.
 2. Use rocPRIM selectively for ordered segment reductions or scans if it

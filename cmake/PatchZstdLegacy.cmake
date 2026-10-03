@@ -39,27 +39,57 @@ endfunction()
 # Outputs: Writes only the identity-checked generated v0.5 source.
 function(superzip_patch_zstd_v05 source_dir)
   set(decoder "${source_dir}/lib/legacy/zstd_v05.c")
+  file(SHA256 "${decoder}" current_hash)
+  if(current_hash STREQUAL
+     "dd60a43788f2a2150ae9ddf91a43ea34c6a03d6a420196e209f5aca2ffb217e2")
+    return()
+  endif()
   file(READ "${decoder}" decoder_content)
+  if(current_hash STREQUAL
+     "62170472e18505b3347e563cdb1eba439312bb53385663730ac58cd92f3c4678")
+    string(
+      CONCAT constructor_contract
+             "/* Purpose: Construct a fully owned buffered decoder, never a "
+             "partial context.\n"
+             " * Inputs: None; allocator failure is a normal error path.\n"
+             " * Outputs: Returns a complete owner or NULL after releasing "
+             "partial allocations. */\n")
+    string(
+      REPLACE
+        "ZBUFFv05_DCtx* ZBUFFv05_createDCtx(void)\n"
+        "${constructor_contract}ZBUFFv05_DCtx* ZBUFFv05_createDCtx(void)\n"
+        decoder_content "${decoder_content}")
+    string(CONCAT checked_create "    zbc->zc = ZSTDv05_createDCtx();\n"
+                  "    if (zbc->zc==NULL) {\n        free(zbc);\n"
+                  "        return NULL;\n    }\n")
+    string(REPLACE "    zbc->zc = ZSTDv05_createDCtx();\n" "${checked_create}"
+                   decoder_content "${decoder_content}")
+  endif()
+  string(REPLACE [=[if (offsetCode | !litLength)]=]
+                 [=[if (offsetCode != 0 || litLength == 0)]=] decoder_content
+                 "${decoder_content}")
   string(
-    CONCAT constructor_contract
-           "/* Purpose: Construct a fully owned buffered decoder, never a "
-           "partial context.\n"
-           " * Inputs: None; allocator failure is a normal error path.\n"
-           " * Outputs: Returns a complete owner or NULL after releasing "
-           "partial allocations. */\n")
-  string(
-    REPLACE "ZBUFFv05_DCtx* ZBUFFv05_createDCtx(void)\n"
-            "${constructor_contract}ZBUFFv05_DCtx* ZBUFFv05_createDCtx(void)\n"
-            decoder_content "${decoder_content}")
-  string(CONCAT checked_create "    zbc->zc = ZSTDv05_createDCtx();\n"
-                "    if (zbc->zc==NULL) {\n        free(zbc);\n"
-                "        return NULL;\n    }\n")
-  string(REPLACE "    zbc->zc = ZSTDv05_createDCtx();\n" "${checked_create}"
-                 decoder_content "${decoder_content}")
+    CONCAT patch_fragment_1
+           "/* Purpose: Decode one legacy sequence and maintain rep"
+           "eat-offset history.\n"
+           " * Inputs: seq receives output; seqState owns validated"
+           " entropy states and borrows the bitstream.\n"
+           " * Outputs: Writes lengths and offset and advances deco"
+           "der state without changing wire semantics. */\n"
+           "static void ZSTDv05_decodeSequence(")
+  string(REPLACE [=[static void ZSTDv05_decodeSequence(]=]
+                 "${patch_fragment_1}" decoder_content "${decoder_content}")
+  file(SHA256 "${decoder}" current_hash)
+  set(original_hash
+      "62170472e18505b3347e563cdb1eba439312bb53385663730ac58cd92f3c4678")
+  # Accept only the exact earlier constructor repair for incremental builds.
+  if(current_hash STREQUAL
+     "ee643222919c3a354da6f71d69f55c681ae0647a274384f2143afbe63dd5d9be")
+    set(original_hash "${current_hash}")
+  endif()
   superzip_write_verified_zstd_patch(
-    "${decoder}"
-    "62170472e18505b3347e563cdb1eba439312bb53385663730ac58cd92f3c4678"
-    "ee643222919c3a354da6f71d69f55c681ae0647a274384f2143afbe63dd5d9be"
+    "${decoder}" "${original_hash}"
+    "dd60a43788f2a2150ae9ddf91a43ea34c6a03d6a420196e209f5aca2ffb217e2"
     "${decoder_content}")
 
 endfunction()
@@ -173,11 +203,146 @@ function(superzip_patch_zstd_header_guard header guard anchor original_hash
                                      "${patched_hash}" "${content}")
 endfunction()
 
+# Purpose: Clarify equivalent cleanup or logical conditions in pinned source.
+# Inputs: source_dir is the verified extracted v1.5.7 dependency root. Outputs:
+# Publishes exact reviewed bytes; rejects source drift and preserves provenance.
+function(superzip_patch_zstd_cover_cleanup source_dir)
+  set(source "${source_dir}/lib/dictBuilder/cover.c")
+  file(READ "${source}" content)
+  string(CONCAT patch_fragment_2 "  if (map->data) {\n"
+                "    free(map->data);\n" "  }")
+  string(REPLACE "${patch_fragment_2}" [=[  free(map->data);]=] content
+                 "${content}")
+  string(CONCAT patch_fragment_3 "  if (dst) {\n" "    free(dst);\n" "  }")
+  string(REPLACE "${patch_fragment_3}" [=[  free(dst);]=] content "${content}")
+  string(CONCAT patch_fragment_4 "  if (best->dict) {\n"
+                "    free(best->dict);\n" "  }")
+  string(REPLACE "${patch_fragment_4}" [=[  free(best->dict);]=] content
+                 "${content}")
+  string(CONCAT patch_fragment_5 "        if (best->dict) {\n"
+                "          free(best->dict);\n" "        }")
+  string(REPLACE "${patch_fragment_5}" [=[        free(best->dict);]=] content
+                 "${content}")
+  string(
+    CONCAT patch_fragment_6
+           "/* Purpose: Release map-owned storage and reset the map"
+           ".\n"
+           " * Inputs: map points to an initialized map; its data m"
+           "ay be NULL.\n"
+           " * Outputs: Releases data and clears size and ownership"
+           ". */\n"
+           "static void COVER_map_destroy(")
+  string(REPLACE [=[static void COVER_map_destroy(]=] "${patch_fragment_6}"
+                 content "${content}")
+  string(
+    CONCAT patch_fragment_7
+           "/* Purpose: Measure sample compression using the candid"
+           "ate dictionary.\n"
+           " * Inputs: parameters, sample sizes/bytes/offsets and d"
+           "ictionary extents are validated by the caller.\n"
+           " * Outputs: Returns total compressed size or an error; "
+           "releases temporary storage. */\n"
+           "size_t COVER_checkTotalCompressedSize(")
+  string(REPLACE [=[size_t COVER_checkTotalCompressedSize(]=]
+                 "${patch_fragment_7}" content "${content}")
+  string(
+    CONCAT patch_fragment_8
+           "/* Purpose: Wait for jobs and release optimizer-owned r"
+           "esources.\n"
+           " * Inputs: best is NULL or initialized shared state wit"
+           "h counted live jobs.\n"
+           " * Outputs: Joins logical completion and releases dicti"
+           "onary and synchronization state. */\n"
+           "void COVER_best_destroy(")
+  string(REPLACE [=[void COVER_best_destroy(]=] "${patch_fragment_8}" content
+                 "${content}")
+  string(
+    CONCAT patch_fragment_9
+           "/* Purpose: Record worker completion and update the bes"
+           "t dictionary under lock.\n"
+           " * Inputs: best is NULL or initialized state; parameter"
+           "s and selection describe one completed job.\n"
+           " * Outputs: Decrements live jobs, updates owned diction"
+           "ary and signals completion. */\n"
+           "void COVER_best_finish(")
+  string(REPLACE [=[void COVER_best_finish(]=] "${patch_fragment_9}" content
+                 "${content}")
+  superzip_write_verified_zstd_patch(
+    "${source}"
+    "2419631b20b0f4867d0f3c178fc4a3006d05f58e8ce3ce6657133f85ed40d683"
+    "89a86e4217d306fd236bfb41cbdb7081e13082d88acc0f780a713df46da3b0da"
+    "${content}")
+endfunction()
+
+# Purpose: Clarify equivalent cleanup or logical conditions in pinned source.
+# Inputs: source_dir is the verified extracted v1.5.7 dependency root. Outputs:
+# Publishes exact reviewed bytes; rejects source drift and preserves provenance.
+function(superzip_patch_zstd_worker_condition source_dir)
+  set(source "${source_dir}/lib/compress/zstdmt_compress.c")
+  file(READ "${source}" content)
+  string(CONCAT patch_fragment_10
+                "if (!mtctx->factory | !mtctx->jobs | !mtctx->bufPool | "
+                "!mtctx->cctxPool | !mtctx->seqPool | initError)")
+  string(CONCAT patch_fragment_11
+                "if (!mtctx->factory || !mtctx->jobs || !mtctx->bufPool "
+                "|| !mtctx->cctxPool || !mtctx->seqPool || initError)")
+  string(REPLACE "${patch_fragment_10}" "${patch_fragment_11}" content
+                 "${content}")
+  string(
+    CONCAT patch_fragment_12
+           "/* Purpose: Construct a complete multithreaded compress"
+           "ion owner.\n"
+           " * Inputs: nbWorkers is validated; cMem supplies alloca"
+           "tion callbacks; pool is optional borrowed state.\n"
+           " * Outputs: Returns a complete context or NULL after re"
+           "leasing partial allocations. */\n"
+           "MEM_STATIC ZSTDMT_CCtx* ZSTDMT_createCCtx_advanced_inte"
+           "rnal(")
+  string(
+    REPLACE [=[MEM_STATIC ZSTDMT_CCtx* ZSTDMT_createCCtx_advanced_internal(]=]
+            "${patch_fragment_12}" content "${content}")
+  superzip_write_verified_zstd_patch(
+    "${source}"
+    "c83db699b4041bf4db89c5558db490dd295635f1eeefd60b643fbc862bbac7b5"
+    "0e2910244eedc12f7728f59e232325e964c2fc546f87f4bf74881016c47cf21a"
+    "${content}")
+endfunction()
+
+# Purpose: Clarify equivalent cleanup or logical conditions in pinned source.
+# Inputs: source_dir is the verified extracted v1.5.7 dependency root. Outputs:
+# Publishes exact reviewed bytes; rejects source drift and preserves provenance.
+function(superzip_patch_zstd_v04_condition source_dir)
+  set(source "${source_dir}/lib/legacy/zstd_v04.c")
+  file(READ "${source}" content)
+  string(REPLACE [=[if (offsetCode | !litLength)]=]
+                 [=[if (offsetCode != 0 || litLength == 0)]=] content
+                 "${content}")
+  string(
+    CONCAT patch_fragment_13
+           "/* Purpose: Decode one legacy sequence and maintain rep"
+           "eat-offset history.\n"
+           " * Inputs: seq receives output; seqState owns validated"
+           " entropy states and borrows the bitstream.\n"
+           " * Outputs: Writes lengths and offset and advances deco"
+           "der state without changing wire semantics. */\n"
+           "static void ZSTD_decodeSequence(")
+  string(REPLACE [=[static void ZSTD_decodeSequence(]=] "${patch_fragment_13}"
+                 content "${content}")
+  superzip_write_verified_zstd_patch(
+    "${source}"
+    "a80d9591ff3fc387a05e8e075713af9ad34596dc5c8681666346a716013a6e14"
+    "079df3416c7aa806e7e9bb3a2db8c4c65dbe938b0b7e261d7b66591e0e29b551"
+    "${content}")
+endfunction()
+
 # Purpose: Apply the production dependency's source repairs reproducibly.
 # Inputs: source_dir is the extracted root of the verified upstream archive.
 # Outputs: Patches generated files or fails closed; leaves provenance untouched.
 function(superzip_patch_zstd_legacy source_dir)
   superzip_patch_zstd_v05("${source_dir}")
+  superzip_patch_zstd_cover_cleanup("${source_dir}")
+  superzip_patch_zstd_worker_condition("${source_dir}")
+  superzip_patch_zstd_v04_condition("${source_dir}")
   superzip_patch_zstd_initializer("${source_dir}")
   superzip_patch_zstd_custom_allocator("${source_dir}")
   superzip_patch_zstd_header_guard(

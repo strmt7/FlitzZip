@@ -42,7 +42,9 @@ function(prepare_fixture name output)
       "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}" --
       "zstd-1.5.7/lib/legacy/zstd_v05.c" "zstd-1.5.7/lib/legacy/zstd_legacy.h"
       "zstd-1.5.7/lib/common/allocations.h" "zstd-1.5.7/lib/dictBuilder/cover.h"
-      "zstd-1.5.7/lib/compress/hist.h"
+      "zstd-1.5.7/lib/compress/hist.h" "zstd-1.5.7/lib/legacy/zstd_v04.c"
+      "zstd-1.5.7/lib/compress/zstdmt_compress.c"
+      "zstd-1.5.7/lib/dictBuilder/cover.c"
     WORKING_DIRECTORY "${root}"
     RESULT_VARIABLE extraction_result)
   if(NOT extraction_result EQUAL 0)
@@ -82,14 +84,53 @@ function(require_rejection root cause)
   endif()
 endfunction()
 
+prepare_fixture(previous previous)
+set(_previous_source "${previous}/lib/legacy/zstd_v05.c")
+file(READ "${_previous_source}" previous_content)
+string(
+  CONCAT previous_contract
+         "/* Purpose: Construct a fully owned buffered decoder, never a "
+         "partial context.\n"
+         " * Inputs: None; allocator failure is a normal error path.\n"
+         " * Outputs: Returns a complete owner or NULL after releasing "
+         "partial allocations. */\n")
+string(REPLACE "ZBUFFv05_DCtx* ZBUFFv05_createDCtx(void)\n"
+               "${previous_contract}ZBUFFv05_DCtx* ZBUFFv05_createDCtx(void)\n"
+               previous_content "${previous_content}")
+string(CONCAT previous_create "    zbc->zc = ZSTDv05_createDCtx();\n"
+              "    if (zbc->zc==NULL) {\n        free(zbc);\n"
+              "        return NULL;\n    }\n")
+string(REPLACE "    zbc->zc = ZSTDv05_createDCtx();\n" "${previous_create}"
+               previous_content "${previous_content}")
+file(WRITE "${_previous_source}.fixture" "${previous_content}")
+configure_file("${_previous_source}.fixture" "${_previous_source}" @ONLY
+               NEWLINE_STYLE LF)
+file(SHA256 "${_previous_source}" previous_hash)
+if(NOT previous_hash STREQUAL
+   "ee643222919c3a354da6f71d69f55c681ae0647a274384f2143afbe63dd5d9be")
+  message(FATAL_ERROR "Earlier constructor-repair fixture identity mismatch")
+endif()
+superzip_patch_zstd_legacy("${previous}")
+
 prepare_fixture(fresh fresh)
 superzip_patch_zstd_legacy("${fresh}")
 set(BOUNDARIES
-    "lib/legacy/zstd_v05.c" "lib/legacy/zstd_legacy.h"
-    "lib/common/allocations.h" "lib/dictBuilder/cover.h" "lib/compress/hist.h")
+    "lib/legacy/zstd_v05.c"
+    "lib/legacy/zstd_legacy.h"
+    "lib/common/allocations.h"
+    "lib/dictBuilder/cover.h"
+    "lib/compress/hist.h"
+    "lib/legacy/zstd_v04.c"
+    "lib/compress/zstdmt_compress.c"
+    "lib/dictBuilder/cover.c")
 foreach(boundary IN LISTS BOUNDARIES)
   string(MAKE_C_IDENTIFIER "${boundary}" key)
   file(SHA256 "${fresh}/${boundary}" "before_${key}")
+  file(SHA256 "${previous}/${boundary}" migrated)
+  if(NOT "${before_${key}}" STREQUAL migrated)
+    message(
+      FATAL_ERROR "Incremental patch differs from fresh source: ${boundary}")
+  endif()
 endforeach()
 superzip_patch_zstd_legacy("${fresh}")
 foreach(boundary IN LISTS BOUNDARIES)
