@@ -590,11 +590,12 @@ std::vector<AdaptiveEncodeBlockPlan> build_adaptive_encode_plans(std::span<const
 }
 
 // Purpose: Select the smallest register/shared-memory specialization for this batch's candidate count.
-// Inputs: Device buffers, segment count, measured event pair, and maximum candidates (1-16).
+// Inputs: Device buffers, segment count, maximum candidates (1-16), and an exclusive borrowed event pair.
+// The pair's previous interval must be complete and collected before this launch.
 // Outputs: Launches exactly one coalesced length kernel on the existing per-thread stream.
 void launch_entropy_length_batch(const std::byte* input, const EntropyLengthSegmentPlan* plans,
                                  const AdaptiveEncodeTable* tables, std::uint32_t* lengths, std::uint32_t segments,
-                                 std::uint32_t candidates, HipEventPair& events) {
+                                 std::uint32_t candidates, const HipEventPair& events) {
     if (candidates <= 2U) {
         launch_measured_kernel(entropy_segment_lengths_batch_kernel<2U>, segments, kGpuPrefixSegmentThreads, 0,
                                hipStreamPerThread, events, "launch entropy segment lengths", input, plans, tables,
@@ -616,10 +617,11 @@ void launch_entropy_length_batch(const std::byte* input, const EntropyLengthSegm
 
 // Purpose: Compute adaptive-prefix encoded segment byte lengths on the AMD GPU.
 // Inputs: `device_input`, `segment_plans`, `code_tables`, and `telemetry` describe one uploaded chunk.
+// `events` is an exclusive borrowed pair; this pass completes and collects its interval before returning.
 // Outputs: Returns an interleaved encoded byte length for each segment/candidate pair.
 std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     const std::byte* device_input, std::span<const EntropyLengthSegmentPlan> segment_plans,
-    std::span<const AdaptiveEncodeTable> code_tables, GpuTelemetry* telemetry) {
+    std::span<const AdaptiveEncodeTable> code_tables, GpuTelemetry* telemetry, const HipEventPair& events) {
     if (segment_plans.empty()) {
         return {};
     }
@@ -654,7 +656,6 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     if (maximum_candidates == 0U || maximum_candidates > kMaxEntropyCandidates) {
         throw GpuError("GPU entropy length batch exceeds candidate limits");
     }
-    auto events = make_hip_event_pair("create entropy segment length events");
     launch_entropy_length_batch(device_input, device_plans.get(), device_tables.get(), device_lengths.get(),
                                 static_cast<std::uint32_t>(segment_plans.size()), maximum_candidates, events);
     finish_measured_kernel(telemetry, events, "synchronize entropy segment lengths");
@@ -743,10 +744,11 @@ AdaptiveBatchSelection select_adaptive_blocks_for_batch(std::vector<AdaptiveEnco
 
 // Purpose: Pack all selected adaptive-prefix segments into one combined device buffer.
 // Inputs: Uploaded bytes, selected segments/tables, and operation-owned telemetry.
+// `events` is an exclusive borrowed pair whose preceding interval has already completed and been collected.
 // Outputs: Returns the combined encoded bitstream for all selected adaptive-prefix blocks.
 std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byte* device_input,
                                                                   const AdaptiveBatchSelection& selection,
-                                                                  GpuTelemetry* telemetry) {
+                                                                  GpuTelemetry* telemetry, const HipEventPair& events) {
     std::vector<std::byte> bitstream(selection.bitstream_bytes);
     if (selection.pack_plans.empty()) {
         return bitstream;
@@ -780,7 +782,6 @@ std::vector<std::byte> pack_adaptive_prefix_segments_batch_device(const std::byt
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + table_bytes + offset_bytes));
     check_hip(hipMemsetAsync(device_encoded.get(), 0, bitstream.size(), hipStreamPerThread),
               "hipMemset adaptive prefix payload");
-    auto events = make_hip_event_pair("create adaptive_prefix_pack_segments_batch_kernel events");
     launch_measured_kernel(adaptive_prefix_pack_segments_batch_kernel,
                            static_cast<unsigned int>(selection.pack_plans.size()), kGpuPrefixSegmentThreads, 0,
                            hipStreamPerThread, events, "launch adaptive_prefix_pack_segments_batch_kernel",
@@ -834,7 +835,7 @@ void append_baseline_block(EncodedChunk& out, const EncodedChunk& baseline, std:
 
 // Purpose: Replace only blocks whose selected entropy payload improves the GPU-native baseline.
 // Inputs: Uploaded and host bytes, verified descriptors, immutable static baseline, level, and mutable HIP telemetry.
-// Outputs: Returns an encoded chunk with only smaller replacements, or empty when no block improves.
+// Outputs: Returns smaller replacements or empty; owns one timing pair across sequential completed passes.
 std::optional<EncodedChunk>
 encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
                                    std::uint32_t block_size, std::span<const BlockDescriptor> source_blocks,
@@ -846,13 +847,14 @@ encode_entropy_prefix_chunk_device(const std::byte* device_input, std::span<cons
     if (length_plans.empty()) {
         return std::nullopt;
     }
+    const auto events = make_hip_event_pair("create entropy prefix encode events");
     const auto segment_lengths =
-        compute_adaptive_prefix_lengths_batch_device(device_input, length_plans, code_tables, telemetry);
+        compute_adaptive_prefix_lengths_batch_device(device_input, length_plans, code_tables, telemetry, events);
     auto selection = select_adaptive_blocks_for_batch(block_plans, segment_lengths, code_tables);
     if (selection.adaptive_blocks == 0U) {
         return std::nullopt;
     }
-    auto bitstream = pack_adaptive_prefix_segments_batch_device(device_input, selection, telemetry);
+    auto bitstream = pack_adaptive_prefix_segments_batch_device(device_input, selection, telemetry, events);
     EncodedChunk out;
     out.blocks.reserve(source_blocks.size());
     std::size_t payload_bytes = 0U;

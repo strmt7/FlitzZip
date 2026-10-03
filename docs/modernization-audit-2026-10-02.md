@@ -1167,3 +1167,22 @@ is still running at this checkpoint. New exact-commit checks and the required
 post-push audit remain pending. The latest completed audit reports 211 open
 alerts. Wider security, all-format/corpus comparisons, latest whole-tool checks
 and release qualification remain open.
+
+## Round Twenty-Seven: Operation-Owned Entropy Timing Events
+
+Static-prefix and adaptive/Huffman length and packing passes now borrow one
+operation-owned RAII timing pair, with completion and timing collection before
+reuse. The HIP Release build, 17 affected native tests, source contracts, lint
+and repository security policy pass. No unrelated GUI, package or compatibility
+smoke is repeated. An initial const-reference dispatch mismatch is corrected
+before this successful validation.
+
+[Event ownership and retained diagnostics](gpu-entropy-event-reuse-validation.md)
+record 60 GiB of bytewise-validated RAM observations with identical sizes and
+resource counters. Whole-operation timing remains inconclusive; its candidate
+compression mean is approximately 1.7% higher in the separate-period diagnostic.
+Independent bounded traces verify 80 fewer event creations and destructions,
+with other API counts, transfers and allocation requests unchanged. Private
+capture/comparison errors are corrected using retained evidence, without repeated
+native runs. Exact-commit hosted checks and the post-push audit remain pending;
+the preceding audit still rejects 211 open security alerts.

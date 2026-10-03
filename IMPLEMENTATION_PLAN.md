@@ -2,15 +2,16 @@
 
 ## Continuation Checkpoint
 
-Current production work reduces prefix-plan allocations and makes dictionary
-framing validation allocation-free. The `437dcbd` Windows, fuzzing, lint and
-scorecard workflows pass; its security run remains pending at this checkpoint.
-The next focused batch skips unused mixed HIP materialization walks. Its HIP
-build and 12 affected tests pass. The
-[kernel study and whole-operation diagnostic](docs/gpu-materialization-skip-validation.md)
-separate an isolated improvement from inconclusive archive timing. The security
-backlog remains 211 open alerts, and release 0.8.0 remains held. Use the fresh
-audit's latest round for continuation; the dated checkpoints below are history.
+Recent production batches reduce prefix-plan allocations, remove dictionary
+validation allocations and skip unused mixed HIP materialization walks. The
+[materialization study](docs/gpu-materialization-skip-validation.md) separates
+an isolated improvement from inconclusive archive timing. The newest batch
+reuses operation-owned entropy timing events: its HIP build and 17 affected
+tests pass. [Retained evidence](docs/gpu-entropy-event-reuse-validation.md) verifies
+fewer event lifecycles, identical archive/resource results and inconclusive
+whole-operation timing. Hosted checks remain intermediate qualification. The
+security backlog remains 211 open alerts, and release 0.8.0 remains held. Use
+the fresh audit's latest round for continuation; dated checkpoints are history.
 
 ### Earlier Checkpoint Evidence
 

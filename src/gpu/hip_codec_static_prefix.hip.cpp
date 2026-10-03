@@ -243,10 +243,11 @@ std::vector<PrefixEncodeBlockPlan> build_prefix_encode_plans(std::size_t input_s
 
 // Purpose: Compute prefix segment byte lengths for the whole uploaded chunk in one HIP pass.
 // Inputs: `device_input` is the chunk in VRAM, `segment_plans` maps every segment, and `telemetry` records HIP work.
+// `events` is an exclusive borrowed pair; this pass completes and collects its interval before returning.
 // Outputs: Returns one aligned encoded byte count per segment.
 std::vector<std::uint32_t> compute_prefix_lengths_batch_device(const std::byte* device_input,
                                                                std::span<const PrefixEncodeSegmentPlan> segment_plans,
-                                                               GpuTelemetry* telemetry) {
+                                                               GpuTelemetry* telemetry, const HipEventPair& events) {
     std::vector<std::uint32_t> segment_lengths(segment_plans.size());
     if (segment_plans.empty()) {
         return segment_lengths;
@@ -266,7 +267,6 @@ std::vector<std::uint32_t> compute_prefix_lengths_batch_device(const std::byte* 
     check_hip(copy_on_codec_stream(device_plans.get(), segment_plans.data(), plan_bytes, hipMemcpyHostToDevice),
               "hipMemcpy prefix length plans");
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes));
-    auto events = make_hip_event_pair("create prefix_segment_lengths_batch_kernel events");
     launch_measured_kernel(prefix_segment_lengths_batch_kernel, static_cast<unsigned int>(segment_plans.size()),
                            kGpuPrefixSegmentThreads, 0, hipStreamPerThread, events,
                            "launch prefix_segment_lengths_batch_kernel", device_input, device_plans.get(),
@@ -325,10 +325,11 @@ PrefixBatchSelection select_prefix_blocks_for_batch(std::vector<PrefixEncodeBloc
 
 // Purpose: Pack all selected prefix segments into one combined device buffer.
 // Inputs: `device_input` is the uploaded chunk, `selection` describes selected segments, and `telemetry` records HIP.
+// `events` is an exclusive borrowed pair whose preceding interval has already completed and been collected.
 // Outputs: Returns the combined encoded bitstream for all selected prefix blocks.
 std::vector<std::byte> pack_prefix_segments_batch_device(const std::byte* device_input,
-                                                         const PrefixBatchSelection& selection,
-                                                         GpuTelemetry* telemetry) {
+                                                         const PrefixBatchSelection& selection, GpuTelemetry* telemetry,
+                                                         const HipEventPair& events) {
     std::vector<std::byte> bitstream(selection.bitstream_bytes);
     if (selection.pack_plans.empty()) {
         return bitstream;
@@ -355,7 +356,6 @@ std::vector<std::byte> pack_prefix_segments_batch_device(const std::byte* device
     record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(plan_bytes + offset_bytes));
     check_hip(hipMemsetAsync(device_encoded.get(), 0, bitstream.size(), hipStreamPerThread),
               "hipMemset prefix payload");
-    auto events = make_hip_event_pair("create prefix_pack_segments_batch_kernel events");
     launch_measured_kernel(prefix_pack_segments_batch_kernel, static_cast<unsigned int>(selection.pack_plans.size()),
                            kGpuPrefixSegmentThreads, 0, hipStreamPerThread, events,
                            "launch prefix_pack_segments_batch_kernel", device_input, device_plans.get(),
@@ -389,7 +389,7 @@ void append_prefix_payload(EncodedChunk& out, const PrefixEncodeBlockPlan& block
 
 // Purpose: Replace verified raw HIP blocks with smaller GPU prefix blocks where the static codec is effective.
 // Inputs: `device_input`, `input`, `block_size`, and `source_blocks` describe one uploaded archive chunk.
-// Outputs: Returns a new encoded chunk when at least one block is prefix-compressed; otherwise returns empty.
+// Outputs: Returns a smaller prefix selection or empty; owns one timing pair across sequential completed passes.
 std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_input, std::span<const std::byte> input,
                                                        std::uint32_t block_size,
                                                        std::span<const BlockDescriptor> source_blocks,
@@ -399,12 +399,13 @@ std::optional<EncodedChunk> encode_prefix_chunk_device(const std::byte* device_i
     if (length_plans.empty()) {
         return std::nullopt;
     }
-    const auto segment_lengths = compute_prefix_lengths_batch_device(device_input, length_plans, telemetry);
+    const auto events = make_hip_event_pair("create static prefix encode events");
+    const auto segment_lengths = compute_prefix_lengths_batch_device(device_input, length_plans, telemetry, events);
     auto selection = select_prefix_blocks_for_batch(block_plans, segment_lengths);
     if (selection.prefix_blocks == 0U) {
         return std::nullopt;
     }
-    auto bitstream = pack_prefix_segments_batch_device(device_input, selection, telemetry);
+    auto bitstream = pack_prefix_segments_batch_device(device_input, selection, telemetry, events);
     EncodedChunk out;
     out.blocks.reserve(source_blocks.size());
     out.payload.reserve(input.size());
