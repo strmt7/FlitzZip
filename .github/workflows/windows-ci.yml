@@ -49,6 +49,15 @@ jobs:
       - name: Post-push audit regression tests
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/test_github_post_push_audit.ps1
+      - name: Native invocation receipt regressions
+        # Validate actual configured CPU outputs as well as failure fixtures.
+        # CTest also exercises the production writer in both GPU modes.
+        shell: pwsh
+        run: |
+          python -m unittest tools.test_native_build_provenance tools.test_native_build_receipt
+          if ($LASTEXITCODE -ne 0) { throw "Native build receipt regressions failed." }
+          python tools/native_build_receipt.py validate --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "Configured CPU build receipt is stale or incomplete." }
       - name: Scanner provenance and coverage regression tests
         shell: pwsh
         run: |

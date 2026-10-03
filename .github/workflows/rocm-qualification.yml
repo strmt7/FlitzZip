@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   compile-link:
+    name: Compile and link the pinned native ROCm toolchain
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
     steps:

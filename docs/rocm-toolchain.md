@@ -76,6 +76,9 @@ It does not verify every SDK/compiler/header/library byte or authenticate which
 compiler produced each cached object. Complete distribution installation stays
 the shared provisioner's responsibility; no installed component is modified.
 Receipts contain relative filenames and hashes rather than installation paths.
+All Windows configurations now generate the common runtime manifest. CPU-only
+validation declares HIP disabled and has no AMD driver prerequisites; it retains
+the same app-local compatibility runtimes. Product releases still require HIP.
 This is local invocation consistency evidence, not signed or reproducible-build
 attestation. Direct CMake and standalone object compilation remain supported,
 but do not themselves publish the wrapper's successful invocation receipt.

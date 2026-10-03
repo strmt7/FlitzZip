@@ -7,6 +7,15 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- A fixture-created artifact is not proof that a fresh production build emits
+  it. The first native-receipt integration passed local HIP checks but failed
+  both hosted CPU-only builds because CMake generated runtime metadata only for
+  HIP. One production writer now generates truthful CPU/HIP manifests, with
+  direct configure-time regressions and hosted validation of actual build
+  receipts. CPU builds retain app-local dependencies and declare HIP disabled;
+  release packaging still requires HIP. Do not fabricate prerequisites or relax
+  receipt checks to make a missing artifact pass.
+
 - A complete measurement journal does not prove that final report export
   succeeded. Confirmation and pilot records now use one frozen-identity
   exporter, exercised with and without pilots through the production caller.

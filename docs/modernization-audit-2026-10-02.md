@@ -1010,3 +1010,34 @@ summary. Its response tail is truncated, not a complete raw verification log.
 The CTest log remains under `build/Testing/Temporary/LastTest.log`. Dedicated-host
 receipt-backed RAM export smoke, exact-SHA hosted assessment, security backlog,
 larger GPU qualification and release acceptance remain pending at this checkpoint.
+
+The clean `8967c09` RAM export smoke completes all fourteen fixed-count CPU/HIP
+observations across seven blocks, byte-validating 140 GiB with zero payload disk
+writes and unchanged archive sizes. Independent hashes of all 454 inputs and
+five outputs match the embedded receipt; exported counters/timings exactly match
+the journal. Shared graph identity validation passes, while publication correctly
+refuses the insufficient single-observation confirmation sample. Host context
+retains 47 readings, 72 invalid counters and nine collection errors; timing is
+inconclusive. No observations are discarded.
+
+Hosted Windows CI then fails both CPU-only lanes during receipt finalization:
+CMake emitted the runtime dependency manifest only for HIP configurations.
+Local fixtures had created it for both, so they missed that production gap.
+The corrected shared CMake writer emits truthful manifests for every Windows
+configuration, with HIP disabled and no driver prerequisites in CPU validation.
+Direct configure-time regressions cover both branches, and hosted CI validates
+actual successful CPU build receipts. The corrected batch passes all 32 commands
+selected by its full verification plan, including 576 native tests, six CTests,
+format/interoperability smoke, bounded sanitizer/fuzz smoke and packaging.
+All eight fresh main-page screenshots were reviewed after the owned GUI exited.
+The current HIP receipt validates 457 native inputs and five output artifacts.
+Ignored evidence is retained in
+`out/native-receipt-cpu-repair-full-result-20261003.json`; its response tail is
+truncated, without timeout or output-limit failure. Corrected hosted verification
+remains pending; local HIP success is not CPU-only hosted acceptance.
+
+This follow-up also widens both test-oracle worker products before multiplication
+for owned alert 1741 and names the ROCm qualification job for alert 1746. These
+are bounded test arithmetic and workflow quality repairs, not proof of an
+exploitable product defect. The 213-alert audit still fails; no suppression or
+dismissal is used. Individual hosted fix confirmation remains pending.

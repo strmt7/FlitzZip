@@ -184,13 +184,14 @@ TEST_CASE(host_memory_pipeline_workspace_geometry) {
         for (std::uint32_t fanout = 1; fanout <= 4U; ++fanout) {
             const superzip::HostPipelineWorkspace workspace{4096U, 13U * 1024U * 1024U, workers, fanout};
             for (std::uint32_t depth = 1; depth <= 64U; ++depth) {
-                const auto contexts = std::min<std::uint64_t>(workers, depth * fanout);
+                const auto contexts = std::min<std::uint64_t>(workers, static_cast<std::uint64_t>(depth) * fanout);
                 const auto growth = depth * (3U * chunk + 4096U) + contexts * workspace.per_worker_bytes;
                 const auto admitted =
                     superzip::resolve_host_pipeline_inflight_limit(memory_with_growth(growth), chunk, 0U, workspace);
                 REQUIRE_EQ(admitted, depth);
                 REQUIRE_TRUE(admitted * (3U * chunk + workspace.per_window_bytes) +
-                                 std::min<std::uint64_t>(workers, admitted * fanout) * workspace.per_worker_bytes <=
+                                 std::min<std::uint64_t>(workers, static_cast<std::uint64_t>(admitted) * fanout) *
+                                     workspace.per_worker_bytes <=
                              growth);
             }
         }

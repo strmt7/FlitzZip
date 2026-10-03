@@ -489,8 +489,7 @@ if(SUPERZIP_ENABLE_HIP)
                   "toolchain only.")
   endif()
   include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ResolveHipArchitecture.cmake")
-  superzip_resolve_hip_architecture(SUPERZIP_HIP_ARCH
-                                   "${SUPERZIP_HIP_ARCH}")
+  superzip_resolve_hip_architecture(SUPERZIP_HIP_ARCH "${SUPERZIP_HIP_ARCH}")
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/tools/rocm-sdk-lock.json"
        SUPERZIP_ROCM_LOCK)
   string(JSON SUPERZIP_ROCM_REQUIRED_VERSION GET "${SUPERZIP_ROCM_LOCK}"
@@ -628,11 +627,16 @@ if(SUPERZIP_ENABLE_HIP)
   target_sources(superzip_core PRIVATE src/gpu/dictionary_candidate.cpp
                                        src/gpu/sparse_pattern_candidate.cpp)
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=1)
-  configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/superzip-runtime-dependencies.json.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json" @ONLY)
 else()
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=0)
+endif()
+if(WIN32)
+  include(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ConfigureRuntimeDependencies.cmake")
+  superzip_configure_runtime_dependencies(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json"
+    "${SUPERZIP_ENABLE_HIP}")
 endif()
 
 set(SUPERZIP_LICENSE_NOTICES_MANIFEST
@@ -671,10 +675,8 @@ set(SUPERZIP_LICENSE_SOURCE_FILES ${SUPERZIP_LICENSE_SOURCES})
 list(TRANSFORM SUPERZIP_LICENSE_SOURCE_FILES
      PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
-add_executable(
-  superzip_cli
-  src/cli/main.cpp src/cli/memory_benchmark.cpp
-  src/cli/memory_benchmark_source.cpp)
+add_executable(superzip_cli src/cli/main.cpp src/cli/memory_benchmark.cpp
+                            src/cli/memory_benchmark_source.cpp)
 target_link_libraries(superzip_cli PRIVATE superzip_core)
 superzip_copy_zstd_runtime(superzip_cli)
 superzip_copy_wimlib_runtime(superzip_cli)
@@ -888,6 +890,14 @@ if(SUPERZIP_BUILD_TESTS)
     add_dependencies(superzip_tests SuperZip)
   endif()
   add_test(NAME superzip_tests COMMAND superzip_tests)
+  add_test(
+    NAME superzip_runtime_manifest_contracts
+    COMMAND
+      "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/tests/runtime-manifest" -P
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_runtime_manifest.cmake")
+  set_tests_properties(superzip_runtime_manifest_contracts PROPERTIES TIMEOUT
+                                                                      15)
   if(WIN32)
     # Guard-page regressions call the exact DLL built for the product, including
     # dictionary builders that are exported but not used by archive dispatch.
