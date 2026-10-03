@@ -336,9 +336,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m unittest tools.test_devskim_report
+          SUPERZIP_DEVSKIM="$RUNNER_TEMP/devskim/devskim" python -m unittest tools.test_devskim_report tools.test_devskim_scope
+          python -m tools.devskim_scope --root . --output "$RUNNER_TEMP/devskim-options.json"
           "$RUNNER_TEMP/devskim/devskim" analyze -I . -O "$RUNNER_TEMP/devskim-raw.sarif" \
-            -f sarif -g "**/.git/**" --disable-supression --skip-excerpts
+            -f sarif --options-json "$RUNNER_TEMP/devskim-options.json" --disable-supression --skip-excerpts
           python -m tools.devskim_report "$RUNNER_TEMP/devskim-raw.sarif" devskim-results.sarif
       - name: Upload DevSkim SARIF
         if: always() && hashFiles('devskim-results.sarif') != ''

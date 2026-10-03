@@ -10,7 +10,7 @@ Power Consumption*, UCI Machine Learning Repository,
 [license conditions](https://creativecommons.org/licenses/by/4.0/legalcode.en),
 retain attribution and disclose the excerpt selection. No endorsement is implied.
 
-The [source descriptor](data/corpora/household-power-source.json) pins the
+The [source descriptor](corpora/household-power-source.json) pins the
 20,640,916-byte official ZIP and its complete 132,960,755-byte member. These
 hashes were observed through the official HTTPS download and independently
 checked during acquisition; they are local reproducibility pins, not claimed
@@ -35,7 +35,7 @@ Run acquisition through the repository's bounded, memory-admitted command
 runner. Its child command is:
 
 ```powershell
-py -3 -m tools.acquire_benchmark_corpus --source-pin docs/benchmarks/data/corpora/household-power-source.json --destination out/benchmarks/corpora/household-power
+py -3 -m tools.acquire_benchmark_corpus --source-pin docs/benchmarks/corpora/household-power-source.json --destination out/benchmarks/corpora/household-power
 ```
 
 Choose a new destination. The tool rejects existing or linked destinations,

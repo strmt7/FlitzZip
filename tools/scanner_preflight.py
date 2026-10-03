@@ -14,6 +14,9 @@ import sys
 import uuid
 from pathlib import Path, PurePosixPath
 
+from tools.devskim_scope import validate_report_directory, write_options
+from tools.scanner_metadata_review import read_policy, review_findings
+
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 64 * 1024 * 1024
 MAX_FILES = 4096
@@ -159,6 +162,7 @@ def main() -> int:
     parser.add_argument("--devskim", default=os.environ.get("SUPERZIP_DEVSKIM") or shutil.which("devskim"))
     args = parser.parse_args()
     paths = changed_paths(ROOT, args.base)
+    validate_report_directory(ROOT)
     if not paths:
         print("Scanner preflight: no changed publication inputs; no scan qualification claimed.")
         return 0
@@ -179,7 +183,10 @@ def main() -> int:
     directory.mkdir(parents=True)
     snapshot = directory / "inputs"
     hashes = snapshot_inputs(ROOT, paths, snapshot)
+    review_policy = read_policy(ROOT)
     gitleaks_report, devskim_report = directory / "gitleaks.json", directory / "devskim.sarif"
+    devskim_options = directory / "devskim-options.json"
+    write_options(snapshot, devskim_options)
     commands = {
         "gitleaks": [
             args.gitleaks,
@@ -211,8 +218,8 @@ def main() -> int:
             "--skip-excerpts",
             "--disable-supression",
             "--disable-console",
-            "-g",
-            "**/.git/**",
+            "--options-json",
+            str(devskim_options),
         ],
     }
     status = {name: run_scanner(command, directory=snapshot) for name, command in commands.items()}
@@ -220,11 +227,14 @@ def main() -> int:
         "gitleaks": finding_count(gitleaks_report, "gitleaks"),
         "devskim": finding_count(devskim_report, "devskim"),
     }
+    review = review_findings(snapshot, devskim_report, review_policy)
     unchanged = all(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest for name, digest in hashes.items())
     unchanged = unchanged and changed_paths(ROOT, args.base) == paths
+    unchanged = unchanged and read_policy(ROOT) == review_policy
     passed = (
         unchanged
-        and not any(counts.values())
+        and counts["gitleaks"] == 0
+        and review["unresolved_count"] == 0
         and all(
             result["exit_code"] == 0 and not result["timed_out"] and not result["output_limit_exceeded"]
             for result in status.values()
@@ -235,7 +245,10 @@ def main() -> int:
         "input_hashes": hashes,
         "tools": tools,
         "finding_counts": counts,
+        "devskim_review": review,
+        "review_policy_sha256": hashlib.sha256(review_policy).hexdigest(),
         "source_unchanged": unchanged,
+        "devskim_passive_reports": validate_report_directory(snapshot),
         "results": status,
         "scope": "changed_files_only_not_full_repository_security_acceptance",
     }
@@ -246,6 +259,8 @@ def main() -> int:
                 "passed": passed,
                 "files": len(paths),
                 "finding_counts": counts,
+                "reviewed_metadata": len(review["reviewed_metadata"]),
+                "unresolved_devskim": review["unresolved_count"],
                 "receipt": str(directory / "receipt.json"),
             }
         )

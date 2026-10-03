@@ -307,10 +307,17 @@ foreach ($path in @('docs/benchmarks/corpora.md', 'docs/benchmarks/household-pow
     Assert-Selector (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'changed-hygiene') "benchmark narrative retains source hygiene: $path"
     Assert-Selector (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'language-lint') "benchmark narrative retains documentation lint: $path"
 }
-$benchmarkCorpusPinPlan = Get-SuperZipVerificationPlan -ChangedPath @('docs/benchmarks/data/corpora/household-power-source.json')
-Assert-Selector (Test-Workflow -Plan $benchmarkCorpusPinPlan -Name 'benchmark-graph') 'nested source pins retain the hosted data workflow'
-Assert-Selector (Test-RequiredCommand -Plan $benchmarkCorpusPinPlan -Id 'benchmark-tooling-tests') 'nested source pins retain graph and permission contracts'
+$benchmarkCorpusPinPlan = Get-SuperZipVerificationPlan -ChangedPath @('docs/benchmarks/corpora/household-power-source.json')
+Assert-Selector (-not (Test-Workflow -Plan $benchmarkCorpusPinPlan -Name 'benchmark-graph')) 'corpus configuration is not measurement graph input'
+Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkCorpusPinPlan -Id 'benchmark-tooling-tests')) 'corpus configuration does not select unrelated graph contracts'
 Assert-Selector (Test-RequiredCommand -Plan $benchmarkCorpusPinPlan -Id 'benchmark-corpus-acquisition-test') 'nested source pins retain acquisition contracts'
+Assert-Selector (Test-Workflow -Plan $benchmarkCorpusPinPlan -Name 'security') 'download configuration retains hosted scanner coverage'
+foreach ($path in @('.github/scanner-metadata-reviews.csv', 'tools/scanner_metadata_review.py', 'tools/test_scanner_metadata_review.py')) {
+    $metadataReviewPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $metadataReviewPlan -Id 'scanner-metadata-review-tests') "metadata review inputs retain exact snapshot contracts: $path"
+    Assert-Selector (Test-Workflow -Plan $metadataReviewPlan -Name 'security') "metadata review inputs retain hosted scans: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $metadataReviewPlan -Id 'release-build')) "metadata review alone must not build the product: $path"
+}
 foreach ($path in @("tools/benchmark_cache.py", "tools/test_benchmark_cache.py", "tools/benchmark_comparators.py", "tools/test_benchmark_comparators.py", "tools/benchmark_permissions.json", "docs/benchmark-permissions.md", "docs/benchmark-research.md", "docs/comparative-benchmark-methodology.md")) {
     $benchmarkToolPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "benchmark-tooling-tests") "benchmark tools and policies require offline validation: $path"

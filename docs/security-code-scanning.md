@@ -4,6 +4,41 @@ SuperZip uses automatic GitHub security workflows adapted for a native Windows
 C++ app. The workflows are source-controlled, SHA-pinned where GitHub Actions
 are used, and default to read-only repository permissions.
 
+## Scanner Input Roles
+
+`docs/benchmarks/data/` contains passive measurement reports only. DevSkim's
+code-pattern analysis excludes that whole directory after
+`tools/devskim_scope.py` validates its role. The shared local/hosted boundary
+rejects source files, test files, unknown record kinds, malformed JSON,
+corpus acquisition configuration, reparse redirects and resource overruns.
+This is an input contract, not a rule suppression or a finding filter.
+The real pinned matcher contract verifies that source, tests, configuration,
+`bin/` code and nested lookalike paths retain findings, including checkout names
+with punctuation. JSON options preserve array boundaries. The pinned matcher's
+single-character placeholders apply only to its already selected absolute
+scan-root prefix; fixed directory depth and the literal report suffix keep
+neighboring inputs outside the exclusion.
+
+Corpus download descriptors live in `docs/benchmarks/corpora/` and remain
+scanned. Production source, vendored compiled source, test code and fixtures,
+tools, workflows and other configuration remain in code analysis. Gitleaks
+and TruffleHog still scan report data and Git history; generated metadata can
+contain leaked credentials and therefore has no folder-level secret exemption.
+The existing exact public-checksum exceptions retain field/value constraints.
+
+Local preflight retains every raw finding. Its metadata review ledger records
+only the four already reviewed checksum matches in the corpus descriptor and
+Gitleaks policy. A verdict requires the exact metadata path, rule, highlighted
+public digest and complete reviewed file hash. Source and test paths cannot
+enter this ledger; changed contents and other findings remain blocking. CSV
+keeps the review records readable without changing the scanned source values.
+This local admission does not dismiss hosted alerts or qualify release security.
+
+A successful analysis with the same DevSkim category can update obsolete
+findings automatically. Final acceptance requires the hosted result and fresh
+alert audit; a local scope check alone does not prove closure. Earlier manual
+metadata dispositions remain visible in GitHub's audit history.
+
 ## Automatic Workflows
 
 - `.github/workflows/security-code-scanning.yml` runs source and dependency
@@ -130,13 +165,14 @@ include `sdk_byte_access`. Gitleaks' generic API-key detector reported 32
 occurrences. Each digest matches both its recorded Git blob and current source
 bytes. The maintainer authorized exclusions for verified metadata only, with
 actual code findings retained. `.github/gitleaks.toml` extends every default
-rule and admits only those two exact filename/digest pairs within the dated
-beta record paths. Changed values, authentication fields, extra same-line
+rule and admits only those two exact filename/digest pairs within the guarded
+passive report directory, without date-specific filenames. Changed values,
+authentication fields, extra same-line
 content and unrelated paths remain detectable. The pinned 8.30.1 scanner passed
 the complete local history with this policy and five real scanner boundary
 checks; hosted history and working-tree acceptance still require a new run.
-DevSkim findings require their separate per-alert evidence and disposition;
-this policy does not suppress them or any code findings.
+DevSkim uses the separate input-role contract above; this checksum policy does
+not alter DevSkim rules or suppress any code findings.
 
 On October 3, 2026, [alert 1742](https://github.com/strmt7/SuperZip/security/code-scanning/1742)
 was confirmed to match the public ROCm archive SHA-256 pin, which

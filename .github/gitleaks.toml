@@ -10,12 +10,12 @@ id = "generic-api-key"
 description = "Verified public source checksum; exact field, value and benchmark path only"
 condition = "AND"
 regexTarget = "line"
-paths = ['''^docs/benchmarks/data/beta-(?:mixed-l5-b[0-9]+|effort-size-L[1-9])-20261003\.json$''']
+paths = ['''^docs/benchmarks/data/(?:[^/]+/)*[^/]+\.json$''']
 regexes = ['''^\s*"tests/cpp/sdk_byte_access_checks\.hpp"\s*:\s*"71c64ef58aae24a06a5c9835606b52bace8f18d477065a2eb5bcd6d4c67c3abc",?\s*$''']
 
 [[rules.allowlists]]
 description = "Verified public source checksum; exact field, value and benchmark path only"
 condition = "AND"
 regexTarget = "line"
-paths = ['''^docs/benchmarks/data/beta-(?:mixed-l5-b[0-9]+|effort-size-L[1-9])-20261003\.json$''']
+paths = ['''^docs/benchmarks/data/(?:[^/]+/)*[^/]+\.json$''']
 regexes = ['''^\s*"tests/cpp/test_sdk_byte_access\.cpp"\s*:\s*"46311f60efaa7cbed9b73dd53b4285cd24c5f9cbbeab6afc15f604f88148aeab",?\s*$''']

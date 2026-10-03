@@ -49,20 +49,23 @@ class GitleaksPolicyTests(unittest.TestCase):
             ):
                 self.assertIsNone(re.fullmatch(pattern, negative))
 
-    # Purpose: Reject exclusions outside the exact dated benchmark record family.
+    # Purpose: Admit reviewed values only in the passive report role without date-specific maintenance.
     # Inputs: Representative record paths and neighboring product/configuration paths. Outputs: Bounded admission only.
-    def test_dated_record_paths_only(self):
+    def test_report_directory_paths_only(self):
         for item in self.allowlists:
             pattern = item["paths"][0]
             for positive in (
                 "docs/benchmarks/data/beta-effort-size-L4-20261003.json",
                 "docs/benchmarks/data/beta-mixed-l5-b8192-20261003.json",
+                "docs/benchmarks/data/beta-effort-size-L4-20261004.json",
+                "docs/benchmarks/data/future/report.json",
             ):
                 self.assertIsNotNone(re.fullmatch(pattern, positive))
             for negative in (
                 "src/benchmark.json",
                 ".github/secrets.json",
-                "docs/benchmarks/data/beta-effort-size-L4-20261004.json",
+                "docs/benchmarks/corpora/source-pin.json",
+                "tests/fixtures/report.json",
                 "docs/benchmarks/data/beta-effort-size-L4-20261003.json.backup",
                 "other/docs/benchmarks/data/beta-effort-size-L4-20261003.json",
             ):
