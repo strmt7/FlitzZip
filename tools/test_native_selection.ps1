@@ -59,6 +59,18 @@ foreach ($name in @('dictionary_off_grid_segmented_records_roundtrip',
 Assert-NativeSelection ('dictionary_encoder_benchmark_opt_in' -notin $dictionary.tests -and
     'dictionary_decoder_independent_writer_fixture' -notin $dictionary.tests) 'candidate changes exclude opt-in timing and standalone decoder fixtures'
 $allCandidates = Get-SuperZipNativeTestSelection -Paths ($entropyPaths + $sparsePaths + $dictionaryPaths)
+$dictionaryCodec = Get-SuperZipNativeTestSelection -Paths @('src/gpu/hip_dictionary_matcher.hip.cpp')
+Assert-NativeSelection ($dictionaryCodec.mode -eq 'component' -and $dictionaryCodec.requireHip) 'reviewed dictionary codec requires its component contracts and HIP'
+foreach ($name in @('dictionary_gpu_stable_prefix_order_with_maximum_sentinels',
+        'dictionary_gpu_matches_agree_with_exhaustive_reference', 'dictionary_encoder_agrees_with_dense_reference',
+        'dictionary_gpu_maximum_batch_is_bounded', 'dictionary_decoder_rejects_incomplete_sequences',
+        'dictionary_concurrent_dense_match_table', 'suzip_gpu_dictionary_writer_levels_and_roundtrip')) {
+    Assert-NativeSelection ($name -in $dictionaryCodec.tests) "dictionary codec sort/search, decoder, concurrency and direct publication coverage: $name"
+}
+foreach ($name in @('dictionary_encoder_benchmark_opt_in', 'dictionary_sparse_pattern_reference_opt_in',
+        'dictionary_interop_export_preserves_bytes_and_refuses_overwrite')) {
+    Assert-NativeSelection ($name -notin $dictionaryCodec.tests) "codec changes do not select unrelated opt-in research or file-export fixtures: $name"
+}
 Assert-NativeSelection ($allCandidates.tests.Count -eq 38 -and $allCandidates.requireHip) 'candidate batch shares four entropy consumers without repetition'
 foreach ($shared in @('src/gpu/dictionary_candidate.hpp', 'src/gpu/dictionary_matcher.cpp', 'src/gpu/dictionary_device.hpp')) {
     Assert-NativeSelection ((Get-SuperZipNativeTestSelection -Paths ($dictionaryPaths + $shared)).mode -eq 'full') "unmapped dictionary boundary retains broader coverage: $shared"

@@ -1681,6 +1681,33 @@ TEST_CASE(dictionary_gpu_maximum_batch_is_bounded) {
               << " workspace_bytes=" << repetitive.device_workspace_bytes << " memory_only=true disk_write_bytes=0\n";
 }
 
+// Purpose: Prove stable prefix sorting retains nearest ties and orders sentinels after maximum valid keys.
+// Inputs: Almost four MiB of 0xFF bytes spanning all 64 segments, including a partial final segment.
+// Outputs: Requires exact level-one match length/distance at segment boundaries and independent encoded read-back.
+TEST_CASE(dictionary_gpu_stable_prefix_order_with_maximum_sentinels) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    const std::vector<std::byte> input(kMaxBatchBytes - 2U, std::byte{0xFF});
+    const auto matches = find_matches(input, 1);
+    REQUIRE_TRUE(matches.gpu_used);
+    REQUIRE_EQ(matches.matches.size(), input.size());
+    REQUIRE_TRUE(matches.device_workspace_bytes <= kMaxWorkspaceBytes);
+    const auto maximum_length = kMinMatchBytes + effort_for_level(1).max_byte_comparisons;
+    for (std::size_t start = 0; start < input.size(); start += kSegmentBytes) {
+        const auto bytes = std::min<std::size_t>(kSegmentBytes, input.size() - start);
+        for (const auto offset : {0U, 1U, 2U, 15U, 255U, 4095U, static_cast<unsigned int>(bytes - 12U),
+                                  static_cast<unsigned int>(bytes - 4U), static_cast<unsigned int>(bytes - 3U)}) {
+            const auto& match = matches.matches[start + offset];
+            const bool has_match = offset != 0U && bytes - offset >= kMinMatchBytes;
+            REQUIRE_EQ(match.distance, has_match ? 1U : 0U);
+            REQUIRE_EQ(match.length, has_match ? std::min<std::size_t>(maximum_length, bytes - offset) : 0U);
+        }
+    }
+    const auto encoded = encode_segments(input, 1);
+    (void)require_valid_encoded_batch(input, encoded);
+}
+
 // Purpose: Preserve required-HIP semantics and argument admission for the encoded-byte path.
 // Inputs: Empty, invalid-level, oversized, and unavailable-device requests.
 // Outputs: Requires explicit errors before work and an empty, GPU-free result for empty input.

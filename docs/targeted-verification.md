@@ -122,9 +122,13 @@ The host dictionary candidate implementation selects 15 cases covering
 segment-local and off-grid repeats, periodic grouping/fallback, independent
 CPU/HIP decoding, CRC, all-effort archive publication and competing entropy
 winners. The combined entropy/sparse/dictionary batch selects 38 unique cases.
-Dictionary headers and matcher/device implementations remain unmapped and keep
-broader qualification; standalone decoder and opt-in timing fixtures are not
-part of the candidate-only cohort.
+The HIP dictionary codec implementation selects 40 reviewed cases covering
+index/search, independent packing/decoding, resource admission, concurrency,
+segment/sentinel boundaries and direct archive/entropy consumers. Unrelated
+export and opt-in research fixtures are excluded from that production-only
+cohort. Dictionary headers, host matcher and device interfaces remain unmapped
+and keep broader qualification. Standalone decoder and opt-in timing fixtures
+are not part of the candidate-only cohort.
 Registered test-file-only changes select all
 recognized cases in those files; they do not trigger unrelated format-matrix,
 fuzz, GUI or package work. Shared headers, other unmapped production mechanisms,

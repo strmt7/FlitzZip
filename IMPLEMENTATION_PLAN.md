@@ -142,6 +142,18 @@ with exact-commit secret scans passing; the subsequent open-alert audit still
 fails at 209. Broader workloads, block/effort sweeps, eligible comparators,
 corpus publication and final hosted acceptance remain outstanding.
 
+The next dictionary-index batch rejected two bit-range candidates. Removing
+position bits failed an independent mixed-data match contract while its
+preserved control passed. Retaining positions and excluding unused upper bits
+passed 48 affected cases, but 138 independently checked paired observations
+showed only a 0.025% mean combined-time difference, below measurement
+uncertainty. The original full-key implementation is restored; no speedup is
+claimed. A maximum-prefix/sentinel regression and 40-case production codec
+mapping remain as durable coverage and iteration improvements. The separate
+failed harness attempt is retained; its corrected study fixed confirmation
+counts from pilots and did not trim or extend measurements. See the
+[candidate decisions](docs/benchmarks/household-power-diagnostic-2026-10-03.md#rejected-dictionary-sort-candidates).
+
 The diagnostic checkpoint also exposed a routing mismatch: narrative benchmark
 prose selected a hosted graph workflow whose event filter covers data inputs.
 The focused correction narrows only that narrative classification, retaining

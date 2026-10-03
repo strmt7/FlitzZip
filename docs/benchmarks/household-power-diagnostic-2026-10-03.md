@@ -161,6 +161,90 @@ trace without launching another workload:
 py -3 tools/analyze_hip_trace.py <completed-trace-path> --allow-entry-only-status-queries
 ```
 
+## Rejected Dictionary Sort Candidates
+
+The next batch evaluated two changes to the production dictionary key sort.
+Keys encode segment, exact four-byte prefix and source position. ROCm Core SDK
+10 includes rocPRIM 4.6.0; its installed headers and
+[official sort documentation](https://rocm.docs.amd.com/projects/rocPRIM/en/latest/device_ops/sort.html)
+describe stable sorting and configurable bit ranges. The SDK distribution was
+kept intact.
+
+The first candidate sorted bits 16 through 63, intending to preserve source
+order within equal prefixes through stability. It reproducibly failed
+`dictionary_dispatch_bound_stage_timing`: an independently checked match did
+not equal the original substring. The preserved full-key control passed that
+same case. The candidate passed the maximum-prefix/sentinel fixture, which
+demonstrates why a uniform-value boundary test cannot replace mixed-data
+validation. It was rejected before timing. The specific cause of the partial
+range failure is unresolved; these observations do not establish an upstream
+rocPRIM defect.
+
+The second candidate retained all source-position bits and sorted bits 0
+through 54. This includes every valid key bit plus a sentinel-discrimination
+bit. It passed all 48 selected native cases, including independent readers,
+exhaustive match/reference packing, concurrency and archive publication.
+The unchanged source-controlled full-key binary and app-local dependencies
+were copied and hash-verified before editing. No control binary was rebuilt
+from a guessed historical dependency state.
+
+The corrected RAM-only comparison used the authenticated first excerpt,
+level 5, 8192 KiB blocks and identical geometry: 32 requested workers, 32
+encode/decode codec workers, encode depth 32 and decode depth 4. Fresh native
+processes ran at normal priority, alternating control/candidate order each
+round, with bytewise validation and CPU/GPU resource samples. Three pilots per
+variant froze 66 confirmations per variant. A predeclared ceiling of 128
+allowed the 30-second combined-time floor to fit these short invocations;
+the prior corpus studies and the production controller's defaults were not
+retrospectively changed. All six pilots and 132 confirmations were retained,
+with no warm-up removal, trimming or post hoc extension. Both confirmation
+lanes met the descriptive 30-second, 5% CV and 2% RSE criteria.
+
+| Confirmation metric | Full-key control | Upper-bit candidate |
+| --- | ---: | ---: |
+| Mean encode time, ms | 435.699 | 435.660 |
+| Mean combined phase time, ms | 457.856 | 457.743 |
+| Combined sample SD, ms | 5.568 | 5.854 |
+| Combined measured time, s | 30.219 | 30.211 |
+| Complete archive bytes | 5,210,241 | 5,210,241 |
+| Recorded device allocation requests, bytes | 693,577,943 | 693,572,823 |
+
+The mean paired candidate-minus-control difference was -0.114 ms, an observed
+0.025% reduction. The paired difference sample SD was 8.583 ms; its mean
+standard error under an independent-observation assumption was 1.057 ms.
+The difference is too small to support a speed claim. Descriptively stable
+lanes do not establish a beneficial comparison or eliminate serial dependence
+and host effects. The 5,120-byte reduction in cumulative allocation requests
+is not a measured peak-VRAM saving and does not justify extra production
+complexity. This candidate was also rejected; production sorting remains
+the original full 64-bit range.
+
+The first comparison-harness attempt failed after journalling one native
+observation because a Boolean parameter was invoked without its value. Its
+failed exit and raw journal remain separate. The corrected study uses new
+destinations and discloses that setup failure; no timing-driven exclusion
+was applied to its observations.
+
+Local evidence is preserved in:
+
+- `out/dictionary-radix-component-verification-20261003.json` and
+  `out/dictionary-radix-stage-failure-reproduction-20261003.json` for the rejected
+  position-bit candidate.
+- `out/dictionary-radix-control-20261003/identity.json` for the verified control.
+- `out/dictionary-radix-upper-bits-verification-20261003.json` for candidate
+  correctness, and `out/dictionary-radix-upper-bit-candidate-20261003.hip.cpp`
+  for its retained source.
+- `out/dictionary-radix-paired-first-excerpt-corrected-20261003.json`, its
+  `.samples.jsonl` and `.plan.json` for the completed comparison.
+- `out/dictionary-radix-independent-inspection-20261003.json` for independent
+  raw/report, byte, geometry, HIP and statistical checks of all 138 observations.
+
+The lasting changes are a maximum-prefix/partial-segment regression and
+component routing for future dictionary codec work. That production path selects
+40 reviewed cases; a changed matcher test file selects all its registrations,
+yielding 48 unique cases with direct consumers in this batch. No GUI, unrelated
+format matrix or full product suite is selected merely for these changes.
+
 ## Local Evidence And Reproduction
 
 The complete schema-four reports and corresponding `.samples.jsonl` journals
