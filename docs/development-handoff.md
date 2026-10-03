@@ -2,6 +2,12 @@
 
 ## Start Here
 
+The [3 October intermediate beta review](beta-review-2026-10-03.md) is the current
+candidate packet. It records the frozen codec identity, fresh block/effort/format
+evidence, packaging asset repair and held acceptance gates. The dated checkpoint
+below remains historical evidence. The maintainer requested a goal pause once
+the review packet is ready; release publication still requires explicit approval.
+
 Prepared on **2 October 2026** for another agent or programmer to continue
 without relying on this chat. This is a development checkpoint, not enterprise
 readiness, final security acceptance or permission to publish a release.

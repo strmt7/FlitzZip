@@ -1121,6 +1121,8 @@ if(WIN32)
   install(FILES "${SUPERZIP_WIMLIB_RUNTIME_DLL}" DESTINATION bin)
 endif()
 install(DIRECTORY docs DESTINATION .)
+install(DIRECTORY resources/brand resources/benchmarks resources/design
+        DESTINATION resources)
 if(SUPERZIP_ENABLE_HIP)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json"
           DESTINATION .)

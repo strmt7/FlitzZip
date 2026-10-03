@@ -295,6 +295,13 @@ mean times, sample SD, exact counts, HIP telemetry and source/binary identity.
 This synthetic workload result establishes neither competitor superiority nor a
 before/after improvement. Broader beta qualification remains in progress.
 
+Fresh [all-nine native effort sizes](docs/benchmarks/native-beta-effort-sizes-2026-10-03.md)
+retain 18 byte-exact RAM observations with unqualified single-run timings.
+The [writable-format size report](docs/benchmarks/beta-format-sizes-2026-10-03.md)
+covers 132 archive/reader cases across all 13 writable formats on bounded
+synthetic fixtures. Separately, all 36 registered formats passed the CLI
+correctness matrix. These size/correctness results are not speed rankings.
+
 For reviewed exact-file CPU/HIP RAM studies, the scientific controller accepts
 `-CorpusManifest`, `-CorpusRoot` and `-CorpusFile` together. It preserves natural
 byte counts, source identity and every pilot/confirmation observation; noisy

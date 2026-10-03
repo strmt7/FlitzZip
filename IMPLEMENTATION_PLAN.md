@@ -312,8 +312,18 @@ Every observation passed byte-exact validation. Only 8 MiB met every declared
 timing-quality safeguard; all six inconclusive cases and the earlier 29-pilot
 budget-aborted setup remain documented. GPU archive sizes were larger for all
 seven synthetic Mixed cases. The qualified plot uses encoded payload bytes;
-the report separately gives full modeled archive bytes. Effort/profile/corpus,
-comparator, format, package/MSI and final hosted acceptance are still pending.
+the report separately gives full modeled archive bytes. The nine-effort size
+diagnostic adds 18 byte-exact RAM observations without timing qualification.
+The registry smoke passes all 36 formats and the bounded level-5 size study
+passes 132 archive/reader cases across all 13 writable formats. ZIP/MSI artifacts
+are prepared for internal review; installation smoke, additional profile/corpus
+and comparator timing, and final hosted acceptance remain separate gates.
+
+Package review exposed omitted README/documentation image assets. The canonical
+CMake install rule now includes brand, benchmark and design resources; codec
+implementations remain frozen. The resulting install-rule change requires a
+fresh build receipt, selected native/package qualification and exact-SHA hosted
+checks before handoff. This does not relabel the earlier benchmark identities.
 
 Refresh README claims, benchmark reports and reproducible plots from that
 candidate's evidence. Prepare a concrete version proposal, changelog, x64 HIP
