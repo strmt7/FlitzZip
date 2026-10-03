@@ -26,6 +26,15 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Publishing unscanned benchmark receipts caused thousands of public-checksum
+  alerts and a failed Gitleaks gate. `tools/scanner_preflight.py` now freezes
+  changed tracked and untracked inputs and runs the same pinned detectors before
+  expensive verification. It fails on findings, missing/mismatched tools,
+  invalid output, resource limits and source mutation. Reports remain private
+  and complete; code findings are never filtered. This adapts bounded admission
+  and explicit evidence patterns inspected in the maintainer's scanner and
+  skill-review repositories, without importing their blanket test policies.
+
 - Logger entries do not establish completed calls. The production HIP trace
   contained unpaired empty status-query entries matching AMD's direct-return
   logging pattern. `analyze_hip_trace.py` preserves strict parsing by default;

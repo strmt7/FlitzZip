@@ -832,6 +832,13 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 - Before pushing, run the checks selected by the verification plan and the
   changed-file hygiene gate. Do not run unrelated heavyweight checks unless the
   selector escalates or there is evidence of a broader problem.
+- The selected `scanner-preflight` gate runs the pinned Gitleaks and DevSkim
+  tools on frozen changed publication files before expensive checks. Provision
+  the complete pinned tools and supply their executable paths through
+  process-scoped `SUPERZIP_GITLEAKS`/`SUPERZIP_DEVSKIM` or PATH. Missing tools,
+  findings, invalid reports and source mutation fail admission. Keep raw reports;
+  investigate findings before publishing, including metadata false positives.
+  This gate supplements full hosted scans; it does not replace them.
 - Optimize CI from exact-run queue, job, and step timings, not total-duration
   impressions. Keep build-traced coverage, query suites, intended fuzz budgets,
   provenance checks, and publication safeguards intact. Never restore compiled

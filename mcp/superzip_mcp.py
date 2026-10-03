@@ -454,6 +454,26 @@ def child_environment(command: Sequence[str]) -> dict[str, str]:
     return environment
 
 
+def command_working_directory(directory: Path | None) -> Path:
+    """Purpose: Keep child working directories inside this checkout without reparse redirects.
+    Inputs: Optional existing directory; None retains the checkout root.
+    Outputs: Absolute directory or a refusal before any child is started.
+    """
+    candidate = Path(os.path.abspath(ROOT if directory is None else directory))
+    try:
+        relative = candidate.relative_to(ROOT)
+    except ValueError:
+        raise ValueError("child working directory must stay inside the checkout") from None
+    current = ROOT
+    for part in ("", *relative.parts):
+        current /= part
+        if current.is_symlink() or current.is_junction():
+            raise ValueError("child working directory crosses a reparse point")
+    if not candidate.is_dir():
+        raise ValueError("child working directory must be an existing directory")
+    return candidate
+
+
 def run_bounded_command(
     command: Sequence[str],
     *,
@@ -462,9 +482,10 @@ def run_bounded_command(
     response_tail_bytes: int = MAX_RESPONSE_TAIL_BYTES,
     cancellation: threading.Event | None = None,
     memory_limit_bytes: int | None = None,
+    working_directory: Path | None = None,
 ) -> dict[str, object]:
     """Purpose: Run one allowlisted command with aggregate memory, process-tree, time, and streaming-output limits.
-    Inputs: Fixed argv and positive limits; cancellation stops only this tree; optional smaller RAM bound is internal.
+    Inputs: Fixed argv, positive limits and checkout-contained directory; cancellation stops only this tree.
     Outputs: Returns bounded outcome and admitted job-memory bytes; no child runs before verified containment.
     """
     if (
@@ -478,6 +499,7 @@ def run_bounded_command(
     ):
         raise ValueError("child command limits require a finite positive deadline and positive integer byte counts")
     admitted_bytes = admit_child_memory_bytes(memory_limit_bytes)
+    child_directory = command_working_directory(working_directory)
     creation_options = {
         "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
         | subprocess.CREATE_NO_WINDOW
@@ -486,7 +508,7 @@ def run_bounded_command(
     }
     process = subprocess.Popen(
         list(command),
-        cwd=ROOT,
+        cwd=child_directory,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

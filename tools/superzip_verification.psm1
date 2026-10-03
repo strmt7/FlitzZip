@@ -265,6 +265,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/test_gitleaks_policy\.py$',
+        '^tools/(scanner_preflight|test_scanner_preflight)\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
@@ -302,6 +303,7 @@ function Get-SuperZipVerificationScope {
         '^tools/native_component_tests\.ps1$',
         '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report)\.py$',
         '^tools/test_gitleaks_policy\.py$',
+        '^tools/(scanner_preflight|test_scanner_preflight)\.py$',
         '^\.github/'
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
@@ -417,6 +419,8 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "devskim-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_devskim_report") -Reason "SARIF publication must preserve all findings, repair only empty optional excerpts, and reject unexpected source content") }
         @{ Pattern = @('^\.github/gitleaks\.toml$', '^\.github/workflows/security-code-scanning\.yml$', '^tools/test_gitleaks_policy\.py$')
            Command = (Get-SuperZipVerificationCommand -Id 'gitleaks-policy-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_gitleaks_policy') -Reason 'reviewed checksum exceptions must retain default rules and reject authentication fields, changed values and unrelated paths') }
+        @{ Pattern = @('^tools/(scanner_preflight|test_scanner_preflight)\.py$')
+           Command = (Get-SuperZipVerificationCommand -Id 'scanner-preflight-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_preflight') -Reason 'changed-file scanner admission must retain complete inputs, bound resources and reject every finding or malformed report') }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$', '^tools/scan_trufflehog\.sh$')
            Command = (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities") }
         @{ Pattern = @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')
@@ -454,6 +458,11 @@ function Get-SuperZipLocalVerificationCommand {
     }
 
     Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "changed-hygiene" -Stage "local" -Executable "powershell" -Arguments $hygieneArguments -Reason "always scan changed files for secrets, forbidden workflow deployment keys, generated binaries, and comparison-name policy")
+    if ($paths.Count -gt 0) {
+        $scannerArguments = @('-3', 'tools/scanner_preflight.py')
+        if (-not [string]::IsNullOrWhiteSpace($BaseRef)) { $scannerArguments += @('--base', $BaseRef) }
+        Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id 'scanner-preflight' -Stage 'local' -Executable 'py' -Arguments $scannerArguments -Reason 'run the pinned secret/DevSkim detectors on frozen changed publication inputs before expensive verification or push')
+    }
 
     if ($scope.touchesLintSurface -or $scope.fullEscalationRequired) {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "language-lint" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/lint.ps1", "-CppMode", "Changed", "-IncludeUntracked") -Reason "changed docs, workflow, script, CMake, or C/C++ surfaces require the fast language linter lane")

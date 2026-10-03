@@ -26,6 +26,13 @@ tools/verification_plan.ps1 -IncludeUntracked
 tools/verify_changes.ps1 -IncludeUntracked
 ```
 
+The planner includes `tools/scanner_preflight.py` for changed publication
+inputs. Run its actual pinned detectors before a commit or push, with complete
+tool paths supplied through the documented process-scoped variables. Read the
+private receipt and raw reports on failure. Do not infer clean scanning from
+the policy-only scanner, unit fixtures, absent tools or empty input selection.
+The operating guide remains authoritative for provisioning and triage rules.
+
 Single-agent and Codex Security worker policy:
 
 - Run SuperZip security work serially in the current agent. Do not spawn,

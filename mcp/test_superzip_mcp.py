@@ -232,6 +232,35 @@ class ProtocolTests(unittest.TestCase):
 
 
 class MemoryAdmissionTests(unittest.TestCase):
+    def test_working_directory_rejects_escapes_and_redirects(self) -> None:
+        """Purpose: Preserve checkout containment; inputs: paths and redirects; outputs: refusals before launch."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inside = root / "inputs"
+            inside.mkdir()
+            with mock.patch.object(superzip_mcp, "ROOT", root):
+                self.assertEqual(superzip_mcp.command_working_directory(inside), inside)
+                self.assertEqual(superzip_mcp.command_working_directory(None), root)
+                for directory in (root.parent, root / "missing", root / ".." / "outside"):
+                    with mock.patch.object(superzip_mcp.subprocess, "Popen") as child:
+                        with self.assertRaises(ValueError):
+                            superzip_mcp.run_bounded_command(["unused"], working_directory=directory)
+                        child.assert_not_called()
+                with mock.patch.object(Path, "is_junction", return_value=True), self.assertRaises(ValueError):
+                    superzip_mcp.command_working_directory(inside)
+
+    @unittest.skipUnless(os.name == "nt", "Windows bounded working-directory integration")
+    def test_real_child_uses_snapshot_directory(self) -> None:
+        """Purpose: Keep detector paths project-relative; inputs: owned checkout directory; outputs: exact child cwd."""
+        with tempfile.TemporaryDirectory(dir=superzip_mcp.ROOT) as temporary:
+            result = superzip_mcp.run_bounded_command(
+                [sys.executable, "-c", "from pathlib import Path; print(Path.cwd())"],
+                working_directory=Path(temporary),
+                timeout_seconds=15,
+            )
+            self.assertEqual(result["exit_code"], 0, result["stderr"])
+            self.assertEqual(Path(result["stdout"].strip()), Path(temporary))
+
     def test_invalid_limits_cannot_disable_deadlines_or_start_children(self) -> None:
         """Purpose: Prevent unbounded checks; inputs: nonfinite deadlines or invalid byte limits; outputs: no child."""
         cases = [{"timeout_seconds": value} for value in (float("nan"), float("inf"), -float("inf"), 0, -1, True, "1")]

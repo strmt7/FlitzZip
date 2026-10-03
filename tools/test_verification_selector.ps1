@@ -108,6 +108,14 @@ function Invoke-WaiterSmoke {
 }
 
 $emptyPaths = @(Select-SuperZipUniquePath -Path @($null, "", " "))
+foreach ($path in @('README.md', 'src/cli/main.cpp', 'docs/benchmarks/data/new-study.json', 'tools/scanner_preflight.py')) {
+    $preflightPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $preflightPlan -Id 'scanner-preflight') "changed publication inputs require actual scanner preflight: $path"
+}
+$preflightToolPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/scanner_preflight.py')
+Assert-Selector (Test-RequiredCommand -Plan $preflightToolPlan -Id 'scanner-preflight-tests') 'scanner admission changes require boundary contracts'
+Assert-Selector (-not (Test-RequiredCommand -Plan $preflightToolPlan -Id 'release-build')) 'scanner admission alone must not rebuild the app'
+Assert-Selector (-not (Test-SuperZipToolContractCommand -Command ([pscustomobject]@{id='scanner-preflight'}))) 'offline contracts must not pretend to execute provisioned detectors'
 foreach ($workflow in @('fuzzing', 'greenbone-openvas-vulnetix')) {
     $source = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) ".github/workflows/$workflow.yml") -Raw
     Assert-Selector ($source -match '(?m)^  workflow_dispatch:\s*$') "final qualification must support manual dispatch when path filters omit a run: $workflow"
@@ -127,7 +135,8 @@ foreach ($path in @('tools/fuzz_resources.ps1', 'tools/test_fuzz_resources.ps1',
 $docsPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md")
 Assert-Selector $docsPlan.scope.docsOnly "docs-only changes must be classified as docsOnly"
 Assert-Selector (-not $docsPlan.scope.fullEscalationRequired) "docs-only changes must not escalate"
-Assert-Selector ((Get-RequiredCommandId -Plan $docsPlan).Count -eq 2) "docs-only changes must require changed hygiene and language lint"
+Assert-Selector ((Get-RequiredCommandId -Plan $docsPlan).Count -eq 3) "docs-only changes must require hygiene, actual scanner admission and language lint"
+Assert-Selector (Test-RequiredCommand -Plan $docsPlan -Id 'scanner-preflight') 'documentation inputs must retain actual detector admission'
 Assert-Selector (Test-RequiredCommand -Plan $docsPlan -Id "language-lint") "docs-only changes must run markdown lint through the language linter"
 Assert-Selector (-not (Test-RequiredCommand -Plan $docsPlan -Id "lint-routing-tests")) "docs-only changes must not rerun unchanged routing implementation tests"
 $lintPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/lint.ps1")
@@ -459,7 +468,7 @@ Assert-Selector $unknownRejected 'unknown paths must fail planning rather than s
 $manyDocs = @(1..30 | ForEach-Object { "docs/fixture-$_.md" })
 $manyDocsPlan = Get-SuperZipVerificationPlan -ChangedPath $manyDocs
 Assert-Selector (-not $manyDocsPlan.scope.fullEscalationRequired) 'path count alone must not turn a documentation batch into product testing'
-Assert-Selector ($manyDocsPlan.requiredLocalCommands.Count -eq 2) 'documentation batches retain only hygiene and language lint'
+Assert-Selector ($manyDocsPlan.requiredLocalCommands.Count -eq 3) 'documentation batches retain hygiene, actual scanner admission and language lint'
 
 $forcedPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/targeted-verification.md") -SuspectGlobalBug
 Assert-Selector $forcedPlan.scope.fullEscalationRequired "SuspectGlobalBug must escalate even for docs"
