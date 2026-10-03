@@ -26,6 +26,14 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Narrative benchmark reports do not change graph inputs. A report-only push
+  exposed a planner requesting `benchmark-graph` despite its data-only event
+  filter. Routing now selects graph contracts for `docs/benchmarks/data/` and
+  existing producers/policies, while report prose retains hygiene and lint.
+  Inclusion/exclusion regressions preserve nested corpus-pin acquisition and
+  graph checks. Missing historical runs remain missing; this correction does
+  not relabel them as passed or weaken data publication admission.
+
 - Test doubles must preserve the production CLI's exit contract. The first
   hosted CPU component invocation rejected an honest HIP-OFF binary because
   its guard expected exit 0 from `gpu-info`; the actual CLI returns 1 when

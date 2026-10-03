@@ -136,6 +136,14 @@ with exact-commit secret scans passing; the subsequent open-alert audit still
 fails at 209. Broader workloads, block/effort sweeps, eligible comparators,
 corpus publication and final hosted acceptance remain outstanding.
 
+The diagnostic checkpoint also exposed a routing mismatch: narrative benchmark
+prose selected a hosted graph workflow whose event filter covers data inputs.
+The focused correction narrows only that narrative classification, retaining
+graph contracts for data, nested source pins and existing producers/policies.
+Reports retain hygiene/lint; no workflow filter, scanner or publication gate is
+removed. Positive and negative selector cases reproduce the original mismatch
+and qualify the corrected dependency routing.
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.

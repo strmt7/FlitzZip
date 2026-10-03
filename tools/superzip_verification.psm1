@@ -568,7 +568,7 @@ function Get-SuperZipVerificationPlan {
         throw "Classify these changed paths before selecting component checks: $($scope.unknownPaths -join ', ')"
     }
     $touchesBenchmarkGraph = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^docs/benchmarks/', '^resources/benchmarks/',
+        '^docs/benchmarks/data/', '^resources/benchmarks/',
         '^docs/(comparative-benchmark-methodology|benchmark-permissions|benchmark-research)\.md$',
         '^tools/(render_.*graph|test_.*graph|run_archive_comparison|test_archive_comparison|benchmark_comparators|test_benchmark_comparators|benchmark_cache|test_benchmark_cache)\.py$',
         '^tools/benchmark_permissions\.json$'

@@ -276,6 +276,18 @@ Assert-Selector (Test-Workflow -Plan $workflowPlan -Name "scorecard") "workflow 
 Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must require post-push audit"
 $benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/benchmarks/data/effort-native-L5.json")
 Assert-Selector (Test-Workflow -Plan $benchmarkPlan -Name "benchmark-graph") "benchmark records must wait for graph regeneration"
+Assert-Selector (Test-RequiredCommand -Plan $benchmarkPlan -Id "benchmark-tooling-tests") "benchmark data must retain graph contracts"
+foreach ($path in @('docs/benchmarks/corpora.md', 'docs/benchmarks/household-power-diagnostic-2026-10-03.md')) {
+    $benchmarkNarrativePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'benchmark-tooling-tests')) "benchmark narrative alone must not rerun unchanged graph contracts: $path"
+    Assert-Selector (-not (Test-Workflow -Plan $benchmarkNarrativePlan -Name 'benchmark-graph')) "benchmark narrative alone must not wait for a path-filtered graph workflow: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'changed-hygiene') "benchmark narrative retains source hygiene: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'language-lint') "benchmark narrative retains documentation lint: $path"
+}
+$benchmarkCorpusPinPlan = Get-SuperZipVerificationPlan -ChangedPath @('docs/benchmarks/data/corpora/household-power-source.json')
+Assert-Selector (Test-Workflow -Plan $benchmarkCorpusPinPlan -Name 'benchmark-graph') 'nested source pins retain the hosted data workflow'
+Assert-Selector (Test-RequiredCommand -Plan $benchmarkCorpusPinPlan -Id 'benchmark-tooling-tests') 'nested source pins retain graph and permission contracts'
+Assert-Selector (Test-RequiredCommand -Plan $benchmarkCorpusPinPlan -Id 'benchmark-corpus-acquisition-test') 'nested source pins retain acquisition contracts'
 foreach ($path in @("tools/benchmark_cache.py", "tools/test_benchmark_cache.py", "tools/benchmark_comparators.py", "tools/test_benchmark_comparators.py", "tools/benchmark_permissions.json", "docs/benchmark-permissions.md", "docs/benchmark-research.md", "docs/comparative-benchmark-methodology.md")) {
     $benchmarkToolPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (Test-RequiredCommand -Plan $benchmarkToolPlan -Id "benchmark-tooling-tests") "benchmark tools and policies require offline validation: $path"
