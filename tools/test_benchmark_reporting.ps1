@@ -15,6 +15,66 @@ foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 
+# Purpose: Exercise production parameter binding and corpus initialization without starting codecs.
+# Inputs: Parsed production script provides its actual parameter block and top-level admission statements.
+# Outputs: Requires unchanged generated-profile validation, admitted corpus labeling and exclusion failures.
+function Test-BenchmarkProfileBinding {
+    param([Management.Automation.Language.ScriptBlockAst]$ScriptAst)
+    $statements = @($ScriptAst.EndBlock.Statements)
+    $requested = @($statements | Where-Object { $_.Extent.Text.StartsWith('$corpusRequested =') })
+    $guard = @($statements | Where-Object { $_.Extent.Text.StartsWith('if ($corpusRequested -and') })
+    $admission = @($statements | Where-Object { $_.Extent.Text.StartsWith('if ($corpusRequested) {') })
+    $profileStatement = @($statements | Where-Object { $_.Extent.Text.StartsWith('$benchmarkProfile =') })
+    if ($requested.Count -ne 1 -or $guard.Count -ne 1 -or $admission.Count -ne 1 -or $profileStatement.Count -ne 1) {
+        throw 'Profile binding fixture cannot locate the production initialization statements.'
+    }
+    $body = @($ScriptAst.ParamBlock.Extent.Text, '$repo = ''owned-root''', $requested[0].Extent.Text, $guard[0].Extent.Text,
+        $admission[0].Extent.Text, $profileStatement[0].Extent.Text,
+        '[pscustomobject]@{ input = $WorkloadProfile; profile = $benchmarkProfile; corpus = $script:BenchmarkCorpus }')
+    $entry = [scriptblock]::Create(($body -join "`n"))
+    # Purpose: Admit only the owned metadata fixture at the production import call boundary.
+    # Inputs: Repository and complete corpus selector must match the controlled arguments.
+    # Outputs: Returns fixture metadata; rejects changed call arguments without touching files.
+    function Import-ReviewedBenchmarkCorpus {
+        param([string]$RepositoryRoot, [string]$Manifest, [string]$Root, [string]$File)
+        if ($RepositoryRoot -ne 'owned-root' -or $Manifest -ne 'owned-manifest' -or
+            $Root -ne 'owned-inputs' -or $File -ne 'owned-file') { throw 'Incorrect corpus admission arguments.' }
+        return [pscustomobject]@{ input_bytes = 37; source_sha256 = ('a' * 64) }
+    }
+    # Purpose: Require admission before the production source-identity guard call.
+    # Inputs: Script-scoped corpus is the owned fixture imported by this test.
+    # Outputs: Throws for missing fixture identity; performs no source or permission claim.
+    function Assert-BenchmarkCorpusIdentity {
+        if ($null -eq $script:BenchmarkCorpus -or $script:BenchmarkCorpus.input_bytes -ne 37) {
+            throw 'Corpus identity was checked before admission.'
+        }
+    }
+    $savedCorpus = $script:BenchmarkCorpus
+    try {
+        foreach ($generated in @('Mixed', 'Compressible', 'Incompressible', 'RepeatedRecord',
+                'SparseRecord', 'LongSparseRecord', 'SegmentedRecords')) {
+            $script:BenchmarkCorpus = $null
+            $result = & $entry -Profile $generated
+            if ($result.input -ne $generated -or $result.profile -ne $generated -or $null -ne $result.corpus) {
+                throw 'Generated-profile binding or labeling changed.'
+            }
+        }
+        $arguments = @{ CorpusManifest = 'owned-manifest'; CorpusRoot = 'owned-inputs'; CorpusFile = 'owned-file' }
+        $result = & $entry @arguments
+        if ($result.input -ne 'Mixed' -or $result.profile -ne 'Corpus' -or $result.corpus.input_bytes -ne 37) {
+            throw 'Corpus initialization mutated the validated generated-profile parameter or lost its label.'
+        }
+        foreach ($invalid in @(@{ Profile = 'Corpus' }, ($arguments + @{ Profile = 'Mixed' }),
+                ($arguments + @{ SizeMiB = 10240 }), ($arguments + @{ Mode = 'Filesystem' }),
+                @{ CorpusManifest = 'owned-manifest'; CorpusRoot = 'owned-inputs' })) {
+            $rejected = $false
+            try { & $entry @invalid | Out-Null } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Invalid or ambiguous corpus parameter binding was admitted.' }
+        }
+    } finally { $script:BenchmarkCorpus = $savedCorpus }
+}
+Test-BenchmarkProfileBinding -ScriptAst $ast
+
 $distribution = Measure-BenchmarkDistribution -Values @(1, 2, 3)
 if ($distribution.count -ne 3 -or $distribution.mean_seconds -ne 2 -or
     $distribution.sample_std_dev_seconds -ne 1 -or $distribution.relative_std_dev_pct -ne 50 -or

@@ -929,7 +929,7 @@ function Invoke-MemoryBenchmarkLane {
     $ownedDecodeStages = Read-BenchmarkWorkerStageSet -Stats $stats -Prefix 'decode_' -Lane $Lane `
         -Stages @('allocation', 'materialization', 'crc')
     if ($ModeFlag -eq "--require-gpu") {
-        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($WorkloadProfile -notin @('Incompressible', 'Corpus'))
+        Assert-GpuBackendStat -Stats $stats -Label "$Lane memory benchmark" -RequireNativeCompressedBlocks ($null -eq $script:BenchmarkCorpus -and $WorkloadProfile -ne 'Incompressible')
         if ($gpuEncodeStages['readiness'] -le 0 -or $gpuEncodeStages['classification'] -le 0) {
             throw "$Lane memory benchmark did not report the required HIP encode work stages."
         }
@@ -1344,8 +1344,8 @@ function Invoke-FrozenMemoryBenchmark {
 if ($corpusRequested) {
     $script:BenchmarkCorpus = Import-ReviewedBenchmarkCorpus -RepositoryRoot $repo -Manifest $CorpusManifest -Root $CorpusRoot -File $CorpusFile
     Assert-BenchmarkCorpusIdentity
-    $WorkloadProfile = 'Corpus'
 }
+$benchmarkProfile = if ($corpusRequested) { 'Corpus' } else { $WorkloadProfile }
 $laneCount = 0
 if (-not $SkipCpu) { ++$laneCount }
 if (-not $SkipGpu) { ++$laneCount }
@@ -1386,7 +1386,7 @@ if ($Mode -eq "Memory") {
     Write-BenchmarkJournal -Path $journalPath -Create -Event @{ event = 'protocol'; sampling_policy = $samplingPolicy
         measurement_identity_policy = 'native-build-receipt-around-observation-v2'; measurement_identity = $script:BenchmarkArtifactState
         native_build_receipt = $script:BenchmarkBuildReceipt
-        source_commit = $script:BenchmarkArtifactState.source_commit; binary_sha256 = $script:BenchmarkArtifactState.binary_sha256; profile = $WorkloadProfile
+        source_commit = $script:BenchmarkArtifactState.source_commit; binary_sha256 = $script:BenchmarkArtifactState.binary_sha256; profile = $benchmarkProfile
         size_mib = $(if ($corpusRequested) { $null } else { $SizeMiB }); input_bytes = (Get-BenchmarkInputByteCount $SizeMiB)
         measurement_protocol = (Get-BenchmarkMeasurementProtocol); corpus = $(if ($corpusRequested) { $script:BenchmarkCorpus.provenance } else { $null })
         compression_level = $CompressionLevel; block_sizes_kib = $BlockSizeKiB }
@@ -1517,7 +1517,7 @@ if ($Mode -eq "Memory") {
     }
 
     Write-BenchmarkMessage ""
-    Write-BenchmarkMessage "SuperZip benchmark: $SizeMiB MiB $WorkloadProfile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB; confirmation counts fixed before measurement."
+    Write-BenchmarkMessage "SuperZip benchmark: $(Get-BenchmarkInputByteCount $SizeMiB) bytes $benchmarkProfile SUZIP memory-only workload, compression level $CompressionLevel, block sizes $($BlockSizeKiB -join ',') KiB; confirmation counts fixed before measurement."
     Write-BenchmarkMessage 'All pilot and confirmation samples are retained. Statistics below describe confirmation only; no confidence or significance claim is made.'
     foreach ($case in $quality) {
         $cv = ($case.metrics.Values | ForEach-Object { $_.relative_std_dev_pct } | Measure-Object -Maximum).Maximum
@@ -1592,7 +1592,7 @@ if ($Mode -eq "Memory") {
             }
         }
         $recordArguments = @{
-            Runs = $results; Profile = $WorkloadProfile; SizeMiB = $SizeMiB; Level = $CompressionLevel
+            Runs = $results; Profile = $benchmarkProfile; SizeMiB = $SizeMiB; Level = $CompressionLevel
             SampleIntervalMs = $SampleIntervalMs; InterRunPauseMs = $InterRunPauseMs
             CpuModel = $cpuModel; GpuModel = $gpuModel; HipRuntimeVersion = $hipRuntimeVersion
         }

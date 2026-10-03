@@ -113,6 +113,16 @@ with ignored payloads. These are empirical numeric inputs; performance studies,
 other workload classes and corpus publication are still outstanding. See the
 [source and methodology](docs/benchmarks/corpora.md).
 
+The first empirical study exposed a controller entry-point defect before
+timing: assigning the internal `Corpus` label to the validated generated-profile
+parameter failed PowerShell validation. The repair derives the effective report
+label separately and bases GPU compressed-block requirements on admitted corpus
+state. Focused reporting contracts now execute the production parameter block
+and initialization statements, covering all seven generated profiles, complete
+corpus admission and ambiguous or incomplete argument rejection. These checks
+pass without rebuilding unchanged native code. Actual empirical measurements
+and broader workload qualification remain outstanding.
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.
