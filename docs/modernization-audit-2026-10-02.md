@@ -970,3 +970,43 @@ truncated; it is not a complete raw verification log. The separate current
 CTest log remains under `build/Testing/Temporary/LastTest.log`. Successful
 build-input receipts, larger-matrix qualification, corpus comparisons, security
 backlog and release acceptance remain open.
+
+## Round Twenty-One: Successful Native Invocation Identity
+
+The build wrapper now serializes the CMake tree with an actual Windows sharing
+lock and records incomplete, configure-only, failed and successful attempts.
+A shared content manifest includes native source, tests, CMake, pinned upstream
+inputs, compiled resources and build/header-generation tools, including staged,
+unstaged and nonignored added contents. Atomic successful receipts bind this
+manifest to configured options, a precisely limited observed toolchain scope,
+GUI/CLI outputs, runtime manifest and app-local DLLs. Prior evidence is retained.
+The first receipt and changed configuration/toolchain/output bytes require a
+fresh build; ordinary source edits retain incremental compilation.
+
+RAM observations now require current receipt/input hashes before and after each
+operation and at completion. Final export embeds the portable receipt once;
+the graph recomputes its shared schema/digests and checks CLI/DLL and HIP scope
+under a distinct observation policy. Historical evidence remains historical.
+These guards do not authenticate every compiler input, loaded GPU drivers,
+ignored/external substitutions or transient mutations restored between checks.
+They are not cryptographic build attestation or measured codec speedups.
+
+Real-file regressions cover failed/incomplete attempts, stale source and output
+bytes, configuration/compiler mutations, fresh versus incremental decisions,
+history collisions and required-HIP fallback. The Windows lock test uses an
+actual exclusive handle. Graph fixtures are explicit test data. A focused
+PowerShell test exposed function-only loading's missing script-root scope; a
+shared explicit tool binding fixes it without bypassing receipt validation.
+All 34 frozen full-profile commands pass, including the fresh six-target HIP
+build, 576 native tests, five CTests, format/interoperability smoke, bounded
+Docker sanitizer/fuzz smoke, GUI controls, brand checks and portable packaging.
+All eight fresh main-page screenshots were reviewed after the owned GUI exited;
+existing About-page speed wording remains an open audit item. The actual HIP
+receipt validates 454 native input files and all five required output artifacts.
+
+Ignored evidence: `out/native-receipt-full-result-20261003.json` retains exit zero
+without timeout or output-limit failure, plus the successful 34-command terminal
+summary. Its response tail is truncated, not a complete raw verification log.
+The CTest log remains under `build/Testing/Temporary/LastTest.log`. Dedicated-host
+receipt-backed RAM export smoke, exact-SHA hosted assessment, security backlog,
+larger GPU qualification and release acceptance remain pending at this checkpoint.

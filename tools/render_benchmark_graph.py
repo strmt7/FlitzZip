@@ -12,6 +12,11 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
+try:
+    from tools.native_build_receipt import validate_receipt
+except ModuleNotFoundError:
+    from native_build_receipt import validate_receipt
+
 SVG = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG)
 
@@ -303,9 +308,9 @@ def validate_confirmation_wall_budget(record: dict) -> None:
         raise ValueError("confirmation wall budget differs from raw pilots")
 
 
-# Purpose: Keep cohorts with observation-time artifact checks separate from historical endpoint-only evidence.
+# Purpose: Keep receipt-backed cohorts separate from historical observation or endpoint checks.
 # Inputs: Source/CLI/app-local DLL identity and matching raw pilot/confirmation snapshots with controller wall times.
-# Outputs: Returns a grouping identity or rejects metadata; does not attest build inputs or HIP drivers.
+# Outputs: Returns a grouping identity or rejects metadata; evidence is unauthenticated and excludes loaded HIP drivers.
 def validate_artifact_measurement_identity(record: dict) -> tuple:
     policy = record.get("measurement_identity_policy", "historical-endpoint-only")
     runs = record.get("runs", []) + record.get("pilot_runs", [])
@@ -315,7 +320,7 @@ def validate_artifact_measurement_identity(record: dict) -> tuple:
         if any(run.get("measurement_identity") is not None for run in runs):
             raise ValueError("measurement identity policy declaration is missing")
         return (policy,)
-    if policy != "source-artifacts-around-observation-v1":
+    if policy not in ("source-artifacts-around-observation-v1", "native-build-receipt-around-observation-v2"):
         raise ValueError("unsupported measurement identity policy")
     dependencies = record.get("binary_dependencies_sha256")
     if not isinstance(dependencies, dict) or any(
@@ -329,6 +334,16 @@ def validate_artifact_measurement_identity(record: dict) -> tuple:
         raise ValueError("invalid app-local runtime identity")
     expected = {name: record.get(name) for name in ("source_commit", "source_dirty", "binary_sha256")}
     expected["binary_dependencies_sha256"] = dependencies
+    receipt_identity = ()
+    if policy == "native-build-receipt-around-observation-v2":
+        receipt_identity = validate_native_receipt_record(record)
+        expected["native_build_receipt_sha256"] = record["native_build_receipt_sha256"]
+        expected["native_inputs_sha256"] = record["native_inputs_sha256"]
+    elif any(
+        record.get(key) is not None
+        for key in ("native_build_receipt", "native_build_receipt_sha256", "native_inputs_sha256")
+    ):
+        raise ValueError("native receipt identity policy declaration is missing")
     for run in runs:
         identity = run.get("measurement_identity")
         wall = run.get("observation_wall_seconds")
@@ -347,7 +362,37 @@ def validate_artifact_measurement_identity(record: dict) -> tuple:
         ):
             raise ValueError("observation measurement identity or wall time changed")
     validate_confirmation_wall_budget(record)
+    if receipt_identity:
+        return (policy, tuple(sorted(dependencies.items())), receipt_identity)
     return (policy, tuple(sorted(dependencies.items())))
+
+
+# Purpose: Bind a portable build receipt to the measured CLI, app-local DLLs and required-HIP scope.
+# Inputs: Untrusted exported receipt, canonical digests and observation lanes.
+# Outputs: Distinct grouping identity or fail-closed error.
+def validate_native_receipt_record(record: dict) -> tuple:
+    receipt = record.get("native_build_receipt")
+    digest = validate_receipt(receipt)
+    inputs_digest = receipt["inputs"]["inputs_sha256"]
+    if record.get("native_build_receipt_sha256") != digest or record.get("native_inputs_sha256") != inputs_digest:
+        raise ValueError("native receipt or input digest differs from measured identity")
+    configuration = receipt["recipe"]["configuration"]
+    outputs = receipt["outputs_sha256"]
+    prefix = f"build/{configuration}/"
+    if outputs[prefix + "superzip_cli.exe"] != record.get("binary_sha256"):
+        raise ValueError("measured CLI differs from its native build receipt")
+    dependencies = {
+        name[len(prefix) :]: value
+        for name, value in outputs.items()
+        if name.startswith(prefix) and name.lower().endswith(".dll")
+    }
+    if dependencies != record.get("binary_dependencies_sha256"):
+        raise ValueError("measured app-local DLLs differ from their native build receipt")
+    if receipt["recipe"]["SUPERZIP_ENABLE_HIP"] != "ON" and any(
+        run.get("lane") == "GPU" for run in record.get("runs", []) + record.get("pilot_runs", [])
+    ):
+        raise ValueError("required-HIP observations have a CPU-only build receipt")
+    return (digest, inputs_digest, configuration)
 
 
 # Purpose: Reject malformed or unreviewed benchmark data before charting it.

@@ -36,6 +36,7 @@ $cli = Join-Path $repo "build\$Configuration\superzip_cli.exe"
 $MaxFilesystemSmokeMiB = 64
 $script:ShowOperationStatsEnabled = [bool]$ShowOperationStats
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
+$script:NativeBuildReceiptTool = Join-Path $PSScriptRoot 'native_build_receipt.py'
 
 # Purpose: Emit benchmark text through the output pipeline instead of host-only writes.
 # Inputs: `Message` is a status, table, or diagnostic line.
@@ -1198,8 +1199,11 @@ function ConvertTo-RamBenchmarkStudyRecord {
     $record = ConvertTo-RamBenchmarkRecord @arguments
     $record.schema_version = 3
     $record.measurement_protocol = 'bytewise-regenerated-v2'
-    $record.measurement_identity_policy = 'source-artifacts-around-observation-v1'
+    $record.measurement_identity_policy = 'native-build-receipt-around-observation-v2'
     $record.binary_dependencies_sha256 = $ArtifactState.binary_dependencies_sha256
+    $record.native_build_receipt_sha256 = $ArtifactState.native_build_receipt_sha256
+    $record.native_inputs_sha256 = $ArtifactState.native_inputs_sha256
+    $record.native_build_receipt = $script:BenchmarkBuildReceipt
     $record.sampling_policy = $SamplingPolicy
     $record.case_quality = $CaseQuality
     $record.pilot_runs = @()
@@ -1242,6 +1246,8 @@ function Get-RamBenchmarkSourceDirty {
         'tools/rocm-sdk-lock.json', 'tools/rocm_toolchain.ps1', 'tools/bootstrap_rocm_sdk.py',
         'tools/process_environment.ps1', 'tools/cmake_toolchain.ps1',
         'tools/build_parallelism.ps1', 'tools/local_resources.ps1',
+        'tools/native_build_provenance.py', 'tools/native_build_receipt.py',
+        'resources/app', 'resources/brand', 'resources/licenses', 'LICENSE',
         'tools/benchmark_statistics.ps1',
         'tools/test_benchmark_graph.py', 'tools/test_benchmark_reporting.ps1',
         'docs/performance-block-size-validation.md', 'docs/compression-level-and-benchmark-suite.md'
@@ -1251,11 +1257,21 @@ function Get-RamBenchmarkSourceDirty {
     return ($status.Count -gt 0)
 }
 
-# Purpose: Snapshot the observed checkout and actual CLI/app-local DLL bytes without recording private paths.
+# Purpose: Require a current successful native receipt and snapshot actual CLI/app-local bytes without private paths.
 # Inputs: RepositoryRoot is a Git checkout; BinaryPath identifies the tested CLI and its runtime directory.
-# Outputs: Returns ordered source/artifact identity, including dirty state; throws on unavailable inputs.
+# Outputs: Returns ordered source/artifact/input/receipt identity; optional Receipt captures the full receipt once.
 function Get-RamBenchmarkArtifactState {
-    param([string]$RepositoryRoot, [string]$BinaryPath)
+    param([string]$RepositoryRoot, [string]$BinaryPath, [ref]$Receipt)
+    $configuration = Split-Path -Leaf (Split-Path -Parent $BinaryPath)
+    $expectedBinary = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot "build/$configuration/superzip_cli.exe"))
+    if (-not $expectedBinary.Equals([IO.Path]::GetFullPath($BinaryPath), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Benchmark requires the CLI bound by the native build receipt.'
+    }
+    $receiptOutput = @(& py -3 $script:NativeBuildReceiptTool validate `
+        --root $RepositoryRoot --configuration $configuration)
+    if ($LASTEXITCODE -ne 0) { throw 'Native build inputs or artifacts changed; journal retained. Rebuild before measurement.' }
+    $buildReceipt = ($receiptOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    if ($null -ne $Receipt) { $Receipt.Value = $buildReceipt.receipt }
     $commit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify benchmark source commit.' }
     $dependencies = [ordered]@{}
@@ -1264,10 +1280,11 @@ function Get-RamBenchmarkArtifactState {
     }
     return [ordered]@{ source_commit = $commit; source_dirty = Get-RamBenchmarkSourceDirty -RepositoryRoot $RepositoryRoot
         binary_sha256 = (Get-FileHash -LiteralPath $BinaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        binary_dependencies_sha256 = $dependencies }
+        binary_dependencies_sha256 = $dependencies
+        native_build_receipt_sha256 = $buildReceipt.receipt_sha256; native_inputs_sha256 = $buildReceipt.inputs_sha256 }
 }
 
-# Purpose: Reject detected checkout, dirty-state, CLI or app-local runtime changes within one measurement cohort.
+# Purpose: Reject detected native input, receipt, checkout, CLI or app-local runtime changes within one cohort.
 # Inputs: Expected is the starting ordered identity; RepositoryRoot/BinaryPath resolve the current inputs.
 # Outputs: Throws on any mismatch rather than mixing observations or replacing the initial source identity.
 function Assert-RamBenchmarkArtifactState {
@@ -1327,9 +1344,15 @@ if ($Mode -eq "Memory") {
         block_order = 'reverse_on_even_iterations'
         run_timeout_seconds = $RunTimeoutSeconds; suite_timeout_seconds = $SuiteTimeoutSeconds
     }
-    $script:BenchmarkArtifactState = Get-RamBenchmarkArtifactState -RepositoryRoot $repo -BinaryPath $cli
+    $script:BenchmarkBuildReceipt = $null
+    $script:BenchmarkArtifactState = Get-RamBenchmarkArtifactState -RepositoryRoot $repo -BinaryPath $cli `
+        -Receipt ([ref]$script:BenchmarkBuildReceipt)
+    if (-not $SkipGpu -and $script:BenchmarkBuildReceipt.recipe.SUPERZIP_ENABLE_HIP -ne 'ON') {
+        throw 'Required-HIP measurements cannot use a CPU-only native receipt.'
+    }
     Write-BenchmarkJournal -Path $journalPath -Create -Event @{ event = 'protocol'; sampling_policy = $samplingPolicy
-        measurement_identity_policy = 'source-artifacts-around-observation-v1'; measurement_identity = $script:BenchmarkArtifactState
+        measurement_identity_policy = 'native-build-receipt-around-observation-v2'; measurement_identity = $script:BenchmarkArtifactState
+        native_build_receipt = $script:BenchmarkBuildReceipt
         source_commit = $script:BenchmarkArtifactState.source_commit; binary_sha256 = $script:BenchmarkArtifactState.binary_sha256; profile = $WorkloadProfile
         size_mib = $SizeMiB; compression_level = $CompressionLevel; block_sizes_kib = $BlockSizeKiB }
     $script:BenchmarkGeometryPlans = @{}

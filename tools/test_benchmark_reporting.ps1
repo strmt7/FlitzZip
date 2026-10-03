@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
+$script:NativeBuildReceiptTool = Join-Path $PSScriptRoot 'native_build_receipt.py'
 
 # Load only function definitions, without starting a workload or touching disk fixtures.
 $tokens = $null
@@ -325,6 +326,7 @@ $studyArguments = @{
 $studyIdentity = [ordered]@{
     source_commit = 'a' * 40; source_dirty = $false; binary_sha256 = 'b' * 64
     binary_dependencies_sha256 = [ordered]@{ 'libzstd.dll' = 'c' * 64 }
+    native_build_receipt_sha256 = 'd' * 64; native_inputs_sha256 = 'e' * 64
 }
 foreach ($includePilots in @($false, $true)) {
     $studyPilots = if ($includePilots) { @($fixtureRun) } else { @() }
@@ -334,7 +336,8 @@ foreach ($includePilots in @($false, $true)) {
     if ($studyJson.schema_version -ne 3 -or $studyJson.source_dirty -ne $false -or
         $studyJson.binary_sha256 -ne ('b' * 64) -or $studyJson.source_commit -ne ('a' * 40) -or
         $studyJson.binary_dependencies_sha256.'libzstd.dll' -ne ('c' * 64) -or
-        $studyJson.measurement_identity_policy -ne 'source-artifacts-around-observation-v1' -or
+        $studyJson.measurement_identity_policy -ne 'native-build-receipt-around-observation-v2' -or
+        $studyJson.native_build_receipt_sha256 -ne ('d' * 64) -or $studyJson.native_inputs_sha256 -ne ('e' * 64) -or
         $studyJson.runs.Count -ne 1 -or $studyJson.pilot_runs.Count -ne [int]$includePilots -or
         $studyArguments.ContainsKey('BinarySha256')) {
         throw 'The production study export lost frozen identity, either stage, or mutated caller metadata.'
@@ -772,7 +775,7 @@ if (-not $rejected) { throw 'A missing pilot lane silently reduced the wall budg
 $artifactRoot = Join-Path $env:TEMP ('superzip-artifact-state-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $artifactRoot | Out-Null
 $artifactSource = Join-Path $artifactRoot 'src/codec.cpp'
-$artifactBinary = Join-Path $artifactRoot 'build/Release/fixture.exe'
+$artifactBinary = Join-Path $artifactRoot 'build/Release/superzip_cli.exe'
 $artifactRuntime = Join-Path $artifactRoot 'build/Release/fixture.dll'
 $originalStatFunction = (Get-Item Function:\Invoke-SuperZipStat).ScriptBlock
 try {
@@ -780,13 +783,16 @@ try {
     [IO.File]::WriteAllText($artifactSource, 'source bytes')
     [IO.File]::WriteAllText($artifactBinary, 'CLI bytes')
     [IO.File]::WriteAllText($artifactRuntime, 'runtime bytes')
+    [IO.File]::WriteAllText((Join-Path $artifactRoot 'CMakeLists.txt'), 'project(Fixture)')
     & git -C $artifactRoot init --quiet
     if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture Git initialization failed.' }
-    & git -C $artifactRoot add -- src/codec.cpp
+    & git -C $artifactRoot add -- src/codec.cpp CMakeLists.txt
     if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture source staging failed.' }
     & git -C $artifactRoot -c user.name='SuperZip Tests' -c user.email='tests@example.invalid' `
         -c commit.gpgsign=false -c core.hooksPath=.git/no-hooks commit --quiet -m 'Artifact fixture source'
     if ($LASTEXITCODE -ne 0) { throw 'Artifact fixture commit failed.' }
+    & py -3 -m tools.test_native_build_receipt --create-fixture $artifactRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Native build receipt fixture failed.' }
     $frozen = Get-RamBenchmarkArtifactState -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
     if ($frozen.source_dirty -or $frozen.binary_dependencies_sha256.Count -ne 1 -or
         ($frozen | ConvertTo-Json -Depth 4).Contains($artifactRoot)) { throw 'Artifact snapshot is dirty, incomplete or leaks a private path.' }
@@ -798,16 +804,9 @@ try {
         try { Assert-RamBenchmarkArtifactState -Expected $frozen -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary }
         catch { $rejected = $_.Exception.Message -match 'changed; journal retained' }
         if (-not $rejected) { throw 'An observed source or artifact mutation was missed.' }
-        if ($mutationPath -eq $artifactSource) {
-            $dirtyStart = Get-RamBenchmarkArtifactState -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
-        }
         [IO.File]::WriteAllBytes($mutationPath, $originalBytes)
         Assert-RamBenchmarkArtifactState -Expected $frozen -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary
     }
-    $rejected = $false
-    try { Assert-RamBenchmarkArtifactState -Expected $dirtyStart -RepositoryRoot $artifactRoot -BinaryPath $artifactBinary }
-    catch { $rejected = $true }
-    if (-not $rejected) { throw 'A dirty starting source was relabeled clean.' }
     Set-Item Function:\Invoke-SuperZipStat -Value {
         param([string[]]$Arguments)
         if ($Arguments.Count -ne 1 -or $Arguments[0] -ne 'unit-fixture') { throw 'The observation arguments changed.' }

@@ -40,19 +40,30 @@ Process resource averages span the whole CLI lifetime, including validation;
 they are not phase-specific utilization measurements. A CRC collision fixture
 checks that the new pass requires byte equality rather than another checksum.
 
-The controller already checked starting commit and CLI hashes before writing
-final JSON. Current records additionally declare
-`measurement_identity_policy=source-artifacts-around-observation-v1`: the
-starting commit, relevant-source dirty state, CLI hash and all app-local DLL
-hashes are checked immediately before and after each observation and at final
-completion, including runs without JSON output. Each observation retains this
-identity and its complete controller `observation_wall_seconds`. Detected
-changes abort rather than relabeling the cohort. Dirty state is a boolean,
-not a digest of uncommitted contents; these boundary checks do not attest
-binary build inputs, externally loaded HIP runtimes/drivers or transient
-changes between checks. A separate verified build-input receipt remains open.
-Graph cohorts with these checks remain separate from historical endpoint-only
-records, which retain their original evidence.
+Current records declare
+`measurement_identity_policy=native-build-receipt-around-observation-v2`.
+The controller requires a successful receipt from `tools/build.ps1` matching
+the current native input contents, configured options, CLI, GUI, runtime manifest
+and all app-local DLLs. It checks that identity immediately before and after
+every observation and at final completion, including runs without JSON output.
+Each observation retains receipt/input digests, starting commit, relevant dirty
+state and CLI/DLL hashes, plus complete controller `observation_wall_seconds`.
+Final JSON embeds the portable receipt once. The complete wall budget includes
+receipt validation. Detected changes abort rather than relabeling the cohort,
+including another edit in an already dirty checkout. The graph independently
+checks the shared receipt schema, canonical digests, measured output hashes and
+required-HIP scope, and separates this cohort from historical v1 observation
+guards and endpoint-only evidence. Historical records remain readable without
+inventing build receipts.
+
+The receipt is local consistency evidence, not authenticated build attestation.
+Its Git-visible projection covers native source/tests, CMake, pinned upstream
+inputs, compiled resources and build/header-generation helpers. It does not
+authenticate ignored or externally substituted inputs, every installed compiler
+component, externally loaded HIP runtimes/drivers, or transient changes restored
+between checks. The observed CMake MSVC probe and explicitly named critical
+compiler/SDK files describe a limited toolchain scope; HIP environment candidates
+are not observed compiler versions. See [native build receipts](rocm-toolchain.md#native-build-receipts).
 Returned native statistics are journaled before the post-observation check;
 if that check fails, raw evidence remains without becoming a valid sample.
 

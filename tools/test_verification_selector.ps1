@@ -164,6 +164,13 @@ foreach ($path in @(".clusterfuzzlite/build.sh", ".clusterfuzzlite/local_smoke.s
 }
 
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
+foreach ($path in @('tools/native_build_provenance.py', 'tools/native_build_receipt.py',
+        'tools/test_native_build_provenance.py', 'tools/test_native_build_receipt.py')) {
+    $receiptPlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector $receiptPlan.scope.touchesVerification "Receipt producer/consumer changes require verification coverage: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $receiptPlan -Id 'native-build-receipt-tests') "Receipt contracts must be executable: $path"
+    Assert-Selector (Test-RequiredCommand -Plan $receiptPlan -Id 'release-build') "Changed receipt inputs require a current product build: $path"
+}
 foreach ($path in @('tools/rocm_toolchain.ps1', 'tools/bootstrap_rocm_sdk.py', 'tools/test_bootstrap_rocm_sdk.py',
         'tools/test_rocm_toolchain.ps1', 'tools/rocm-sdk-lock.json', 'tools/compile_hip_object.ps1',
         'tools/process_environment.ps1', 'tools/test_process_environment.ps1')) {

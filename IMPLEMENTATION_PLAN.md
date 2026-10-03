@@ -11,7 +11,9 @@ inconclusive and the complete publication graph is refused. Keep the controller
 failure, telemetry limits and 213-alert audit failure visible. Portable GPU
 build defaults now use the shared six-target preset and pass all 33 full local
 commands; round twenty records the exact scope. Successful native-build input
-receipts and qualification beyond those six targets remain next work.
+receipts pass all 34 full-profile commands in the next batch;
+qualification beyond those six targets remains next work. Round twenty-one
+records the invocation and observation identity contract and its limits.
 
 The [fresh October 2 audit](docs/modernization-audit-2026-10-02.md) is the current
 continuation entry point. The [earlier development handoff](docs/development-handoff.md)

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import unittest
 import xml.etree.ElementTree as ET
 
 from tools import render_benchmark_graph as graph
+from tools.native_build_provenance import canonical
+from tools.native_build_receipt import RECIPE_KEYS
 
 
 # Purpose: Build one complete paired-run record without depending on a real GPU or filesystem benchmark.
@@ -144,7 +147,112 @@ def artifact_fixture() -> dict:
     return record
 
 
+# Purpose: Create a portable receipt-bound cohort for validator regressions.
+# Inputs: None; fixture hashes and outputs are synthetic test data.
+# Outputs: Complete test record, never performance or successful real-build evidence.
+def receipt_fixture() -> dict:
+    record = artifact_fixture()
+    recipe = {key: "" for key in RECIPE_KEYS}
+    recipe.update(
+        CMAKE_GENERATOR="Visual Studio 18 2026",
+        CMAKE_GENERATOR_PLATFORM="x64",
+        SUPERZIP_ENABLE_HIP="ON",
+        SUPERZIP_HIP_ARCH="gfx1201",
+        SUPERZIP_PACKAGE_VERSION="0.8.0",
+        SUPERZIP_MSI_INSTALL_SCOPE="perMachine",
+        SUPERZIP_BUILD_GUI="ON",
+        SUPERZIP_BUILD_TESTS="ON",
+        configuration="Release",
+        configured_flags_sha256="f" * 64,
+    )
+    files = {"CMakeLists.txt": "a" * 64, "src/fixture.cpp": "a" * 64}
+    build = {
+        "schema_version": 1,
+        "kind": "successful-native-invocation-v1",
+        "transaction_id": "a" * 32,
+        "status": "successful",
+        "clean_first": True,
+        "recipe": recipe,
+        "inputs": {
+            "schema_version": 1,
+            "projection": "native-invocation-inputs-v1",
+            "files": files,
+            "inputs_sha256": hashlib.sha256(canonical(files)).hexdigest(),
+        },
+        "toolchain": {
+            "scope": "cmake-msvc-probe-and-critical-compiler-files-v1",
+            "cmake_version": "4.4.3",
+            "cmake_sha256": "a" * 64,
+            "host_compiler_id": "MSVC",
+            "host_compiler_version": "19.51.36260.0",
+            "host_compiler_files_sha256": {name: "a" * 64 for name in ("cl.exe", "c1xx.dll", "c2.dll")},
+            "hip_sdk": {
+                "scope": "lock-plus-hipcc-clang-import-version-and-device-bitcode-v1",
+                "lock_sha256": "a" * 64,
+                "critical_files_sha256": {
+                    name: "a" * 64
+                    for name in (
+                        "bin/hipcc.exe",
+                        "lib/llvm/bin/clang.exe",
+                        "lib/amdhip64.lib",
+                        "include/hip/hip_version.h",
+                        "lib/llvm/amdgcn/bitcode/ocml.bc",
+                    )
+                },
+            },
+        },
+        "outputs_sha256": {
+            "build/Release/superzip_cli.exe": "b" * 64,
+            "build/Release/SuperZip.exe": "a" * 64,
+            "build/Release/fixture.dll": "c" * 64,
+            "build/superzip-runtime-dependencies.json": "a" * 64,
+        },
+    }
+    record.update(
+        native_build_receipt=build,
+        native_build_receipt_sha256=hashlib.sha256(canonical(build)).hexdigest(),
+        native_inputs_sha256=build["inputs"]["inputs_sha256"],
+        measurement_identity_policy="native-build-receipt-around-observation-v2",
+    )
+    for run in record["runs"] + record["pilot_runs"]:
+        run["measurement_identity"].update(
+            native_build_receipt_sha256=record["native_build_receipt_sha256"],
+            native_inputs_sha256=record["native_inputs_sha256"],
+        )
+    return record
+
+
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Reject inconsistent, private, incomplete and CPU-fallback receipt-backed publication metadata.
+    # Inputs: Independently mutated exported fixture receipts.
+    # Outputs: Accepts one complete fixture and rejects inconsistent mutations.
+    def test_receipt_backed_publication(self):
+        record = receipt_fixture()
+        graph.validate_record(record, False)
+        for section, key, value in (
+            ("inputs", "inputs_sha256", "0" * 64),
+            ("recipe", "SUPERZIP_ENABLE_HIP", "OFF"),
+            ("recipe", "configuration", "Debug"),
+            ("toolchain", "host_compiler_version", "C:/private/compiler"),
+            ("outputs_sha256", "build/Release/superzip_cli.exe", "0" * 64),
+        ):
+            changed = copy.deepcopy(record)
+            changed["native_build_receipt"][section][key] = value
+            changed["native_build_receipt_sha256"] = hashlib.sha256(
+                canonical(changed["native_build_receipt"])
+            ).hexdigest()
+            with self.subTest(section=section, key=key), self.assertRaises(ValueError):
+                graph.validate_record(changed, False)
+        for key in ("native_build_receipt", "native_build_receipt_sha256", "native_inputs_sha256"):
+            changed = copy.deepcopy(record)
+            del changed[key]
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                graph.validate_record(changed, False)
+        changed = copy.deepcopy(record)
+        changed["runs"][0]["measurement_identity"]["native_inputs_sha256"] = "0" * 64
+        with self.assertRaises(ValueError):
+            graph.validate_record(changed, False)
+
     # Purpose: Require the raw artifact cohort and observation lifetime, preserving historical compatibility honestly.
     # Inputs: One current record with independently mutated source, binary, runtime and wall-time fields.
     # Outputs: Rejects all identity changes and missing policy declarations before publishing a chart.

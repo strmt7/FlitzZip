@@ -265,6 +265,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
         '^tools/(bootstrap_rocm_sdk|test_bootstrap_rocm_sdk)\.py$',
+        '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$',
         '^tools/(process_environment|test_process_environment)\.ps1$',
         '^tools/rocm-sdk-lock\.json$',
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
@@ -377,6 +378,10 @@ function Get-SuperZipLocalVerificationCommand {
             "tools.test_benchmark_comparators", "tools.test_benchmark_cache"
         )
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-tooling-tests" -Stage "local" -Executable "py" -Arguments $benchmarkTests -Reason "benchmark permissions, cache identity and graph contracts require offline tests, never a timed workload")
+    }
+
+    if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$', '^tools/build\.ps1$'))) {
+        Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "native-build-receipt-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_native_build_provenance", "tools.test_native_build_receipt") -Reason "native invocation receipts must reject stale source/output bytes, active or incomplete attempts and required-HIP fallback while preserving evidence")
     }
 
     if (-not ($scope.docsOnly -and -not $scope.fullEscalationRequired)) {

@@ -95,6 +95,16 @@ function Assert-MsiProductIdentity {
     return $trimmed
 }
 
+# Purpose: Invoke the shared receipt implementation without mixing JSON and build diagnostics.
+# Inputs: Operation and explicit arguments for this owned build transaction.
+# Outputs: Parsed receipt summary; throws on a failed producer invocation.
+function Invoke-NativeBuildReceipt {
+    param([string]$Operation, [string[]]$Arguments = @())
+    $output = @(& py -3 (Join-Path $PSScriptRoot 'native_build_receipt.py') $Operation --root $repo @Arguments)
+    if ($LASTEXITCODE -ne 0) { throw "Native build receipt $Operation failed with exit code $LASTEXITCODE." }
+    return (($output -join [Environment]::NewLine) | ConvertFrom-Json)
+}
+
 $HipArch = Resolve-HipArchitecture -Architecture $HipArch
 $cmake = Find-CMake -RepoRoot $repo
 $Generator = Find-CMakeGenerator -Requested $Generator -BuildRoot $build
@@ -125,13 +135,49 @@ if (-not $CpuOnlyValidation) {
     $sdkRoot = Resolve-RocmSdkRoot -RepoRoot $repo -RequestedPath $HipPath
     $configureArgs += "-DSUPERZIP_HIP_PATH=$sdkRoot"
 }
-Invoke-NativeTool -FilePath $cmake -Arguments $configureArgs -Operation "CMake configure"
-
-if (-not $ConfigureOnly) {
-    Assert-BuildOutputNotRunning -Configuration $Configuration
-    $jobs = Resolve-BuildParallelism
-    $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel", [string]$jobs)
-    Invoke-SuperZipParallelBuild -Jobs $jobs -Action {
-        Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
+$null = New-Item -ItemType Directory -Force -Path $build
+if ((Get-Item -LiteralPath $build).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    throw 'Refusing a linked native build directory.'
+}
+$lockPath = Join-Path $build 'native-build.lock'
+if ((Test-Path -LiteralPath $lockPath) -and
+    ((Get-Item -LiteralPath $lockPath).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw 'Refusing a linked native build lock.'
+}
+# One tree-wide lock also serializes configurations sharing CMakeCache.txt.
+$buildLock = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+$transaction = $null
+$completed = $false
+try {
+    $transaction = Invoke-NativeBuildReceipt -Operation begin -Arguments @('--configuration', $Configuration)
+    $receiptArguments = @('--token', $transaction.transaction_id, '--cmake', $cmake)
+    Invoke-NativeTool -FilePath $cmake -Arguments $configureArgs -Operation "CMake configure"
+    if ($ConfigureOnly) {
+        Invoke-NativeBuildReceipt -Operation configure-only -Arguments @('--token', $transaction.transaction_id) | Out-Null
+        $completed = $true
+    } else {
+        Assert-BuildOutputNotRunning -Configuration $Configuration
+        $prepared = Invoke-NativeBuildReceipt -Operation prepare -Arguments $receiptArguments
+        $jobs = Resolve-BuildParallelism
+        $buildArgs = @("--build", $build, "--config", $Configuration, "--parallel", [string]$jobs)
+        if ($prepared.clean_first_required) {
+            Write-Output 'Native receipt requires a fresh build for the first receipt or changed configuration/toolchain/artifacts.'
+            $buildArgs += '--clean-first'
+            $receiptArguments += '--clean-first'
+        }
+        Invoke-SuperZipParallelBuild -Jobs $jobs -Action {
+            Invoke-NativeTool -FilePath $cmake -Arguments $buildArgs -Operation "CMake build"
+        }
+        $receipt = Invoke-NativeBuildReceipt -Operation finish -Arguments $receiptArguments
+        Write-Output "native_build_receipt status=successful inputs_sha256=$($receipt.inputs_sha256) receipt_sha256=$($receipt.receipt_sha256)"
+        $completed = $true
+    }
+} finally {
+    try {
+        if ($null -ne $transaction -and -not $completed) {
+            Invoke-NativeBuildReceipt -Operation failed -Arguments @('--token', $transaction.transaction_id) | Out-Null
+        }
+    } finally {
+        $buildLock.Dispose()
     }
 }

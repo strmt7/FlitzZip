@@ -53,6 +53,44 @@ scan. The build script passes it on each configure, preventing an older CMake
 cache from silently selecting a different SDK. CPU-only validation does not
 require ROCm and remains limited to hosted/static-analysis checks.
 
+## Native Build Receipts
+
+`tools/build.ps1` owns an exclusive Windows sharing lock for the entire CMake
+build tree, across configurations. It records an incomplete attempt before
+configuration, freezes actual Git-visible native input contents and configured
+options, and publishes a successful receipt only after the build succeeds and
+the source/configuration/observed toolchain remain unchanged. GUI, CLI, runtime
+manifest and all app-local DLL hashes bind the outputs. Configure-only, failed,
+interrupted or active attempts cannot qualify for RAM measurement. Old receipt
+and transaction bytes remain under ignored `build/native-build-history`; they
+are historical evidence, not acceptance of the next attempt. The lock's file
+presence is not proof of a live process; an unlocked incomplete attempt can be
+replaced by an ordinary new build without manual marker deletion.
+
+The first receipt and changed configuration, observed toolchain or output bytes
+require `--clean-first`. Ordinary source changes retain CMake's incremental
+dependency behavior. Toolchain evidence records the CMake MSVC probe, hashes of
+CMake and MSVC's `cl.exe`, `c1xx.dll`, `c2.dll`, and, for HIP builds, the SDK lock,
+`hipcc.exe`, Clang, HIP import library/version header and device bitcode files.
+It does not verify every SDK/compiler/header/library byte or authenticate which
+compiler produced each cached object. Complete distribution installation stays
+the shared provisioner's responsibility; no installed component is modified.
+Receipts contain relative filenames and hashes rather than installation paths.
+This is local invocation consistency evidence, not signed or reproducible-build
+attestation. Direct CMake and standalone object compilation remain supported,
+but do not themselves publish the wrapper's successful invocation receipt.
+
+Validate the current build without timing a workload:
+
+```powershell
+py -3 tools/native_build_receipt.py validate --configuration Release --require-hip
+```
+
+RAM benchmarks now require this receipt and preserve its digest around every
+observation. A documentation-only commit does not change native input contents;
+a modified compiled resource or an additional nonignored source does. Failed
+validation requires a normal rebuild, rather than editing the receipt.
+
 ## Distribution And Component Versions
 
 Checked on 2026-10-02 against AMD's [release notes](https://rocm.docs.amd.com/en/docs-10.0.0/about/release-notes.html)
