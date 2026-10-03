@@ -17,6 +17,8 @@ on:
       - .github/workflows/component-contracts.yml
       - .github/workflows/windows-ci.yml
       - .github/workflows/rocm-qualification.yml
+      - .github/workflows/release.yml
+      - .github/actions/windows-release/action.yml
       - .github/workflows/security-code-scanning.yml
       - .github/requirements/**
       - .github/codeql/**

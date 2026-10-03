@@ -82,10 +82,16 @@ repository-relative paths and produces:
 | Archive parser, path safety, extraction publication | C++ checks plus external compatibility interop smoke, registry-wide format matrix smoke, security scan, and short fuzz smoke | `lint`, `windows-ci`, `security`; observe `fuzzing` |
 | GUI or visual resources | C++ checks plus GUI smoke and screenshot inspection | `lint`, `windows-ci` |
 | Workflows, security scanners, release actions | hygiene, language lint, security scan | `lint`, `security`, scanner-specific workflows, `scorecard` |
+| Release workflow orchestration and shared release policy | hygiene, language lint, security scan, offline release identity/replacement/title contracts | `lint`, `component-contracts`, `security`, `scorecard` |
 | Packaging or installer files | Release build, C++ tests, security scan, MSI identity smoke, package smoke | `lint`, `windows-ci`, `security` |
 | MCP Python | Python syntax and bounded-child contracts, hygiene/lint/function contracts | relevant lint/security checks |
 | Verifier routing | selector, runner, lint-routing and checkpoint contracts, hygiene/lint/function contracts | relevant lint/security checks |
 | Performance-sensitive code | normal correctness checks; RAM-only benchmark is manual before claims | workflow set from touched source |
+
+Release orchestration alone does not alter compiled artifacts or MSI inputs.
+Its workflow reference and safeguards are tested directly. Changes to the
+composite packaging action, CMake, package scripts or installer producers still
+require the artifact checks; publication remains a separate acceptance step.
 
 ### Explicit Broad Coverage And Classification
 

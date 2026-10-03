@@ -57,7 +57,7 @@ jobs:
           persist-credentials: false
 
       - name: Run release pipeline
-        uses: ./.github/actions/windows-release
+        uses: $/.github/actions/windows-release
         env:
           GH_TOKEN: ${{ github.token }}
           WIX_OSMF_EULA_ID: ${{ vars.WIX_OSMF_EULA_ID }}

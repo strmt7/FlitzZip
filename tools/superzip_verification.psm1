@@ -261,6 +261,7 @@ function Get-SuperZipVerificationScope {
 
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^tools/(release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/scan_trufflehog\.sh$',
@@ -296,14 +297,14 @@ function Get-SuperZipVerificationScope {
     )
     $touchesSecurityBoundary = $touchesArchiveParser -or (Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^src/core/(defender_scan|integrity|path_safety|file_publish)\.',
-        '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows)\.ps1$',
+        '^tools/(security_scan|github_post_push_audit|verify_change_hygiene|wait_relevant_workflows|release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/native_component_tests\.ps1$',
         '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report)\.py$',
         '^\.github/'
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-SuperZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/superzip_brand_logo')
-    $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$', '^\.github/actions/windows-release/', '^\.github/workflows/release\.yml$')
+    $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$', '^\.github/actions/windows-release/')
     $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern @(
         '^\.clang-format$',
         '^\.github/.*\.ya?ml$',
@@ -358,6 +359,8 @@ function Get-SuperZipVerificationScope {
 function Get-SuperZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^\.github/workflows/release\.yml$', '^\.github/actions/windows-release/action\.yml$')
+           Command = (Get-SuperZipVerificationCommand -Id 'release-workflow-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_release_workflow_policy.ps1') -Reason 'release action identity and replacement/title safeguards require their offline contracts without publishing artifacts') }
         @{ Pattern = @('^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$', '^tools/superzip_verification\.psm1$', '^\.github/workflows/(windows-ci|rocm-qualification)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'native-ci-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_ci.ps1') -Reason 'hosted CPU/HIP routing, event ranges and conditional native/matrix work must match real workflow contracts') }
         @{ Pattern = @('^tests/cpp/test_main\.cpp$', '^tools/test_native_runner\.ps1$')

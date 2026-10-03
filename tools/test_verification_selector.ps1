@@ -322,6 +322,29 @@ foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.
 }
 
 $packagingPlan = Get-SuperZipVerificationPlan -ChangedPath @("CMakeLists.txt")
+foreach ($releasePath in @('.github/workflows/release.yml', 'tools/release_workflow_policy.ps1',
+        'tools/test_release_workflow_policy.ps1')) {
+    $releasePlan = Get-SuperZipVerificationPlan -ChangedPath @($releasePath)
+    Assert-Selector (Test-RequiredCommand -Plan $releasePlan -Id 'release-workflow-contracts') "release policy must run its actual safeguards: $releasePath"
+    Assert-Selector (Test-RequiredCommand -Plan $releasePlan -Id 'security-scan') "release policy must retain repository security checks: $releasePath"
+    foreach ($id in @('release-build', 'unit-tests', 'msi-identity-smoke', 'package-smoke')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $releasePlan -Id $id)) "release orchestration alone must not execute unchanged product work: $releasePath/$id"
+    }
+    Assert-Selector (-not (Test-Workflow -Plan $releasePlan -Name 'windows-ci')) "release orchestration alone must not require a native CI run: $releasePath"
+    Assert-Selector (Test-Workflow -Plan $releasePlan -Name 'security') "release policy retains hosted security audits: $releasePath"
+    if ($releasePath -eq '.github/workflows/release.yml') {
+        Assert-Selector (Test-Workflow -Plan $releasePlan -Name 'scorecard') 'release workflow changes retain hosted Scorecard'
+    }
+}
+foreach ($producerPath in @('CMakeLists.txt', 'tools/package.ps1', '.github/actions/windows-release/action.yml')) {
+    $producerPlan = Get-SuperZipVerificationPlan -ChangedPath @($producerPath)
+    foreach ($id in @('release-build', 'msi-identity-smoke', 'package-smoke')) {
+        Assert-Selector (Test-RequiredCommand -Plan $producerPlan -Id $id) "actual release producers retain artifact qualification: $producerPath/$id"
+    }
+}
+foreach ($releasePath in @('.github/workflows/release.yml', '.github/actions/windows-release/action.yml')) {
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $releasePath) "release policy inputs must trigger hosted component contracts: $releasePath"
+}
 foreach ($inputPath in @('LICENSE', 'resources/licenses/license-notices.json')) {
     $inputPlan = Get-SuperZipVerificationPlan -ChangedPath @($inputPath)
     Assert-Selector $inputPlan.scope.touchesNativeBuildInputs "compiled license inputs must retain build identity: $inputPath"

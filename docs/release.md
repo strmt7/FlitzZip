@@ -4,6 +4,14 @@ SuperZip releases are created by `.github/workflows/release.yml`. The workflow
 is manual-only, versioned with SemVer, and publishes either a beta prerelease or
 a stable GitHub release.
 
+The composite action uses `$/` to resolve from the exact workflow commit, as
+documented in [GitHub's self-repository action syntax](https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/).
+This requires Actions runner 2.336.0 or newer. The workspace checkout still
+uses `github.sha`: the action runs repository build scripts from that workspace.
+`tools/release_workflow_policy.ps1` checks both identities and preserves the
+replacement acknowledgement and release-note guards. Its offline contracts
+never publish a release or run an installer.
+
 ## Release Artifacts
 
 Every product release must be Windows x64 and HIP-enabled. The portable ZIP and

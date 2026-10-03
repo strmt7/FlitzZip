@@ -10,7 +10,7 @@ reuses operation-owned entropy timing events: its HIP build and 17 affected
 tests pass. [Retained evidence](docs/gpu-entropy-event-reuse-validation.md) verifies
 fewer event lifecycles, identical archive/resource results and inconclusive
 whole-operation timing. Hosted checks remain intermediate qualification. The
-security backlog remains 211 open alerts, and release 0.8.0 remains held. Use
+security backlog remains open, and release 0.8.0 remains held. Use
 the fresh audit's latest round for continuation; dated checkpoints are history.
 
 The newest development batch adds reusable
@@ -42,6 +42,17 @@ event lifecycles and preserved output/resource requests without a speed claim.
 The real CPU cohort exposed an incorrect `gpu-info` exit expectation; its guard
 and fixtures now match the unavailable exit contract. Manual hosted validation
 can select a reviewed commit range, retaining broad qualification when empty.
+
+The release-policy batch binds the composite action to the workflow commit
+with GitHub's self-repository syntax and shares identity/replacement/title guards
+between hygiene and security scanning. Release orchestration selects offline
+policy contracts; actual packaging producers retain artifact qualification.
+All 12 selected local requirements pass, with six unchanged checks reused after
+correcting a selector assertion. The shared policy also passes PowerShell 7.
+At `be30316`, Windows CI and ROCm qualification pass. Two SDK DevSkim alerts are
+[individually reviewed false positives](docs/security-code-scanning.md#finding-triage).
+Hosted disposition of the release-action finding and other security work remain
+pending; release publication remains held.
 
 ### Earlier Checkpoint Evidence
 

@@ -31,4 +31,5 @@ Assert-CiContractPlan -Path 'tools/native_component_tests.ps1' -Required @('nati
 Assert-CiContractPlan -Path 'tests/cpp/test_main.cpp' -Required @('native-runner-contracts')
 Assert-CiContractPlan -Path 'tools/native_ci.ps1' -Required @('native-ci-contracts')
 Assert-CiContractPlan -Path '.github/workflows/rocm-qualification.yml' -Required @('native-ci-contracts', 'rocm-toolchain-tests')
+Assert-CiContractPlan -Path '.github/workflows/release.yml' -Required @('release-workflow-contracts')
 Write-Output 'CI component projection inclusion/exclusion contracts passed.'

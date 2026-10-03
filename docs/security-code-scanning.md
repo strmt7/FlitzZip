@@ -125,6 +125,16 @@ either rule. Dismiss confirmed false positives with a specific GitHub audit
 comment; do not dismiss unresolved findings or change the source to evade a
 pattern.
 
+On October 3, 2026, [alert 1742](https://github.com/strmt7/SuperZip/security/code-scanning/1742)
+was confirmed to match the public ROCm archive SHA-256 pin, which
+`download_archive` verifies against archive bytes. [Alert 1743](https://github.com/strmt7/SuperZip/security/code-scanning/1743)
+matched HTTP metadata in a negative redirect test; `NoRedirect.redirect_request`
+unconditionally raises before network I/O, while production downloads require
+HTTPS. Both dispositions reviewed source at `be30316` and required the passing
+Gitleaks history/working-tree and TruffleHog history steps in
+[security run 37100463323](https://github.com/strmt7/SuperZip/actions/runs/37100463323).
+Each alert has its own evidence comment. No rule, scan scope or test was removed.
+
 ## Scanner Dependency Remediation
 
 On 2026-09-30, OSV and Grype reported PyJWT 2.13.0 in

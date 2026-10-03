@@ -509,3 +509,10 @@ Do not add broad exclusions, scanner suppressions, mandatory heavyweight gates,
 or product-direction changes as a lesson. A learning guard is valid only when it
 prevents a known failure class without hiding findings or slowing unrelated
 development paths.
+
+Release identity and replacement policy share one implementation in
+`tools/release_workflow_policy.ps1`, used by changed-file hygiene and repository
+security scanning. Offline mutation contracts check commit binding and guard
+removal. Select these contracts for orchestration changes; rebuilding unchanged
+artifacts cannot validate an Actions reference. Keep artifact qualification for
+actual packaging producers.

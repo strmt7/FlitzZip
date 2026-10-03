@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'release_workflow_policy.ps1')
 
 $secretPatterns = @(
     "ghp_[A-Za-z0-9_]{30,}",
@@ -47,42 +48,6 @@ function Test-ExcludedScanPath {
     return $false
 }
 
-# Purpose: Verify release replacement remains guarded by an explicit version-specific acknowledgement.
-# Inputs: Reads the release workflow and composite release action from the repository.
-# Outputs: Throws when replacement can delete an existing release/tag without the acknowledgement gate.
-function Assert-ReleaseReplacementSafeguard {
-    $releaseWorkflow = Join-Path $repo ".github\workflows\release.yml"
-    $releaseAction = Join-Path $repo ".github\actions\windows-release\action.yml"
-    if (-not (Test-Path -LiteralPath $releaseWorkflow) -or -not (Test-Path -LiteralPath $releaseAction)) {
-        throw "Release workflow and windows-release action must both exist for replacement safeguard validation."
-    }
-
-    $workflowText = Get-Content -LiteralPath $releaseWorkflow -Raw
-    $actionText = Get-Content -LiteralPath $releaseAction -Raw
-    foreach ($requiredSnippet in @(
-            "replacement_acknowledgement:",
-            'replacement_acknowledgement: ${{ inputs.replacement_acknowledgement }}')) {
-        if ($workflowText -notmatch [regex]::Escape($requiredSnippet)) {
-            throw "Release workflow is missing the replacement acknowledgement safeguard: $requiredSnippet"
-        }
-    }
-    foreach ($requiredSnippet in @(
-            "replacement_acknowledgement:",
-            "REPLACEMENT_ACKNOWLEDGEMENT",
-            "replace_existing=true requires replacement_acknowledgement exactly",
-            "REPLACE_RELEASE_TAG=`$releaseTag",
-            "Replacement tag tracking mismatch",
-            'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"',
-            "Replacement is exceptional")) {
-        if ($actionText -notmatch [regex]::Escape($requiredSnippet)) {
-            throw "Windows release action is missing the replacement acknowledgement safeguard: $requiredSnippet"
-        }
-    }
-    if ($workflowText -notmatch [regex]::Escape("MSI replacements get a fresh ProductCode from the release run identity")) {
-        throw "Release workflow input text must document same-version MSI replacement identity."
-    }
-}
-
 # Purpose: Verify Greenbone/OpenVAS workflow-dispatch input cannot bypass broker target authorization.
 # Inputs: Reads the live Greenbone workflow and its broker resolver from the repository.
 # Outputs: Throws when the effective scan target can come directly from workflow input.
@@ -107,20 +72,6 @@ function Assert-GreenboneTargetBrokerAuthorization {
     }
     if ($resolver -match '\btarget\s*:\s*(environment\.|targetRequest)') {
         throw "Greenbone workflow input must not bypass broker target authorization."
-    }
-}
-
-# Purpose: Verify release notes do not duplicate the GitHub release title as a Markdown H1.
-# Inputs: Reads the composite release action that generates `out\release-notes.md`.
-# Outputs: Throws when the generated notes would repeat the release title inside the body.
-function Assert-ReleaseNotesDoNotDuplicateTitle {
-    $releaseAction = Join-Path $repo ".github\actions\windows-release\action.yml"
-    if (-not (Test-Path -LiteralPath $releaseAction)) {
-        throw "Windows release action must exist for release-note title validation."
-    }
-    $actionText = Get-Content -LiteralPath $releaseAction -Raw
-    if ($actionText -match '#\s*SuperZip\s+\$env:RELEASE_TAG') {
-        throw "Release notes must not include a duplicate '# SuperZip `$env:RELEASE_TAG' heading; GitHub already renders the release title."
     }
 }
 
@@ -290,9 +241,10 @@ function Test-WorkflowSecurityPolicy {
         }
     }
 
-    Assert-ReleaseReplacementSafeguard
+    Assert-ReleaseReplacementSafeguard -RepoRoot $repo
+    Assert-ReleaseWorkflowIdentity -RepoRoot $repo
     Assert-GreenboneTargetBrokerAuthorization
-    Assert-ReleaseNotesDoNotDuplicateTitle
+    Assert-ReleaseNotesDoNotDuplicateTitle -RepoRoot $repo
     Assert-ReleaseDocUseVersionPlaceholder
 }
 
