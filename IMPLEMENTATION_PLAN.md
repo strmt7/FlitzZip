@@ -55,8 +55,22 @@ follow-up removes the single-use composite action and declares its 15 stages
 directly in the workflow. Structured parity verifies identical run bodies,
 tool versions and arguments; conditions use the same exported string inputs.
 The workflow token is limited to metadata/publishing stages. All 13 selected
-follow-up local checks and the official actionlint 1.7.12 binary pass. Hosted
-qualification remains pending; release publication remains held.
+follow-up local checks and the official actionlint 1.7.12 binary pass. At
+`db3e8d5`, hosted component contracts, lint, Scorecard, Semgrep and workflow
+lint/injection checks pass; alerts 1744 and 1748 are fixed. The complete security
+run remains in progress at this checkpoint; release publication remains held.
+
+The next production batch pools the host dictionary filter's invocation-owned
+scratch and reserves only segment-local sample capacity. Its HIP Release build
+and 15 direct integration cases pass. The
+[screening study](docs/dictionary-screen-pool-validation.md) retains every timing
+observation, documents the small-block memory tradeoff and verifies cleanup
+through 512 injected allocation failures. The isolated filter improvement is
+not an archive throughput claim. Canonical dependency routing now selects these
+15 cases, or 38 unique cases for an entropy/sparse/dictionary batch. Unmapped
+headers and matcher/device implementations keep broader qualification. Whole
+archive timing, representative corpora and exact-commit hosted checks remain
+outstanding; unchanged checks are reused during this development cycle.
 
 ### Earlier Checkpoint Evidence
 

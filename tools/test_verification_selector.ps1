@@ -171,6 +171,7 @@ Assert-Selector (Test-RequiredCommand -Plan $componentToolPlan -Id 'rocm-toolcha
 
 $gpuPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/gpu/dictionary_candidate.cpp")
 Assert-Selector $gpuPlan.scope.touchesPerformance "GPU codec changes must retain performance verification"
+Assert-Selector (($gpuPlan.requiredLocalCommands | Where-Object id -eq 'unit-tests').command -match 'native_component_tests\.ps1') 'reviewed dictionary mechanism must execute its canonical component cohort'
 Assert-Selector (-not (Test-Workflow -Plan $gpuPlan -Name "benchmark-graph")) "GPU source alone must not wait for a path-filtered graph workflow"
 
 foreach ($case in @(

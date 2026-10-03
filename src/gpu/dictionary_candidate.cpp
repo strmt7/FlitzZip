@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <memory_resource>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -16,14 +17,16 @@ namespace {
 
 // Purpose: Avoid expensive dictionary trials on blocks without sampled repeated substrings.
 // Inputs: One bounded source block sampled evenly at no more than 4,096 twelve-byte positions.
-// Outputs: Returns true after eight repeats reachable within independent 64 KiB dictionary segments.
+// Outputs: Returns true after eight segment-local repeats; all scratch is released on return or exception.
 bool has_dictionary_sample_repeats(std::span<const std::byte> input) {
     constexpr std::size_t kMaxSamples = 4096U;
     constexpr std::size_t kRequiredRepeats = 8U;
     constexpr std::size_t kSampleBytes = 12U;
     const auto stride = std::max<std::size_t>(64U, (input.size() + kMaxSamples - 1U) / kMaxSamples);
-    std::unordered_set<std::string_view> seen;
-    seen.reserve(std::min<std::size_t>(kMaxSamples, input.size() / stride + 1U));
+    // Recycle nodes across segments; reserve only the maximum keys live in one segment.
+    std::pmr::unsynchronized_pool_resource pool;
+    std::pmr::unordered_set<std::string_view> seen{&pool};
+    seen.reserve(std::min<std::size_t>((kSegmentBytes + stride - 1U) / stride, input.size() / stride + 1U));
     std::size_t repeats = 0U;
     std::size_t previous_segment = 0U;
     for (std::size_t offset = 0U; offset + kSampleBytes <= input.size(); offset += stride) {

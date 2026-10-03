@@ -86,7 +86,12 @@ function Get-SuperZipNativeTestSelection {
            rules = @(
                @{ source = 'tests/cpp/test_sparse_pattern_block.cpp'; pattern = '^(sparse_pattern_|long_sparse_pattern_)' },
                @{ source = 'tests/cpp/test_archive_roundtrip.cpp'; pattern = '^suzip_(sparse_pattern_cpu_reader_roundtrip|long_sparse_pattern_v7_reader_roundtrip|long_sparse_pattern_writer_selects_v7)$' },
-               @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_gpu_(entropy_efforts_preserve_per_block_winners|efforts_preserve_dictionary_candidates_after_entropy_gain)$' }) }
+               @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_gpu_(entropy_efforts_preserve_per_block_winners|efforts_preserve_dictionary_candidates_after_entropy_gain)$' }) },
+        @{ id = 'hip-dictionary-candidate'; paths = @('src/gpu/dictionary_candidate.cpp')
+           rules = @(
+               @{ source = 'tests/cpp/test_dictionary_matcher.cpp'; pattern = '^dictionary_(segmented_records_large_block_roundtrip|off_grid_segmented_records_roundtrip|adjacent_periodic_blocks_preserve_encoded_bytes|periodic_group_probe_falls_back_without_byte_changes|periodic_efforts_preserve_size_order|periodic_candidate_independent_block_decode|mixed_periodic_distances_roundtrip|production_chunk_crc_and_decode)$' },
+               @{ source = 'tests/cpp/test_archive_roundtrip.cpp'; pattern = '^suzip_(gpu_dictionary_(writer_levels_and_roundtrip|mixed_and_archive_roundtrip)|required_gpu_encoder_emits_no_cpu_deflate_blocks)$' },
+               @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_gpu_(entropy_efforts_preserve_per_block_winners|efforts_preserve_dictionary_candidates_after_entropy_gain|prefix_candidate_selection_is_per_block|prefix_levels_compact_shifted_alphabet)$' }) }
     )
     $native = @($Paths | Where-Object { $_ -match '^(src|tests|fuzz)/|^CMakeLists\.txt$|^cmake/|^third_party/' })
     if (-not $native.Count) { return $broad }

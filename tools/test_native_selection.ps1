@@ -47,6 +47,22 @@ foreach ($name in @('sparse_pattern_hip_batch_rejects_prepopulated_output_fields
 }
 $gpuBatch = Get-SuperZipNativeTestSelection -Paths ($entropyPaths + $sparsePaths)
 Assert-NativeSelection ($gpuBatch.tests.Count -eq 27 -and $gpuBatch.requireHip) 'entropy/sparse batch shares two competition cases without repetition'
+$dictionaryPaths = @('src/gpu/dictionary_candidate.cpp')
+$dictionary = Get-SuperZipNativeTestSelection -Paths $dictionaryPaths
+Assert-NativeSelection ($dictionary.mode -eq 'component' -and $dictionary.requireHip -and $dictionary.tests.Count -eq 15) 'reviewed dictionary candidate cohort and required HIP'
+foreach ($name in @('dictionary_off_grid_segmented_records_roundtrip',
+        'dictionary_adjacent_periodic_blocks_preserve_encoded_bytes', 'dictionary_production_chunk_crc_and_decode',
+        'suzip_gpu_dictionary_writer_levels_and_roundtrip', 'suzip_required_gpu_encoder_emits_no_cpu_deflate_blocks',
+        'suzip_gpu_efforts_preserve_dictionary_candidates_after_entropy_gain')) {
+    Assert-NativeSelection ($name -in $dictionary.tests) "dictionary admission, effort, grouping and publication coverage: $name"
+}
+Assert-NativeSelection ('dictionary_encoder_benchmark_opt_in' -notin $dictionary.tests -and
+    'dictionary_decoder_independent_writer_fixture' -notin $dictionary.tests) 'candidate changes exclude opt-in timing and standalone decoder fixtures'
+$allCandidates = Get-SuperZipNativeTestSelection -Paths ($entropyPaths + $sparsePaths + $dictionaryPaths)
+Assert-NativeSelection ($allCandidates.tests.Count -eq 38 -and $allCandidates.requireHip) 'candidate batch shares four entropy consumers without repetition'
+foreach ($shared in @('src/gpu/dictionary_candidate.hpp', 'src/gpu/dictionary_matcher.cpp', 'src/gpu/dictionary_device.hpp')) {
+    Assert-NativeSelection ((Get-SuperZipNativeTestSelection -Paths ($dictionaryPaths + $shared)).mode -eq 'full') "unmapped dictionary boundary retains broader coverage: $shared"
+}
 Assert-NativeSelection ('gpu_block_batch_hip_identity' -notin $sparse.tests -and
     'suzip_gpu_prefix_packing_matches_reference' -notin $sparse.tests) 'sparse changes exclude unrelated encoder and standalone batch fixtures'
 foreach ($shared in @('src/gpu/sparse_pattern_candidate.hpp', 'src/gpu/sparse_pattern_device.hpp',

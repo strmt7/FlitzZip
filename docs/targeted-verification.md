@@ -118,6 +118,13 @@ selection and HIP count/gather files select 12 cases covering admission, patch
 layout, short/long motifs, independent CPU/HIP readers, version-seven writer
 publication and per-block competition. A combined entropy/sparse batch selects
 27 unique cases, sharing two competition cases instead of repeating them.
+The host dictionary candidate implementation selects 15 cases covering
+segment-local and off-grid repeats, periodic grouping/fallback, independent
+CPU/HIP decoding, CRC, all-effort archive publication and competing entropy
+winners. The combined entropy/sparse/dictionary batch selects 38 unique cases.
+Dictionary headers and matcher/device implementations remain unmapped and keep
+broader qualification; standalone decoder and opt-in timing fixtures are not
+part of the candidate-only cohort.
 Registered test-file-only changes select all
 recognized cases in those files; they do not trigger unrelated format-matrix,
 fuzz, GUI or package work. Shared headers, other unmapped production mechanisms,
