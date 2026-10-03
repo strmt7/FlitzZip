@@ -25,7 +25,9 @@ canonical step admission and complete Git event ranges. HIP implementation edits
 select real complete-SDK compilation instead of unrelated CPU-only tests.
 Registered test edits use exact CPU-validation cohorts, format/policy scans remain
 conditional, and CPU results explicitly leave GPU assertions unqualified. Local
-routing contracts pass; exact-commit hosted qualification remains pending.
+routing contracts pass. Windows CI passed at `7a3cc5b`; the component lane
+exposed a fixture directory assumption on fresh checkouts. Its focused repair
+uses an owned temporary directory; hosted requalification remains pending.
 
 ### Earlier Checkpoint Evidence
 

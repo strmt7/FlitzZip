@@ -106,13 +106,18 @@ Assert-NativeCi ($workflow.Contains('tools/security_scan.ps1') -and $workflow.Co
 $hipWorkflow = Get-Content -LiteralPath (Join-Path $root '.github/workflows/rocm-qualification.yml') -Raw
 Assert-NativeCi ($hipWorkflow.Contains('--require-hip') -and $hipWorkflow.Contains("inputs.runner || 'windows-2025-vs2026'")) 'automatic HIP compilation uses an explicit runner and actual required-HIP receipt'
 $entry = Join-Path $PSScriptRoot 'ci_native_plan.ps1'
-$outputPath = Join-Path $root ('out/native-ci-outputs-' + [guid]::NewGuid().ToString('N') + '.txt')
+$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-native-ci-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
+$outputPath = Join-Path $fixtureRoot 'outputs.txt'
 try {
     $metadata = (& $entry -ChangedPath 'tests/cpp/test_dictionary_block.cpp' -GitHubOutput $outputPath | ConvertFrom-Json)
     Assert-NativeCi ($metadata.native_test_mode -eq 'component' -and -not $metadata.gpu_execution_qualified) 'real entry emits explicit CPU-only component metadata'
     $outputs = @(Get-Content -LiteralPath $outputPath)
     Assert-NativeCi (($outputs -join '|') -eq 'native_build=true|native_tests=true|format_matrix=false|policy_scan=false') 'actual GitHub output values are fixed booleans'
-} finally { if (Test-Path -LiteralPath $outputPath) { Remove-Item -LiteralPath $outputPath } }
+} finally {
+    if (Test-Path -LiteralPath $outputPath) { Remove-Item -LiteralPath $outputPath }
+    Remove-Item -LiteralPath $fixtureRoot
+}
 # Bind the production executor to a controlled command boundary; no product workload is launched.
 . (Join-Path $PSScriptRoot 'native_ci.ps1')
 $script:NativeCiCommands = [Collections.Generic.List[object]]::new()

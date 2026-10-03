@@ -26,6 +26,12 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Offline test fixtures must create and clean their own temporary directories.
+  The hosted native-routing contracts initially passed locally but failed on a
+  fresh runner because their output fixture assumed ignored `out/` already
+  existed. The fixture now owns a unique directory under the system temporary
+  root; production GitHub output handling remains unchanged.
+
 - A fixture-created artifact is not proof that a fresh production build emits
   it. The first native-receipt integration passed local HIP checks but failed
   both hosted CPU-only builds because CMake generated runtime metadata only for
