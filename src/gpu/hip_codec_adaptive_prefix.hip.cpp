@@ -668,6 +668,33 @@ std::vector<std::uint32_t> compute_adaptive_prefix_lengths_batch_device(
     return segment_lengths;
 }
 
+// Purpose: Measure one entropy candidate and optionally materialize only its selected offsets.
+// Inputs: Internal block plan, immutable interleaved GPU lengths, candidate index, and empty or complete offset
+// storage. Outputs: Checked bitstream byte count; missing lengths, invalid storage, or offset overflow throw before
+// packing.
+std::uint32_t measure_entropy_candidate(const AdaptiveEncodeBlockPlan& plan, std::span<const std::uint32_t> lengths,
+                                        std::size_t candidate, std::span<std::uint32_t> offsets = {}) {
+    if (candidate >= plan.candidates.size() ||
+        (!offsets.empty() && offsets.size() != static_cast<std::size_t>(plan.segment_count) + 1U)) {
+        throw GpuError("GPU entropy candidate or offset storage exceeds its block plan");
+    }
+    std::uint32_t bytes = 0U;
+    if (!offsets.empty()) {
+        offsets.front() = 0U;
+    }
+    for (std::uint32_t segment = 0U; segment < plan.segment_count; ++segment) {
+        const auto index = static_cast<std::size_t>(plan.segment_offset) + segment * plan.candidates.size() + candidate;
+        if (index >= lengths.size()) {
+            throw GpuError("GPU entropy measured lengths exceed their output table");
+        }
+        bytes = checked_prefix_offset_add(bytes, lengths[index], "GPU entropy block size");
+        if (!offsets.empty()) {
+            offsets[segment + 1U] = bytes;
+        }
+    }
+    return bytes;
+}
+
 // Purpose: Choose one measured candidate for a block without losing a smaller lower-effort representation.
 // Inputs: Nested candidates, exact interleaved GPU segment lengths, and matching encode tables.
 // Outputs: Sets the winning kind, offsets, and serialized codebook only for a strict complete-payload saving.
@@ -675,24 +702,15 @@ bool select_entropy_block(AdaptiveEncodeBlockPlan& plan, std::span<const std::ui
                           std::span<const AdaptiveEncodeTable> tables) {
     auto best_bytes = static_cast<std::uint64_t>(plan.payload_limit);
     auto winner = plan.candidates.size();
-    std::vector<std::uint32_t> offsets(static_cast<std::size_t>(plan.segment_count) + 1U, 0U);
     for (std::size_t candidate = 0U; candidate < plan.candidates.size(); ++candidate) {
-        for (std::uint32_t segment = 0U; segment < plan.segment_count; ++segment) {
-            const auto index =
-                static_cast<std::size_t>(plan.segment_offset) + segment * plan.candidates.size() + candidate;
-            if (index >= lengths.size()) {
-                throw GpuError("GPU entropy measured lengths exceed their output table");
-            }
-            offsets[segment + 1U] =
-                checked_prefix_offset_add(offsets[segment], lengths[index], "GPU entropy block size");
-        }
+        const auto bitstream_bytes = measure_entropy_candidate(plan, lengths, candidate);
         const auto header = plan.candidates[candidate].kind == BlockKind::GpuHuffman ? kGpuHuffmanLookupBytes
                                                                                      : kGpuAdaptivePrefixCodebookBytes;
-        const auto payload_bytes = header + offsets.size() * sizeof(std::uint32_t) + offsets.back();
-        if (offsets.back() != 0U && payload_bytes < best_bytes) {
+        const auto offset_bytes = (static_cast<std::size_t>(plan.segment_count) + 1U) * sizeof(std::uint32_t);
+        const auto payload_bytes = header + offset_bytes + bitstream_bytes;
+        if (bitstream_bytes != 0U && payload_bytes < best_bytes) {
             best_bytes = payload_bytes;
             winner = candidate;
-            plan.offsets = offsets;
         }
     }
     if (winner == plan.candidates.size()) {
@@ -702,12 +720,13 @@ bool select_entropy_block(AdaptiveEncodeBlockPlan& plan, std::span<const std::ui
     if (selected.table_index >= tables.size()) {
         throw GpuError("GPU entropy selected table exceeds its bounded table list");
     }
+    plan.offsets.resize(static_cast<std::size_t>(plan.segment_count) + 1U);
+    plan.bitstream_bytes = measure_entropy_candidate(plan, lengths, winner, plan.offsets);
     plan.kind = selected.kind;
     plan.table_index = selected.table_index;
     plan.codebook = selected.kind == BlockKind::GpuHuffman ? serialize_huffman_lookup(tables[selected.table_index])
                                                            : std::move(selected.codebook);
     plan.use_adaptive = true;
-    plan.bitstream_bytes = plan.offsets.back();
     return true;
 }
 

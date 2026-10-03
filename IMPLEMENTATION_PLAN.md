@@ -2,6 +2,15 @@
 
 ## Continuation Checkpoint
 
+GPU entropy selection now measures candidate sizes without allocating offsets
+for losing blocks and prepares only the final winner's offset table. The
+[component study](docs/gpu-entropy-selection-validation.md) verifies one fewer
+allocation in all 105 before/after cases, identical selected fields and tables,
+and 210 paired error checks. The canonical HIP Release build and all 17 affected
+cases pass, along with hygiene, real pinned detector preflight, language lint
+and changed-function contracts. No archive speedup or ratio gain is claimed;
+timing and exact-SHA hosted qualification remain separate.
+
 The October 3 scanner input-role batch is hosted-qualified at `8cb3f4d`:
 all ten security jobs pass, and no open DevSkim result remains in the guarded
 passive benchmark-report directory. Source, test and configuration findings
