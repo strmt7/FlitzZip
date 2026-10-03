@@ -100,5 +100,3 @@ try {
     }
     Remove-Item -LiteralPath $fixture -Recurse -Force
 }
-
-
