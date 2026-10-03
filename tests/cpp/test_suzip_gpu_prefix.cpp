@@ -1087,3 +1087,73 @@ TEST_CASE(suzip_gpu_pattern_decode_unaligned_boundaries) {
     REQUIRE_TRUE(!superzip::decode_chunk(payload, blocks, decoded, options));
     REQUIRE_TRUE(decoded == expected);
 }
+
+// Purpose: Preserve lane positions while a mixed materializer skips independently decoded prefix windows.
+// Inputs: Independent static/adaptive reference frames, unaligned 64 KiB boundaries and sub-thread-stride blocks.
+// Outputs: Requires identical CPU/HIP bytes and device CRC, including raw/fill/pattern bytes after skipped windows.
+TEST_CASE(suzip_gpu_mixed_materialization_skips_unaligned_prefix_windows) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    for (const auto lead : {1U, 255U, 256U, 257U, 65535U}) {
+        for (const bool adaptive : {false, true}) {
+            std::vector<std::byte> payload;
+            std::vector<std::byte> expected;
+            std::vector<superzip::BlockDescriptor> blocks;
+            // Purpose: Append an independent block fixture; Inputs: kind, decoded/encoded bytes and fill value.
+            // Outputs: Extends the dense layout without using production encode or materialization logic.
+            const auto append = [&](superzip::BlockKind kind, const std::vector<std::byte>& input,
+                                    const std::vector<std::byte>& encoded, std::uint8_t fill = 0U) {
+                blocks.push_back({.kind = kind,
+                                  .fill_value = fill,
+                                  .uncompressed_len = static_cast<std::uint32_t>(input.size()),
+                                  .encoded_offset = payload.size(),
+                                  .encoded_len = static_cast<std::uint32_t>(encoded.size())});
+                payload.insert(payload.end(), encoded.begin(), encoded.end());
+                expected.insert(expected.end(), input.begin(), input.end());
+            };
+            const std::vector<std::byte> first(lead, std::byte{0xA7});
+            append(superzip::BlockKind::Raw, first, first);
+            std::vector<std::byte> codebook;
+            if (adaptive) {
+                codebook.resize(superzip::kGpuAdaptivePrefixCodebookBytes);
+                for (std::size_t i = 0; i < codebook.size(); ++i) {
+                    codebook[i] = static_cast<std::byte>(i);
+                }
+            }
+            for (const auto coded_length : {65549U, 4113U}) {
+                std::vector<std::byte> coded(coded_length);
+                for (std::size_t i = 0; i < coded.size(); ++i) {
+                    coded[i] = static_cast<std::byte>((i * 13U + i / 7U) & 3U);
+                }
+                append(adaptive ? superzip::BlockKind::GpuAdaptivePrefix : superzip::BlockKind::GpuPrefix, coded,
+                       reference_prefix_payload(coded, codebook));
+                // Several blocks are shorter than a lane stride: a lane can already be beyond their end.
+                for (const auto fill_length : {1U, 2U, 253U, 257U}) {
+                    append(superzip::BlockKind::Fill, std::vector<std::byte>(fill_length, std::byte{0xEF}), {}, 0xEFU);
+                }
+                std::vector<std::byte> patterned(509U);
+                const std::vector motif{std::byte{0x91}, std::byte{0x26}, std::byte{0xF4}};
+                for (std::size_t i = 0; i < patterned.size(); ++i) {
+                    patterned[i] = motif[i % motif.size()];
+                }
+                append(superzip::BlockKind::Pattern, patterned, motif);
+                const std::vector<std::byte> raw_tail(513U, std::byte{0x42});
+                append(superzip::BlockKind::Raw, raw_tail, raw_tail);
+            }
+            superzip::GpuCodecOptions options;
+            options.require_gpu = true;
+            std::vector<std::byte> decoded(expected.size(), std::byte{0xCC});
+            REQUIRE_TRUE(superzip::decode_chunk(payload, blocks, decoded, options));
+            REQUIRE_TRUE(decoded == expected);
+            const auto crc = superzip::crc_decoded_chunk(payload, blocks, expected.size(), options);
+            REQUIRE_TRUE(crc.gpu_used);
+            REQUIRE_EQ(crc.crc32, superzip::crc32(expected));
+            options.require_gpu = false;
+            options.force_cpu = true;
+            std::fill(decoded.begin(), decoded.end(), std::byte{0xDD});
+            REQUIRE_TRUE(!superzip::decode_chunk(payload, blocks, decoded, options));
+            REQUIRE_TRUE(decoded == expected);
+        }
+    }
+}

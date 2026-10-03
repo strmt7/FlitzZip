@@ -2,6 +2,18 @@
 
 ## Continuation Checkpoint
 
+Current production work reduces prefix-plan allocations and makes dictionary
+framing validation allocation-free. The `437dcbd` Windows, fuzzing, lint and
+scorecard workflows pass; its security run remains pending at this checkpoint.
+The next focused batch skips unused mixed HIP materialization walks. Its HIP
+build and 12 affected tests pass. The
+[kernel study and whole-operation diagnostic](docs/gpu-materialization-skip-validation.md)
+separate an isolated improvement from inconclusive archive timing. The security
+backlog remains 211 open alerts, and release 0.8.0 remains held. Use the fresh
+audit's latest round for continuation; the dated checkpoints below are history.
+
+### Earlier Checkpoint Evidence
+
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.
 Its Mixed RAM study retained 42 pilots and all 134 prescribed confirmations,
 with bytewise validation and unchanged sizes. Original report export failed

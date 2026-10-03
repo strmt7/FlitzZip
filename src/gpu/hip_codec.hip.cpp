@@ -466,7 +466,7 @@ __global__ void materialize_blocks_kernel(const std::byte* payload, const Device
 
 // Purpose: Decode fill/raw/pattern metadata over fixed output segments to improve occupancy for large SUZIP blocks.
 // Inputs: `payload`, `blocks`, `block_count`, `output`, and `output_len` are validated device buffers and bounds.
-// Outputs: Writes decoded bytes into `output`; invalid metadata leaves affected bytes untouched instead of OOB access.
+// Outputs: Writes raw/fill/pattern bytes, skips separate decoder windows, and preserves each lane's byte stride.
 __global__ void materialize_segments_kernel(const std::byte* payload, const DeviceBlock* blocks,
                                             std::uint32_t block_count, std::byte* output, std::size_t output_len) {
     const auto segment_start = static_cast<std::size_t>(blockIdx.x) * kMaterializeSegmentBytes;
@@ -495,6 +495,13 @@ __global__ void materialize_segments_kernel(const std::byte* payload, const Devi
                     phase -= period;
                 }
                 pos += blockDim.x;
+            }
+        } else if (block.kind != static_cast<std::uint8_t>(BlockKind::Raw) &&
+                   block.kind != static_cast<std::uint8_t>(BlockKind::Fill)) {
+            // A lane can jump over several short blocks; never subtract an already passed boundary.
+            if (pos < block_end) {
+                const auto remaining = min(block_end, segment_end) - pos;
+                pos += ((remaining + blockDim.x - 1U) / blockDim.x) * blockDim.x;
             }
         } else {
             while (pos < block_end && pos < segment_end) {

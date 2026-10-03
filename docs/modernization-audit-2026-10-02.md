@@ -1144,3 +1144,26 @@ Only that new test registration changes CMake; unrelated installer/package and
 blanket-suite checks are excluded under the maintainer's direction. The preceding
 `a02e0bb` checkpoint passes all four hosted runs. This new source batch still
 needs exact-commit hosted qualification and post-push audit.
+
+## Round Twenty-Six: Skip Unused GPU Materialization Work
+
+The generic HIP materializer now advances lanes past separately decoded coded
+windows instead of walking bytes without writing them. The same step handles
+prefix, Huffman and dictionary windows; it preserves stride and guards already
+passed short blocks. Independent unaligned fixtures and 11 existing affected
+cases pass, as do the HIP Release build, changed-code gates and security policy.
+No unrelated native suite, GUI, installer or compatibility smoke is repeated.
+
+[Kernel and archive evidence](gpu-materialization-skip-validation.md) retains
+all observations. A fixed alternating exact-kernel probe observes mean ratios
+of 1.13–1.21 on one GPU, with output and untouched regions verified. Two
+three-observation whole-operation sweeps byte-check 420 GiB with identical
+sizes, geometry and device resource counters. Their timing results remain
+inconclusive; the isolated result is not an archive-speed claim. A private
+launcher exit-code observation defect is corrected and both series retained.
+
+The preceding `437dcbd` Windows, fuzzing, lint and scorecard runs pass; security
+is still running at this checkpoint. New exact-commit checks and the required
+post-push audit remain pending. The latest completed audit reports 211 open
+alerts. Wider security, all-format/corpus comparisons, latest whole-tool checks
+and release qualification remain open.
