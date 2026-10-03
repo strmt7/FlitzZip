@@ -64,6 +64,8 @@ class ComparatorPreflightTests(unittest.TestCase):
             comparators.require_permission("Bandizip", "publish_results", version="7.46", edition="Standard")
             comparators.require_permission("lzbench", "execute", version="2.4", modules=("lz4", "zstd"))
             comparators.require_permission("HIGGS", "execute")
+            comparators.require_permission("HouseholdPower", "execute")
+            comparators.require_permission("HouseholdPower", "publish_results")
             comparators.require_permission("PeaZip", "execute", version="11.3.0")
             for subject in ("WinZip", "WinRAR", "Silesia", "NanaZip", "Unknown"):
                 with self.subTest(subject=subject), self.assertRaises(ValueError):

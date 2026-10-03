@@ -102,6 +102,17 @@ now explicitly use normal priority. The fixture results are correctness evidence
 not performance claims. Representative datasets, actual comparative measurements,
 corpus publication and final hosted acceptance remain outstanding.
 
+The corpus acquisition follow-up verifies the official UCI household-power
+archive and its complete member, then retains three disjoint complete-row
+excerpts without padding, repetition or conversion. Their combined payload is
+62,914,418 bytes; the archive is not staged to disk. A reusable pinned-source
+tool feeds the canonical permission-manifest boundary, with explicit network,
+decode, output and lifetime limits. Five offline acquisition contracts and the
+actual official-source acquisition pass. Attribution and exact ranges remain
+with ignored payloads. These are empirical numeric inputs; performance studies,
+other workload classes and corpus publication are still outstanding. See the
+[source and methodology](docs/benchmarks/corpora.md).
+
 ### Earlier Checkpoint Evidence
 
 The `d2a44ca` observation-guard checkpoint has seven passing hosted workflows.

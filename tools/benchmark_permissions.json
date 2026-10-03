@@ -102,6 +102,14 @@
       "evidence": ["https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia"],
       "conditions": ["Excluded from new runs and headline comparisons; use a separately licensed replacement instead.", "Never commit corpus payloads or assume medical-image redistribution rights."]
     },
+    "HouseholdPower": {
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "UCI explicitly licenses the empirical household-power dataset under CC-BY-4.0. This is one numeric time-series workload, not a representative mixed-file corpus. Redistribution hold is repository policy, not a restriction in the dataset license.",
+      "evidence": ["https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption", "https://archive.ics.uci.edu/static/public/235/individual%2Bhousehold%2Belectric%2Bpower%2Bconsumption.zip", "https://doi.org/10.24432/C58K54", "https://creativecommons.org/licenses/by/4.0/", "https://creativecommons.org/licenses/by/4.0/legalcode.en"],
+      "conditions": ["Attribute Georges Hebrail and Alice Berard (2006), Individual Household Electric Power Consumption, UCI, DOI 10.24432/C58K54 and CC-BY-4.0.", "Record exact source hashes, byte windows and complete-row trimming; preserve missing values and line endings without padding, cycling or generated substitution.", "Do not commit or ship dataset payloads. Publish original numerical measurements with attribution and selection limits; do not imply UCI or creator endorsement."]
+    },
     "HIGGS": {
       "execute": "allowed",
       "publish_results": "allowed",

@@ -490,4 +490,9 @@ Assert-Selector (($corpusPlan.requiredLocalCommands.id -contains 'benchmark-corp
     ($corpusPlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
     ($corpusPlan.requiredLocalCommands.id -notcontains 'benchmark-tooling-tests')) 'corpus admission changes must select their own contracts and controller, without unrelated native or graph suites'
 
+$acquisitionPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/acquire_benchmark_corpus.py', 'tools/test_acquire_benchmark_corpus.py')
+Assert-Selector (($acquisitionPlan.requiredLocalCommands.id -contains 'benchmark-corpus-acquisition-test') -and
+    ($acquisitionPlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
+    ($acquisitionPlan.requiredLocalCommands.id -notcontains 'release-build')) 'corpus acquisition must select its admission and publication contracts without unrelated product builds or native tests'
+
 Write-Output "Verification selector self-test passed."

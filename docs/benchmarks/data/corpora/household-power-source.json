@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "name": "UCI household power measurements: three chronological excerpts",
+  "subject": "HouseholdPower",
+  "source_url": "https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption",
+  "download_url": "https://archive.ics.uci.edu/static/public/235/individual%2Bhousehold%2Belectric%2Bpower%2Bconsumption.zip",
+  "archive_bytes": 20640916,
+  "archive_sha256": "9f84b46ade8a2d8e1286ec4b2b6c2987a45a755c59f263be3b3b3d10dfbda3ff",
+  "member": {
+    "name": "household_power_consumption.txt",
+    "bytes": 132960755,
+    "sha256": "4259c9d7ece5dbee9ab8d53682baac68d791c864f0f64a52b4043cb3b90894b7"
+  },
+  "windows": [
+    {"label": "first", "offset": 0, "bytes": 20971520},
+    {"label": "middle", "offset": 55994617, "bytes": 20971520},
+    {"label": "last", "offset": 111989235, "bytes": 20971520}
+  ],
+  "attribution": "Georges Hebrail and Alice Berard (2006), Individual Household Electric Power Consumption, UCI Machine Learning Repository, DOI https://doi.org/10.24432/C58K54. Licensed under CC BY 4.0: https://creativecommons.org/licenses/by/4.0/. These excerpts retain literal complete rows from the specified byte windows; they are not the complete dataset. No endorsement is implied."
+}

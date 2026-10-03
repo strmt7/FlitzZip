@@ -66,6 +66,11 @@ Beta builds, paid editions and new codec modules need separate review.
   authentic published numeric dataset, not empirical detector observations or
   a representative mixed-file replacement by themselves. No HIGGS payload has
   been downloaded or benchmarked in this development round.
+- **Household power: eligible empirical numeric workload under CC-BY-4.0.**
+  The [source and acquisition contract](benchmarks/corpora.md) records the
+  official dataset, attribution, exact container/member pins and three
+  disjoint complete-row excerpts. This supplies real measurements without
+  treating one time series as a mixed-file workload. Payloads are not shipped.
 - **Other corpora: unreviewed.** Public download access, a benchmark-tool
   license, or another reviewer's use does not license a dataset. Verify every
   constituent before use; do not copy review-site archives or media.
