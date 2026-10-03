@@ -24,6 +24,27 @@ function Get-RequiredCommandId {
     return @($Plan.requiredLocalCommands | ForEach-Object { $_.id })
 }
 
+# Purpose: Read the shared push/PR path filter from the two owned workflow fixtures.
+# Inputs: Repository-relative workflow name and a candidate changed path.
+# Outputs: Returns whether its anchored positive globs admit the path; rejects missing/shared-filter drift.
+function Test-OwnedWorkflowPathFilter {
+    param([string]$Workflow, [string]$Path)
+
+    $root = Split-Path -Parent $PSScriptRoot
+    $source = Get-Content -LiteralPath (Join-Path $root ".github/workflows/$Workflow.yml") -Raw
+    $filter = [regex]::Match($source, '(?m)^    paths: &(?<anchor>[\w-]+)\r?\n(?<paths>(?:      - [^\r\n]+\r?\n)+)')
+    Assert-Selector $filter.Success "owned workflow must declare a bounded anchored filter: $Workflow"
+    $alias = "    paths: *$($filter.Groups['anchor'].Value)"
+    Assert-Selector ($source.Contains($alias)) "push and PR must share the same filter: $Workflow"
+    foreach ($line in ($filter.Groups['paths'].Value -split '\r?\n')) {
+        if (-not $line) { continue }
+        $glob = $line.Substring(8)
+        Assert-Selector ($glob -notmatch '[!\[\]?]') "fixture reader supports only owned positive literal/star globs: $Workflow"
+        if ($Path -clike $glob) { return $true }
+    }
+    return $false
+}
+
 # Purpose: Test that a plan contains a required local command id.
 # Inputs: `Plan` is a verification plan and `Id` is the expected command id.
 # Outputs: Returns true when the command is present.
@@ -129,13 +150,40 @@ $gpuPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/gpu/dictionary_candi
 Assert-Selector $gpuPlan.scope.touchesPerformance "GPU codec changes must retain performance verification"
 Assert-Selector (-not (Test-Workflow -Plan $gpuPlan -Name "benchmark-graph")) "GPU source alone must not wait for a path-filtered graph workflow"
 
+foreach ($case in @(
+    @('.github/workflows/fuzzing.yml', $true), @('.clusterfuzzlite/build.sh', $true),
+    @('tools/test_fuzz_build.py', $true), @('fuzz/archive_index_fuzzer.cpp', $true),
+    @('src/core/checksum.cpp', $true), @('src/iso/iso_adapter.cpp', $true),
+    @('third_party/miniz/miniz.c', $true), @('src/gpu/hip_codec.hip.cpp', $false),
+    @('src/app/main_window.cpp', $false), @('src/zip/zip_adapter.cpp', $false),
+    @('tools/agent_context.py', $false), @('docs/targeted-verification.md', $false)
+)) {
+    $selected = Test-LongRunningWorkflow -Plan (Get-SuperZipVerificationPlan -ChangedPath @($case[0])) -Name 'fuzzing'
+    Assert-Selector ($selected -eq $case[1]) "hosted fuzz input ownership: $($case[0])"
+    Assert-Selector ((Test-OwnedWorkflowPathFilter -Workflow fuzzing -Path $case[0]) -eq $selected) "fuzz planner/trigger parity: $($case[0])"
+}
+$root = Split-Path -Parent $PSScriptRoot
+$fuzzBuild = Get-Content -LiteralPath (Join-Path $root '.clusterfuzzlite/build.sh') -Raw
+foreach ($dependency in [regex]::Matches($fuzzBuild, '(?:src|fuzz|third_party)/[\w./-]+\.(?:cpp|c|hpp|h)\b')) {
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow fuzzing -Path $dependency.Value) "actual declared fuzzer input must trigger hosted fuzzing: $($dependency.Value)"
+}
+foreach ($case in @(
+    @('.github/openvas/resolve_config.cjs', $true), @('.github/workflows/greenbone-openvas-vulnetix.yml', $true),
+    @('.github/workflows/greenbone-openvas-live.yml', $true), @('.github/requirements/requirements-gvm-tools-linux.txt', $true),
+    @('tools/agent_context.py', $false), @('src/core/checksum.cpp', $false), @('docs/targeted-verification.md', $false)
+)) {
+    $selected = Test-Workflow -Plan (Get-SuperZipVerificationPlan -ChangedPath @($case[0])) -Name 'greenbone-openvas-vulnetix'
+    Assert-Selector ($selected -eq $case[1]) "offline Greenbone input ownership: $($case[0])"
+    Assert-Selector ((Test-OwnedWorkflowPathFilter -Workflow greenbone-openvas-vulnetix -Path $case[0]) -eq $selected) "Greenbone planner/trigger parity: $($case[0])"
+}
+
 $archivePlan = Get-SuperZipVerificationPlan -ChangedPath @("src/zip/zip_adapter.cpp")
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "security-scan") "archive parser changes must run security scan"
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "compatibility-interop-smoke") "archive parser changes must run external compatibility interop smoke"
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "format-matrix-smoke") "archive parser changes must run the registry-wide format matrix smoke"
 Assert-Selector (Test-RequiredCommand -Plan $archivePlan -Id "short-fuzz-smoke") "archive parser changes must run short fuzz smoke"
 Assert-Selector (-not (Test-Workflow -Plan $archivePlan -Name "fuzzing")) "archive parser changes must not block normal waits on fuzzing"
-Assert-Selector (Test-LongRunningWorkflow -Plan $archivePlan -Name "fuzzing") "archive parser changes must still observe fuzzing as a long-running workflow"
+Assert-Selector (-not (Test-LongRunningWorkflow -Plan $archivePlan -Name "fuzzing")) "ZIP is not compiled by the hosted fuzz build and must not start unrelated sanitizer jobs"
 
 $guiPlan = Get-SuperZipVerificationPlan -ChangedPath @("src/app/main_window.cpp")
 Assert-Selector (Test-RequiredCommand -Plan $guiPlan -Id "gui-smoke") "GUI changes must run GUI smoke"
@@ -257,6 +305,8 @@ foreach ($inputPath in @('LICENSE', 'resources/licenses/license-notices.json')) 
     Assert-Selector (Test-RequiredCommand -Plan $inputPlan -Id 'release-build') "compiled license inputs must rebuild their actual outputs: $inputPath"
     Assert-Selector (Test-Workflow -Plan $inputPlan -Name 'windows-ci') "compiled license inputs must retain hosted build coverage: $inputPath"
 }
+
+
 Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "msi-identity-smoke") "packaging changes must run MSI identity smoke"
 Assert-Selector (Test-RequiredCommand -Plan $packagingPlan -Id "package-smoke") "packaging changes must run package smoke"
 Assert-Selector (Test-Workflow -Plan $packagingPlan -Name "windows-ci") "packaging changes must wait for windows-ci"

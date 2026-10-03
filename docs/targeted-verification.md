@@ -194,6 +194,21 @@ uncertain; the latest commit's diff alone may omit earlier security/GUI changes.
 Superseded intermediate commits need no separate wait. Do not call work complete
 because an opportunistic command returned successfully.
 
+The hosted fuzz workflow now runs on changes to its actual compiled source
+families, vendored codec inputs, harnesses, container/build recipe or its own
+workflow. The selector checks those triggers against the literal source inputs
+declared by the production fuzz build. UI, GPU-only, documentation and unrelated
+agent-tool edits do not start that Linux sanitizer build. Scheduled fuzzing and
+manual dispatch remain available with both sanitizers and unchanged run budgets.
+An archive adapter outside that build still requires its own relevant correctness
+and interoperability checks; running unrelated fuzz targets does not qualify it.
+
+The offline Greenbone audit runs on its configuration/scripts, pinned tool
+requirements and the offline/live workflow contracts. Live scans retain their
+separate schedule, broker authorization and stateful execution. Neither workflow
+filter turns an unresolved finding into a pass. As with the native/component
+filters above, review GitHub's path-filter limits and required-check settings.
+
 Fuzzing is long-running by design. Do not wait for it during ordinary
 development pushes. Use `-Mode opportunistic -IncludeLongRunning` occasionally
 to check for completed fuzzing failures while continuing other work. Use

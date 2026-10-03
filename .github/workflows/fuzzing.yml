@@ -2,9 +2,32 @@ name: fuzzing
 
 on:
   pull_request:
+    paths: &fuzzer-inputs
+      - .github/workflows/fuzzing.yml
+      - .clusterfuzzlite/**
+      - fuzz/**
+      - tools/test_fuzz_build.py
+      - src/core/**
+      - src/arc/**
+      - src/arj/**
+      - src/cab/**
+      - src/cpio/**
+      - src/gzip/**
+      - src/iso/**
+      - src/lha/**
+      - src/lzip/**
+      - src/lzma/**
+      - src/macbinary/**
+      - src/rpm/**
+      - src/sevenzip/**
+      - src/xar/**
+      - third_party/miniz/**
+      - third_party/lzma_sdk/**
+      - third_party/lhasa/**
   push:
     branches:
       - main
+    paths: *fuzzer-inputs
   schedule:
     - cron: "41 4 * * 2"
   workflow_dispatch:

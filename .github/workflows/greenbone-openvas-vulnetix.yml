@@ -2,7 +2,13 @@ name: greenbone-openvas-vulnetix
 
 on:
   push:
+    paths: &scanner-inputs
+      - .github/workflows/greenbone-openvas-vulnetix.yml
+      - .github/workflows/greenbone-openvas-live.yml
+      - .github/openvas/**
+      - .github/requirements/requirements-gvm-tools-linux.txt
   pull_request:
+    paths: *scanner-inputs
 
 permissions:
   contents: read # allow checkout and scan artifact collection

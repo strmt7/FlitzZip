@@ -1083,3 +1083,27 @@ commands; the complete ignored log is retained at
 for the preceding `f2a3455` checkpoint pass, and GitHub confirms alerts 1741 and
 1746 fixed. Hosted assessment of the new routing lane and a fresh remaining-alert
 count are still pending at this source checkpoint.
+
+## Round Twenty-Three: Remaining Unconditional Hosted Work
+
+The `7b729ca` component lane passes on GitHub, including the real planner and
+Windows command execution. Its fresh post-push audit rejects 211 open alerts;
+the two-alert reduction is confirmed, not suppressed. Native CI and security
+analysis remain pending at this intermediate observation.
+
+That push also reveals unconditional fuzzing and offline Greenbone runs even
+though neither mechanism changed. Push/PR filters now admit the actual fuzz
+build source families, vendored codec inputs, harnesses, container recipe and
+own workflow; the offline audit admits its scripts/configuration, pinned
+requirements and offline/live workflow contracts. Weekly/manual fuzzing, both
+sanitizers and their 300/600-second budgets remain intact; stateful live scanning
+is unchanged. Planner/trigger parity regressions cover admitted and excluded
+mechanisms and every literal source dependency declared in the fuzz build.
+The component lane also observes changed filter contracts. This batch changes
+no product code and requires no local native build, GUI or package smoke.
+The frozen source passes all ten selected local commands, including filter
+ownership/parity and broker contracts. Complete bounded evidence is retained in
+`out/workflow-input-routing-verification-20261003.json`, without timeout or output
+truncation. A console-only Unicode display failure after the successful verifier
+was corrected by reading that retained JSON; the checks were not repeated.
+Hosted qualification of the new filters remains pending.

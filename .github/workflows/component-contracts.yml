@@ -19,6 +19,8 @@ on:
       - .github/codeql/**
       - .github/openvas/**
       - .github/workflows/greenbone-openvas-vulnetix.yml
+      - .github/workflows/greenbone-openvas-live.yml
+      - .github/workflows/fuzzing.yml
   pull_request:
     paths: *contract-inputs
   workflow_dispatch:

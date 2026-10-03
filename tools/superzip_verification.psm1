@@ -366,7 +366,7 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'cmake-toolchain-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_cmake_toolchain.ps1') -Reason 'changed CMake discovery requires official toolchain and path contracts') }
         @{ Pattern = @('^tools/(lint|test_lint_routing)\.ps1$', '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1)$')
            Command = (Get-SuperZipVerificationCommand -Id "lint-routing-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_lint_routing.ps1") -Reason "changed/all/configuration lint routing must retain newly added files and cover owned CMake fixtures") }
-        @{ Pattern = @('^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1)$')
+        @{ Pattern = @('^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1)$', '^\.github/workflows/(fuzzing|greenbone-openvas-vulnetix)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id "verification-selector-self-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_selector.ps1") -Reason "verification tooling or full escalation requires classifier scenario self-tests") }
         @{ Pattern = @('^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1)$', '^tools/test_verification_runner\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "verification-runner-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_runner.ps1") -Reason "runner failures must stop immediately without executing unrelated or repeated commands") }
@@ -560,14 +560,19 @@ function Get-SuperZipVerificationPlan {
         @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/workflows/benchmark-graph\.yml$', '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$')))),
         @("windows-ci", ($scope.touchesCpp -or $scope.touchesProductionSource -or $scope.touchesGui -or $scope.touchesPackaging -or $scope.touchesNativeBuildInputs -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/workflows/windows-ci\.yml$')))),
         @("security", ($scope.touchesSecurityBoundary -or $scope.touchesWorkflow -or $scope.touchesPackaging -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
-        @("greenbone-openvas-vulnetix", ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')))),
+        @("greenbone-openvas-vulnetix", ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-(vulnetix|live)\.yml$', '^\.github/requirements/requirements-gvm-tools-linux\.txt$')))),
         @("scorecard", ($scope.touchesWorkflow -or $scope.fullEscalationRequired))
     )) {
         if ($pair[1] -and $workflowSeen.Add([string]$pair[0])) {
             [void]$workflows.Add([string]$pair[0])
         }
     }
-    if (($scope.touchesArchiveParser -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.clusterfuzzlite/', '^tools/fuzz\.ps1$'))) -and $longRunningSeen.Add("fuzzing")) {
+    $touchesHostedFuzzInputs = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^\.github/workflows/fuzzing\.yml$', '^\.clusterfuzzlite/', '^fuzz/', '^tools/test_fuzz_build\.py$',
+        '^src/(core|arc|arj|cab|cpio|gzip|iso|lha|lzip|lzma|macbinary|rpm|sevenzip|xar)/',
+        '^third_party/(miniz|lzma_sdk|lhasa)/'
+    )
+    if (($touchesHostedFuzzInputs -or $scope.fullEscalationRequired) -and $longRunningSeen.Add("fuzzing")) {
         [void]$longRunningWorkflows.Add("fuzzing")
     }
 
