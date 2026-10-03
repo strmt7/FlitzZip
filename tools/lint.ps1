@@ -199,10 +199,6 @@ try {
         if (@($pythonFiles | Where-Object { $_ -in @("tools/cocoindex_agent_search.py", "tools/test_cocoindex_agent_search.py") }).Count -gt 0) {
             Invoke-LintCommand -FilePath "py" -Arguments @("-3", "-m", "unittest", "tools.test_cocoindex_agent_search") -Label "cocoindex-wrapper-tests"
         }
-        if (@($pythonFiles | Where-Object { $_ -in @('tools/analyze_hip_trace.py', 'tools/test_hip_trace.py') }).Count -gt 0) {
-            Invoke-LintCommand -FilePath (Resolve-LintToolPath -Name 'python' -VenvPath $LintVenvPath) `
-                -Arguments @('-m', 'unittest', 'tools.test_hip_trace') -Label 'hip-trace-tests'
-        }
     } else {
         Write-Output "lint step=python-ruff skipped=no-python-files"
     }

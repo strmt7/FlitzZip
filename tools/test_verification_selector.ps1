@@ -233,6 +233,8 @@ $componentCases = @(
     @('tools/test_verification_selector.ps1', 'verification-selector-self-test'),
     @('tools/build_parallelism.ps1', 'build-parallelism-test'),
     @('tools/test_build_parallelism.ps1', 'build-parallelism-test'),
+    @('tools/analyze_hip_trace.py', 'hip-api-trace-tests'),
+    @('tools/test_hip_trace.py', 'hip-api-trace-tests'),
     @('tools/refactor_audit.ps1', 'refactor-audit-tests'),
     @('tools/test_refactor_audit.ps1', 'refactor-audit-tests')
 )
@@ -242,6 +244,14 @@ foreach ($case in $componentCases) {
     Assert-Selector (Test-RequiredCommand -Plan $componentPlan -Id $case[1]) "required component contract missing: $($case[0])"
     Assert-Selector (-not (Test-RequiredCommand -Plan $componentPlan -Id 'gui-smoke')) "tool changes must not launch the GUI: $($case[0])"
     Assert-Selector (-not (Test-RequiredCommand -Plan $componentPlan -Id 'package-smoke')) "tool changes must not package the product: $($case[0])"
+}
+
+foreach ($path in @('tools/analyze_hip_trace.py', 'tools/test_hip_trace.py')) {
+    $tracePlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    foreach ($id in @('release-build', 'unit-tests', 'benchmark-tooling-tests', 'ram-benchmark-sweep')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $tracePlan -Id $id)) "offline HIP trace tools must not rerun native workloads or graph checks: $path, $id"
+    }
+    Assert-Selector (Test-Workflow -Plan $tracePlan -Name 'component-contracts') "trace contracts must run on the hosted component path: $path"
 }
 
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")

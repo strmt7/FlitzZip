@@ -128,8 +128,14 @@ then completed all three excerpts at level 5 and 8192 KiB blocks: 18 pilots and
 CPU archives were smaller for every excerpt. All paired timing comparisons
 remain inconclusive under the unchanged policy; only last-excerpt HIP met all
 descriptive lane requirements. The input-allocation counter includes VRAM
-admission and allocation, so the next profiling batch must separate those costs
-before choosing a production change. Dictionary ratio coverage also remains a
+admission and allocation. A bounded instrumented follow-up accounts for all
+1,005 API entry records: 905 complete calls and 100 explicitly untimed status
+query entries. The first `hipMemGetInfo` interval is 245.747 ms; all 52 logged
+`hipMalloc` intervals total 6.726 ms. This locates the observed cost without
+proving its runtime-initialization cause or a production speedup. The analyzer
+preserves strict defaults and reports unknown fields only under a narrow
+opt-in. Fourteen parser contracts and component-only routing prevent another
+native run merely to repair diagnostic tooling. Dictionary ratio coverage remains a
 priority. No samples, thresholds or required-HIP semantics were weakened. Two
 new public corpus-hash alerts were individually verified as false positives,
 with exact-commit secret scans passing; the subsequent open-alert audit still

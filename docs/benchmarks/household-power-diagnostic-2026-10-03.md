@@ -84,8 +84,9 @@ Exact source review locates this region in `encode_chunk_hip_impl`: it includes
 `HipDeviceMemoryReservation` followed by `HipDeviceBuffer` construction. The
 reservation queries the selected device and free VRAM before aggregate admission;
 the buffer then calls `hipMalloc`. These combined counters do not identify which
-API, driver initialization or allocation mechanism causes the cost. Separate
-those components before choosing bounded workspace reuse or another allocator;
+API, driver initialization or allocation mechanism causes the cost. The
+instrumented follow-up below separates those API intervals before choosing
+bounded workspace reuse or another allocator;
 preserve aggregate admission, ownership and failure cleanup. Earlier rejected
 [allocation experiments](../modernization-audit-2026-10-02.md#round-one-input-allocation-experiment)
 remain relevant evidence.
@@ -96,6 +97,69 @@ those production mechanisms with independent readers and exact bytes, rather
 than substituting a CPU codec inside a required-HIP lane. More workload classes,
 all seven blocks, broader effort levels and eligible external comparators remain
 outstanding. Small numeric excerpts do not replace those qualifications.
+
+## Instrumented API Follow-Up
+
+One normal-priority production invocation on source commit
+`16d06ec04799110daf7e4d5dda13df08fbf56248` traced the same first excerpt,
+level 5 and 8192 KiB blocks. The unchanged HIP-enabled binary and its build
+receipt passed before/after identity checks. The invocation completed bytewise
+validation with required HIP, `memory_only=true` and `disk_write_bytes=0`.
+Child-scoped `AMD_LOG_LEVEL=4`, `AMD_LOG_MASK=1` and `AMD_LOG_LEVEL_FILE`
+produced a completed 251,663-byte log. Logging perturbs execution: these
+intervals are diagnostic observations, not new benchmark samples or a speedup.
+
+The original strict analyzer rejected this valid capture because
+`hipGetLastError` entries lacked logged returns. AMD's
+[status-query implementation](https://github.com/ROCm/clr/blob/develop/hipamd/src/hip_error.cpp)
+initializes API logging but returns directly for `hipGetLastError` and
+`hipExtGetLastError`; `hipPeekAtLastError` uses the normal logged return.
+This source pattern explains the observed layout but does not prove that the
+develop branch is identical to the installed driver binary.
+
+The analyzer now offers `--allow-entry-only-status-queries`. Its strict default
+is unchanged. The opt-in retains only unpaired, empty-argument entries for
+those two APIs, reporting unknown duration, status and unique-call count.
+Repeated entry-shaped records are not arbitrarily paired. Missing allocation,
+transfer, other status-query or internal launch-configuration returns still
+fail. Paired queries retain their actual timing and success/failure evidence.
+Internal `__hip` configuration APIs now receive the same strict parsing.
+
+All 1,005 entry records are accounted for: 905 complete calls and 100 untimed
+`hipGetLastError` records, with 905 logged returns. No record was silently
+discarded. Full-trace results include:
+
+| API | Complete calls | Total host interval, ms | Maximum host interval, ms |
+| --- | ---: | ---: | ---: |
+| `hipMemGetInfo` | 17 | 245.904 | 245.747 |
+| `hipEventSynchronize` | 23 | 138.217 | 23.341 |
+| `hipMemcpyWithStream` | 36 | 23.092 | 8.398 |
+| `hipMalloc` | 52 | 6.726 | 1.295 |
+| `hipHostMalloc` | 2 | 2.768 | 2.755 |
+
+The first `hipMemGetInfo` interval was 245.747 ms; its other 16 intervals
+totalled 0.157 ms. The four device allocation calls requesting exactly
+20,971,465 bytes totalled 0.977 ms. These observations locate the large
+input-admission cost at the first memory query, rather than at the logged
+device allocation calls. First-use runtime initialization is a hypothesis to
+check; moving a query before the encode timer would not remove end-to-end cost.
+Do not remove VRAM admission or reinstate an allocator experiment on this
+evidence. Synchronization intervals include waiting and are not independent
+device execution measurements. API intervals may nest or overlap across
+threads; their totals are not additive wall-clock fractions.
+
+Fourteen focused parser contracts cover opt-in accounting, strict rejection,
+internal APIs, privacy, time windows and the actual CLI. The canonical verifier
+selects these offline contracts for analyzer changes. Their former lint-side
+invocation was removed to avoid running the same suite twice in one plan.
+The retained capture and sanitized analysis are local evidence under
+`out/household-hip-api-trace-capture-20261003.json` and
+`out/household-hip-api-trace-analysis-20261003.json`. Reanalyze a completed
+trace without launching another workload:
+
+```powershell
+py -3 tools/analyze_hip_trace.py <completed-trace-path> --allow-entry-only-status-queries
+```
 
 ## Local Evidence And Reproduction
 

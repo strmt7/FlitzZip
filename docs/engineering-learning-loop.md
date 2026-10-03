@@ -26,6 +26,14 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Logger entries do not establish completed calls. The production HIP trace
+  contained unpaired empty status-query entries matching AMD's direct-return
+  logging pattern. `analyze_hip_trace.py` preserves strict parsing by default;
+  an explicit narrow opt-in retains these records with unknown duration,
+  status and unique-call count. It never fabricates timing or overlooks other
+  missing returns. Parser contracts run once through the canonical component
+  selector, independently of lint and native benchmark execution.
+
 - Narrative benchmark reports do not change graph inputs. A report-only push
   exposed a planner requesting `benchmark-graph` despite its data-only event
   filter. Routing now selects graph contracts for `docs/benchmarks/data/` and

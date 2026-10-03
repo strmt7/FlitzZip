@@ -389,6 +389,8 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "build-parallelism-test" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_build_parallelism.ps1") -Reason "build scheduling must honor explicit job counts and bound default shared-host load") }
         @{ Pattern = @('^tools/(bootstrap_rocm_sdk|test_bootstrap_rocm_sdk)\.py$', '^tools/rocm-sdk-lock\.json$')
            Command = (Get-SuperZipVerificationCommand -Id "rocm-bootstrap-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_bootstrap_rocm_sdk") -Reason "whole SDK provisioning must reject unsafe archives and changed installations without host changes") }
+        @{ Pattern = @('^tools/(analyze_hip_trace|test_hip_trace)\.py$')
+           Command = (Get-SuperZipVerificationCommand -Id 'hip-api-trace-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_hip_trace') -Reason 'offline HIP trace parsing must preserve complete-call pairing, explicit untimed status-query accounting and sanitized output without rerunning native workloads') }
         @{ Pattern = @('^\.clusterfuzzlite/', '^tools/(fuzz|fuzz_resources|test_fuzz_resources|local_resources)\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "fuzz-resource-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_fuzz_resources.ps1") -Reason "local fuzz admission must fit Windows and Docker-host RAM without CPU caps") }
         @{ Pattern = @('^\.clusterfuzzlite/', '^tools/(fuzz_memory|test_fuzz_memory)\.py$', '^tools/fuzz\.ps1$')

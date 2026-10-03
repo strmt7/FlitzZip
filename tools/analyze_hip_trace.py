@@ -13,10 +13,14 @@ from pathlib import Path
 MAX_TRACE_BYTES = 64 * 1024 * 1024
 MAX_LINE_CHARS = 64 * 1024
 HEADER = re.compile(r"(?P<time>\d+) us:\s*\[pid:(?P<pid>\d+) tid:\s*0x\s*(?P<tid>[0-9a-fA-F]+)\]\s*(?P<body>.*)")
-ENTRY = re.compile(r"(?P<api>hip[A-Za-z0-9_]{1,92})\s+\(\s*(?P<args>.*?)\s*\)\s*\Z")
-RETURN = re.compile(r"(?P<api>hip[A-Za-z0-9_]{1,92}): Returned (?P<status>\w+)\b.*\Z")
-UNIDENTIFIED_API = re.compile(r"\d+ us:\s*hip[A-Za-z0-9_]+(?:\s+\(|: Returned )")
-API_RECORD = re.compile(r"hip[A-Za-z0-9_]+(?:\s+\(|:\s*Returned\b)")
+API_NAME = r"(?:__)?hip[A-Za-z0-9_]{1,92}"
+ENTRY = re.compile(rf"(?P<api>{API_NAME})\s+\(\s*(?P<args>.*?)\s*\)\s*\Z")
+RETURN = re.compile(rf"(?P<api>{API_NAME}): Returned (?P<status>\w+)\b.*\Z")
+UNIDENTIFIED_API = re.compile(r"\d+ us:\s*(?:__)?hip[A-Za-z0-9_]+(?:\s+\(|: Returned )")
+API_RECORD = re.compile(r"(?:__)?hip[A-Za-z0-9_]+(?:\s+\(|:\s*Returned\b)")
+# AMD hip_error.cpp logs entry but returns directly for these two empty-argument queries.
+# hipPeekAtLastError uses HIP_RETURN and must retain the normal complete-call contract.
+ENTRY_ONLY_STATUS_QUERIES = frozenset({"hipGetLastError", "hipExtGetLastError"})
 SGR_COLOR = re.compile(r"\x1b\[[0-9;]*m")
 BYTE_COUNT = re.compile(r"[0-9]{1,20}\Z")
 
@@ -33,14 +37,40 @@ class TraceCall:
     succeeded: bool
 
 
-# Purpose: Pair per-thread API entry/return records despite cross-thread logger interleaving.
-# Inputs: Bounded trace text with level-four thread identity; raw arguments remain private.
-# Outputs: Returns complete calls or rejects missing identity, truncated calls, and inconsistent clocks/stacks.
-def parse_trace(text: str) -> list[TraceCall]:
+@dataclass(frozen=True)
+class TraceEntry:
+    """Private entry record; an unpaired record does not establish duration, status, or a unique call."""
+
+    thread: tuple[int, int]
+    api: str
+    started_us: int
+    arguments: str
+
+
+@dataclass(frozen=True)
+class ParsedTrace:
+    """Complete calls and separately retained, explicitly admitted untimed logger records."""
+
+    calls: list[TraceCall]
+    untimed_entries: list[TraceEntry]
+
+
+# Purpose: Identify the narrow runtime logging exception without guessing status or elapsed time.
+# Inputs: One pending private entry and the explicit caller opt-in.
+# Outputs: Returns true only for an admitted empty-argument status-query record.
+def is_entry_only_query(entry: TraceEntry, allowed: bool) -> bool:
+    return allowed and entry.api in ENTRY_ONLY_STATUS_QUERIES and not entry.arguments
+
+
+# Purpose: Pair per-thread API records and retain explicitly admitted entry-only status queries separately.
+# Inputs: Bounded level-four trace text and an opt-in for the two documented empty-argument query layouts.
+# Outputs: Returns complete calls/untimed records; rejects all other incomplete, unidentified or inconsistent calls.
+def parse_trace_records(text: str, allow_entry_only_status_queries: bool = False) -> ParsedTrace:
     if len(text.encode("utf-8")) > MAX_TRACE_BYTES:
         raise ValueError("HIP trace exceeds the 64 MiB input limit")
-    stacks: dict[tuple[int, int], list[tuple[str, int, str]]] = defaultdict(list)
+    stacks: dict[tuple[int, int], list[TraceEntry]] = defaultdict(list)
     calls = []
+    untimed_entries = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         if len(line) > MAX_LINE_CHARS:
             raise ValueError("HIP trace line exceeds the input limit")
@@ -56,21 +86,49 @@ def parse_trace(text: str) -> list[TraceCall]:
         entry = ENTRY.fullmatch(body)
         returned = RETURN.fullmatch(body)
         if entry is not None:
-            stacks[thread].append((entry["api"], timestamp, entry["args"]))
+            stacks[thread].append(TraceEntry(thread, entry["api"], timestamp, entry["args"]))
         elif returned is not None:
-            if not stacks[thread] or stacks[thread][-1][0] != returned["api"]:
+            stack = stacks[thread]
+            while (
+                stack
+                and stack[-1].api != returned["api"]
+                and is_entry_only_query(stack[-1], allow_entry_only_status_queries)
+            ):
+                pending = stack.pop()
+                if timestamp < pending.started_us:
+                    raise ValueError("HIP API trace contains a reversed host interval")
+                untimed_entries.append(pending)
+            if not stack or stack[-1].api != returned["api"]:
                 raise ValueError(f"HIP API trace contains an unmatched return at line {line_number}")
-            api, started, arguments = stacks[thread].pop()
-            if timestamp < started:
+            pending = stack.pop()
+            if timestamp < pending.started_us:
                 raise ValueError("HIP API trace contains a reversed host interval")
-            calls.append(TraceCall(thread, api, started, timestamp, arguments, returned["status"] == "hipSuccess"))
+            calls.append(
+                TraceCall(
+                    thread,
+                    pending.api,
+                    pending.started_us,
+                    timestamp,
+                    pending.arguments,
+                    returned["status"] == "hipSuccess",
+                )
+            )
         elif API_RECORD.match(body):
             raise ValueError(f"HIP API trace contains a malformed API record at line {line_number}")
-    if any(stacks.values()):
-        raise ValueError("HIP API trace contains incomplete calls")
+    for stack in stacks.values():
+        while stack and is_entry_only_query(stack[-1], allow_entry_only_status_queries):
+            untimed_entries.append(stack.pop())
+        if stack:
+            raise ValueError("HIP API trace contains incomplete calls")
     if not calls:
         raise ValueError("HIP API trace contains no complete calls")
-    return calls
+    return ParsedTrace(calls, untimed_entries)
+
+
+# Purpose: Preserve the strict complete-call parser for existing consumers.
+# Inputs: Bounded level-four trace text. Outputs: Returns calls or rejects any unpaired entry, including status queries.
+def parse_trace(text: str) -> list[TraceCall]:
+    return parse_trace_records(text).calls
 
 
 # Purpose: Measure a union of intervals so nested API calls do not double-count host occupancy.
@@ -137,9 +195,14 @@ def transfer_volume(call: TraceCall) -> tuple[str, int] | None:
 
 
 # Purpose: Produce a privacy-preserving aggregate report for a complete trace or explicit host-time window.
-# Inputs: Complete calls and optional inclusive start/exclusive end bounds in the trace clock's microseconds.
-# Outputs: Returns API/size/direction costs and transfer volumes; no pointers, paths, PIDs, or thread IDs.
-def build_report(calls: list[TraceCall], start_us: int | None = None, end_us: int | None = None) -> dict:
+# Inputs: Complete calls, optional inclusive start/exclusive end bounds and explicitly admitted untimed records.
+# Outputs: Returns costs/volumes and separate entry-record counts; no inferred status, duration or private identities.
+def build_report(
+    calls: list[TraceCall],
+    start_us: int | None = None,
+    end_us: int | None = None,
+    untimed_entries: list[TraceEntry] | None = None,
+) -> dict:
     if (start_us is not None and start_us < 0) or (end_us is not None and end_us < 0):
         raise ValueError("HIP trace time bounds must be nonnegative")
     if start_us is not None and end_us is not None and start_us >= end_us:
@@ -166,8 +229,8 @@ def build_report(calls: list[TraceCall], start_us: int | None = None, end_us: in
         if transfer is not None:
             transfers[transfer[0]] += transfer[1]
             copy_groups[call.api, transfer[0], transfer[1]].append(call)
-    return {
-        "schema_version": 1,
+    report = {
+        "schema_version": 1 if untimed_entries is None else 2,
         "measurement_kind": "instrumented_hip_api_diagnostic_not_benchmark",
         "complete_calls": len(calls),
         "selected_calls": len(selected),
@@ -185,6 +248,32 @@ def build_report(calls: list[TraceCall], start_us: int | None = None, end_us: in
         "transfer_calls": [
             {"api": api, "direction": direction, "bytes_per_call": count, **summarize_cost(group)}
             for (api, direction, count), group in sorted(copy_groups.items())
+        ],
+    }
+    if untimed_entries is not None:
+        report["untimed_entry_records"] = summarize_untimed_entries(untimed_entries, start_us, end_us)
+    return report
+
+
+# Purpose: Account for every admitted logger entry independently of timed calls and unique-call inference.
+# Inputs: Private empty-argument query records and already validated timestamp bounds.
+# Outputs: Returns total/selected/excluded record counts and explicit unknown status/duration per API.
+def summarize_untimed_entries(entries: list[TraceEntry], start_us: int | None, end_us: int | None) -> dict:
+    groups: dict[str, int] = defaultdict(int)
+    for entry in entries:
+        if not is_entry_only_query(entry, True):
+            raise ValueError("HIP trace contains an unsupported untimed entry")
+        if (start_us is None or entry.started_us >= start_us) and (end_us is None or entry.started_us < end_us):
+            groups[entry.api] += 1
+    selected = sum(groups.values())
+    return {
+        "policy": "explicit_empty_argument_status_query_entries",
+        "total_records": len(entries),
+        "selected_records": selected,
+        "excluded_records": len(entries) - selected,
+        "apis": [
+            {"api": api, "entry_records": count, "duration_us": None, "status": None, "unique_calls": None}
+            for api, count in sorted(groups.items())
         ],
     }
 
@@ -208,9 +297,16 @@ def main() -> int:
     parser.add_argument("trace", type=Path)
     parser.add_argument("--start-us", type=int)
     parser.add_argument("--end-us", type=int)
+    parser.add_argument(
+        "--allow-entry-only-status-queries",
+        action="store_true",
+        help="retain empty hipGetLastError/hipExtGetLastError entries with unknown cost/status",
+    )
     arguments = parser.parse_args()
     try:
-        report = build_report(parse_trace(read_trace(arguments.trace)), arguments.start_us, arguments.end_us)
+        parsed = parse_trace_records(read_trace(arguments.trace), arguments.allow_entry_only_status_queries)
+        entries = parsed.untimed_entries if arguments.allow_entry_only_status_queries else None
+        report = build_report(parsed.calls, arguments.start_us, arguments.end_us, entries)
     except (OSError, UnicodeError):
         parser.exit(1, "HIP trace analysis failed: unreadable trace\n")
     except ValueError as error:

@@ -6,7 +6,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +21,115 @@ def line(time: int, thread: str, body: str) -> str:
 
 
 class HipTraceTests(unittest.TestCase):
+    # Purpose: Keep known entry-only logger records separate without inventing elapsed time or success.
+    # Inputs: Repeated empty queries, nested calls and cross-thread entries with one complete allocation.
+    # Outputs: Requires strict rejection by default and exact separate accounting when explicitly enabled.
+    def test_entry_only_queries_require_explicit_accounting(self):
+        text = (
+            line(1, "a", "hipGetLastError ( )")
+            + line(2, "a", "hipGetLastError ( )")
+            + line(3, "a", "hipMalloc ( private-pointer, 16 )")
+            + line(4, "a", "hipExtGetLastError ( )")
+            + line(5, "b", "hipGetLastError ( )")
+            + line(8, "a", "hipMalloc: Returned hipSuccess :")
+            + line(9, "a", "hipGetLastError ( )")
+        )
+        with self.assertRaises(ValueError):
+            trace.parse_trace(text)
+        parsed = trace.parse_trace_records(text, True)
+        report = trace.build_report(parsed.calls, untimed_entries=parsed.untimed_entries)
+        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(report["complete_calls"], 1)
+        self.assertEqual(report["apis"][0]["traced_host_total_us"], 5)
+        untimed = report["untimed_entry_records"]
+        self.assertEqual(untimed["total_records"], 5)
+        self.assertEqual(untimed["selected_records"], 5)
+        self.assertEqual(untimed["excluded_records"], 0)
+        self.assertEqual(
+            {item["api"]: item["entry_records"] for item in untimed["apis"]},
+            {"hipExtGetLastError": 1, "hipGetLastError": 4},
+        )
+        for item in untimed["apis"]:
+            self.assertIsNone(item["duration_us"])
+            self.assertIsNone(item["status"])
+            self.assertIsNone(item["unique_calls"])
+        narrowed = trace.build_report(parsed.calls, 3, 9, parsed.untimed_entries)
+        self.assertEqual(narrowed["untimed_entry_records"]["selected_records"], 2)
+        self.assertEqual(narrowed["untimed_entry_records"]["excluded_records"], 3)
+        for token in ("private", "arguments", "pid:", "tid:"):
+            self.assertNotIn(token, json.dumps(report))
+
+    # Purpose: Use real paired status-query return evidence even when entry-only compatibility is enabled.
+    # Inputs: One completed failing query and one completed internal launch-configuration API.
+    # Outputs: Requires exact durations/failure counts, no untimed records and strict internal API pairing.
+    def test_paired_queries_and_internal_apis(self):
+        text = (
+            line(1, "a", "hipGetLastError ( )")
+            + line(4, "a", "hipGetLastError: Returned hipErrorInvalidValue :")
+            + line(5, "a", "__hipPushCallConfiguration ( private-grid )")
+            + line(7, "a", "__hipPushCallConfiguration: Returned hipSuccess :")
+        )
+        parsed = trace.parse_trace_records(text, True)
+        self.assertEqual(parsed.untimed_entries, [])
+        self.assertEqual(parsed.calls, trace.parse_trace(text))
+        report = trace.build_report(parsed.calls, untimed_entries=parsed.untimed_entries)
+        self.assertEqual(sum(item["traced_host_total_us"] for item in report["apis"]), 5)
+        self.assertEqual(sum(item["failed_calls"] for item in report["apis"]), 1)
+
+    # Purpose: Preserve fail-closed handling for every unsupported omission and malformed API record.
+    # Inputs: A valid pair followed by nonempty queries, other missing returns or inconsistent logger records.
+    # Outputs: Requires rejection in compatibility mode, including internal APIs and reversed nested timestamps.
+    def test_entry_only_mode_does_not_hide_incomplete_calls(self):
+        complete = line(1, "a", "hipFree ( pointer )") + line(2, "a", "hipFree: Returned hipSuccess :")
+        fragments = (
+            line(3, "a", "hipGetLastError ( private-argument )"),
+            line(3, "a", "hipExtGetLastError ( private-argument )"),
+            line(3, "a", "hipPeekAtLastError ( )"),
+            line(3, "a", "hipMalloc ( pointer, 16 )") + line(4, "a", "hipGetLastError ( )"),
+            line(3, "a", "hipMemcpy ( p, q, 16, hipMemcpyHostToDevice )"),
+            line(3, "a", "__hipPopCallConfiguration ( pointer )"),
+            line(3, "a", "__hipPopCallConfiguration ( truncated"),
+            ":3: :0 : 3 us: __hipPopCallConfiguration ( pointer )\n",
+            line(3, "a", "hipGetLastError ( truncated"),
+            line(3, "a", "hipGetLastError: Returned hipSuccess :"),
+            line(3, "a", "hipFree ( pointer )")
+            + line(5, "a", "hipGetLastError ( )")
+            + line(4, "a", "hipFree: Returned hipSuccess :"),
+            line(3, "a", "hip" + "x" * 93 + " ( )"),
+        )
+        for fragment in fragments:
+            with self.subTest(fragment=fragment[:60]), self.assertRaises(ValueError):
+                trace.parse_trace_records(complete + fragment, True)
+        with self.assertRaises(ValueError):
+            trace.parse_trace_records(line(1, "a", "hipGetLastError ( )"), True)
+        with self.assertRaises(ValueError):
+            trace.build_report(
+                trace.parse_trace(complete), untimed_entries=[trace.TraceEntry((1, 1), "hipMalloc", 3, "pointer, 16")]
+            )
+
+    # Purpose: Wire the opt-in through the real CLI while preserving its strict default and schema-one consumer.
+    # Inputs: A temporary complete-call trace with one unpaired status-query entry.
+    # Outputs: Requires default failure and successful schema-two JSON with honest unknown fields under opt-in.
+    def test_entry_only_cli_opt_in(self):
+        text = line(1, "a", "hipFree ( pointer )") + line(2, "a", "hipFree: Returned hipSuccess :")
+        self.assertEqual(trace.build_report(trace.parse_trace(text))["schema_version"], 1)
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "trace.log"
+            path.write_text(text + line(3, "a", "hipGetLastError ( )"), encoding="utf-8")
+            with patch("sys.argv", ["analyze_hip_trace", str(path)]), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as exited:
+                    trace.main()
+                self.assertEqual(exited.exception.code, 1)
+            captured = io.StringIO()
+            with (
+                patch("sys.argv", ["analyze_hip_trace", str(path), "--allow-entry-only-status-queries"]),
+                redirect_stdout(captured),
+            ):
+                self.assertEqual(trace.main(), 0)
+            report = json.loads(captured.getvalue())
+            self.assertEqual(report["untimed_entry_records"]["total_records"], 1)
+            self.assertIsNone(report["untimed_entry_records"]["apis"][0]["status"])
+
     # Purpose: Separate allocation size and transfer direction without losing failure or window accounting.
     # Inputs: Complete interleaved calls, including failed allocation and copy records.
     # Outputs: Requires exact numeric groups, unchanged API totals and no raw private argument material.
