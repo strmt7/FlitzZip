@@ -1041,3 +1041,23 @@ for owned alert 1741 and names the ROCm qualification job for alert 1746. These
 are bounded test arithmetic and workflow quality repairs, not proof of an
 exploitable product defect. The 213-alert audit still fails; no suppression or
 dismissal is used. Individual hosted fix confirmation remains pending.
+
+At `f2a3455`, hosted Windows CI passes on both Windows 2022 and Windows
+2025/VS 2026, including actual CPU-only receipt validation. Lint, the dispatched
+benchmark graph check, Scorecard and the Greenbone workflow also pass. Security
+and fuzzing remain running at this intermediate observation. The fresh audit
+still rejects 213 unapproved alerts; workflow success is not final security
+acceptance or proof of live scanner coverage.
+
+## Round Twenty-Two: Focused Production Cycles
+
+The maintainer explicitly requests batched component-specific verification.
+The runner's first repair stops immediately on failure, preserving the original
+error instead of launching unrelated full-profile commands. Six controlled
+real-runner cases cover early/later/manual failures, success, explicit full
+selection and the legacy no-escalation switch. Runner/selector contracts,
+changed-file lint/hygiene and function contracts form this focused batch;
+the blanket full profile is explicitly deferred by that maintainer direction.
+The classifier's independent blanket tooling expansion remains next work.
+Product binaries are unchanged by this runner batch, and no benchmark,
+product rebuild, GUI smoke or package rebuild is repeated for it.

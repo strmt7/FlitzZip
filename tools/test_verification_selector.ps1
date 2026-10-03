@@ -251,6 +251,10 @@ Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-bounded-child-test
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "verification-selector-self-test") "MCP/verifier changes must self-test selector"
 
 $verifierPlan = Get-SuperZipVerificationPlan -ChangedPath @("tools/superzip_verification.psm1")
+foreach ($runnerPath in @('tools/verify_changes.ps1', 'tools/test_verification_runner.ps1')) {
+    $runnerPlan = Get-SuperZipVerificationPlan -ChangedPath @($runnerPath) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $runnerPlan -Id 'verification-runner-tests') "runner changes must execute actual failure-propagation contracts: $runnerPath"
+}
 Assert-Selector $verifierPlan.scope.fullEscalationRequired "verification tool changes must escalate"
 Assert-Selector (Test-RequiredCommand -Plan $verifierPlan -Id "verification-selector-self-test") "verification tool changes must self-test selector"
 Assert-Selector (Test-RequiredCommand -Plan $verifierPlan -Id "msi-identity-smoke") "full escalation must include MSI identity smoke"

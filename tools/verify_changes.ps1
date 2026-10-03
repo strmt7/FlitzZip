@@ -12,6 +12,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
+if ($NoAutoEscalate.IsPresent) {
+    Write-Verbose 'Automatic escalation is disabled by default; -NoAutoEscalate remains accepted for compatibility.'
+}
 
 # Purpose: Run a list of command descriptors in order.
 # Inputs: `Commands` is produced by the SuperZip verification planner.
@@ -26,24 +29,6 @@ function Invoke-VerificationCommandList {
         Invoke-SuperZipVerificationCommand -Command $command
         [void]$Executed.Add([string]$command.id)
     }
-}
-
-# Purpose: Filter commands that have already completed in the targeted phase.
-# Inputs: `Commands` is the full command list and `Executed` contains completed command ids.
-# Outputs: Returns commands whose ids are not already executed.
-function Select-UnexecutedCommand {
-    param(
-        [object[]]$Commands,
-        [Parameter(Mandatory = $true)]$Executed
-    )
-
-    $remaining = @()
-    foreach ($command in @($Commands)) {
-        if (-not $Executed.Contains([string]$command.id)) {
-            $remaining += $command
-        }
-    }
-    return $remaining
 }
 
 $plan = Get-SuperZipVerificationPlan `
@@ -66,25 +51,9 @@ try {
         Invoke-VerificationCommandList -Commands $plan.manualLocalCommands -Executed $executed
     }
 } catch {
-    if ($NoAutoEscalate.IsPresent -or $Full.IsPresent) {
-        throw
-    }
-    Write-Warning "Targeted verification failed: $($_.Exception.Message)"
-    Write-Warning "Automatically escalating to the full verification profile because a larger bug may be present."
-    $fullPlan = Get-SuperZipVerificationPlan `
-        -ChangedPath $ChangedPath `
-        -BaseRef $BaseRef `
-        -HeadRef $HeadRef `
-        -IncludeUntracked:$IncludeUntracked `
-        -SuspectGlobalBug `
-        -Checkpoint $Checkpoint
-    $remaining = Select-UnexecutedCommand -Commands $fullPlan.requiredLocalCommands -Executed $executed
-    Invoke-VerificationCommandList -Commands $remaining -Executed $executed
-    if ($IncludeManual.IsPresent) {
-        $manualRemaining = Select-UnexecutedCommand -Commands $fullPlan.manualLocalCommands -Executed $executed
-        Invoke-VerificationCommandList -Commands $manualRemaining -Executed $executed
-    }
-    throw "Targeted verification failed and full escalation completed; original failure still requires remediation."
+    Write-Warning "Verification stopped at the first failure. Diagnose the changed mechanism before widening the plan."
+    Write-Warning $_.ScriptStackTrace
+    throw
 }
 
 Write-Output "Targeted verification passed. Commands executed: $($executed.Count)."

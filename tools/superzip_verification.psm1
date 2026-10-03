@@ -259,7 +259,7 @@ function Get-SuperZipVerificationScope {
 
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
+        '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
@@ -382,6 +382,9 @@ function Get-SuperZipLocalVerificationCommand {
 
     if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$', '^tools/build\.ps1$'))) {
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "native-build-receipt-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_native_build_provenance", "tools.test_native_build_receipt") -Reason "native invocation receipts must reject stale source/output bytes, active or incomplete attempts and required-HIP fallback while preserving evidence")
+    }
+    if ($scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(verify_changes|test_verification_runner)\.ps1$'))) {
+        Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "verification-runner-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_verification_runner.ps1") -Reason "runner failures must stop immediately without executing unrelated or repeated commands")
     }
 
     if (-not ($scope.docsOnly -and -not $scope.fullEscalationRequired)) {

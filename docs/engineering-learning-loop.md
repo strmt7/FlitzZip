@@ -1,5 +1,23 @@
 # Engineering Learning Loop
 
+## Focused Iteration And Failure Handling
+
+On 3 October 2026 the maintainer explicitly directed component-specific
+verification and batching instead of repeated unrelated suites. A failed check
+does not by itself establish a global defect: diagnose the failed mechanism,
+repair it and rerun its affected contracts. The verification runner now stops
+at the first failure and preserves its original error rather than automatically
+launching the full profile. Controlled first-command, later-command and manual
+failures exercise the actual runner without building or launching the product.
+Explicit `-Full` remains available for demonstrated wider impact.
+
+The classifier's separate blanket expansion for tooling/skill changes remains
+the next routing repair; it is not yet removed. For this runner-only batch,
+the maintainer's focused-testing direction defers that blanket full profile.
+Run the runner contracts, selector contracts, changed-file lint/hygiene and
+function-contract audit. Preserve scanner failures and pending hosted checks;
+this focused pass must not be described as a complete product requalification.
+
 SuperZip records concrete engineering mistakes as enforceable repository
 invariants. The goal is not more process; it is to convert verified failures
 into small checks that prevent the same regression from reaching GitHub Actions,
