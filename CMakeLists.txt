@@ -278,34 +278,8 @@ if(WIN32)
   endif()
   include(cmake/PatchZstdLegacy.cmake)
   superzip_patch_zstd_legacy("${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
-  # Build the upstream C library without its CLI/test/assembler project. MSVC
-  # uses the portable decoder; upstream disables its GNU assembly here.
-  set(SUPERZIP_ZSTD_LIBRARY_DIR "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/lib")
-  file(
-    GLOB
-    SUPERZIP_ZSTD_SOURCES
-    CONFIGURE_DEPENDS
-    "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/*.c"
-    "${SUPERZIP_ZSTD_LIBRARY_DIR}/compress/*.c"
-    "${SUPERZIP_ZSTD_LIBRARY_DIR}/decompress/*.c"
-    "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/*.c"
-    "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/*.c")
-  set(SUPERZIP_ZSTD_RESOURCE
-      "${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}/build/VS2010/libzstd-dll")
-  add_library(libzstd_shared SHARED ${SUPERZIP_ZSTD_SOURCES}
-                                    "${SUPERZIP_ZSTD_RESOURCE}/libzstd-dll.rc")
-  target_include_directories(libzstd_shared
-                             PRIVATE "${SUPERZIP_ZSTD_LIBRARY_DIR}")
-  target_compile_definitions(
-    libzstd_shared
-    PRIVATE ZSTD_MULTITHREAD
-            ZSTD_DLL_EXPORT=1
-            ZSTD_DISABLE_ASM
-            ZSTD_HEAPMODE=0
-            ZSTD_LEGACY_SUPPORT=5
-            XXH_NAMESPACE=ZSTD_
-            _CRT_SECURE_NO_WARNINGS)
-  set_target_properties(libzstd_shared PROPERTIES OUTPUT_NAME libzstd)
+  include(cmake/ZstdLibrary.cmake)
+  superzip_add_zstd_library("${SUPERZIP_ZSTD_RUNTIME_SOURCE_DIR}")
   set(SUPERZIP_ZSTD_RUNTIME_DLL "$<TARGET_FILE:libzstd_shared>")
   set(SUPERZIP_ZSTD_RUNTIME_HASH_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
@@ -900,80 +874,8 @@ if(SUPERZIP_BUILD_TESTS)
   set_tests_properties(superzip_runtime_manifest_contracts PROPERTIES TIMEOUT
                                                                       15)
   if(WIN32)
-    # Guard-page regressions call the exact DLL built for the product, including
-    # dictionary builders that are exported but not used by archive dispatch.
-    add_executable(superzip_zstd_bounds_tests tests/cpp/test_main.cpp
-                                              tests/cpp/test_zstd_bounds.cpp)
-    target_include_directories(superzip_zstd_bounds_tests
-                               PRIVATE tests/cpp "${SUPERZIP_ZSTD_LIBRARY_DIR}")
-    target_compile_definitions(
-      superzip_zstd_bounds_tests PRIVATE ZSTD_DLL_IMPORT=1 NOMINMAX
-                                         WIN32_LEAN_AND_MEAN)
-    target_link_libraries(superzip_zstd_bounds_tests PRIVATE libzstd_shared)
-    superzip_copy_zstd_runtime(superzip_zstd_bounds_tests)
-    add_test(NAME superzip_zstd_bounds_tests COMMAND superzip_zstd_bounds_tests)
-    set_tests_properties(superzip_zstd_bounds_tests PROPERTIES TIMEOUT 60)
-    # Compile the production dependency sources with a deterministic allocator
-    # interposer; no alternate decoder implementation is used by these tests.
-    add_library(
-      superzip_zstd_legacy_fault_objects OBJECT
-      "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v05.c"
-      "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v06.c"
-      "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy/zstd_v07.c")
-    target_include_directories(
-      superzip_zstd_legacy_fault_objects PRIVATE tests/zstd
-                                                 "${SUPERZIP_ZSTD_LIBRARY_DIR}")
-    target_compile_definitions(
-      superzip_zstd_legacy_fault_objects
-      PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
-              _CRT_SECURE_NO_WARNINGS)
-    set(_legacy_allocator_header
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/zstd/intercept_allocations.h")
-    if(MSVC)
-      target_compile_options(superzip_zstd_legacy_fault_objects
-                             PRIVATE "/FI${_legacy_allocator_header}")
-    else()
-      target_compile_options(superzip_zstd_legacy_fault_objects
-                             PRIVATE -include "${_legacy_allocator_header}")
-    endif()
-    add_executable(
-      superzip_zstd_legacy_tests
-      tests/cpp/test_main.cpp
-      tests/cpp/test_zstd_legacy_failures.cpp
-      tests/zstd/fault_allocator.c
-      tests/zstd/legacy_driver.c
-      $<TARGET_OBJECTS:superzip_zstd_legacy_fault_objects>
-      "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/error_private.c"
-      "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/xxhash.c")
-    target_include_directories(
-      superzip_zstd_legacy_tests PRIVATE tests/cpp tests/zstd
-                                         "${SUPERZIP_ZSTD_LIBRARY_DIR}")
-    target_compile_definitions(
-      superzip_zstd_legacy_tests
-      PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
-              _CRT_SECURE_NO_WARNINGS)
-    add_test(NAME superzip_zstd_legacy_tests COMMAND superzip_zstd_legacy_tests)
-    add_test(
-      NAME superzip_zstd_legacy_patch
-      COMMAND
-        "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/test_zstd_legacy_patch.cmake")
-    string(CONCAT _zstd_header_contract
-                  "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/"
-                  "test_zstd_header_contracts.cmake")
-    add_test(
-      NAME superzip_zstd_header_contracts
-      COMMAND
-        "${CMAKE_COMMAND}" "-DREPO_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-        "-DGENERATOR=${CMAKE_GENERATOR}"
-        "-DGENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
-        "-DGENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}" -P
-        "${_zstd_header_contract}")
-    set_tests_properties(superzip_zstd_legacy_tests superzip_zstd_legacy_patch
-                         PROPERTIES TIMEOUT 60)
-    set_tests_properties(superzip_zstd_header_contracts PROPERTIES TIMEOUT 150)
+    set(SUPERZIP_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+    include(cmake/ZstdTests.cmake)
   endif()
 endif()
 

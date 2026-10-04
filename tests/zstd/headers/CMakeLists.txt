@@ -41,5 +41,56 @@ superzip_patch_zstd_legacy("${SOURCE_ROOT}")
 foreach(extension IN ITEMS c cpp)
   require_header_compilation("patched-repeated-${extension}" "${extension}" 1
                              TRUE)
+  try_compile(
+    allocations_compiled SOURCE_FROM_FILE
+    "allocations.${extension}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/allocations_contract.c" NO_CACHE
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${SOURCE_ROOT}/lib" CXX_STANDARD
+                20 C_STANDARD 11
+    OUTPUT_VARIABLE allocations_diagnostic LOG_DESCRIPTION
+                    "Zstandard private allocations first ${extension}")
+  if(NOT allocations_compiled)
+    message(
+      FATAL_ERROR "Allocation header contract failed: ${allocations_diagnostic}"
+    )
+  endif()
+endforeach()
+
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+# Purpose: Compile each complete encoder source with assertions enabled and
+# disabled. Inputs: component selects the production translation unit; release
+# controls NDEBUG. Outputs: Rejects missing assertion helpers or broken compile
+# contracts in either mode.
+function(require_assertion_helper_compilation component release)
+  if(component STREQUAL "huf_compress")
+    set(reference
+        "static int (*const check_helper)(nodeElt*, U32) = &HUF_isSorted;")
+  else()
+    string(CONCAT reference
+                  "static int (*const check_helper)(void const*, size_t) "
+                  "= &ZSTD_isAligned;")
+  endif()
+  string(CONCAT source "#include \"compress/${component}.c\"\n"
+                "#ifndef NDEBUG\n" "${reference}\n" "#endif\n")
+  set(definitions -DDEBUGLEVEL=1 -DZSTD_DISABLE_ASM -D_CRT_SECURE_NO_WARNINGS)
+  if(release)
+    list(APPEND definitions -DNDEBUG)
+  endif()
+  try_compile(
+    compiled SOURCE_FROM_CONTENT
+    "assertions.c" "${source}" NO_CACHE
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${SOURCE_ROOT}/lib"
+    COMPILE_DEFINITIONS ${definitions} C_STANDARD 11
+    OUTPUT_VARIABLE diagnostic LOG_DESCRIPTION
+                    "Zstandard ${component} assertions release=${release}")
+  if(NOT compiled)
+    message(FATAL_ERROR "Assertion helper contract failed: ${diagnostic}")
+  endif()
+endfunction()
+foreach(component IN ITEMS huf_compress zstd_lazy)
+  foreach(release IN ITEMS TRUE FALSE)
+    require_assertion_helper_compilation("${component}" "${release}")
+  endforeach()
 endforeach()
 message(STATUS "Zstandard C/C++ staged and repeated header contracts passed")

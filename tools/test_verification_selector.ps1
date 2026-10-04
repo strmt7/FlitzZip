@@ -371,6 +371,39 @@ foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.
 }
 
 $packagingPlan = Get-SuperZipVerificationPlan -ChangedPath @("CMakeLists.txt")
+foreach ($guardPath in @('tools/zstd_rewrite_policy.ps1', 'tools/test_zstd_rewrite_policy.ps1',
+        'cmake/ZstdRawBlockWriter.c', 'cmake/ZstdLegacyStreamV05.c', 'tests/cpp/test_zstd_bounds.cpp',
+        'tools/security_scan.ps1', 'tools/verify_change_hygiene.ps1')) {
+    $guardPlan = Get-SuperZipVerificationPlan -ChangedPath @($guardPath)
+    Assert-Selector (Test-RequiredCommand -Plan $guardPlan -Id 'zstd-rewrite-policy-contracts') "Zstandard recurrence guards must execute for their inputs and consumers: $guardPath"
+    Assert-Selector (Test-SuperZipToolContractCommand -Command @($guardPlan.requiredLocalCommands | Where-Object { $_.id -eq 'zstd-rewrite-policy-contracts' })[0]) "Zstandard guard must project into hosted tool contracts: $guardPath"
+}
+foreach ($guardPath in @('tools/zstd_rewrite_policy.ps1', 'tools/test_zstd_rewrite_policy.ps1')) {
+    $guardPlan = Get-SuperZipVerificationPlan -ChangedPath @($guardPath)
+    Assert-Selector (-not (Test-RequiredCommand -Plan $guardPlan -Id 'release-build')) "policy-only edits must not require unrelated native rebuilds: $guardPath"
+    Assert-Selector (Test-Workflow -Plan $guardPlan -Name 'security') "Zstandard guard retains hosted security validation: $guardPath"
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $guardPath) "Zstandard guard inputs must trigger hosted contracts: $guardPath"
+}
+foreach ($sanitizerPath in @('tools/test_zstd_sanitizers.ps1', '.github/workflows/zstd-sanitizers.yml',
+        'cmake/ZstdFutureBoundary.c', 'tests/zstd/future/header.c', 'tests/cpp/test_zstd_future.cpp',
+        'third_party/upstream/zstd/v1.5.7/zstd-v1.5.7.zip', 'tests/cpp/zstd_legacy_fixture.hpp', 'cmake/ZstdLibrary.cmake',
+        'cmake/ZstdTests.cmake', 'cmake/ZstdRawBlockWriter.c', 'tests/zstd/sanitizers/CMakeLists.txt',
+        'tests/zstd/sanitizers/asan_control.cpp', 'tests/cmake/test_zstd_asan_control.cmake',
+        'tests/cpp/test_zstd_bounds.cpp', 'CMakeLists.txt')) {
+    $sanitizerPlan = Get-SuperZipVerificationPlan -ChangedPath @($sanitizerPath)
+    Assert-Selector (Test-RequiredCommand -Plan $sanitizerPlan -Id 'zstd-sanitizer-tests') "Zstandard memory-safety surfaces require qualified sanitizer validation: $sanitizerPath"
+    Assert-Selector (-not (Test-SuperZipToolContractCommand -Command @($sanitizerPlan.requiredLocalCommands | Where-Object { $_.id -eq 'zstd-sanitizer-tests' })[0])) "native sanitizer qualification must not run in offline tool contracts: $sanitizerPath"
+    Assert-Selector (Test-Workflow -Plan $sanitizerPlan -Name 'zstd-sanitizers') "sanitizer inputs must select their dedicated hosted workflow: $sanitizerPath"
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'zstd-sanitizers' -Path $sanitizerPath) "sanitizer inputs must trigger hosted validation: $sanitizerPath"
+}
+
+foreach ($unrelatedPath in @('tools/scanner_preflight.py', '.github/scanner-source-reviews.csv', 'docs/security-code-scanning.md')) {
+    $unrelatedPlan = Get-SuperZipVerificationPlan -ChangedPath @($unrelatedPath)
+    Assert-Selector (-not (Test-RequiredCommand -Plan $unrelatedPlan -Id 'zstd-sanitizer-tests')) "unrelated tooling/docs must not rerun native ASan: $unrelatedPath"
+    Assert-Selector (-not (Test-OwnedWorkflowPathFilter -Workflow 'zstd-sanitizers' -Path $unrelatedPath)) "unrelated tooling/docs must not trigger the sanitizer workflow: $unrelatedPath"
+}
+$sanitizerToolPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/test_zstd_sanitizers.ps1')
+Assert-Selector (-not (Test-RequiredCommand -Plan $sanitizerToolPlan -Id 'release-build')) 'isolated sanitizer tooling must not select an unrelated product rebuild'
 foreach ($releasePath in @('.github/workflows/release.yml', 'tools/release_workflow_policy.ps1',
         'tools/test_release_workflow_policy.ps1')) {
     $releasePlan = Get-SuperZipVerificationPlan -ChangedPath @($releasePath)

@@ -48,6 +48,27 @@ void sz_legacy_free(void* context, unsigned version);
  * Outputs: Returns one on error, zero on success; mutates context exactly as the upstream initializer does. */
 int sz_legacy_initialize(void** context, unsigned previous, unsigned version, const void* dictionary, size_t bytes);
 
+/* Purpose: Inspect owned buffer invariants after allocation failure without attempting an unsafe retry.
+ * Inputs: context is a live decoder for version 5-7. Outputs: Returns one when published capacities have storage. */
+int sz_legacy_buffers_consistent(const void* context, unsigned version);
+
+typedef struct {
+    const void* input;
+    size_t input_capacity;
+    const void* output;
+    size_t output_capacity;
+} sz_legacy_buffer_state;
+
+/* Purpose: Observe exact production buffer owners and capacities across a failed growth operation.
+ * Inputs: context is a live decoder for version 5-7. Outputs: Returns borrowed identities; transfers no ownership. */
+sz_legacy_buffer_state sz_legacy_get_buffer_state(const void* context, unsigned version);
+
+/* Purpose: Exercise the exact production buffered streaming entry point under allocation faults.
+ * Inputs: context is initialized; source/output extents are writable counters, hint receives the native result.
+ * Outputs: Returns one on error, zero on success; counters retain the production API's contract. */
+int sz_legacy_decode(void* context, unsigned version, void* destination, size_t* destination_bytes, const void* source,
+                     size_t* source_bytes, size_t* hint);
+
 /* Purpose: Exercise the production zero-allocation helper with optional fault callbacks.
  * Inputs: bytes is the bounded test extent; custom selects the tracked allocator instead of the standard allocator.
  * Outputs: Returns zeroed owned storage or NULL; successful custom storage was nonzero before initialization. */
@@ -57,6 +78,19 @@ void* sz_custom_calloc(size_t bytes, int custom);
  * Inputs: address is NULL or a helper result; custom matches its acquisition.
  * Outputs: Frees the allocation or does nothing for NULL; tracked releases retain ownership diagnostics. */
 void sz_custom_free(void* address, int custom);
+
+/* Purpose: Execute a sequence through the canonical version-specific helper.
+ * Inputs: version is 5-7; buffers own their stated extents, prefix <= capacity, literals retain wildcopy padding.
+ * Outputs: Returns native bytes/error identity; malformed extents must leave output unchanged. */
+size_t sz_legacy_sequence(unsigned version, void* destination, size_t capacity, size_t prefix, const void* literals,
+                          size_t literal_bytes, const void* dictionary, size_t dictionary_bytes, size_t literal_length,
+                          size_t match_length, size_t offset);
+
+/* Purpose: Classify a native decoder result; result is bytes or an encoded error, returns one only for an error. */
+int sz_legacy_result_is_error(size_t result);
+
+/* Purpose: Verify malformed-block history handling in canonical v0.7; no inputs, returns one for preserved history. */
+int sz_legacy_v07_block_error_history(void);
 
 #ifdef __cplusplus
 }

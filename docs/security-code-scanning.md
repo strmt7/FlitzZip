@@ -6,6 +6,21 @@ are used, and default to read-only repository permissions.
 
 ## Scanner Input Roles
 
+Folder names alone do not establish security relevance. Product code, tests,
+build-time source templates, scanner configuration and acquisition manifests
+remain security inputs wherever they live. Secret/privacy detectors still
+cover passive documents and measurements. Measurement producers and plotting
+scripts belong in code directories; passive reports belong in the validated
+data directory. New executable or unknown files there fail role admission
+instead of inheriting a blanket directory exception.
+
+The October 4 maintainer-approved source dispositions are recorded in
+`.github/scanner-source-reviews.csv` and the
+[individual review](security-source-finding-review-2026-10-04.md). The actual
+detectors still scan those files. Admission recognizes only each exact source
+hash, rule and complete line/column region; a subsequent source change or a
+new location requires another review. Raw reports and counts stay complete.
+
 `docs/benchmarks/data/` contains passive measurement reports only. DevSkim's
 code-pattern analysis excludes that whole directory after
 `tools/devskim_scope.py` validates its role. The shared local/hosted boundary

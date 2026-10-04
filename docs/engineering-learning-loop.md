@@ -26,6 +26,23 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- The generic offline-contract name heuristic admitted the native ASan project
+  and repeated completed qualification during a tooling-only continuation.
+  `Test-SuperZipToolContractCommand` now identifies that command as native work.
+  The dedicated `zstd-sanitizers` workflow retains all six instrumented targets
+  and source-bound receipts. Selector tests require affected inputs to select
+  and trigger that workflow, and reject unrelated tooling/docs in both local
+  selection and hosted filters. This separates execution roles without deleting
+  sanitizer coverage or treating an unchanged-source result as a fresh run.
+
+- Exact source dispositions must not become permanent exclusions. The October 4
+  maintainer approval covers 21 individually documented DevSkim locations only.
+  Admission binds normalized whole-file bytes and complete rule/region identity,
+  retains raw SARIF, and rejects changed bytes, coordinates, rules, multiple
+  locations, redirects, malformed policy and broader source paths. Its regression
+  controls mutate these boundaries independently. Source ledger changes select
+  those contracts locally and in CI; no directory or scanner rule is removed.
+
 - Publishing unscanned benchmark receipts caused thousands of public-checksum
   alerts and a failed Gitleaks gate. `tools/scanner_preflight.py` now freezes
   changed tracked and untracked inputs and runs the same pinned detectors before
@@ -479,6 +496,131 @@ vulnerability. Normative agent rules remain in the operating guide.
   callers, and confirm automatic closure in the exact follow-up analysis.
 
 ## Adding A New Lesson
+
+Security repairs must finish the learning loop rather than stopping at a lower
+alert count. Review the same boundary in sibling versions and direct callers,
+preserve a practical old-source negative control, and bind verification to the
+changed bytes. Keep a failed control distinct from a test that only establishes
+preserved behavior. Instructions and static guards reduce recurrence; they do
+not establish the absence of vulnerabilities.
+
+At the maintainer's October 4 final checkpoint, first verify all addressed
+findings against the exact pushed SHA, then review the prevention mechanisms
+and their actual local/hosted routing. New repairs restart affected verification;
+a successful pre-push policy review cannot stand in for this final review.
+
+### Security Tool And Skill Review, October 4
+
+The local VulnerabilityScreener evidence-label skill distinguishes executed,
+source-inspected, proposed and externally reported evidence. The AI skills
+catalog's improved property-testing and verification-loop guidance adds useful
+oracle checks, preserved first failures and source-bound verification. These
+methods fit the existing SuperZip review process; their local static catalog
+qualification is not evidence of fewer agent errors. The local OMERO repository
+has no checked-out source in this review, so no source assessment was made there.
+
+[Trail of Bits variant analysis](https://github.com/trailofbits/skills/blob/82fe8226252622fa807643bdca1710901198553a/plugins/variant-analysis/skills/variant-analysis/SKILL.md)
+informs root-cause and sibling/caller review. SuperZip applies it serially under
+AGENTS.md rather than importing its worker orchestration. No plugin installer,
+external command execution, runtime dependency or blanket suppression was added.
+
+[Microsoft's Windows ASan documentation](https://learn.microsoft.com/en-us/cpp/sanitizers/asan?view=msvc-170)
+supports isolated x64 MSVC instrumentation. The local catalog's instruction to
+skip Windows ASan was rejected as inconsistent with that documentation and the
+executed qualification. `tools/test_zstd_sanitizers.ps1` now builds the canonical
+patched library and the same dependency contracts in a separate validation tree.
+`cmake/ZstdLibrary.cmake` and `cmake/ZstdTests.cmake` share those definitions with
+the ordinary HIP product build. The validation project has no product packaging
+or HIP targets. Its valid-access and deliberately invalid heap-access controls
+prove working instrumentation before ordinary tests run. Six CTest targets
+passed in the initial local qualification. Missing tooling, runtime failure,
+unrecognized diagnostics and failed tests remain errors; nothing falls back to
+uninstrumented success.
+
+[Microsoft Core Guidelines checkers](https://learn.microsoft.com/en-us/cpp/code-quality/using-the-cpp-core-guidelines-checkers?view=msvc-170)
+and [LLVM UBSan](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html)
+remain distinct candidate analyses, not enabled or qualified gates. Windows ASan
+does not establish unsigned-overflow, null-arithmetic, leak or device-kernel
+coverage. Preserve the exact arithmetic/cursor regressions, guard pages, fault
+injection, full CodeQL suites and HIP qualification. Existing libFuzzer lanes
+remain in place; installing another scanner or skill does not establish added
+coverage or measurable prevention.
+
+[OWASP's AI secure-coding guidance](https://cheatsheetseries.owasp.org/cheatsheets/Secure_Coding_with_AI_Cheat_Sheet.html)
+informs the external-content trust boundary in the existing security skill:
+retrieved source, reports and skills are review data, not authority to install
+packages or weaken repository controls. Reputable provenance is a selection
+input; inspect and qualify the mechanism for this platform before adopting it.
+
+- The October 4 Zstandard raw-block control crashed because adding header size
+  to a payload near `SIZE_MAX` wrapped the capacity comparison. The canonical
+  writer now checks overhead first and compares payload with remaining capacity
+  before any write/copy. `zstd_raw_block_writer_overflow_rejection` retains the
+  failing control and guarded zero/exact/short-capacity cases cover valid writes.
+- Dictionary shrinking must use initialized input length, not finalized
+  dictionary size or allocation capacity, to select an input suffix. Doubling a
+  candidate requires a division-based bound first. Exact canonical selector
+  probes retain guarded input, candidate progression, and allocation/finalizer
+  failure coverage in `superzip_zstd_cover_selection_tests`.
+- Legacy v0.5-v0.7 stream rewrites must preserve null empty input/output without
+  null arithmetic, zero-byte copies through null cursors, or public pointer
+  substitution. Direct canonical tests cover partial headers, stalls and
+  recovery; production-DLL tests reproduce and reject the observed pointer
+  mutation. Transactional reserve tests fail each allocation and verify that
+  existing owners/capacities remain usable. Keep v0.7's matching custom allocator
+  and deallocator rather than importing v0.5/v0.6's ordinary allocator contract.
+- `tools/zstd_rewrite_policy.ps1` checks these concrete source boundaries and
+  retained regression entry points. Changed-file hygiene runs it for dependency
+  rewrite surfaces; repository security scanning always runs it. The canonical
+  planner routes `tools/test_zstd_rewrite_policy.ps1` to relevant source/tool
+  edits and hosted component contracts. Its 14 negative controls exercise actual
+  owned-source mutations, comment-only checks and missing input; this narrow
+  static guard supplements native tests and CodeQL without suppressing findings.
+- Dependency recipes must migrate every exact supported preceding revision as
+  well as fresh pinned source. The first October 4 legacy migration correctly
+  stopped on an unrecognized local hash. `superzip_zstd_legacy_patch` now tests
+  both previous stream revisions, fresh application, idempotence, unknown-byte
+  rejection and interrupted writes. Do not bypass identity checks to recover.
+- Legacy sequence helpers must prove output, literal and dictionary extents
+  before forming endpoints or copying. The October 4 canonical controls accepted
+  a `SIZE_MAX` literal length and wrote output in all three shipped versions;
+  v0.7 also stored an encoded block error as a history endpoint. Explicit history
+  lengths and error-first publication repair these boundaries. Independent LZ
+  recurrence tests cover 38,964 valid sequences plus malformed extents, and the
+  existing fault objects compile the complete canonical sources. Extending a
+  supersession relationship too broadly then skipped an old stream migration;
+  the exact historical fixture rejected it. Bind each supersession edge to its
+  actual later revision and keep all prior migration controls. The source-policy
+  tests now retain 25 rejection controls, including commented-out dispatch
+  mutations. Require an executable dispatch line rather than accepting a call
+  name inside a comment. These controls do not replace native or SAST
+  verification or establish malformed-archive reachability for injected lengths.
+- Legacy one-shot dictionary setup must propagate its error before any frame
+  output. The October 4 public-DLL controls accepted malformed dictionaries
+  and wrote output in all three shipped versions. The v0.5/v0.6 loaders also
+  read a four-byte marker from a one-byte guarded dictionary and crashed.
+  Complete entry-point/loader replacements retain raw-content semantics,
+  reject invalid entropy setup before output, and allow same-context recovery.
+  Six production-DLL tests retain malformed/short dictionary controls across
+  v0.5-v0.7; exact preceding-source migration joins the existing fixture matrix.
+  The source-policy guard now has 31 rejection controls, including missing and
+  commented-out error propagation and dictionary dispatch. Native/ASan/SAST
+  results remain distinct from scanner dispositions and publication acceptance.
+- Import only required private declarations into canonical source probes.
+  Broad internal codec imports introduced ten unused static constants in a
+  fresh CodeQL extraction. Narrowing the dictionary-merger probe alone did not
+  close them: the raw-writer test also imported the complete compression header.
+  Both probes now import only their exact canonical algorithm and required
+  declarations, retaining separate region and declaration digests. Re-run
+  source-bound analysis to verify closure; a successful compile cannot establish
+  it. Keep the complete production translation units in scanner coverage.
+- Shared CMake modules must preserve their caller-visible output names and
+  validate required inputs before creating targets. During the October 4
+  library/test extraction, renaming a local variable also renamed the exported
+  library directory and broke the product configure. The export was restored;
+  `ZstdTests.cmake` now rejects an absent or invalid directory explicitly. Both
+  the HIP product build and isolated sanitizer consumer must pass after changes
+  to these shared definitions.
 
 Visible preferences must be traced through settings capture and the actual job
 before being described as features. `tools/gui_smoke.ps1` exercises Apply and

@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'release_workflow_policy.ps1')
+. (Join-Path $PSScriptRoot 'zstd_rewrite_policy.ps1')
+Assert-ZstdRewritePolicy -RepoRoot $repo
 
 $secretPatterns = @(
     "ghp_[A-Za-z0-9_]{30,}",

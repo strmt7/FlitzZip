@@ -2,6 +2,94 @@
 
 ## Continuation Checkpoint
 
+The next October 4 continuation received explicit maintainer approval for the
+21 individually reviewed DevSkim source/test reports. Exact rule, normalized
+source hash and complete region admission now retains all raw reports and
+invalidates each disposition on a later source/location change. There are no
+new folder exclusions. The initial live preflight passes with zero Gitleaks
+findings, 21 retained reviewed DevSkim reports and zero unresolved reports;
+12 scanner admission contracts pass. The native source remains unchanged from
+the receipt below, so its completed HIP, corpus, interoperability and ASan
+results remain reusable after identity validation. Hosted source findings and
+the release pause remain unresolved; this is an intermediate publication batch.
+
+Agent instructions and executable admission tests now enforce source freshness,
+complete raw reports and content-based scanner roles across directory moves.
+Native ASan qualification has a dedicated affected-source workflow; the offline
+tool contract projection explicitly rejects native builds. Selector contracts
+cover both affected inputs and unrelated tooling/documentation inputs so this
+duplicate execution cannot recur unnoticed.
+
+The unpublished local Zstandard rewrites are ahead of the hosted findings.
+The latest October 4 continuation repairs ignored dictionary-initialization
+errors in all three shipped legacy decoders and out-of-extent dictionary-marker
+reads in v0.5/v0.6. The new production-DLL tests fail on the preceding source;
+the two short-dictionary controls terminate with access violations. The repaired
+HIP build, all seven CTest targets, CPU/required-HIP corpus read-back at all seven
+block sizes, independent writer interoperability and all six isolated ASan
+targets pass. Dependency source guards now have 31 negative controls. The current
+native input identity is
+`70bc8379378fd228843e4153f700500b43facb81a0a58f09c68fdd10854633d7`.
+Exact-source local CodeQL validation now completes all 183 queries with no
+query-analysis errors and 70 raw findings. The interrupted extraction was
+resumed in its original unfinalized database after all 819 frozen inputs were
+verified against both the snapshot and live checkout. All six critical pointer
+reports remain; this result does not establish hosted acceptance. Scanner
+preflight and individual unresolved findings still block publication. See the
+[local review](docs/security-finding-review-2026-10-03.md#legacy-dictionary-failure-propagation)
+and [recurrence lessons](docs/engineering-learning-loop.md#adding-a-new-lesson).
+The maintainer's pause before release remains in force.
+
+The latest continuation retains the completed analysis at tree
+`9f80e60964d32e305eee4ede406839309753e87e` in
+`out/dictionary-codeql-resumed-analysis-20261004.json`. Its complete per-result
+comparison is `out/dictionary-analysis-comparison-20261004.json`: all ten rule
+counts match the preceding 70-result analysis. The six critical reports contain
+23 current flow variants. The canonical validator reverified the unchanged HIP
+build receipt, binaries and native inputs above. The selected verifier passes
+67-path hygiene and then fails scanner preflight with zero Gitleaks findings
+and 21 unresolved DevSkim reports. Fresh GitHub retrieval still has 182 open
+alerts, including six critical reports and two permitted Scorecard policy
+alerts. No source finding was accepted, suppressed or dismissed; no push or
+release occurred.
+
+The resumed October 4 batch integrates explicit v0.5-v0.7 dictionary extents,
+checks sequence lengths before pointer formation, and prevents v0.7 block
+errors from advancing history. The HIP build and all five dependency contracts
+pass, including 38,964 independent sequence-oracle cases and exact historical
+migration. Changed-language lint and 25 recurrence controls pass. The selected
+publication verifier still fails at 21 DevSkim findings, with zero Gitleaks
+findings. A fresh GitHub inventory has 182 open alerts, including six critical
+pointer reports and two permitted Scorecard policy alerts. Full native
+validation, CPU/required-HIP corpus read-back at seven block sizes, independent
+writer interoperability and all six isolated ASan targets now pass for native
+inputs `af6ebcf82c40cd07bf901aaf53b049539e8c7c8449e6b8f609aa0e19cd43f9b8`.
+CodeQL extraction for tree `1905bade740435b3842e2c027f7c9aa6ea8da995` failed
+with `MSB4166` and `CL.exe` exit code 4; the underlying cause is unconfirmed.
+A fresh retry for tree `ce9e4c13802d491b9772339ecaecf13976429d10` completed both
+suites and all 183 queries without analysis errors, returning 70 raw findings.
+It ran alone with more RAM reserved per traced compiler and peak-memory
+diagnostics. All six critical pointer reports remain. This frozen analysis
+precedes the dictionary repairs above and does not establish their acceptance.
+The portable-package and MSI-identity checks pass as local validation only;
+no finding closure, push or release acceptance is claimed.
+
+After source fixes pass publication admission and are pushed, confirm the exact
+pushed SHA's required hosted checks and complete finding inventory. Then perform
+the maintainer-requested final review of agent instructions, skills, tools,
+selectors and recurrence guards, repairing any newly exposed defect and
+requalifying the affected gates. This final prevention review remains pending;
+it cannot replace finding closure or the pause before release.
+
+After cybersecurity remediation and verification are complete, run every
+applicable benchmark suite under the documented RAM-only and host-isolation
+rules. Audit all plotting code and regenerate the document figures from the
+qualified measurements. Review axis scales, units, representation, uncertainty
+calculations and error bars; use one consistent publication style and visually
+inspect every resulting figure. Retain measurement provenance and unresolved
+limits. This maintainer-requested publication-figure review remains pending and
+must not begin benchmark timing while security work is incomplete.
+
 Individual metadata triage at `ed3ea0f` has settled five verified DevSkim false
 positives with specific audit comments and same-commit secret-scan evidence.
 The [review](docs/security-finding-review-2026-10-03.md#latest-individual-metadata-triage)

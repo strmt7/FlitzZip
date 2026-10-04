@@ -14,6 +14,83 @@ FIELDS = ("path", "rule", "input_sha256", "public_sha256", "evidence")
 MAX_POLICY_BYTES = 64 * 1024
 MAX_REVIEWS = 256
 METADATA_PATH = re.compile(r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/[^/]+\.json)")
+SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")
+SOURCE_FIELDS = ("path", "rule", "input_sha256", "startLine", "startColumn", "endLine", "endColumn", "evidence")
+SOURCE_EVIDENCE = "docs/security-source-finding-review-2026-10-04.md"
+SOURCE_PATH = re.compile(
+    r"(?:cmake/Zstd(?:CoverSelection|Legacy(?:StreamV0[567]|LiteralsV0[567]|HistoryV0[567]))\.c"
+    r"|tests/zstd/sanitizers/asan_control\.cpp)"
+)
+
+
+# Purpose: Load only the maintainer-approved source review ledger without following redirected paths.
+# Inputs: Checkout root. Outputs: Validated bounded CSV bytes; missing or redirected policy fails closed.
+def read_source_policy(root: Path) -> bytes:
+    path = root
+    for part in SOURCE_POLICY.parts:
+        path /= part
+        if path.is_symlink() or path.is_junction():
+            raise ValueError("Scanner source review policy crosses a reparse point")
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_POLICY_BYTES + 1)
+    read_source_reviews(payload)
+    return payload
+
+
+# Purpose: Validate exact approved rule/source/region identities, with no wildcard or secret-rule admission.
+# Inputs: Bounded CSV bytes. Outputs: At most 21 unique records; malformed or broader policy raises.
+def read_source_reviews(payload: bytes) -> list[dict[str, str]]:
+    if len(payload) > MAX_POLICY_BYTES:
+        raise ValueError("Scanner source review policy exceeds its byte budget")
+    reader = csv.DictReader(io.StringIO(payload.decode("utf-8")))
+    if tuple(reader.fieldnames or ()) != SOURCE_FIELDS:
+        raise ValueError("Scanner source review fields differ from the approved contract")
+    rows, seen = [], set()
+    for row in reader:
+        if len(rows) >= 21 or set(row) != set(SOURCE_FIELDS) or any(not value for value in row.values()):
+            raise ValueError("Scanner source review row is malformed or exceeds approved admission")
+        if SOURCE_PATH.fullmatch(row["path"]) is None or row["rule"] not in ("DS121708", "DS161085", "DS154189"):
+            raise ValueError("Source review path or rule is outside the maintainer-approved boundary")
+        if re.fullmatch(r"[0-9a-f]{64}", row["input_sha256"]) is None or row["evidence"] != SOURCE_EVIDENCE:
+            raise ValueError("Source review requires an exact digest and approved evidence")
+        if any(re.fullmatch(r"[1-9][0-9]{0,6}", row[key]) is None for key in SOURCE_FIELDS[3:7]):
+            raise ValueError("Source review requires bounded positive region coordinates")
+        if (int(row["endLine"]), int(row["endColumn"])) <= (int(row["startLine"]), int(row["startColumn"])):
+            raise ValueError("Source review region must have a positive extent")
+        identity = tuple(row[key] for key in SOURCE_FIELDS[:-1])
+        if identity in seen:
+            raise ValueError("Source review identity is duplicated")
+        seen.add(identity)
+        rows.append(row)
+    return rows
+
+
+# Purpose: Match one source finding to its approved normalized bytes and complete line/column region.
+# Inputs: Frozen source root, raw finding and validated records. Outputs: Matching record or None; no report mutation.
+def reviewed_source_finding(root: Path, finding: dict, rows: list[dict[str, str]]) -> dict | None:
+    locations = finding.get("locations", [])
+    if len(locations) != 1:
+        return None
+    physical = locations[0].get("physicalLocation", {})
+    name = physical.get("artifactLocation", {}).get("uri", "").replace("\\", "/")
+    region = physical.get("region", {})
+    for row in rows:
+        if row["path"] != name or row["rule"] != finding.get("ruleId"):
+            continue
+        if any(type(region.get(key)) is not int or region[key] != int(row[key]) for key in SOURCE_FIELDS[3:7]):
+            continue
+        path = root
+        for part in Path(name).parts:
+            path /= part
+            if path.is_symlink() or path.is_junction():
+                raise ValueError("Reviewed source crosses a reparse point")
+        with path.open("rb") as stream:
+            payload = stream.read(MAX_POLICY_BYTES + 1)
+        if len(payload) > MAX_POLICY_BYTES:
+            raise ValueError("Reviewed source exceeds its byte budget")
+        if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() == row["input_sha256"]:
+            return row
+    return None
 
 
 # Purpose: Freeze bounded review policy bytes without following filesystem redirects.
@@ -59,10 +136,11 @@ def read_reviews(payload: bytes) -> list[dict[str, str]]:
 # Purpose: Distinguish exact reviewed metadata from unresolved findings without mutating or filtering the raw SARIF.
 # Inputs: Frozen input root, complete raw report and frozen review policy.
 # Outputs: Reviewed identities and unresolved count.
-def review_findings(root: Path, report: Path, policy: bytes) -> dict:
+def review_findings(root: Path, report: Path, policy: bytes, source_policy: bytes | None = None) -> dict:
     reviews = read_reviews(policy)
+    source_reviews = read_source_reviews(source_policy) if source_policy is not None else []
     data = json.loads(report.read_text(encoding="utf-8-sig"))
-    reviewed, unresolved = [], 0
+    reviewed, reviewed_source, unresolved = [], [], 0
     for run_index, run in enumerate(data["runs"]):
         for index, finding in enumerate(run["results"]):
             locations = finding.get("locations", [])
@@ -93,6 +171,8 @@ def review_findings(root: Path, report: Path, policy: bytes) -> dict:
                         "evidence": candidates[0]["evidence"],
                     }
                 )
+            elif (source_row := reviewed_source_finding(root, finding, source_reviews)) is not None:
+                reviewed_source.append({**source_row, "run_index": run_index, "result_index": index})
             else:
                 unresolved += 1
-    return {"reviewed_metadata": reviewed, "unresolved_count": unresolved}
+    return {"reviewed_metadata": reviewed, "reviewed_source": reviewed_source, "unresolved_count": unresolved}

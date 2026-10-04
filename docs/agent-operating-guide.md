@@ -241,6 +241,12 @@ Guidelines, and SEI CERT C++.
   APIs solely to reduce the scanner count. Preserve unresolved findings visibly.
 - Preserve supply-chain evidence: checksums, third-party notices, SBOM output,
   release notes, and reproducible build inputs.
+- Every security repair or incidental rewrite failure must complete the existing
+  learning loop in `docs/engineering-learning-loop.md`. Record the cause and
+  affected siblings, repair the canonical implementation, retain an old-source
+  negative control where practical, and add a narrow executable guard with its
+  own rejection controls. Source guards are partial checks; they do not replace
+  native regressions, analysis of caller contracts, or exact-source SAST.
 - After pushed remediations, sample the exact-SHA workflows at intermediate
   checkpoints and retain the deployment/code-scanning audit as pending. At the
   final acceptance checkpoint, complete workflows and run
@@ -486,6 +492,18 @@ tools\package.ps1 -Configuration Release
   on Windows. Fix a proven lifetime conflict rather than adding cleanup retries,
   weakening assertions, or changing file-sharing policy to conceal it.
 - Keep memory bounded. Do not read whole archives or whole large files into memory when streaming APIs are available.
+- Prove byte extents before pointer formation, header access or payload copies.
+  Check fixed overhead first, then compare payload length with remaining capacity;
+  never validate a potentially overflowing sum. Keep initialized input length,
+  allocation capacity and finalized output length distinct. Nullable empty buffers
+  require zero-safe endpoints, distances, copies and advances without changing
+  caller-owned buffer identities. Acquire all replacement storage before releasing
+  or publishing live owners, and exercise failure at every allocation point.
+- Dependency rewrites must migrate both fresh source and every exact supported
+  preceding local revision, reject unknown bytes, and remain idempotent. Test
+  canonical generated source and the production DLL rather than a copied algorithm.
+  Restrict test-probe imports to required declarations; importing private codec
+  headers can create unused-definition findings that a build does not detect.
 - Prefer deterministic behavior over hidden global state. Options must be explicit and safe by default.
 - Empty codec jobs must still validate metadata before returning. GPU-use flags
   must describe dispatched nonempty work, not merely a selected backend; retain

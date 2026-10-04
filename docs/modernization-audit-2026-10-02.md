@@ -860,13 +860,13 @@ without converting it into a valid observation.
 ## Bounds Review Progress
 
 The six baseline pointer-bounds results contain 21 reported flow variants.
-Seven relevant generated dependency files were compared byte-for-byte with the
+At this earlier checkpoint, seven relevant generated dependency files were compared byte-for-byte with the
 original source archive; all match, and the archive hash matches recorded
 provenance. The separate documented downstream patches remain outside this set.
 
 | Reported variants | Inspected boundary |
 | --- | --- |
-| Ten xxHash reads | COVER/FASTCOVER builders retain `0 <= tail <= capacity`; their initial content span ends at allocation end. Shrink iterations bound their span by the successfully finalized dictionary size. xxHash consumes 32-byte stripes and only reads 8/4/1-byte tails when that many bytes remain. |
+| Ten xxHash reads | The initial builder span ends at allocation end, and xxHash checks remaining bytes before stripe/tail reads. The earlier shrinking review relied on finalized dictionary size and missed its distinction from initialized content size; this was not a sufficient caller-boundary proof. |
 | Eight header writes | The ordinary frame path rejects capacity below six bytes; raw blocks check payload plus the three-byte header; split compressed blocks check the three-byte header before entropy encoding. Error returns propagate before advancing output. |
 | Three RLE writes | The target-size and both split routes reach the same helper, whose explicit capacity-below-four rejection precedes the header and `op[3]` write. |
 
@@ -876,6 +876,14 @@ it does not establish safety of every exported dependency API. The added guarded
 production-DLL regressions are finite dynamic evidence, not complete proof of
 all internal branches or a substitute for static triage. These six alerts remain
 open; no finding was dismissed or scanner coverage narrowed by this review.
+
+The later guarded production-DLL study reproduced the shrinking defect: 680
+initialized content bytes became an 816-byte finalized dictionary, followed by
+an invalid request for 808 content bytes. The downstream `COVER_selectDict`
+repair retains initialized length separately and rejects candidate extents
+outside it. See the [current source-bound review](security-finding-review-2026-10-03.md)
+for implementation, recurrence evidence and remaining scanner gates. This
+correction does not establish closure of the ten reported xxHash flow variants.
 
 ## Round Nineteen: Completed Measurements And Report Export Repair
 

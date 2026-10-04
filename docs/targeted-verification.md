@@ -215,8 +215,16 @@ every product check is relevant. `-NoAutoEscalate` remains accepted for script
 compatibility; stopping at a failure is now the default.
 
 The `component-contracts` workflow uses this same planner over the actual
-push/PR commit range and executes only offline tool contracts. Native Windows
-CI is filtered to native build inputs, the native test driver and its own
+push/PR commit range and executes only offline tool contracts.
+
+Zstandard's isolated native ASan qualification runs in `zstd-sanitizers`, with
+the same canonical library, six instrumented targets and source-bound receipt.
+It is required by affected-source plans and observed at the exact pushed SHA.
+The offline contract projection does not run that native build again. Its
+selector contracts check affected path admission and unrelated tooling/docs
+rejection against the real shared push/PR workflow filter.
+
+Native Windows CI is filtered to native build inputs, the native test driver and its own
 workflow; every produced build still validates its actual invocation receipt.
 Moved tool regressions are routed in the dedicated lane, not deleted.
 GitHub supports [YAML anchors](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases),

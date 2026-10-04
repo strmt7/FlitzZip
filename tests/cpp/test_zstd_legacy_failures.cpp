@@ -1,7 +1,9 @@
 #include "test_util.hpp"
 #include "fault_allocator.h"
+#include "zstd_legacy_fixture.hpp"
 
 #include <array>
+#include <span>
 
 namespace {
 
@@ -184,6 +186,217 @@ TEST_CASE(zstd_legacy_same_version_reuses_owner) {
             REQUIRE_EQ(sz_legacy_initialize(&owner.context, version, version, nullptr, 0), 0);
             REQUIRE_EQ(owner.context, original);
             REQUIRE_EQ(sz_fault_live_allocations(), 2U);
+        }
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+        REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+    }
+}
+
+// Purpose: Preserve valid owned buffer state after one streaming allocation fails, then reinitialize safely.
+// Inputs: version is 5-7, fail_after selects the input or output allocation, and pinned bytes provide the oracle.
+// Outputs: Requires valid capacity/storage, exact retried output and complete cleanup without an unsafe baseline retry.
+void check_stream_allocation_failure(unsigned version, std::size_t fail_after) {
+    const auto extent = superzip_test::kLegacyFrames[version - 4U];
+    const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+    REQUIRE_TRUE(sz_fault_reset(0U));
+    {
+        LegacyOwner owner{nullptr, version};
+        REQUIRE_EQ(sz_legacy_initialize(&owner.context, 0U, version, nullptr, 0U), 0);
+        REQUIRE_TRUE(owner.context != nullptr);
+        REQUIRE_TRUE(sz_fault_fail_after(fail_after));
+        std::array<unsigned char, 512> output{};
+        auto input_bytes = frame.size();
+        auto output_bytes = output.size();
+        std::size_t hint = 0;
+        REQUIRE_EQ(
+            sz_legacy_decode(owner.context, version, output.data(), &output_bytes, frame.data(), &input_bytes, &hint),
+            1);
+        REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, version));
+        REQUIRE_TRUE(sz_fault_fail_after(0U));
+        REQUIRE_EQ(sz_legacy_initialize(&owner.context, version, version, nullptr, 0U), 0);
+        input_bytes = frame.size();
+        output_bytes = output.size();
+        REQUIRE_EQ(
+            sz_legacy_decode(owner.context, version, output.data(), &output_bytes, frame.data(), &input_bytes, &hint),
+            0);
+        REQUIRE_EQ(hint, 0U);
+        REQUIRE_EQ(input_bytes, frame.size());
+        REQUIRE_EQ(output_bytes, superzip_test::kLegacyExpected.size());
+        REQUIRE_TRUE(std::ranges::equal(std::span(output).first(output_bytes), superzip_test::kLegacyExpected));
+        REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, version));
+    }
+    REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+    REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+}
+
+// Purpose: Verify v0.5 input-buffer allocation failure and retry; no inputs, requires valid ownership.
+TEST_CASE(zstd_legacy_v05_stream_input_allocation_failure) {
+    check_stream_allocation_failure(5U, 1U);
+}
+
+// Purpose: Verify v0.5 output-buffer allocation failure and retry; no inputs, requires valid ownership.
+TEST_CASE(zstd_legacy_v05_stream_output_allocation_failure) {
+    check_stream_allocation_failure(5U, 2U);
+}
+
+// Purpose: Verify v0.6 input-buffer allocation failure and retry; no inputs, requires valid ownership.
+TEST_CASE(zstd_legacy_v06_stream_input_allocation_failure) {
+    check_stream_allocation_failure(6U, 1U);
+}
+
+// Purpose: Verify v0.6 output-buffer allocation failure and retry; no inputs, requires valid ownership.
+TEST_CASE(zstd_legacy_v06_stream_output_allocation_failure) {
+    check_stream_allocation_failure(6U, 2U);
+}
+
+// Purpose: Verify v0.7 input-buffer allocation failure and retry; no inputs, requires valid ownership.
+TEST_CASE(zstd_legacy_v07_stream_input_allocation_failure) {
+    check_stream_allocation_failure(7U, 1U);
+}
+
+// Purpose: Verify v0.7 output-buffer allocation failure and retry; no inputs, requires valid ownership.
+TEST_CASE(zstd_legacy_v07_stream_output_allocation_failure) {
+    check_stream_allocation_failure(7U, 2U);
+}
+
+// Purpose: Decode a complete pinned frame through the exact interposed stream and check its independent oracle.
+// Inputs: owner is initialized and frame encodes the pinned legacy plaintext with a permitted window variation.
+// Outputs: Requires full consumption, end-of-frame, exact bytes and valid buffer ownership.
+void require_legacy_stream_readback(const LegacyOwner& owner, std::span<const unsigned char> frame) {
+    std::array<unsigned char, 512> output{};
+    auto input_bytes = frame.size();
+    auto output_bytes = output.size();
+    std::size_t hint = 0;
+    REQUIRE_EQ(
+        sz_legacy_decode(owner.context, owner.version, output.data(), &output_bytes, frame.data(), &input_bytes, &hint),
+        0);
+    REQUIRE_EQ(hint, 0U);
+    REQUIRE_EQ(input_bytes, frame.size());
+    REQUIRE_EQ(output_bytes, superzip_test::kLegacyExpected.size());
+    REQUIRE_TRUE(std::ranges::equal(std::span(output).first(output_bytes), superzip_test::kLegacyExpected));
+    REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, owner.version));
+}
+
+// Purpose: Retain both previously initialized buffer owners when a larger frame needs storage and acquisition fails.
+// Inputs: version is 5-7; pinned frame bytes retain their payload while the format's window declaration grows.
+// Outputs: Requires exact owner/capacity preservation, successful reinitialization and retry, and complete cleanup.
+void check_stream_buffer_growth_failure(unsigned version) {
+    const auto extent = superzip_test::kLegacyFrames[version - 4U];
+    const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+    std::vector<unsigned char> larger(frame.begin(), frame.end());
+    if (version == 7U) {
+        REQUIRE_EQ(larger[4], 0x20U);
+        larger[4] = 0x00U;  // Replace direct content-size mode with an explicit window and unknown content size.
+        larger[5] = 0x48U;  // 512 KiB, leaving the original block payload and extent unchanged.
+    } else {
+        larger[4] = static_cast<unsigned char>((larger[4] & 0xF0U) | 7U);
+    }
+    for (const auto fail_after : {1U, 2U}) {
+        if (version == 5U && fail_after == 2U) {
+            continue;  // Version five always owns a full-size input buffer, so only its output buffer grows.
+        }
+        REQUIRE_TRUE(sz_fault_reset(0U));
+        {
+            LegacyOwner owner{nullptr, version};
+            REQUIRE_EQ(sz_legacy_initialize(&owner.context, 0U, version, nullptr, 0U), 0);
+            require_legacy_stream_readback(owner, frame);
+            const auto original = sz_legacy_get_buffer_state(owner.context, version);
+            const auto live = sz_fault_live_allocations();
+            REQUIRE_EQ(sz_legacy_initialize(&owner.context, version, version, nullptr, 0U), 0);
+            REQUIRE_TRUE(sz_fault_fail_after(fail_after));
+            std::array<unsigned char, 512> output{};
+            auto input_bytes = larger.size();
+            auto output_bytes = output.size();
+            std::size_t hint = 0;
+            REQUIRE_EQ(sz_legacy_decode(owner.context, version, output.data(), &output_bytes, larger.data(),
+                                        &input_bytes, &hint),
+                       1);
+            const auto retained = sz_legacy_get_buffer_state(owner.context, version);
+            REQUIRE_EQ(retained.input, original.input);
+            REQUIRE_EQ(retained.input_capacity, original.input_capacity);
+            REQUIRE_EQ(retained.output, original.output);
+            REQUIRE_EQ(retained.output_capacity, original.output_capacity);
+            REQUIRE_EQ(sz_fault_live_allocations(), live);
+            REQUIRE_TRUE(sz_fault_fail_after(0U));
+            REQUIRE_EQ(sz_legacy_initialize(&owner.context, version, version, nullptr, 0U), 0);
+            require_legacy_stream_readback(owner, larger);
+        }
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+        REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+    }
+}
+
+// Purpose: Verify v0.5 output-buffer growth failure and retry; no inputs, requires retained owners and exact output.
+TEST_CASE(zstd_legacy_v05_stream_growth_preserves_buffers) {
+    check_stream_buffer_growth_failure(5U);
+}
+
+// Purpose: Verify v0.6 input/output-buffer growth failures and retry; no inputs, requires retained owners and output.
+TEST_CASE(zstd_legacy_v06_stream_growth_preserves_buffers) {
+    check_stream_buffer_growth_failure(6U);
+}
+
+// Purpose: Verify v0.7 input/output-buffer growth failures and retry; no inputs, requires retained owners and output.
+TEST_CASE(zstd_legacy_v07_stream_growth_preserves_buffers) {
+    check_stream_buffer_growth_failure(7U);
+}
+
+// Purpose: Exercise empty legacy public buffers through header accumulation and output backpressure.
+// Inputs: All shipped buffered decoder versions and independent upstream golden frames.
+// Outputs: Requires zero consumption on empty input, bounded progress and exact read-back after output resumes.
+TEST_CASE(zstd_legacy_stream_empty_buffers_preserve_progress) {
+    for (const auto version : kLegacyVersions) {
+        REQUIRE_TRUE(sz_fault_reset(0U));
+        {
+            LegacyOwner owner{nullptr, version};
+            REQUIRE_EQ(sz_legacy_initialize(&owner.context, 0U, version, nullptr, 0U), 0);
+            std::size_t input_bytes = 0;
+            std::size_t output_bytes = 0;
+            std::size_t hint = 0;
+            REQUIRE_EQ(sz_legacy_decode(owner.context, version, nullptr, &output_bytes, nullptr, &input_bytes, &hint),
+                       0);
+            REQUIRE_EQ(input_bytes, 0U);
+            REQUIRE_EQ(output_bytes, 0U);
+            REQUIRE_TRUE(hint > 0U);
+
+            const auto extent = superzip_test::kLegacyFrames[version - 4U];
+            const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+            input_bytes = 1U;
+            REQUIRE_EQ(
+                sz_legacy_decode(owner.context, version, nullptr, &output_bytes, frame.data(), &input_bytes, &hint), 0);
+            REQUIRE_EQ(input_bytes, 1U);
+            input_bytes = 0;
+            REQUIRE_EQ(sz_legacy_decode(owner.context, version, nullptr, &output_bytes, nullptr, &input_bytes, &hint),
+                       0);
+            REQUIRE_EQ(input_bytes, 0U);
+            REQUIRE_EQ(output_bytes, 0U);
+
+            input_bytes = frame.size() - 1U;
+            REQUIRE_EQ(sz_legacy_decode(owner.context, version, nullptr, &output_bytes, frame.data() + 1U, &input_bytes,
+                                        &hint),
+                       0);
+            REQUIRE_TRUE(input_bytes <= frame.size() - 1U);
+            REQUIRE_EQ(output_bytes, 0U);
+            auto position = 1U + input_bytes;
+            std::array<unsigned char, 512> output{};
+            std::size_t produced = 0;
+            for (unsigned attempt = 0; hint != 0U && attempt < 16U; ++attempt) {
+                input_bytes = frame.size() - position;
+                output_bytes = output.size() - produced;
+                const auto* input = input_bytes != 0U ? frame.data() + position : nullptr;
+                REQUIRE_EQ(sz_legacy_decode(owner.context, version, output.data() + produced, &output_bytes, input,
+                                            &input_bytes, &hint),
+                           0);
+                REQUIRE_TRUE(input_bytes <= frame.size() - position);
+                REQUIRE_TRUE(output_bytes <= output.size() - produced);
+                position += input_bytes;
+                produced += output_bytes;
+            }
+            REQUIRE_EQ(hint, 0U);
+            REQUIRE_EQ(position, frame.size());
+            REQUIRE_EQ(produced, superzip_test::kLegacyExpected.size());
+            REQUIRE_TRUE(std::ranges::equal(std::span(output).first(produced), superzip_test::kLegacyExpected));
+            REQUIRE_TRUE(sz_legacy_buffers_consistent(owner.context, version));
         }
         REQUIRE_EQ(sz_fault_live_allocations(), 0U);
         REQUIRE_EQ(sz_fault_invalid_frees(), 0U);

@@ -261,6 +261,8 @@ function Get-SuperZipVerificationScope {
 
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^tools/(zstd_rewrite_policy|test_zstd_rewrite_policy)\.ps1$',
+        '^tools/test_zstd_sanitizers\.ps1$',
         '^tools/(release_workflow_policy|test_release_workflow_policy)\.ps1$',
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
@@ -365,6 +367,12 @@ function Get-SuperZipVerificationScope {
 function Get-SuperZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
+        @{ Pattern = @('^tools/test_zstd_sanitizers\.ps1$', '^\.github/workflows/zstd-sanitizers\.yml$', '^third_party/upstream/zstd/', '^tests/cpp/zstd_legacy_fixture\.hpp$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
+           Command = (Get-SuperZipVerificationCommand -Id 'zstd-sanitizer-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_zstd_sanitizers.ps1') -Reason 'dependency memory and ownership rewrites require instrumented canonical-source tests and qualified Windows ASan controls in an isolated validation build') }
+        @{ Pattern = @('^\.github/workflows/zstd-sanitizers\.yml$', '^tools/test_zstd_sanitizers\.ps1$')
+           Command = (Get-SuperZipVerificationCommand -Id 'verification-selector-self-test' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_verification_selector.ps1') -Reason 'native sanitizer workflow changes must preserve affected-source coverage and offline-contract isolation') }
+        @{ Pattern = @('^tools/(zstd_rewrite_policy|test_zstd_rewrite_policy|verify_change_hygiene|security_scan)\.ps1$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
+           Command = (Get-SuperZipVerificationCommand -Id 'zstd-rewrite-policy-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_zstd_rewrite_policy.ps1') -Reason 'known extent, nullable-buffer, allocation and patch-dispatch defects require source recurrence mutation controls') }
         @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^\.github/workflows/release\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'release-workflow-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_release_workflow_policy.ps1') -Reason 'release action identity and replacement/title safeguards require their offline contracts without publishing artifacts') }
         @{ Pattern = @('^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$', '^tools/superzip_verification\.psm1$', '^\.github/workflows/(windows-ci|rocm-qualification)\.yml$')
@@ -425,8 +433,8 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'scanner-preflight-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_preflight') -Reason 'changed-file scanner admission must retain complete inputs, bound resources and reject every finding or malformed report') }
         @{ Pattern = @('^\.github/workflows/security-code-scanning\.yml$', '^tools/(devskim_scope|test_devskim_scope|scanner_preflight)\.py$', '^docs/benchmarks/data/')
            Command = (Get-SuperZipVerificationCommand -Id 'devskim-scope-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_devskim_scope') -Reason 'passive report exclusions must fail on code, tests, acquisition configuration, malformed data and redirects while retaining other scanner inputs') }
-        @{ Pattern = @('^\.github/scanner-metadata-reviews\.csv$', '^tools/(scanner_preflight|scanner_metadata_review|test_scanner_metadata_review)\.py$')
-           Command = (Get-SuperZipVerificationCommand -Id 'scanner-metadata-review-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_metadata_review') -Reason 'exact reviewed public metadata must retain raw findings and reject code, stale snapshots, unknown evidence and unrelated rules') }
+        @{ Pattern = @('^\.github/scanner-(metadata|source)-reviews\.csv$', '^tools/(scanner_preflight|scanner_metadata_review|test_scanner_metadata_review)\.py$')
+           Command = (Get-SuperZipVerificationCommand -Id 'scanner-metadata-review-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_metadata_review') -Reason 'approved exact metadata/source dispositions must retain raw findings and reject stale bytes, other locations, unknown evidence and unrelated rules') }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$', '^tools/scan_trufflehog\.sh$')
            Command = (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities") }
         @{ Pattern = @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')
@@ -566,7 +574,7 @@ function Get-SuperZipWorkflowWaitPolicy {
 # Inputs: One trusted planner command descriptor. Outputs: True only for mechanism contracts or MCP syntax.
 function Test-SuperZipToolContractCommand {
     param([Parameter(Mandatory = $true)]$Command)
-    return $Command.id -ne 'unit-tests' -and
+    return $Command.id -notin @('unit-tests', 'zstd-sanitizer-tests') -and
         ($Command.id -match '(-tests|-test|-contracts)$' -or $Command.id -eq 'mcp-python-compile')
 }
 
@@ -609,6 +617,7 @@ function Get-SuperZipVerificationPlan {
     $longRunningSeen = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $hostedNative = Get-SuperZipHostedWorkflowSelection -Paths $paths -Full:$scope.fullEscalationRequired
     foreach ($pair in @(
+        @('zstd-sanitizers', (@($local | Where-Object { $_.id -eq 'zstd-sanitizer-tests' }).Count -gt 0)),
         @("component-contracts", (@($local | Where-Object { Test-SuperZipToolContractCommand -Command $_ }).Count -gt 0)),
         @("lint", ($scope.touchesLintSurface -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/workflows/benchmark-graph\.yml$', '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$')))),

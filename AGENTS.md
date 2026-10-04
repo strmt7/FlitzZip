@@ -78,6 +78,16 @@ means its rules do not apply.
 
 ## Change And Verification Loop
 
+Prevent recurrence using the current source and retained evidence. Never move
+code, templates, tests or configuration into a passive-data folder to avoid
+analysis, rename primitives to evade a rule, or inherit an old disposition after
+its source/location changes. Reuse a completed check only after matching its
+source, tool/configuration and relevant output identities; rerun the affected
+consumer when they change. Check the planner's actual command roles before
+execution: an offline tool contract must not silently rebuild native targets.
+The operating guide and executable scope/admission contracts enforce the
+specific boundaries; instructions alone are not proof of error prevention.
+
 Inspect `git status --short`, then ask the verifier what the actual changed
 paths require before selecting tests, smoke runs, benchmarks, or workflow waits:
 
@@ -104,6 +114,14 @@ verifier or remove scanners to hide them.
   ```powershell
   tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
   ```
+
+- Security repairs and failures discovered during rewrites require the existing
+  learning loop in `docs/engineering-learning-loop.md`: repair the production
+  boundary, retain the reproducer, review sibling versions/callers, and add the
+  narrowest executable recurrence guard. Read the guide's Engineering Quality
+  Baseline and Coding Standards before memory/ownership rewrites. Do not close a
+  finding through scanner suppression, primitive renaming, removed regression
+  coverage, or a passing check against older source bytes.
 
 - The ordinary local build is HIP-enabled:
 

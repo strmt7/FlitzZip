@@ -13,7 +13,7 @@ function Assert-CiContractPlan {
         if ($id -notin $ids) { throw "CI projection lost $id for $Path" }
     }
     foreach ($id in @('release-build', 'unit-tests', 'gui-smoke', 'package-smoke',
-            'short-fuzz-smoke', 'ram-benchmark-sweep', 'security-scan', 'language-lint')) {
+            'short-fuzz-smoke', 'ram-benchmark-sweep', 'security-scan', 'language-lint', 'zstd-sanitizer-tests')) {
         if ($id -in $ids) { throw "CI tool lane admitted unrelated product command $id for $Path" }
     }
     if (@($ids | Sort-Object -Unique).Count -ne $ids.Count) {
@@ -32,4 +32,6 @@ Assert-CiContractPlan -Path 'tests/cpp/test_main.cpp' -Required @('native-runner
 Assert-CiContractPlan -Path 'tools/native_ci.ps1' -Required @('native-ci-contracts')
 Assert-CiContractPlan -Path '.github/workflows/rocm-qualification.yml' -Required @('native-ci-contracts', 'rocm-toolchain-tests')
 Assert-CiContractPlan -Path '.github/workflows/release.yml' -Required @('release-workflow-contracts')
+Assert-CiContractPlan -Path 'cmake/ZstdLegacyHistoryV05.c' -Required @('zstd-rewrite-policy-contracts')
+Assert-CiContractPlan -Path '.github/scanner-source-reviews.csv' -Required @('scanner-metadata-review-tests')
 Write-Output 'CI component projection inclusion/exclusion contracts passed.'

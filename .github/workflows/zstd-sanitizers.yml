@@ -1,0 +1,44 @@
+name: zstd-sanitizers
+
+on:
+  push:
+    paths: &sanitizer-inputs
+      - cmake/PatchZstdLegacy.cmake
+      - cmake/Zstd*.c
+      - cmake/Zstd*.cmake
+      - CMakeLists.txt
+      - tests/zstd/**
+      - tests/cpp/test_zstd*.cpp
+      - tests/cpp/zstd_legacy_fixture.hpp
+      - tests/cmake/test_zstd*.cmake
+      - third_party/upstream/zstd/**
+      - tools/test_zstd_sanitizers.ps1
+      - .github/workflows/zstd-sanitizers.yml
+  pull_request:
+    paths: *sanitizer-inputs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zstd-sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-memory-safety:
+    name: Qualify canonical Zstandard with MSVC ASan
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Checkout canonical source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select pinned Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Run isolated native sanitizer qualification
+        shell: pwsh
+        run: tools/test_zstd_sanitizers.ps1

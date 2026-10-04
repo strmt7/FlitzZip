@@ -12,6 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'release_workflow_policy.ps1')
+. (Join-Path $PSScriptRoot 'zstd_rewrite_policy.ps1')
 Import-Module (Join-Path $PSScriptRoot "superzip_verification.psm1") -Force
 
 # Purpose: Return whether a file extension is normally safe to scan as text.
@@ -294,5 +295,8 @@ foreach ($path in $paths) {
 }
 
 Assert-ReleaseDocUseVersionPlaceholder
+if (@($paths | Where-Object { $_ -match '^(cmake/|tests/(cpp/test_zstd|zstd/|cmake/test_zstd)|CMakeLists\.txt$|tools/(zstd_rewrite_policy|test_zstd_rewrite_policy|verify_change_hygiene|security_scan)\.ps1$)' }).Count -gt 0) {
+    Assert-ZstdRewritePolicy -RepoRoot $repo
+}
 
 Write-Output "Changed-file hygiene passed. Paths checked: $($paths.Count)."

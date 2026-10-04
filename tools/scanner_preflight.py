@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from tools.devskim_scope import validate_report_directory, write_options
-from tools.scanner_metadata_review import read_policy, review_findings
+from tools.scanner_metadata_review import read_policy, read_source_policy, review_findings
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 64 * 1024 * 1024
@@ -184,6 +184,7 @@ def main() -> int:
     snapshot = directory / "inputs"
     hashes = snapshot_inputs(ROOT, paths, snapshot)
     review_policy = read_policy(ROOT)
+    source_review_policy = read_source_policy(ROOT)
     gitleaks_report, devskim_report = directory / "gitleaks.json", directory / "devskim.sarif"
     devskim_options = directory / "devskim-options.json"
     write_options(snapshot, devskim_options)
@@ -227,10 +228,11 @@ def main() -> int:
         "gitleaks": finding_count(gitleaks_report, "gitleaks"),
         "devskim": finding_count(devskim_report, "devskim"),
     }
-    review = review_findings(snapshot, devskim_report, review_policy)
+    review = review_findings(snapshot, devskim_report, review_policy, source_review_policy)
     unchanged = all(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest for name, digest in hashes.items())
     unchanged = unchanged and changed_paths(ROOT, args.base) == paths
     unchanged = unchanged and read_policy(ROOT) == review_policy
+    unchanged = unchanged and read_source_policy(ROOT) == source_review_policy
     passed = (
         unchanged
         and counts["gitleaks"] == 0
@@ -247,6 +249,7 @@ def main() -> int:
         "finding_counts": counts,
         "devskim_review": review,
         "review_policy_sha256": hashlib.sha256(review_policy).hexdigest(),
+        "source_review_policy_sha256": hashlib.sha256(source_review_policy).hexdigest(),
         "source_unchanged": unchanged,
         "devskim_passive_reports": validate_report_directory(snapshot),
         "results": status,
@@ -260,6 +263,7 @@ def main() -> int:
                 "files": len(paths),
                 "finding_counts": counts,
                 "reviewed_metadata": len(review["reviewed_metadata"]),
+                "reviewed_source": len(review["reviewed_source"]),
                 "unresolved_devskim": review["unresolved_count"],
                 "receipt": str(directory / "receipt.json"),
             }

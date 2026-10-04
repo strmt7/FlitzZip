@@ -4,6 +4,11 @@ on:
   push:
     paths: &contract-inputs
       - tools/**
+      - cmake/**
+      - CMakeLists.txt
+      - tests/zstd/**
+      - tests/cpp/test_zstd*.cpp
+      - tests/cmake/test_zstd*.cmake
       - mcp/**
       - .agents/skills/**
       - AGENTS.md
@@ -15,11 +20,14 @@ on:
       - src/cli/**
       - tests/cpp/test_main.cpp
       - .github/workflows/component-contracts.yml
+      - .github/workflows/zstd-sanitizers.yml
       - .github/workflows/windows-ci.yml
       - .github/workflows/rocm-qualification.yml
       - .github/workflows/release.yml
       - .github/workflows/security-code-scanning.yml
       - .github/requirements/**
+      - .github/scanner-metadata-reviews.csv
+      - .github/scanner-source-reviews.csv
       - .github/codeql/**
       - .github/openvas/**
       - .github/workflows/greenbone-openvas-vulnetix.yml
