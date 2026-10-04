@@ -161,9 +161,9 @@ foreach ($file in $files) {
     }
 }
 
-$forbidden = Get-ChildItem -Path $repo -Recurse -File -Include *.pdb,*.ilk,*.obj,*.exe,*.dll -Force | Where-Object {
-    -not (Test-ExcludedScanPath -Path $_.FullName)
-}
+# Reuse the same complete source inventory instead of traversing generated
+# trees a second time. Both checks retain the identical exclusion policy.
+$forbidden = $files | Where-Object { $_.Extension -in @('.pdb', '.ilk', '.obj', '.exe', '.dll') }
 if ($forbidden) {
     throw "Build artifacts found outside build directory: $($forbidden[0].FullName)"
 }

@@ -42,11 +42,14 @@ add_test(NAME superzip_zstd_bounds_tests COMMAND superzip_zstd_bounds_tests)
 set_tests_properties(superzip_zstd_bounds_tests PROPERTIES TIMEOUT 60)
 # Observe finalizer extents in the exact generated selection helper while
 # forwarding successful calls to the product DLL; allocator faults are serial.
-add_library(superzip_zstd_cover_probe OBJECT
-            "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/cover.c")
+add_library(
+  superzip_zstd_cover_probe OBJECT
+  "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/cover.c"
+  "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/fastcover.c")
 target_include_directories(
-  superzip_zstd_cover_probe PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/zstd"
-                                    "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+  superzip_zstd_cover_probe
+  PRIVATE "${SUPERZIP_SOURCE_ROOT}/cmake" "${SUPERZIP_SOURCE_ROOT}/tests/zstd"
+          "${SUPERZIP_ZSTD_LIBRARY_DIR}")
 target_compile_definitions(
   superzip_zstd_cover_probe
   PRIVATE ZDICT_finalizeDictionary=sz_checked_finalize
@@ -62,8 +65,10 @@ else()
 endif()
 # Visual Studio cannot represent target-wide C flags separately in a mixed C/C++
 # object target. Keep the two instrumented languages in distinct targets.
-add_library(superzip_zstd_cover_owner_probe OBJECT
-            "${SUPERZIP_SOURCE_ROOT}/cmake/ZstdCoverSelection.cpp")
+add_library(
+  superzip_zstd_cover_owner_probe OBJECT
+  "${SUPERZIP_SOURCE_ROOT}/cmake/ZstdCoverSelection.cpp"
+  "${SUPERZIP_SOURCE_ROOT}/cmake/ZstdCoverWorkGroup.cpp")
 target_include_directories(
   superzip_zstd_cover_owner_probe PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/zstd"
                                           "${SUPERZIP_ZSTD_LIBRARY_DIR}")
@@ -84,21 +89,39 @@ add_executable(
   superzip_zstd_cover_selection_tests
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_main.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_cover_selection.cpp"
+  "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_work_group.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_dictionary_merge.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.cpp"
   "${_dictionary_merge_probe}"
   $<TARGET_OBJECTS:superzip_zstd_cover_probe>
   $<TARGET_OBJECTS:superzip_zstd_cover_owner_probe>
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/divsufsort.c"
-  "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/pool.c")
+  "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/pool.c"
+  "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/threading.c")
 target_include_directories(
   superzip_zstd_cover_selection_tests
-  PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/cpp"
+  PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/cpp" "${SUPERZIP_SOURCE_ROOT}/cmake"
           "${SUPERZIP_SOURCE_ROOT}/tests/zstd" "${SUPERZIP_ZSTD_LIBRARY_DIR}"
           "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder")
 target_compile_definitions(
   superzip_zstd_cover_selection_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
                                               _CRT_SECURE_NO_WARNINGS)
+foreach(target IN
+        ITEMS superzip_zstd_cover_probe superzip_zstd_cover_owner_probe
+              superzip_zstd_cover_selection_tests)
+  target_compile_definitions(
+    ${target}
+    PRIVATE ZSTD_MULTITHREAD
+            NOMINMAX
+            COVER_createWorkGroup=sz_fault_createWorkGroup
+            COVER_workGroupBest=sz_fault_workGroupBest
+            COVER_workGroupPool=sz_fault_workGroupPool
+            COVER_copyWorkDictionary=sz_fault_copyWorkDictionary
+            COVER_prepareWorkContext=sz_fault_prepareWorkContext
+            COVER_commitWorkContext=sz_fault_commitWorkContext
+            COVER_finishWorkContext=sz_fault_finishWorkContext
+            COVER_releaseWorkGroup=sz_fault_releaseWorkGroup)
+endforeach()
 target_link_libraries(superzip_zstd_cover_selection_tests
                       PRIVATE libzstd_shared)
 superzip_copy_zstd_runtime(superzip_zstd_cover_selection_tests)

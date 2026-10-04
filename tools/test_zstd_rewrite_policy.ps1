@@ -33,6 +33,8 @@ try {
     foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
             'cmake/ZstdDictionaryEvaluation.cmake',
             'cmake/ZstdHuffmanTable.c', 'tests/cpp/test_zstd_huffman_table.cpp', 'tests/zstd/fault_allocator.cpp',
+            'cmake/ZstdCoverWorkGroup.cpp', 'tests/cpp/test_zstd_work_group.cpp',
+            'cmake/ZstdCoverWorkGroup.cmake',
             'cmake/ZstdFseTableGeometry.c', 'tests/cpp/test_zstd_fse_table.cpp',
             'cmake/ZstdLegacyBuffers.cpp', 'cmake/ZstdLibrary.cmake', 'tests/cpp/test_zstd_legacy_buffers.cpp',
             'cmake/ZstdLegacyOwnedStreamV05.c', 'cmake/ZstdLegacyOwnedStreamV06.c', 'cmake/ZstdLegacyOwnedStreamV07.c',
@@ -47,6 +49,15 @@ try {
     }
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
     foreach ($mutation in @(
+            @('cmake/ZstdCoverWorkGroup.cpp', 'POOL_joinJobs(pool.get());', '', 'optimizer actual worker completion'),
+            @('cmake/ZstdCoverWorkGroup.cmake', '#if PTRDIFF_MAX <= UINT32_MAX', '#if 0', 'sample count architecture range'),
+            @('cmake/ZstdCoverWorkGroup.cpp', 'COVER_best_wait(&best);', '', 'optimizer logical completion'),
+            @('cmake/ZstdCoverWorkGroup.cpp', 'if (committed && destroyContext != nullptr)', 'if (destroyContext != nullptr)', 'optimizer initialized context cleanup'),
+            @('cmake/ZstdCoverWorkGroup.cpp', 'using ContextOwner = std::unique_ptr<std::byte[], ContextDelete>;', 'using ContextOwner = std::byte*;', 'optimizer exclusive context storage'),
+            @('cmake/ZstdCoverWorkGroup.cpp', 'group->best.dictSize > capacity', 'group->best.dictSize == 0', 'optimizer output extent'),
+            @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_work_group("${source_dir}")', '', 'optimizer owner patch dispatch'),
+            @('tests/cpp/test_zstd_work_group.cpp', 'TEST_CASE(zstd_work_group_joins_actual_worker_lifetime)', 'TEST_CASE(removed_optimizer_lifetime)', 'optimizer early-completion regression'),
+            @('tests/cpp/test_zstd_work_group.cpp', 'TEST_CASE(zstd_work_group_context_transaction_and_failures)', 'TEST_CASE(removed_optimizer_failure)', 'optimizer context failure regression'),
             @('cmake/ZstdLegacyBuffers.cpp', 'using BufferOwner = std::unique_ptr<char[], BufferDelete>;', 'using BufferOwner = char*;', 'legacy exclusive buffer ownership'),
             @('cmake/ZstdLegacyBuffers.cpp', 'count > destinationCapacity - destinationOffset || count > sourceCapacity - sourceOffset', 'count > destinationCapacity || count > sourceCapacity', 'legacy complete copy geometry'),
             @('cmake/ZstdLegacyBuffers.cpp', 'std::copy_backward(input.begin(), input.end(), output.end());', 'std::copy(input.begin(), input.end(), output.begin());', 'legacy backward overlap transfer'),

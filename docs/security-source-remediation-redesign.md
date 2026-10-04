@@ -93,6 +93,23 @@ dates, individual dispositions and qualification results remain in audit
 records. The security skill no longer carries the historical disposition counts
 or depends on this particular redesign being the active task.
 
+The COVER and FASTCOVER optimizers now share an explicit private C++ work-group
+owner. It owns the synchronized best result, optional worker pool and private
+C context storage. Successful initialization commits the matching C cleanup
+callback; an initializer that already rolled back cannot trigger a second
+cleanup. Context replacement acquires storage before joining and releasing its
+predecessor, so rejected geometry and allocation failure retain prior ownership.
+
+Logical completion and actual worker return are distinct. The group waits for
+`POOL_joinJobs` before releasing context, then waits for the best-result record
+before destroying its synchronization. A regression deliberately signals
+logical completion before the worker's final context access and requires both
+real workers to return before destruction. Serial allocation-failure,
+uncommitted-initialization and bounded dictionary-publication controls exercise
+the same owner. Production guarded training exercises both exported optimizers
+with real pools. These source and consumer contracts do not establish hosted
+alert closure until fresh analysis completes.
+
 ## Remaining Source Work
 
 The earlier inventory contains 28 DevSkim and 53 CodeQL source reports. Its

@@ -19,6 +19,7 @@ function(superzip_add_zstd_library source_root)
     libzstd_shared SHARED
     ${library_sources}
     "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCoverSelection.cpp"
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCoverWorkGroup.cpp"
     "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyBuffers.cpp"
     "${resource_directory}/libzstd-dll.rc")
   target_compile_features(libzstd_shared PRIVATE cxx_std_20)
