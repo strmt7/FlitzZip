@@ -32,7 +32,8 @@ tool paths supplied through the documented process-scoped variables. Read the
 private receipt and raw reports on failure. Do not infer clean scanning from
 the policy-only scanner, unit fixtures, absent tools or empty input selection.
 The operating guide remains authoritative for provisioning and triage rules.
-The maintainer-approved 21 source dispositions are bound to exact normalized
+The maintainer-approved 27 source dispositions (21 Zstandard/control sites and
+six SDK fixed-width copies) are bound to exact normalized
 source bytes, rule and complete line/column region in the source review ledger.
 Do not expand them without a new individual review and maintainer approval;
 changed source or finding locations remain blocking. Raw SARIF stays complete.

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import hashlib
 import io
 import json
 import re
+import subprocess
 from pathlib import Path
 
 POLICY = Path(".github/scanner-metadata-reviews.csv")
@@ -17,9 +19,13 @@ METADATA_PATH = re.compile(r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/
 SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")
 SOURCE_FIELDS = ("path", "rule", "input_sha256", "startLine", "startColumn", "endLine", "endColumn", "evidence")
 SOURCE_EVIDENCE = "docs/security-source-finding-review-2026-10-04.md"
+SDK_SOURCE = "third_party/lzma_sdk/C/CpuArch.h"
+SDK_EVIDENCE = "docs/security-sdk-finding-review-2026-10-04.md"
+SOURCE_TOOL_VERSION = "1.0.100+ea92e6f3cc"
+MAX_SOURCE_REVIEWS = 27
 SOURCE_PATH = re.compile(
     r"(?:cmake/Zstd(?:CoverSelection|Legacy(?:StreamV0[567]|LiteralsV0[567]|HistoryV0[567]))\.c"
-    r"|tests/zstd/sanitizers/asan_control\.cpp)"
+    r"|tests/zstd/sanitizers/asan_control\.cpp|third_party/lzma_sdk/C/CpuArch\.h)"
 )
 
 
@@ -38,20 +44,30 @@ def read_source_policy(root: Path) -> bytes:
 
 
 # Purpose: Validate exact approved rule/source/region identities, with no wildcard or secret-rule admission.
-# Inputs: Bounded CSV bytes. Outputs: At most 21 unique records; malformed or broader policy raises.
+# Inputs: Bounded CSV bytes. Outputs: At most 27 unique records; malformed or broader policy raises.
 def read_source_reviews(payload: bytes) -> list[dict[str, str]]:
     if len(payload) > MAX_POLICY_BYTES:
         raise ValueError("Scanner source review policy exceeds its byte budget")
     reader = csv.DictReader(io.StringIO(payload.decode("utf-8")))
     if tuple(reader.fieldnames or ()) != SOURCE_FIELDS:
         raise ValueError("Scanner source review fields differ from the approved contract")
-    rows, seen = [], set()
+    rows, seen, counts = [], set(), {SOURCE_EVIDENCE: 0, SDK_EVIDENCE: 0}
     for row in reader:
-        if len(rows) >= 21 or set(row) != set(SOURCE_FIELDS) or any(not value for value in row.values()):
+        if (
+            len(rows) >= MAX_SOURCE_REVIEWS
+            or set(row) != set(SOURCE_FIELDS)
+            or any(not value for value in row.values())
+        ):
             raise ValueError("Scanner source review row is malformed or exceeds approved admission")
         if SOURCE_PATH.fullmatch(row["path"]) is None or row["rule"] not in ("DS121708", "DS161085", "DS154189"):
             raise ValueError("Source review path or rule is outside the maintainer-approved boundary")
-        if re.fullmatch(r"[0-9a-f]{64}", row["input_sha256"]) is None or row["evidence"] != SOURCE_EVIDENCE:
+        evidence = SDK_EVIDENCE if row["path"] == SDK_SOURCE else SOURCE_EVIDENCE
+        counts[evidence] += 1
+        if counts[evidence] > (6 if evidence == SDK_EVIDENCE else 21):
+            raise ValueError("Source review exceeds the individually approved component counts")
+        if row["path"] == SDK_SOURCE and row["rule"] != "DS121708":
+            raise ValueError("SDK source review admits only the six approved fixed-width copy reports")
+        if re.fullmatch(r"[0-9a-f]{64}", row["input_sha256"]) is None or row["evidence"] != evidence:
             raise ValueError("Source review requires an exact digest and approved evidence")
         if any(re.fullmatch(r"[1-9][0-9]{0,6}", row[key]) is None for key in SOURCE_FIELDS[3:7]):
             raise ValueError("Source review requires bounded positive region coordinates")
@@ -91,6 +107,87 @@ def reviewed_source_finding(root: Path, finding: dict, rows: list[dict[str, str]
         if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() == row["input_sha256"]:
             return row
     return None
+
+
+# Purpose: Bind admission to the published source bytes as well as the live checkout.
+# Inputs: Root, full commit SHA and a validated exact review record. Outputs: True only for the bounded Git blob hash.
+def committed_source_matches(root: Path, commit: str, row: dict[str, str]) -> bool:
+    target = f"{commit}:{row['path']}"
+    options = {"cwd": root, "check": True, "capture_output": True, "timeout": 15}
+    size = subprocess.run(["git", "cat-file", "-s", target], **options).stdout.strip()
+    if not size.isdigit() or int(size) > MAX_POLICY_BYTES:
+        raise ValueError("Published reviewed source exceeds its byte budget")
+    payload = subprocess.run(["git", "show", target], **options).stdout
+    return (
+        len(payload) == int(size) and hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() == row["input_sha256"]
+    )
+
+
+# Purpose: Apply the same approved source identities to hosted alerts without changing their state or raw inventory.
+# Inputs: Root, complete alert objects, exact analysis commit and approved policy. Outputs: Reviewed alert IDs only.
+def review_hosted_findings(root: Path, alerts: list[dict], commit: str, policy: bytes) -> list[int]:
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None or len(alerts) > 20000:
+        raise ValueError("Hosted source review requires a full commit and bounded inventory")
+    rows = read_source_reviews(policy)
+    accepted, identities = [], {}
+    for alert in alerts:
+        tool, instance = alert.get("tool", {}), alert.get("most_recent_instance", {})
+        if alert.get("state") != "open" or tool.get("name") != "devskim" or tool.get("version") != SOURCE_TOOL_VERSION:
+            continue
+        if instance.get("commit_sha") != commit or instance.get("category") != "devskim":
+            continue
+        location = instance.get("location", {})
+        finding = {
+            "ruleId": alert.get("rule", {}).get("id"),
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": location.get("path", "")},
+                        "region": dict(
+                            zip(
+                                SOURCE_FIELDS[3:7],
+                                (location.get(key) for key in ("start_line", "start_column", "end_line", "end_column")),
+                                strict=True,
+                            )
+                        ),
+                    }
+                }
+            ],
+        }
+        row = reviewed_source_finding(root, finding, rows)
+        if row is None:
+            continue
+        identity = (row["path"], row["input_sha256"])
+        if identity not in identities:
+            identities[identity] = committed_source_matches(root, commit, row)
+        if identities[identity] and type(alert.get("number")) is int and alert["number"] > 0:
+            accepted.append(alert["number"])
+    if len(set(accepted)) != len(accepted):
+        raise ValueError("Hosted source review contains duplicate alert identities")
+    return accepted
+
+
+# Purpose: Provide bounded, source-bound hosted admission to the canonical PowerShell audit.
+# Inputs: An ignored raw alert snapshot and optional full commit. Outputs: JSON IDs; any invalid input/tool fails.
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--hosted-alerts", required=True, type=Path)
+    parser.add_argument("--commit", default="")
+    arguments = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    with arguments.hosted_alerts.open("rb") as stream:
+        payload = stream.read(16 * 1024**2 + 1)
+    if len(payload) > 16 * 1024**2:
+        raise ValueError("Hosted alert snapshot exceeds its byte budget")
+    alerts = json.loads(payload.decode("utf-8-sig"))
+    if not isinstance(alerts, list) or any(not isinstance(alert, dict) for alert in alerts):
+        raise ValueError("Hosted source review requires a complete alert array")
+    commit = arguments.commit
+    if not commit:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True, timeout=15
+        ).stdout.strip()
+    print(json.dumps(review_hosted_findings(root, alerts, commit, read_source_policy(root))))
 
 
 # Purpose: Freeze bounded review policy bytes without following filesystem redirects.
@@ -176,3 +273,7 @@ def review_findings(root: Path, report: Path, policy: bytes, source_policy: byte
             else:
                 unresolved += 1
     return {"reviewed_metadata": reviewed, "reviewed_source": reviewed_source, "unresolved_count": unresolved}
+
+
+if __name__ == "__main__":
+    main()

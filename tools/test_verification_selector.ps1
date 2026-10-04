@@ -385,6 +385,9 @@ foreach ($guardPath in @('tools/zstd_rewrite_policy.ps1', 'tools/test_zstd_rewri
     Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $guardPath) "Zstandard guard inputs must trigger hosted contracts: $guardPath"
 }
 foreach ($sanitizerPath in @('tools/test_zstd_sanitizers.ps1', '.github/workflows/zstd-sanitizers.yml',
+        'tools/cmake_toolchain.ps1', 'tools/build_parallelism.ps1', 'tools/local_resources.ps1',
+        'tools/process_environment.ps1', 'tools/native_build_provenance.py', 'tests/cpp/test_util.hpp',
+        'tests/cpp/test_main.cpp',
         'cmake/ZstdFutureBoundary.c', 'tests/zstd/future/header.c', 'tests/cpp/test_zstd_future.cpp',
         'third_party/upstream/zstd/v1.5.7/zstd-v1.5.7.zip', 'tests/cpp/zstd_legacy_fixture.hpp', 'cmake/ZstdLibrary.cmake',
         'cmake/ZstdTests.cmake', 'cmake/ZstdRawBlockWriter.c', 'tests/zstd/sanitizers/CMakeLists.txt',
@@ -491,9 +494,12 @@ $fullIntermediate = Get-SuperZipVerificationPlan -ChangedPath @('README.md') -Su
 Assert-Selector ($fullIntermediate.scope.fullEscalationRequired -and $fullIntermediate.workflowWaitPolicy.deferAllowed) `
     'full local escalation must not imply blocking intermediate remote waiting'
 
-foreach ($path in @("tools/github_post_push_audit.ps1", "tools/test_github_post_push_audit.ps1")) {
+foreach ($path in @('tools/github_post_push_audit.ps1', 'tools/test_github_post_push_audit.ps1',
+        'tools/scanner_metadata_review.py', 'tools/test_scanner_metadata_review.py', '.github/scanner-source-reviews.csv')) {
     $auditPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
-    Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
+    if ($path.StartsWith('tools/')) {
+        Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
+    }
     Assert-Selector (-not $auditPlan.scope.fullEscalationRequired) "post-push audit changes must target API failure contracts: $path"
     Assert-Selector (Test-RequiredCommand -Plan $auditPlan -Id "github-post-push-audit-tests") "post-push audit changes must run their offline regressions: $path"
 }

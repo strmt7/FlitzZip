@@ -220,6 +220,8 @@ push/PR commit range and executes only offline tool contracts.
 Zstandard's isolated native ASan qualification runs in `zstd-sanitizers`, with
 the same canonical library, six instrumented targets and source-bound receipt.
 It is required by affected-source plans and observed at the exact pushed SHA.
+Its admission includes the shared test runner/header, CMake provisioning,
+resource/environment helpers and source-identity capture used by the driver.
 The offline contract projection does not run that native build again. Its
 selector contracts check affected path admission and unrelated tooling/docs
 rejection against the real shared push/PR workflow filter.

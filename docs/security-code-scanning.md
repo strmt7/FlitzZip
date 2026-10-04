@@ -16,10 +16,16 @@ instead of inheriting a blanket directory exception.
 
 The October 4 maintainer-approved source dispositions are recorded in
 `.github/scanner-source-reviews.csv` and the
-[individual review](security-source-finding-review-2026-10-04.md). The actual
+[individual review](security-source-finding-review-2026-10-04.md). The
+[SDK copy supplement](security-sdk-finding-review-2026-10-04.md) records the
+six separately approved fixed-width byte-access operations. The actual
 detectors still scan those files. Admission recognizes only each exact source
 hash, rule and complete line/column region; a subsequent source change or a
 new location requires another review. Raw reports and counts stay complete.
+The hosted audit uses the same ledger, additionally requiring the exact
+analysis commit, producer version/category and committed Git blob identity.
+Approved findings remain visible with their raw GitHub state; admission expires
+on source or identity changes and does not dismiss alerts permanently.
 
 `docs/benchmarks/data/` contains passive measurement reports only. DevSkim's
 code-pattern analysis excludes that whole directory after

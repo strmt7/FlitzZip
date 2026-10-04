@@ -1,5 +1,6 @@
 param(
     [string]$Repository = "",
+    [string]$Commit = "",
     [switch]$IncludeHistory,
     [string]$HistoryReportPath = ""
 )
@@ -165,11 +166,53 @@ function Assert-NoDeployment {
     }
 }
 
-# Purpose: Verify that open code-scanning alerts are limited to approved residual Scorecard findings.
+# Purpose: Resolve exact approved source alerts without dismissing or filtering the hosted inventory.
+# Inputs: Complete validated alerts and optional analysis commit; the existing source ledger remains authoritative.
+# Outputs: Reviewed IDs only; unavailable tools, stale source/analysis or malformed output fail closed.
+function Get-ReviewedSourceAlertId {
+    param([object[]]$Alerts, [string]$AnalysisCommit)
+    $candidates = @($Alerts | Where-Object { $_.tool.name -eq 'devskim' })
+    if ($candidates.Count -eq 0) { return @() }
+    $directory = Join-Path $repoRoot 'out/hosted-source-review'
+    foreach ($path in @((Join-Path $repoRoot 'out'), $directory)) {
+        if ((Test-Path -LiteralPath $path) -and
+            ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Refusing a redirected hosted source review directory.'
+        }
+    }
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $snapshot = Join-Path $directory ([guid]::NewGuid().ToString('N') + '.json')
+    ConvertTo-Json -InputObject $Alerts -Depth 20 | Set-Content -LiteralPath $snapshot -Encoding UTF8
+    $arguments = @('-3', '-m', 'tools.scanner_metadata_review', '--hosted-alerts', $snapshot)
+    if ($AnalysisCommit) { $arguments += @('--commit', $AnalysisCommit) }
+    Push-Location $repoRoot
+    try {
+        $output = & py @arguments
+        if ($LASTEXITCODE -ne 0) { throw 'Exact hosted source admission failed; reviewed alerts remain blocking.' }
+    } finally { Pop-Location }
+    $parameters = @{ InputObject = ($output -join "`n") }
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('NoEnumerate')) {
+        $parameters.NoEnumerate = $true
+    }
+    $document = @(ConvertFrom-Json @parameters)
+    if ($document.Count -ne 1 -or $document[0] -isnot [System.Array]) {
+        throw 'Hosted source review returned a non-array result.'
+    }
+    $ids = $document[0]
+    $seen = [System.Collections.Generic.HashSet[long]]::new()
+    foreach ($id in $ids) {
+        if ($id -isnot [int] -and $id -isnot [long]) { throw 'Hosted source review returned an invalid ID.' }
+        if ($id -le 0 -or $id -notin $candidates.number) { throw 'Hosted source review returned an unrelated ID.' }
+        if (-not $seen.Add([long]$id)) { throw 'Hosted source review returned a duplicate ID.' }
+    }
+    return $ids
+}
+
+# Purpose: Verify open alerts are limited to approved policy residuals and exact source dispositions.
 # Inputs: `Alerts` contains validated open alerts only, never resolved or dismissed history.
 # Outputs: Throws with full grouped counts and bounded examples when an unapproved alert is open.
 function Assert-CodeScanningAllowList {
-    param([object[]]$Alerts)
+    param([object[]]$Alerts, [string]$AnalysisCommit)
 
     $allowedScorecardRules = @(
         "MaintainedID",
@@ -177,9 +220,12 @@ function Assert-CodeScanningAllowList {
         "BranchProtectionID",
         "CIIBestPracticesID"
     )
+    $reviewedSource = @(Get-ReviewedSourceAlertId -Alerts $Alerts -AnalysisCommit $AnalysisCommit)
+    Write-Output "Exact approved source alerts: $($reviewedSource.Count); raw hosted states remain unchanged."
 
     $violations = @($Alerts | Where-Object {
-        -not ($_.tool.name -eq "Scorecard" -and $allowedScorecardRules -contains $_.rule.id)
+        -not (($_.tool.name -eq "Scorecard" -and $allowedScorecardRules -contains $_.rule.id) -or
+            $_.number -in $reviewedSource)
     })
     if ($violations.Count -gt 0) {
         $groups = $violations | Group-Object { "$($_.tool.name)/$($_.rule.id)" } | Sort-Object Name | ForEach-Object {
@@ -219,5 +265,5 @@ if ($IncludeHistory) {
     }
 }
 $alerts = @($inventory | Where-Object state -eq 'open')
-Assert-CodeScanningAllowList -Alerts $alerts
+Assert-CodeScanningAllowList -Alerts $alerts -AnalysisCommit $Commit
 Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Open code-scanning alerts: $($alerts.Count)."

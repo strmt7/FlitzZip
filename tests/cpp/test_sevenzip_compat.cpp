@@ -273,3 +273,53 @@ TEST_CASE(sevenzip_extraction_rejects_missing_name_property_without_crash) {
     REQUIRE_TRUE(rejected);
     REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
 }
+
+// Purpose: Exercise bounded folder scanning through complete checksum-correct production archives.
+// Inputs: A valid empty Copy folder and invalid coder counts, descriptors, properties and binding graphs.
+// Outputs: The valid control extracts exactly one empty file; every invalid graph fails before output.
+TEST_CASE(sevenzip_folder_scanner_preserves_descriptor_and_binding_bounds) {
+    const std::vector<std::vector<unsigned char>> descriptors{
+        {1, 1, 0},                            // Valid single Copy coder.
+        {0},                                  // Missing coder.
+        {65},                                 // Coder-count limit.
+        {1, 0xC1, 0},                         // Reserved descriptor flags.
+        {1, 9, 0},                            // Method identifier larger than eight bytes.
+        {1, 0x11, 0, 65, 1},                  // Input-stream limit.
+        {1, 0x11, 0, 1, 2},                   // Multiple coder outputs.
+        {1, 0x21, 0, 127},                    // Property extent beyond the remaining header.
+        {2, 1, 0, 1, 0, 2, 0},                // Bond input outside the graph.
+        {2, 1, 0, 1, 0, 0, 2},                // Bond output outside the graph.
+        {3, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1},    // Duplicate bound input.
+        {3, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0},    // Duplicate bound output.
+        {2, 0x11, 0, 0, 1, 0x11, 0, 0, 1},    // Fewer inputs than bonds.
+        {2, 0x11, 0, 32, 1, 0x11, 0, 33, 1},  // Aggregate input-stream limit.
+        {1, 0x11, 0, 2, 1, 0, 0},             // Duplicate packed-stream index.
+    };
+    for (std::size_t index = 0; index < descriptors.size(); ++index) {
+        // Header/MainStreamsInfo/PackInfo: one zero-byte packed stream; one inline folder.
+        std::vector<unsigned char> header{1, 4, 6, 0, 1, 9, 0, 0, 7, 11, 1, 0};
+        header.insert(header.end(), descriptors[index].begin(), descriptors[index].end());
+        header.push_back(12);  // CodersUnpackSize.
+        header.insert(header.end(), descriptors[index][0], 0);
+        // End unpack/main streams, then one named file and the header terminator.
+        const std::array<unsigned char, 13> files{0, 0, 5, 1, 17, 5, 0, 'x', 0, 0, 0, 0, 0};
+        header.insert(header.end(), files.begin(), files.end());
+        const auto root = test_temp_dir("sevenzip-folder-graph-" + std::to_string(index));
+        const auto archive = root / "folder.7z";
+        write_7z_fixture(archive, make_unencoded_7z(header));
+        if (index == 0) {
+            static_cast<void>(superzip::extract_7z(archive, root / "out", false));
+            REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(1));
+            REQUIRE_EQ(std::filesystem::file_size(root / "out" / "x"), static_cast<std::uintmax_t>(0));
+        } else {
+            bool rejected = false;
+            try {
+                static_cast<void>(superzip::extract_7z(archive, root / "out", false));
+            } catch (const superzip::ArchiveError&) {
+                rejected = true;
+            }
+            REQUIRE_TRUE(rejected);
+            REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(0));
+        }
+    }
+}

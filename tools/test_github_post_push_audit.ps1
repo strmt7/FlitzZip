@@ -49,13 +49,13 @@ function Test-AuditCase {
     param(
         [string]$Name, [object[]]$Responses, [string]$Failure = '',
         [switch]$IncludeHistory, [string]$HistoryReportPath = '',
-        [AllowEmptyString()][string]$Repository = 'fixture/repository'
+        [AllowEmptyString()][string]$Repository = 'fixture/repository', [string]$Commit = ''
     )
     $auditReplies.Clear()
     foreach ($response in $Responses) { $auditReplies.Enqueue($response) }
     $message = ''
     try {
-        & (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') -Repository $Repository `
+        & (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') -Repository $Repository -Commit $Commit `
             -IncludeHistory:$IncludeHistory -HistoryReportPath $HistoryReportPath 6>&1 | Out-Null
     } catch {
         $message = $_.Exception.Message
@@ -175,6 +175,45 @@ Test-AuditCase 'unapproved history entry still blocks' @($emptyDeployments, (Get
 Test-AuditCase 'all-state later page retained' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 0 ($historyJson.Replace('"number":2', '"number":101').Replace('"number":3', '"number":102')))) -IncludeHistory
 Test-AuditCase 'all-state partial history fails' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 1 '[]')) 'code-scanning API failed' -IncludeHistory
 Test-AuditCase 'missing history authorization for report' @() 'requires IncludeHistory' -HistoryReportPath 'unused.json'
+
+# Purpose: Exercise the PowerShell consumer of exact source admission without invoking external tools.
+# Inputs: Production Python arguments, complete JSON snapshot, and fixture output/status.
+# Outputs: Verifies checkout/commit/raw-state binding and returns the configured admission response.
+function Invoke-TestSourceReview {
+    if ($args.Count -ne 7 -or ($args[0..3] -join ' ') -ne '-3 -m tools.scanner_metadata_review --hosted-alerts' -or
+        $args[5] -ne '--commit' -or $args[6] -ne $sourceCommit -or
+        (Get-Location).Path -ne (Split-Path -Parent $PSScriptRoot)) {
+        throw 'Hosted source admission lost checkout or exact-commit binding.'
+    }
+    $snapshot = Get-Content -LiteralPath $args[4] -Raw | ConvertFrom-Json
+    if (@($snapshot).Count -ne $sourceSnapshotCount -or $snapshot[0].number -ne 77 -or $snapshot[0].state -ne 'open') {
+        throw 'Hosted source admission lost the complete raw alert snapshot.'
+    }
+    $global:LASTEXITCODE = $sourceExitCode
+    return $sourceReply
+}
+$sourceCommit = 'a' * 40
+$sourceExitCode = 0
+$sourceSnapshotCount = 1
+$sourceReply = '[77]'
+$sourceJson = '[{"number":77,"state":"open","tool":{"name":"devskim"},"rule":{"id":"DS121708"}}]'
+Set-Alias -Name py -Value Invoke-TestSourceReview -Scope Script
+try {
+    Test-AuditCase 'exact approved source is admitted without dismissal' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) -Commit $sourceCommit
+    $sourceSnapshotCount = 2
+    $mixedJson = $sourceJson.TrimEnd(']') + ',' + $unapprovedJson.TrimStart('[')
+    Test-AuditCase 'source approval cannot admit another producer' @($emptyDeployments, (Get-ApiReply $alerts 0 $mixedJson)) 'Unapproved code-scanning alerts are open: 1.' -Commit $sourceCommit
+    $sourceSnapshotCount = 1
+    foreach ($invalidReply in @('[2]', '["77"]', '77', '{}', 'null', '[77,77]')) {
+        $sourceReply = $invalidReply
+        Test-AuditCase 'malformed or unrelated admission remains blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Hosted source review returned' -Commit $sourceCommit
+    }
+    $sourceReply = '[77]'
+    $sourceExitCode = 1
+    Test-AuditCase 'failed admission cannot consume plausible output' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Exact hosted source admission failed' -Commit $sourceCommit
+} finally {
+    Remove-Item -LiteralPath Alias:py
+}
 
 $reportRoot = Join-Path ([IO.Path]::GetTempPath()) ('superzip-history-audit-' + [Guid]::NewGuid().ToString('N'))
 $reportPath = Join-Path $reportRoot 'history.json'

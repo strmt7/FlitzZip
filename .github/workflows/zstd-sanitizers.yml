@@ -10,9 +10,16 @@ on:
       - tests/zstd/**
       - tests/cpp/test_zstd*.cpp
       - tests/cpp/zstd_legacy_fixture.hpp
+      - tests/cpp/test_util.hpp
+      - tests/cpp/test_main.cpp
       - tests/cmake/test_zstd*.cmake
       - third_party/upstream/zstd/**
       - tools/test_zstd_sanitizers.ps1
+      - tools/cmake_toolchain.ps1
+      - tools/build_parallelism.ps1
+      - tools/local_resources.ps1
+      - tools/process_environment.ps1
+      - tools/native_build_provenance.py
       - .github/workflows/zstd-sanitizers.yml
   pull_request:
     paths: *sanitizer-inputs

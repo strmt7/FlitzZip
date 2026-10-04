@@ -46,3 +46,11 @@ both Windows unit tests and Linux sanitizer fuzzer initialization.
 The missing `SetBe16` byte-store definition is supplied for the SDK's existing
 `SetBe16a` alias, with the same two-byte big-endian contract.
 The upstream provenance archive is not modified, and sanitizer checks stay enabled.
+
+The folder-header scanner separates bounded coder descriptors, unique stream
+bindings and folder-table storage. Error ordering, allocation cleanup and the
+successful cursor commit are retained. Cursor offsets use consumed byte counts
+so an empty external buffer does not require subtraction of null pointers.
+The SDK's narrower-address-space allocation limits remain enabled on those
+architectures; the stricter 31-bit index limit remains unconditional. Obsolete
+disabled debug fragments were removed from the imported sources.

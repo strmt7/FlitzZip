@@ -206,7 +206,96 @@ class ScannerSourceReviewTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 review.read_source_reviews(payload)
-        self.assertEqual(len(self.rows), 21)
+        self.assertEqual(len(self.rows), 27)
+
+    # Purpose: Reuse exact local source matching while additionally binding hosted admission to committed bytes.
+    # Inputs: An independently assembled GitHub record. Outputs: One approved ID with no raw state mutation.
+    def hosted_fixture(self):
+        return {
+            "number": 42,
+            "state": "open",
+            "tool": {"name": "devskim", "version": review.SOURCE_TOOL_VERSION},
+            "rule": {"id": self.row["rule"]},
+            "most_recent_instance": {
+                "commit_sha": "a" * 40,
+                "category": "devskim",
+                "location": {
+                    "path": self.row["path"],
+                    **dict(
+                        zip(
+                            ("start_line", "start_column", "end_line", "end_column"),
+                            (int(self.row[key]) for key in review.SOURCE_FIELDS[3:7]),
+                            strict=True,
+                        )
+                    ),
+                },
+            },
+        }
+
+    # Purpose: Preserve hosted state and require committed source identity in addition to the local digest.
+    # Inputs: Exact and nonmatching published blobs. Outputs: Admission passes only the exact published source.
+    def test_hosted_committed_identity(self):
+        from unittest.mock import patch
+
+        alert = self.hosted_fixture()
+        before = copy.deepcopy(alert)
+        with patch.object(review, "committed_source_matches", return_value=True) as committed:
+            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [42])
+            committed.assert_called_once()
+        self.assertEqual(alert, before)
+        with patch.object(review, "committed_source_matches", return_value=False):
+            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [])
+
+    # Purpose: Reject stale analyses, changed producer/category/rule/region and malformed identities independently.
+    # Inputs: Independent GitHub record mutations. Outputs: Every unmatched record remains blocking.
+    def test_hosted_freshness_boundaries(self):
+        from unittest.mock import patch
+
+        mutations = [
+            ("tool", "version", "1.0.101"),
+            ("tool", "name", "other"),
+            ("most_recent_instance", "commit_sha", "b" * 40),
+            ("most_recent_instance", "category", "other"),
+            ("rule", "id", "DS117838"),
+        ]
+        for container, key, value in mutations:
+            alert = self.hosted_fixture()
+            alert[container][key] = value
+            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [])
+        for key in ("start_line", "start_column", "end_line", "end_column"):
+            alert = self.hosted_fixture()
+            alert["most_recent_instance"]["location"][key] += 1
+            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [])
+        with patch.object(review, "committed_source_matches", return_value=True):
+            alert = self.hosted_fixture()
+            with self.assertRaises(ValueError):
+                review.review_hosted_findings(self.root, [alert, alert], "a" * 40, self.policy)
+        with self.assertRaises(ValueError):
+            review.review_hosted_findings(self.root, [], "HEAD", self.policy)
+
+    # Purpose: Reject unexpected SDK rules and stale approved bytes across every registered component.
+    # Inputs: The current approved ledger and all its source files. Outputs: Every row matches its actual file/region.
+    def test_all_registered_source_identities(self):
+        checkout = Path(__file__).resolve().parents[1]
+        for row in self.rows:
+            finding = {
+                "ruleId": row["rule"],
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": row["path"]},
+                            "region": {key: int(row[key]) for key in review.SOURCE_FIELDS[3:7]},
+                        }
+                    }
+                ],
+            }
+            self.assertIsNotNone(review.reviewed_source_finding(checkout, finding, self.rows))
+        with self.assertRaises(ValueError):
+            review.read_source_reviews(
+                self.policy.replace(
+                    b'"third_party/lzma_sdk/C/CpuArch.h","DS121708"', b'"third_party/lzma_sdk/C/CpuArch.h","DS161085"'
+                )
+            )
 
 
 if __name__ == "__main__":

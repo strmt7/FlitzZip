@@ -36,7 +36,8 @@ the Security tab, released artifacts, or the product UI again.
   sanitizer coverage or treating an unchanged-source result as a fresh run.
 
 - Exact source dispositions must not become permanent exclusions. The October 4
-  maintainer approval covers 21 individually documented DevSkim locations only.
+  maintainer approvals cover 21 Zstandard/control sites and six SDK fixed-width
+  copy locations, each individually documented.
   Admission binds normalized whole-file bytes and complete rule/region identity,
   retains raw SARIF, and rejects changed bytes, coordinates, rules, multiple
   locations, redirects, malformed policy and broader source paths. Its regression

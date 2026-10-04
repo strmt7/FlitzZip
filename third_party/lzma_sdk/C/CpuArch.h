@@ -221,10 +221,6 @@ EXTERN_C_BEGIN
 #endif
 
 
-// #undef MY_CPU_NAME
-// #undef MY_CPU_SIZEOF_POINTER
-// #define __e2k__
-// #define __SIZEOF_POINTER__ 4
 #if  defined(__e2k__)
   #define MY_CPU_E2K
   #if defined(__ILP32__) || defined(__SIZEOF_POINTER__) && (__SIZEOF_POINTER__ == 4)

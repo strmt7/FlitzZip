@@ -2,6 +2,25 @@
 
 ## Continuation Checkpoint
 
+The October 4 repairs are published at `7b3b14f`. All seven affected workflows
+pass, including the dedicated native ASan workflow. The complete post-push
+inventory contains 83 open alerts: two permitted Scorecard policy residuals,
+28 DevSkim reports and 53 CodeQL reports, including six critical pointer reports.
+The audit continues to block unapproved findings; workflow success alone is not
+security acceptance.
+
+The next batch separates the SDK folder parser into bounded descriptor,
+binding and stream-table stages while retaining its error ordering. A valid
+empty Copy folder and 14 malformed folder cases exercise the actual decoder;
+the HIP build, full native validation and all 17 direct 7z tests pass. The
+maintainer also approved six individually reviewed fixed-width SDK copies,
+bringing the exact DevSkim source ledger to 27 sites. Hosted admission now
+requires the same rule, full region, scanner version, analysis commit and
+whole-file source identity as local admission, including the committed Git
+blob. Raw reports and hosted states remain intact. All other findings remain
+blocking. Shared native and sanitizer driver dependencies now participate in
+automatic affected-input selection. These repairs do not lift the release pause.
+
 The next October 4 continuation received explicit maintainer approval for the
 21 individually reviewed DevSkim source/test reports. Exact rule, normalized
 source hash and complete region admission now retains all raw reports and

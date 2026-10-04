@@ -266,7 +266,7 @@ while ($true) {
 
 if ($Mode -eq 'final' -and $plan.postPushAuditRequired) {
     try {
-        & (Join-Path $PSScriptRoot "github_post_push_audit.ps1") -Repository $repositorySlug
+        & (Join-Path $PSScriptRoot "github_post_push_audit.ps1") -Repository $repositorySlug -Commit $commitSha
         $auditState = 'passed'
     } catch {
         Save-WorkflowCheckpoint -Root $repoRoot -Repository $repositorySlug -Commit $commitSha `

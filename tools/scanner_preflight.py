@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from tools.devskim_scope import validate_report_directory, write_options
-from tools.scanner_metadata_review import read_policy, read_source_policy, review_findings
+from tools.scanner_metadata_review import SOURCE_TOOL_VERSION, read_policy, read_source_policy, review_findings
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 64 * 1024 * 1024
@@ -137,6 +137,8 @@ def require_versions(gitleaks: str, devskim: str) -> dict:
             "version"
         ],
     }
+    if expected["devskim"] != SOURCE_TOOL_VERSION.split("+")[0]:
+        raise ValueError("DevSkim identity changed; exact source dispositions require renewed individual review")
     observed = {}
     for name, executable, argument in (("gitleaks", gitleaks, "version"), ("devskim", devskim, "--version")):
         result = run_scanner([executable, argument], 15)
