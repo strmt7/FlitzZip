@@ -132,6 +132,12 @@ try {
     Test-AuditCase -Name 'edited vendor C and next-line braces require contracts' -Options '-ChangedOnly' -Expected @($vendorPath)
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('static int parse(', '    int value)', '{', '    return value;', '}'))
     Test-AuditCase -Name 'complete vendor C contracts are admitted' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('extern "C"', 'int parse(int first,',
+        '          int second) {', '    return first + second;', '}'))
+    Test-AuditCase -Name 'multiline attached-brace signatures keep their preceding contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('extern "C"', 'int parse(int first,',
+        '          int second) {', '    return first + second;', '}')
+    Test-AuditCase -Name 'multiline attached-brace signatures still require all contract fields' -Options '-ChangedOnly' -Expected @($vendorPath)
     foreach ($field in @('Inputs', 'Outputs')) {
         $incomplete = @($contract | Where-Object { $_ -notmatch ($field + ':') })
         Write-AuditFixture -RelativePath $vendorPath -Lines ($incomplete + @('int parse(void)', '{', '    return 1;', '}'))

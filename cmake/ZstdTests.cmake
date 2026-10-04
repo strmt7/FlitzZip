@@ -15,11 +15,20 @@ set(_raw_block_probe "${CMAKE_CURRENT_BINARY_DIR}/tests/zstd_raw_block_probe.c")
 superzip_generate_zstd_raw_block_probe(
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/compress/zstd_compress_internal.h"
   "${_raw_block_probe}")
+include("${SUPERZIP_SOURCE_ROOT}/tests/zstd/HuffmanTableProbe.cmake")
+set(_huffman_probe
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/zstd_huffman_table_probe.c")
+superzip_generate_zstd_huffman_probe(
+  "${SUPERZIP_ZSTD_LIBRARY_DIR}/decompress/huf_decompress.c"
+  "${_huffman_probe}")
 add_executable(
   superzip_zstd_bounds_tests
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_main.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_bounds.cpp"
-  "${_raw_block_probe}")
+  "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_huffman_table.cpp"
+  "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_fse_table.cpp"
+  "${_raw_block_probe}"
+  "${_huffman_probe}")
 target_include_directories(
   superzip_zstd_bounds_tests
   PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/cpp"
@@ -76,7 +85,7 @@ add_executable(
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_main.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_cover_selection.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_dictionary_merge.cpp"
-  "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.c"
+  "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.cpp"
   "${_dictionary_merge_probe}"
   $<TARGET_OBJECTS:superzip_zstd_cover_probe>
   $<TARGET_OBJECTS:superzip_zstd_cover_owner_probe>
@@ -147,7 +156,7 @@ add_executable(
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_legacy_failures.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_legacy_history.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_legacy_buffers.cpp"
-  "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.c"
+  "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/legacy_driver.c"
   $<TARGET_OBJECTS:superzip_zstd_legacy_fault_objects>
   $<TARGET_OBJECTS:superzip_zstd_legacy_buffer_probe>
@@ -158,9 +167,22 @@ target_include_directories(
   PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/cpp" "${SUPERZIP_SOURCE_ROOT}/cmake"
           "${SUPERZIP_SOURCE_ROOT}/tests/zstd" "${SUPERZIP_ZSTD_LIBRARY_DIR}")
 target_compile_definitions(
-  superzip_zstd_legacy_tests PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_
-                                     ZSTD_DISABLE_ASM _CRT_SECURE_NO_WARNINGS
-                                     NOMINMAX WIN32_LEAN_AND_MEAN)
+  superzip_zstd_legacy_tests
+  PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
+          _CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
+# Production and fault owners have distinct C symbols. This prevents duplicate
+# definitions from obscuring the tested ownership graph in linked analysis.
+foreach(target IN
+        ITEMS superzip_zstd_legacy_fault_objects
+              superzip_zstd_legacy_buffer_probe superzip_zstd_legacy_tests)
+  target_compile_definitions(
+    ${target}
+    PRIVATE ZBUFF_createOwnedBuffers=sz_fault_createOwnedBuffers
+            ZBUFF_reserveOwnedBuffers=sz_fault_reserveOwnedBuffers
+            ZBUFF_viewOwnedBuffers=sz_fault_viewOwnedBuffers
+            ZBUFF_releaseOwnedBuffers=sz_fault_releaseOwnedBuffers
+            ZBUFF_copyBytes=sz_fault_copyBytes)
+endforeach()
 add_test(NAME superzip_zstd_legacy_tests COMMAND superzip_zstd_legacy_tests)
 add_test(
   NAME superzip_zstd_legacy_patch

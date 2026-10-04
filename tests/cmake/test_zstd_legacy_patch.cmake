@@ -49,6 +49,8 @@ function(prepare_fixture name output)
       "zstd-1.5.7/lib/dictBuilder/zdict.c"
       "zstd-1.5.7/lib/common/entropy_common.c" "zstd-1.5.7/lib/common/huf.h"
       "zstd-1.5.7/lib/common/xxhash.h" "zstd-1.5.7/lib/compress/fse_compress.c"
+      "zstd-1.5.7/lib/common/fse.h"
+      "zstd-1.5.7/lib/compress/zstd_compress_sequences.c"
       "zstd-1.5.7/lib/compress/huf_compress.c"
       "zstd-1.5.7/lib/compress/zstd_compress.c"
       "zstd-1.5.7/lib/compress/zstd_lazy.c"
@@ -293,7 +295,10 @@ math(EXPR original_length "${original_end} - ${original_begin}")
 string(SUBSTRING "${original_cover}" ${original_begin} ${original_length}
                  original_selection)
 file(READ "${REPO_ROOT}/cmake/ZstdCoverSelection.c" repaired_selection)
-file(READ "${fresh}/lib/dictBuilder/cover.c" repaired_cover)
+# Build the exact preceding full repair directly from the immutable fixture;
+# later evaluation changes must not alter this historical migration control.
+superzip_patch_zstd_base("${previous_cover}")
+file(READ "${_previous_cover_source}" repaired_cover)
 string(REPLACE "${repaired_selection}\n" "${original_selection}"
                previous_cover_content "${repaired_cover}")
 string(
@@ -324,6 +329,8 @@ if(NOT migrated_cover_hash STREQUAL fresh_cover_hash)
   message(FATAL_ERROR "COVER cleanup migration differs from fresh repair")
 endif()
 set(BOUNDARIES
+    "lib/common/fse.h"
+    "lib/compress/zstd_compress_sequences.c"
     "lib/legacy/zstd_v05.c"
     "lib/legacy/zstd_legacy.h"
     "lib/common/allocations.h"

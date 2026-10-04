@@ -31,6 +31,9 @@ function Assert-ZstdPolicyMutation {
 
 try {
     foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
+            'cmake/ZstdDictionaryEvaluation.cmake',
+            'cmake/ZstdHuffmanTable.c', 'tests/cpp/test_zstd_huffman_table.cpp', 'tests/zstd/fault_allocator.cpp',
+            'cmake/ZstdFseTableGeometry.c', 'tests/cpp/test_zstd_fse_table.cpp',
             'cmake/ZstdLegacyBuffers.cpp', 'cmake/ZstdLibrary.cmake', 'tests/cpp/test_zstd_legacy_buffers.cpp',
             'cmake/ZstdLegacyOwnedStreamV05.c', 'cmake/ZstdLegacyOwnedStreamV06.c', 'cmake/ZstdLegacyOwnedStreamV07.c',
             'cmake/ZstdLegacyPublicStream.c', 'tests/cpp/test_zstd_bounds.cpp',
@@ -55,6 +58,13 @@ try {
             @('cmake/ZstdCoverSelection.cpp', 'content.initializedOffset > content.capacity', 'content.initializedOffset > 0', 'dictionary allocation geometry'),
             @('cmake/ZstdCoverSelection.cpp', 'content.capacity > static_cast<std::size_t>(PTRDIFF_MAX)', 'content.capacity > 0', 'dictionary pointer extent'),
             @('cmake/ZstdCoverSelection.cpp', 'using DictionaryOwner = std::unique_ptr<BYTE[], DictionaryDelete>;', 'using DictionaryOwner = BYTE*;', 'dictionary scoped ownership'),
+            @('cmake/ZstdHuffmanTable.c', 'count > (table.capacity - entries) / length', 'count > table.capacity', 'Huffman ranked table capacity'),
+            @('cmake/ZstdHuffmanTable.c', 'symbol != symbolCount', 'symbol > symbolCount', 'Huffman complete symbol geometry'),
+            @('cmake/ZstdFseTableGeometry.c', 'tableLog > 15 || maxSymbolValue > 255', 'tableLog > 15', 'FSE descriptor geometry'),
+            @('cmake/ZstdCoverSelection.cpp', 'sampleOffsets[index] != extent || sampleSizes[index] > limit - extent', 'sampleOffsets[index] != extent', 'dictionary packed sample geometry'),
+            @('cmake/ZstdCoverSelection.cpp', 'written > output.size() || written > static_cast<std::size_t>(PTRDIFF_MAX) - total', 'written > output.size()', 'dictionary aggregate overflow'),
+            @('cmake/ZstdCoverSelection.cpp', 'largestDictSize > dictBufferCapacity', 'largestDictSize == 0', 'dictionary finalized capacity'),
+            @('cmake/ZstdDictionaryEvaluation.cmake', 'if (samplesSizes[i] > (size_t)-1 - sum)', 'if (0)', 'dictionary input accumulation overflow'),
             @('cmake/ZstdCoverSelection.cpp', 'const auto suffix = initialized.last(candidateContentSize);', 'const auto suffix = allocation.last(candidateContentSize);', 'dictionary bounded suffix'),
             @('cmake/ZstdDictionaryBounds.cmake', 'COVER_freeSelectedDictionary(selection.dictContent);', 'free(selection.dictContent);', 'dictionary matching release'),
             @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_raw_block_writer("${source_dir}")', '# omitted raw-block patch', 'raw-block patch dispatch'),

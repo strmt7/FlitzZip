@@ -30,6 +30,9 @@ void sz_fault_free(void* address);
 /* Purpose: Inspect fixture ownership; no inputs, returns the live allocation count. */
 size_t sz_fault_live_allocations(void);
 
+/* Purpose: Inspect allocation ordering. Inputs: None. Outputs: Attempts since the last serial reset. */
+size_t sz_fault_allocation_attempts(void);
+
 /* Purpose: Inspect fixture release failures; no inputs, returns the invalid-free count. */
 size_t sz_fault_invalid_frees(void);
 

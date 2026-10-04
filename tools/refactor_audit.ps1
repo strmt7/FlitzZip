@@ -355,7 +355,7 @@ function Get-CppFunctionStart {
     $candidate = $Lines[$Index].Trim()
     if ($candidate -notmatch '\{\s*$') { return -1 }
     $start = $Index
-    if ($candidate -eq '{') {
+    if ($candidate -eq '{' -or $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
         for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 12); --$i) {
             $line = $Lines[$i].Trim()
             if (-not $line) { continue }
@@ -363,6 +363,11 @@ function Get-CppFunctionStart {
             $start = $i
             if ($line -match '\b[A-Za-z_]\w*\s*\(') { break }
         }
+    }
+    if ($start -gt 0 -and $Lines[$start - 1].Trim() -eq 'extern') {
+        # The projection masks the linkage string; keep a separate extern "C"
+        # line with its declaration so the preceding contract remains adjacent.
+        --$start
     }
     $signature = (($Lines[$start..$Index] -join ' ').Trim())
     if ($signature -match '^(if|else|for|while|switch|catch|TEST_CASE)\b' -or

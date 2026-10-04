@@ -36,6 +36,35 @@ Its valid final-byte access and deliberate one-past-allocation access remain.
 Qualification must still observe ASan termination and a heap-overflow diagnostic;
 the rewrite cannot remove or catch the expected fault.
 
+Dictionary evaluation now shares the selector's C++ ownership boundary. Packed
+sample offsets must match a checked accumulation of their sizes before any
+sample subview is formed. Train/finalization counts, null nonempty inputs,
+nonfinite split points and unrepresentable extents are rejected before allocation
+or finalizer access. Finalized dictionaries must fit their actual allocation.
+Compression output and aggregate size are independently bounded, and compression
+contexts, prepared dictionaries and output arrays have matching scoped cleanup.
+Both dictionary builders reject sample-size accumulation overflow through the
+existing input-size limit. Tests retain allocation failures and independently
+decompress every evaluated frame; declared C allocations still require live
+caller storage and are not proved by metadata alone.
+
+The packed Huffman fill now validates all symbol ranks and table capacity before
+publishing typed entries. It no longer writes wide integer values through
+smaller-entry pointers. FSE table construction and state/sequence consumers
+share an explicit header and checked region description. Invalid descriptors
+are rejected before construction shifts or region pointers; the packed ABI is
+unchanged. Direct controls check ranked entries, canaries, malformed metadata,
+RLE geometry, boundary symbols and all supported descriptor sizes.
+
+The serial fault fixture now retains exclusive array owners instead of a raw
+address registry with manual allocation/release. Null, foreign and repeated
+release attempts retain every other owner. Its controls fill the entire record
+budget and verify exhaustion, failed resets with live storage and exact cleanup.
+Production and interposed legacy owners have separate C symbols, preserving
+observable failures while removing ambiguous duplicate definitions from linked
+analysis. Architecture-specific range checks remain active where their operand
+ranges require them; wider targets retain the owner's capacity admission.
+
 The buffered legacy decoders now retain one opaque C++ ownership tree for input
 and output storage. Their C state has no independent allocation capacities:
 stages borrow the actual buffer geometry from that owner. Default arrays use

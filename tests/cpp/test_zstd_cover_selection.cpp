@@ -9,6 +9,7 @@ extern "C" {
 #include "zstd_errors.h"
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <span>
 
@@ -239,5 +240,140 @@ TEST_CASE(zstd_cover_selection_rejects_invalid_allocation_geometry) {
     REQUIRE_TRUE(COVER_dictSelectionIsError(result));
     REQUIRE_EQ(ZSTD_getErrorCode(result.totalCompressedSize), ZSTD_error_parameter_outOfBound);
     REQUIRE_EQ(probe.calls, 0U);
+    REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+}
+
+// Purpose: Reject malformed packed sample metadata before finalization or temporary allocation.
+// Inputs: Live small arrays with gaps, reversed offsets, overflow, invalid counts and null byte storage.
+// Outputs: Requires parameter errors without sample reads, finalizer calls or retained allocations.
+TEST_CASE(zstd_cover_evaluation_rejects_invalid_sample_geometry) {
+    SelectionFixture fixture(680U, 1U);
+    ZDICT_cover_params_t params{};
+    params.splitPoint = 1.0;
+    const auto reject = [&](const BYTE* bytes, const std::size_t* sizes, std::size_t* offsets, std::size_t train,
+                            std::size_t count, double split) {
+        REQUIRE_TRUE(sz_fault_reset(1U));
+        params.splitPoint = split;
+        const auto result = COVER_checkTotalCompressedSize(params, sizes, bytes, offsets, train, count,
+                                                           fixture.content.data(), fixture.content.size());
+        REQUIRE_EQ(ZSTD_getErrorCode(result), ZSTD_error_parameter_outOfBound);
+        REQUIRE_EQ(sz_fault_allocation_attempts(), 0U);
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+    };
+    std::array<std::size_t, 2> sizes{8U, 8U};
+    std::array<std::size_t, 2> offsets{0U, 9U};
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 0U, 2U, 1.0);
+    offsets = {1U, 8U};
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 0U, 2U, 1.0);
+    offsets = {0U, 8U};
+    sizes[1] = static_cast<std::size_t>(PTRDIFF_MAX);
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 0U, 2U, 1.0);
+    sizes[1] = 8U;
+    reject(nullptr, sizes.data(), offsets.data(), 0U, 2U, 1.0);
+    reject(fixture.samples.data(), nullptr, offsets.data(), 0U, 2U, 1.0);
+    reject(fixture.samples.data(), sizes.data(), nullptr, 0U, 2U, 1.0);
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 3U, 2U, 1.0);
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 0U, 2U, -1.0);
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 0U, 2U, std::numeric_limits<double>::quiet_NaN());
+    reject(fixture.samples.data(), sizes.data(), offsets.data(), 0U, static_cast<std::size_t>(PTRDIFF_MAX), 1.0);
+    REQUIRE_TRUE(sz_fault_reset(1U));
+    probe = {};
+    params.splitPoint = 1.0;
+    offsets[1] = 9U;
+    const COVER_dictContent_t content{fixture.content.data(), fixture.content.size(), 0U};
+    const auto selected =
+        COVER_selectDict(content, 4096U, fixture.samples.data(), sizes.data(), 2U, 0U, 2U, params, offsets.data(), 0U);
+    REQUIRE_EQ(ZSTD_getErrorCode(selected.totalCompressedSize), ZSTD_error_parameter_outOfBound);
+    REQUIRE_EQ(probe.calls, 0U);
+    REQUIRE_EQ(sz_fault_allocation_attempts(), 0U);
+}
+
+// Purpose: Compare candidate evaluation with independent frame read-back and an externally accumulated total.
+// Inputs: A real finalized dictionary and training/full-corpus splits over the deterministic fixture.
+// Outputs: Requires exact aggregate sizes, unchanged samples and dictionaries, and complete temporary cleanup.
+TEST_CASE(zstd_cover_evaluation_matches_independent_readback) {
+    REQUIRE_TRUE(sz_fault_reset(0U));
+    SelectionFixture fixture(680U, 1U);
+    const auto selection = fixture.select(false);
+    require_selection(selection);
+    const auto originalSamples = fixture.samples;
+    const std::vector<BYTE> originalDictionary(selection->dictContent, selection->dictContent + selection->dictSize);
+    const std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> compressor(ZSTD_createCCtx(), ZSTD_freeCCtx);
+    const std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> decompressor(ZSTD_createDCtx(), ZSTD_freeDCtx);
+    const std::unique_ptr<ZSTD_CDict, decltype(&ZSTD_freeCDict)> dictionary(
+        ZSTD_createCDict(selection->dictContent, selection->dictSize, 3), ZSTD_freeCDict);
+    REQUIRE_TRUE(compressor && decompressor && dictionary);
+    for (const auto first : {0U, 1U, 127U, 128U}) {
+        std::size_t expected = selection->dictSize;
+        for (std::size_t index = first; index < fixture.sizes.size(); ++index) {
+            const auto sample = std::span(fixture.samples).subspan(fixture.offsets[index], fixture.sizes[index]);
+            std::vector<BYTE> compressed(ZSTD_compressBound(sample.size()));
+            std::vector<BYTE> restored(sample.size());
+            const auto written = ZSTD_compress_usingCDict(compressor.get(), compressed.data(), compressed.size(),
+                                                          sample.data(), sample.size(), dictionary.get());
+            REQUIRE_TRUE(!ZSTD_isError(written));
+            REQUIRE_EQ(ZSTD_decompress_usingDict(decompressor.get(), restored.data(), restored.size(),
+                                                 compressed.data(), written, selection->dictContent,
+                                                 selection->dictSize),
+                       sample.size());
+            REQUIRE_TRUE(std::ranges::equal(sample, restored));
+            expected += written;
+        }
+        ZDICT_cover_params_t params{};
+        params.splitPoint = first == 0U ? 1.0 : 0.5;
+        params.zParams.compressionLevel = 3;
+        const auto live = sz_fault_live_allocations();
+        const auto measured =
+            COVER_checkTotalCompressedSize(params, fixture.sizes.data(), fixture.samples.data(), fixture.offsets.data(),
+                                           first, fixture.sizes.size(), selection->dictContent, selection->dictSize);
+        REQUIRE_EQ(measured, expected);
+        REQUIRE_EQ(sz_fault_live_allocations(), live);
+        REQUIRE_EQ(fixture.samples, originalSamples);
+        REQUIRE_TRUE(std::ranges::equal(originalDictionary, std::span(selection->dictContent, selection->dictSize)));
+    }
+}
+
+// Purpose: Prevent declared sample extent overflow from reaching either dictionary trainer.
+// Inputs: Live size arrays at zero, maximum and overflowing accumulation boundaries.
+// Outputs: Requires exact sums or the rejecting SIZE_MAX sentinel without wrapping.
+TEST_CASE(zstd_cover_sample_sum_rejects_overflow) {
+    const auto maximum = std::numeric_limits<std::size_t>::max();
+    const std::array<std::size_t, 3> valid{0U, 8U, 17U};
+    const std::array<std::size_t, 2> overflow{maximum, 1U};
+    REQUIRE_EQ(COVER_sum(valid.data(), 3U), 25U);
+    REQUIRE_EQ(COVER_sum(overflow.data(), 2U), maximum);
+    REQUIRE_EQ(COVER_sum(nullptr, 1U), maximum);
+    REQUIRE_EQ(COVER_sum(nullptr, 0U), 0U);
+}
+
+// Purpose: Verify fixture ownership independently of decoder construction and fault injection.
+// Inputs: All record slots, one excess allocation, null/foreign/double releases, and a reset with live storage.
+// Outputs: Requires bounded failure, preserved owners and bytes, matching cleanup and exact diagnostics.
+TEST_CASE(zstd_fault_allocator_preserves_exclusive_records) {
+    REQUIRE_TRUE(sz_fault_reset(0U));
+    std::array<void*, 32> records{};
+    for (std::size_t index = 0; index < records.size(); ++index) {
+        records[index] = sz_fault_malloc(16U);
+        REQUIRE_TRUE(records[index] != nullptr);
+        static_cast<BYTE*>(records[index])[0] = static_cast<BYTE>(index);
+    }
+    REQUIRE_EQ(sz_fault_live_allocations(), records.size());
+    REQUIRE_TRUE(sz_fault_malloc(16U) == nullptr);
+    REQUIRE_TRUE(!sz_fault_reset(1U));
+    BYTE foreign{};
+    sz_fault_free(&foreign);
+    sz_fault_free(nullptr);
+    REQUIRE_EQ(sz_fault_live_allocations(), records.size());
+    REQUIRE_EQ(sz_fault_invalid_frees(), 1U);
+    for (std::size_t index = 0; index < records.size(); ++index) {
+        REQUIRE_EQ(static_cast<BYTE*>(records[index])[0], static_cast<BYTE>(index));
+        sz_fault_free(records[index]);
+    }
+    sz_fault_free(records.front());
+    REQUIRE_EQ(sz_fault_invalid_frees(), 2U);
+    REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+    REQUIRE_TRUE(sz_fault_reset(1U));
+    REQUIRE_TRUE(sz_fault_malloc(16U) == nullptr);
+    REQUIRE_EQ(sz_fault_allocation_attempts(), 1U);
     REQUIRE_EQ(sz_fault_live_allocations(), 0U);
 }
