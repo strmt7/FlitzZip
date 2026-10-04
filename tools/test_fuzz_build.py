@@ -83,6 +83,8 @@ class FuzzBuildTests(unittest.TestCase):
                 result, commands = self.run_plan(Path(temporary), sanitizer)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 compiled = [args for args in commands if "-c" in args]
+                wire = [args for args in compiled if "third_party/lzma_sdk/C/CpuArchByteAccess.cpp" in args]
+                self.assertEqual(len(wire), 1, "The shared SDK wire implementation must be compiled once.")
                 for name in CORE:
                     instances = [args for args in compiled if f"src/core/{name}.cpp" in args]
                     self.assertEqual(len(instances), 2, name)
@@ -95,6 +97,8 @@ class FuzzBuildTests(unittest.TestCase):
                     objects = [Path(arg) for arg in args if Path(arg).stem in CORE and arg.endswith(".o")]
                     self.assertEqual({obj.stem for obj in objects}, set(expected_core), name)
                     self.assertEqual(len(objects), len(expected_core), name)
+                    wire_objects = [arg for arg in args if Path(arg).name == "CpuArchByteAccess.o"]
+                    self.assertEqual(len(wire_objects), int(name in ("sevenzip", "lzma", "lzip")), name)
                     expected_dir = "miniz-core-objects" if name in ("cpio", "xar") else "core-objects"
                     self.assertTrue(all(obj.parent.name == expected_dir for obj in objects), name)
                 for args in commands:
@@ -114,6 +118,17 @@ class FuzzBuildTests(unittest.TestCase):
             result, commands = self.run_plan(Path(temporary), "address", "src/core/file_publish.cpp")
             self.assertEqual(result.returncode, 7, result.stderr)
             self.assertTrue(all("-c" in args for args in commands))
+
+    # Purpose: Reject an incomplete SDK bridge before any SDK consumer is linked.
+    # Inputs: Injected wire implementation compile failure. Outputs: No sevenzip, LZMA or lzip target links.
+    def test_sdk_wire_failure_stops_consumers(self):
+        with tempfile.TemporaryDirectory(prefix="fuzz build ") as temporary:
+            result, commands = self.run_plan(Path(temporary), "address", "third_party/lzma_sdk/C/CpuArchByteAccess.cpp")
+            self.assertEqual(result.returncode, 7, result.stderr)
+            links = {Path(args[args.index("-o") + 1]).name for args in commands if "-c" not in args}
+            self.assertTrue(
+                links.isdisjoint({"superzip_sevenzip_fuzzer", "superzip_lzma_fuzzer", "superzip_lzip_fuzzer"})
+            )
 
 
 if __name__ == "__main__":

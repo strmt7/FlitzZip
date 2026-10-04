@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
+. (Join-Path $PSScriptRoot 'benchmark_corpus.ps1')
 $script:NativeBuildReceiptTool = Join-Path $PSScriptRoot 'native_build_receipt.py'
 
 # Load only function definitions, without starting a workload or touching disk fixtures.
@@ -14,6 +15,39 @@ $definitions = $ast.FindAll({ param($node)
 foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
 }
+
+# Purpose: Verify priority assignment handles completion races without hiding failures on live processes.
+# Inputs: Controlled process properties represent alive, completed, racing and failing owned processes.
+# Outputs: Requires the intended assignment count and exception behavior without launching any process.
+function Test-BenchmarkProcessPriority {
+    foreach ($scenario in @('completed', 'alive', 'race', 'failure', 'whatif')) {
+        $process = [pscustomobject]@{ HasExited = ($scenario -eq 'completed'); Scenario = $scenario
+            Assignments = 0; AssignedPriority = [Diagnostics.ProcessPriorityClass]::Normal }
+        # Purpose: Return the controlled priority property. Inputs: Fixture object. Outputs: Assigned priority.
+        $getter = { $this.AssignedPriority }
+        # Purpose: Model priority assignment and an exit race. Inputs: Desired priority. Outputs: Assignment or error.
+        $setter = {
+            param($priority)
+            $this.Assignments++
+            if ($this.Scenario -eq 'race') { $this.HasExited = $true; throw 'Confirmed exit race.' }
+            if ($this.Scenario -eq 'failure') { throw 'Live process priority denied.' }
+            $this.AssignedPriority = $priority
+        }
+        $process | Add-Member -MemberType ScriptProperty -Name PriorityClass -Value $getter -SecondValue $setter
+        $failed = $false
+        try { Set-BenchmarkOwnedProcessPriority -Process $process -Priority BelowNormal -WhatIf:($scenario -eq 'whatif') }
+        catch {
+            if ($scenario -ne 'failure' -or $_.Exception.Message -notmatch 'Live process priority denied') { throw }
+            $failed = $true
+        }
+        $expectedAssignments = if ($scenario -in @('completed', 'whatif')) { 0 } else { 1 }
+        if ($process.Assignments -ne $expectedAssignments -or $failed -ne ($scenario -eq 'failure') -or
+            ($scenario -eq 'alive' -and $process.AssignedPriority -ne [Diagnostics.ProcessPriorityClass]::BelowNormal)) {
+            throw "Owned-process priority contract failed for $scenario."
+        }
+    }
+}
+Test-BenchmarkProcessPriority
 
 # Purpose: Exercise production parameter binding and corpus initialization without starting codecs.
 # Inputs: Parsed production script provides its actual parameter block and top-level admission statements.

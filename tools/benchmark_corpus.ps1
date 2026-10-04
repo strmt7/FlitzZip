@@ -1,6 +1,20 @@
 # Exact corpus identity support for the scientific RAM benchmark controller.
 $script:BenchmarkCorpus = $null
 
+# Purpose: Set priority on an owned subprocess while allowing a completed process to retain its result.
+# Inputs: A started process and its desired priority; completion may race with the setter.
+# Outputs: Applies priority or returns only after confirmed exit; live-process errors remain fatal.
+function Set-BenchmarkOwnedProcessPriority {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
+    param([Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][Diagnostics.ProcessPriorityClass]$Priority)
+    if ($Process.HasExited -or -not $PSCmdlet.ShouldProcess('Owned benchmark subprocess', "Set priority to $Priority")) { return }
+    try { $Process.PriorityClass = $Priority }
+    catch {
+        if (-not $Process.HasExited) { throw }
+    }
+}
+
 # Purpose: Admit a corpus through the existing Python permission/manifest boundary within a bounded subprocess.
 # Inputs: Repository root, reviewed manifest, flat input root and selected filename; no data is downloaded.
 # Outputs: Returns private paths plus public provenance or throws on timeout, excess output or failed admission.
@@ -21,7 +35,7 @@ function Import-ReviewedBenchmarkCorpus {
     try {
         if (-not $process.Start()) { throw 'Corpus admission process did not start.' }
         $started = $true
-        $process.PriorityClass = [Diagnostics.ProcessPriorityClass]::BelowNormal
+        Set-BenchmarkOwnedProcessPriority -Process $process -Priority BelowNormal
         $stdout = Read-BoundedBenchmarkStream -Reader $process.StandardOutput
         $stderr = Read-BoundedBenchmarkStream -Reader $process.StandardError
         if (-not $process.WaitForExit(120000)) {

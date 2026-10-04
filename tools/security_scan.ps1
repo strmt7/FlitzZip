@@ -771,8 +771,25 @@ function Test-FuzzHarnessPolicy {
         throw "The standalone CMake ISO fuzzer must link file_manifest.cpp with file_publish.cpp."
     }
     $sdkAccess = Get-Content -LiteralPath (Join-Path $repo "third_party\lzma_sdk\C\CpuArch.h") -Raw
+    $sdkAccess += Get-Content -LiteralPath (Join-Path $repo "third_party\lzma_sdk\C\CpuArchByteAccess.h") -Raw
+    $sdkAccess += Get-Content -LiteralPath (Join-Path $repo "third_party\lzma_sdk\C\CpuArchByteAccess.cpp") -Raw
+    $sdkAccess = [regex]::Replace($sdkAccess, '(?s)/\*.*?\*/|(?m)//[^\r\n]*', '')
     if ($sdkAccess -match '\*\s*\(\s*(?:const\s+)?UInt(?:16|32|64)\s*\*\s*\)') {
-        throw "SDK byte accessors must not dereference typed integer pointer casts; preserve the fixed-size copy adaptation."
+        throw "SDK wire accessors must not dereference typed integer pointer casts; preserve byte-defined endian access."
+    }
+    if ($sdkAccess -match '\b(?:memcpy|memmove|Z7_GetNative[0-9]+|Z7_SetNative[0-9]+)\s*\(') {
+        throw 'SDK wire fields require explicit endian decoding/encoding, without native representation copies.'
+    }
+    if ($clusterBuild -notmatch '(?s)"\$CXX"\s+\$CXXFLAGS[^\n]*\n[^\n]*CpuArchByteAccess\.cpp' -or
+        $cmakeLists -notmatch 'third_party/lzma_sdk/C/CpuArchByteAccess\.cpp' -or
+        $cmakeLists -notmatch 'INTERPROCEDURAL_OPTIMIZATION_RELEASE\s+TRUE') {
+        throw 'SDK typed wire access must be compiled into native and sanitizer consumers with Release MSVC optimization.'
+    }
+    $sdkChecks = Get-Content -LiteralPath (Join-Path $repo 'tests/cpp/sdk_byte_access_checks.hpp') -Raw
+    if ($sdkChecks -notmatch 'check_sdk_argument_evaluation<UInt16>' -or
+        $sdkChecks -notmatch 'check_sdk_argument_evaluation<UInt32>' -or
+        $sdkChecks -notmatch 'check_sdk_argument_evaluation<UInt64>') {
+        throw 'SDK wire operations must retain argument evaluation regressions for every width.'
     }
     $sevenzipFuzzer = Get-Content -LiteralPath (Join-Path $repo "fuzz\sevenzip_fuzzer.cpp") -Raw
     if ($sevenzipFuzzer -notmatch 'sdk_byte_access_checks\.hpp' -or

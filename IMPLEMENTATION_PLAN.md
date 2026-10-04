@@ -468,6 +468,33 @@ neither whole-repo acceptance nor a claimed compression speedup.
 
 ## Current Modernization Sequence
 
+### Security Closure Before Compression Research
+
+Finish all solvable source-scanning findings through production repairs and
+source-bound verification before resuming broad performance work. Keep genuine
+external governance requirements visible. Track new and reopened findings at
+component milestones, repair root-cause families together, and retain executable
+recurrence guards. This ongoing monitoring follows the operating guide; incident
+counts must never become agent-skill instructions.
+
+After that closure, improve application responsiveness, maintainability and
+measured CPU/HIP performance. Develop a native `.suzip` option named **Neutron
+Star Mode**, displayed below level 9 only when a compatible HIP GPU is detected
+and the user's acceleration settings allow it. Require actual GPU execution;
+use a separate CPU reference only for correctness and controlled comparisons.
+Prioritize the smallest lossless archive over compression/decompression time,
+while preserving cancellation, bounded memory and verified byte-exact recovery.
+
+Research advanced parsing, transforms, entropy coding, model-aware compression
+and learned methods using reputable primary sources and independent benchmarks.
+Include model/metadata overhead in archive sizes and retain unfavorable results.
+Preserve existing archive readability through explicit format versioning. Changes
+to kernels, host integration and the native protocol may transfer to ordinary
+levels only after demonstrating a benefit under those levels' resource and
+latency constraints. Universal minimum size, broad GPU compatibility and extreme
+speedup remain research goals until supported by measured evidence. Existing
+dependency approval, security and release gates continue to apply.
+
 ### Next Intermediate Beta Review
 
 On 3 October 2026 the maintainer requested a bounded intermediate beta review

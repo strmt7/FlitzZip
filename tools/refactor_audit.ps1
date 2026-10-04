@@ -370,7 +370,7 @@ function Get-CppFunctionStart {
         --$start
     }
     $signature = (($Lines[$start..$Index] -join ' ').Trim())
-    if ($signature -match '^(if|else|for|while|switch|catch|TEST_CASE)\b' -or
+    if ($signature -match '^\}?\s*(if|else|for|while|switch|catch|TEST_CASE)\b' -or
         $signature -match '\]\s*\(' -or $signature -match '(^|\s)(==|!=|<=|>=|&&|\|\|)(\s|$)' -or
         $signature -notmatch '\b[A-Za-z_]\w*\s*\([^;{}]*\)\s*(const\s*)?(noexcept\s*)?(->[^{}]*)?\{\s*$') {
         return -1

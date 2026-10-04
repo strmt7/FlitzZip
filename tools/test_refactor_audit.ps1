@@ -156,6 +156,16 @@ try {
         '    /* imaginary() { does not define a function } */',
         '    if (literal && raw) { return 1; }', '    return 0;', '}'))
     Test-AuditCase -Name 'comments, strings, raw strings and controls do not create functions' -Options '-ChangedOnly'
+    $controlPath = 'src/controls.cpp'
+    $controls = $contract + @('int controls()', '{', '    int value = 0;',
+        '    try {', '        value = 1;', '    } catch (...) {', '        value = 2;', '    }',
+        '    if (value) {', '        ++value;', '    } else if (!value) {', '        --value;',
+        '    } else {', '        value = 3;', '    }', '    return value;', '}')
+    Write-AuditFixture -RelativePath $controlPath -Lines $controls
+    Test-AuditCase -Name 'attached closing braces do not turn catch or else branches into functions' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $controlPath -Lines ($controls + @('int undocumented()', '{', '    return 0;', '}'))
+    Test-AuditCase -Name 'control rejection still audits a following real function' -Options '-ChangedOnly' -Expected @($controlPath)
+    Write-AuditFixture -RelativePath $controlPath -Lines $controls
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int previous(void)', '{', '    return 0;', '}',
         'int missing(void)', '{', '    return 1;', '}'))
     Test-AuditCase -Name 'a previous function contract cannot cover the next function' -Options '-ChangedOnly' -Expected @($vendorPath)

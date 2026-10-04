@@ -5,7 +5,7 @@
 #define ZIP7_INC_CPU_ARCH_H
 
 #include "7zTypes.h"
-#include <string.h>
+#include "CpuArchByteAccess.h"
 
 EXTERN_C_BEGIN
 
@@ -479,164 +479,21 @@ EXTERN_C_BEGIN
 #endif
 
 
-/* Purpose: Load native-endian bits without alignment or aliasing assumptions.
-   Inputs: p addresses at least two readable bytes. Outputs: Copied UInt16 value. */
-static Z7_FORCE_INLINE UInt16 Z7_GetNative16(const void *p)
-{
-  UInt16 value;
-  memcpy(&value, p, sizeof(value));
-  return value;
-}
 
-/* Purpose: Load native-endian bits without alignment or aliasing assumptions.
-   Inputs: p addresses at least four readable bytes. Outputs: Copied UInt32 value. */
-static Z7_FORCE_INLINE UInt32 Z7_GetNative32(const void *p)
-{
-  UInt32 value;
-  memcpy(&value, p, sizeof(value));
-  return value;
-}
+#define GetUi16(p) Z7_ReadLE16(p)
+#define SetUi16(p, v) { Z7_WriteLE16(p, v); }
+#define GetUi32(p) Z7_ReadLE32(p)
+#define SetUi32(p, v) { Z7_WriteLE32(p, v); }
+#define GetUi64(p) Z7_ReadLE64(p)
+#define SetUi64(p, v) { Z7_WriteLE64(p, v); }
+#define GetBe16(p) Z7_ReadBE16(p)
+#define SetBe16(p, v) { Z7_WriteBE16(p, v); }
+#define GetBe32(p) Z7_ReadBE32(p)
+#define SetBe32(p, v) { Z7_WriteBE32(p, v); }
+#define GetBe64(p) Z7_ReadBE64(p)
+#define SetBe64(p, v) { Z7_WriteBE64(p, v); }
 
-/* Purpose: Load native-endian bits without alignment or aliasing assumptions.
-   Inputs: p addresses at least eight readable bytes. Outputs: Copied UInt64 value. */
-static Z7_FORCE_INLINE UInt64 Z7_GetNative64(const void *p)
-{
-  UInt64 value;
-  memcpy(&value, p, sizeof(value));
-  return value;
-}
-
-/* Purpose: Store native-endian bits without alignment or aliasing assumptions.
-   Inputs: p addresses two writable bytes; value contains bits. Outputs: Writes exactly two bytes. */
-static Z7_FORCE_INLINE void Z7_SetNative16(void *p, UInt16 value)
-{
-  memcpy(p, &value, sizeof(value));
-}
-
-/* Purpose: Store native-endian bits without alignment or aliasing assumptions.
-   Inputs: p addresses four writable bytes; value contains bits. Outputs: Writes exactly four bytes. */
-static Z7_FORCE_INLINE void Z7_SetNative32(void *p, UInt32 value)
-{
-  memcpy(p, &value, sizeof(value));
-}
-
-/* Purpose: Store native-endian bits without alignment or aliasing assumptions.
-   Inputs: p addresses eight writable bytes; value contains bits. Outputs: Writes exactly eight bytes. */
-static Z7_FORCE_INLINE void Z7_SetNative64(void *p, UInt64 value)
-{
-  memcpy(p, &value, sizeof(value));
-}
-
-#ifdef MY_CPU_LE_UNALIGN
-
-#define GetUi16(p) Z7_GetNative16(p)
-#define GetUi32(p) Z7_GetNative32(p)
-#ifdef MY_CPU_LE_UNALIGN_64
-#define GetUi64(p) Z7_GetNative64(p)
-#define SetUi64(p, v) { Z7_SetNative64(p, v); }
-#endif
-
-#define SetUi16(p, v) { Z7_SetNative16(p, v); }
-#define SetUi32(p, v) { Z7_SetNative32(p, v); }
-
-#else
-
-#define GetUi16(p) ( (UInt16) ( \
-             ((const Byte *)(p))[0] | \
-    ((UInt16)((const Byte *)(p))[1] << 8) ))
-
-#define GetUi32(p) ( \
-             ((const Byte *)(p))[0]        | \
-    ((UInt32)((const Byte *)(p))[1] <<  8) | \
-    ((UInt32)((const Byte *)(p))[2] << 16) | \
-    ((UInt32)((const Byte *)(p))[3] << 24))
-
-#define SetUi16(p, v) { Byte *_ppp_ = (Byte *)(p); UInt32 _vvv_ = (v); \
-    _ppp_[0] = (Byte)_vvv_; \
-    _ppp_[1] = (Byte)(_vvv_ >> 8); }
-
-#define SetUi32(p, v) { Byte *_ppp_ = (Byte *)(p); UInt32 _vvv_ = (v); \
-    _ppp_[0] = (Byte)_vvv_; \
-    _ppp_[1] = (Byte)(_vvv_ >> 8); \
-    _ppp_[2] = (Byte)(_vvv_ >> 16); \
-    _ppp_[3] = (Byte)(_vvv_ >> 24); }
-
-#endif
-
-
-#ifndef GetUi64
-#define GetUi64(p) (GetUi32(p) | ((UInt64)GetUi32(((const Byte *)(p)) + 4) << 32))
-#endif
-
-#ifndef SetUi64
-#define SetUi64(p, v) { Byte *_ppp2_ = (Byte *)(p); UInt64 _vvv2_ = (v); \
-    SetUi32(_ppp2_    , (UInt32)_vvv2_) \
-    SetUi32(_ppp2_ + 4, (UInt32)(_vvv2_ >> 32)) }
-#endif
-
-
-#if defined(MY_CPU_LE_UNALIGN) && defined(Z7_CPU_FAST_BSWAP_SUPPORTED)
-
-#define GetBe16_to32(p)  (Z7_BSWAP32 (Z7_GetNative16(p)) >> 16)
-
-#define GetBe32(p)  Z7_BSWAP32 (Z7_GetNative32(p))
-#define SetBe32(p, v) { Z7_SetNative32(p, Z7_BSWAP32(v)); }
-
-#if defined(MY_CPU_LE_UNALIGN_64)
-#define GetBe64(p)  Z7_BSWAP64 (Z7_GetNative64(p))
-#define SetBe64(p, v) { Z7_SetNative64(p, Z7_BSWAP64(v)); }
-#endif
-
-#else
-
-#define GetBe32(p) ( \
-    ((UInt32)((const Byte *)(p))[0] << 24) | \
-    ((UInt32)((const Byte *)(p))[1] << 16) | \
-    ((UInt32)((const Byte *)(p))[2] <<  8) | \
-             ((const Byte *)(p))[3] )
-
-#define SetBe32(p, v) { Byte *_ppp_ = (Byte *)(p); UInt32 _vvv_ = (v); \
-    _ppp_[0] = (Byte)(_vvv_ >> 24); \
-    _ppp_[1] = (Byte)(_vvv_ >> 16); \
-    _ppp_[2] = (Byte)(_vvv_ >> 8); \
-    _ppp_[3] = (Byte)_vvv_; }
-
-#endif
-
-#ifndef GetBe64
-#define GetBe64(p) (((UInt64)GetBe32(p) << 32) | GetBe32(((const Byte *)(p)) + 4))
-#endif
-
-#ifndef SetBe64
-#define SetBe64(p, v) { Byte *_ppp_ = (Byte *)(p); UInt64 _vvv_ = (v); \
-    _ppp_[0] = (Byte)(_vvv_ >> 56); \
-    _ppp_[1] = (Byte)(_vvv_ >> 48); \
-    _ppp_[2] = (Byte)(_vvv_ >> 40); \
-    _ppp_[3] = (Byte)(_vvv_ >> 32); \
-    _ppp_[4] = (Byte)(_vvv_ >> 24); \
-    _ppp_[5] = (Byte)(_vvv_ >> 16); \
-    _ppp_[6] = (Byte)(_vvv_ >> 8); \
-    _ppp_[7] = (Byte)_vvv_; }
-#endif
-
-/* Purpose: Store a big-endian 16-bit field through bytes on every supported CPU.
-   Inputs: p addresses two writable bytes; v contains bits. Outputs: Writes exactly two bytes. */
-#ifndef SetBe16
-#define SetBe16(p, v) { Byte *_ppp_ = (Byte *)(p); UInt16 _vvv_ = (v); \
-    _ppp_[0] = (Byte)(_vvv_ >> 8); \
-    _ppp_[1] = (Byte)_vvv_; }
-#endif
-
-#ifndef GetBe16
-#ifdef GetBe16_to32
-#define GetBe16(p) ( (UInt16) GetBe16_to32(p))
-#else
-#define GetBe16(p) ( (UInt16) ( \
-    ((UInt16)((const Byte *)(p))[0] << 8) | \
-             ((const Byte *)(p))[1] ))
-#endif
-#endif
-
+#define GetBe16_to32(p) ((UInt32)Z7_ReadBE16(p))
 
 #if defined(MY_CPU_BE)
 #define Z7_CONV_BE_TO_NATIVE_CONST32(v)  (v)
@@ -653,54 +510,18 @@ static Z7_FORCE_INLINE void Z7_SetNative64(void *p, UInt64 value)
 #endif
 
 
-#if defined(MY_CPU_BE)
+/* Aligned-name compatibility aliases share the same byte wire contract. */
+#define GetUi16a(p) GetUi16(p)
+#define GetUi32a(p) GetUi32(p)
+#define GetUi64a(p) GetUi64(p)
+#define SetUi16a(p, v) SetUi16(p, v)
+#define SetUi32a(p, v) SetUi32(p, v)
+#define GetBe16a(p) GetBe16(p)
+#define GetBe32a(p) GetBe32(p)
+#define GetBe64a(p) GetBe64(p)
+#define SetBe16a(p, v) SetBe16(p, v)
+#define SetBe32a(p, v) SetBe32(p, v)
 
-#define GetBe64a(p)      Z7_GetNative64(p)
-#define GetBe32a(p)      Z7_GetNative32(p)
-#define GetBe16a(p)      Z7_GetNative16(p)
-#define SetBe32a(p, v)   { Z7_SetNative32(p, v); }
-#define SetBe16a(p, v)   { Z7_SetNative16(p, v); }
-
-
-
-#if 1 && defined(Z7_CPU_FAST_BSWAP_SUPPORTED) && defined(MY_CPU_64BIT)
-#define GetUi64a(p)   Z7_BSWAP64 (Z7_GetNative64(p))
-#else
-#define GetUi64a(p)      GetUi64(p)
-#endif
-
-#if 1 && defined(Z7_CPU_FAST_BSWAP_SUPPORTED)
-#define GetUi32a(p)   Z7_BSWAP32 (Z7_GetNative32(p))
-#else
-#define GetUi32a(p)      GetUi32(p)
-#endif
-
-#define GetUi16a(p)      GetUi16(p)
-#define SetUi32a(p, v)   SetUi32(p, v)
-#define SetUi16a(p, v)   SetUi16(p, v)
-
-#elif defined(MY_CPU_LE)
-
-#define GetUi64a(p)      Z7_GetNative64(p)
-#define GetUi32a(p)      Z7_GetNative32(p)
-#define GetUi16a(p)      Z7_GetNative16(p)
-#define SetUi32a(p, v)   { Z7_SetNative32(p, v); }
-#define SetUi16a(p, v)   { Z7_SetNative16(p, v); }
-
-#define GetBe64a(p)      GetBe64(p)
-#define GetBe32a(p)      GetBe32(p)
-#define GetBe16a(p)      GetBe16(p)
-#define SetBe32a(p, v)   SetBe32(p, v)
-#define SetBe16a(p, v)   SetBe16(p, v)
-
-#else
-#error Stop_Compiling_Unknown_Endian_CPU_a
-#endif
-
-
-#ifndef GetBe16_to32
-#define GetBe16_to32(p) GetBe16(p)
-#endif
 
 
 #if defined(MY_CPU_X86_OR_AMD64) \

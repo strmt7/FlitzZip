@@ -37,14 +37,20 @@ upstream `Z7_ANALYZE_MODE` warning suppressions are not imported. Some unchanged
 files retain historical comment removal; the upstream archive contains the
 unmodified complete source and public-domain notices.
 
-`CpuArch.h` uses fixed-size `memcpy` helpers instead of typed integer pointer
-dereferences for native-endian loads/stores, including the aligned-name aliases.
-Wire endian conversions and caller-owned extent bounds remain unchanged. This
-production adaptation removes alignment/aliasing assumptions exposed by UBSan
-on a valid 7z start header; byte-oracle/canary tests cover all offsets 0-15 in
-both Windows unit tests and Linux sanitizer fuzzer initialization.
-The missing `SetBe16` byte-store definition is supplied for the SDK's existing
-`SetBe16a` alias, with the same two-byte big-endian contract.
+`CpuArch.h` routes wire integer access through `CpuArchByteAccess.h`. This local
+component decodes and encodes explicit little/big-endian fields, including the
+aligned-name aliases, through fixed-width spans, owned byte arrays and C++20
+`std::bit_cast`. Byte order is explicit and unaligned fields never require
+typed integer pointer dereferences. C callers use `CpuArchByteAccess.cpp` through
+a C ABI; C++ callers use the same inline implementation. Release MSVC builds
+require mixed-language interprocedural optimization to preserve inlining across
+that boundary. Pointer and value expressions are evaluated once. Caller-owned
+extent bounds remain required at parser and filter boundaries. The previous
+fixed-size copy adaptation is retired; its original alignment/aliasing repair
+remains preserved. Independent byte-oracle/canary checks cover offsets 0-15 and
+exact-width buffers, and expression checks cover every alias in Windows unit
+tests and Linux sanitizer fuzzer initialization. The existing `SetBe16a` alias
+retains its two-byte big-endian contract.
 The upstream provenance archive is not modified, and sanitizer checks stay enabled.
 
 The folder-header scanner separates bounded coder descriptors, unique stream

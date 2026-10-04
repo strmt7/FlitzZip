@@ -9,6 +9,32 @@
 
 namespace superzip_test {
 
+// Purpose: Require each SDK macro to evaluate pointer/value expressions once.
+// Inputs: UInt fixes the wire width; callbacks expand the real production macros.
+// Outputs: Rejects repeated expressions or a changed value after the store/load.
+template <typename UInt, typename Load, typename Store> void check_sdk_argument_evaluation(Load load, Store store) {
+    std::array<Byte, sizeof(UInt)> bytes{};
+    unsigned pointer_calls = 0;
+    unsigned value_calls = 0;
+    auto pointer = [&] {
+        ++pointer_calls;
+        return bytes.data();
+    };
+    constexpr auto expected = static_cast<UInt>(0xFEDCBA9876543210ULL);
+    auto value = [&] {
+        ++value_calls;
+        return expected;
+    };
+    store(pointer, value);
+    if (pointer_calls != 1 || value_calls != 1) {
+        throw std::runtime_error("SDK store repeats a pointer or value expression");
+    }
+    const auto actual = load(pointer);
+    if (pointer_calls != 2 || value_calls != 1 || actual != expected) {
+        throw std::runtime_error("SDK load repeats a pointer expression or changes wire bits");
+    }
+}
+
 // Purpose: Check SDK integer access against independent byte encoding at every alignment offset.
 // Inputs: UInt fixes field width; load/store are SDK operations; big_endian selects wire order.
 // Outputs: Throws on wrong bytes, values, or writes outside the field, including at the buffer end.
@@ -56,6 +82,20 @@ inline void verify_sdk_unaligned_access() {
     check_sdk_access<UInt16>([](const Byte* p) { return GetBe16(p); }, [](Byte* p, UInt16 v) { SetBe16(p, v); }, true);
     check_sdk_access<UInt32>([](const Byte* p) { return GetBe32(p); }, [](Byte* p, UInt32 v) { SetBe32(p, v); }, true);
     check_sdk_access<UInt64>([](const Byte* p) { return GetBe64(p); }, [](Byte* p, UInt64 v) { SetBe64(p, v); }, true);
+    check_sdk_argument_evaluation<UInt16>([](auto& p) { return GetUi16(p()); },
+                                          [](auto& p, auto& v) { SetUi16(p(), v()); });
+    check_sdk_argument_evaluation<UInt32>([](auto& p) { return GetUi32(p()); },
+                                          [](auto& p, auto& v) { SetUi32(p(), v()); });
+    check_sdk_argument_evaluation<UInt64>([](auto& p) { return GetUi64(p()); },
+                                          [](auto& p, auto& v) { SetUi64(p(), v()); });
+    check_sdk_argument_evaluation<UInt16>([](auto& p) { return GetBe16(p()); },
+                                          [](auto& p, auto& v) { SetBe16(p(), v()); });
+    check_sdk_argument_evaluation<UInt32>([](auto& p) { return GetBe32(p()); },
+                                          [](auto& p, auto& v) { SetBe32(p(), v()); });
+    check_sdk_argument_evaluation<UInt64>([](auto& p) { return GetBe64(p()); },
+                                          [](auto& p, auto& v) { SetBe64(p(), v()); });
+    check_sdk_argument_evaluation<UInt16>([](auto& p) { return GetBe16_to32(p()); },
+                                          [](auto& p, auto& v) { SetBe16(p(), v()); });
 }
 
 // Purpose: Verify aligned-name aliases preserve wire semantics on byte buffers without extra assumptions.
@@ -73,6 +113,18 @@ inline void verify_sdk_aligned_access() {
     check_sdk_access<UInt32>([](const Byte* p) { return GetBe32a(p); }, [](Byte* p, UInt32 v) { SetBe32a(p, v); },
                              true);
     check_sdk_access<UInt64>([](const Byte* p) { return GetBe64a(p); }, [](Byte* p, UInt64 v) { SetBe64(p, v); }, true);
+    check_sdk_argument_evaluation<UInt16>([](auto& p) { return GetUi16a(p()); },
+                                          [](auto& p, auto& v) { SetUi16a(p(), v()); });
+    check_sdk_argument_evaluation<UInt32>([](auto& p) { return GetUi32a(p()); },
+                                          [](auto& p, auto& v) { SetUi32a(p(), v()); });
+    check_sdk_argument_evaluation<UInt64>([](auto& p) { return GetUi64a(p()); },
+                                          [](auto& p, auto& v) { SetUi64(p(), v()); });
+    check_sdk_argument_evaluation<UInt16>([](auto& p) { return GetBe16a(p()); },
+                                          [](auto& p, auto& v) { SetBe16a(p(), v()); });
+    check_sdk_argument_evaluation<UInt32>([](auto& p) { return GetBe32a(p()); },
+                                          [](auto& p, auto& v) { SetBe32a(p(), v()); });
+    check_sdk_argument_evaluation<UInt64>([](auto& p) { return GetBe64a(p()); },
+                                          [](auto& p, auto& v) { SetBe64(p(), v()); });
 }
 
 }  // namespace superzip_test

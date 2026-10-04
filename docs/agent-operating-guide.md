@@ -254,6 +254,20 @@ Guidelines, and SEI CERT C++.
   a family verdict. Fix the shared production boundary with regression coverage;
   do not rename safe primitives, remove useful code, or substitute platform-only
   APIs solely to reduce the scanner count. Preserve unresolved findings visibly.
+- Keep security debt visible throughout development. At task entry, reuse the
+  latest complete finding inventory and its analysis identity; refresh it after
+  a relevant completed upload, a scanner/configuration change, or a substantive
+  component milestone. Compare new and reopened findings, severity, affected
+  root causes and aging against the previous snapshot. Do not treat a pending
+  upload or a lower total as proof of repair. Interrupt affected feature work
+  for new critical/high findings or a broken security gate; batch other findings
+  by shared cause before expanding that component again. Review broader trends
+  periodically during sustained work so lower-severity debt cannot accumulate
+  unnoticed. Use compact saved summaries, selected preflight checks and one
+  opportunistic workflow sample per intermediate push; never repeat an unchanged
+  full scan or poll unchanged uploads merely to report progress. Final acceptance
+  still requires the complete exact-source audit. Counts and checkpoint evidence
+  belong in audit records, not skills or instructions.
 - Preserve supply-chain evidence: checksums, third-party notices, SBOM output,
   release notes, and reproducible build inputs.
 - Every security repair or incidental rewrite failure must complete the existing
@@ -403,6 +417,9 @@ Guidelines, and SEI CERT C++.
   restores priority on success/failure, and does not lower timed benchmark lanes.
   Windows inherits below-normal priority unless a child explicitly overrides it.
   Do not raise processes to high/realtime priority or change unrelated tasks.
+  An owned short-lived subprocess may exit during priority assignment. Ignore
+  that setter failure only after confirming process exit; retain live-process
+  errors and still validate the completed process's exit code and output.
   See [Microsoft scheduling guidance](https://learn.microsoft.com/en-us/windows/win32/procthread/scheduling-priorities)
   and [CodeQL resource options](https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-cli-manual/database-analyze).
 - Run heavy local checks serially unless aggregate RAM admission and ownership
@@ -719,9 +736,11 @@ an empty alert list never justifies weakening them.
 - Read and write serialized integer fields through bounded byte access or
   fixed-size copies into properly aligned values. Hardware support for
   unaligned instructions does not justify typed integer pointer dereferences
-  on byte buffers. Preserve downstream SDK copy adaptations during upgrades;
+  on byte buffers. Preserve downstream SDK wire access adaptations during upgrades;
   validate wire bytes with an independent endian oracle and canaries, including
   misaligned offsets and exact-width buffers under real sanitizer instrumentation.
+  Pointer and value expressions in compatibility macros must evaluate once;
+  parser and filter callers must prove the complete field extent before access.
 - Microsoft Defender scanning is opt-in and must run with `CREATE_NO_WINDOW`.
 - SHA-256 integrity hashing is opt-in and must use Windows CNG on Windows.
 - Keep CI layered: build, tests, secret scan, dependency review/security scanning, an always-on Greenbone/OpenVAS integration audit, and an OIDC-brokered authorized live OpenVAS/Vulnetix lane.

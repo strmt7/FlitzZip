@@ -522,7 +522,7 @@ function Invoke-SuperZipStat {
     $gpuSampler = if ($NoResourceCounters) { $null } else { Get-GpuResourceSampler }
     $process = [Diagnostics.Process]::Start($psi)
     try {
-        $process.PriorityClass = [Diagnostics.ProcessPriorityClass]::Normal
+        Set-BenchmarkOwnedProcessPriority -Process $process -Priority Normal
         $stdoutTask = Read-BoundedBenchmarkStream -Reader $process.StandardOutput
         $stderrTask = Read-BoundedBenchmarkStream -Reader $process.StandardError
         $initialIo = Get-ProcessIoTransfer -Process $process

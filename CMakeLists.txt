@@ -162,12 +162,27 @@ add_library(
   third_party/lzma_sdk/C/Bra86.c
   third_party/lzma_sdk/C/BraIA64.c
   third_party/lzma_sdk/C/CpuArch.c
+  third_party/lzma_sdk/C/CpuArchByteAccess.cpp
   third_party/lzma_sdk/C/Delta.c
   third_party/lzma_sdk/C/Lzma2Dec.c
   third_party/lzma_sdk/C/LzmaDec.c
   third_party/lzma_sdk/C/Ppmd7.c
   third_party/lzma_sdk/C/Ppmd7Dec.c)
 target_include_directories(lzma_sdk_7z PUBLIC third_party/lzma_sdk/C)
+target_compile_features(lzma_sdk_7z PRIVATE cxx_std_20)
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_ID STREQUAL
+                                           "MSVC")
+  include(CheckIPOSupported)
+  check_ipo_supported(
+    RESULT sdk_wire_ipo_supported
+    OUTPUT sdk_wire_ipo_error
+    LANGUAGES C CXX)
+  if(NOT sdk_wire_ipo_supported)
+    message(FATAL_ERROR "SDK wire access requires IPO: ${sdk_wire_ipo_error}")
+  endif()
+  set_property(TARGET lzma_sdk_7z PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE
+                                           TRUE)
+endif()
 target_compile_definitions(lzma_sdk_7z PUBLIC Z7_EXTRACT_ONLY Z7_PPMD_SUPPORT)
 target_compile_definitions(lzma_sdk_7z PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(MSVC)

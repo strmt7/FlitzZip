@@ -39,7 +39,8 @@ including the valid empty Copy folder and fourteen malformed descriptor/binding
 controls, fragmented PPMd input, CRC, truncation, names and overwrite behavior.
 The source review does not claim universal caller safety or final acceptance.
 
-Admission must use this complete file's normalized SHA-256 and
-each exact rule/region. Detectors, raw SARIF, rules and scanned paths must remain
-unchanged. Any source or location change invalidates the admission. The other
-findings remain blocking; no broader suppression is proposed.
+The former admission is retired. The SDK now has an explicit wire integer
+component in `CpuArchByteAccess.h`, replacing the reviewed native-copy helpers.
+Fresh hosted analysis must establish source closure. Detectors, raw SARIF,
+rules and source coverage remain intact; this historical review admits no
+current finding and does not establish final acceptance.

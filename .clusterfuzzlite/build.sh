@@ -106,6 +106,10 @@ build_lzma_sdk_objects() {
       -Wno-conversion -Wno-sign-conversion -c "$source" -o "$object"
     objects+=("$object")
   done
+  local wire_object="$object_dir/CpuArchByteAccess.o"
+  "$CXX" $CXXFLAGS "${COMMON_FLAGS[@]}" -Ithird_party/lzma_sdk/C \
+    -c third_party/lzma_sdk/C/CpuArchByteAccess.cpp -o "$wire_object"
+  objects+=("$wire_object")
   printf '%s\n' "${objects[@]}"
 }
 
