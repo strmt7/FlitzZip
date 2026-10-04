@@ -13,9 +13,11 @@ function Assert-ZstdPolicyMutation {
 
     $file = Join-Path $fixtureRoot $Path
     $text = Get-Content -LiteralPath $file -Raw
-    if (-not $text.Contains($Original)) { throw "Mutation fixture drift: $Path/$Original" }
+    $pattern = Get-ZstdPolicyTokenPattern -Token $Original
+    if (-not [regex]::IsMatch($text, $pattern)) { throw "Mutation fixture drift: $Path/$Original" }
     try {
-        [IO.File]::WriteAllText($file, $text.Replace($Original, $Replacement))
+        $changed = [regex]::Replace($text, $pattern, $Replacement.Replace('$', '$$'))
+        [IO.File]::WriteAllText($file, $changed)
         $rejected = $false
         try { Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot }
         catch {
@@ -30,6 +32,20 @@ function Assert-ZstdPolicyMutation {
 }
 
 try {
+    # A glob argument must not start a comment spanning later CMake commands;
+    # actual CMake and generated-C comments must still fail executable matching.
+    $guard = 'canonical_guard()'
+    foreach ($case in @(
+            @(('file(GLOB sources "${root}/*")' + "`n" + $guard), $true),
+            @(('# ' + $guard), $false),
+            @(('set(fragment "/* ' + $guard + ' */")'), $false),
+            @(('set(fragment [=[/* ' + $guard + ' */]=])'), $false),
+            @(('set(fragment [==[/* ' + $guard + ' */]==])'), $false),
+            @(('set(fragment "// ' + $guard + '")'), $false),
+            @(('set(fragment "#define FLAG 1")' + "`n" + $guard), $true))) {
+        $code = Get-ZstdExecutablePolicyText -Text $case[0] -Path 'fixture.cmake'
+        if ($code.Contains($guard) -ne $case[1]) { throw 'CMake executable comment boundary regression.' }
+    }
     foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
             'cmake/ZstdDictionaryEvaluation.cmake',
             'cmake/ZstdHeaderComponents.cmake', 'tests/zstd/headers/header_contract.c',
@@ -45,15 +61,21 @@ try {
             'cmake/ZstdLegacyOwnedStreamV05.c', 'cmake/ZstdLegacyOwnedStreamV06.c', 'cmake/ZstdLegacyOwnedStreamV07.c',
             'cmake/ZstdLegacyPublicStream.c', 'tests/cpp/test_zstd_bounds.cpp',
             'tests/cpp/test_zstd_cover_selection.cpp', 'tests/cpp/test_zstd_legacy_failures.cpp',
-            'cmake/ZstdLegacyStreamV05.c', 'cmake/ZstdLegacyStreamV06.c', 'cmake/ZstdLegacyStreamV07.c',
-            'cmake/ZstdLegacyHistoryV05.c', 'cmake/ZstdLegacyHistoryV06.c', 'cmake/ZstdLegacyHistoryV07.c',
-            'cmake/ZstdLegacyBlockV07.c', 'cmake/ZstdLegacyDictionary.cmake', 'tests/cpp/test_zstd_legacy_history.cpp')) {
+            'cmake/ZstdLegacyLiteralsV05.c', 'cmake/ZstdLegacyLiteralsV06.c', 'cmake/ZstdLegacyLiteralsV07.c',
+            'cmake/ZstdLegacyCanonical.cmake', 'tests/cmake/test_zstd_legacy_patch.cmake', 'cmake/ZstdLegacyOwnedBlock.c', 'cmake/ZstdLegacyDictionary.cmake', 'tests/cpp/test_zstd_legacy_history.cpp')) {
         $destination = Join-Path $fixtureRoot $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination
     }
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
     foreach ($mutation in @(
+            @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT recognized)', 'if(FALSE)', 'canonical exact source admission'),
+            @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT actual STREQUAL "${_zstd_canonical_${version}_patched}")', 'if(FALSE)', 'canonical complete output identity'),
+            @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT archive_hash STREQUAL _zstd_canonical_archive_hash)', 'if(FALSE)', 'canonical immutable provenance identity'),
+            @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_canonical_geometry("${content}" "${version}" content)', '# omitted geometry', 'canonical complete geometry dispatch'),
+            @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_canonical_stream("${content}" "${version}" content)', '# omitted stream', 'legacy owned buffer patch dispatch'),
+            @('cmake/ZstdLegacyOwnedSequence.c', 'sequence.matchLength > available - sequence.litLength', 'sequence.matchLength > available', 'canonical sequence extent'),
+            @('tests/cmake/test_zstd_legacy_patch.cmake', 'prepare_historical_decoder_stage("${previous_canonical}" "complete")', '', 'canonical historical migration coverage'),
             @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_header_components("${source_dir}")', '', 'guarded header component dispatch'),
             @('cmake/ZstdHeaderComponents.cmake', 'if(NOT component_hash STREQUAL "${${key}_${part}_hash}")', 'if(FALSE)', 'complete header component identity'),
             @('cmake/ZstdHeaderComponents.cmake', 'if(EXISTS "${temporary}" OR EXISTS "${raw}")', 'if(FALSE)', 'header interrupted publication rejection'),
@@ -79,7 +101,7 @@ try {
             @('cmake/ZstdLegacyBuffers.cpp', 'count <= capacity - offset', 'count <= capacity', 'legacy complete copy geometry'),
             @('cmake/ZstdLegacyBuffers.cpp', '!valid_extent(destination, destinationCapacity, destinationOffset, count)', '!valid_extent(destination, destinationCapacity, 0, count)', 'legacy copy destination geometry'),
             @('cmake/ZstdLegacyBuffers.cpp', '!valid_extent(source, sourceCapacity, sourceOffset, count)', '!valid_extent(source, sourceCapacity, 0, count)', 'legacy copy source geometry'),
-            @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_owned_decoder("${source_dir}")', '', 'legacy complete decoder ownership dispatch'),
+            @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_canonical("${source_dir}")', '', 'legacy complete decoder ownership dispatch'),
             @('cmake/ZstdLegacyBuffers.cpp', 'count > distance ||', 'count > capacity ||', 'legacy initialized history transfer extent'),
             @('cmake/ZstdLegacyBuffers.cpp', 'distance > owner->initialized', 'distance > owner->capacity', 'legacy initialized history distance'),
             @('cmake/ZstdLegacyBuffers.cpp', 'owner->initialized = std::min(owner->initialized, limit);', 'owner->initialized = owner->capacity;', 'legacy decoded window retention bound'),
@@ -121,30 +143,26 @@ try {
             -Replacement "$context`->inPos > needed" -Cause "v$version owned input extent"
         Assert-ZstdPolicyMutation -Path $owned -Original '*srcSizePtr > (size_t)PTRDIFF_MAX' `
             -Replacement '*srcSizePtr > SIZE_MAX' -Cause "v$version public input pointer geometry"
-        $history = "cmake/ZstdLegacyHistoryV$version.c"
-        Assert-ZstdPolicyMutation -Path $history -Original 'sequence.matchLength > available - sequence.litLength' `
-            -Replacement 'sequence.litLength + sequence.matchLength > available' -Cause "v$version sequence extent"
-        Assert-ZstdPolicyMutation -Path $history -Original 'dictionaryOffset > dictSize' `
-            -Replacement 'dictionaryOffset > 0' -Cause "v$version history extent"
-        $fragment = "cmake/ZstdLegacyStreamV$version.c"
-        Assert-ZstdPolicyMutation -Path $fragment -Original '*srcSizePtr != 0 ? istart + *srcSizePtr : istart' `
+        Assert-ZstdPolicyMutation -Path $owned -Original "$context`->outStart > $context`->outEnd || $context`->outEnd > buffers.outputCapacity" `
+            -Replacement "$context`->outStart > $context`->outEnd" -Cause "v$version initialized output extent"
+        Assert-ZstdPolicyMutation -Path $owned -Original '*srcSizePtr != 0 ? istart + *srcSizePtr : istart' `
             -Replacement 'istart + *srcSizePtr' -Cause "v$version nullable input extent"
-        $cleanup = if ($version -eq '07') { 'zbd->customMem.customFree(zbd->customMem.opaque, replacementIn);' } else { 'free(replacementIn);' }
-        Assert-ZstdPolicyMutation -Path $fragment -Original $cleanup `
-            -Replacement '/* omitted cleanup */' -Cause "v$version partial allocation cleanup"
+        $literal = "cmake/ZstdLegacyLiteralsV$version.c"
+        Assert-ZstdPolicyMutation -Path $literal -Original "return ZSTDv$version`_decodeRawLiterals(dctx, istart, srcSize);" `
+            -Replacement 'return 0;' -Cause "v$version canonical raw literal routing"
     }
     # A comment containing the removed check cannot satisfy the executable-source guard.
     Assert-ZstdPolicyMutation -Path 'cmake/ZstdRawBlockWriter.c' `
         -Original 'dstCapacity < ZSTD_blockHeaderSize || srcSize > dstCapacity - ZSTD_blockHeaderSize' `
         -Replacement '/* dstCapacity < ZSTD_blockHeaderSize || srcSize > dstCapacity - ZSTD_blockHeaderSize */ 0' `
         -Cause 'raw-block extent'
-    Assert-ZstdPolicyMutation -Path 'cmake/ZstdLegacyBlockV07.c' -Original 'if (ZSTDv07_isError(result))' `
+    Assert-ZstdPolicyMutation -Path 'cmake/ZstdLegacyOwnedBlock.c' -Original 'if (ZSTDvXX_isError(result))' `
         -Replacement 'if (0)' -Cause 'legacy error history boundary'
-    Assert-ZstdPolicyMutation -Path 'cmake/PatchZstdLegacy.cmake' `
-        -Original 'superzip_patch_zstd_legacy_history("${source_dir}")' `
+    Assert-ZstdPolicyMutation -Path 'cmake/ZstdLegacyCanonical.cmake' `
+        -Original 'superzip_zstd_owned_decoder_components("${content}" "${version}" content)' `
         -Replacement '# omitted legacy history patch' -Cause 'legacy history patch dispatch'
-    Assert-ZstdPolicyMutation -Path 'cmake/PatchZstdLegacy.cmake' `
-        -Original 'superzip_patch_zstd_legacy_dictionary("${source_dir}")' `
+    Assert-ZstdPolicyMutation -Path 'cmake/ZstdLegacyCanonical.cmake' `
+        -Original 'superzip_zstd_rewrite_legacy_dictionary("${content}" "${version}" content)' `
         -Replacement '# omitted legacy dictionary patch' -Cause 'legacy dictionary patch dispatch'
     Assert-ZstdPolicyMutation -Path 'cmake/ZstdLegacyDictionary.cmake' `
         -Original 'if (ZSTD@version@_isError(initialized)) return initialized;' `
@@ -161,9 +179,7 @@ try {
     foreach ($entry in @(
             @('superzip_patch_zstd_raw_block_writer', 'raw-block patch dispatch'),
             @('superzip_patch_zstd_legacy_public_stream', 'public stream patch dispatch'),
-            @('superzip_patch_zstd_legacy_history', 'legacy history patch dispatch'),
-            @('superzip_patch_zstd_dictionary_bounds', 'dictionary bounds patch dispatch'),
-            @('superzip_patch_zstd_legacy_dictionary', 'legacy dictionary patch dispatch'))) {
+            @('superzip_patch_zstd_dictionary_bounds', 'dictionary bounds patch dispatch'))) {
         $dispatch = $entry[0] + '("${source_dir}")'
         Assert-ZstdPolicyMutation -Path 'cmake/PatchZstdLegacy.cmake' -Original $dispatch `
             -Replacement ('# ' + $dispatch) -Cause $entry[1]

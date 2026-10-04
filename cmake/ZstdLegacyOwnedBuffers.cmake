@@ -67,40 +67,17 @@ endfunction()
 function(superzip_zstd_decoder_owner_predecessor actual_hash predecessor output)
   include(
     "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedDecoderHashes.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyCanonicalHashes.cmake")
   foreach(version IN ITEMS v05 v06 v07)
     set(key "_zstd_owned_decoder_${version}")
     if(actual_hash STREQUAL "${${key}_patched}")
       set(predecessor "${${key}_original}")
+    elseif(actual_hash STREQUAL "${_zstd_canonical_${version}_patched}")
+      set(predecessor "${${key}_patched}")
     endif()
   endforeach()
   set(${output}
       "${predecessor}"
-      PARENT_SCOPE)
-endfunction()
-
-# Purpose: Replace the complete buffered stream region with checked stages.
-# Inputs: Verified preceding source and version. Outputs: Proposed source only.
-function(superzip_zstd_rewrite_owned_stream content version output)
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
-  string(TOUPPER "${version}" fragment_version)
-  string(CONCAT fragment_path "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/"
-                "ZstdLegacyOwnedStream${fragment_version}.c")
-  file(READ "${fragment_path}" fragment)
-  string(REGEX REPLACE "\n+$" "" fragment "${fragment}")
-  set(stream_key "_zstd_legacy_stream_${version}")
-  superzip_zstd_replace_legacy_region(
-    "${content}" "/* Transactional buffers and explicit stream"
-    "${${stream_key}_end}" "${fragment}" content)
-  # The old size-limited copy helper has no remaining caller. All transfers
-  # enforce full source and destination geometry in the checked stages.
-  string(
-    REGEX
-    REPLACE
-      "(static|MEM_STATIC) size_t ZBUFF${version}_limitCopy\\([^}]*}[^}]*}" ""
-      content "${content}")
-  set(${output}
-      "${content}"
       PARENT_SCOPE)
 endfunction()
 
@@ -187,34 +164,6 @@ function(superzip_zstd_rewrite_owned_context content version output)
   set(${output}
       "${content}"
       PARENT_SCOPE)
-endfunction()
-
-# Purpose: Publish checked ownership for all shipped legacy buffered decoders.
-# Inputs: Extracted exact dictionary revisions. Outputs: Atomic complete
-# revisions or a source/output identity rejection; preserves immutable upstream
-# archives.
-function(superzip_patch_zstd_legacy_owned_buffers source_dir)
-  foreach(version IN ITEMS v05 v06 v07)
-    set(key "_zstd_legacy_owned_${version}")
-    set(source "${source_dir}/lib/legacy/zstd_${version}.c")
-    file(SHA256 "${source}" actual_hash)
-    if(actual_hash STREQUAL "${${key}_patched}")
-      continue()
-    endif()
-    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
-                                      superseded)
-    if(superseded)
-      continue()
-    endif()
-    if(NOT actual_hash STREQUAL "${${key}_original}")
-      message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
-    endif()
-    file(READ "${source}" content)
-    superzip_zstd_rewrite_owned_stream("${content}" "${version}" content)
-    superzip_zstd_rewrite_owned_context("${content}" "${version}" content)
-    superzip_write_verified_zstd_patch("${source}" "${actual_hash}"
-                                       "${${key}_patched}" "${content}")
-  endforeach()
 endfunction()
 
 set(_zstd_legacy_owned_v05_original

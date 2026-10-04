@@ -810,107 +810,6 @@ function(superzip_patch_zstd_foundation source_dir)
   superzip_patch_zstd_bufferless("${source_dir}")
 endfunction()
 
-# Purpose: Split legacy literal-kind algorithms from their dispatch without
-# changing wire bytes, errors or buffer ownership. Inputs: source_dir owns the
-# verified extracted archive. Outputs: Publishes only the exact final source
-# revisions; accepts those same revisions on subsequent configuration.
-function(superzip_patch_zstd_legacy_literals source_dir)
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
-  foreach(version IN ITEMS v05 v06 v07)
-    set(key "_zstd_legacy_literals_${version}")
-    set(stream_key "_zstd_legacy_stream_${version}")
-    set(history_key "_zstd_legacy_history_${version}")
-    set(dictionary_key "_zstd_legacy_dictionary_${version}")
-    set(source "${source_dir}/lib/legacy/zstd_${version}.c")
-    file(SHA256 "${source}" actual_hash)
-    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
-                                      superseded)
-    if(superseded
-       OR actual_hash STREQUAL "${${key}_patched}"
-       OR actual_hash STREQUAL "${${dictionary_key}_patched}"
-       OR actual_hash STREQUAL "${${history_key}_patched}"
-       OR actual_hash STREQUAL "${${stream_key}_patched}"
-       OR actual_hash STREQUAL "${${stream_key}_empty_prior}"
-       OR actual_hash STREQUAL "${${stream_key}_prior}")
-      continue()
-    endif()
-    if(NOT actual_hash STREQUAL "${${key}_original}")
-      message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
-    endif()
-    file(READ "${source}" content)
-    string(FIND "${content}" "${${key}_begin}" begin)
-    string(FIND "${content}" "${${key}_end}" end)
-    if(begin LESS 0 OR end LESS_EQUAL begin)
-      message(FATAL_ERROR "Zstandard legacy literal decoder boundary mismatch")
-    endif()
-    string(SUBSTRING "${content}" 0 ${begin} prefix)
-    string(SUBSTRING "${content}" ${end} -1 suffix)
-    string(TOUPPER "${version}" fragment_version)
-    string(CONCAT fragment_path "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/"
-                  "ZstdLegacyLiterals${fragment_version}.c")
-    file(READ "${fragment_path}" fragment)
-    string(REGEX REPLACE "\n+$" "" fragment "${fragment}")
-    string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-    superzip_write_verified_zstd_patch("${source}" "${${key}_original}"
-                                       "${${key}_patched}" "${content}")
-  endforeach()
-endfunction()
-
-# Purpose: Publish transactional legacy buffer ownership and small explicit
-# stream stages. Inputs: source_dir owns exact preceding literal-decoder
-# revisions. Outputs: Preserves old buffers on acquisition failure and retains
-# supported wire formats, consumption, hints and allocator identities.
-function(superzip_patch_zstd_legacy_stream source_dir)
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
-  foreach(version IN ITEMS v05 v06 v07)
-    set(key "_zstd_legacy_stream_${version}")
-    set(history_key "_zstd_legacy_history_${version}")
-    set(dictionary_key "_zstd_legacy_dictionary_${version}")
-    set(source "${source_dir}/lib/legacy/zstd_${version}.c")
-    file(SHA256 "${source}" actual_hash)
-    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
-                                      superseded)
-    if(superseded
-       OR actual_hash STREQUAL "${${key}_patched}"
-       OR actual_hash STREQUAL "${${history_key}_patched}"
-       OR actual_hash STREQUAL "${${dictionary_key}_patched}")
-      continue()
-    endif()
-    if(NOT actual_hash STREQUAL "${${key}_original}"
-       AND NOT actual_hash STREQUAL "${${key}_prior}"
-       AND NOT actual_hash STREQUAL "${${key}_empty_prior}")
-      message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
-    endif()
-    file(READ "${source}" content)
-    if(actual_hash STREQUAL "${${key}_original}")
-      string(FIND "${content}" "${${key}_begin}" begin)
-    else()
-      string(FIND "${content}" "/* Transactional buffers and explicit stream"
-                  begin)
-    endif()
-    string(FIND "${content}" "${${key}_end}" end)
-    if(begin LESS 0 OR end LESS_EQUAL begin)
-      message(FATAL_ERROR "Zstandard legacy stream boundary mismatch")
-    endif()
-    string(SUBSTRING "${content}" 0 ${begin} prefix)
-    string(SUBSTRING "${content}" ${end} -1 suffix)
-    string(TOUPPER "${version}" fragment_version)
-    file(
-      READ
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream${fragment_version}.c"
-      fragment)
-    string(REGEX REPLACE "\n+$" "" fragment "${fragment}")
-    string(CONCAT content "${prefix}" "${fragment}" "${suffix}")
-    superzip_write_verified_zstd_patch("${source}" "${actual_hash}"
-                                       "${${key}_patched}" "${content}")
-  endforeach()
-endfunction()
-
 # Purpose: Preserve empty public buffer identity through shipped legacy
 # decoders. Inputs: source_dir owns verified v1.5.7 source after the initializer
 # repair. Outputs: Guards zero offsets and removes the unneeded sentinel
@@ -1040,9 +939,9 @@ function(superzip_patch_zstd_raw_block_writer source_dir)
                                      "${_zstd_raw_block_patched}" "${content}")
 endfunction()
 
-# Purpose: Apply the verified predecessor revisions in their established order.
-# Inputs: Extracted pinned source. Outputs: A complete known predecessor for the
-# ownership migration, with all earlier repairs and provenance checks.
+# Purpose: Apply identity-bound nonlegacy repairs and foundational annotations.
+# Inputs: Extracted pinned source with canonical owned legacy decoders. Outputs:
+# Complete nonlegacy revisions with all provenance checks preserved.
 function(superzip_patch_zstd_base source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
@@ -1053,10 +952,6 @@ function(superzip_patch_zstd_base source_dir)
   superzip_patch_zstd_decompression_stream("${source_dir}")
   superzip_patch_zstd_dictionary_merge("${source_dir}")
   superzip_patch_zstd_synchronization_point("${source_dir}")
-  superzip_patch_zstd_legacy_literals("${source_dir}")
-  superzip_patch_zstd_legacy_stream("${source_dir}")
-  superzip_patch_zstd_legacy_history("${source_dir}")
-  superzip_patch_zstd_legacy_dictionary("${source_dir}")
   superzip_patch_zstd_legacy_public_stream("${source_dir}")
   superzip_patch_zstd_raw_block_writer("${source_dir}")
   superzip_patch_zstd_dictionary_bounds("${source_dir}")
@@ -1072,13 +967,12 @@ function(superzip_patch_zstd_legacy source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCoverWorkGroup.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdAlgorithmProgress.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdHeaderComponents.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedDecoder.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyCanonical.cmake")
+  superzip_patch_zstd_canonical("${source_dir}")
   superzip_patch_zstd_base("${source_dir}")
-  superzip_patch_zstd_legacy_owned_buffers("${source_dir}")
   superzip_patch_zstd_dictionary_evaluation("${source_dir}")
   superzip_patch_zstd_table_geometry("${source_dir}")
   superzip_patch_zstd_work_group("${source_dir}")
   superzip_patch_zstd_algorithm_progress("${source_dir}")
-  superzip_patch_zstd_legacy_owned_decoder("${source_dir}")
   superzip_patch_zstd_header_components("${source_dir}")
 endfunction()

@@ -78,42 +78,6 @@ static size_t ZSTDv06_decodeRepeatLiterals(ZSTDv06_DCtx* dctx, const BYTE* istar
     return litCSize + lhSize;
 }
 
-/* Purpose: Decode raw literals using the v06 wire contract.
- * Inputs: dctx is writable; istart borrows srcSize bytes, at least MIN_CBLOCK_SIZE.
- * Outputs: Returns bytes consumed or an error; publishes the same literal state as upstream. */
-static size_t ZSTDv06_decodeRawLiterals(ZSTDv06_DCtx* dctx, const BYTE* istart, size_t srcSize) {
-    size_t litSize;
-    U32 lhSize = ((istart[0]) >> 4) & 3;
-    switch (lhSize) {
-    case 0:
-    case 1:
-    default: /* note : default is impossible, since lhSize into [0..3] */
-        lhSize = 1;
-        litSize = istart[0] & 31;
-        break;
-    case 2:
-        litSize = ((istart[0] & 15) << 8) + istart[1];
-        break;
-    case 3:
-        litSize = ((istart[0] & 15) << 16) + (istart[1] << 8) + istart[2];
-        break;
-    }
-
-    if (lhSize + litSize + WILDCOPY_OVERLENGTH > srcSize) { /* risk reading beyond src buffer with wildcopy */
-        if (litSize + lhSize > srcSize)
-            return ERROR(corruption_detected);
-        memcpy(dctx->litBuffer, istart + lhSize, litSize);
-        dctx->litPtr = dctx->litBuffer;
-        dctx->litSize = litSize;
-        memset(dctx->litBuffer + dctx->litSize, 0, WILDCOPY_OVERLENGTH);
-        return lhSize + litSize;
-    }
-    /* direct reference into compressed stream */
-    dctx->litPtr = istart + lhSize;
-    dctx->litSize = litSize;
-    return lhSize + litSize;
-}
-
 /* Purpose: Decode rle literals using the v06 wire contract.
  * Inputs: dctx is writable; istart borrows srcSize bytes, at least MIN_CBLOCK_SIZE.
  * Outputs: Returns bytes consumed or an error; publishes the same literal state as upstream. */

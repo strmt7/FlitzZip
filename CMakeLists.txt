@@ -182,6 +182,10 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_ID STREQUAL
   endif()
   set_property(TARGET lzma_sdk_7z PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE
                                            TRUE)
+  # The C bridge requires IPO; tell consumers before linking so MSVC does not
+  # discover /GL inputs and restart the link. Release already disables ordinary
+  # incremental linking, and this preserves the same optimized output contract.
+  target_link_options(lzma_sdk_7z INTERFACE "$<$<CONFIG:Release>:/LTCG>")
 endif()
 target_compile_definitions(lzma_sdk_7z PUBLIC Z7_EXTRACT_ONLY Z7_PPMD_SUPPORT)
 target_compile_definitions(lzma_sdk_7z PRIVATE _CRT_SECURE_NO_WARNINGS)

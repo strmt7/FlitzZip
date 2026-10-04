@@ -31,7 +31,7 @@ size_t ZSTD@version@_decompress_usingDict(ZSTD@version@_DCtx* dctx,
 
 ]=])
   string(CONFIGURE "${one_shot}" one_shot @ONLY)
-  superzip_zstd_replace_legacy_region(
+  superzip_zstd_replace_owned_region(
     "${content}" "size_t ZSTD${version}_decompress_usingDict("
     "size_t ZSTD${version}_decompressDCtx(" "${one_shot}" content)
   if(NOT version STREQUAL v07)
@@ -62,37 +62,13 @@ static size_t ZSTD@version@_decompress_insertDictionary(
 
 ]=])
     string(CONFIGURE "${insertion}" insertion @ONLY)
-    superzip_zstd_replace_legacy_region(
+    superzip_zstd_replace_owned_region(
       "${content}" "static size_t ZSTD${version}_decompress_insertDictionary("
       "size_t ZSTD${version}_decompressBegin_usingDict(" "${insertion}" content)
   endif()
   set(${output}
       "${content}"
       PARENT_SCOPE)
-endfunction()
-
-# Purpose: Publish complete identity-bound legacy dictionary repairs. Inputs:
-# source_dir owns exact history revisions or the complete final result. Outputs:
-# Migrates all shipped versions, rejects unknown bytes and leaves provenance
-# archives unchanged; repeated application performs no writes.
-function(superzip_patch_zstd_legacy_dictionary source_dir)
-  foreach(version IN ITEMS v05 v06 v07)
-    set(key "_zstd_legacy_dictionary_${version}")
-    set(source "${source_dir}/lib/legacy/zstd_${version}.c")
-    file(SHA256 "${source}" actual_hash)
-    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
-                                      superseded)
-    if(superseded OR actual_hash STREQUAL "${${key}_patched}")
-      continue()
-    endif()
-    if(NOT actual_hash STREQUAL "${${key}_original}")
-      message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
-    endif()
-    file(READ "${source}" content)
-    superzip_zstd_rewrite_legacy_dictionary("${content}" "${version}" content)
-    superzip_write_verified_zstd_patch("${source}" "${actual_hash}"
-                                       "${${key}_patched}" "${content}")
-  endforeach()
 endfunction()
 
 set(_zstd_legacy_dictionary_v05_original

@@ -235,39 +235,6 @@ function(superzip_zstd_owned_empty_geometry content version output)
       PARENT_SCOPE)
 endfunction()
 
-# Purpose: Publish complete decoder ownership for all shipped historical
-# versions. Inputs: Exact previous canonical sources or exact complete owned
-# results. Outputs: Atomic hash-verified sources; unknown bytes and immutable
-# upstream archives remain untouched.
-function(superzip_patch_zstd_legacy_owned_decoder source_dir)
-  foreach(version IN ITEMS v05 v06 v07)
-    set(key "_zstd_owned_decoder_${version}")
-    set(source "${source_dir}/lib/legacy/zstd_${version}.c")
-    file(SHA256 "${source}" actual)
-    if(actual STREQUAL "${${key}_patched}")
-      continue()
-    endif()
-    if(NOT actual STREQUAL "${${key}_original}")
-      message(FATAL_ERROR "Zstandard patch source identity mismatch: ${source}")
-    endif()
-    file(READ "${source}" content)
-    superzip_zstd_owned_decoder_components("${content}" "${version}" content)
-    superzip_zstd_owned_decoder_geometry("${content}" "${version}" content)
-    superzip_zstd_owned_decoder_guards("${content}" "${version}" content)
-    file(READ "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedProbe.c" probe)
-    string(REPLACE vXX "${version}" probe "${probe}")
-    string(SUBSTRING "${version}" 1 2 number)
-    string(REGEX REPLACE "^0" "" number "${number}")
-    string(
-      CONCAT _owned_boundary_text_13
-             "\n#define SUPERZIP_LEGACY_DECODER_VERSION "
-             "${number}\n${probe}\n#undef SUPERZIP_LEGACY_DECODE" "R_VERSION\n")
-    string(APPEND content "${_owned_boundary_text_13}")
-    superzip_write_verified_zstd_patch("${source}" "${actual}"
-                                       "${${key}_patched}" "${content}")
-  endforeach()
-endfunction()
-
 include("${CMAKE_CURRENT_LIST_DIR}/ZstdLegacyOwnedDecoderHashes.cmake")
 
 # Purpose: Instantiate the canonical ownership components for one historical
@@ -277,16 +244,14 @@ function(superzip_zstd_owned_decoder_components content version output)
   string(SUBSTRING "${version}" 1 2 number)
   string(REGEX REPLACE "^0" "" number "${number}")
   string(TOUPPER "${version}" upper)
-  foreach(component IN ITEMS owner sequence literals continue block one_shot)
-    if(component STREQUAL owner)
+  foreach(component IN ITEMS owner sequence continue block one_shot)
+    if(component STREQUAL "owner")
       set(file ZstdLegacyDecoderOwner.c)
-    elseif(component STREQUAL sequence)
+    elseif(component STREQUAL "sequence")
       set(file ZstdLegacyOwnedSequence.c)
-    elseif(component STREQUAL literals)
-      set(file ZstdLegacyOwnedLiterals.c)
-    elseif(component STREQUAL continue)
+    elseif(component STREQUAL "continue")
       set(file "ZstdLegacyOwnedContinue${upper}.c")
-    elseif(component STREQUAL block)
+    elseif(component STREQUAL "block")
       set(file ZstdLegacyOwnedBlock.c)
     else()
       set(file ZstdLegacyOwnedOneShot.c)
@@ -333,9 +298,11 @@ function(superzip_zstd_owned_component_regions content version output)
   if(version STREQUAL v07)
     set(factory createDCtx_advanced)
     set(section "\n\n/*-************************")
-    set(frame "\n\n/* Purpose: Borrow an uncompressed block")
+    set(frame "\nZSTDLIBv07_API size_t ZSTDv07_insertBlock(")
+    set(sequence_begin "static\nsize_t ZSTDv07_execSequence(")
   else()
     set(factory createDCtx)
+    set(sequence_begin "static size_t ZSTD${version}_execSequence(")
     set(section "\n\n/* ************************")
     if(version STREQUAL v05)
       set(frame "\n\n\n/*! ZSTDv05_decompress_continueDCtx")
@@ -348,11 +315,8 @@ function(superzip_zstd_owned_component_regions content version output)
     "${content}" "\nZSTD${version}_DCtx* ZSTD${version}_${factory}"
     "${section}" "\n${owner}" content)
   superzip_zstd_replace_owned_region(
-    "${content}" "/* Purpose: Execute a legacy sequence after proving"
+    "${content}" "${sequence_begin}"
     "static size_t ZSTD${version}_decompressSequences(" "${sequence}" content)
-  superzip_zstd_replace_owned_region(
-    "${content}" "\nstatic size_t ZSTD${version}_decodeRawLiterals("
-    "\n\n/* Purpose: Decode rle literals" "\n${literals}" content)
   superzip_zstd_replace_owned_region(
     "${content}" "\nsize_t ZSTD${version}_decompressContinue("
     "\n\n\nstatic size_t ZSTD${version}_loadEntropy(" "\n${continue}" content)
@@ -367,7 +331,7 @@ function(superzip_zstd_owned_component_regions content version output)
          insert)
     superzip_zstd_replace_owned_region(
       "${content}" "\nZSTDLIBv07_API size_t ZSTDv07_insertBlock("
-      "\n\n#ifdef SUPERZIP_ZSTD_BUFFER_PROBES" "\n${insert}" content)
+      "\n\nstatic size_t ZSTDv07_generateNxBytes(" "\n${insert}" content)
   endif()
   set(${output}
       "${content}"

@@ -1,3 +1,26 @@
+# Purpose: Strip comments according to the source language before safety matching.
+# Inputs: Complete source text and its repository path.
+# Outputs: Executable policy text; CMake arguments retain their boundaries while embedded C comments are removed.
+function Get-ZstdExecutablePolicyText {
+    param([string]$Text, [string]$Path)
+    $cComments = '(?s)/\*.*?\*/|(?m)//[^\r\n]*'
+    if (-not $Path.EndsWith('.cmake')) { return [regex]::Replace($Text, $cComments, '') }
+    $cmakeTokens = '(?s)(?<argument>"(?:\\.|[^"\\])*"|\[(?<level>=*)\[.*?\]\k<level>\])|(?<comment>#[^\r\n]*)'
+    return [regex]::Replace($Text, $cmakeTokens, [System.Text.RegularExpressions.MatchEvaluator] {
+        param($match)
+        if ($match.Groups['comment'].Success) { return '' }
+        return [regex]::Replace($match.Value, $cComments, '')
+    })
+}
+
+# Purpose: Match an exact safety expression across ordinary formatter whitespace.
+# Inputs: A literal source requirement. Outputs: An escaped pattern; operators, names and values remain exact.
+function Get-ZstdPolicyTokenPattern {
+    param([string]$Token)
+    $parts = [regex]::Split($Token, '\s+') | ForEach-Object { [regex]::Escape($_) }
+    return $parts -join '\s+'
+}
+
 # Purpose: Validate executable safety requirements against their actual sources.
 # Inputs: RepoRoot and path/token/diagnostic triples identify required boundaries.
 # Outputs: Rejects missing source or tokens; comments cannot satisfy executable dispatch.
@@ -7,10 +30,11 @@ function Assert-ZstdSourceRequirement {
     foreach ($requirement in $Requirements) {
         $path = Join-Path $RepoRoot $requirement[0]
         $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
-        $code = [regex]::Replace($text, '(?s)/\*.*?\*/|(?m)//[^\r\n]*', '')
-        $present = $code.Contains($requirement[1])
-        if ($requirement[0] -eq 'cmake/PatchZstdLegacy.cmake' -and $requirement[2] -like '*dispatch') {
-            $call = '(?m)^\s*' + [regex]::Escape($requirement[1]) + '\s*$'
+        $code = Get-ZstdExecutablePolicyText -Text $text -Path $requirement[0]
+        $tokenPattern = Get-ZstdPolicyTokenPattern -Token $requirement[1]
+        $present = [regex]::IsMatch($code, $tokenPattern)
+        if ($requirement[0].EndsWith('.cmake') -and $requirement[2] -like '*dispatch') {
+            $call = '(?m)^\s*' + $tokenPattern + '\s*$'
             $present = [regex]::IsMatch($code, $call)
         }
         if (-not $present) {
@@ -24,7 +48,7 @@ function Assert-ZstdSourceRequirement {
 function Assert-ZstdOwnedDecoderPolicy {
     param([string]$RepoRoot)
     $requirements = @(
-        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_owned_decoder("${source_dir}")', 'legacy complete decoder ownership dispatch'),
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_canonical("${source_dir}")', 'legacy complete decoder ownership dispatch'),
         @('cmake/ZstdLegacyBuffers.cpp', 'count > distance ||', 'legacy initialized history transfer extent'),
         @('cmake/ZstdLegacyBuffers.cpp', 'distance > owner->initialized', 'legacy initialized history distance'),
         @('cmake/ZstdLegacyBuffers.cpp', 'owner->initialized = std::min(owner->initialized, limit);', 'legacy decoded window retention bound'),
@@ -47,6 +71,12 @@ function Assert-ZstdRewritePolicy {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
     $requirements = @(
+        @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT recognized)', 'canonical exact source admission'),
+        @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT actual STREQUAL "${_zstd_canonical_${version}_patched}")', 'canonical complete output identity'),
+        @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT archive_hash STREQUAL _zstd_canonical_archive_hash)', 'canonical immutable provenance identity'),
+        @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_canonical_geometry("${content}" "${version}" content)', 'canonical complete geometry dispatch'),
+        @('cmake/ZstdLegacyOwnedSequence.c', 'sequence.matchLength > available - sequence.litLength', 'canonical sequence extent'),
+        @('tests/cmake/test_zstd_legacy_patch.cmake', 'prepare_historical_decoder_stage("${previous_canonical}" "complete")', 'canonical historical migration coverage'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_header_components("${source_dir}")', 'guarded header component dispatch'),
         @('cmake/ZstdHeaderComponents.cmake', 'if(NOT component_hash STREQUAL "${${key}_${part}_hash}")', 'complete header component identity'),
         @('cmake/ZstdHeaderComponents.cmake', 'if(EXISTS "${temporary}" OR EXISTS "${raw}")', 'header interrupted publication rejection'),
@@ -86,7 +116,7 @@ function Assert-ZstdRewritePolicy {
         @('cmake/ZstdLegacyBuffers.cpp', 'if (input.data() == output.data())', 'legacy identical-range copy contract'),
         @('cmake/ZstdLegacyBuffers.cpp', 'owner->input = std::move(input);', 'legacy transactional input publication'),
         @('cmake/ZstdLegacyBuffers.cpp', 'owner->output = std::move(output);', 'legacy transactional output publication'),
-        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_owned_buffers("${source_dir}")', 'legacy owned buffer patch dispatch'),
+        @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_canonical_stream("${content}" "${version}" content)', 'legacy owned buffer patch dispatch'),
         @('cmake/ZstdLibrary.cmake', '"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyBuffers.cpp"', 'legacy production owner linkage'),
         @('tests/cpp/test_zstd_legacy_buffers.cpp', 'TEST_CASE(zstd_legacy_checked_copy_overlap_oracle)', 'legacy independent copy oracle'),
         @('tests/cpp/test_zstd_legacy_buffers.cpp', 'TEST_CASE(zstd_legacy_owned_buffers_allocation_failures)', 'legacy owner failure regression'),
@@ -109,11 +139,11 @@ function Assert-ZstdRewritePolicy {
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_dictionary_bounds("${source_dir}")', 'dictionary bounds patch dispatch'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_raw_block_writer("${source_dir}")', 'raw-block patch dispatch'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_public_stream("${source_dir}")', 'public stream patch dispatch'),
-        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_history("${source_dir}")', 'legacy history patch dispatch'),
-        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_dictionary("${source_dir}")', 'legacy dictionary patch dispatch'),
+        @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_owned_decoder_components("${content}" "${version}" content)', 'legacy history patch dispatch'),
+        @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_rewrite_legacy_dictionary("${content}" "${version}" content)', 'legacy dictionary patch dispatch'),
         @('cmake/ZstdLegacyDictionary.cmake', 'if (ZSTD@version@_isError(initialized)) return initialized;', 'legacy dictionary error propagation'),
         @('cmake/ZstdLegacyDictionary.cmake', 'dictSize < sizeof(U32) ||', 'legacy dictionary marker extent'),
-        @('cmake/ZstdLegacyBlockV07.c', 'if (ZSTDv07_isError(result))', 'legacy error history boundary'),
+        @('cmake/ZstdLegacyOwnedBlock.c', 'if (ZSTDvXX_isError(result))', 'legacy error history boundary'),
         @('tests/cpp/test_zstd_legacy_history.cpp', 'TEST_CASE(zstd_legacy_sequence_rejects_malformed_extents)', 'legacy sequence extent regression'),
         @('cmake/PatchZstdLegacy.cmake', 'Zstandard patch source identity mismatch', 'patch input identity'),
         @('cmake/PatchZstdLegacy.cmake', 'Zstandard patch output identity mismatch', 'patch output identity'),
@@ -130,16 +160,12 @@ function Assert-ZstdRewritePolicy {
         $requirements += ,@($ownedFragment, "$context`->outStart > $context`->outEnd || $context`->outEnd > buffers.outputCapacity", "v$version initialized output extent")
         $requirements += ,@($ownedFragment, '*srcSizePtr > (size_t)PTRDIFF_MAX', "v$version public input pointer geometry")
         $requirements += ,@($ownedFragment, 'ZBUFF_viewOwnedBuffers', "v$version actual owner geometry")
-        $history = "cmake/ZstdLegacyHistoryV$version.c"
-        $requirements += ,@($history, 'sequence.matchLength > available - sequence.litLength', "v$version sequence extent")
-        $requirements += ,@($history, 'dictionaryOffset > dictSize', "v$version history extent")
-        $fragment = "cmake/ZstdLegacyStreamV$version.c"
-        $requirements += ,@($fragment, 'if (begin == NULL)', "v$version empty cursor")
-        $requirements += ,@($fragment, '*srcSizePtr != 0 ? istart + *srcSizePtr : istart', "v$version nullable input extent")
+        $requirements += ,@($ownedFragment, 'if (begin == NULL)', "v$version empty cursor")
+        $requirements += ,@($ownedFragment, '*srcSizePtr != 0 ? istart + *srcSizePtr : istart', "v$version nullable input extent")
         $outputSize = if ($version -eq '05') { 'maxDstSizePtr' } else { 'dstCapacityPtr' }
-        $requirements += ,@($fragment, "*$outputSize != 0 ? ostart + *$outputSize : ostart", "v$version nullable output extent")
-        $cleanup = if ($version -eq '07') { 'zbd->customMem.customFree(zbd->customMem.opaque, replacementIn);' } else { 'free(replacementIn);' }
-        $requirements += ,@($fragment, $cleanup, "v$version partial allocation cleanup")
+        $requirements += ,@($ownedFragment, "*$outputSize != 0 ? ostart + *$outputSize : ostart", "v$version nullable output extent")
+        $literalFragment = "cmake/ZstdLegacyLiteralsV$version.c"
+        $requirements += ,@($literalFragment, "return ZSTDv$version`_decodeRawLiterals(dctx, istart, srcSize);", "v$version canonical raw literal routing")
         $requirements += ,@('tests/cpp/test_zstd_bounds.cpp', "TEST_CASE(zstd_legacy_v${version}_public_output_backpressure)", "v$version public pointer regression")
         $requirements += ,@('tests/cpp/test_zstd_bounds.cpp', "TEST_CASE(zstd_legacy_v${version}_dictionary_error_propagation)", "v$version dictionary error regression")
         $requirements += ,@('tests/cpp/test_zstd_bounds.cpp', "TEST_CASE(zstd_legacy_v${version}_short_raw_dictionary)", "v$version short dictionary regression")

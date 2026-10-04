@@ -38,6 +38,53 @@ if(EXISTS "${SCRATCH}")
 endif()
 file(MAKE_DIRECTORY "${SCRATCH}")
 
+# Retired generators remain accessible through their exact published Git tree.
+# They construct passive migration inputs only; production uses the current
+# direct canonical generator and never builds these historical implementations.
+find_program(GIT_EXECUTABLE NAMES git REQUIRED)
+set(HISTORICAL_COMMIT "d59f65a59f384ff6f7e43d133c672d7d535e2bfc")
+set(HISTORICAL_ROOT "${SCRATCH}/historical")
+set(HISTORICAL_ARCHIVE "${SCRATCH}/historical-cmake.tar")
+execute_process(
+  COMMAND "${GIT_EXECUTABLE}" archive --format=tar
+          "--output=${HISTORICAL_ARCHIVE}" "${HISTORICAL_COMMIT}" cmake
+  WORKING_DIRECTORY "${REPO_ROOT}"
+  RESULT_VARIABLE historical_result
+  ERROR_VARIABLE historical_error
+  TIMEOUT 20)
+if(NOT historical_result EQUAL 0)
+  message(FATAL_ERROR "Exact historical migration source is unavailable; "
+                      "use a full Git checkout: ${historical_error}")
+endif()
+file(MAKE_DIRECTORY "${HISTORICAL_ROOT}")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E tar xf "${HISTORICAL_ARCHIVE}"
+  WORKING_DIRECTORY "${HISTORICAL_ROOT}"
+  RESULT_VARIABLE historical_extraction
+  TIMEOUT 20)
+if(NOT historical_extraction EQUAL 0)
+  message(FATAL_ERROR "Historical migration source extraction failed")
+endif()
+
+# Purpose: Prepare one exact historical decoder generation boundary. Inputs: A
+# private fixture and a fixed stage from the pinned published Git tree. Outputs:
+# Verified passive source bytes; child function definitions cannot replace
+# current production functions.
+function(prepare_historical_decoder_stage root stage)
+  execute_process(
+    COMMAND
+      "${CMAKE_COMMAND}" "-DHISTORICAL_ROOT=${HISTORICAL_ROOT}"
+      "-DFIXTURE_ROOT=${root}" "-DSTAGE=${stage}" -P
+      "${REPO_ROOT}/tests/cmake/prepare_historical_zstd.cmake"
+    RESULT_VARIABLE result
+    ERROR_VARIABLE error
+    TIMEOUT 30)
+  if(NOT result EQUAL 0)
+    message(
+      FATAL_ERROR "Historical migration fixture preparation failed: ${error}")
+  endif()
+endfunction()
+
 # Extract the provenance archive once; mutations use separate ordinary copies
 # and cannot modify this template or one another.
 set(TEMPLATE_ROOT "${SCRATCH}/upstream")
@@ -181,11 +228,19 @@ endif()
 superzip_patch_zstd_legacy("${previous}")
 
 prepare_fixture(fresh fresh)
+# Ordinary caller variables must not change component selection in CMake's
+# dynamically scoped functions. These names previously made bare comparisons
+# resolve to unrelated caller text instead of the intended literal labels.
+foreach(component_name IN ITEMS owner sequence literals continue block one_shot)
+  set(${component_name} "unrelated caller value")
+endforeach()
 superzip_patch_zstd_legacy("${fresh}")
+foreach(component_name IN ITEMS owner sequence literals continue block one_shot)
+  unset(${component_name})
+endforeach()
 
 prepare_fixture(previous-literals previous_literals)
-superzip_patch_zstd_foundation("${previous_literals}")
-superzip_patch_zstd_legacy_literals("${previous_literals}")
+prepare_historical_decoder_stage("${previous_literals}" "literals")
 superzip_patch_zstd_legacy("${previous_literals}")
 
 prepare_fixture(previous-bufferless previous_bufferless)
@@ -266,24 +321,18 @@ function(prepare_previous_stream root keep_probes)
 endfunction()
 
 prepare_fixture(previous-stream previous_stream)
-superzip_patch_zstd_foundation("${previous_stream}")
-superzip_patch_zstd_legacy_literals("${previous_stream}")
-superzip_patch_zstd_legacy_stream("${previous_stream}")
+prepare_historical_decoder_stage("${previous_stream}" "stream")
 prepare_previous_stream("${previous_stream}" FALSE)
 superzip_patch_zstd_legacy("${previous_stream}")
 
 prepare_fixture(previous-empty-stream previous_empty_stream)
-superzip_patch_zstd_foundation("${previous_empty_stream}")
-superzip_patch_zstd_legacy_literals("${previous_empty_stream}")
-superzip_patch_zstd_legacy_stream("${previous_empty_stream}")
+prepare_historical_decoder_stage("${previous_empty_stream}" "stream")
 prepare_previous_stream("${previous_empty_stream}" TRUE)
 superzip_patch_zstd_legacy("${previous_empty_stream}")
 
 # Migrate the exact last stream revision before explicit history extents.
 prepare_fixture(previous-history previous_history)
-superzip_patch_zstd_foundation("${previous_history}")
-superzip_patch_zstd_legacy_literals("${previous_history}")
-superzip_patch_zstd_legacy_stream("${previous_history}")
+prepare_historical_decoder_stage("${previous_history}" "stream")
 include("${REPO_ROOT}/cmake/ZstdLegacyHistory.cmake")
 foreach(version IN ITEMS v05 v06 v07)
   set(_history_key "_zstd_legacy_history_${version}")
@@ -296,10 +345,7 @@ superzip_patch_zstd_legacy("${previous_history}")
 
 # Migrate the exact history rewrite before dictionary error propagation.
 prepare_fixture(previous-dictionary previous_dictionary)
-superzip_patch_zstd_foundation("${previous_dictionary}")
-superzip_patch_zstd_legacy_literals("${previous_dictionary}")
-superzip_patch_zstd_legacy_stream("${previous_dictionary}")
-superzip_patch_zstd_legacy_history("${previous_dictionary}")
+prepare_historical_decoder_stage("${previous_dictionary}" "history")
 include("${REPO_ROOT}/cmake/ZstdLegacyDictionary.cmake")
 foreach(version IN ITEMS v05 v06 v07)
   set(_dictionary_key "_zstd_legacy_dictionary_${version}")
@@ -316,24 +362,8 @@ superzip_patch_zstd_legacy("${previous_dictionary}")
 # provenance; no unsafe historical implementation is copied into a tracked
 # source fixture.
 prepare_fixture(previous-decoder-owner previous_decoder_owner)
-foreach(
-  part IN
-  ITEMS LegacyOwnedBuffers
-        DictionaryEvaluation
-        TableGeometry
-        CoverWorkGroup
-        AlgorithmProgress
-        HeaderComponents
-        LegacyOwnedDecoder)
-  include("${REPO_ROOT}/cmake/Zstd${part}.cmake")
-endforeach()
-superzip_patch_zstd_base("${previous_decoder_owner}")
-superzip_patch_zstd_legacy_owned_buffers("${previous_decoder_owner}")
-superzip_patch_zstd_dictionary_evaluation("${previous_decoder_owner}")
-superzip_patch_zstd_table_geometry("${previous_decoder_owner}")
-superzip_patch_zstd_work_group("${previous_decoder_owner}")
-superzip_patch_zstd_algorithm_progress("${previous_decoder_owner}")
-superzip_patch_zstd_header_components("${previous_decoder_owner}")
+include("${REPO_ROOT}/cmake/ZstdLegacyOwnedDecoderHashes.cmake")
+prepare_historical_decoder_stage("${previous_decoder_owner}" "preowner")
 foreach(version IN ITEMS v05 v06 v07)
   set(_owner_key "_zstd_owned_decoder_${version}")
   file(SHA256 "${previous_decoder_owner}/lib/legacy/zstd_${version}.c"
@@ -345,6 +375,19 @@ foreach(version IN ITEMS v05 v06 v07)
   endif()
 endforeach()
 superzip_patch_zstd_legacy("${previous_decoder_owner}")
+
+# Migrate the fully owned canonical sources published before generator
+# consolidation.
+prepare_fixture(previous-canonical previous_canonical)
+prepare_historical_decoder_stage("${previous_canonical}" "complete")
+foreach(version IN ITEMS v05 v06 v07)
+  file(SHA256 "${previous_canonical}/lib/legacy/zstd_${version}.c"
+       canonical_hash)
+  if(NOT canonical_hash STREQUAL "${_zstd_owned_decoder_${version}_patched}")
+    message(FATAL_ERROR "Historical canonical fixture identity mismatch")
+  endif()
+endforeach()
+superzip_patch_zstd_legacy("${previous_canonical}")
 
 prepare_fixture(previous-allocator previous_allocator)
 superzip_patch_zstd_legacy("${previous_allocator}")
@@ -534,6 +577,11 @@ foreach(boundary IN LISTS BOUNDARIES)
     message(
       FATAL_ERROR "Previous canonical decoder ownership migration differs "
                   "from fresh source")
+  endif()
+  file(SHA256 "${previous_canonical}/${boundary}" migrated_canonical)
+  if(NOT "${before_${key}}" STREQUAL migrated_canonical)
+    message(
+      FATAL_ERROR "Historical canonical migration differs from fresh source")
   endif()
   file(SHA256 "${prior_comments}/${boundary}" migrated_comments)
   if(NOT "${before_${key}}" STREQUAL migrated_comments)

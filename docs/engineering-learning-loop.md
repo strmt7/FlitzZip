@@ -726,6 +726,27 @@ byte oracles, complete acquisition rollback and prepared-frame error propagation
 matching and actual memory accounting. The rewrite policy rejects removal of
 these production boundaries and their executable regressions.
 
+Dependency rewrites must publish the complete current implementation directly
+from immutable provenance. Retire superseded production generators once their
+ownership and extent boundaries are replaced; keep exact historical identities
+for cache migration, and reject unknown bytes before publication. Historical
+migration tests reconstruct passive inputs from a pinned published Git tree in
+private storage, then apply the current generator. They require a full Git
+checkout and never compile the retired implementations. Product builds use the
+pinned upstream archive and do not require Git history. Keep source-language
+comment parsing in policy guards separate from generated-code arguments; a
+CMake glob must not erase later checks, and comments cannot satisfy a guard.
+Stage intentional native source deletions before capturing build inputs. The
+provenance collector deliberately rejects missing files still present in the
+Git index; this prevents an incomplete checkout from producing an accepted
+build receipt. Review the staged deletions and preserve that rejection contract.
+
+When a dependency produces MSVC `/GL` objects, propagate explicit Release
+`/LTCG` to its link consumers. This preserves the required optimization while
+avoiding the linker's automatic restart. Confirm the effective link options and
+absence of restart diagnostics; report timing improvements only from measured
+comparisons under comparable conditions.
+
 Release identity and replacement policy share one implementation in
 `tools/release_workflow_policy.ps1`, used by changed-file hygiene and repository
 security scanning. Offline mutation contracts check commit binding and guard
