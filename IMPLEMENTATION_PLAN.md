@@ -2,6 +2,20 @@
 
 ## Continuation Checkpoint
 
+The maintainer requested a source remediation redesign after rejecting the
+earlier admission approach. The 27 source and 54 hosted dispositions below
+are historical evidence and no longer make any open source report pass.
+The preflight counts exact source matches as unresolved, and the post-push
+audit requires actual closure of every open alert, including governance reports.
+The [redesign record](docs/security-source-remediation-redesign.md) separates
+implemented changes from remaining source work and fresh-analysis requirements.
+The existing HIP, ASan and archive compatibility controls remain required.
+Earlier passing receipts apply only to their recorded source identities.
+Releases remain paused; this redesign is not yet complete.
+
+The following checkpoints precede the redesign. Their approvals and passing
+receipts must be interpreted only against their recorded historical revisions.
+
 The SDK follow-up is published at `fcd29ea`; all eight affected workflows pass.
 Its fresh analysis exposed three undocumented inherited SDK parser functions.
 The current batch repairs their structure and contracts, adds a nine-entry

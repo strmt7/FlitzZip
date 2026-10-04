@@ -6,8 +6,14 @@ function Assert-ZstdRewritePolicy {
 
     $requirements = @(
         @('cmake/ZstdRawBlockWriter.c', 'dstCapacity < ZSTD_blockHeaderSize || srcSize > dstCapacity - ZSTD_blockHeaderSize', 'raw-block extent'),
-        @('cmake/ZstdCoverSelection.c', 'candidateContentSize <= initializedContentSize', 'initialized dictionary extent'),
-        @('cmake/ZstdCoverSelection.c', 'candidateDictSize > initializedContentSize / 2', 'dictionary growth overflow'),
+        @('cmake/ZstdCoverSelection.cpp', 'candidateContentSize <= initialized.size()', 'initialized dictionary extent'),
+        @('cmake/ZstdCoverSelection.cpp', 'candidateDictSize > initialized.size() / 2', 'dictionary growth overflow'),
+        @('cmake/ZstdCoverSelection.cpp', 'content.initializedOffset > content.capacity', 'dictionary allocation geometry'),
+        @('cmake/ZstdCoverSelection.cpp', 'content.capacity > static_cast<std::size_t>(PTRDIFF_MAX)', 'dictionary pointer extent'),
+        @('cmake/ZstdCoverSelection.cpp', 'using DictionaryOwner = std::unique_ptr<BYTE[], DictionaryDelete>;', 'dictionary scoped ownership'),
+        @('cmake/ZstdCoverSelection.cpp', 'const auto suffix = initialized.last(candidateContentSize);', 'dictionary bounded suffix'),
+        @('cmake/ZstdDictionaryBounds.cmake', 'COVER_freeSelectedDictionary(selection.dictContent);', 'dictionary matching release'),
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_dictionary_bounds("${source_dir}")', 'dictionary bounds patch dispatch'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_raw_block_writer("${source_dir}")', 'raw-block patch dispatch'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_public_stream("${source_dir}")', 'public stream patch dispatch'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_history("${source_dir}")', 'legacy history patch dispatch'),
@@ -21,6 +27,7 @@ function Assert-ZstdRewritePolicy {
         @('tests/cpp/test_zstd_bounds.cpp', 'TEST_CASE(zstd_raw_block_writer_overflow_rejection)', 'raw-block overflow regression'),
         @('tests/cpp/test_zstd_cover_selection.cpp', 'TEST_CASE(zstd_cover_shrinking_preserves_initialized_extent)', 'dictionary input-span regression'),
         @('tests/cpp/test_zstd_cover_selection.cpp', 'TEST_CASE(zstd_cover_selection_failure_ownership)', 'dictionary allocation regression'),
+        @('tests/cpp/test_zstd_cover_selection.cpp', 'TEST_CASE(zstd_cover_selection_rejects_invalid_allocation_geometry)', 'dictionary geometry regression'),
         @('tests/cpp/test_zstd_legacy_failures.cpp', 'TEST_CASE(zstd_legacy_stream_empty_buffers_preserve_progress)', 'empty-buffer progress regression')
     )
     foreach ($version in @('05', '06', '07')) {

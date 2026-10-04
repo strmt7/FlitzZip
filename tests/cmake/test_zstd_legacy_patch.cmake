@@ -44,7 +44,9 @@ function(prepare_fixture name output)
       "zstd-1.5.7/lib/common/allocations.h" "zstd-1.5.7/lib/dictBuilder/cover.h"
       "zstd-1.5.7/lib/compress/hist.h" "zstd-1.5.7/lib/legacy/zstd_v04.c"
       "zstd-1.5.7/lib/compress/zstdmt_compress.c"
-      "zstd-1.5.7/lib/dictBuilder/cover.c" "zstd-1.5.7/lib/dictBuilder/zdict.c"
+      "zstd-1.5.7/lib/dictBuilder/cover.c"
+      "zstd-1.5.7/lib/dictBuilder/fastcover.c"
+      "zstd-1.5.7/lib/dictBuilder/zdict.c"
       "zstd-1.5.7/lib/common/entropy_common.c" "zstd-1.5.7/lib/common/huf.h"
       "zstd-1.5.7/lib/common/xxhash.h" "zstd-1.5.7/lib/compress/fse_compress.c"
       "zstd-1.5.7/lib/compress/huf_compress.c"
@@ -294,6 +296,19 @@ file(READ "${REPO_ROOT}/cmake/ZstdCoverSelection.c" repaired_selection)
 file(READ "${fresh}/lib/dictBuilder/cover.c" repaired_cover)
 string(REPLACE "${repaired_selection}\n" "${original_selection}"
                previous_cover_content "${repaired_cover}")
+string(
+  CONCAT
+    current_cover_call
+    "const COVER_dictContent_t content = {dict, dictBufferCapacity, tail};\n"
+    "    selection = COVER_selectDict(content, dictBufferCapacity,")
+string(CONCAT previous_cover_call
+              "selection = COVER_selectDict(dict + tail, dictBufferCapacity, "
+              "dictBufferCapacity - tail,")
+string(REPLACE "${current_cover_call}" "${previous_cover_call}"
+               previous_cover_content "${previous_cover_content}")
+string(REPLACE "COVER_freeSelectedDictionary(selection.dictContent);"
+               "free(selection.dictContent);" previous_cover_content
+               "${previous_cover_content}")
 file(WRITE "${_previous_cover_source}.fixture" "${previous_cover_content}")
 configure_file("${_previous_cover_source}.fixture" "${_previous_cover_source}"
                @ONLY NEWLINE_STYLE LF)
@@ -317,6 +332,7 @@ set(BOUNDARIES
     "lib/legacy/zstd_v04.c"
     "lib/compress/zstdmt_compress.c"
     "lib/dictBuilder/cover.c"
+    "lib/dictBuilder/fastcover.c"
     "lib/dictBuilder/zdict.c"
     "lib/common/entropy_common.c"
     "lib/common/huf.h"

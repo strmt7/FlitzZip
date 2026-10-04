@@ -39,8 +39,9 @@ target_include_directories(
   superzip_zstd_cover_probe PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/zstd"
                                     "${SUPERZIP_ZSTD_LIBRARY_DIR}")
 target_compile_definitions(
-  superzip_zstd_cover_probe PRIVATE ZDICT_finalizeDictionary=sz_checked_finalize
-                                    _CRT_SECURE_NO_WARNINGS)
+  superzip_zstd_cover_probe
+  PRIVATE ZDICT_finalizeDictionary=sz_checked_finalize
+          SUPERZIP_COVER_FAULT_ALLOCATIONS _CRT_SECURE_NO_WARNINGS)
 set(_cover_allocator_header
     "${SUPERZIP_SOURCE_ROOT}/tests/zstd/intercept_allocations.h")
 if(MSVC)
@@ -50,6 +51,18 @@ else()
   target_compile_options(superzip_zstd_cover_probe
                          PRIVATE -include "${_cover_allocator_header}")
 endif()
+# Visual Studio cannot represent target-wide C flags separately in a mixed C/C++
+# object target. Keep the two instrumented languages in distinct targets.
+add_library(superzip_zstd_cover_owner_probe OBJECT
+            "${SUPERZIP_SOURCE_ROOT}/cmake/ZstdCoverSelection.cpp")
+target_include_directories(
+  superzip_zstd_cover_owner_probe PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/zstd"
+                                          "${SUPERZIP_ZSTD_LIBRARY_DIR}")
+target_compile_features(superzip_zstd_cover_owner_probe PRIVATE cxx_std_20)
+target_compile_definitions(
+  superzip_zstd_cover_owner_probe
+  PRIVATE ZDICT_finalizeDictionary=sz_checked_finalize
+          SUPERZIP_COVER_FAULT_ALLOCATIONS _CRT_SECURE_NO_WARNINGS)
 # Direct merger controls compile the exact generated type/helper region; the
 # bridge marshals bounded fixtures without publishing a private API.
 include("${SUPERZIP_SOURCE_ROOT}/tests/zstd/DictionaryMergeProbe.cmake")
@@ -66,6 +79,7 @@ add_executable(
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.c"
   "${_dictionary_merge_probe}"
   $<TARGET_OBJECTS:superzip_zstd_cover_probe>
+  $<TARGET_OBJECTS:superzip_zstd_cover_owner_probe>
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder/divsufsort.c"
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/pool.c")
 target_include_directories(

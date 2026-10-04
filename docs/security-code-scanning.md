@@ -14,18 +14,18 @@ scripts belong in code directories; passive reports belong in the validated
 data directory. New executable or unknown files there fail role admission
 instead of inheriting a blanket directory exception.
 
-The October 4 maintainer-approved source dispositions are recorded in
+Historical October 4 source dispositions are recorded in
 `.github/scanner-source-reviews.csv` and the
 [individual review](security-source-finding-review-2026-10-04.md). The
 [SDK copy supplement](security-sdk-finding-review-2026-10-04.md) records the
 six separately approved fixed-width byte-access operations. The actual
-detectors still scan those files. Admission recognizes only each exact source
-hash, rule and complete line/column region; a subsequent source change or a
-new location requires another review. Raw reports and counts stay complete.
-The hosted audit uses the same ledger, additionally requiring the exact
-analysis commit, producer version/category and committed Git blob identity.
-Approved findings remain visible with their raw GitHub state; admission expires
-on source or identity changes and does not dismiss alerts permanently.
+detectors still scan those files. Historical matching recognizes only each
+exact source hash, rule and complete line/column region. Raw reports and counts
+stay complete. The informational review tool also checks analysis identity.
+These records are historical review evidence. They no longer admit source
+findings to publication or security acceptance. Every source report counts as
+unresolved in the preflight, including an exact historical match. The hosted
+audit requires closure of every open alert and never consults approval ledgers.
 
 The [remaining individual review](security-remaining-finding-review-2026-10-04.md)
 records 54 separately approved reports in `.github/scanner-hosted-reviews.csv`.
@@ -33,7 +33,10 @@ Their complete incident identities use the public integrity pin in
 `.github/scanner-hosted-approval.csv`, independently from caller-context
 renewal. That context includes native build inputs, all generated Zstandard
 library sources and CodeQL configuration. Changed source, caller context,
-producer or coordinates expire admission; every unmatched finding blocks.
+producer or coordinates invalidate a historical match. Matching a record is
+informational and cannot establish remediation. Do not reseal these ledgers to
+make a changed implementation pass. Follow the
+[source remediation redesign](security-source-remediation-redesign.md).
 
 ### Prevention Strategy and Research
 
@@ -472,10 +475,10 @@ variables.
 - The generated Win32 logo header is deterministic visual geometry validated by
   `tools\verify_brand_assets.ps1`; keep it covered by the manual Windows build
   database and do not add CodeQL path exclusions for generated source.
-- The only acceptable open code-scanning alerts are the current residual OSSF
-  Scorecard findings for `MaintainedID`, `CodeReviewID`, `BranchProtectionID`,
-  and `CIIBestPracticesID`. `BinaryArtifactsID`, SAST alerts, dependency
-  alerts, secrets, and scanner policy findings must be fixed.
+- Every open code-scanning alert blocks final security acceptance, including
+  Scorecard governance reports. Source fixes require fresh analysis of the
+  repaired revision. Governance and attestation reports require their actual
+  controls; a code rewrite cannot establish them.
 - After every push that changes security, workflows, dependencies, packaging, or
   release artifacts, run:
 
@@ -483,8 +486,8 @@ variables.
   tools\github_post_push_audit.ps1
   ```
 
-  The audit checks that no GitHub deployment records exist and that open
-  code-scanning alerts are limited to the approved residual Scorecard findings.
+  The audit checks that no GitHub deployment records exist and that no
+  code-scanning alerts remain open. It retains complete pagination and history.
 - For a requested review of current and resolved incidents, run the same audit
   with `-IncludeHistory -HistoryReportPath out/security/history-review.json`.
   Use a new filename for each refresh; existing reports are never overwritten.

@@ -26,6 +26,15 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Source review admissions were mistaken for remediation. The source preflight
+  now counts every exact historical match as unresolved, and the hosted audit
+  never consults the admission ledgers. Its complete inventory blocks every
+  open source or governance alert. Regression cases include formerly accepted
+  source and Scorecard records, pagination, mixed producers and malformed
+  admission outputs. Historical review text remains explicitly historical.
+  The [redesign record](security-source-remediation-redesign.md) tracks the
+  production boundary changes and required source closure evidence.
+
 - The SDK follow-up exposed three undocumented inherited parser routines.
   The changed-function audit skipped vendor source and recognized only
   same-line C/C++ braces. It now admits edited vendor source, recognizes
@@ -44,13 +53,12 @@ the Security tab, released artifacts, or the product UI again.
   contracts check both boundaries. Normal local builds remain HIP-enabled;
   selecting a CPU parser cohort does not select unrelated GPU timing work.
 
-- The 54 separately approved hosted dispositions retain every incident field
-  under a fixed approval digest. Admission also requires the current native
-  input digest, the complete generated Zstandard source closure and analysis
-  configuration. Tests reject independent source/caller/scanner/location
-  changes, altered decisions, missing records and expanded inventories. Raw
-  results remain intact; new findings, including the SDK documentation reports,
-  are outside this approval and require production fixes.
+- The 54 historical hosted dispositions retain every incident field under a
+  fixed integrity digest. Their informational matching controls reject source,
+  caller, scanner and location changes, altered decisions, missing records and
+  expanded inventories. These controls preserve review provenance; they do not
+  admit any finding. Raw results remain intact and every open report requires
+  its actual remediation or governance control.
 
 - The generic offline-contract name heuristic admitted the native ASan project
   and repeated completed qualification during a tooling-only continuation.
@@ -61,14 +69,12 @@ the Security tab, released artifacts, or the product UI again.
   selection and hosted filters. This separates execution roles without deleting
   sanitizer coverage or treating an unchanged-source result as a fresh run.
 
-- Exact source dispositions must not become permanent exclusions. The October 4
-  maintainer approvals cover 21 Zstandard/control sites and six SDK fixed-width
-  copy locations, each individually documented.
-  Admission binds normalized whole-file bytes and complete rule/region identity,
-  retains raw SARIF, and rejects changed bytes, coordinates, rules, multiple
-  locations, redirects, malformed policy and broader source paths. Its regression
-  controls mutate these boundaries independently. Source ledger changes select
-  those contracts locally and in CI; no directory or scanner rule is removed.
+- Historical source matching binds normalized whole-file bytes and complete
+  rule/region identity for the 21 Zstandard/control and six SDK locations. Its
+  provenance controls reject changed bytes, coordinates, rules, multiple
+  locations, redirects, malformed policy and broader source paths. Even an
+  exact match counts as unresolved. Source ledger changes select the relevant
+  contracts locally and in CI; no directory or scanner rule is removed.
 
 - Publishing unscanned benchmark receipts caused thousands of public-checksum
   alerts and a failed Gitleaks gate. `tools/scanner_preflight.py` now freezes

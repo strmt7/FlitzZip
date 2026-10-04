@@ -32,18 +32,14 @@ tool paths supplied through the documented process-scoped variables. Read the
 private receipt and raw reports on failure. Do not infer clean scanning from
 the policy-only scanner, unit fixtures, absent tools or empty input selection.
 The operating guide remains authoritative for provisioning and triage rules.
-The maintainer-approved 27 source dispositions (21 Zstandard/control sites and
-six SDK fixed-width copies) are bound to exact normalized
-source bytes, rule and complete line/column region in the source review ledger.
-Do not expand them without a new individual review and maintainer approval;
-changed source or finding locations remain blocking. Raw SARIF stays complete.
-The separate hosted ledger records the 54 individually approved incidents and
-seals their complete identities. Its caller-context receipt covers native
-inputs, all generated Zstandard sources and CodeQL configuration. Neither
-ledger accepts unknown findings. Follow the operating guide's batch/freshness
-rules; do not reseal decisions, rename primitives or weaken scanning to make
-an iteration pass. Changed vendor functions participate in the ordinary
-function-contract gate before publication.
+The 27 source and 54 hosted dispositions are historical review evidence, not
+remediation. Exact historical matches remain blocking in the preflight and
+hosted audit. Do not renew, reseal or expand those decisions to make an
+iteration pass. Preserve complete raw reports and scanner coverage. Read
+`docs/security-source-remediation-redesign.md` before continuing this redesign.
+Repair the actual bounds, ownership or algorithm contract, retain the old-source
+failure control, and require fresh analysis before reporting a finding fixed.
+Changed vendor functions participate in the ordinary function-contract gate.
 
 Single-agent and Codex Security worker policy:
 
@@ -240,9 +236,9 @@ Workflow and release hardening rules:
   stream. Keep the two-pass validation model, reject unsafe inner paths,
   unsupported special files, overwrite attempts, malformed Gzip trailers, and
   `070702` checksum mismatches before publishing output.
-- The only acceptable open code-scanning findings are Scorecard
-  `MaintainedID`, `CodeReviewID`, `BranchProtectionID`, and
-  `CIIBestPracticesID`.
+- Every open code-scanning finding blocks final security acceptance, including
+  Scorecard reports. Apply actual governance controls and truthful attestations;
+  never dismiss them or alter uploads to produce an empty list.
 - `tools/security_scan.ps1` runs the changed-code refactor gate. Do not bypass
   it with broad exclusions; split large functions and add required function
   contracts before pushing.

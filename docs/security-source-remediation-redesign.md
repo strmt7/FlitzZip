@@ -1,0 +1,102 @@
+# Source Remediation Redesign
+
+The maintainer requested this redesign on 4 October 2026 after challenging the
+admission of 81 source reports. The earlier confirmations approved 21 source,
+six SDK and 54 hosted dispositions. They did not fix those operations. Matching
+hashes establish identity, not memory safety. The old reviews remain historical
+evidence; their verdicts no longer allow an outstanding report to pass.
+
+## Production Boundaries
+
+The first implementation replaces the dictionary selector's independent suffix
+pointer and size with `COVER_dictContent_t`: allocation base, allocation capacity
+and initialized offset travel together. Selection rejects a missing base,
+offset beyond capacity and extents beyond `PTRDIFF_MAX` before pointer formation
+or allocation. Finalized output capacity remains independent from readable
+input. Shrinking candidates must fit the initialized suffix before their source
+is formed. Both COVER and FASTCOVER use the representation. The transformation
+requires known complete source identities and preserves the upstream archive.
+
+The checked selector now runs in a C++20 translation unit with `std::span` input
+regions and move-only array owners. Error returns automatically release both
+temporary dictionaries. Success transfers exactly one array to the private C
+record; its release uses the matching array deallocator. COVER's separate best
+dictionary continues to own its own copy. The canonical test selector retains
+serial allocator/finalizer interposition; the product DLL uses array allocation
+and deallocation. Both builds execute the same selection and geometry logic.
+
+The selector's native regression supplies malformed geometry and requires an
+ordinary parameter error, no finalizer call and no retained allocation. Existing
+shrinking, allocation/finalizer faults, guarded output and independent readback
+controls remain. This is stronger geometry enforcement; scanner closure remains
+unverified until fresh analysis of these generated production sources.
+
+The standalone sanitizer control uses C++ array ownership and stream output.
+Its valid final-byte access and deliberate one-past-allocation access remain.
+Qualification must still observe ASan termination and a heap-overflow diagnostic;
+the rewrite cannot remove or catch the expected fault.
+
+## Remaining Source Work
+
+The earlier inventory contains 28 DevSkim and 53 CodeQL source reports. Its
+reported source locations, including build-derived dependencies and the CMake
+compiler probe, are retained in the historical ledgers. These groups require
+different production contracts:
+
+| Report group | Required engineering boundary | Required verification |
+| --- | --- | --- |
+| Dictionary/hash and block-output pointers | Complete allocation geometry, initialized input and independently bounded output | Direct selection/finalizer and guarded production compression tests, fresh flow analysis |
+| Packed FSE/Huffman table offsets | Typed table regions, element counts, alignment and descriptor capacity | Representation and malformed-table controls, decoder readback and sanitizer tests |
+| Optimizer task pointers | An explicit owner covering every submitted worker until join, including failure cleanup | Serial and worker-pool consumers, allocation-failure and lifetime tests |
+| Legacy dictionary/output/literal references | Lifetime and initialized extents enforced at actual decoder use | All supported legacy versions, independent sequence oracle and history/backpressure tests |
+| Allocation/copy API reports | Matching allocation/deallocation ownership and both readable/writable extents, with ordinary error propagation | Fault injection, truncation, overlap, aliasing/alignment and canaries |
+| Algorithm progress | Explicit progress and comparison-budget state without changing the algorithm | Direct match-search and suffix-ranking consumers |
+| Staged headers/default allocator | Public/static/inline inclusion and allocator contracts preserved | C and C++ first/repeated inclusion and real allocator consumers |
+| Upstream quality/probe observations | Actual upstream interface or research work, with truthful provenance | Relevant compiler and direct-consumer contracts |
+
+None of these rows is marked complete by this document. Replacing a primitive
+name, moving a file out of coverage, discarding an old-source reproducer or
+adding whole-file guards to staged headers cannot close a row. New runtime
+dependencies still require the ordinary maintainer approval.
+
+## Acceptance And Recurrence
+
+`scanner_preflight.py` scans frozen changed publication bytes with pinned
+detectors before expensive qualification. `review_findings` keeps exact source
+review matches informational and counts them as unresolved. Public checksum
+metadata retains its separate exact identity contract; source code cannot use
+that metadata path. Raw reports are never filtered.
+
+`github_post_push_audit.ps1` requires zero open alerts from its complete hosted
+inventory. It has no source or Scorecard admission path. Resolved and dismissed
+history remains available, but a dismissal is not evidence of source repair.
+Branch controls and external attestations require actual governance evidence;
+source rewrites cannot truthfully satisfy them.
+
+For each related batch, run the change-aware planner once, complete the affected
+production/consumer contracts, and preserve failures before widening coverage.
+Use completed receipts only for unchanged inputs and their actual recorded
+scope. Native changes require new HIP qualification; no permanent build or
+scanner disablement is authorized. Analyse the coherent source batch, preserve
+stable SARIF categories and paths, and require fresh source closure before
+reporting a finding fixed. Intermediate pushes must report pending or failed
+gates as such. Final acceptance requires the accumulated change range.
+
+No static analyser or repository instruction guarantees that future agents will
+introduce no defects. Enforced contracts, retained negative controls, dependency
+provenance and automatic changed-input checks are the recurrence controls.
+
+## Research Basis
+
+[CodeQL's pointer guidance](https://codeql.github.com/codeql-query-help/cpp/cpp-invalid-pointer-deref/)
+supports validating bounds before pointer access; its reports require source
+inspection rather than severity-based assumptions. Its
+[stack lifetime guidance](https://codeql.github.com/codeql-query-help/cpp/cpp-stack-address-escape/)
+identifies retaining stack addresses as an ownership concern.
+[Microsoft's checked-copy contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/memcpy-s-wmemcpy-s?view=msvc-170)
+does not supply the actual source extent and changes error behavior, so a blind
+`memcpy_s` substitution cannot establish a complete repair.
+[GitHub source-resolution guidance](https://docs.github.com/en/code-security/how-tos/manage-security-alerts/manage-code-scanning-alerts/resolve-alerts)
+distinguishes source resolution from dismissal, while its
+[SARIF guidance](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
+requires stable result identity to avoid unnecessary duplicate alert creation.

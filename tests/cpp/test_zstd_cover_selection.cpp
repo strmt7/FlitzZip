@@ -76,8 +76,9 @@ struct SelectionFixture {
         params.zParams.compressionLevel = 3;
         const auto count = static_cast<unsigned>(sizes.size());
         auto result = std::make_unique<COVER_dictSelection_t>();
-        *result = COVER_selectDict(content.data(), 4096U, content.size(), samples.data(), sizes.data(), count, count,
-                                   count, params, offsets.data(), 0U);
+        const COVER_dictContent_t input{content.data(), content.size(), 0U};
+        *result = COVER_selectDict(input, 4096U, samples.data(), sizes.data(), count, count, count, params,
+                                   offsets.data(), 0U);
         return SelectionOwner(result.release());
     }
 };
@@ -206,4 +207,37 @@ TEST_CASE(zstd_cover_selection_failure_ownership) {
         REQUIRE_EQ(sz_fault_live_allocations(), 0U);
         REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
     }
+}
+
+// Purpose: Reject invalid allocation geometry before any finalizer access or allocation.
+// Inputs: A live fixture plus null, reversed-offset and unrepresentable source/output extents.
+// Outputs: Requires ordinary parameter errors, no finalizer invocation and no retained allocation.
+TEST_CASE(zstd_cover_selection_rejects_invalid_allocation_geometry) {
+    SelectionFixture fixture(680U, 1U);
+    const auto excessive = static_cast<std::size_t>(PTRDIFF_MAX) + 1U;
+    const std::array<COVER_dictContent_t, 4> invalid{{
+        {nullptr, 0U, 0U},
+        {fixture.content.data(), fixture.content.size(), fixture.content.size() + 1U},
+        {fixture.content.data(), excessive, 0U},
+        {fixture.content.data(), fixture.content.size(), excessive},
+    }};
+    ZDICT_cover_params_t params{};
+    for (const auto input : invalid) {
+        REQUIRE_TRUE(sz_fault_reset(1U));
+        probe = {};
+        const auto result = COVER_selectDict(input, 4096U, fixture.samples.data(), fixture.sizes.data(), 128U, 128U,
+                                             128U, params, fixture.offsets.data(), 0U);
+        REQUIRE_TRUE(COVER_dictSelectionIsError(result));
+        REQUIRE_EQ(ZSTD_getErrorCode(result.totalCompressedSize), ZSTD_error_parameter_outOfBound);
+        REQUIRE_EQ(probe.calls, 0U);
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+    }
+    REQUIRE_TRUE(sz_fault_reset(1U));
+    const COVER_dictContent_t valid{fixture.content.data(), fixture.content.size(), 0U};
+    const auto result = COVER_selectDict(valid, excessive, fixture.samples.data(), fixture.sizes.data(), 128U, 128U,
+                                         128U, params, fixture.offsets.data(), 0U);
+    REQUIRE_TRUE(COVER_dictSelectionIsError(result));
+    REQUIRE_EQ(ZSTD_getErrorCode(result.totalCompressedSize), ZSTD_error_parameter_outOfBound);
+    REQUIRE_EQ(probe.calls, 0U);
+    REQUIRE_EQ(sz_fault_live_allocations(), 0U);
 }

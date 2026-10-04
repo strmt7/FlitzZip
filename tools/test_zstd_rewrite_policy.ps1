@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$script:negativeControlCount = 0
 . (Join-Path $PSScriptRoot 'zstd_rewrite_policy.ps1')
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -22,13 +23,14 @@ function Assert-ZstdPolicyMutation {
             $rejected = $true
         }
         if (-not $rejected) { throw "Zstandard policy accepted recurrence: $Cause" }
+        $script:negativeControlCount += 1
     } finally {
         [IO.File]::WriteAllText($file, $text)
     }
 }
 
 try {
-    foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.c', 'cmake/PatchZstdLegacy.cmake',
+    foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
             'cmake/ZstdLegacyPublicStream.c', 'tests/cpp/test_zstd_bounds.cpp',
             'tests/cpp/test_zstd_cover_selection.cpp', 'tests/cpp/test_zstd_legacy_failures.cpp',
             'cmake/ZstdLegacyStreamV05.c', 'cmake/ZstdLegacyStreamV06.c', 'cmake/ZstdLegacyStreamV07.c',
@@ -41,8 +43,13 @@ try {
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
     foreach ($mutation in @(
             @('cmake/ZstdRawBlockWriter.c', 'dstCapacity < ZSTD_blockHeaderSize || srcSize > dstCapacity - ZSTD_blockHeaderSize', 'srcSize + ZSTD_blockHeaderSize > dstCapacity', 'raw-block extent'),
-            @('cmake/ZstdCoverSelection.c', 'candidateContentSize <= initializedContentSize', 'candidateContentSize <= largestDictSize', 'initialized dictionary extent'),
-            @('cmake/ZstdCoverSelection.c', 'candidateDictSize > initializedContentSize / 2', 'candidateDictSize * 2 > initializedContentSize', 'dictionary growth overflow'),
+            @('cmake/ZstdCoverSelection.cpp', 'candidateContentSize <= initialized.size()', 'candidateContentSize <= largestDictSize', 'initialized dictionary extent'),
+            @('cmake/ZstdCoverSelection.cpp', 'candidateDictSize > initialized.size() / 2', 'candidateDictSize * 2 > initialized.size()', 'dictionary growth overflow'),
+            @('cmake/ZstdCoverSelection.cpp', 'content.initializedOffset > content.capacity', 'content.initializedOffset > 0', 'dictionary allocation geometry'),
+            @('cmake/ZstdCoverSelection.cpp', 'content.capacity > static_cast<std::size_t>(PTRDIFF_MAX)', 'content.capacity > 0', 'dictionary pointer extent'),
+            @('cmake/ZstdCoverSelection.cpp', 'using DictionaryOwner = std::unique_ptr<BYTE[], DictionaryDelete>;', 'using DictionaryOwner = BYTE*;', 'dictionary scoped ownership'),
+            @('cmake/ZstdCoverSelection.cpp', 'const auto suffix = initialized.last(candidateContentSize);', 'const auto suffix = allocation.last(candidateContentSize);', 'dictionary bounded suffix'),
+            @('cmake/ZstdDictionaryBounds.cmake', 'COVER_freeSelectedDictionary(selection.dictContent);', 'free(selection.dictContent);', 'dictionary matching release'),
             @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_raw_block_writer("${source_dir}")', '# omitted raw-block patch', 'raw-block patch dispatch'),
             @('cmake/ZstdLegacyPublicStream.c', '    switch(version)', "    output->dst = legacyContext;`n    switch(version)", 'caller-owned public buffer'),
             @('tests/cpp/test_zstd_bounds.cpp', 'TEST_CASE(zstd_raw_block_writer_overflow_rejection)', 'TEST_CASE(removed_overflow)', 'raw-block overflow regression'))) {
@@ -90,6 +97,7 @@ try {
             @('superzip_patch_zstd_raw_block_writer', 'raw-block patch dispatch'),
             @('superzip_patch_zstd_legacy_public_stream', 'public stream patch dispatch'),
             @('superzip_patch_zstd_legacy_history', 'legacy history patch dispatch'),
+            @('superzip_patch_zstd_dictionary_bounds', 'dictionary bounds patch dispatch'),
             @('superzip_patch_zstd_legacy_dictionary', 'legacy dictionary patch dispatch'))) {
         $dispatch = $entry[0] + '("${source_dir}")'
         Assert-ZstdPolicyMutation -Path 'cmake/PatchZstdLegacy.cmake' -Original $dispatch `
@@ -100,7 +108,7 @@ try {
     try { Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot }
     catch { if ($_.Exception.Message -notlike '*ZstdRawBlockWriter.c*') { throw }; $missingRejected = $true }
     if (-not $missingRejected) { throw 'Missing source guard was accepted.' }
-    Write-Output 'Zstandard rewrite policy passed positive source checks and 31 negative controls.'
+    Write-Output "Zstandard rewrite policy passed positive source checks and $($script:negativeControlCount) mutation controls, plus missing-source rejection."
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixtureRoot)
     $prefix = $fixtureParent.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar

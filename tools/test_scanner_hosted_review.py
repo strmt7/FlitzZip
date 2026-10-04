@@ -88,7 +88,7 @@ class HostedReviewTests(unittest.TestCase):
         before = copy.deepcopy(alerts)
         with patch.object(review, "committed_context_matches", return_value=True):
             self.assertEqual(
-                review.review_hosted_alerts(self.root, alerts, self.commit, self.rows),
+                review.match_historical_hosted_alerts(self.root, alerts, self.commit, self.rows),
                 [int(row["alert"]) for row in self.rows],
             )
         self.assertEqual(alerts, before)
@@ -110,30 +110,30 @@ class HostedReviewTests(unittest.TestCase):
             for container, key, value in mutations:
                 alert = copy.deepcopy(original)
                 alert[container][key] = value
-                self.assertEqual(review.review_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
+                self.assertEqual(review.match_historical_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
             for key in ("path", "start_line", "start_column", "end_line", "end_column"):
                 alert = copy.deepcopy(original)
                 loc = alert["most_recent_instance"]["location"]
                 loc[key] = "src/unreviewed.cpp" if key == "path" else loc[key] + 1
-                self.assertEqual(review.review_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
+                self.assertEqual(review.match_historical_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
             for key, value in (("number", 999999), ("state", "dismissed"), ("number", True)):
                 alert = {**copy.deepcopy(original), key: value}
-                self.assertEqual(review.review_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
+                self.assertEqual(review.match_historical_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
 
     # Purpose: Expire sink approvals when unreported generated callers, native callers or analysis configuration change.
     # Inputs: Independent caller/configuration mutations with unchanged incident locations. Outputs: No stale approval.
     def test_caller_and_configuration_expiry(self):
         alerts = [self.alert(self.rows[0])]
         with patch.object(review, "committed_context_matches", return_value=True):
-            self.assertNotEqual(review.review_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
+            self.assertNotEqual(review.match_historical_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
             caller = self.root / review.DERIVED_ROOT / "dictBuilder/zdict.c"
             caller.write_bytes(b"unreported generated caller changed\n")
-            self.assertEqual(review.review_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
+            self.assertEqual(review.match_historical_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
             caller.unlink()
             with patch.object(review, "capture_inputs", return_value={"inputs_sha256": "c" * 64}):
-                self.assertEqual(review.review_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
+                self.assertEqual(review.match_historical_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
             (self.root / review.CONFIGURATION[0]).write_bytes(b"query suite changed\n")
-            self.assertEqual(review.review_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
+            self.assertEqual(review.match_historical_hosted_alerts(self.root, alerts, self.commit, self.rows), [])
 
     # Purpose: Expire one source independently even when its caller context is externally held constant.
     # Inputs: Changed reviewed bytes with a mocked matching context. Outputs: Its exact report remains blocking.
@@ -144,18 +144,20 @@ class HostedReviewTests(unittest.TestCase):
             patch.object(review, "committed_context_matches", return_value=True),
         ):
             (self.root / row["path"]).write_bytes(b"changed reviewed source\n")
-            self.assertEqual(review.review_hosted_alerts(self.root, [self.alert(row)], self.commit, self.rows), [])
+            self.assertEqual(
+                review.match_historical_hosted_alerts(self.root, [self.alert(row)], self.commit, self.rows), []
+            )
 
     # Purpose: Require published inputs; reject unavailable Git, malformed commits and duplicate records.
     # Inputs: Negative producer/inventory controls. Outputs: No stale or ambiguous admission succeeds.
     def test_publication_and_inventory_boundaries(self):
         alert = self.alert(self.rows[0])
         with patch.object(review, "committed_context_matches", return_value=False):
-            self.assertEqual(review.review_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
+            self.assertEqual(review.match_historical_hosted_alerts(self.root, [alert], self.commit, self.rows), [])
         with patch.object(review, "committed_context_matches", return_value=True), self.assertRaises(ValueError):
-            review.review_hosted_alerts(self.root, [alert, alert], self.commit, self.rows)
+            review.match_historical_hosted_alerts(self.root, [alert, alert], self.commit, self.rows)
         with self.assertRaises(ValueError):
-            review.review_hosted_alerts(self.root, [], "HEAD", self.rows)
+            review.match_historical_hosted_alerts(self.root, [], "HEAD", self.rows)
         with patch.object(review.subprocess, "run") as run:
             run.return_value.returncode = 128
             with self.assertRaises(ValueError):

@@ -1,7 +1,7 @@
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <memory>
+#include <new>
 
 #ifndef __SANITIZE_ADDRESS__
 #error The sanitizer qualification control must be instrumented.
@@ -14,13 +14,12 @@ int main(int argc, char** argv) {
     if (argc != 2 || (std::strcmp(argv[1], "--valid") != 0 && std::strcmp(argv[1], "--heap-overflow") != 0)) {
         return 2;
     }
-    const std::unique_ptr<unsigned char, decltype(&std::free)> storage(static_cast<unsigned char*>(std::malloc(16U)),
-                                                                       &std::free);
+    const std::unique_ptr<unsigned char[]> storage(new (std::nothrow) unsigned char[16U]);
     if (!storage) {
         return 3;
     }
     volatile std::size_t offset = std::strcmp(argv[1], "--valid") == 0 ? 15U : 16U;
     storage.get()[offset] = 0x5CU;
-    std::printf("%u\n", static_cast<unsigned>(storage.get()[offset]));
+    std::cout << static_cast<unsigned>(storage.get()[offset]) << '\n';
     return 0;
 }

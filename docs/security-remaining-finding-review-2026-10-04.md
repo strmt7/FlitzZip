@@ -1,5 +1,13 @@
 # Remaining Individual Finding Review - 4 October 2026
 
+Current status: historical review, superseded as an acceptance mechanism by
+the [source remediation redesign](security-source-remediation-redesign.md).
+The maintainer subsequently required source remediation of these reports.
+All 54 matching alerts now remain blocking. The following text records the
+earlier decisions, assumptions, source identities and finite test evidence.
+It does not prove harmlessness, describe the redesigned source or establish
+closure. In particular, approvals of quality observations are not repairs.
+
 Status: the maintainer approved these exact 54 individual dispositions on
 October 4. The approved ledger supplements the separate 27 DevSkim source sites;
 raw reports and hosted states remain intact. The complete reference inventory is

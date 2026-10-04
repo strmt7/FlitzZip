@@ -1,5 +1,12 @@
 # Exact DevSkim Source Review, October 4
 
+Current status: historical review, superseded as an acceptance mechanism by
+the [source remediation redesign](security-source-remediation-redesign.md).
+The maintainer subsequently requested source repairs instead of admission.
+All matching source reports now remain blocking. The statements and hashes
+below record the earlier assessment only; they do not establish current source
+identity, harmlessness, remediation or security acceptance.
+
 These 21 reports were individually reviewed against the current source. The
 maintainer explicitly approved these exact dispositions on October 4. The
 ledger in `.github/scanner-source-reviews.csv` binds each rule, complete source

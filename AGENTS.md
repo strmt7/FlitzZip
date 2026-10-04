@@ -123,6 +123,9 @@ verifier or remove scanners to hide them.
   Baseline and Coding Standards before memory/ownership rewrites. Do not close a
   finding through scanner suppression, primitive renaming, removed regression
   coverage, or a passing check against older source bytes.
+  Historical approval ledgers are evidence only; exact matches remain
+  unresolved. Follow `docs/security-source-remediation-redesign.md` for the
+  current source remediation sequence and closure requirements.
 
 - The ordinary local build is HIP-enabled:
 

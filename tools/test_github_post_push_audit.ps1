@@ -124,8 +124,8 @@ Test-AuditCase 'failed remote query cannot use plausible output' @() 'reading re
 $auditGitExitCode = 0
 $auditGitRemote = ''
 Test-AuditCase 'empty remote query rejected' @() 'remote.origin.url is unset' -Repository ''
-Test-AuditCase 'existing approved residual' @($emptyDeployments, (Get-ApiReply $alerts 0 $approvedJson))
-Test-AuditCase 'unapproved finding' @($emptyDeployments, (Get-ApiReply $alerts 0 $unapprovedJson)) 'Unapproved code-scanning'
+Test-AuditCase 'previously accepted governance alert remains blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $approvedJson)) 'Unresolved code-scanning'
+Test-AuditCase 'unapproved finding' @($emptyDeployments, (Get-ApiReply $alerts 0 $unapprovedJson)) 'Unresolved code-scanning'
 $priorityJson = '[{"number":100,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/quality"}},' +
     '{"number":2,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/critical","security_severity_level":"critical"}},' +
     '{"number":3,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/high","security_severity_level":"high"}}]'
@@ -150,8 +150,8 @@ $fullPage = ConvertTo-Json -InputObject @((1..100) | ForEach-Object {
     [pscustomobject]@{ number = $_; state = 'open'; tool = @{ name = 'Scorecard' }; rule = @{ id = 'CodeReviewID' } }
 }) -Depth 5 -Compress
 $secondPageFinding = $unapprovedJson.Replace('"number":2', '"number":101')
-Test-AuditCase 'complete pagination' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), $emptyAlerts)
-Test-AuditCase 'unapproved finding on second page' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 0 $secondPageFinding)) 'Unapproved code-scanning'
+Test-AuditCase 'complete pagination retains every governance finding' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), $emptyAlerts) 'Unresolved code-scanning alerts are open: 100.'
+Test-AuditCase 'unapproved finding on second page' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 0 $secondPageFinding)) 'Unresolved code-scanning'
 Test-AuditCase 'failed second page' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 1 '[]')) 'code-scanning API failed'
 Test-AuditCase 'repeated page rejects incomplete evidence' @($emptyDeployments, (Get-ApiReply $alerts 0 $fullPage), (Get-ApiReply $alerts 0 $fullPage)) 'duplicate alert'
 Test-AuditCase 'duplicate within a page rejected' @($emptyDeployments, (Get-ApiReply $alerts 0 ('[' + ($approvedJson.TrimStart('[').TrimEnd(']')) + ',' + ($approvedJson.TrimStart('[').TrimEnd(']')) + ']'))) 'duplicate alert'
@@ -171,26 +171,16 @@ $historyJson = '[{"number":2,"state":"fixed","tool":{"name":"CodeQL"},"rule":{"i
     '"dismissed_comment":"private reviewer text must not be exported","most_recent_instance":{"location":{"path":"src/sample.cpp","start_line":12},"commit_sha":"fixture-commit","category":"c-cpp"}}]'
 Test-AuditCase 'all-state history preserves closed states' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) -IncludeHistory
 Test-AuditCase 'empty complete history' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 '[]')) -IncludeHistory
-Test-AuditCase 'unapproved history entry still blocks' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $unapprovedJson)) 'Unapproved code-scanning' -IncludeHistory
-Test-AuditCase 'all-state later page retained' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 0 ($historyJson.Replace('"number":2', '"number":101').Replace('"number":3', '"number":102')))) -IncludeHistory
+Test-AuditCase 'unapproved history entry still blocks' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $unapprovedJson)) 'Unresolved code-scanning' -IncludeHistory
+Test-AuditCase 'all-state later page retained' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 0 ($historyJson.Replace('"number":2', '"number":101').Replace('"number":3', '"number":102')))) 'Unresolved code-scanning alerts are open: 100.' -IncludeHistory
 Test-AuditCase 'all-state partial history fails' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 1 '[]')) 'code-scanning API failed' -IncludeHistory
 Test-AuditCase 'missing history authorization for report' @() 'requires IncludeHistory' -HistoryReportPath 'unused.json'
 
-# Purpose: Exercise the PowerShell consumer of exact source admission without invoking external tools.
-# Inputs: Production Python arguments, complete JSON snapshot, and fixture output/status.
-# Outputs: Verifies checkout/commit/raw-state binding and returns the configured admission response.
+# Purpose: Reject any attempted invocation of the retired source admission path.
+# Inputs: Historically accepted/malformed output, status and snapshot-count fixtures.
+# Outputs: Throws on invocation; every actual audit must decide closure without consulting these fixtures.
 function Invoke-TestSourceReview {
-    if ($args.Count -ne 7 -or ($args[0..3] -join ' ') -ne '-3 -m tools.scanner_metadata_review --hosted-alerts' -or
-        $args[5] -ne '--commit' -or $args[6] -ne $sourceCommit -or
-        (Get-Location).Path -ne (Split-Path -Parent $PSScriptRoot)) {
-        throw 'Hosted source admission lost checkout or exact-commit binding.'
-    }
-    $snapshot = Get-Content -LiteralPath $args[4] -Raw | ConvertFrom-Json
-    if (@($snapshot).Count -ne $sourceSnapshotCount -or $snapshot[0].number -ne 77 -or $snapshot[0].state -ne 'open') {
-        throw 'Hosted source admission lost the complete raw alert snapshot.'
-    }
-    $global:LASTEXITCODE = $sourceExitCode
-    return $sourceReply
+    throw "A completion audit must never consult source admission: output=$sourceReply, status=$sourceExitCode, count=$sourceSnapshotCount."
 }
 $sourceCommit = 'a' * 40
 $sourceExitCode = 0
@@ -199,18 +189,18 @@ $sourceReply = '[77]'
 $sourceJson = '[{"number":77,"state":"open","tool":{"name":"devskim"},"rule":{"id":"DS121708"}}]'
 Set-Alias -Name py -Value Invoke-TestSourceReview -Scope Script
 try {
-    Test-AuditCase 'exact approved source is admitted without dismissal' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) -Commit $sourceCommit
+    Test-AuditCase 'historically approved source remains blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Unresolved code-scanning alerts are open: 1.' -Commit $sourceCommit
     $sourceSnapshotCount = 2
     $mixedJson = $sourceJson.TrimEnd(']') + ',' + $unapprovedJson.TrimStart('[')
-    Test-AuditCase 'source approval cannot admit another producer' @($emptyDeployments, (Get-ApiReply $alerts 0 $mixedJson)) 'Unapproved code-scanning alerts are open: 1.' -Commit $sourceCommit
+    Test-AuditCase 'all producers remain blocking despite historical approval' @($emptyDeployments, (Get-ApiReply $alerts 0 $mixedJson)) 'Unresolved code-scanning alerts are open: 2.' -Commit $sourceCommit
     $sourceSnapshotCount = 1
     foreach ($invalidReply in @('[2]', '["77"]', '77', '{}', 'null', '[77,77]')) {
         $sourceReply = $invalidReply
-        Test-AuditCase 'malformed or unrelated admission remains blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Hosted source review returned' -Commit $sourceCommit
+        Test-AuditCase 'admission output cannot influence actual closure' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Unresolved code-scanning alerts are open: 1.' -Commit $sourceCommit
     }
     $sourceReply = '[77]'
     $sourceExitCode = 1
-    Test-AuditCase 'failed admission cannot consume plausible output' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Exact hosted source admission failed' -Commit $sourceCommit
+    Test-AuditCase 'admission status cannot influence actual closure' @($emptyDeployments, (Get-ApiReply $alerts 0 $sourceJson)) 'Unresolved code-scanning alerts are open: 1.' -Commit $sourceCommit
 } finally {
     Remove-Item -LiteralPath Alias:py
 }
@@ -233,7 +223,7 @@ try {
         throw 'An existing history report was changed.'
     }
     $blockedPath = Join-Path $reportRoot 'blocked.json'
-    Test-AuditCase 'blocked audit retains history evidence' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $unapprovedJson)) 'Unapproved code-scanning' -IncludeHistory -HistoryReportPath $blockedPath
+    Test-AuditCase 'blocked audit retains history evidence' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $unapprovedJson)) 'Unresolved code-scanning' -IncludeHistory -HistoryReportPath $blockedPath
     if (-not (Test-Path -LiteralPath $blockedPath -PathType Leaf)) { throw 'Blocked history evidence was lost.' }
     Test-AuditCase 'non-JSON report rejected' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $historyJson)) '.json extension' -IncludeHistory -HistoryReportPath (Join-Path $reportRoot 'invalid.txt')
     Push-Location $reportRoot

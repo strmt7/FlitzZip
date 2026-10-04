@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -129,7 +130,11 @@ class ScannerSourceReviewTests(unittest.TestCase):
         self.row = self.rows[0]
         self.source = self.root / self.row["path"]
         self.source.parent.mkdir(parents=True)
-        self.source.write_bytes((checkout / self.row["path"]).read_bytes())
+        self.source.write_bytes(
+            subprocess.check_output(
+                ["git", "-C", str(checkout), "show", "509e6077faf6defca2d90e90f9116dbcd1bcb9ea:" + self.row["path"]]
+            )
+        )
         self.finding = {
             "ruleId": self.row["rule"],
             "locations": [
@@ -142,8 +147,8 @@ class ScannerSourceReviewTests(unittest.TestCase):
             ],
         }
 
-    # Purpose: Preserve every raw result while admitting only the approved complete source/location identity.
-    # Inputs: One approved finding and an unreviewed sibling. Outputs: One reviewed, one unresolved and identical SARIF.
+    # Purpose: Keep an exactly reviewed source finding blocking rather than crediting a review as a repair.
+    # Inputs: One historically reviewed finding and an unreviewed sibling. Outputs: Both unresolved and identical SARIF.
     def test_lossless_exact_admission(self):
         report = self.root / "raw.sarif"
         report.write_text(json.dumps({"runs": [{"results": [self.finding, {"ruleId": "DS117838"}]}]}))
@@ -151,7 +156,7 @@ class ScannerSourceReviewTests(unittest.TestCase):
         result = review.review_findings(
             self.root, report, b",".join(key.encode() for key in review.FIELDS) + b"\n", self.policy
         )
-        self.assertEqual((len(result["reviewed_source"]), result["unresolved_count"]), (1, 1))
+        self.assertEqual((len(result["reviewed_source"]), result["unresolved_count"]), (1, 2))
         self.assertEqual(report.read_bytes(), before)
         self.assertEqual(
             review.review_findings(self.root, report, b",".join(key.encode() for key in review.FIELDS) + b"\n")[
@@ -240,11 +245,11 @@ class ScannerSourceReviewTests(unittest.TestCase):
         alert = self.hosted_fixture()
         before = copy.deepcopy(alert)
         with patch.object(review, "committed_source_matches", return_value=True) as committed:
-            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [42])
+            self.assertEqual(review.match_historical_source_alerts(self.root, [alert], "a" * 40, self.policy), [42])
             committed.assert_called_once()
         self.assertEqual(alert, before)
         with patch.object(review, "committed_source_matches", return_value=False):
-            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [])
+            self.assertEqual(review.match_historical_source_alerts(self.root, [alert], "a" * 40, self.policy), [])
 
     # Purpose: Reject stale analyses, changed producer/category/rule/region and malformed identities independently.
     # Inputs: Independent GitHub record mutations. Outputs: Every unmatched record remains blocking.
@@ -261,23 +266,30 @@ class ScannerSourceReviewTests(unittest.TestCase):
         for container, key, value in mutations:
             alert = self.hosted_fixture()
             alert[container][key] = value
-            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [])
+            self.assertEqual(review.match_historical_source_alerts(self.root, [alert], "a" * 40, self.policy), [])
         for key in ("start_line", "start_column", "end_line", "end_column"):
             alert = self.hosted_fixture()
             alert["most_recent_instance"]["location"][key] += 1
-            self.assertEqual(review.review_hosted_findings(self.root, [alert], "a" * 40, self.policy), [])
+            self.assertEqual(review.match_historical_source_alerts(self.root, [alert], "a" * 40, self.policy), [])
         with patch.object(review, "committed_source_matches", return_value=True):
             alert = self.hosted_fixture()
             with self.assertRaises(ValueError):
-                review.review_hosted_findings(self.root, [alert, alert], "a" * 40, self.policy)
+                review.match_historical_source_alerts(self.root, [alert, alert], "a" * 40, self.policy)
         with self.assertRaises(ValueError):
-            review.review_hosted_findings(self.root, [], "HEAD", self.policy)
+            review.match_historical_source_alerts(self.root, [], "HEAD", self.policy)
 
-    # Purpose: Reject unexpected SDK rules and stale approved bytes across every registered component.
-    # Inputs: The current approved ledger and all its source files. Outputs: Every row matches its actual file/region.
+    # Purpose: Preserve historical review provenance without requiring current source to retain reviewed bytes.
+    # Inputs: The historical ledger and its exact recorded revision. Outputs: Matching archival identities only.
     def test_all_registered_source_identities(self):
         checkout = Path(__file__).resolve().parents[1]
         for row in self.rows:
+            source = self.root / row["path"]
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(
+                subprocess.check_output(
+                    ["git", "-C", str(checkout), "show", "509e6077faf6defca2d90e90f9116dbcd1bcb9ea:" + row["path"]]
+                )
+            )
             finding = {
                 "ruleId": row["rule"],
                 "locations": [
@@ -289,7 +301,7 @@ class ScannerSourceReviewTests(unittest.TestCase):
                     }
                 ],
             }
-            self.assertIsNotNone(review.reviewed_source_finding(checkout, finding, self.rows))
+            self.assertIsNotNone(review.reviewed_source_finding(self.root, finding, self.rows))
         with self.assertRaises(ValueError):
             review.read_source_reviews(
                 self.policy.replace(

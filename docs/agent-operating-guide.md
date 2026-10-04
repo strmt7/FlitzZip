@@ -550,6 +550,16 @@ For simple private helpers, one compact line is acceptable if it still covers pu
 
 ## Security Rules
 
+Source-finding remediation must follow the
+[source remediation redesign](security-source-remediation-redesign.md).
+Historical source/hosted approval ledgers do not establish a fix and cannot
+admit an open report. Preserve full scanner coverage and raw results. Require
+an enforceable production contract, its direct-consumer regression and fresh
+analysis of the repaired bytes before claiming source closure. Every open
+hosted alert blocks final acceptance, including governance reports. Retain
+deliberately failing sanitizer controls and staged upstream header contracts;
+an empty alert list never justifies weakening them.
+
 - Validate all archive entry names with `safe_join_archive_path` before extraction.
 - Compatibility archive support must use in-process parsers/writers. Do not
   shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other

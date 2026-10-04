@@ -1,4 +1,4 @@
-"""Retain scanner findings while recognizing exact, provenance-reviewed metadata snapshots."""
+"""Retain raw findings and historical reviews; only exact public metadata can be admitted."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from tools.scanner_hosted_review import read_hosted_policy, review_hosted_alerts
+from tools.scanner_hosted_review import match_historical_hosted_alerts, read_hosted_policy
 
 POLICY = Path(".github/scanner-metadata-reviews.csv")
 FIELDS = ("path", "rule", "input_sha256", "public_sha256", "evidence")
@@ -125,9 +125,9 @@ def committed_source_matches(root: Path, commit: str, row: dict[str, str]) -> bo
     )
 
 
-# Purpose: Apply the same approved source identities to hosted alerts without changing their state or raw inventory.
-# Inputs: Root, complete alert objects, exact analysis commit and approved policy. Outputs: Reviewed alert IDs only.
-def review_hosted_findings(root: Path, alerts: list[dict], commit: str, policy: bytes) -> list[int]:
+# Purpose: Identify historical source review matches without establishing remediation or acceptance.
+# Inputs: Root, complete alerts, historical analysis commit and ledger. Outputs: Informational matched IDs only.
+def match_historical_source_alerts(root: Path, alerts: list[dict], commit: str, policy: bytes) -> list[int]:
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None or len(alerts) > 20000:
         raise ValueError("Hosted source review requires a full commit and bounded inventory")
     rows = read_source_reviews(policy)
@@ -169,8 +169,9 @@ def review_hosted_findings(root: Path, alerts: list[dict], commit: str, policy: 
     return accepted
 
 
-# Purpose: Provide bounded, source-bound hosted admission to the canonical PowerShell audit.
-# Inputs: An ignored raw alert snapshot and optional full commit. Outputs: JSON IDs; any invalid input/tool fails.
+# Purpose: Report historical review matches separately from unresolved hosted findings.
+# Inputs: A bounded raw alert snapshot and optional full commit.
+# Outputs: Informational matches and every open ID as blocking; historical reviews never establish closure.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hosted-alerts", required=True, type=Path)
@@ -189,11 +190,16 @@ def main() -> None:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True, timeout=15
         ).stdout.strip()
-    accepted = review_hosted_findings(root, alerts, commit, read_source_policy(root))
-    accepted += review_hosted_alerts(root, alerts, commit, read_hosted_policy(root))
+    accepted = match_historical_source_alerts(root, alerts, commit, read_source_policy(root))
+    accepted += match_historical_hosted_alerts(root, alerts, commit, read_hosted_policy(root))
     if len(set(accepted)) != len(accepted):
         raise ValueError("Hosted review ledgers contain overlapping alert identities")
-    print(json.dumps(sorted(accepted)))
+    blocking = [alert["number"] for alert in alerts if alert.get("state") == "open"]
+    print(
+        json.dumps(
+            {"historically_reviewed": sorted(accepted), "blocking": sorted(blocking), "unresolved_count": len(blocking)}
+        )
+    )
 
 
 # Purpose: Freeze bounded review policy bytes without following filesystem redirects.
@@ -236,9 +242,9 @@ def read_reviews(payload: bytes) -> list[dict[str, str]]:
     return reviews
 
 
-# Purpose: Distinguish exact reviewed metadata from unresolved findings without mutating or filtering the raw SARIF.
+# Purpose: Retain historical source review context while keeping every source finding blocking.
 # Inputs: Frozen input root, complete raw report and frozen review policy.
-# Outputs: Reviewed identities and unresolved count.
+# Outputs: Metadata identities, informational source identities and unresolved count; raw SARIF is unchanged.
 def review_findings(root: Path, report: Path, policy: bytes, source_policy: bytes | None = None) -> dict:
     reviews = read_reviews(policy)
     source_reviews = read_source_reviews(source_policy) if source_policy is not None else []
@@ -276,6 +282,7 @@ def review_findings(root: Path, report: Path, policy: bytes, source_policy: byte
                 )
             elif (source_row := reviewed_source_finding(root, finding, source_reviews)) is not None:
                 reviewed_source.append({**source_row, "run_index": run_index, "result_index": index})
+                unresolved += 1
             else:
                 unresolved += 1
     return {"reviewed_metadata": reviewed, "reviewed_source": reviewed_source, "unresolved_count": unresolved}

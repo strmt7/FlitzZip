@@ -1,4 +1,4 @@
-"""Apply individually approved hosted dispositions without hiding raw findings."""
+"""Match historical hosted review identities for audit context; never establish source closure."""
 
 from __future__ import annotations
 
@@ -198,9 +198,11 @@ def committed_context_matches(root: Path, commit: str) -> bool:
     return result.returncode == 0
 
 
-# Purpose: Admit exact approved hosted operations only while their source, caller and analysis context remain valid.
-# Inputs: Complete raw alerts, full analysis commit and approved ledger. Outputs: IDs only; never mutates reports.
-def review_hosted_alerts(root: Path, alerts: list[dict], commit: str, rows: list[dict[str, str]]) -> list[int]:
+# Purpose: Identify exact historical review matches while preserving their source and analysis provenance.
+# Inputs: Complete alerts, full analysis commit and historical ledger. Outputs: Informational IDs, never acceptance.
+def match_historical_hosted_alerts(
+    root: Path, alerts: list[dict], commit: str, rows: list[dict[str, str]]
+) -> list[int]:
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None or len(alerts) > 20000:
         raise ValueError("Hosted review requires a full analysis commit and bounded inventory")
     if context_digest(root) != rows[0]["context_sha256"] or not committed_context_matches(root, commit):

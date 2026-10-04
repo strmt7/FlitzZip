@@ -57,6 +57,7 @@ foreach(
   target IN
   ITEMS libzstd_shared
         superzip_zstd_cover_probe
+        superzip_zstd_cover_owner_probe
         superzip_zstd_legacy_fault_objects
         superzip_zstd_bounds_tests
         superzip_zstd_cover_selection_tests
