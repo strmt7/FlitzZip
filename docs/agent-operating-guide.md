@@ -233,6 +233,15 @@ Guidelines, and SEI CERT C++.
   packages during build and verify checksums before use.
 - Fix scanner findings at root cause. Suppressions need documented evidence and
   maintainer approval; they are not a default remediation strategy.
+  Batch related source repairs before qualification. Use the actual detector
+  pins, stable SARIF paths/categories and the affected component checks before
+  publication. Reuse a completed result only while its source, callers, build
+  recipe, scanner and analysis configuration still match. A tools/docs change
+  does not justify rebuilding unchanged native inputs. Changed native inputs
+  require their selected checks; a previous deferral never disables future
+  scanning. Exact approved incident ledgers must not be broadened, resealed or
+  converted into family/path exceptions without another individual review and
+  maintainer approval. Raw results and unmatched findings remain visible.
 - Investigate related scanner findings in shared-root-cause/component batches,
   retaining one evidence-backed result per alert ID. Validate distinct callers,
   allocation contracts, build configurations, and failure paths before extending
@@ -522,6 +531,10 @@ tools\package.ps1 -Configuration Release
   `tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings`.
   Split large functions before pushing; do not wait for CodeQL to report
   poorly documented or oversized functions.
+  This includes locally edited vendor C/C++ and either opening-brace style.
+  Contracts require Purpose, Inputs and Outputs in the immediately preceding
+  comment block. Long bodies also need concise comments explaining actual
+  parsing stages, ownership or invariants; comment padding is not a repair.
 
 ## Required Function Documentation
 

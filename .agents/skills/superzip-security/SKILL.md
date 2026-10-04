@@ -37,6 +37,13 @@ six SDK fixed-width copies) are bound to exact normalized
 source bytes, rule and complete line/column region in the source review ledger.
 Do not expand them without a new individual review and maintainer approval;
 changed source or finding locations remain blocking. Raw SARIF stays complete.
+The separate hosted ledger records the 54 individually approved incidents and
+seals their complete identities. Its caller-context receipt covers native
+inputs, all generated Zstandard sources and CodeQL configuration. Neither
+ledger accepts unknown findings. Follow the operating guide's batch/freshness
+rules; do not reseal decisions, rename primitives or weaken scanning to make
+an iteration pass. Changed vendor functions participate in the ordinary
+function-contract gate before publication.
 
 Single-agent and Codex Security worker policy:
 

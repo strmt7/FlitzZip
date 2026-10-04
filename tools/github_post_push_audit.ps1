@@ -166,12 +166,15 @@ function Assert-NoDeployment {
     }
 }
 
-# Purpose: Resolve exact approved source alerts without dismissing or filtering the hosted inventory.
+# Purpose: Resolve exact approved source/quality reports without dismissing or filtering the hosted inventory.
 # Inputs: Complete validated alerts and optional analysis commit; the existing source ledger remains authoritative.
 # Outputs: Reviewed IDs only; unavailable tools, stale source/analysis or malformed output fail closed.
-function Get-ReviewedSourceAlertId {
+function Get-ReviewedHostedAlertId {
     param([object[]]$Alerts, [string]$AnalysisCommit)
-    $candidates = @($Alerts | Where-Object { $_.tool.name -eq 'devskim' })
+    $candidates = @($Alerts | Where-Object {
+        $_.tool.name -eq 'devskim' -or
+        ($_.tool.name -eq 'CodeQL' -and $_.most_recent_instance.commit_sha -match '^[a-f0-9]{40}$')
+    })
     if ($candidates.Count -eq 0) { return @() }
     $directory = Join-Path $repoRoot 'out/hosted-source-review'
     foreach ($path in @((Join-Path $repoRoot 'out'), $directory)) {
@@ -220,7 +223,7 @@ function Assert-CodeScanningAllowList {
         "BranchProtectionID",
         "CIIBestPracticesID"
     )
-    $reviewedSource = @(Get-ReviewedSourceAlertId -Alerts $Alerts -AnalysisCommit $AnalysisCommit)
+    $reviewedSource = @(Get-ReviewedHostedAlertId -Alerts $Alerts -AnalysisCommit $AnalysisCommit)
     Write-Output "Exact approved source alerts: $($reviewedSource.Count); raw hosted states remain unchanged."
 
     $violations = @($Alerts | Where-Object {

@@ -323,3 +323,32 @@ TEST_CASE(sevenzip_folder_scanner_preserves_descriptor_and_binding_bounds) {
         }
     }
 }
+
+// Purpose: Exercise file-map bitmap rollover and inline properties through the production decoder.
+// Inputs: Nine named empty entries with alternating file/directory flags and defined Windows attributes.
+// Outputs: Extracts all entries with correct types across the eighth-entry boundary and zero file bytes.
+TEST_CASE(sevenzip_header_maps_empty_entries_across_bitmap_boundary) {
+    std::vector<unsigned char> header{1, 5, 9, 14, 2, 0xFF, 0x80, 15, 2, 0xAA, 0x80, 17, 37, 0};
+    for (unsigned char name = 'a'; name <= 'i'; ++name) {
+        header.insert(header.end(), {name, 0, 0, 0});
+    }
+    header.insert(header.end(), {21, 38, 1, 0});
+    for (unsigned int index = 0; index < 9; ++index) {
+        append_le32(header, index % 2 == 0 ? 0x20U : 0x10U);
+    }
+    header.insert(header.end(), {0, 0});
+    const auto root = test_temp_dir("sevenzip-header-bitmap-boundary");
+    const auto archive = root / "empty-entries.7z";
+    write_7z_fixture(archive, make_unencoded_7z(header));
+    static_cast<void>(superzip::extract_7z(archive, root / "out", false));
+    REQUIRE_EQ(count_regular_files(root / "out"), static_cast<std::uint64_t>(5));
+    for (unsigned int index = 0; index < 9; ++index) {
+        const auto path = root / "out" / std::string(1, static_cast<char>('a' + index));
+        if (index % 2 == 0) {
+            REQUIRE_TRUE(std::filesystem::is_regular_file(path));
+            REQUIRE_EQ(std::filesystem::file_size(path), static_cast<std::uintmax_t>(0));
+        } else {
+            REQUIRE_TRUE(std::filesystem::is_directory(path));
+        }
+    }
+}

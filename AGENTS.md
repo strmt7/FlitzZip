@@ -109,7 +109,8 @@ verifier or remove scanners to hide them.
   module patterns. Prefer behavior-preserving, reviewable changes unless a
   behavior change was requested.
 - Every new or changed function needs a concise Purpose/Inputs/Outputs
-  contract. Run the changed-function size/complexity/documentation gate:
+  contract, including locally edited vendor code. Run the changed-function
+  size/complexity/documentation gate before publication:
 
   ```powershell
   tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings

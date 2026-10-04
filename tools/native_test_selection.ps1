@@ -78,21 +78,25 @@ function Get-SuperZipNativeTestSelection {
     $broad = [pscustomobject]@{ mode = 'full'; components = @(); tests = @(); requireHip = $false }
     if ($Full.IsPresent) { return $broad }
     $definitions = @(
-        @{ id = 'hip-entropy-encode'; paths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
+        @{ id = 'sevenzip-parser'; requireHip = $false; paths = @('third_party/lzma_sdk/C/7zArcIn.c')
+           rules = @(
+               @{ source = 'tests/cpp/test_sevenzip_compat.cpp'; pattern = '^sevenzip_' },
+               @{ source = 'tests/cpp/test_sevenzip_ppmd.cpp'; pattern = '^sevenzip_' }) },
+        @{ id = 'hip-entropy-encode'; requireHip = $true; paths = @('src/gpu/hip_codec_static_prefix.hip.cpp', 'src/gpu/hip_codec_adaptive_prefix.hip.cpp')
            rules = @(
                @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_(prefix_reference|gpu_(prefix_|huffman_|entropy_efforts_|efforts_preserve_dictionary_)|required_gpu_(prefix_|huffman_))' },
                @{ source = 'tests/cpp/test_gpu_block_batch.cpp'; pattern = '^gpu_block_batch_hip_identity$' }) },
-        @{ id = 'hip-sparse-candidate'; paths = @('src/gpu/sparse_pattern_candidate.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')
+        @{ id = 'hip-sparse-candidate'; requireHip = $true; paths = @('src/gpu/sparse_pattern_candidate.cpp', 'src/gpu/hip_sparse_pattern.hip.cpp')
            rules = @(
                @{ source = 'tests/cpp/test_sparse_pattern_block.cpp'; pattern = '^(sparse_pattern_|long_sparse_pattern_)' },
                @{ source = 'tests/cpp/test_archive_roundtrip.cpp'; pattern = '^suzip_(sparse_pattern_cpu_reader_roundtrip|long_sparse_pattern_v7_reader_roundtrip|long_sparse_pattern_writer_selects_v7)$' },
                @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_gpu_(entropy_efforts_preserve_per_block_winners|efforts_preserve_dictionary_candidates_after_entropy_gain)$' }) },
-        @{ id = 'hip-dictionary-codec'; paths = @('src/gpu/hip_dictionary_matcher.hip.cpp')
+        @{ id = 'hip-dictionary-codec'; requireHip = $true; paths = @('src/gpu/hip_dictionary_matcher.hip.cpp')
            rules = @(
                @{ source = 'tests/cpp/test_dictionary_matcher.cpp'; pattern = '^dictionary_(?!.*_(benchmark|reference)_opt_in$|interop_export_)' },
                @{ source = 'tests/cpp/test_archive_roundtrip.cpp'; pattern = '^suzip_(gpu_dictionary_(writer_levels_and_roundtrip|mixed_and_archive_roundtrip)|required_gpu_encoder_emits_no_cpu_deflate_blocks)$' },
                @{ source = 'tests/cpp/test_suzip_gpu_prefix.cpp'; pattern = '^suzip_gpu_(entropy_efforts_preserve_per_block_winners|efforts_preserve_dictionary_candidates_after_entropy_gain|prefix_candidate_selection_is_per_block|prefix_levels_compact_shifted_alphabet)$' }) },
-        @{ id = 'hip-dictionary-candidate'; paths = @('src/gpu/dictionary_candidate.cpp')
+        @{ id = 'hip-dictionary-candidate'; requireHip = $true; paths = @('src/gpu/dictionary_candidate.cpp')
            rules = @(
                @{ source = 'tests/cpp/test_dictionary_matcher.cpp'; pattern = '^dictionary_(segmented_records_large_block_roundtrip|off_grid_segmented_records_roundtrip|adjacent_periodic_blocks_preserve_encoded_bytes|periodic_group_probe_falls_back_without_byte_changes|periodic_efforts_preserve_size_order|periodic_candidate_independent_block_decode|mixed_periodic_distances_roundtrip|production_chunk_crc_and_decode)$' },
                @{ source = 'tests/cpp/test_archive_roundtrip.cpp'; pattern = '^suzip_(gpu_dictionary_(writer_levels_and_roundtrip|mixed_and_archive_roundtrip)|required_gpu_encoder_emits_no_cpu_deflate_blocks)$' },
@@ -124,7 +128,7 @@ function Get-SuperZipNativeTestSelection {
     $hipSources = @('tests/cpp/test_suzip_gpu_prefix.cpp', 'tests/cpp/test_gpu_block_batch.cpp',
         'tests/cpp/test_dictionary_matcher.cpp', 'tests/cpp/test_sparse_pattern_block.cpp')
     return [pscustomobject]@{ mode = 'component'; components = @($components | ForEach-Object { $_.id }) + $testSources
-        tests = @($selected | Sort-Object); requireHip = ($components.Count -gt 0 -or @($testSources | Where-Object { $_ -in $hipSources }).Count -gt 0) }
+        tests = @($selected | Sort-Object); requireHip = (@($components | Where-Object { $_.requireHip }).Count -gt 0 -or @($testSources | Where-Object { $_ -in $hipSources }).Count -gt 0) }
 }
 
 # Purpose: Require a compiled, available HIP backend before and after GPU-dependent component cases.

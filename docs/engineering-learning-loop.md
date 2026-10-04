@@ -26,6 +26,32 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- The SDK follow-up exposed three undocumented inherited parser routines.
+  The changed-function audit skipped vendor source and recognized only
+  same-line C/C++ braces. It now admits edited vendor source, recognizes
+  both brace styles, masks comments/literals, requires every contract field,
+  rejects borrowed contracts from preceding functions and deletion-only
+  contract removals, and checks long-body
+  documentation. Negative controls cover these failures. The actual folder
+  and header parser is split into bounded stages with documented ownership;
+  production decoder cases retain malformed-header rejection and exercise
+  file-map bitmap rollover with nine files/directories.
+
+- The 7z header parser has a reviewed native component cohort covering every
+  registered 7z parser and PPMd consumer. Its only product caller is the 7z
+  adapter; the folder decoder is its in-library consumer. Shared SDK headers,
+  decoder primitives or unmapped native inputs retain the full driver. Selector
+  contracts check both boundaries. Normal local builds remain HIP-enabled;
+  selecting a CPU parser cohort does not select unrelated GPU timing work.
+
+- The 54 separately approved hosted dispositions retain every incident field
+  under a fixed approval digest. Admission also requires the current native
+  input digest, the complete generated Zstandard source closure and analysis
+  configuration. Tests reject independent source/caller/scanner/location
+  changes, altered decisions, missing records and expanded inventories. Raw
+  results remain intact; new findings, including the SDK documentation reports,
+  are outside this approval and require production fixes.
+
 - The generic offline-contract name heuristic admitted the native ASan project
   and repeated completed qualification during a tooling-only continuation.
   `Test-SuperZipToolContractCommand` now identifies that command as native work.

@@ -495,13 +495,21 @@ Assert-Selector ($fullIntermediate.scope.fullEscalationRequired -and $fullInterm
     'full local escalation must not imply blocking intermediate remote waiting'
 
 foreach ($path in @('tools/github_post_push_audit.ps1', 'tools/test_github_post_push_audit.ps1',
-        'tools/scanner_metadata_review.py', 'tools/test_scanner_metadata_review.py', '.github/scanner-source-reviews.csv')) {
+        'tools/scanner_metadata_review.py', 'tools/test_scanner_metadata_review.py', '.github/scanner-source-reviews.csv',
+        'tools/scanner_hosted_review.py', 'tools/test_scanner_hosted_review.py', '.github/scanner-hosted-reviews.csv', '.github/scanner-hosted-approval.csv')) {
     $auditPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     if ($path.StartsWith('tools/')) {
         Assert-Selector $auditPlan.scope.touchesVerification "post-push audit changes are verification tooling: $path"
     }
     Assert-Selector (-not $auditPlan.scope.fullEscalationRequired) "post-push audit changes must target API failure contracts: $path"
     Assert-Selector (Test-RequiredCommand -Plan $auditPlan -Id "github-post-push-audit-tests") "post-push audit changes must run their offline regressions: $path"
+}
+
+foreach ($path in @('tools/scanner_hosted_review.py', 'tools/test_scanner_hosted_review.py',
+        '.github/scanner-hosted-reviews.csv', '.github/scanner-hosted-approval.csv', 'tools/scanner_metadata_review.py', 'tools/github_post_push_audit.ps1')) {
+    $hostedReviewPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+    Assert-Selector (Test-RequiredCommand -Plan $hostedReviewPlan -Id 'scanner-hosted-review-tests') "hosted review producers and consumers must run expiry contracts: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $hostedReviewPlan -Id 'release-build')) "hosted admission tooling must not repeat an unchanged native build: $path"
 }
 
 $unknownScope = Get-SuperZipVerificationScope -ChangedPath @('unexpected/new-area.file')

@@ -28,6 +28,8 @@ on:
       - .github/requirements/**
       - .github/scanner-metadata-reviews.csv
       - .github/scanner-source-reviews.csv
+      - .github/scanner-hosted-reviews.csv
+      - .github/scanner-hosted-approval.csv
       - .github/codeql/**
       - .github/openvas/**
       - .github/workflows/greenbone-openvas-vulnetix.yml

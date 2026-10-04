@@ -90,6 +90,14 @@ foreach ($shared in @('src/gpu/hip_codec_support.hpp', 'src/gpu/hip_codec.hip.cp
 Assert-NativeSelection ((Get-SuperZipNativeTestSelection -Paths $entropyPaths -Full).mode -eq 'full') 'explicit full qualification'
 Assert-NativeSelection ((Get-SuperZipNativeTestSelection -Paths @('tests/cpp/test_main.cpp')).mode -eq 'runner') 'runner-only edits select registry contracts'
 $inventory = @(Get-SuperZipNativeTestInventory)
+$sevenzip = Get-SuperZipNativeTestSelection -Paths @('third_party/lzma_sdk/C/7zArcIn.c')
+$sevenzipExpected = @($inventory | Where-Object { $_.source -in @('tests/cpp/test_sevenzip_compat.cpp',
+        'tests/cpp/test_sevenzip_ppmd.cpp') } | Select-Object -ExpandProperty name | Sort-Object)
+Assert-NativeSelection ($sevenzip.mode -eq 'component' -and -not $sevenzip.requireHip -and
+    ($sevenzip.tests -join '|') -ceq ($sevenzipExpected -join '|')) '7z header parser selects all registered parser and decoder consumers'
+foreach ($shared in @('third_party/lzma_sdk/C/7z.h', 'third_party/lzma_sdk/C/LzmaDec.c', 'third_party/lzma_sdk/C/CpuArch.h')) {
+    Assert-NativeSelection ((Get-SuperZipNativeTestSelection -Paths @('third_party/lzma_sdk/C/7zArcIn.c', $shared)).mode -eq 'full') "shared SDK changes retain broader coverage: $shared"
+}
 $testPath = 'tests/cpp/test_dictionary_block.cpp'
 $testOnly = Get-SuperZipNativeTestSelection -Paths @($testPath)
 $expected = @($inventory | Where-Object source -eq $testPath | Select-Object -ExpandProperty name | Sort-Object)

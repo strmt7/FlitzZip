@@ -27,6 +27,37 @@ analysis commit, producer version/category and committed Git blob identity.
 Approved findings remain visible with their raw GitHub state; admission expires
 on source or identity changes and does not dismiss alerts permanently.
 
+The [remaining individual review](security-remaining-finding-review-2026-10-04.md)
+records 54 separately approved reports in `.github/scanner-hosted-reviews.csv`.
+Their complete incident identities use the public integrity pin in
+`.github/scanner-hosted-approval.csv`, independently from caller-context
+renewal. That context includes native build inputs, all generated Zstandard
+library sources and CodeQL configuration. Changed source, caller context,
+producer or coordinates expire admission; every unmatched finding blocks.
+
+### Prevention Strategy and Research
+
+The pre-publication changed-function gate covers edited vendor C/C++, both brace
+styles, complete contracts and long-function body documentation. It operates on
+actual changed functions; it does not suppress queries or replace native tests.
+The scanner preflight freezes changed publication bytes and uses the pinned
+detectors. Hosted acceptance still requires the exact analyzed commit.
+
+GitHub documents that [stable file paths and SARIF fingerprints](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
+prevent duplicate alerts across runs. Preserve paths, rule IDs, categories and
+fingerprints when modifying scanners; never invent fingerprints to hide results.
+GitHub's [incremental-analysis guidance](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/scan-from-the-command-line/incremental-analysis)
+states that CodeQL Actions handle incremental analysis automatically, and CLI
+overlays require no-build extraction. SuperZip retains its traced native build
+and generated dependency coverage; switching to no-build extraction or filtering
+results to edited lines would not provide equivalent acceptance evidence here.
+The existing [security-and-quality suite](https://docs.github.com/en/code-security/concepts/code-scanning/codeql/codeql-query-suites)
+retains both security and maintainability checks. Microsoft's
+[native analysis guidance](https://learn.microsoft.com/en-us/cpp/code-quality/using-the-cpp-core-guidelines-checkers?view=msvc-170)
+supports automated type/resource checks, but adding another analyzer is not
+evidence that existing findings were repaired. Retain the pinned working tools
+and their production regressions before adding new overlapping diagnostics.
+
 `docs/benchmarks/data/` contains passive measurement reports only. DevSkim's
 code-pattern analysis excludes that whole directory after
 `tools/devskim_scope.py` validates its role. The shared local/hosted boundary

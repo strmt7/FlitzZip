@@ -11,6 +11,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from tools.scanner_hosted_review import read_hosted_policy, review_hosted_alerts
+
 POLICY = Path(".github/scanner-metadata-reviews.csv")
 FIELDS = ("path", "rule", "input_sha256", "public_sha256", "evidence")
 MAX_POLICY_BYTES = 64 * 1024
@@ -187,7 +189,11 @@ def main() -> None:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True, timeout=15
         ).stdout.strip()
-    print(json.dumps(review_hosted_findings(root, alerts, commit, read_source_policy(root))))
+    accepted = review_hosted_findings(root, alerts, commit, read_source_policy(root))
+    accepted += review_hosted_alerts(root, alerts, commit, read_hosted_policy(root))
+    if len(set(accepted)) != len(accepted):
+        raise ValueError("Hosted review ledgers contain overlapping alert identities")
+    print(json.dumps(sorted(accepted)))
 
 
 # Purpose: Freeze bounded review policy bytes without following filesystem redirects.

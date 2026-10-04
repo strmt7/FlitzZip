@@ -426,18 +426,14 @@ static SRes ReadPackInfo(CSzAr *p, CSzData *sd, ISzAllocPtr alloc)
 
 #define k_NumCodersStreams_in_Folder_MAX (SZ_NUM_BONDS_IN_FOLDER_MAX + SZ_NUM_PACK_STREAMS_IN_FOLDER_MAX)
 
-SRes SzGetNextFolderItem(CSzFolder *f, CSzData *sd)
+/* Purpose: Decode supported coder descriptors and retain bounded property offsets.
+ * Inputs: f owns fixed coder slots; sd borrows folder bytes; numCoders is validated.
+ * Outputs: Advances sd and publishes the total input count; invalid extents return SDK errors. */
+static SRes ReadFolderCoders(CSzFolder *f, CSzData *sd, UInt32 numCoders, UInt32 *totalInputs, const Byte *dataStart)
 {
-  UInt32 numCoders, i, numInStreams = 0;
-  const Byte * const dataStart = sd->Data;
+  UInt32 i, numInStreams = 0;
 
-  f->UnpackStream = 0;
-
-  RINOK(SzReadNumber32(sd, &numCoders))
-  if (numCoders == 0 || numCoders > SZ_NUM_CODERS_IN_FOLDER_MAX)
-    return SZ_ERROR_UNSUPPORTED;
-  f->NumCoders = numCoders;
-
+  /* Method IDs and property payloads must fit the remaining descriptor bytes. */
   for (i = 0; i < numCoders; i++)
   {
     Byte mainByte;
@@ -505,6 +501,18 @@ SRes SzGetNextFolderItem(CSzFolder *f, CSzData *sd)
     }
   }
 
+  *totalInputs = numInStreams;
+  return SZ_OK;
+}
+
+/* Purpose: Validate folder bonds and identify distinct unbound packed streams.
+ * Inputs: f contains validated coders; sd borrows descriptors; numInStreams is bounded.
+ * Outputs: Populates bonds, pack streams and unpack index; duplicate/out-of-range indices fail. */
+static SRes ReadFolderBindings(CSzFolder *f, CSzData *sd, UInt32 numInStreams)
+{
+  UInt32 i;
+  const UInt32 numCoders = f->NumCoders;
+  /* Bond uniqueness is checked before indexing either fixed-size bitmap. */
   {
     Byte streamUsed[k_NumCodersStreams_in_Folder_MAX];
     UInt32 numBonds, numPackStreams;
@@ -578,6 +586,22 @@ SRes SzGetNextFolderItem(CSzFolder *f, CSzData *sd)
       }
   }
   return SZ_OK;
+}
+
+/* Purpose: Decode one supported folder graph without allocating or owning its source bytes.
+ * Inputs: f owns fixed tables; sd borrows an encoded folder and is advanced as parsed.
+ * Outputs: Records bounded coders/bonds/property offsets, or returns archive/unsupported errors. */
+SRes SzGetNextFolderItem(CSzFolder *f, CSzData *sd)
+{
+  UInt32 numCoders, numInStreams;
+  const Byte * const dataStart = sd->Data;
+  f->UnpackStream = 0;
+  RINOK(SzReadNumber32(sd, &numCoders))
+  if (numCoders == 0 || numCoders > SZ_NUM_CODERS_IN_FOLDER_MAX)
+    return SZ_ERROR_UNSUPPORTED;
+  f->NumCoders = numCoders;
+  RINOK(ReadFolderCoders(f, sd, numCoders, &numInStreams, dataStart))
+  return ReadFolderBindings(f, sd, numInStreams);
 }
 
 
@@ -1084,21 +1108,21 @@ static SRes ReadTime(CSzBitUi64s *p, size_t num, CSzData *sd2,
 #define NUM_ADDITIONAL_STREAMS_MAX 8
 
 
-static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
-    CBuf * const tempBufs, ISzAllocPtr allocMain, ISzAllocPtr allocTemp)
-{
-  CSubStreamInfo ssi;
-  UInt32 numTempBufs = 0;
-
+/* Purpose: Read optional archive properties and additional/main packed stream metadata.
+ * Inputs: p owns partial archive state; sd and temporary buffers borrow live header data.
+ * Outputs: Updates stream metadata and next type; allocators retain caller cleanup ownership. */
+static SRes ReadHeaderStreams(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
+    CBuf *tempBufs, UInt32 *numTempBufs, CSubStreamInfo *ssi, UInt64 *nextType,
+    ISzAllocPtr allocMain, ISzAllocPtr allocTemp)
 {
   UInt64 type;
 
-  SzData_CLEAR(&ssi.sdSizes)
-  SzData_CLEAR(&ssi.sdCRCs)
-  SzData_CLEAR(&ssi.sdNumSubStreams)
+  SzData_CLEAR(&ssi->sdSizes)
+  SzData_CLEAR(&ssi->sdCRCs)
+  SzData_CLEAR(&ssi->sdNumSubStreams)
 
-  ssi.NumSubDigests = 0;
-  ssi.NumTotalSubStreams = 0;
+  ssi->NumSubDigests = 0;
+  ssi->NumTotalSubStreams = 0;
 
   RINOK(ReadID(sd, &type))
 
@@ -1115,6 +1139,7 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
     RINOK(ReadID(sd, &type))
   }
 
+  /* Additional folders are decoded into caller-owned temporary buffers. */
   if (type == k7zIdAdditionalStreamsInfo)
   {
     CSzAr tempAr;
@@ -1125,7 +1150,7 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
 
     res = SzReadAndDecodePackedStreams(inStream, sd, tempBufs, NUM_ADDITIONAL_STREAMS_MAX,
         p->startPosAfterHeader, &tempAr, allocTemp);
-    numTempBufs = tempAr.NumFolders;
+    *numTempBufs = tempAr.NumFolders;
     SzAr_Free(&tempAr, allocTemp);
 
     if (res != SZ_OK)
@@ -1133,21 +1158,90 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
     RINOK(ReadID(sd, &type))
   }
 
+  /* Main stream offsets are relative to the verified start-header boundary. */
   if (type == k7zIdMainStreamsInfo)
   {
     static const UInt32 k_numFoldersMax = (UInt32)1 << 30;
-    RINOK(SzReadStreamsInfo(&p->db, sd, k_numFoldersMax, tempBufs, numTempBufs,
-        &p->dataPos, &ssi, allocMain))
+    RINOK(SzReadStreamsInfo(&p->db, sd, k_numFoldersMax, tempBufs, *numTempBufs,
+        &p->dataPos, ssi, allocMain))
     p->dataPos += p->startPosAfterHeader;
     RINOK(ReadID(sd, &type))
   }
 
-  if (type == k7zIdEnd)
-    return SZ_OK;
-  if (type != k7zIdFilesInfo)
+  if (type != k7zIdEnd && type != k7zIdFilesInfo)
     return SZ_ERROR_ARCHIVE;
+  *nextType = type;
+  return SZ_OK;
 }
 
+/* Purpose: Copy validated inline or external UTF-16 names into archive-owned storage.
+ * Inputs: sd borrows a bounded property; tempBufs remain live; p owns allocated names.
+ * Outputs: Stores offsets and names, rejecting duplicates, odd byte sizes or invalid external indices. */
+static SRes ReadNamesProperty(CSzArEx *p, CSzData *sd, CBuf *tempBufs,
+    UInt32 numTempBufs, ISzAllocPtr allocMain)
+{
+  const UInt32 numFiles = p->NumFiles;
+  size_t namesSize;
+  const Byte *namesData;
+  Byte external;
+  if (p->FileNameOffsets)
+    return SZ_ERROR_ARCHIVE;
+  SZ_READ_BYTE_SD(sd, external)
+  if (external == 0)
+  {
+    namesData = sd->Data;
+    namesSize = sd->Size;
+  }
+  else
+  {
+    UInt32 index;
+    RINOK(SzReadNumber32(sd, &index))
+    if (index >= numTempBufs || sd->Size)
+      return SZ_ERROR_ARCHIVE;
+    namesData = tempBufs[index].data;
+    namesSize = tempBufs[index].size;
+  }
+  if (namesSize & 1)
+    return SZ_ERROR_ARCHIVE;
+  MY_ALLOC(size_t, p->FileNameOffsets, numFiles + 1, allocMain)
+  MY_ALLOC_ZE_AND_CPY(p->FileNames, namesSize, namesData, allocMain)
+  RINOK(SzReadFileNames(p->FileNames, namesSize, numFiles, p->FileNameOffsets))
+  return SZ_OK;
+}
+
+/* Purpose: Read defined Windows attributes from a bounded inline or external property.
+ * Inputs: p owns attribute tables; sd and tempBufs borrow live bytes; allocMain owns allocations.
+ * Outputs: Populates attributes only for defined files and rejects trailing or invalid source bytes. */
+static SRes ReadAttributesProperty(CSzArEx *p, CSzData *sd, CBuf *tempBufs,
+    UInt32 numTempBufs, ISzAllocPtr allocMain)
+{
+  const UInt32 numFiles = p->NumFiles;
+  Byte external;
+  if (p->Attribs.Defs)
+    return SZ_ERROR_ARCHIVE;
+  RINOK(ReadBitVector(sd, numFiles, &p->Attribs.Defs, allocMain))
+  SZ_READ_BYTE_SD(sd, external)
+  if (external)
+  {
+    UInt32 index;
+    RINOK(SzReadNumber32(sd, &index))
+    if (index >= numTempBufs || sd->Size)
+      return SZ_ERROR_ARCHIVE;
+    sd->Data = tempBufs[index].data;
+    sd->Size = tempBufs[index].size;
+  }
+  RINOK(ReadUi32s(sd, numFiles, &p->Attribs, allocMain))
+  if (sd->Size)
+    return SZ_ERROR_ARCHIVE;
+  return SZ_OK;
+}
+
+/* Purpose: Read bounded file properties while preserving optional/unknown property behavior.
+ * Inputs: p owns partial metadata; sd/tempBufs remain live; output bitmaps borrow their bytes.
+ * Outputs: Records file count/properties and empty-stream maps; malformed properties return SDK errors. */
+static SRes ReadHeaderFileProperties(CSzArEx *p, CSzData *sd, CBuf *tempBufs,
+    UInt32 numTempBufs, UInt32 *emptyCount, const Byte **streams, const Byte **files,
+    ISzAllocPtr allocMain)
 {
   UInt32 numFiles, numEmptyStreams = 0;
   const Byte *emptyStreams = NULL;
@@ -1172,11 +1266,13 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
       sdSwitch.Size = (size_t)size;
       SKIP_DATA(sd, size)
     }
+    /* Each property is confined to its declared slice before interpreting its type. */
     if (type >= 64)
       continue;
 
     switch ((unsigned)type)
     {
+      /* Empty-stream/file bitmaps borrow the live header and reject duplicate definitions. */
       case k7zIdEmptyStream:
       {
         if (emptyStreams || emptyFiles)
@@ -1199,56 +1295,11 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
       }
 
       case k7zIdName:
-      {
-        size_t namesSize;
-        const Byte *namesData;
-        Byte external;
-        if (p->FileNameOffsets)
-          return SZ_ERROR_ARCHIVE;
-        SZ_READ_BYTE_SD(&sdSwitch, external)
-        if (external == 0)
-        {
-          namesData = sdSwitch.Data;
-          namesSize = sdSwitch.Size;
-        }
-        else
-        {
-          UInt32 index;
-          RINOK(SzReadNumber32(&sdSwitch, &index))
-          if (index >= numTempBufs || sdSwitch.Size)
-            return SZ_ERROR_ARCHIVE;
-          namesData = tempBufs[index].data;
-          namesSize = tempBufs[index].size;
-        }
-        if (namesSize & 1)
-          return SZ_ERROR_ARCHIVE;
-        MY_ALLOC(size_t, p->FileNameOffsets, numFiles + 1, allocMain)
-        MY_ALLOC_ZE_AND_CPY(p->FileNames, namesSize, namesData, allocMain)
-        RINOK(SzReadFileNames(p->FileNames, namesSize, numFiles, p->FileNameOffsets))
+        RINOK(ReadNamesProperty(p, &sdSwitch, tempBufs, numTempBufs, allocMain))
         break;
-      }
-
       case k7zIdWinAttrib:
-      {
-        Byte external;
-        if (p->Attribs.Defs)
-          return SZ_ERROR_ARCHIVE;
-        RINOK(ReadBitVector(&sdSwitch, numFiles, &p->Attribs.Defs, allocMain))
-        SZ_READ_BYTE_SD(&sdSwitch, external)
-        if (external)
-        {
-          UInt32 index;
-          RINOK(SzReadNumber32(&sdSwitch, &index))
-          if (index >= numTempBufs || sdSwitch.Size)
-            return SZ_ERROR_ARCHIVE;
-          sdSwitch.Data = tempBufs[index].data;
-          sdSwitch.Size = tempBufs[index].size;
-        }
-        RINOK(ReadUi32s(&sdSwitch, numFiles, &p->Attribs, allocMain))
-        if (sdSwitch.Size)
-          return SZ_ERROR_ARCHIVE;
+        RINOK(ReadAttributesProperty(p, &sdSwitch, tempBufs, numTempBufs, allocMain))
         break;
-      }
 
       case k7zIdMTime:
       case k7zIdCTime:
@@ -1262,182 +1313,223 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
     }
   }
 
-  if (numFiles - numEmptyStreams != ssi.NumTotalSubStreams)
+  *emptyCount = numEmptyStreams;
+  *streams = emptyStreams;
+  *files = emptyFiles;
+  return SZ_OK;
+}
+
+/* File-map cursor owns no buffers; bitmap/digest pointers borrow the current live header. */
+typedef struct
+{
+  UInt32 emptyFileIndex, folderIndex, remSubStreams, numSubStreams, digestIndex;
+  UInt64 unpackPos;
+  const Byte *digestsDefs, *digestsVals;
+  Byte isDirMask, crcMask, mask;
+} CFileMapState;
+
+/* Purpose: Map one file to its folder, unpack extent and optional CRC.
+ * Inputs: p owns allocated maps; ssi/state retain bounded cursors; empty maps borrow header bytes.
+ * Outputs: Advances mapping state or returns archive errors before invalid folder indexing/extent arithmetic. */
+static SRes MapHeaderFile(CSzArEx *p, CSubStreamInfo *ssi, CFileMapState *state,
+    UInt32 i, const Byte *emptyStreams, const Byte *emptyFiles)
+{
+  p->UnpackPositions[i] = state->unpackPos;
+  p->CRCs.Vals[i] = 0;
+
+  if (emptyStreams && SzBitArray_Check(emptyStreams, i))
+  {
+    if (emptyFiles)
+    {
+      if (!SzBitArray_Check(emptyFiles, state->emptyFileIndex))
+        state->isDirMask |= state->mask;
+      state->emptyFileIndex++;
+    }
+    else
+      state->isDirMask |= state->mask;
+    if (state->remSubStreams == 0)
+    {
+      p->FileToFolder[i] = (UInt32)-1;
+      return SZ_OK;
+    }
+  }
+
+  /* Skip zero-stream folders while preserving overflow checks on their unpacked sizes. */
+  if (state->remSubStreams == 0)
+  {
+    for (;;)
+    {
+      if (state->folderIndex >= p->db.NumFolders)
+        return SZ_ERROR_ARCHIVE;
+      p->FolderToFile[state->folderIndex] = i;
+      state->numSubStreams = 1;
+      if (ssi->sdNumSubStreams.Data)
+      {
+        RINOK(SzReadNumber32(&ssi->sdNumSubStreams, &state->numSubStreams))
+      }
+      state->remSubStreams = state->numSubStreams;
+      if (state->numSubStreams != 0)
+        break;
+      {
+        const UInt64 folderUnpackSize = SzAr_GetFolderUnpackSize(&p->db, state->folderIndex);
+        state->unpackPos += folderUnpackSize;
+        if (state->unpackPos < folderUnpackSize)
+          return SZ_ERROR_ARCHIVE;
+      }
+      state->folderIndex++;
+    }
+  }
+
+  p->FileToFolder[i] = state->folderIndex;
+
+  if (emptyStreams && SzBitArray_Check(emptyStreams, i))
+    return SZ_OK;
+
+  /* Last substreams use the folder total; earlier sizes are read from the bounded size cursor. */
+  if (--state->remSubStreams == 0)
+  {
+    const UInt64 folderUnpackSize = SzAr_GetFolderUnpackSize(&p->db, state->folderIndex);
+    const UInt64 startFolderUnpackPos = p->UnpackPositions[p->FolderToFile[state->folderIndex]];
+    if (folderUnpackSize < state->unpackPos - startFolderUnpackPos)
+      return SZ_ERROR_ARCHIVE;
+    state->unpackPos = startFolderUnpackPos + folderUnpackSize;
+    if (state->unpackPos < folderUnpackSize)
+      return SZ_ERROR_ARCHIVE;
+
+    if (state->numSubStreams == 1 && SzBitWithVals_Check(&p->db.FolderCRCs, state->folderIndex))
+    {
+      p->CRCs.Vals[i] = p->db.FolderCRCs.Vals[state->folderIndex];
+      state->crcMask |= state->mask;
+    }
+    state->folderIndex++;
+  }
+  else
+  {
+    UInt64 v;
+    RINOK(ReadNumber(&ssi->sdSizes, &v))
+    state->unpackPos += v;
+    if (state->unpackPos < v)
+      return SZ_ERROR_ARCHIVE;
+  }
+  /* Per-file CRCs are used only when no single-substream folder CRC supplied the value. */
+  if ((state->crcMask & state->mask) == 0 && state->digestsVals)
+  {
+    if (!state->digestsDefs || SzBitArray_Check(state->digestsDefs, state->digestIndex))
+    {
+      p->CRCs.Vals[i] = GetUi32(state->digestsVals);
+      state->digestsVals += 4;
+      state->crcMask |= state->mask;
+    }
+    state->digestIndex++;
+  }
+  return SZ_OK;
+}
+
+/* Purpose: Allocate archive-owned file maps and consume validated substream metadata.
+ * Inputs: p owns partial allocations; ssi and empty bitmaps borrow live header/temporary buffers.
+ * Outputs: Builds offsets/folder links/flags/CRCs or returns SDK errors; caller frees partial allocations. */
+static SRes BuildHeaderFileMap(CSzArEx *p, CSubStreamInfo *ssi,
+    const Byte *emptyStreams, const Byte *emptyFiles, ISzAllocPtr allocMain)
+{
+  UInt32 i;
+  const UInt32 numFiles = p->NumFiles;
+  CFileMapState state = { 0 };
+  state.mask = 0x80;
+
+  MY_ALLOC(UInt32, p->FolderToFile, p->db.NumFolders + 1, allocMain)
+  MY_ALLOC_ZE(UInt32, p->FileToFolder, p->NumFiles, allocMain)
+  MY_ALLOC(UInt64, p->UnpackPositions, p->NumFiles + 1, allocMain)
+  MY_ALLOC_ZE(Byte, p->IsDirs, (p->NumFiles + 7) >> 3, allocMain)
+
+  RINOK(SzBitUi32s_Alloc(&p->CRCs, p->NumFiles, allocMain))
+
+  /* Stream parsing already validated the digest bitmap/value extent. */
+  if (ssi->sdCRCs.Size != 0)
+  {
+    Byte allDigestsDefined = 0;
+    SZ_READ_BYTE_SD_NOCHECK(&ssi->sdCRCs, allDigestsDefined)
+    if (allDigestsDefined)
+      state.digestsVals = ssi->sdCRCs.Data;
+    else
+    {
+      const size_t numBytes = (ssi->NumSubDigests + 7) >> 3;
+      state.digestsDefs = ssi->sdCRCs.Data;
+      state.digestsVals = state.digestsDefs + numBytes;
+    }
+  }
+
+  /* Pack per-file directory and CRC flags only after each complete group of eight. */
+  for (i = 0; i < numFiles; i++, state.mask >>= 1)
+  {
+    if (state.mask == 0)
+    {
+      const UInt32 byteIndex = (i - 1) >> 3;
+      p->IsDirs[byteIndex] = state.isDirMask;
+      p->CRCs.Defs[byteIndex] = state.crcMask;
+      state.isDirMask = 0;
+      state.crcMask = 0;
+      state.mask = 0x80;
+    }
+
+    RINOK(MapHeaderFile(p, ssi, &state, i, emptyStreams, emptyFiles))
+  }
+
+  if (state.mask != 0x80)
+  {
+    const UInt32 byteIndex = (i - 1) >> 3;
+    p->IsDirs[byteIndex] = state.isDirMask;
+    p->CRCs.Defs[byteIndex] = state.crcMask;
+  }
+
+  p->UnpackPositions[i] = state.unpackPos;
+
+  /* Remaining folders must contain zero substreams; all count bytes must be consumed. */
+  if (state.remSubStreams != 0)
     return SZ_ERROR_ARCHIVE;
 
   for (;;)
   {
-    UInt64 type;
+    p->FolderToFile[state.folderIndex] = i;
+    if (state.folderIndex >= p->db.NumFolders)
+      break;
+    if (!ssi->sdNumSubStreams.Data)
+      return SZ_ERROR_ARCHIVE;
+    RINOK(SzReadNumber32(&ssi->sdNumSubStreams, &state.numSubStreams))
+    if (state.numSubStreams != 0)
+      return SZ_ERROR_ARCHIVE;
+    state.folderIndex++;
+  }
+
+  if (ssi->sdNumSubStreams.Data && ssi->sdNumSubStreams.Size != 0)
+    return SZ_ERROR_ARCHIVE;
+  return SZ_OK;
+}
+
+/* Purpose: Parse stream and file sections into archive-owned metadata.
+ * Inputs: p retains cleanup ownership; sd/inStream/tempBufs are live; allocators remain caller-owned.
+ * Outputs: Advances sd and populates p, returning exact SDK errors on malformed sections. */
+static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
+    CBuf * const tempBufs, ISzAllocPtr allocMain, ISzAllocPtr allocTemp)
+{
+  CSubStreamInfo ssi;
+  UInt32 numTempBufs = 0, numEmptyStreams;
+  const Byte *emptyStreams, *emptyFiles;
+  UInt64 type;
+  RINOK(ReadHeaderStreams(p, sd, inStream, tempBufs, &numTempBufs, &ssi, &type, allocMain, allocTemp))
+  if (type == k7zIdEnd)
+    return SZ_OK;
+  RINOK(ReadHeaderFileProperties(p, sd, tempBufs, numTempBufs,
+      &numEmptyStreams, &emptyStreams, &emptyFiles, allocMain))
+  if (p->NumFiles - numEmptyStreams != ssi.NumTotalSubStreams)
+    return SZ_ERROR_ARCHIVE;
+  for (;;)
+  {
     RINOK(ReadID(sd, &type))
     if (type == k7zIdEnd)
       break;
     RINOK(SkipData(sd))
   }
-
-  {
-    UInt32 i;
-    UInt32 emptyFileIndex = 0;
-    UInt32 folderIndex = 0;
-    UInt32 remSubStreams = 0;
-    UInt32 numSubStreams = 0;
-    UInt64 unpackPos = 0;
-    const Byte *digestsDefs = NULL;
-    const Byte *digestsVals = NULL;
-    UInt32 digestIndex = 0;
-    Byte isDirMask = 0;
-    Byte crcMask = 0;
-    Byte mask = 0x80;
-
-    MY_ALLOC(UInt32, p->FolderToFile, p->db.NumFolders + 1, allocMain)
-    MY_ALLOC_ZE(UInt32, p->FileToFolder, p->NumFiles, allocMain)
-    MY_ALLOC(UInt64, p->UnpackPositions, p->NumFiles + 1, allocMain)
-    MY_ALLOC_ZE(Byte, p->IsDirs, (p->NumFiles + 7) >> 3, allocMain)
-
-    RINOK(SzBitUi32s_Alloc(&p->CRCs, p->NumFiles, allocMain))
-
-    if (ssi.sdCRCs.Size != 0)
-    {
-      Byte allDigestsDefined = 0;
-      SZ_READ_BYTE_SD_NOCHECK(&ssi.sdCRCs, allDigestsDefined)
-      if (allDigestsDefined)
-        digestsVals = ssi.sdCRCs.Data;
-      else
-      {
-        const size_t numBytes = (ssi.NumSubDigests + 7) >> 3;
-        digestsDefs = ssi.sdCRCs.Data;
-        digestsVals = digestsDefs + numBytes;
-      }
-    }
-
-    for (i = 0; i < numFiles; i++, mask >>= 1)
-    {
-      if (mask == 0)
-      {
-        const UInt32 byteIndex = (i - 1) >> 3;
-        p->IsDirs[byteIndex] = isDirMask;
-        p->CRCs.Defs[byteIndex] = crcMask;
-        isDirMask = 0;
-        crcMask = 0;
-        mask = 0x80;
-      }
-
-      p->UnpackPositions[i] = unpackPos;
-      p->CRCs.Vals[i] = 0;
-
-      if (emptyStreams && SzBitArray_Check(emptyStreams, i))
-      {
-        if (emptyFiles)
-        {
-          if (!SzBitArray_Check(emptyFiles, emptyFileIndex))
-            isDirMask |= mask;
-          emptyFileIndex++;
-        }
-        else
-          isDirMask |= mask;
-        if (remSubStreams == 0)
-        {
-          p->FileToFolder[i] = (UInt32)-1;
-          continue;
-        }
-      }
-
-      if (remSubStreams == 0)
-      {
-        for (;;)
-        {
-          if (folderIndex >= p->db.NumFolders)
-            return SZ_ERROR_ARCHIVE;
-          p->FolderToFile[folderIndex] = i;
-          numSubStreams = 1;
-          if (ssi.sdNumSubStreams.Data)
-          {
-            RINOK(SzReadNumber32(&ssi.sdNumSubStreams, &numSubStreams))
-          }
-          remSubStreams = numSubStreams;
-          if (numSubStreams != 0)
-            break;
-          {
-            const UInt64 folderUnpackSize = SzAr_GetFolderUnpackSize(&p->db, folderIndex);
-            unpackPos += folderUnpackSize;
-            if (unpackPos < folderUnpackSize)
-              return SZ_ERROR_ARCHIVE;
-          }
-          folderIndex++;
-        }
-      }
-
-      p->FileToFolder[i] = folderIndex;
-
-      if (emptyStreams && SzBitArray_Check(emptyStreams, i))
-        continue;
-
-      if (--remSubStreams == 0)
-      {
-        const UInt64 folderUnpackSize = SzAr_GetFolderUnpackSize(&p->db, folderIndex);
-        const UInt64 startFolderUnpackPos = p->UnpackPositions[p->FolderToFile[folderIndex]];
-        if (folderUnpackSize < unpackPos - startFolderUnpackPos)
-          return SZ_ERROR_ARCHIVE;
-        unpackPos = startFolderUnpackPos + folderUnpackSize;
-        if (unpackPos < folderUnpackSize)
-          return SZ_ERROR_ARCHIVE;
-
-        if (numSubStreams == 1 && SzBitWithVals_Check(&p->db.FolderCRCs, folderIndex))
-        {
-          p->CRCs.Vals[i] = p->db.FolderCRCs.Vals[folderIndex];
-          crcMask |= mask;
-        }
-        folderIndex++;
-      }
-      else
-      {
-        UInt64 v;
-        RINOK(ReadNumber(&ssi.sdSizes, &v))
-        unpackPos += v;
-        if (unpackPos < v)
-          return SZ_ERROR_ARCHIVE;
-      }
-      if ((crcMask & mask) == 0 && digestsVals)
-      {
-        if (!digestsDefs || SzBitArray_Check(digestsDefs, digestIndex))
-        {
-          p->CRCs.Vals[i] = GetUi32(digestsVals);
-          digestsVals += 4;
-          crcMask |= mask;
-        }
-        digestIndex++;
-      }
-    }
-
-    if (mask != 0x80)
-    {
-      const UInt32 byteIndex = (i - 1) >> 3;
-      p->IsDirs[byteIndex] = isDirMask;
-      p->CRCs.Defs[byteIndex] = crcMask;
-    }
-
-    p->UnpackPositions[i] = unpackPos;
-
-    if (remSubStreams != 0)
-      return SZ_ERROR_ARCHIVE;
-
-    for (;;)
-    {
-      p->FolderToFile[folderIndex] = i;
-      if (folderIndex >= p->db.NumFolders)
-        break;
-      if (!ssi.sdNumSubStreams.Data)
-        return SZ_ERROR_ARCHIVE;
-      RINOK(SzReadNumber32(&ssi.sdNumSubStreams, &numSubStreams))
-      if (numSubStreams != 0)
-        return SZ_ERROR_ARCHIVE;
-      folderIndex++;
-    }
-
-    if (ssi.sdNumSubStreams.Data && ssi.sdNumSubStreams.Size != 0)
-      return SZ_ERROR_ARCHIVE;
-  }
-}
-  return SZ_OK;
+  return BuildHeaderFileMap(p, &ssi, emptyStreams, emptyFiles, allocMain);
 }
 
 
@@ -1465,6 +1557,9 @@ static SRes SzReadHeader(
   return res;
 }
 
+/* Purpose: Open a 7z stream only after validating start/next-header bounds and checksums.
+ * Inputs: p owns partial state; inStream is seekable; allocMain/allocTemp remain caller-owned.
+ * Outputs: Parses plain or encoded metadata; all temporary buffers are freed on every completed path. */
 static SRes SzArEx_Open2(
     CSzArEx *p,
     ILookInStreamPtr inStream,
@@ -1479,6 +1574,7 @@ static SRes SzArEx_Open2(
   CBuf buf;
   SRes res;
 
+  /* Validate the fixed start header before trusting its offsets and sizes. */
   RINOK(LookInStream_Read2(inStream, header, k7zStartHeaderSize, SZ_ERROR_NO_ARCHIVE))
   startPosAfterHeader = 0; // k7zStartHeaderSize
   RINOK(ILookInStream_Seek(inStream, &startPosAfterHeader, SZ_SEEK_CUR))
@@ -1502,6 +1598,7 @@ static SRes SzArEx_Open2(
   if (nextHeaderOffset >= (UInt64)1 << 62 ||
       nextHeaderSize >= (UInt64)1 << 48)
     return SZ_ERROR_NO_ARCHIVE;
+  /* Check the host allocation width and the physical stream extent before seeking. */
   nextHeaderSizeT = (size_t)nextHeaderSize;
   if (nextHeaderSizeT != nextHeaderSize)
     return SZ_ERROR_MEM;
@@ -1536,6 +1633,7 @@ static SRes SzArEx_Open2(
 
       res = ReadID(&sd, &type);
 
+      /* Encoded headers transfer their owned decoded buffer only after successful decoding. */
       if (res == SZ_OK && type == k7zIdEncodedHeader)
       {
         CSzAr tempAr;
@@ -1575,6 +1673,7 @@ static SRes SzArEx_Open2(
     }
   }
 
+  /* The active plain/decoded header buffer has one cleanup owner. */
   Buf_Free(&buf, allocTemp);
   return res;
 }

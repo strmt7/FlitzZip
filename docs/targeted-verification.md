@@ -328,6 +328,16 @@ separate schedule, broker authorization and stateful execution. Neither workflow
 filter turns an unresolved finding into a pass. As with the native/component
 filters above, review GitHub's path-filter limits and required-check settings.
 
+Hosted incident-ledger or admission changes select the hosted-review and
+post-push-audit contracts, including identity, source/caller freshness and
+inventory-expansion rejection. Editing that tooling alone selects no product
+build. Edited vendor functions use the ordinary changed-function gate, including
+C definitions with next-line braces and complete contract fields, including
+deletion-only contract removals. The reviewed `7zArcIn.c` cohort covers all
+registered 7z parser/PPMd consumers. Shared SDK inputs retain the full native
+driver. New parser source still selects a HIP-enabled build, affected native
+correctness checks and fresh hosted analysis.
+
 Fuzzing is long-running by design. Do not wait for it during ordinary
 development pushes. Use `-Mode opportunistic -IncludeLongRunning` occasionally
 to check for completed fuzzing failures while continuing other work. Use

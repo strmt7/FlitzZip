@@ -267,7 +267,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|test_verification_runner\.ps1|ci_tool_contracts\.ps1|test_ci_tool_contracts\.ps1|verification_plan\.ps1|verify_changes\.ps1|verify_change_hygiene\.ps1|wait_relevant_workflows\.ps1|security_scan\.ps1|github_post_push_audit\.ps1|refactor_audit\.ps1|format_matrix_smoke\.ps1|test_msi_identity\.ps1|test\.ps1|build\.ps1|fuzz\.ps1)$',
         '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$',
         '^tools/test_gitleaks_policy\.py$',
-        '^tools/(scanner_preflight|test_scanner_preflight|scanner_metadata_review|test_scanner_metadata_review)\.py$',
+        '^tools/(scanner_preflight|test_scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$',
         '^tools/scan_trufflehog\.sh$',
         '^tools/(build_parallelism|test_build_parallelism|local_resources|test_workflow_checkpoint)\.ps1$',
         '^tools/(rocm_toolchain|test_rocm_toolchain|compile_hip_object|hip_architecture|test_hip_architecture)\.ps1$',
@@ -306,7 +306,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(test_semgrep_installation|test_semgrep_runtime|semgrep_coverage|test_semgrep_coverage|devskim_provenance|test_devskim_provenance|devskim_report|test_devskim_report|devskim_scope|test_devskim_scope)\.py$',
         '^tools/test_gitleaks_policy\.py$',
         '^tools/(scanner_preflight|test_scanner_preflight)\.py$',
-        '^tools/(scanner_metadata_review|test_scanner_metadata_review)\.py$',
+        '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$',
         '^docs/benchmarks/corpora/.*\.json$',
         '^\.github/'
     ))
@@ -409,7 +409,7 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "fuzz-resource-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_fuzz_resources.ps1") -Reason "local fuzz admission must fit Windows and Docker-host RAM without CPU caps") }
         @{ Pattern = @('^\.clusterfuzzlite/', '^tools/(fuzz_memory|test_fuzz_memory)\.py$', '^tools/fuzz\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "fuzz-memory-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_fuzz_memory") -Reason "local fuzzing must verify real cgroup RAM and zero-swap limits before compiling") }
-        @{ Pattern = @('^tools/(github_post_push_audit|test_github_post_push_audit|wait_relevant_workflows)\.ps1$', '^tools/(scanner_metadata_review|test_scanner_metadata_review)\.py$', '^\.github/scanner-source-reviews\.csv$')
+        @{ Pattern = @('^tools/(github_post_push_audit|test_github_post_push_audit|wait_relevant_workflows)\.ps1$', '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$', '^\.github/scanner-(source-reviews|hosted-reviews|hosted-approval)\.csv$')
            Command = (Get-SuperZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination") }
         @{ Pattern = @('^tools/(refactor_audit|test_refactor_audit)\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies") }
@@ -433,8 +433,10 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'scanner-preflight-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_preflight') -Reason 'changed-file scanner admission must retain complete inputs, bound resources and reject every finding or malformed report') }
         @{ Pattern = @('^\.github/workflows/security-code-scanning\.yml$', '^tools/(devskim_scope|test_devskim_scope|scanner_preflight)\.py$', '^docs/benchmarks/data/')
            Command = (Get-SuperZipVerificationCommand -Id 'devskim-scope-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_devskim_scope') -Reason 'passive report exclusions must fail on code, tests, acquisition configuration, malformed data and redirects while retaining other scanner inputs') }
-        @{ Pattern = @('^\.github/scanner-(metadata|source)-reviews\.csv$', '^tools/(scanner_preflight|scanner_metadata_review|test_scanner_metadata_review)\.py$')
+        @{ Pattern = @('^\.github/scanner-(metadata-reviews|source-reviews|hosted-reviews|hosted-approval)\.csv$', '^tools/(scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$')
            Command = (Get-SuperZipVerificationCommand -Id 'scanner-metadata-review-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_metadata_review') -Reason 'approved exact metadata/source dispositions must retain raw findings and reject stale bytes, other locations, unknown evidence and unrelated rules') }
+        @{ Pattern = @('^\.github/scanner-hosted-(reviews|approval)\.csv$', '^tools/(scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$', '^tools/github_post_push_audit\.ps1$')
+           Command = (Get-SuperZipVerificationCommand -Id 'scanner-hosted-review-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_hosted_review') -Reason 'individual hosted decisions must expire on source/caller/query changes while preserving raw reports and rejecting unrelated or broadened findings') }
         @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$', '^tools/scan_trufflehog\.sh$')
            Command = (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities") }
         @{ Pattern = @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')

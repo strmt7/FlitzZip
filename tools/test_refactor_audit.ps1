@@ -69,7 +69,8 @@ function Invoke-AuditFixture {
 # Inputs: Name labels the case, Options selects the audit mode, and Expected names its exact findings.
 # Outputs: Adds a bounded failure description or prints one passing case.
 function Test-AuditCase {
-    param([string]$Name, [string]$Options = "", [string[]]$Expected = @(), [switch]$ExpectGitFailure)
+    param([string]$Name, [string]$Options = "", [string[]]$Expected = @(),
+        [string[]]$OtherFindings = @(), [switch]$ExpectGitFailure)
 
     ++$script:CaseCount
     $result = Invoke-AuditFixture -Options $Options
@@ -77,9 +78,9 @@ function Test-AuditCase {
         $passed = $result.ExitCode -ne 0 -and $result.Output -notmatch 'status=clean' -and
             $result.Error -match 'comparison revision is unavailable'
     } else {
-        $actual = @([regex]::Matches($result.Output, 'refactor_finding category=missing-contract path="([^"]+)"') | ForEach-Object { $_.Groups[1].Value.Replace('\', '/') } | Sort-Object)
-        $expectedSorted = @($Expected | Sort-Object)
-        $passed = ($result.ExitCode -eq $(if ($Expected.Count) { 1 } else { 0 })) -and
+        $actual = @([regex]::Matches($result.Output, 'refactor_finding category=([^ ]+) path="([^"]+)"') | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value.Replace('\', '/') } | Sort-Object)
+        $expectedSorted = @(@($Expected | ForEach-Object { 'missing-contract:' + $_ }) + $OtherFindings | Sort-Object)
+        $passed = ($result.ExitCode -eq $(if ($expectedSorted.Count) { 1 } else { 0 })) -and
             (($actual -join "`n") -ceq ($expectedSorted -join "`n")) -and
             ($result.Output -match 'refactor_audit status=')
     }
@@ -122,6 +123,51 @@ try {
     Invoke-FixtureGit -GitArguments @("rm", "--quiet", "--", "src/renamed file.cpp") | Out-Null
     Test-AuditCase -Name "deleted paths do not hide remaining additions" -Options "-ChangedOnly" -Expected @($unicodePath)
     Test-AuditCase -Name "invalid explicit Git base fails closed" -Options "-ChangedOnly -GitBase refs/heads/no-such-audit-base" -ExpectGitFailure
+    Invoke-FixtureGit -GitArguments @("add", "--all") | Out-Null
+    Invoke-FixtureGit -GitArguments @("commit", "--quiet", "-m", "fixture contract baseline") | Out-Null
+    $contract = @('/* Purpose: Decode a bounded synthetic input.',
+        ' * Inputs: No borrowed state or external resources.', ' * Outputs: Returns the synthetic result. */')
+    $vendorPath = 'third_party/sdk/parser.c'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('static int parse(', '    int value)', '{', '    return value;', '}')
+    Test-AuditCase -Name 'edited vendor C and next-line braces require contracts' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('static int parse(', '    int value)', '{', '    return value;', '}'))
+    Test-AuditCase -Name 'complete vendor C contracts are admitted' -Options '-ChangedOnly'
+    foreach ($field in @('Inputs', 'Outputs')) {
+        $incomplete = @($contract | Where-Object { $_ -notmatch ($field + ':') })
+        Write-AuditFixture -RelativePath $vendorPath -Lines ($incomplete + @('int parse(void)', '{', '    return 1;', '}'))
+        Test-AuditCase -Name "Purpose alone cannot substitute for $field" -Options '-ChangedOnly' -Expected @($vendorPath)
+    }
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int parse(void)', '{') + @('    int value = 0;') + @('    ++value;') * 104 + @('    return value;', '}'))
+    Test-AuditCase -Name 'long C functions need meaningful body documentation' -Options '-ChangedOnly' -OtherFindings @("poor-documentation:$vendorPath")
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int parse(void)', '{', '    int value = 0;',
+        '    /* Bound synthetic input accounting before publishing it. */',
+        '    /* Keep ownership local throughout the synthetic calculation. */',
+        '    /* Check the accumulated value before returning it. */') + @('    ++value;') * 124 + @('    return value;', '}'))
+    Test-AuditCase -Name 'edited vendor functions cannot exceed the size gate' -Options '-ChangedOnly -MaxFunctionLines 120' -OtherFindings @("large-function:$vendorPath")
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int parse(void)', '{',
+        '    const char *literal = "missing() { /* Purpose: fake */ }";',
+        '    const char *raw = R"tag(fake() { })tag";',
+        '    /* imaginary() { does not define a function } */',
+        '    if (literal && raw) { return 1; }', '    return 0;', '}'))
+    Test-AuditCase -Name 'comments, strings, raw strings and controls do not create functions' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int previous(void)', '{', '    return 0;', '}',
+        'int missing(void)', '{', '    return 1;', '}'))
+    Test-AuditCase -Name 'a previous function contract cannot cover the next function' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int parse(void)', '{', '    return 1;', '}'))
+    Invoke-FixtureGit -GitArguments @('add', '--', $vendorPath) | Out-Null
+    Invoke-FixtureGit -GitArguments @('commit', '--quiet', '-m', 'fixture documented vendor') | Out-Null
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('int parse(void)', '{', '    return 1;', '}')
+    Test-AuditCase -Name 'deleting a complete contract still intersects the function' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines (@($contract | Where-Object { $_ -notmatch 'Inputs:' }) + @('int parse(void)', '{', '    return 1;', '}'))
+    Test-AuditCase -Name 'deleting one contract field cannot evade changed-only coverage' -Options '-ChangedOnly' -Expected @($vendorPath)
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('int parse(void)', '{', '    return 1;', '}'))
+    $neighbor = 'third_party/sdk/neighbor.c'
+    $inherited = @('int inherited(void)', '{', '    return 0;', '}')
+    Write-AuditFixture -RelativePath $neighbor -Lines $inherited
+    Invoke-FixtureGit -GitArguments @('add', '--', $neighbor) | Out-Null
+    Invoke-FixtureGit -GitArguments @('commit', '--quiet', '-m', 'fixture inherited neighbor') | Out-Null
+    Write-AuditFixture -RelativePath $neighbor -Lines ($contract + @('int added(void)', '{', '    return 1;', '}', '') + $inherited)
+    Test-AuditCase -Name 'inserted helper and separator cannot implicate an unchanged neighbor' -Options '-ChangedOnly'
 } finally {
     if (Test-Path -LiteralPath $fixture) {
         $resolved = [IO.Path]::GetFullPath((Get-Item -LiteralPath $fixture).FullName)

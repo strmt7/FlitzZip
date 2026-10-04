@@ -18,7 +18,6 @@ $skipFragments = @(
     "\.git\",
     "\build\",
     "\out\",
-    "\third_party\",
     "\resources\design\"
 )
 $changedLineRangesByPath = @{}
@@ -61,6 +60,10 @@ function Test-SkippedPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     $normalized = "\" + (ConvertTo-RepoRelativePath -Path $Path).Replace("/", "\")
+    # Changed vendor code has the same function gates as owned code; full cleanup inventories retain provenance scope.
+    if (-not $script:AuditChangedOnly -and $normalized.StartsWith("\third_party\", [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
     foreach ($fragment in $skipFragments) {
         if ($normalized.IndexOf($fragment, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             return $true
@@ -192,7 +195,9 @@ function Get-ChangedLineRange {
     }
     $diff = Invoke-AuditGit -Arguments @("diff", "--unified=0", "--no-ext-diff", $Base, "--", $gitPath)
     $ranges = New-Object System.Collections.Generic.List[object]
-    foreach ($line in ($diff.Output -split "\r?\n")) {
+    $diffLines = @($diff.Output -split "\r?\n")
+    for ($index = 0; $index -lt $diffLines.Count; ++$index) {
+        $line = $diffLines[$index]
         $match = [regex]::Match($line, "^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
         if (-not $match.Success) {
             continue
@@ -200,7 +205,17 @@ function Get-ChangedLineRange {
         $start = [int]$match.Groups[1].Value
         $length = if ($match.Groups[2].Success) { [int]$match.Groups[2].Value } else { 1 }
         if ($length -le 0) {
-            continue
+            # Comment-only removal belongs to the following contract/function. Code removal stays at
+            # the preceding cursor, so deleting an entire function cannot implicate its unchanged neighbor.
+            $commentsOnly = $true
+            for ($next = $index + 1; $next -lt $diffLines.Count -and $diffLines[$next] -notmatch '^@@'; ++$next) {
+                if ($diffLines[$next].StartsWith('-') -and $diffLines[$next] -notmatch '^-\s*(//|/\*|\*|#|$)') {
+                    $commentsOnly = $false
+                    break
+                }
+            }
+            if ($commentsOnly) { ++$start }
+            $length = 1
         }
         $ranges.Add([pscustomobject]@{
             Start = $start
@@ -291,45 +306,86 @@ function Measure-ComplexityMarker {
 
 # Purpose: Check whether a function has a nearby SuperZip contract comment.
 # Inputs: `Lines` is the full file and `Index` is the zero-based function start line.
-# Outputs: Returns true when a nearby previous line contains `Purpose:`.
+# Outputs: Requires all three nonempty fields in the immediately preceding comment block.
 function Test-NearbyContractComment {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
         [Parameter(Mandatory = $true)][int]$Index
     )
 
-    $start = [Math]::Max(0, $Index - 16)
-    for ($i = $start; $i -lt $Index; ++$i) {
-        if ($Lines[$i].Contains("Purpose:")) {
-            return $true
-        }
+    $comments = [System.Collections.Generic.List[string]]::new()
+    for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 16); --$i) {
+        if ([string]::IsNullOrWhiteSpace($Lines[$i])) { continue }
+        if ($Lines[$i] -notmatch '^\s*(//|/\*|\*|#)') { break }
+        $comments.Add($Lines[$i])
     }
-    return $false
+    $text = $comments -join "`n"
+    return $text -match 'Purpose:\s*\S' -and $text -match 'Inputs?:\s*\S' -and $text -match 'Outputs?:\s*\S'
 }
 
-# Purpose: Return the first line of a multi-line C++ statement for heuristic classification.
-# Inputs: `Lines` is the full file and `Index` is the candidate line ending in an opening brace.
-# Outputs: Returns the closest logical statement-start text used to distinguish functions from control blocks.
-function Get-CppStatementStartText {
-    param(
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines,
-        [Parameter(Mandatory = $true)][int]$Index
-    )
+# Purpose: Mask C/C++ comments and literals while preserving source lines and comment identities.
+# Inputs: Complete source text, including raw strings and multiline comments.
+# Outputs: Code-only lines and distinct comment line numbers for bounded function auditing.
+function Get-CppAuditProjection {
+    param([string]$Text)
 
-    $start = [Math]::Max(0, $Index - 8)
-    for ($i = $Index; $i -ge $start; --$i) {
-        $candidate = $Lines[$i].Trim()
-        if ([string]::IsNullOrWhiteSpace($candidate)) {
-            continue
-        }
-        if ($candidate -match "^(if|else\s+if|for|while|switch|catch)\b") {
-            return $candidate
-        }
-        if ($i -lt $Index -and $candidate -match "[;{}]\s*$") {
-            break
+    $pattern = '(?<Comment>/\*[\s\S]*?\*/|//[^\r\n]*)|\bR"(?<Raw>[^ ()\\\r\n]{0,16})\([\s\S]*?\)\k<Raw>"|"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])*'''
+    $commentLines = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($match in [regex]::Matches($Text, $pattern)) {
+        if (-not $match.Groups['Comment'].Success) { continue }
+        $startLine = ([regex]::Matches($Text.Substring(0, $match.Index), "`n")).Count
+        $length = ([regex]::Matches($match.Value, "`n")).Count + 1
+        for ($line = $startLine; $line -lt $startLine + $length; ++$line) {
+            $commentLines.Add($line) | Out-Null
         }
     }
-    return $Lines[$Index].Trim()
+    $masked = [regex]::Replace($Text, $pattern, [Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        return [regex]::Replace($match.Value, '[^\r\n]', ' ')
+    })
+    return [pscustomobject]@{ Lines = @($masked -split '\r?\n'); CommentLines = $commentLines }
+}
+
+# Purpose: Locate a C/C++ definition's signature for either same-line or next-line opening braces.
+# Inputs: Masked source lines and candidate brace line; control blocks and test registrations are excluded.
+# Outputs: Signature start index, or -1 when the candidate is not a recognized function definition.
+function Get-CppFunctionStart {
+    param([string[]]$Lines, [int]$Index)
+
+    $candidate = $Lines[$Index].Trim()
+    if ($candidate -notmatch '\{\s*$') { return -1 }
+    $start = $Index
+    if ($candidate -eq '{') {
+        for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 12); --$i) {
+            $line = $Lines[$i].Trim()
+            if (-not $line) { continue }
+            if ($line -match '[;{}]') { break }
+            $start = $i
+            if ($line -match '\b[A-Za-z_]\w*\s*\(') { break }
+        }
+    }
+    $signature = (($Lines[$start..$Index] -join ' ').Trim())
+    if ($signature -match '^(if|else|for|while|switch|catch|TEST_CASE)\b' -or
+        $signature -match '\]\s*\(' -or $signature -match '(^|\s)(==|!=|<=|>=|&&|\|\|)(\s|$)' -or
+        $signature -notmatch '\b[A-Za-z_]\w*\s*\([^;{}]*\)\s*(const\s*)?(noexcept\s*)?(->[^{}]*)?\{\s*$') {
+        return -1
+    }
+    return $start
+}
+
+# Purpose: Include the immediately preceding contract in a changed function's finding range.
+# Inputs: Raw lines and signature start; preceding executable statements terminate the range.
+# Outputs: First contract/blank line index, bounded to the sixteen-line documentation window.
+function Get-CppContractStart {
+    param([string[]]$Lines, [int]$Index)
+
+    $start = $Index
+    for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 16); --$i) {
+        if ([string]::IsNullOrWhiteSpace($Lines[$i])) { continue }
+        if ($Lines[$i] -notmatch '^\s*(//|/\*|\*|#|$)') { break }
+        $start = $i
+    }
+    return $start
 }
 
 # Purpose: Add one audit finding to the shared collection.
@@ -369,38 +425,39 @@ function Test-CppFile {
     )
 
     $lines = [IO.File]::ReadAllLines($Path)
+    $projection = Get-CppAuditProjection -Text ([IO.File]::ReadAllText($Path))
+    $code = $projection.Lines
     for ($i = 0; $i -lt $lines.Count; ++$i) {
-        $trimmed = $lines[$i].Trim()
-        if ($trimmed -notmatch "\)\s*(const\s*)?(\{|noexcept\s*\{|->.*\{)$") {
-            continue
-        }
-        $statementStart = Get-CppStatementStartText -Lines $lines -Index $i
-        if ($statementStart -match "^(if|else|for|while|switch|catch|TEST_CASE)\b" -or
-            $trimmed -match "^\}\s*(else|catch)\b" -or
-            $trimmed -match "\]\s*\(" -or
-            $trimmed -match "(\s(==|!=|<=|>=|<|>)\s|&&|\|\|)") {
-            continue
-        }
+        $signatureStart = Get-CppFunctionStart -Lines $code -Index $i
+        if ($signatureStart -lt 0) { continue }
+        $findingStart = (Get-CppContractStart -Lines $lines -Index $signatureStart) + 1
         $depth = 0
         $body = New-Object System.Collections.Generic.List[string]
         for ($j = $i; $j -lt $lines.Count; ++$j) {
-            $body.Add($lines[$j])
-            $depth += Get-BraceDelta -Line $lines[$j]
+            $body.Add($code[$j])
+            $depth += Get-BraceDelta -Line $code[$j]
             if ($depth -eq 0) {
                 break
             }
         }
-        $lineCount = $body.Count
+        $lineCount = $j - $signatureStart + 1
         $markers = Measure-ComplexityMarker -Lines $body.ToArray()
         if ($lineCount -gt $script:AuditMaxFunctionLines) {
-            Add-RefactorFinding -Findings $Findings -Category "large-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$lineCount lines"
+            Add-RefactorFinding -Findings $Findings -Category "large-function" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "$lineCount lines"
         }
         if ($markers -gt $script:AuditMaxComplexityMarkers) {
-            Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "$markers markers"
+            Add-RefactorFinding -Findings $Findings -Category "complex-function" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "$markers markers"
         }
-        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $i)) {
-            Add-RefactorFinding -Findings $Findings -Category "missing-contract" -Path $Path -Line ($i + 1) -EndLine ($j + 1) -Detail "No nearby Purpose/Input/Output contract comment"
+        if ($script:AuditCheckContracts -and -not (Test-NearbyContractComment -Lines $lines -Index $signatureStart)) {
+            Add-RefactorFinding -Findings $Findings -Category "missing-contract" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "No nearby Purpose/Input/Output contract comment"
         }
+        if ($script:AuditCheckContracts -and $lineCount -ge 100) {
+            $commentCount = @($signatureStart..$j | Where-Object { $projection.CommentLines.Contains($_) }).Count
+            if ($commentCount * 100 -lt $lineCount * 2) {
+                Add-RefactorFinding -Findings $Findings -Category "poor-documentation" -Path $Path -Line $findingStart -EndLine ($j + 1) -Detail "Long function lacks parsing/ownership/invariant comments"
+            }
+        }
+        $i = $j
     }
 }
 

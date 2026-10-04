@@ -2,6 +2,20 @@
 
 ## Continuation Checkpoint
 
+The SDK follow-up is published at `fcd29ea`; all eight affected workflows pass.
+Its fresh analysis exposed three undocumented inherited SDK parser functions.
+The current batch repairs their structure and contracts, adds a nine-entry
+file-map rollover regression, and closes the audit's vendor/C-brace coverage
+gap. The maintainer approved the 54 individually documented remaining reports;
+exact incident identities and source/caller/scanner freshness are enforced,
+with every raw result retained and every unmatched finding blocking. The
+HIP-enabled build and all seven native CTests pass, as do 14 CPU/required-HIP
+corpus cases, nine rejection controls and twelve controller cases. The new
+7z-only component mapping preserves all registered parser/PPMd consumers; shared
+SDK inputs retain broad coverage. Twenty function-audit and 22 scanner-admission
+contracts pass. Hosted verification of this final batch is pending. Releases
+remain paused.
+
 The October 4 repairs are published at `7b3b14f`. All seven affected workflows
 pass, including the dedicated native ASan workflow. The complete post-push
 inventory contains 83 open alerts: two permitted Scorecard policy residuals,
