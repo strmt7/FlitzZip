@@ -5,6 +5,14 @@ function Assert-ZstdRewritePolicy {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
     $requirements = @(
+        @('cmake/ZstdAlgorithmProgress.cmake', 'int prefixSearchComplete = 0;', 'match budget and termination separation'),
+        @('cmake/ZstdAlgorithmProgress.cmake', '&& !prefixSearchComplete)', 'match completed-prefix dictionary gate'),
+        @('cmake/ZstdSuffixRanks.c', 'if (suffix < 0 || suffix >= count)', 'suffix rank index extent'),
+        @('cmake/ZstdSuffixRanks.c', 'if (remaining == 0)', 'suffix group termination'),
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_algorithm_progress("${source_dir}")', 'algorithm progress patch dispatch'),
+        @('tests/cpp/test_zstd_algorithm_progress.cpp', 'TEST_CASE(zstd_suffix_progress_matches_lexicographic_oracle)', 'suffix independent ordering oracle'),
+        @('tests/cpp/test_zstd_algorithm_progress.cpp', 'TEST_CASE(zstd_suffix_progress_rejects_malformed_groups)', 'suffix malformed group regression'),
+        @('tests/cpp/test_zstd_match_progress.cpp', 'TEST_CASE(zstd_match_progress_preserves_attached_dictionary_frames)', 'match pre-rewrite frame controls'),
         @('cmake/ZstdCoverWorkGroup.cpp', 'POOL_joinJobs(pool.get());', 'optimizer actual worker completion'),
         @('cmake/ZstdCoverWorkGroup.cmake', '#if PTRDIFF_MAX <= UINT32_MAX', 'sample count architecture range'),
         @('cmake/ZstdCoverWorkGroup.cpp', 'COVER_best_wait(&best);', 'optimizer logical completion'),

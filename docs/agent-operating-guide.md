@@ -503,6 +503,15 @@ tools\package.ps1 -Configuration Release
 ## Coding Standards
 
 - Use C++20, RAII, value types, `std::filesystem`, `std::span`, explicit integer widths, and clear ownership.
+- Represent binary format fixtures as typed byte arrays with explicit extents;
+  compare exact bytes and independent read-back. Do not encode fixture payloads
+  as opaque text tokens or weaken secret detection to accommodate them.
+- Shared worker state must remain owned until the actual worker calls return.
+  A completion counter or result signal can precede final worker cleanup;
+  qualify teardown with a worker that deliberately signals before its last access.
+- Keep algorithm work budgets separate from termination decisions. Preserve
+  comparison consumption and rank ordering with independent consumer oracles;
+  changing loop syntax alone does not establish a repair.
 - Scope test-owned file streams and handles before removing their directories
   on Windows. Fix a proven lifetime conflict rather than adding cleanup retries,
   weakening assertions, or changing file-sharing policy to conceal it.

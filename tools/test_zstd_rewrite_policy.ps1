@@ -35,6 +35,8 @@ try {
             'cmake/ZstdHuffmanTable.c', 'tests/cpp/test_zstd_huffman_table.cpp', 'tests/zstd/fault_allocator.cpp',
             'cmake/ZstdCoverWorkGroup.cpp', 'tests/cpp/test_zstd_work_group.cpp',
             'cmake/ZstdCoverWorkGroup.cmake',
+            'cmake/ZstdAlgorithmProgress.cmake', 'cmake/ZstdSuffixRanks.c',
+            'tests/cpp/test_zstd_algorithm_progress.cpp', 'tests/cpp/test_zstd_match_progress.cpp',
             'cmake/ZstdFseTableGeometry.c', 'tests/cpp/test_zstd_fse_table.cpp',
             'cmake/ZstdLegacyBuffers.cpp', 'cmake/ZstdLibrary.cmake', 'tests/cpp/test_zstd_legacy_buffers.cpp',
             'cmake/ZstdLegacyOwnedStreamV05.c', 'cmake/ZstdLegacyOwnedStreamV06.c', 'cmake/ZstdLegacyOwnedStreamV07.c',
@@ -49,6 +51,14 @@ try {
     }
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
     foreach ($mutation in @(
+            @('cmake/ZstdAlgorithmProgress.cmake', 'int prefixSearchComplete = 0;', 'int prefixSearchComplete;', 'match budget and termination separation'),
+            @('cmake/ZstdAlgorithmProgress.cmake', '&& !prefixSearchComplete)', ')', 'match completed-prefix dictionary gate'),
+            @('cmake/ZstdSuffixRanks.c', 'if (suffix < 0 || suffix >= count)', 'if (suffix < 0)', 'suffix rank index extent'),
+            @('cmake/ZstdSuffixRanks.c', 'if (remaining == 0)', 'if (0)', 'suffix group termination'),
+            @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_algorithm_progress("${source_dir}")', '', 'algorithm progress patch dispatch'),
+            @('tests/cpp/test_zstd_algorithm_progress.cpp', 'TEST_CASE(zstd_suffix_progress_matches_lexicographic_oracle)', 'TEST_CASE(removed_suffix_oracle)', 'suffix independent ordering oracle'),
+            @('tests/cpp/test_zstd_algorithm_progress.cpp', 'TEST_CASE(zstd_suffix_progress_rejects_malformed_groups)', 'TEST_CASE(removed_suffix_malformed)', 'suffix malformed group regression'),
+            @('tests/cpp/test_zstd_match_progress.cpp', 'TEST_CASE(zstd_match_progress_preserves_attached_dictionary_frames)', 'TEST_CASE(removed_match_controls)', 'match pre-rewrite frame controls'),
             @('cmake/ZstdCoverWorkGroup.cpp', 'POOL_joinJobs(pool.get());', '', 'optimizer actual worker completion'),
             @('cmake/ZstdCoverWorkGroup.cmake', '#if PTRDIFF_MAX <= UINT32_MAX', '#if 0', 'sample count architecture range'),
             @('cmake/ZstdCoverWorkGroup.cpp', 'COVER_best_wait(&best);', '', 'optimizer logical completion'),

@@ -27,6 +27,7 @@ add_executable(
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_bounds.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_huffman_table.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_fse_table.cpp"
+  "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_match_progress.cpp"
   "${_raw_block_probe}"
   "${_huffman_probe}")
 target_include_directories(
@@ -90,6 +91,7 @@ add_executable(
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_main.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_cover_selection.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_work_group.cpp"
+  "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_algorithm_progress.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_dictionary_merge.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.cpp"
   "${_dictionary_merge_probe}"
@@ -104,8 +106,9 @@ target_include_directories(
           "${SUPERZIP_SOURCE_ROOT}/tests/zstd" "${SUPERZIP_ZSTD_LIBRARY_DIR}"
           "${SUPERZIP_ZSTD_LIBRARY_DIR}/dictBuilder")
 target_compile_definitions(
-  superzip_zstd_cover_selection_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
-                                              _CRT_SECURE_NO_WARNINGS)
+  superzip_zstd_cover_selection_tests
+  PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN SUPERZIP_ZSTD_SUFFIX_RANK_PROBES
+          _CRT_SECURE_NO_WARNINGS)
 foreach(target IN
         ITEMS superzip_zstd_cover_probe superzip_zstd_cover_owner_probe
               superzip_zstd_cover_selection_tests)

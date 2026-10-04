@@ -110,6 +110,21 @@ the same owner. Production guarded training exercises both exported optimizers
 with real pools. These source and consumer contracts do not establish hosted
 alert closure until fresh analysis completes.
 
+Match-search termination is now independent of comparison-budget consumption.
+A complete prefix match can skip attached-dictionary lookup without assigning
+to the loop's remaining-budget counter. Exact frames captured from the preceding
+qualified library and independent dictionary read-back cover three actual match
+strategies and short/long attached-dictionary inputs. They establish bounded
+behavior preservation; they are not performance claims.
+
+Suffix ranking has an explicit remaining-work cursor and validates every rank
+index before writing. Unterminated negative groups cannot read before the
+workspace. Both suffix-array and Burrows-Wheeler consumers propagate a ranking
+failure before construction. An independent lexicographic suffix oracle checks
+the full suffix order, transformed bytes and primary index across short lengths,
+larger boundaries and four alphabets; separate malformed-group fixtures preserve
+workspace canaries. The original algorithm and provenance remain covered.
+
 ## Remaining Source Work
 
 The earlier inventory contains 28 DevSkim and 53 CodeQL source reports. Its
