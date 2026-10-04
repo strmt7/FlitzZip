@@ -1,49 +1,9 @@
-# Purpose: Recognize complete later revisions of an exact preceding patch.
-# Inputs: actual_hash and patched_hash identify full generated-source bytes.
-# Outputs: Returns true through output only for an explicitly linked pair;
-# unknown revisions remain subject to the writer's source identity rejection.
-function(superzip_zstd_patch_is_superseded actual_hash patched_hash output)
+# Purpose: Recognize exact later revisions outside the legacy decoder pipeline.
+# Inputs: Complete current and preceding source hashes. Outputs: Returns true
+# only for a known paired transformation; unknown bytes remain rejected.
+function(superzip_zstd_nonlegacy_patch_is_superseded actual_hash patched_hash
+         output)
   set(recognized FALSE)
-  # Later decoder refactors are complete revisions of their exact preceding
-  # constructor/comment patches. Bind each accepted edge to both identities.
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
-  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryBounds.cmake")
-  superzip_zstd_dictionary_patch_is_superseded(
-    "${actual_hash}" "${patched_hash}" recognized)
-  if(actual_hash STREQUAL _zstd_legacy_public_patched
-     AND patched_hash STREQUAL _zstd_legacy_public_original)
-    set(recognized TRUE)
-  endif()
-  foreach(version IN ITEMS v05 v06 v07)
-    set(literal_key "_zstd_legacy_literals_${version}")
-    set(stream_key "_zstd_legacy_stream_${version}")
-    set(history_key "_zstd_legacy_history_${version}")
-    set(dictionary_key "_zstd_legacy_dictionary_${version}")
-    if((actual_hash STREQUAL "${${history_key}_patched}"
-        OR actual_hash STREQUAL "${${dictionary_key}_patched}"
-        OR actual_hash STREQUAL "${${stream_key}_patched}"
-        OR actual_hash STREQUAL "${${stream_key}_empty_prior}"
-        OR actual_hash STREQUAL "${${stream_key}_prior}"
-       )
-       AND (patched_hash STREQUAL "${${stream_key}_original}"
-            OR patched_hash STREQUAL "${${literal_key}_original}"
-            OR patched_hash STREQUAL "${${literal_key}_preceding}"))
-      set(recognized TRUE)
-    endif()
-    if((actual_hash STREQUAL "${${history_key}_patched}"
-        OR actual_hash STREQUAL "${${dictionary_key}_patched}")
-       AND patched_hash STREQUAL "${${stream_key}_patched}")
-      set(recognized TRUE)
-    endif()
-    if(actual_hash STREQUAL "${${literal_key}_patched}"
-       AND (patched_hash STREQUAL "${${literal_key}_original}"
-            OR patched_hash STREQUAL "${${literal_key}_preceding}"))
-      set(recognized TRUE)
-    endif()
-  endforeach()
   # A later comment-only revision is also a complete result of its preceding
   # logical patch. Accept only its exact identity paired with that baseline.
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCommentClarifications.cmake")
@@ -81,6 +41,80 @@ function(superzip_zstd_patch_is_superseded actual_hash patched_hash output)
       set(recognized TRUE)
     endif()
   endforeach()
+  set(${output}
+      "${recognized}"
+      PARENT_SCOPE)
+endfunction()
+
+# Purpose: Recognize complete later revisions of an exact preceding patch.
+# Inputs: actual_hash and patched_hash identify full generated-source bytes.
+# Outputs: Returns true through output only for an explicitly linked pair;
+# unknown revisions remain subject to the writer's source identity rejection.
+function(superzip_zstd_patch_is_superseded actual_hash patched_hash output)
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
+  superzip_zstd_owned_predecessor("${actual_hash}" predecessor)
+  if(NOT predecessor STREQUAL "")
+    superzip_zstd_patch_is_superseded("${predecessor}" "${patched_hash}"
+                                      recognized)
+    if(predecessor STREQUAL patched_hash)
+      set(recognized TRUE)
+    endif()
+    set(${output}
+        "${recognized}"
+        PARENT_SCOPE)
+    return()
+  endif()
+  set(recognized FALSE)
+  # Later decoder refactors are complete revisions of their exact preceding
+  # constructor/comment patches. Bind each accepted edge to both identities.
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyLiterals.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyStream.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryBounds.cmake")
+  superzip_zstd_dictionary_patch_is_superseded("${actual_hash}"
+                                               "${patched_hash}" recognized)
+  if(actual_hash STREQUAL _zstd_legacy_public_patched
+     AND patched_hash STREQUAL _zstd_legacy_public_original)
+    set(recognized TRUE)
+  endif()
+  foreach(version IN ITEMS v05 v06 v07)
+    set(literal_key "_zstd_legacy_literals_${version}")
+    set(stream_key "_zstd_legacy_stream_${version}")
+    set(history_key "_zstd_legacy_history_${version}")
+    set(dictionary_key "_zstd_legacy_dictionary_${version}")
+    if(actual_hash STREQUAL "${${dictionary_key}_patched}"
+       AND (patched_hash STREQUAL "${${history_key}_patched}"
+            OR patched_hash STREQUAL "${${literal_key}_patched}"))
+      set(recognized TRUE)
+    endif()
+    if((actual_hash STREQUAL "${${history_key}_patched}"
+        OR actual_hash STREQUAL "${${dictionary_key}_patched}"
+        OR actual_hash STREQUAL "${${stream_key}_patched}"
+        OR actual_hash STREQUAL "${${stream_key}_empty_prior}"
+        OR actual_hash STREQUAL "${${stream_key}_prior}"
+       )
+       AND (patched_hash STREQUAL "${${stream_key}_original}"
+            OR patched_hash STREQUAL "${${literal_key}_original}"
+            OR patched_hash STREQUAL "${${literal_key}_preceding}"))
+      set(recognized TRUE)
+    endif()
+    if((actual_hash STREQUAL "${${history_key}_patched}"
+        OR actual_hash STREQUAL "${${dictionary_key}_patched}")
+       AND patched_hash STREQUAL "${${stream_key}_patched}")
+      set(recognized TRUE)
+    endif()
+    if(actual_hash STREQUAL "${${literal_key}_patched}"
+       AND (patched_hash STREQUAL "${${literal_key}_original}"
+            OR patched_hash STREQUAL "${${literal_key}_preceding}"))
+      set(recognized TRUE)
+    endif()
+  endforeach()
+  superzip_zstd_nonlegacy_patch_is_superseded("${actual_hash}"
+                                              "${patched_hash}" nonlegacy)
+  if(nonlegacy)
+    set(recognized TRUE)
+  endif()
   set(${output}
       "${recognized}"
       PARENT_SCOPE)
@@ -763,7 +797,10 @@ function(superzip_patch_zstd_legacy_literals source_dir)
     set(dictionary_key "_zstd_legacy_dictionary_${version}")
     set(source "${source_dir}/lib/legacy/zstd_${version}.c")
     file(SHA256 "${source}" actual_hash)
-    if(actual_hash STREQUAL "${${key}_patched}"
+    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
+                                      superseded)
+    if(superseded
+       OR actual_hash STREQUAL "${${key}_patched}"
        OR actual_hash STREQUAL "${${dictionary_key}_patched}"
        OR actual_hash STREQUAL "${${history_key}_patched}"
        OR actual_hash STREQUAL "${${stream_key}_patched}"
@@ -807,7 +844,10 @@ function(superzip_patch_zstd_legacy_stream source_dir)
     set(dictionary_key "_zstd_legacy_dictionary_${version}")
     set(source "${source_dir}/lib/legacy/zstd_${version}.c")
     file(SHA256 "${source}" actual_hash)
-    if(actual_hash STREQUAL "${${key}_patched}"
+    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
+                                      superseded)
+    if(superseded
+       OR actual_hash STREQUAL "${${key}_patched}"
        OR actual_hash STREQUAL "${${history_key}_patched}"
        OR actual_hash STREQUAL "${${dictionary_key}_patched}")
       continue()
@@ -971,13 +1011,14 @@ function(superzip_patch_zstd_raw_block_writer source_dir)
                                      "${_zstd_raw_block_patched}" "${content}")
 endfunction()
 
-# Purpose: Apply every identity-bound dependency revision in its verified order.
-# Inputs: source_dir owns extracted pinned Zstandard sources. Outputs: Publishes
-# complete reviewed revisions, rejects drift and retains upstream provenance.
-function(superzip_patch_zstd_legacy source_dir)
+# Purpose: Apply the verified predecessor revisions in their established order.
+# Inputs: Extracted pinned source. Outputs: A complete known predecessor for the
+# ownership migration, with all earlier repairs and provenance checks.
+function(superzip_patch_zstd_base source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyHistory.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyDictionary.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryBounds.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
   superzip_patch_zstd_foundation("${source_dir}")
   superzip_patch_zstd_compression_stream("${source_dir}")
   superzip_patch_zstd_decompression_stream("${source_dir}")
@@ -990,4 +1031,13 @@ function(superzip_patch_zstd_legacy source_dir)
   superzip_patch_zstd_legacy_public_stream("${source_dir}")
   superzip_patch_zstd_raw_block_writer("${source_dir}")
   superzip_patch_zstd_dictionary_bounds("${source_dir}")
+endfunction()
+
+# Purpose: Apply the complete identity-bound production dependency pipeline.
+# Inputs: Extracted pinned sources. Outputs: Complete reviewed revisions or
+# identity rejection; the canonical product never selects a partial pipeline.
+function(superzip_patch_zstd_legacy source_dir)
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
+  superzip_patch_zstd_base("${source_dir}")
+  superzip_patch_zstd_legacy_owned_buffers("${source_dir}")
 endfunction()

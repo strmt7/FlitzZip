@@ -120,7 +120,7 @@ add_library(superzip_zstd_legacy_fault_objects OBJECT ${_legacy_fault_sources})
 target_include_directories(
   superzip_zstd_legacy_fault_objects
   PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/zstd" "${SUPERZIP_ZSTD_LIBRARY_DIR}"
-          "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy")
+          "${SUPERZIP_SOURCE_ROOT}/cmake" "${SUPERZIP_ZSTD_LIBRARY_DIR}/legacy")
 target_compile_definitions(
   superzip_zstd_legacy_fault_objects
   PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_ ZSTD_DISABLE_ASM
@@ -134,23 +134,33 @@ else()
   target_compile_options(superzip_zstd_legacy_fault_objects
                          PRIVATE -include "${_legacy_allocator_header}")
 endif()
+add_library(superzip_zstd_legacy_buffer_probe OBJECT
+            "${SUPERZIP_SOURCE_ROOT}/cmake/ZstdLegacyBuffers.cpp")
+target_include_directories(superzip_zstd_legacy_buffer_probe
+                           PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/zstd")
+target_compile_features(superzip_zstd_legacy_buffer_probe PRIVATE cxx_std_20)
+target_compile_definitions(superzip_zstd_legacy_buffer_probe
+                           PRIVATE SUPERZIP_LEGACY_BUFFER_FAULT_ALLOCATIONS)
 add_executable(
   superzip_zstd_legacy_tests
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_main.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_legacy_failures.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_legacy_history.cpp"
+  "${SUPERZIP_SOURCE_ROOT}/tests/cpp/test_zstd_legacy_buffers.cpp"
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/fault_allocator.c"
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/legacy_driver.c"
   $<TARGET_OBJECTS:superzip_zstd_legacy_fault_objects>
+  $<TARGET_OBJECTS:superzip_zstd_legacy_buffer_probe>
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/error_private.c"
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/xxhash.c")
 target_include_directories(
   superzip_zstd_legacy_tests
-  PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/cpp"
+  PRIVATE "${SUPERZIP_SOURCE_ROOT}/tests/cpp" "${SUPERZIP_SOURCE_ROOT}/cmake"
           "${SUPERZIP_SOURCE_ROOT}/tests/zstd" "${SUPERZIP_ZSTD_LIBRARY_DIR}")
 target_compile_definitions(
   superzip_zstd_legacy_tests PRIVATE ZSTD_LEGACY_SUPPORT=5 XXH_NAMESPACE=ZSTD_
-                                     ZSTD_DISABLE_ASM _CRT_SECURE_NO_WARNINGS)
+                                     ZSTD_DISABLE_ASM _CRT_SECURE_NO_WARNINGS
+                                     NOMINMAX WIN32_LEAN_AND_MEAN)
 add_test(NAME superzip_zstd_legacy_tests COMMAND superzip_zstd_legacy_tests)
 add_test(
   NAME superzip_zstd_legacy_patch

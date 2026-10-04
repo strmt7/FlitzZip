@@ -3,11 +3,11 @@
 Current status: historical review, superseded as an acceptance mechanism by
 the [source remediation redesign](security-source-remediation-redesign.md).
 The maintainer subsequently requested source repairs instead of admission.
-All matching source reports now remain blocking. The statements and hashes
+Any source report still open in fresh analysis remains blocking. The statements and hashes
 below record the earlier assessment only; they do not establish current source
 identity, harmlessness, remediation or security acceptance.
 
-These 21 reports were individually reviewed against the current source. The
+These 21 reports were individually reviewed against the source recorded below. The
 maintainer explicitly approved these exact dispositions on October 4. The
 ledger in `.github/scanner-source-reviews.csv` binds each rule, complete source
 digest and line/column region. Only CRLF/LF normalization is permitted. Changed
@@ -15,7 +15,7 @@ source bytes, another location or another rule invalidate the disposition.
 Raw reports remain complete; no file, directory or rule is excluded. This
 approval does not resolve any other DevSkim or CodeQL report.
 
-The existing HIP, allocation-fault, guard-page and independent legacy-sequence oracle checks and all six ASan targets passed for native input identity `70bc8379378fd228843e4153f700500b43facb81a0a58f09c68fdd10854633d7`. The reviewed bytes below still match those retained assessments.
+The HIP, allocation-fault, guard-page and independent legacy-sequence oracle checks and all six ASan targets passed for native input identity `70bc8379378fd228843e4153f700500b43facb81a0a58f09c68fdd10854633d7` at that review. The retained assessments describe that tested revision.
 
 ## DS121708: cmake/ZstdLegacyStreamV06.c, line 195
 

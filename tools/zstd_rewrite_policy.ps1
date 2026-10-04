@@ -5,6 +5,17 @@ function Assert-ZstdRewritePolicy {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
     $requirements = @(
+        @('cmake/ZstdLegacyBuffers.cpp', 'using BufferOwner = std::unique_ptr<char[], BufferDelete>;', 'legacy exclusive buffer ownership'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'count > destinationCapacity - destinationOffset || count > sourceCapacity - sourceOffset', 'legacy complete copy geometry'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'std::copy_backward(input.begin(), input.end(), output.end());', 'legacy backward overlap transfer'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'if (input.data() == output.data())', 'legacy identical-range copy contract'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'owner->input = std::move(input);', 'legacy transactional input publication'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'owner->output = std::move(output);', 'legacy transactional output publication'),
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_owned_buffers("${source_dir}")', 'legacy owned buffer patch dispatch'),
+        @('cmake/ZstdLibrary.cmake', '"${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyBuffers.cpp"', 'legacy production owner linkage'),
+        @('tests/cpp/test_zstd_legacy_buffers.cpp', 'TEST_CASE(zstd_legacy_checked_copy_overlap_oracle)', 'legacy independent copy oracle'),
+        @('tests/cpp/test_zstd_legacy_buffers.cpp', 'TEST_CASE(zstd_legacy_owned_buffers_allocation_failures)', 'legacy owner failure regression'),
+        @('tests/cpp/test_zstd_legacy_failures.cpp', 'TEST_CASE(zstd_legacy_stream_rejects_invalid_public_geometry)', 'legacy public geometry regression'),
         @('cmake/ZstdRawBlockWriter.c', 'dstCapacity < ZSTD_blockHeaderSize || srcSize > dstCapacity - ZSTD_blockHeaderSize', 'raw-block extent'),
         @('cmake/ZstdCoverSelection.cpp', 'candidateContentSize <= initialized.size()', 'initialized dictionary extent'),
         @('cmake/ZstdCoverSelection.cpp', 'candidateDictSize > initialized.size() / 2', 'dictionary growth overflow'),
@@ -31,6 +42,12 @@ function Assert-ZstdRewritePolicy {
         @('tests/cpp/test_zstd_legacy_failures.cpp', 'TEST_CASE(zstd_legacy_stream_empty_buffers_preserve_progress)', 'empty-buffer progress regression')
     )
     foreach ($version in @('05', '06', '07')) {
+        $ownedFragment = "cmake/ZstdLegacyOwnedStreamV$version.c"
+        $context = if ($version -eq '05') { 'zbc' } else { 'zbd' }
+        $requirements += ,@($ownedFragment, "$context`->inPos > needed || needed > buffers.inputCapacity", "v$version owned input extent")
+        $requirements += ,@($ownedFragment, "$context`->outStart > $context`->outEnd || $context`->outEnd > buffers.outputCapacity", "v$version initialized output extent")
+        $requirements += ,@($ownedFragment, '*srcSizePtr > (size_t)PTRDIFF_MAX', "v$version public input pointer geometry")
+        $requirements += ,@($ownedFragment, 'ZBUFF_viewOwnedBuffers', "v$version actual owner geometry")
         $history = "cmake/ZstdLegacyHistoryV$version.c"
         $requirements += ,@($history, 'sequence.matchLength > available - sequence.litLength', "v$version sequence extent")
         $requirements += ,@($history, 'dictionaryOffset > dictSize', "v$version history extent")

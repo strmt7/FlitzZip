@@ -228,6 +228,12 @@ Guidelines, and SEI CERT C++.
   fixtures, test doubles and labelled control builds are validation tools, not
   alternate product paths. Wire a verified beneficial change into the canonical
   product or workflow and verify that path before describing it as implemented.
+- Separate operating policy from evidence. Agent instructions and skills define
+  reusable procedures, contracts and routing; keep incident dates, finding
+  counts, individual verdicts, commit identities and checkpoint results in
+  audit records. Tools derive current status from source-bound inputs and
+  complete reports, never from counts copied into policy. Update a policy only
+  when a reusable rule or interface changes; do not rewrite it after each scan.
 - Prefer pinned, provenance-recorded dependencies. Do not track extracted
   runtime binaries such as `.dll` or `.exe`; extract them from pinned upstream
   packages during build and verify checksums before use.

@@ -36,6 +36,34 @@ Its valid final-byte access and deliberate one-past-allocation access remain.
 Qualification must still observe ASan termination and a heap-overflow diagnostic;
 the rewrite cannot remove or catch the expected fault.
 
+The buffered legacy decoders now retain one opaque C++ ownership tree for input
+and output storage. Their C state has no independent allocation capacities:
+stages borrow the actual buffer geometry from that owner. Default arrays use
+matching array allocation and deallocation; custom callbacks and their opaque
+state remain paired through construction, growth and destruction. Both needed
+replacements are acquired before either old allocation is released, so a failed
+growth preserves both identities, capacities and initialized bytes.
+
+Header, input and output transfers validate complete readable and writable
+extents, offsets and counts before pointer formation. The shared C++ transfer
+uses bounded views and preserves both overlap directions. Decoder stages map
+failure to their own version's ordinary error codes; public entry points reject
+missing counters, null nonempty extents and unrepresentable pointer geometry
+before forming cursors. Header consumption, output wrap and backpressure retain
+the version-specific stream behavior.
+
+Direct controls compare overlapping transfers against an immutable-input
+oracle, require unchanged canaries on invalid requests, and inject every owner,
+initial buffer and growth allocation failure. Existing pinned legacy frame,
+history, public backpressure and patch-migration controls remain. These controls
+must pass in both the HIP product qualification and the canonical ASan build;
+this document does not establish their result or hosted alert closure.
+
+Reusable agent policy contains procedures and contracts. Incident inventories,
+dates, individual dispositions and qualification results remain in audit
+records. The security skill no longer carries the historical disposition counts
+or depends on this particular redesign being the active task.
+
 ## Remaining Source Work
 
 The earlier inventory contains 28 DevSkim and 53 CodeQL source reports. Its
@@ -100,3 +128,12 @@ does not supply the actual source extent and changes error behavior, so a blind
 distinguishes source resolution from dismissal, while its
 [SARIF guidance](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support)
 requires stable result identity to avoid unnecessary duplicate alert creation.
+
+The [C++ algorithm contract](https://eel.is/c++draft/alg.copy) excludes a copy
+destination starting inside the source range. The checked transfer handles
+identical ranges as a no-op and uses backward copying for rightward overlap;
+leftward overlap uses forward copying. The immutable-input oracle covers each
+case. [C++ ownership guidance](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#r1-manage-resources-automatically-using-resource-handles-and-raii)
+supports scoped resource handles, while [NIST SSDF](https://csrc.nist.gov/pubs/sp/800/218/final)
+supports repairing root causes and integrating recurrence prevention into
+development. None of these references establishes repository certification.

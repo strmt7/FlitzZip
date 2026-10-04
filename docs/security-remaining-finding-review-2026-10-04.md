@@ -3,12 +3,12 @@
 Current status: historical review, superseded as an acceptance mechanism by
 the [source remediation redesign](security-source-remediation-redesign.md).
 The maintainer subsequently required source remediation of these reports.
-All 54 matching alerts now remain blocking. The following text records the
+Any source report still open in fresh analysis remains blocking. The following text records the
 earlier decisions, assumptions, source identities and finite test evidence.
 It does not prove harmlessness, describe the redesigned source or establish
 closure. In particular, approvals of quality observations are not repairs.
 
-Status: the maintainer approved these exact 54 individual dispositions on
+Historical decision: the maintainer approved these exact 54 individual dispositions on
 October 4. The approved ledger supplements the separate 27 DevSkim source sites;
 raw reports and hosted states remain intact. The complete reference inventory is
 the post-push analyses at `7b3b14f` and `fcd29ea`; all eight affected workflows
@@ -16,7 +16,7 @@ passed for the SDK follow-up. The caller context was renewed after the separate
 SDK header/parser refactor and its 7z regression. All 54 reviewed operations retain
 their exact approved source hashes, rules and regions; no Zstandard callers,
 patch recipes, generated library sources or analysis configuration changed.
-The current native input identity is
+The native input identity at that review was
 `37077f6b861fbe5812c2cdfbd86eccddee21a439fc0fb7895da9e8c2062e3a82`.
 Its caller/analysis context is
 `f59f6387d84dbf1d7629e4caa282d399c0f22e519ee7640ac0f65d7df1f9b052`.
@@ -31,12 +31,13 @@ remain available and every unmatched finding must stay blocking.
 
 ## Critical Pointer Reports: 1501-1506
 
-These approved false-positive dispositions apply to the repaired source. They
+The earlier decisions classified these reports as false positives. Those
+classifications do not admit any open report or establish current safety. They
 do not excuse the earlier reproduced COVER shrinking defect, raw-block size
 overflow, legacy history defects or dictionary setup failures. Those received
 production repairs and retained old-source controls before this review.
 
-The current local CodeQL result contains 23 flow variants across these six
+The reviewed local CodeQL result contained 23 flow variants across these six
 locations: four final-byte reads, four eight-byte reads, three four-byte reads,
 four first-header-byte writes, four second-header-byte writes and four RLE
 payload writes. The raw SARIF is retained in

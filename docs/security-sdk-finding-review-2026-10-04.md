@@ -2,14 +2,14 @@
 
 Current status: historical review, superseded as an acceptance mechanism by
 the [source remediation redesign](security-source-remediation-redesign.md).
-All six matching source reports now remain blocking. The analysis below
+Any source report still open in fresh analysis remains blocking. The analysis below
 records the earlier assessment and its tested revision; it cannot establish
 current safety, source closure or final acceptance.
 
 Status: maintainer approved these exact six dispositions on 4 October 2026.
 Normalized complete-source SHA-256:
 `196748d22995e4764288f514d8b2af56371c9e13db052d28fe066cd640288792`.
-The current publication preflight retains six `DS121708` findings in
+The publication preflight at that review retained six `DS121708` findings in
 `third_party/lzma_sdk/C/CpuArch.h`. These copies are the existing production
 repair for the independently reproduced alignment/aliasing fault. The folder
 parser rewrite does not introduce or change their executable bodies. Removal

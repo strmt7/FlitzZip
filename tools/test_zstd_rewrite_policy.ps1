@@ -31,6 +31,8 @@ function Assert-ZstdPolicyMutation {
 
 try {
     foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
+            'cmake/ZstdLegacyBuffers.cpp', 'cmake/ZstdLibrary.cmake', 'tests/cpp/test_zstd_legacy_buffers.cpp',
+            'cmake/ZstdLegacyOwnedStreamV05.c', 'cmake/ZstdLegacyOwnedStreamV06.c', 'cmake/ZstdLegacyOwnedStreamV07.c',
             'cmake/ZstdLegacyPublicStream.c', 'tests/cpp/test_zstd_bounds.cpp',
             'tests/cpp/test_zstd_cover_selection.cpp', 'tests/cpp/test_zstd_legacy_failures.cpp',
             'cmake/ZstdLegacyStreamV05.c', 'cmake/ZstdLegacyStreamV06.c', 'cmake/ZstdLegacyStreamV07.c',
@@ -42,6 +44,11 @@ try {
     }
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
     foreach ($mutation in @(
+            @('cmake/ZstdLegacyBuffers.cpp', 'using BufferOwner = std::unique_ptr<char[], BufferDelete>;', 'using BufferOwner = char*;', 'legacy exclusive buffer ownership'),
+            @('cmake/ZstdLegacyBuffers.cpp', 'count > destinationCapacity - destinationOffset || count > sourceCapacity - sourceOffset', 'count > destinationCapacity || count > sourceCapacity', 'legacy complete copy geometry'),
+            @('cmake/ZstdLegacyBuffers.cpp', 'std::copy_backward(input.begin(), input.end(), output.end());', 'std::copy(input.begin(), input.end(), output.begin());', 'legacy backward overlap transfer'),
+            @('cmake/ZstdLegacyBuffers.cpp', 'if (input.data() == output.data())', 'if (0)', 'legacy identical-range copy contract'),
+            @('tests/cpp/test_zstd_legacy_buffers.cpp', 'TEST_CASE(zstd_legacy_checked_copy_overlap_oracle)', 'TEST_CASE(removed_copy_oracle)', 'legacy independent copy oracle'),
             @('cmake/ZstdRawBlockWriter.c', 'dstCapacity < ZSTD_blockHeaderSize || srcSize > dstCapacity - ZSTD_blockHeaderSize', 'srcSize + ZSTD_blockHeaderSize > dstCapacity', 'raw-block extent'),
             @('cmake/ZstdCoverSelection.cpp', 'candidateContentSize <= initialized.size()', 'candidateContentSize <= largestDictSize', 'initialized dictionary extent'),
             @('cmake/ZstdCoverSelection.cpp', 'candidateDictSize > initialized.size() / 2', 'candidateDictSize * 2 > initialized.size()', 'dictionary growth overflow'),
@@ -56,6 +63,12 @@ try {
         Assert-ZstdPolicyMutation -Path $mutation[0] -Original $mutation[1] -Replacement $mutation[2] -Cause $mutation[3]
     }
     foreach ($version in @('05', '06', '07')) {
+        $owned = "cmake/ZstdLegacyOwnedStreamV$version.c"
+        $context = if ($version -eq '05') { 'zbc' } else { 'zbd' }
+        Assert-ZstdPolicyMutation -Path $owned -Original "$context`->inPos > needed || needed > buffers.inputCapacity" `
+            -Replacement "$context`->inPos > needed" -Cause "v$version owned input extent"
+        Assert-ZstdPolicyMutation -Path $owned -Original '*srcSizePtr > (size_t)PTRDIFF_MAX' `
+            -Replacement '*srcSizePtr > SIZE_MAX' -Cause "v$version public input pointer geometry"
         $history = "cmake/ZstdLegacyHistoryV$version.c"
         Assert-ZstdPolicyMutation -Path $history -Original 'sequence.matchLength > available - sequence.litLength' `
             -Replacement 'sequence.litLength + sequence.matchLength > available' -Cause "v$version sequence extent"

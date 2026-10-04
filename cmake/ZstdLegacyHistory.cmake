@@ -32,7 +32,10 @@ function(superzip_patch_zstd_legacy_history source_dir)
     set(dictionary_key "_zstd_legacy_dictionary_${version}")
     set(source "${source_dir}/lib/legacy/zstd_${version}.c")
     file(SHA256 "${source}" actual_hash)
-    if(actual_hash STREQUAL "${${key}_patched}"
+    superzip_zstd_patch_is_superseded("${actual_hash}" "${${key}_patched}"
+                                      superseded)
+    if(superseded
+       OR actual_hash STREQUAL "${${key}_patched}"
        OR actual_hash STREQUAL "${${dictionary_key}_patched}")
       continue()
     endif()

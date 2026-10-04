@@ -32,13 +32,14 @@ tool paths supplied through the documented process-scoped variables. Read the
 private receipt and raw reports on failure. Do not infer clean scanning from
 the policy-only scanner, unit fixtures, absent tools or empty input selection.
 The operating guide remains authoritative for provisioning and triage rules.
-The 27 source and 54 hosted dispositions are historical review evidence, not
-remediation. Exact historical matches remain blocking in the preflight and
-hosted audit. Do not renew, reseal or expand those decisions to make an
-iteration pass. Preserve complete raw reports and scanner coverage. Read
-`docs/security-source-remediation-redesign.md` before continuing this redesign.
-Repair the actual bounds, ownership or algorithm contract, retain the old-source
-failure control, and require fresh analysis before reporting a finding fixed.
+Historical source dispositions are review evidence, not remediation. Exact
+historical matches remain blocking in the preflight and hosted audit. Do not
+renew, reseal or expand decisions to make an iteration pass. Preserve complete
+raw reports and scanner coverage. Repair the actual bounds, ownership or
+algorithm contract, retain the old-source failure control, and require fresh
+analysis before reporting a finding fixed.
+Follow the Engineering Quality Baseline's separation of operating policy from
+evidence; keep per-scan state in audit records.
 Changed vendor functions participate in the ordinary function-contract gate.
 
 Single-agent and Codex Security worker policy:
