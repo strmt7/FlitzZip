@@ -1,15 +1,49 @@
 #include "test_util.hpp"
 #include "fault_allocator.h"
+#include "zstd_legacy_fixture.hpp"
 
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <span>
 #include <vector>
 
 namespace {
 
 constexpr std::array<unsigned, 3> kVersions{5, 6, 7};
 constexpr unsigned char kCanary = 0xCC;
+
+struct PreparedOwner {
+    void* context;
+    unsigned version;
+    // Purpose: Release prepared production state on every assertion path.
+    // Inputs: Original context/version. Outputs: Matching complete owner destruction.
+    ~PreparedOwner() {
+        sz_legacy_free_owned(context, version);
+    }
+};
+
+struct DestinationAllocator {
+    std::size_t allocations{};
+    std::size_t releases{};
+};
+
+// Purpose: Acquire tracked destination storage with observable allocator identity.
+// Inputs: Live callback state and requested bytes. Outputs: Tracked storage or null, with an acquisition count.
+void* allocate_destination(void* opaque, std::size_t bytes) {
+    auto& state = *static_cast<DestinationAllocator*>(opaque);
+    auto* result = sz_fault_malloc(bytes);
+    if (result != nullptr)
+        ++state.allocations;
+    return result;
+}
+
+// Purpose: Observe matching destruction under the destination's original callback identity.
+// Inputs: Callback state and live owned storage. Outputs: Tracked release and count.
+void release_destination(void* opaque, void* address) {
+    ++static_cast<DestinationAllocator*>(opaque)->releases;
+    sz_fault_free(address);
+}
 
 // Purpose: Compare canonical sequence copying against a byte-at-a-time LZ history oracle.
 // Inputs: version is shipped; dictionary/prefix/literal extents and offset describe valid live history.
@@ -110,4 +144,105 @@ TEST_CASE(zstd_legacy_v07_block_error_preserves_history) {
     REQUIRE_EQ(sz_legacy_v07_block_error_history(), 1);
     REQUIRE_EQ(sz_fault_live_allocations(), 0U);
     REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+}
+
+// Purpose: Recover exact literals and dictionary bytes after cloning and expiry of every original source.
+// Inputs: Every shipped decoder, fixed independent byte oracles and a distinct v07 destination allocator.
+// Outputs: Requires byte identity, surrounding canaries and matching complete destruction.
+TEST_CASE(zstd_legacy_prepared_history_and_literals_outlive_sources) {
+    for (const auto version : kVersions) {
+        DestinationAllocator state;
+        const sz_legacy_allocator allocator =
+            version == 7 ? sz_legacy_allocator{allocate_destination, release_destination, &state}
+                         : sz_legacy_allocator{};
+        REQUIRE_TRUE(sz_fault_reset(0));
+        {
+            std::array<unsigned char, 8> dictionary{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'};
+            std::array<unsigned char, 4> literals{0x83, 'A', 'B', 'C'};
+            PreparedOwner owner{sz_legacy_prepare_owned(version, dictionary.data(), dictionary.size(), literals.data(),
+                                                        literals.size(), allocator),
+                                version};
+            REQUIRE_TRUE(owner.context != nullptr);
+            dictionary.fill('x');
+            literals.fill('y');
+            std::array<unsigned char, 24> output{};
+            output.fill(kCanary);
+            REQUIRE_EQ(sz_legacy_read_owned(version, owner.context, output.data() + 4, 16, 0, 0, 12, 8), 12U);
+            constexpr std::array<unsigned char, 12> dictionary_expected{'a', 'b', 'c', 'd', 'e', 'f',
+                                                                        'g', 'h', 'a', 'b', 'c', 'd'};
+            REQUIRE_TRUE(std::equal(dictionary_expected.begin(), dictionary_expected.end(), output.begin() + 4));
+            REQUIRE_EQ(output[3], kCanary);
+            REQUIRE_EQ(output[20], kCanary);
+            output.fill(kCanary);
+            REQUIRE_EQ(sz_legacy_read_owned(version, owner.context, output.data() + 4, 16, 0, 3, 3, 1), 6U);
+            constexpr std::array<unsigned char, 6> literals_expected{'A', 'B', 'C', 'C', 'C', 'C'};
+            REQUIRE_TRUE(std::equal(literals_expected.begin(), literals_expected.end(), output.begin() + 4));
+            REQUIRE_EQ(output[3], kCanary);
+            REQUIRE_EQ(output[20], kCanary);
+        }
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+        REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+        REQUIRE_EQ(state.allocations, state.releases);
+        if (version == 7)
+            REQUIRE_EQ(state.allocations, 4U);
+    }
+}
+
+// Purpose: Reject every prepared ownership acquisition failure with complete matching rollback.
+// Inputs: Three raw decoder records per context, dictionary capture and independent history clone.
+// Outputs: Requires null on every injected failure and complete ownership after a successful retry.
+TEST_CASE(zstd_legacy_prepared_owner_allocation_failures) {
+    const std::array<unsigned char, 8> dictionary{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'};
+    const std::array<unsigned char, 4> literals{0x83, 'A', 'B', 'C'};
+    for (const auto version : kVersions) {
+        for (std::size_t failure = 1; failure <= 9; ++failure) {
+            REQUIRE_TRUE(sz_fault_reset(failure));
+            {
+                PreparedOwner owner{sz_legacy_prepare_owned(version, dictionary.data(), dictionary.size(),
+                                                            literals.data(), literals.size(), {}),
+                                    version};
+                REQUIRE_EQ(owner.context == nullptr, failure <= 8);
+            }
+            REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+            REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+        }
+    }
+}
+
+// Purpose: Return prepared-clone allocation failure before writing any frame output, then permit an explicit retry.
+// Inputs: Exact independent legacy golden frames, valid dictionaries and the actual clone acquisition boundary.
+// Outputs: Requires untouched output on failure and byte-exact golden-frame recovery after successful retry.
+TEST_CASE(zstd_legacy_prepared_clone_failure_blocks_frame_output) {
+    const std::array<unsigned char, 8> dictionary{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'};
+    const std::array<unsigned char, 4> literals{0x83, 'A', 'B', 'C'};
+    for (const auto version : kVersions) {
+        REQUIRE_TRUE(sz_fault_reset(0));
+        {
+            PreparedOwner owner{sz_legacy_prepare_owned(version, dictionary.data(), dictionary.size(), literals.data(),
+                                                        literals.size(), {}),
+                                version};
+            REQUIRE_TRUE(owner.context != nullptr);
+            const auto extent = superzip_test::kLegacyFrames[version - 4U];
+            const auto frame = std::span(superzip_test::kLegacyCompressed).subspan(extent.offset, extent.size);
+            std::array<unsigned char, 1024> output{};
+            output.fill(kCanary);
+            const auto before = output;
+            REQUIRE_TRUE(sz_fault_fail_after(5));
+            const auto failed =
+                sz_legacy_clone_decode(version, owner.context, output.data(), output.size(), dictionary.data(),
+                                       dictionary.size(), frame.data(), frame.size());
+            REQUIRE_EQ(sz_legacy_result_is_error(failed), 1);
+            REQUIRE_EQ(output, before);
+            REQUIRE_TRUE(sz_fault_fail_after(0));
+            const auto result =
+                sz_legacy_clone_decode(version, owner.context, output.data(), output.size(), dictionary.data(),
+                                       dictionary.size(), frame.data(), frame.size());
+            REQUIRE_EQ(sz_legacy_result_is_error(result), 0);
+            REQUIRE_EQ(result, superzip_test::kLegacyExpected.size());
+            REQUIRE_TRUE(std::equal(superzip_test::kLegacyExpected.begin(), superzip_test::kLegacyExpected.end(),
+                                    output.begin()));
+        }
+        REQUIRE_EQ(sz_fault_live_allocations(), 0U);
+        REQUIRE_EQ(sz_fault_invalid_frees(), 0U);
+    }
 }

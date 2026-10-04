@@ -710,6 +710,22 @@ or product-direction changes as a lesson. A learning guard is valid only when it
 prevents a known failure class without hiding findings or slowing unrelated
 development paths.
 
+Historical evidence stays bound to its recorded source revision. A current
+source edit must not invalidate an unchanged historical checksum or cause its
+scanner policy to be broadened. `tools/test_gitleaks_policy.py` verifies the
+exact original Git blobs and rejects neighboring authentication fields, changed
+values and paths outside passive benchmark records.
+
+Legacy decoder state must own every byte that survives a call: history,
+dictionary content and padded literals. Keep the active output prefix local,
+retain only the decoded window's initialized suffix, preserve destination
+allocator identity when cloning, and propagate clone or capture failures before
+later output. `test_zstd_legacy_history.cpp` checks source expiry, independent
+byte oracles, complete acquisition rollback and prepared-frame error propagation;
+`test_zstd_legacy_buffers.cpp` checks ring geometry, window changes, allocation
+matching and actual memory accounting. The rewrite policy rejects removal of
+these production boundaries and their executable regressions.
+
 Release identity and replacement policy share one implementation in
 `tools/release_workflow_policy.ps1`, used by changed-file hygiene and repository
 security scanning. Offline mutation contracts check commit binding and guard

@@ -53,7 +53,26 @@ function(superzip_zstd_owned_predecessor actual_hash output)
       set(predecessor "${${key}_original}")
     endif()
   endforeach()
+  superzip_zstd_decoder_owner_predecessor("${actual_hash}" "${predecessor}"
+                                          predecessor)
   set_property(GLOBAL PROPERTY "${property}" "${predecessor}")
+  set(${output}
+      "${predecessor}"
+      PARENT_SCOPE)
+endfunction()
+
+# Purpose: Recognize complete decoder ownership after earlier buffer ownership.
+# Inputs: Exact source hash and prior metadata result. Outputs: Known owner
+# predecessor or the unchanged prior result.
+function(superzip_zstd_decoder_owner_predecessor actual_hash predecessor output)
+  include(
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedDecoderHashes.cmake")
+  foreach(version IN ITEMS v05 v06 v07)
+    set(key "_zstd_owned_decoder_${version}")
+    if(actual_hash STREQUAL "${${key}_patched}")
+      set(predecessor "${${key}_original}")
+    endif()
+  endforeach()
   set(${output}
       "${predecessor}"
       PARENT_SCOPE)

@@ -1,7 +1,9 @@
 """Keep reviewed public-checksum exceptions separate from authentication material."""
 
 import hashlib
+import json
 import re
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -32,14 +34,19 @@ class GitleaksPolicyTests(unittest.TestCase):
             self.assertEqual(len(allowed["paths"]), 1)
             self.assertEqual(len(allowed["regexes"]), 1)
 
-    # Purpose: Require each admitted value to be a real source hash, with no neighboring credential bypass.
-    # Inputs: Current source bytes and production regexes. Outputs: Both source fields match; changed/auth values fail.
+    # Purpose: Bind historical public checksums to the report's exact committed source bytes.
+    # Inputs: The immutable benchmark source revision and production regexes.
+    # Outputs: Both original source fields match; changed or authentication values remain rejected.
     def test_exact_public_source_values_and_authentication_boundaries(self):
+        record = json.loads((ROOT / "docs/benchmarks/data/beta-effort-size-L4-20261003.json").read_text("utf-8-sig"))
+        revision = record["source_commit"]
+        self.assertRegex(revision, r"\A[0-9a-f]{40}\Z")
         for name in ("tests/cpp/sdk_byte_access_checks.hpp", "tests/cpp/test_sdk_byte_access.cpp"):
-            digest = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+            source = subprocess.check_output(["git", "show", f"{revision}:{name}"], cwd=ROOT, timeout=10)
+            digest = hashlib.sha256(source).hexdigest()
             positive = f'"{name}": "{digest}",'
             matches = [item for item in self.allowlists if re.fullmatch(item["regexes"][0], positive)]
-            self.assertEqual(len(matches), 1, "Source checksum changed: require a fresh provenance review")
+            self.assertEqual(len(matches), 1, "Historical public-source identity changed: require provenance review")
             pattern = matches[0]["regexes"][0]
             for negative in (
                 f'"api_key": "{digest}",',

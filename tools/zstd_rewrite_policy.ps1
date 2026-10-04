@@ -19,6 +19,27 @@ function Assert-ZstdSourceRequirement {
     }
 }
 
+# Purpose: Enforce complete decoder ownership and independent prepared-state lifetimes.
+# Inputs: Repository root and canonical source boundaries. Outputs: Rejects concrete lifetime and geometry recurrence.
+function Assert-ZstdOwnedDecoderPolicy {
+    param([string]$RepoRoot)
+    $requirements = @(
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_legacy_owned_decoder("${source_dir}")', 'legacy complete decoder ownership dispatch'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'count > distance ||', 'legacy initialized history transfer extent'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'distance > owner->initialized', 'legacy initialized history distance'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'owner->initialized = std::min(owner->initialized, limit);', 'legacy decoded window retention bound'),
+        @('cmake/ZstdLegacyOwnedSequence.c', 'dictionaryOffset > ZBUFF_ownedHistorySize(history)', 'legacy actual sequence history extent'),
+        @('cmake/ZstdLegacyOwnedLiterals.c', 'litSize > sizeof(dctx->litBuffer) - WILDCOPY_OVERLENGTH', 'legacy raw literal padding extent'),
+        @('cmake/ZstdLegacyOwnedLiterals.c', 'dctx->litPtr = dctx->litBuffer;', 'legacy independent raw literal lifetime'),
+        @('cmake/ZstdLegacyDecoderOwner.c', 'destination->owner = owner;', 'legacy cloned destination ownership identity'),
+        @('cmake/ZstdLegacyDecoderOwner.c', 'destination->customMem = allocator;', 'legacy cloned custom allocator identity'),
+        @('cmake/ZstdLegacyOwnedDecoder.cmake', 'if (dctx->historyError) return dctx->historyError;', 'legacy prepared clone error propagation'),
+        @('tests/cpp/test_zstd_legacy_history.cpp', 'TEST_CASE(zstd_legacy_prepared_history_and_literals_outlive_sources)', 'legacy prepared source expiry regression'),
+        @('tests/cpp/test_zstd_legacy_history.cpp', 'TEST_CASE(zstd_legacy_prepared_clone_failure_blocks_frame_output)', 'legacy prepared clone output regression')
+    )
+    Assert-ZstdSourceRequirement -RepoRoot $RepoRoot -Requirements $requirements
+}
+
 # Purpose: Reject recurrence of the concrete Zstandard source defects repaired here.
 # Inputs: RepoRoot owns the patch fragments and their production-facing regressions.
 # Outputs: Throws with the missing safety boundary; this static guard does not replace native tests or SAST.
@@ -58,7 +79,9 @@ function Assert-ZstdRewritePolicy {
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_table_geometry("${source_dir}")', 'table geometry patch dispatch'),
         @('tests/cpp/test_zstd_huffman_table.cpp', 'TEST_CASE(zstd_huffman_typed_fill_rank_oracle)', 'Huffman independent rank oracle'),
         @('tests/cpp/test_zstd_huffman_table.cpp', 'TEST_CASE(zstd_huffman_typed_fill_rejects_geometry)', 'Huffman malformed table regression'),
-        @('cmake/ZstdLegacyBuffers.cpp', 'count > destinationCapacity - destinationOffset || count > sourceCapacity - sourceOffset', 'legacy complete copy geometry'),
+        @('cmake/ZstdLegacyBuffers.cpp', 'count <= capacity - offset', 'legacy complete copy geometry'),
+        @('cmake/ZstdLegacyBuffers.cpp', '!valid_extent(destination, destinationCapacity, destinationOffset, count)', 'legacy copy destination geometry'),
+        @('cmake/ZstdLegacyBuffers.cpp', '!valid_extent(source, sourceCapacity, sourceOffset, count)', 'legacy copy source geometry'),
         @('cmake/ZstdLegacyBuffers.cpp', 'std::copy_backward(input.begin(), input.end(), output.end());', 'legacy backward overlap transfer'),
         @('cmake/ZstdLegacyBuffers.cpp', 'if (input.data() == output.data())', 'legacy identical-range copy contract'),
         @('cmake/ZstdLegacyBuffers.cpp', 'owner->input = std::move(input);', 'legacy transactional input publication'),
@@ -124,6 +147,7 @@ function Assert-ZstdRewritePolicy {
         $requirements += ,@('tests/cpp/test_zstd_legacy_failures.cpp', "TEST_CASE(zstd_legacy_v${version}_stream_growth_preserves_buffers)", "v$version replacement ownership regression")
     }
     Assert-ZstdSourceRequirement -RepoRoot $RepoRoot -Requirements $requirements
+    Assert-ZstdOwnedDecoderPolicy -RepoRoot $RepoRoot
     $public = Get-Content -LiteralPath (Join-Path $RepoRoot 'cmake/ZstdLegacyPublicStream.c') -Raw
     $shipped = [regex]::Replace($public, '(?ms)^#if \(ZSTD_LEGACY_SUPPORT <= 4\).*?^#endif\s*', '')
     $shipped = [regex]::Replace($shipped, '(?s)/\*.*?\*/|(?m)//[^\r\n]*', '')

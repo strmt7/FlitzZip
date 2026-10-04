@@ -1,0 +1,13 @@
+# Exact complete source identities for canonical legacy decoder ownership.
+set(_zstd_owned_decoder_v05_original
+    "10b1201cf5047a87f6d76ca6ba4909491065184b39ea7eb1298ec599af9b6b22")
+set(_zstd_owned_decoder_v06_original
+    "704b561f891236887ef6eb5bbe7ddf36165bc9b7a6fe35f6beb8e76f319987d6")
+set(_zstd_owned_decoder_v07_original
+    "0385d8da21f32d780c02799786bef3491d00f7f06abdda340accd7aab2137adb")
+set(_zstd_owned_decoder_v05_patched
+    "685f92d15a05449968582c2c26f0a9e9c0dbe67b790505ebbc9b0a2505bd22b9")
+set(_zstd_owned_decoder_v06_patched
+    "e4999d497f6dfe2d6f172fdd9ab893d384cea39af4f49c26c46ca72100dd4b7e")
+set(_zstd_owned_decoder_v07_patched
+    "12b3146b9e594fde1cbdd401975a04a27790c547960e196a0fcc3ae7699bbbc1")

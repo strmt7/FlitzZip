@@ -311,6 +311,41 @@ foreach(version IN ITEMS v05 v06 v07)
 endforeach()
 superzip_patch_zstd_legacy("${previous_dictionary}")
 
+# Migrate the exact previously published canonical decoder cache into
+# independent history ownership. This fixture is reconstructed from immutable
+# provenance; no unsafe historical implementation is copied into a tracked
+# source fixture.
+prepare_fixture(previous-decoder-owner previous_decoder_owner)
+foreach(
+  part IN
+  ITEMS LegacyOwnedBuffers
+        DictionaryEvaluation
+        TableGeometry
+        CoverWorkGroup
+        AlgorithmProgress
+        HeaderComponents
+        LegacyOwnedDecoder)
+  include("${REPO_ROOT}/cmake/Zstd${part}.cmake")
+endforeach()
+superzip_patch_zstd_base("${previous_decoder_owner}")
+superzip_patch_zstd_legacy_owned_buffers("${previous_decoder_owner}")
+superzip_patch_zstd_dictionary_evaluation("${previous_decoder_owner}")
+superzip_patch_zstd_table_geometry("${previous_decoder_owner}")
+superzip_patch_zstd_work_group("${previous_decoder_owner}")
+superzip_patch_zstd_algorithm_progress("${previous_decoder_owner}")
+superzip_patch_zstd_header_components("${previous_decoder_owner}")
+foreach(version IN ITEMS v05 v06 v07)
+  set(_owner_key "_zstd_owned_decoder_${version}")
+  file(SHA256 "${previous_decoder_owner}/lib/legacy/zstd_${version}.c"
+       decoder_owner_hash)
+  if(NOT decoder_owner_hash STREQUAL "${${_owner_key}_original}")
+    message(
+      FATAL_ERROR
+        "Previous canonical decoder ownership fixture identity mismatch")
+  endif()
+endforeach()
+superzip_patch_zstd_legacy("${previous_decoder_owner}")
+
 prepare_fixture(previous-allocator previous_allocator)
 superzip_patch_zstd_legacy("${previous_allocator}")
 set(_previous_allocator_source "${previous_allocator}/lib/common/allocations.h")
@@ -493,6 +528,12 @@ foreach(boundary IN LISTS BOUNDARIES)
   if(NOT "${before_${key}}" STREQUAL migrated_dictionary)
     message(
       FATAL_ERROR "Previous dictionary migration differs from fresh source")
+  endif()
+  file(SHA256 "${previous_decoder_owner}/${boundary}" migrated_decoder_owner)
+  if(NOT "${before_${key}}" STREQUAL migrated_decoder_owner)
+    message(
+      FATAL_ERROR "Previous canonical decoder ownership migration differs "
+                  "from fresh source")
   endif()
   file(SHA256 "${prior_comments}/${boundary}" migrated_comments)
   if(NOT "${before_${key}}" STREQUAL migrated_comments)

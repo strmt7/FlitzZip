@@ -95,6 +95,34 @@ int sz_legacy_result_is_error(size_t result);
 /* Purpose: Verify malformed-block history handling in canonical v0.7; no inputs, returns one for preserved history. */
 int sz_legacy_v07_block_error_history(void);
 
+typedef struct {
+    void* (*allocate)(void*, size_t);
+    void (*release)(void*, void*);
+    void* opaque;
+} sz_legacy_allocator;
+
+/* Purpose: Prepare an independently owned production decoder for source-lifetime tests.
+ * Inputs: Shipped version, complete dictionary/raw-literal extents and optional v07 destination callbacks.
+ * Outputs: Complete prepared ownership or NULL after matching rollback. */
+void* sz_legacy_prepare_owned(unsigned version, const void* dictionary, size_t dictionary_bytes, const void* literals,
+                              size_t literal_bytes, sz_legacy_allocator allocator);
+
+/* Purpose: Release a raw prepared production decoder. Inputs: Exact version and context or NULL.
+ * Outputs: Matching complete owner-tree destruction. */
+void sz_legacy_free_owned(void* context, unsigned version);
+
+/* Purpose: Read actual prepared history/literals through the canonical sequence helper.
+ * Inputs: Shipped version, exclusive context, complete initialized prefix/output extents and sequence geometry.
+ * Outputs: Native bytes or error, with no alternate decoding. */
+size_t sz_legacy_read_owned(unsigned version, void* context, void* destination, size_t capacity, size_t prefix,
+                            size_t literal_length, size_t match_length, size_t offset);
+
+/* Purpose: Exercise a prepared clone through the real one-shot entry point under allocation faults.
+ * Inputs: Exclusive context, complete dictionary/frame/input/output extents and prearranged allocator failure.
+ * Outputs: Unchanged production byte/error result. */
+size_t sz_legacy_clone_decode(unsigned version, void* context, void* destination, size_t capacity,
+                              const void* dictionary, size_t dictionary_bytes, const void* source, size_t source_bytes);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,6 +1,87 @@
 #include "fault_allocator.h"
 #include "legacy/zstd_legacy.h"
 #include "common/allocations.h"
+#include "ZstdLegacyBuffers.h"
+
+#define SZ_DECLARE_OWNED_PROBES(version)                                                                               \
+    void* sz_legacy_##version##_prepare_owned(const void*, size_t, const void*, size_t, ZBUFF_bufferAllocator);        \
+    size_t sz_legacy_##version##_read_owned(void*, void*, size_t, size_t, size_t, size_t, size_t);                     \
+    size_t sz_legacy_##version##_clone_decode(void*, void*, size_t, const void*, size_t, const void*, size_t)
+SZ_DECLARE_OWNED_PROBES(v05);
+SZ_DECLARE_OWNED_PROBES(v06);
+SZ_DECLARE_OWNED_PROBES(v07);
+#undef SZ_DECLARE_OWNED_PROBES
+
+/* Purpose: Prepare actual raw contexts while keeping version-specific C types in canonical translation units.
+ * Inputs: Shipped version, full dictionary/literal geometry and optional v07 destination callbacks.
+ * Outputs: Independent prepared ownership or NULL with no alternate parser. */
+void* sz_legacy_prepare_owned(unsigned version, const void* dictionary, size_t dictionary_bytes, const void* literals,
+                              size_t literal_bytes, sz_legacy_allocator allocator) {
+    ZBUFF_bufferAllocator const memory = {allocator.allocate, allocator.release, allocator.opaque};
+    switch (version) {
+    case 5:
+        return sz_legacy_v05_prepare_owned(dictionary, dictionary_bytes, literals, literal_bytes, memory);
+    case 6:
+        return sz_legacy_v06_prepare_owned(dictionary, dictionary_bytes, literals, literal_bytes, memory);
+    case 7:
+        return sz_legacy_v07_prepare_owned(dictionary, dictionary_bytes, literals, literal_bytes, memory);
+    default:
+        return NULL;
+    }
+}
+
+/* Purpose: Release a raw context through the same historical API that constructed it.
+ * Inputs: A raw owned context or NULL and its shipped version. Outputs: Matching complete release. */
+void sz_legacy_free_owned(void* context, unsigned version) {
+    switch (version) {
+    case 5:
+        ZSTDv05_freeDCtx(context);
+        break;
+    case 6:
+        ZSTDv06_freeDCtx(context);
+        break;
+    case 7:
+        ZSTDv07_freeDCtx(context);
+        break;
+    }
+}
+
+/* Purpose: Dispatch a canonical prepared sequence without rewriting any result.
+ * Inputs: Shipped version, live context and complete sequence geometry. Outputs: Native bytes or error. */
+size_t sz_legacy_read_owned(unsigned version, void* context, void* destination, size_t capacity, size_t prefix,
+                            size_t literal_length, size_t match_length, size_t offset) {
+    switch (version) {
+    case 5:
+        return sz_legacy_v05_read_owned(context, destination, capacity, prefix, literal_length, match_length, offset);
+    case 6:
+        return sz_legacy_v06_read_owned(context, destination, capacity, prefix, literal_length, match_length, offset);
+    case 7:
+        return sz_legacy_v07_read_owned(context, destination, capacity, prefix, literal_length, match_length, offset);
+    default:
+        return ERROR(GENERIC);
+    }
+}
+
+/* Purpose: Dispatch the actual prepared-frame clone entry point under bounded allocator faults.
+ * Inputs: Shipped version, live destination context and complete dictionary/frame/output extents.
+ * Outputs: Native byte/error identity with no alternate decoder implementation. */
+size_t sz_legacy_clone_decode(unsigned version, void* context, void* destination, size_t capacity,
+                              const void* dictionary, size_t dictionary_bytes, const void* source,
+                              size_t source_bytes) {
+    switch (version) {
+    case 5:
+        return sz_legacy_v05_clone_decode(context, destination, capacity, dictionary, dictionary_bytes, source,
+                                          source_bytes);
+    case 6:
+        return sz_legacy_v06_clone_decode(context, destination, capacity, dictionary, dictionary_bytes, source,
+                                          source_bytes);
+    case 7:
+        return sz_legacy_v07_clone_decode(context, destination, capacity, dictionary, dictionary_bytes, source,
+                                          source_bytes);
+    default:
+        return ERROR(GENERIC);
+    }
+}
 
 size_t sz_legacy_v05_sequence(void*, size_t, size_t, const void*, size_t, const void*, size_t, size_t, size_t, size_t);
 size_t sz_legacy_v06_sequence(void*, size_t, size_t, const void*, size_t, const void*, size_t, size_t, size_t, size_t);
