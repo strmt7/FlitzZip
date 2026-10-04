@@ -1,3 +1,24 @@
+# Purpose: Validate executable safety requirements against their actual sources.
+# Inputs: RepoRoot and path/token/diagnostic triples identify required boundaries.
+# Outputs: Rejects missing source or tokens; comments cannot satisfy executable dispatch.
+function Assert-ZstdSourceRequirement {
+    param([string]$RepoRoot, [object[]]$Requirements)
+
+    foreach ($requirement in $Requirements) {
+        $path = Join-Path $RepoRoot $requirement[0]
+        $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+        $code = [regex]::Replace($text, '(?s)/\*.*?\*/|(?m)//[^\r\n]*', '')
+        $present = $code.Contains($requirement[1])
+        if ($requirement[0] -eq 'cmake/PatchZstdLegacy.cmake' -and $requirement[2] -like '*dispatch') {
+            $call = '(?m)^\s*' + [regex]::Escape($requirement[1]) + '\s*$'
+            $present = [regex]::IsMatch($code, $call)
+        }
+        if (-not $present) {
+            throw "Zstandard rewrite policy missing $($requirement[2]): $($requirement[0])"
+        }
+    }
+}
+
 # Purpose: Reject recurrence of the concrete Zstandard source defects repaired here.
 # Inputs: RepoRoot owns the patch fragments and their production-facing regressions.
 # Outputs: Throws with the missing safety boundary; this static guard does not replace native tests or SAST.
@@ -5,6 +26,10 @@ function Assert-ZstdRewritePolicy {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
     $requirements = @(
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_header_components("${source_dir}")', 'guarded header component dispatch'),
+        @('cmake/ZstdHeaderComponents.cmake', 'if(NOT component_hash STREQUAL "${${key}_${part}_hash}")', 'complete header component identity'),
+        @('cmake/ZstdHeaderComponents.cmake', 'if(EXISTS "${temporary}" OR EXISTS "${raw}")', 'header interrupted publication rejection'),
+        @('tests/zstd/headers/header_contract.c', '#define XXH_INLINE_ALL', 'late hash implementation opt-in'),
         @('cmake/ZstdAlgorithmProgress.cmake', 'int prefixSearchComplete = 0;', 'match budget and termination separation'),
         @('cmake/ZstdAlgorithmProgress.cmake', '&& !prefixSearchComplete)', 'match completed-prefix dictionary gate'),
         @('cmake/ZstdSuffixRanks.c', 'if (suffix < 0 || suffix >= count)', 'suffix rank index extent'),
@@ -98,21 +123,7 @@ function Assert-ZstdRewritePolicy {
         $requirements += ,@('tests/cpp/test_zstd_legacy_failures.cpp', "TEST_CASE(zstd_legacy_v${version}_stream_output_allocation_failure)", "v$version allocation failure regression")
         $requirements += ,@('tests/cpp/test_zstd_legacy_failures.cpp', "TEST_CASE(zstd_legacy_v${version}_stream_growth_preserves_buffers)", "v$version replacement ownership regression")
     }
-    foreach ($requirement in $requirements) {
-        $path = Join-Path $RepoRoot $requirement[0]
-        $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
-        # Safety boundaries must exist in executable source, not only in explanatory comments.
-        $code = [regex]::Replace($text, '(?s)/\*.*?\*/|(?m)//[^\r\n]*', '')
-        $present = $code.Contains($requirement[1])
-        if ($requirement[0] -eq 'cmake/PatchZstdLegacy.cmake' -and $requirement[2] -like '*dispatch') {
-            # A comment retaining the call text cannot stand in for an executable dispatch line.
-            $call = '(?m)^\s*' + [regex]::Escape($requirement[1]) + '\s*$'
-            $present = [regex]::IsMatch($code, $call)
-        }
-        if (-not $present) {
-            throw "Zstandard rewrite policy missing $($requirement[2]): $($requirement[0])"
-        }
-    }
+    Assert-ZstdSourceRequirement -RepoRoot $RepoRoot -Requirements $requirements
     $public = Get-Content -LiteralPath (Join-Path $RepoRoot 'cmake/ZstdLegacyPublicStream.c') -Raw
     $shipped = [regex]::Replace($public, '(?ms)^#if \(ZSTD_LEGACY_SUPPORT <= 4\).*?^#endif\s*', '')
     $shipped = [regex]::Replace($shipped, '(?s)/\*.*?\*/|(?m)//[^\r\n]*', '')

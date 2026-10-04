@@ -512,6 +512,12 @@ tools\package.ps1 -Configuration Release
 - Keep algorithm work budgets separate from termination decisions. Preserve
   comparison consumption and rank ordering with independent consumer oracles;
   changing loop syntax alone does not establish a repair.
+- Headers with late opt-in declarations or implementation must preserve every
+  supported inclusion phase. Give declaration and implementation components
+  complete guards, keep configuration dispatch separate, and test public-first,
+  late opt-in and repeated inclusion in C and C++. Bind derived components to
+  exact source identities; missing, altered or interrupted components must fail
+  configuration. Keep every executable component within scanner coverage.
 - Scope test-owned file streams and handles before removing their directories
   on Windows. Fix a proven lifetime conflict rather than adding cleanup retries,
   weakening assertions, or changing file-sharing policy to conceal it.

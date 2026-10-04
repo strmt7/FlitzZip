@@ -2,10 +2,23 @@
 # actual_hash identifies complete source bytes. Outputs: Returns only a known
 # predecessor or an empty result; never accepts drift.
 function(superzip_zstd_owned_predecessor actual_hash output)
+  set(property "_SUPERZIP_ZSTD_PREDECESSOR_${actual_hash}")
+  get_property(
+    known GLOBAL
+    PROPERTY "${property}"
+    SET)
+  if(known)
+    get_property(predecessor GLOBAL PROPERTY "${property}")
+    set(${output}
+        "${predecessor}"
+        PARENT_SCOPE)
+    return()
+  endif()
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdDictionaryEvaluation.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdTableGeometry.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCoverWorkGroup.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdAlgorithmProgress.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdHeaderComponents.cmake")
   set(predecessor "")
   if(actual_hash STREQUAL _zstd_dictionary_evaluation_patched)
     set(predecessor "${_zstd_dictionary_evaluation_original}")
@@ -22,6 +35,12 @@ function(superzip_zstd_owned_predecessor actual_hash output)
       set(predecessor "${${key}_original}")
     endif()
   endforeach()
+  foreach(flavor IN ITEMS zstd zdict fse xxhash)
+    set(key "_zstd_header_component_${flavor}")
+    if(actual_hash STREQUAL "${${key}_patched}")
+      set(predecessor "${${key}_original}")
+    endif()
+  endforeach()
   foreach(part IN ITEMS huffman legacy fse_header fse_builder fse_sequences)
     set(key "_zstd_table_geometry_${part}")
     if(actual_hash STREQUAL "${${key}_patched}")
@@ -34,6 +53,7 @@ function(superzip_zstd_owned_predecessor actual_hash output)
       set(predecessor "${${key}_original}")
     endif()
   endforeach()
+  set_property(GLOBAL PROPERTY "${property}" "${predecessor}")
   set(${output}
       "${predecessor}"
       PARENT_SCOPE)

@@ -4,6 +4,11 @@
 #include "common/fse.h"
 #include "common/xxhash.h"
 
+/* Optional state must remain available before a later inline namespace. */
+#define XXH_STATIC_LINKING_ONLY
+#include "common/xxhash.h"
+typedef char hash_state_was_complete[(sizeof(XXH32_state_t) > 0) ? 1 : -1];
+
 #define ZSTD_STATIC_LINKING_ONLY
 #define ZDICT_STATIC_LINKING_ONLY
 #define FSE_STATIC_LINKING_ONLY

@@ -7,6 +7,13 @@ if(NOT DEFINED REPO_ROOT)
   message(FATAL_ERROR "REPO_ROOT is required")
 endif()
 include("${REPO_ROOT}/cmake/PatchZstdLegacy.cmake")
+if(DEFINED COMPONENT_SOURCE_FILE)
+  include("${REPO_ROOT}/cmake/ZstdHeaderComponents.cmake")
+  file(READ "${COMPONENT_SOURCE_FILE}" component_content)
+  superzip_publish_zstd_header_component(
+    "${COMPONENT_OUTPUT_FILE}" "${COMPONENT_EXPECTED}" "${component_content}")
+  return()
+endif()
 if(DEFINED PATCH_SOURCE_DIR)
   superzip_patch_zstd_legacy("${PATCH_SOURCE_DIR}")
   return()
@@ -31,53 +38,86 @@ if(EXISTS "${SCRATCH}")
 endif()
 file(MAKE_DIRECTORY "${SCRATCH}")
 
-# Purpose: Extract just the patched input files into a fresh fixture. Inputs:
+# Extract the provenance archive once; mutations use separate ordinary copies
+# and cannot modify this template or one another.
+set(TEMPLATE_ROOT "${SCRATCH}/upstream")
+file(MAKE_DIRECTORY "${TEMPLATE_ROOT}")
+execute_process(
+  COMMAND
+    "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}" --
+    "zstd-1.5.7/lib/legacy/zstd_v05.c" "zstd-1.5.7/lib/legacy/zstd_legacy.h"
+    "zstd-1.5.7/lib/common/allocations.h" "zstd-1.5.7/lib/dictBuilder/cover.h"
+    "zstd-1.5.7/lib/compress/hist.h" "zstd-1.5.7/lib/legacy/zstd_v04.c"
+    "zstd-1.5.7/lib/compress/zstdmt_compress.c"
+    "zstd-1.5.7/lib/dictBuilder/cover.c"
+    "zstd-1.5.7/lib/dictBuilder/fastcover.c"
+    "zstd-1.5.7/lib/dictBuilder/zdict.c"
+    "zstd-1.5.7/lib/common/entropy_common.c" "zstd-1.5.7/lib/common/huf.h"
+    "zstd-1.5.7/lib/common/xxhash.h" "zstd-1.5.7/lib/compress/fse_compress.c"
+    "zstd-1.5.7/lib/common/fse.h"
+    "zstd-1.5.7/lib/compress/zstd_compress_sequences.c"
+    "zstd-1.5.7/lib/compress/huf_compress.c"
+    "zstd-1.5.7/lib/compress/zstd_compress.c"
+    "zstd-1.5.7/lib/compress/zstd_lazy.c"
+    "zstd-1.5.7/lib/compress/zstd_compress_internal.h"
+    "zstd-1.5.7/lib/compress/zstd_opt.c"
+    "zstd-1.5.7/lib/decompress/huf_decompress.c"
+    "zstd-1.5.7/lib/decompress/zstd_decompress_block.c"
+    "zstd-1.5.7/lib/decompress/zstd_decompress.c"
+    "zstd-1.5.7/lib/dictBuilder/divsufsort.c" "zstd-1.5.7/lib/legacy/zstd_v01.c"
+    "zstd-1.5.7/lib/legacy/zstd_v06.c" "zstd-1.5.7/lib/legacy/zstd_v02.c"
+    "zstd-1.5.7/lib/legacy/zstd_v03.c" "zstd-1.5.7/lib/legacy/zstd_v07.c"
+    "zstd-1.5.7/lib/zdict.h" "zstd-1.5.7/lib/zstd.h"
+  WORKING_DIRECTORY "${TEMPLATE_ROOT}"
+  RESULT_VARIABLE extraction_result)
+if(NOT extraction_result EQUAL 0)
+  message(FATAL_ERROR "Dependency-patch fixture extraction failed")
+endif()
+
+file(
+  GLOB_RECURSE TEMPLATE_FILES
+  RELATIVE "${TEMPLATE_ROOT}"
+  "${TEMPLATE_ROOT}/*")
+foreach(template_file IN LISTS TEMPLATE_FILES)
+  string(MAKE_C_IDENTIFIER "${template_file}" template_key)
+  file(SHA256 "${TEMPLATE_ROOT}/${template_file}" "template_${template_key}")
+endforeach()
+
+# Purpose: Copy the pinned patched-input template into a fresh fixture. Inputs:
 # name identifies a test-owned directory below scratch. Outputs: Returns that
 # fixture's source root through output; no binaries.
 function(prepare_fixture name output)
   set(root "${SCRATCH}/${name}")
-  file(MAKE_DIRECTORY "${root}")
-  execute_process(
-    COMMAND
-      "${CMAKE_COMMAND}" -E tar xf "${ARCHIVE}" --
-      "zstd-1.5.7/lib/legacy/zstd_v05.c" "zstd-1.5.7/lib/legacy/zstd_legacy.h"
-      "zstd-1.5.7/lib/common/allocations.h" "zstd-1.5.7/lib/dictBuilder/cover.h"
-      "zstd-1.5.7/lib/compress/hist.h" "zstd-1.5.7/lib/legacy/zstd_v04.c"
-      "zstd-1.5.7/lib/compress/zstdmt_compress.c"
-      "zstd-1.5.7/lib/dictBuilder/cover.c"
-      "zstd-1.5.7/lib/dictBuilder/fastcover.c"
-      "zstd-1.5.7/lib/dictBuilder/zdict.c"
-      "zstd-1.5.7/lib/common/entropy_common.c" "zstd-1.5.7/lib/common/huf.h"
-      "zstd-1.5.7/lib/common/xxhash.h" "zstd-1.5.7/lib/compress/fse_compress.c"
-      "zstd-1.5.7/lib/common/fse.h"
-      "zstd-1.5.7/lib/compress/zstd_compress_sequences.c"
-      "zstd-1.5.7/lib/compress/huf_compress.c"
-      "zstd-1.5.7/lib/compress/zstd_compress.c"
-      "zstd-1.5.7/lib/compress/zstd_lazy.c"
-      "zstd-1.5.7/lib/compress/zstd_compress_internal.h"
-      "zstd-1.5.7/lib/compress/zstd_opt.c"
-      "zstd-1.5.7/lib/decompress/huf_decompress.c"
-      "zstd-1.5.7/lib/decompress/zstd_decompress_block.c"
-      "zstd-1.5.7/lib/decompress/zstd_decompress.c"
-      "zstd-1.5.7/lib/dictBuilder/divsufsort.c"
-      "zstd-1.5.7/lib/legacy/zstd_v01.c" "zstd-1.5.7/lib/legacy/zstd_v06.c"
-      "zstd-1.5.7/lib/legacy/zstd_v02.c" "zstd-1.5.7/lib/legacy/zstd_v03.c"
-      "zstd-1.5.7/lib/legacy/zstd_v07.c" "zstd-1.5.7/lib/zdict.h"
-    WORKING_DIRECTORY "${root}"
-    RESULT_VARIABLE extraction_result)
-  if(NOT extraction_result EQUAL 0)
-    message(FATAL_ERROR "Dependency-patch fixture extraction failed")
+  if(EXISTS "${root}")
+    message(FATAL_ERROR "Refusing a preexisting dependency-patch fixture")
   endif()
+  file(MAKE_DIRECTORY "${root}")
+  file(COPY "${TEMPLATE_ROOT}/zstd-1.5.7" DESTINATION "${root}")
   set(${output}
       "${root}/zstd-1.5.7"
       PARENT_SCOPE)
 endfunction()
 
+# Purpose: Isolate a component publisher's failure without repeating unrelated
+# decoder transformations. Inputs: Unique name within this test's scratch.
+# Outputs: Returns a new component-only fixture with no upstream source copies.
+function(prepare_component_fixture name output)
+  set(root "${SCRATCH}/${name}")
+  if(EXISTS "${root}")
+    message(FATAL_ERROR "Refusing a preexisting component fixture")
+  endif()
+  file(MAKE_DIRECTORY "${root}/lib/common")
+  set(${output}
+      "${root}"
+      PARENT_SCOPE)
+endfunction()
+
 # Purpose: Require a child patch to reject one invalid fixture without
 # overwrite. Inputs: root owns the fixture; cause is the exact expected failure
-# diagnostic; optional third argument selects the relative source boundary.
-# Outputs: Fails if the child succeeds, rejects for another reason, or changes
-# the selected source.
+# diagnostic; optional third argument selects the relative source boundary;
+# optional fourth selects a canonical component for publisher tests. Outputs:
+# Fails if the child succeeds, rejects for another reason, or changes the
+# selected source.
 function(require_rejection root cause)
   if(ARGC GREATER 2)
     set(relative "${ARGV2}")
@@ -86,9 +126,19 @@ function(require_rejection root cause)
   endif()
   set(source "${root}/${relative}")
   file(SHA256 "${source}" before)
+  set(component_arguments)
+  if(ARGC GREATER 3)
+    file(SHA256 "${ARGV3}" component_expected)
+    string(REGEX REPLACE "\\.superzip-component(\\.raw)?$" "" component_output
+                         "${source}")
+    list(APPEND component_arguments "-DCOMPONENT_SOURCE_FILE=${ARGV3}"
+         "-DCOMPONENT_OUTPUT_FILE=${component_output}"
+         "-DCOMPONENT_EXPECTED=${component_expected}")
+  endif()
   execute_process(
-    COMMAND "${CMAKE_COMMAND}" "-DREPO_ROOT=${REPO_ROOT}"
-            "-DPATCH_SOURCE_DIR=${root}" -P "${CMAKE_CURRENT_LIST_FILE}"
+    COMMAND
+      "${CMAKE_COMMAND}" "-DREPO_ROOT=${REPO_ROOT}" "-DPATCH_SOURCE_DIR=${root}"
+      ${component_arguments} -P "${CMAKE_CURRENT_LIST_FILE}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE error)
@@ -328,7 +378,19 @@ file(SHA256 "${fresh}/lib/dictBuilder/cover.c" fresh_cover_hash)
 if(NOT migrated_cover_hash STREQUAL fresh_cover_hash)
   message(FATAL_ERROR "COVER cleanup migration differs from fresh repair")
 endif()
+set(COMPONENT_BOUNDARIES
+    "lib/zstd_public.h"
+    "lib/zstd_static.h"
+    "lib/zdict_public.h"
+    "lib/zdict_static.h"
+    "lib/common/fse_public.h"
+    "lib/common/fse_static.h"
+    "lib/common/xxhash_public.h"
+    "lib/common/xxhash_static.h"
+    "lib/common/xxhash_implementation.h")
 set(BOUNDARIES
+    ${COMPONENT_BOUNDARIES}
+    "lib/zstd.h"
     "lib/common/fse.h"
     "lib/compress/zstd_compress_sequences.c"
     "lib/legacy/zstd_v05.c"
@@ -444,6 +506,9 @@ foreach(boundary IN LISTS BOUNDARIES)
   if(NOT "${before_${key}}" STREQUAL repeated)
     message(FATAL_ERROR "Dependency patch is not idempotent: ${boundary}")
   endif()
+  if(boundary IN_LIST COMPONENT_BOUNDARIES)
+    continue()
+  endif()
   prepare_fixture("drift-${key}" drift)
   file(APPEND "${drift}/${boundary}" "\n/* fixture source drift */\n")
   require_rejection("${drift}" "Zstandard patch source identity mismatch"
@@ -464,6 +529,55 @@ foreach(boundary IN LISTS BOUNDARIES)
       message(FATAL_ERROR "Dependency patch overwrote an incomplete patch")
     endif()
   endforeach()
+endforeach()
+
+foreach(component IN LISTS COMPONENT_BOUNDARIES)
+  # Missing and altered generated components must reject an already published
+  # graph. Monitor the dispatcher during absence, then the altered component.
+  file(RENAME "${fresh}/${component}" "${fresh}/${component}.missing")
+  require_rejection("${fresh}" "Missing Zstandard header component"
+                    "lib/zstd.h")
+  file(RENAME "${fresh}/${component}.missing" "${fresh}/${component}")
+  file(READ "${fresh}/${component}" original_component)
+  file(APPEND "${fresh}/${component}" "\n/* fixture component drift */\n")
+  require_rejection("${fresh}" "Zstandard header component identity mismatch"
+                    "${component}")
+  file(WRITE "${fresh}/${component}.fixture" "${original_component}")
+  configure_file("${fresh}/${component}.fixture" "${fresh}/${component}" @ONLY
+                 NEWLINE_STYLE LF)
+  file(SHA256 "${fresh}/${component}" restored)
+  string(MAKE_C_IDENTIFIER "${component}" key)
+  if(NOT "${before_${key}}" STREQUAL restored)
+    message(FATAL_ERROR "Header component fixture restoration failed")
+  endif()
+
+  # Unknown components and incomplete publication must also reject the first
+  # configuration; retained evidence proves no overwrite occurred.
+  prepare_component_fixture("component-drift-${key}" drift)
+  file(WRITE "${drift}/${component}" "fixture-owned unknown component\n")
+  require_rejection("${drift}" "Zstandard header component identity mismatch"
+                    "${component}" "${fresh}/${component}")
+  foreach(phase IN ITEMS input output)
+    prepare_component_fixture("component-interrupted-${key}-${phase}"
+                              interrupted)
+    set(PARTIAL "${interrupted}/${component}.superzip-component")
+    if(phase STREQUAL "input")
+      string(APPEND PARTIAL ".raw")
+    endif()
+    file(WRITE "${PARTIAL}" "fixture-owned incomplete component\n")
+    file(RELATIVE_PATH partial_relative "${interrupted}" "${PARTIAL}")
+    require_rejection(
+      "${interrupted}" "Incomplete or concurrent Zstandard header"
+      "${partial_relative}" "${fresh}/${component}")
+  endforeach()
+endforeach()
+
+foreach(template_file IN LISTS TEMPLATE_FILES)
+  string(MAKE_C_IDENTIFIER "${template_file}" template_key)
+  file(SHA256 "${TEMPLATE_ROOT}/${template_file}" after)
+  if(NOT "${template_${template_key}}" STREQUAL after)
+    message(FATAL_ERROR "Dependency-patch test changed its source template")
+  endif()
 endforeach()
 
 file(SHA256 "${ARCHIVE}" archive_after)

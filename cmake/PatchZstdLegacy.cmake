@@ -51,6 +51,29 @@ endfunction()
 # Outputs: Returns true through output only for an explicitly linked pair;
 # unknown revisions remain subject to the writer's source identity rejection.
 function(superzip_zstd_patch_is_superseded actual_hash patched_hash output)
+  set(property "_SUPERZIP_ZSTD_PAIR_${actual_hash}_${patched_hash}")
+  get_property(
+    known GLOBAL
+    PROPERTY "${property}"
+    SET)
+  if(known)
+    get_property(recognized GLOBAL PROPERTY "${property}")
+  else()
+    superzip_zstd_calculate_superseded("${actual_hash}" "${patched_hash}"
+                                       recognized)
+    # Cache immutable metadata relationships only for this CMake process.
+    # Writers still hash actual source bytes before every admission decision.
+    set_property(GLOBAL PROPERTY "${property}" "${recognized}")
+  endif()
+  set(${output}
+      "${recognized}"
+      PARENT_SCOPE)
+endfunction()
+
+# Purpose: Calculate the exact reviewed predecessor graph for one source pair.
+# Inputs: Complete current and requested hashes from verified source/metadata.
+# Outputs: Returns only a supported graph relationship, never source content.
+function(superzip_zstd_calculate_superseded actual_hash patched_hash output)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyOwnedBuffers.cmake")
   superzip_zstd_owned_predecessor("${actual_hash}" predecessor)
   if(NOT predecessor STREQUAL "")
@@ -1048,10 +1071,12 @@ function(superzip_patch_zstd_legacy source_dir)
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdTableGeometry.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdCoverWorkGroup.cmake")
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdAlgorithmProgress.cmake")
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdHeaderComponents.cmake")
   superzip_patch_zstd_base("${source_dir}")
   superzip_patch_zstd_legacy_owned_buffers("${source_dir}")
   superzip_patch_zstd_dictionary_evaluation("${source_dir}")
   superzip_patch_zstd_table_geometry("${source_dir}")
   superzip_patch_zstd_work_group("${source_dir}")
   superzip_patch_zstd_algorithm_progress("${source_dir}")
+  superzip_patch_zstd_header_components("${source_dir}")
 endfunction()

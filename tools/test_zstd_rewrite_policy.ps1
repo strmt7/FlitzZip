@@ -32,6 +32,7 @@ function Assert-ZstdPolicyMutation {
 try {
     foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
             'cmake/ZstdDictionaryEvaluation.cmake',
+            'cmake/ZstdHeaderComponents.cmake', 'tests/zstd/headers/header_contract.c',
             'cmake/ZstdHuffmanTable.c', 'tests/cpp/test_zstd_huffman_table.cpp', 'tests/zstd/fault_allocator.cpp',
             'cmake/ZstdCoverWorkGroup.cpp', 'tests/cpp/test_zstd_work_group.cpp',
             'cmake/ZstdCoverWorkGroup.cmake',
@@ -51,6 +52,10 @@ try {
     }
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
     foreach ($mutation in @(
+            @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_header_components("${source_dir}")', '', 'guarded header component dispatch'),
+            @('cmake/ZstdHeaderComponents.cmake', 'if(NOT component_hash STREQUAL "${${key}_${part}_hash}")', 'if(FALSE)', 'complete header component identity'),
+            @('cmake/ZstdHeaderComponents.cmake', 'if(EXISTS "${temporary}" OR EXISTS "${raw}")', 'if(FALSE)', 'header interrupted publication rejection'),
+            @('tests/zstd/headers/header_contract.c', '#define XXH_INLINE_ALL', '', 'late hash implementation opt-in'),
             @('cmake/ZstdAlgorithmProgress.cmake', 'int prefixSearchComplete = 0;', 'int prefixSearchComplete;', 'match budget and termination separation'),
             @('cmake/ZstdAlgorithmProgress.cmake', '&& !prefixSearchComplete)', ')', 'match completed-prefix dictionary gate'),
             @('cmake/ZstdSuffixRanks.c', 'if (suffix < 0 || suffix >= count)', 'if (suffix < 0)', 'suffix rank index extent'),
