@@ -30,7 +30,7 @@ mode, so the product exposes the non-store levels.
 | 9 | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates full-block entropy samples. |
 
 Native SUZIP additionally offers the separate experimental
-[Neutron Star Mode](neutron-star-mode-research.md), selected by `--neutron-star`
+[Neutron star mode](neutron-star-mode-research.md), selected by `--neutron-star`
 and shown below 9 only when actual HIP capability and the required-GPU setting
 permit it. Its persisted intent and benchmark `compression_mode=neutron_star`
 identity are separate from numeric effort. The ordinary numeric-level protocol

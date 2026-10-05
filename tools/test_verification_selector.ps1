@@ -378,7 +378,8 @@ foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_ru
     Assert-Selector (Test-Workflow -Plan $scannerPlan -Name "security") "scanner changes require Linux runtime checks in the hosted security workflow: $path"
 }
 
-foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh")) {
+foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh",
+        ".github/scanner-secret-reviews.json", "third_party/upstream/nltk/source.zip")) {
     $redactionPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (-not $redactionPlan.scope.fullEscalationRequired) "secret report changes require their contracts, not product-wide tests: $path"
     Assert-Selector (Test-RequiredCommand -Plan $redactionPlan -Id "secret-report-tests") "redaction changes must execute their regressions: $path"

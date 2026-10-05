@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -52,6 +53,8 @@
 #include <system_error>
 #include <vector>
 #include <windows.h>
+#include <fcntl.h>
+#include <io.h>
 
 namespace {
 
@@ -111,6 +114,8 @@ void usage() {
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
         << kBlockSizeUsage
         << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>]\n"
+        << "  superzip_cli memory-benchmark --source-stdin --source-bytes <1-4294967295> "
+           "--source-sha256 <lowercase-hex> [--neutron-star] [--plan-only] [the same corpus options]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords] "
            "[--workers "
@@ -514,7 +519,7 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
 // Outputs: Returns operation statistics; throws for unsupported formats or backend errors.
 superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_format, const CliCompressCommand& command) {
     if (command.neutron_star && archive_format != superzip::ArchiveFormat::SuperZip) {
-        throw superzip::ArchiveError("Neutron Star Mode is available only for native SUZIP creation");
+        throw superzip::ArchiveError("Neutron star mode is available only for native SUZIP creation");
     }
     if (command.verify_after_write && archive_format != superzip::ArchiveFormat::SuperZip &&
         archive_format != superzip::ArchiveFormat::Zip) {
@@ -858,7 +863,7 @@ int run_extract_command(const std::vector<std::string>& args) {
 }
 
 // Purpose: Inspect corpus extent without allocating or authenticating its payload.
-// Inputs: User-selected regular file; the 1..64 MiB corpus boundary applies.
+// Inputs: User-selected regular file; the CLI's 32-bit extent representation applies before memory admission.
 // Outputs: Returns checked metadata bytes or throws; this does not verify the source SHA-256.
 std::size_t memory_benchmark_corpus_size(const std::filesystem::path& path) {
     if (!std::filesystem::is_regular_file(path)) {
@@ -867,7 +872,7 @@ std::size_t memory_benchmark_corpus_size(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     const auto length = input.tellg();
     if (!input || length <= 0 || length > static_cast<std::streamoff>(superzip::cli::kMemoryBenchmarkCorpusMaxBytes)) {
-        throw superzip::ArchiveError("benchmark corpus must contain 1..67108864 bytes");
+        throw superzip::ArchiveError("benchmark corpus must contain 1..4294967295 bytes within current host headroom");
     }
     return static_cast<std::size_t>(length);
 }
@@ -876,21 +881,44 @@ std::size_t memory_benchmark_corpus_size(const std::filesystem::path& path) {
 // Inputs: User-selected file and its checked metadata extent; host headroom applies before allocation.
 // Outputs: Owns exact bytes or throws on invalid size/read; no payload is written to storage.
 std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path& path, std::size_t size) {
-    if (size == 0U || size > superzip::cli::kMemoryBenchmarkCorpusMaxBytes) {
-        throw superzip::ArchiveError("benchmark corpus extent is outside resource limits");
-    }
-    if (size > superzip::safe_host_memory_growth_bytes(superzip::query_host_memory_snapshot()) / 2U) {
-        throw superzip::ArchiveError("benchmark corpus exceeds current host memory headroom");
-    }
     std::ifstream input(path, std::ios::binary);
-    std::vector<std::byte> bytes(size);
-    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    const bool complete = static_cast<bool>(input);
-    const auto extra = input.peek();
-    if (!complete || input.bad() || extra != std::char_traits<char>::eof()) {
-        throw superzip::ArchiveError("benchmark corpus read failed or its size changed");
+    return superzip::cli::load_memory_benchmark_stream(input, size);
+}
+
+struct MemoryBenchmarkSourceArguments {
+    std::optional<std::filesystem::path> file;
+    bool stdin_requested = false;
+    std::optional<std::uint32_t> bytes;
+};
+
+// Purpose: Parse exact RAM-source declarations independently of codec and generated-workload options.
+// Inputs: Full argument vector, current cursor and command-local source/options state.
+// Outputs: Consumes a recognized source option; rejects duplicate declarations; leaves other options untouched.
+bool parse_memory_benchmark_source_argument(const std::vector<std::string>& args, std::size_t& i,
+                                            MemoryBenchmarkSourceArguments& source,
+                                            superzip::cli::MemoryBenchmarkOptions& options) {
+    if (args[i] == "--source-file") {
+        if (source.file) {
+            throw superzip::ArchiveError("duplicate --source-file");
+        }
+        const auto value = require_arg(args, i, "--source-file");
+        source.file = std::filesystem::path(std::u8string(value.begin(), value.end()));
+    } else if (args[i] == "--source-stdin") {
+        if (source.stdin_requested) {
+            throw superzip::ArchiveError("duplicate --source-stdin");
+        }
+        source.stdin_requested = true;
+    } else if (args[i] == "--source-bytes") {
+        if (source.bytes) {
+            throw superzip::ArchiveError("duplicate --source-bytes");
+        }
+        source.bytes = require_u32_arg(args, i, "--source-bytes");
+    } else if (args[i] == "--source-sha256") {
+        options.expected_source_sha256 = require_arg(args, i, "--source-sha256");
+    } else {
+        return false;
     }
-    return bytes;
+    return true;
 }
 
 // Purpose: Execute `memory-benchmark` after parsing generated or exact corpus options.
@@ -901,22 +929,17 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
     bool plan_only = false;
     bool level_requested = false;
     bool generated_geometry = false;
-    std::optional<std::filesystem::path> source_file;
+    MemoryBenchmarkSourceArguments source_arguments;
+    // Parsing: source declarations are separate from generated geometry and codec policy.
     for (std::size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "--size-mib") {
+        if (parse_memory_benchmark_source_argument(args, i, source_arguments, options)) {
+            continue;
+        } else if (args[i] == "--size-mib") {
             generated_geometry = true;
             options.size_mib = require_u32_arg(args, i, "--size-mib");
         } else if (args[i] == "--profile") {
             generated_geometry = true;
             options.profile = require_arg(args, i, "--profile");
-        } else if (args[i] == "--source-file") {
-            if (source_file) {
-                throw superzip::ArchiveError("duplicate --source-file");
-            }
-            const auto value = require_arg(args, i, "--source-file");
-            source_file = std::filesystem::path(std::u8string(value.begin(), value.end()));
-        } else if (args[i] == "--source-sha256") {
-            options.expected_source_sha256 = require_arg(args, i, "--source-sha256");
         } else if (args[i] == "--require-gpu") {
             options.require_gpu = true;
         } else if (args[i] == "--force-cpu") {
@@ -948,15 +971,43 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
         options.require_gpu = true;
         options.compression_level = superzip::kMaxCompressionLevel;
     }
+    // Ownership: the snapshot outlives every codec and bytewise-readback worker.
     std::vector<std::byte> source;
-    if (source_file) {
+    if (source_arguments.stdin_requested) {
+        if (source_arguments.file || generated_geometry || !source_arguments.bytes ||
+            options.expected_source_sha256.empty()) {
+            throw superzip::ArchiveError(
+                "--source-stdin requires --source-bytes and --source-sha256; excludes file/generated input");
+        }
+        if (*source_arguments.bytes == 0U || *source_arguments.bytes > superzip::cli::kMemoryBenchmarkCorpusMaxBytes) {
+            throw superzip::ArchiveError(
+                "benchmark corpus must contain 1..4294967295 bytes within current host headroom");
+        }
+        options.corpus_bytes = *source_arguments.bytes;
+        options.profile = "Corpus";
+        if (!plan_only) {
+            (void)superzip::cli::plan_memory_benchmark(options);
+            // Binary mode preserves CRLF, NUL and Ctrl-Z in this dedicated CLI process.
+            if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+                throw superzip::ArchiveError("could not select binary benchmark stdin");
+            }
+            source = superzip::cli::load_memory_benchmark_stream(std::cin, *source_arguments.bytes);
+            options.source = source;
+        }
+    } else if (source_arguments.bytes) {
+        throw superzip::ArchiveError("--source-bytes requires --source-stdin");
+    }
+    if (source_arguments.file) {
         if (generated_geometry || options.expected_source_sha256.empty()) {
             throw superzip::ArchiveError(
                 "--source-file requires --source-sha256 and excludes --size-mib and --profile");
         }
-        options.corpus_bytes = memory_benchmark_corpus_size(*source_file);
+        options.corpus_bytes = memory_benchmark_corpus_size(*source_arguments.file);
+        options.profile = "Corpus";
         if (!plan_only) {
-            source = load_memory_benchmark_corpus(*source_file, static_cast<std::size_t>(options.corpus_bytes));
+            (void)superzip::cli::plan_memory_benchmark(options);
+            source =
+                load_memory_benchmark_corpus(*source_arguments.file, static_cast<std::size_t>(options.corpus_bytes));
             options.source = source;
         }
         options.profile = "Corpus";

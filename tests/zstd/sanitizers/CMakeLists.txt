@@ -95,6 +95,6 @@ set_tests_properties(
   superzip_zstd_bounds_tests superzip_zstd_cover_selection_tests
   superzip_zstd_legacy_tests PROPERTIES DEPENDS
                                         superzip_zstd_asan_qualification)
-set_tests_properties(superzip_zstd_legacy_patch PROPERTIES TIMEOUT 120)
+# Retain the shared composite/child deadlines from ZstdTests.cmake.
 # This standalone project has no product, HIP backend, installer or packaging
 # targets.

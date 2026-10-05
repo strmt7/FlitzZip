@@ -117,7 +117,8 @@ execute_process(
     "zstd-1.5.7/lib/legacy/zstd_v03.c" "zstd-1.5.7/lib/legacy/zstd_v07.c"
     "zstd-1.5.7/lib/zdict.h" "zstd-1.5.7/lib/zstd.h"
   WORKING_DIRECTORY "${TEMPLATE_ROOT}"
-  RESULT_VARIABLE extraction_result)
+  RESULT_VARIABLE extraction_result
+  TIMEOUT 20)
 if(NOT extraction_result EQUAL 0)
   message(FATAL_ERROR "Dependency-patch fixture extraction failed")
 endif()
@@ -189,7 +190,8 @@ function(require_rejection root cause)
       ${component_arguments} -P "${CMAKE_CURRENT_LIST_FILE}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
-    ERROR_VARIABLE error)
+    ERROR_VARIABLE error
+    TIMEOUT 30)
   if(result EQUAL 0 OR NOT "${output}${error}" MATCHES "${cause}")
     message(
       FATAL_ERROR "Invalid fixture was not rejected as expected: ${error}")

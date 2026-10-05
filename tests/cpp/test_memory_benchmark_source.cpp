@@ -9,6 +9,7 @@
 #include <array>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -45,6 +46,48 @@ std::string parallel_validation_error(std::span<const std::byte> bytes, std::uin
     return {};
 }
 }  // namespace
+
+// Purpose: Preserve all binary stream bytes instead of applying text or EOF-marker translation.
+// Inputs: Every byte value, including NUL, CRLF and Ctrl-Z, through an exact nonempty source stream.
+// Outputs: Requires exact extent and byte equality before any codec is involved.
+TEST_CASE(memory_benchmark_stream_preserves_binary_bytes) {
+    std::string source;
+    for (unsigned int value = 0U; value < 256U; ++value) {
+        source.push_back(static_cast<char>(value));
+    }
+    std::istringstream input(source, std::ios::binary);
+    const auto bytes = superzip::cli::load_memory_benchmark_stream(input, source.size());
+    REQUIRE_EQ(bytes.size(), source.size());
+    for (std::size_t index = 0U; index < bytes.size(); ++index) {
+        REQUIRE_EQ(std::to_integer<unsigned int>(bytes[index]), static_cast<unsigned int>(index));
+    }
+}
+
+// Purpose: Reject undeclared, missing or failed input without accepting an incomplete snapshot.
+// Inputs: Zero/oversized declarations, truncated/trailing payloads and a stream with a read error.
+// Outputs: Every invalid source raises ArchiveError; no oversized fixture allocation is needed.
+TEST_CASE(memory_benchmark_stream_rejects_invalid_extents_and_reads) {
+    for (const auto size :
+         {std::size_t{0}, std::size_t{1}, std::size_t{3}, superzip::cli::kMemoryBenchmarkCorpusMaxBytes + 1U}) {
+        std::istringstream input("ab", std::ios::binary);
+        bool rejected = false;
+        try {
+            (void)superzip::cli::load_memory_benchmark_stream(input, size);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+    }
+    std::istringstream failed("ab", std::ios::binary);
+    failed.setstate(std::ios::badbit);
+    bool rejected = false;
+    try {
+        (void)superzip::cli::load_memory_benchmark_stream(failed, 2U);
+    } catch (const superzip::ArchiveError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
 
 // Purpose: Check source consistency across profile boundaries, unaligned chunks and reference-buffer tails.
 // Inputs: All seven profiles and a complete source exceeding the long-record motif length.

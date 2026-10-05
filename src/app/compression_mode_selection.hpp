@@ -27,7 +27,7 @@ inline bool normalize_neutron_selection(UiState& state, bool native_format) {
         return false;
     }
     state.compression_level_index = kCompressionLevelOptionCount - 1;
-    state.status = "Neutron Star Mode requires SUZIP, a compatible AMD GPU, and AMD HIP required; level 9 selected";
+    state.status = "Neutron star mode requires SUZIP, a compatible AMD GPU, and AMD HIP required; level 9 selected";
     return true;
 }
 

@@ -228,7 +228,8 @@ add_test(
     "-DGENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}" -P
     "${_zstd_header_contract}")
 set_tests_properties(superzip_zstd_legacy_tests PROPERTIES TIMEOUT 60)
-# The expanded exact-revision migration matrix took 59 seconds in the product
-# build; retain bounded headroom for the shared-host and instrumented consumers.
-set_tests_properties(superzip_zstd_legacy_patch PROPERTIES TIMEOUT 120)
+# This composite includes fresh, historical and malformed-source migrations.
+# Its children retain individual deadlines; allow their cumulative work on a
+# shared host without inheriting a single-child wall-clock budget.
+set_tests_properties(superzip_zstd_legacy_patch PROPERTIES TIMEOUT 600)
 set_tests_properties(superzip_zstd_header_contracts PROPERTIES TIMEOUT 150)

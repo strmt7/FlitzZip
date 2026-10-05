@@ -1,10 +1,12 @@
 #include "cli/memory_benchmark_source.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
+#include "core/host_memory_budget.hpp"
 
 #include <algorithm>
 #include <array>
 #include <future>
+#include <istream>
 #include <string>
 
 namespace superzip::cli {
@@ -95,6 +97,26 @@ const std::vector<std::byte>& long_sparse_record_motif() {
 }
 
 }  // namespace
+
+// Purpose: Own an exact source snapshot without allocating beyond corpus or current host-memory admission.
+// Inputs: Binary stream and declared extent; the caller owns transport lifetime and its deadline.
+// Outputs: Returns every original byte; rejects invalid extents, incomplete reads and undeclared trailing bytes.
+std::vector<std::byte> load_memory_benchmark_stream(std::istream& input, std::size_t size) {
+    if (size == 0U || size > kMemoryBenchmarkCorpusMaxBytes) {
+        throw ArchiveError("benchmark corpus extent is outside resource limits");
+    }
+    if (size > safe_host_memory_growth_bytes(query_host_memory_snapshot()) / 2U) {
+        throw ArchiveError("benchmark corpus exceeds current host memory headroom");
+    }
+    std::vector<std::byte> bytes(size);
+    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    const bool complete = static_cast<bool>(input);
+    const auto extra = input.peek();
+    if (!complete || input.bad() || extra != std::char_traits<char>::eof()) {
+        throw ArchiveError("benchmark corpus read failed or its size changed");
+    }
+    return bytes;
+}
 
 // Purpose: Fill a benchmark chunk with deterministic compressed-pattern or incompressible data.
 // Inputs: `buffer` is the destination, `global_offset` is its virtual file offset, `total_bytes` is the workload size,

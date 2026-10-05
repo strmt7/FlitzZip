@@ -1,8 +1,8 @@
-# Neutron Star Mode Research
+# Neutron star mode Research
 
 ## Scope And Status
 
-Neutron Star Mode is a lossless native SUZIP compression research feature.
+Neutron star mode is a lossless native SUZIP compression research feature.
 The implementation is a bounded HIP dictionary primitive with separate
 application, CLI and benchmark mode routing. Its GUI row follows the nine
 numeric efforts and requires native SUZIP, actual cached HIP availability and
@@ -111,6 +111,13 @@ graph, not a data-type heuristic or an omitted compression candidate. Active
 graphs retain the complete previous minimum-byte search.
 
 ## Further Ratio Work
+
+The [2026-10-05 ratio review](neutron-ratio-research-2026-10-05.md) evaluates
+recent lossless AI-model coding, tile-addressable ANS, reversible field
+transforms and neural predictors, with an ordered Neutron-only experiment
+sequence. [Canonical public-corpus benchmarking](neutron-public-corpus-benchmark.md)
+uses the original Canterbury bytes and the complete current Govdocs1 thread0
+inventory through the existing RAM engine and Hyperfine.
 
 The application portfolio must retain level-nine GPU candidates and select
 using complete block costs, including framing, so a stronger dictionary trial

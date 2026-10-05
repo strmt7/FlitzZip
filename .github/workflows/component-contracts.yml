@@ -28,6 +28,8 @@ on:
       - .github/workflows/security-code-scanning.yml
       - .github/requirements/**
       - .github/scanner-metadata-reviews.csv
+      - .github/scanner-secret-reviews.json
+      - third_party/upstream/nltk/**
       - .github/scanner-source-reviews.csv
       - .github/scanner-hosted-reviews.csv
       - .github/scanner-hosted-approval.csv
@@ -64,15 +66,21 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PUSH_BASE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUSH_REF: ${{ github.ref }}
         run: |
           $base = if ($env:EVENT_NAME -eq 'pull_request') { $env:PR_BASE } else { $env:PUSH_BASE }
           if ($base -and $base -notmatch '^0{40}$') {
             if ($base -notmatch '^[0-9a-f]{40}$') { throw 'Invalid comparison commit.' }
             tools/ci_tool_contracts.ps1 -BaseRef $base -HeadRef HEAD
           } elseif ($env:EVENT_NAME -eq 'push') {
-            $paths = @(git ls-files)
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate initial branch inputs.' }
-            tools/ci_tool_contracts.ps1 -ChangedPath $paths
+            if ($env:PUSH_REF -eq "refs/heads/$($env:DEFAULT_BRANCH)") {
+              $paths = @(git ls-files)
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate initial default-branch inputs.' }
+              tools/ci_tool_contracts.ps1 -ChangedPath $paths
+            } else {
+              tools/ci_tool_contracts.ps1 -InitialPush -DefaultBranch $env:DEFAULT_BRANCH -HeadRef HEAD
+            }
           } else {
             tools/ci_tool_contracts.ps1 -BaseRef HEAD~1 -HeadRef HEAD
           }

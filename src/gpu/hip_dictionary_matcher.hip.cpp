@@ -2,6 +2,7 @@
 #include "gpu/dictionary_device.hpp"
 #include "gpu/hip_codec_support.hpp"
 #include "gpu/hip_dictionary_optimal.hpp"
+#include "gpu/neutron_stage_clock.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -797,8 +798,7 @@ struct NeutronWorkspace {
 };
 
 struct NeutronRun {
-    std::optional<double> milliseconds = 0.0;
-    std::uint32_t launches = 0U;
+    NeutronStageClock<HipEventPair> clock{make_hip_event_pair("create Neutron operation events")};
     std::size_t downloaded_size_bytes = 0U;
     std::uint32_t active_segment_mask = 0U;
     std::uint32_t parse_launches = 0U;
@@ -806,18 +806,22 @@ struct NeutronRun {
 
 template <typename Kernel, typename... Args>
 // Purpose: Bound cancellation latency to one measured launch and preserve unavailable event timing.
-// Inputs: Admitted kernel/arguments, a shared stage accumulator and an optional throwing checkpoint.
-// Outputs: Synchronizes before the next launch, accumulates real event time and counts the executed kernel.
+// Inputs: Admitted kernel/arguments, an operation-owned event pair/accumulator and an optional throwing checkpoint.
+// Outputs: Synchronizes and reads timing before reusing events; counts only completed kernels.
 void run_neutron_stage(NeutronRun& run, const EncodeCheckpoint& checkpoint, Kernel kernel, unsigned int blocks,
                        Args... args) {
     if (checkpoint) {
         checkpoint();
     }
-    auto events = make_hip_event_pair("create Neutron stage events");
-    launch_measured_kernel(kernel, blocks, kThreads, 0, hipStreamPerThread, events, "launch Neutron stage", args...);
-    const auto elapsed = finish_dictionary_stage(events);
-    run.milliseconds = run.milliseconds && elapsed ? std::optional<double>{*run.milliseconds + *elapsed} : std::nullopt;
-    ++run.launches;
+    // Purpose: Dispatch one stage using the operation's borrowed timing handles.
+    // Inputs: Events remain owned by the clock; typed kernel arguments survive its synchronous completion.
+    // Outputs: Submits ordered HIP work or throws before the clock permits another dispatch.
+    run.clock.measure(
+        [&](const HipEventPair& events) {
+            launch_measured_kernel(kernel, blocks, kThreads, 0, hipStreamPerThread, events, "launch Neutron stage",
+                                   args...);
+        },
+        finish_dictionary_stage);
 }
 
 // Purpose: Execute deeper matches, exact parsing and incremental output entirely on HIP.
@@ -895,9 +899,9 @@ PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> i
             if (checkpoint) {
                 checkpoint();
             }
-            auto result =
-                finish_encoded_dictionary(workspace.output.get(), workspace.sizes.get(), sizes, packed, packed_capacity,
-                                          metadata, run.milliseconds, run.launches + 3U, run.downloaded_size_bytes);
+            auto result = finish_encoded_dictionary(workspace.output.get(), workspace.sizes.get(), sizes, packed,
+                                                    packed_capacity, metadata, run.clock.milliseconds(),
+                                                    run.clock.launches() + 3U, run.downloaded_size_bytes);
             result.telemetry.neutron_active_segment_mask = run.active_segment_mask;
             result.telemetry.neutron_parse_launches = run.parse_launches;
             workspace.release_checked();

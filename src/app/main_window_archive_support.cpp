@@ -375,7 +375,7 @@ const ArchiveNameEncodingChoice& selected_name_encoding(const UiState& state) {
 // Outputs: Returns a numeric effort label or the separate Neutron mode label.
 std::wstring compression_level_text(int index) {
     if (index == kNeutronCompressionLevelIndex) {
-        return L"Neutron Star Mode";
+        return L"Neutron star mode";
     }
     return std::to_wstring(compression_level_value(index));
 }
@@ -500,7 +500,7 @@ OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& so
                                     int compression_level, NativeCompressionMode compression_mode,
                                     const ProgressCallback& progress_callback) {
     if (compression_mode != NativeCompressionMode::Standard && archive_format != ArchiveFormat::SuperZip) {
-        throw ArchiveError("Neutron Star Mode is available only for SUZIP");
+        throw ArchiveError("Neutron star mode is available only for SUZIP");
     }
     if (verify_after_write && archive_format != ArchiveFormat::SuperZip && archive_format != ArchiveFormat::Zip) {
         throw ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");

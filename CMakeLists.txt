@@ -799,6 +799,23 @@ endif()
 
 if(SUPERZIP_BUILD_TESTS)
   enable_testing()
+  if(WIN32)
+    # This optional target exercises the same production timing owner without
+    # linking HIP or app dependencies.
+    add_executable(
+      superzip_neutron_stage_clock_contracts EXCLUDE_FROM_ALL
+      tests/cpp/test_main.cpp tests/cpp/test_neutron_stage_clock.cpp)
+    target_include_directories(superzip_neutron_stage_clock_contracts
+                               PRIVATE src tests/cpp)
+    target_compile_features(superzip_neutron_stage_clock_contracts
+                            PRIVATE cxx_std_20)
+    target_compile_definitions(superzip_neutron_stage_clock_contracts
+                               PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(MSVC)
+      target_compile_options(superzip_neutron_stage_clock_contracts PRIVATE /W4
+                                                                            /WX)
+    endif()
+  endif()
   # Compile tests alongside the app targets; only their final executable needs
   # the CLI/GUI prerequisites used by process-level regression cases.
   add_library(
@@ -854,6 +871,7 @@ if(SUPERZIP_BUILD_TESTS)
     tests/cpp/test_suzip_gpu_prefix.cpp
     tests/cpp/test_dictionary_matcher.cpp
     tests/cpp/test_neutron_dictionary.cpp
+    tests/cpp/test_neutron_stage_clock.cpp
     tests/cpp/test_dictionary_block.cpp
     tests/cpp/test_sparse_pattern_block.cpp
     tests/cpp/test_tar_bzip2_compat.cpp

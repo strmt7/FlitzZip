@@ -1,4 +1,12 @@
-# Neutron Star Mode Validation
+# Neutron star mode validation
+
+The [system-freeze investigation](neutron-stability-investigation-2026-10-05.md)
+is open. Earlier finite correctness and timing results below do not establish
+that the reported freeze has been resolved. Device correctness execution has
+resumed after source review, host lifecycle contracts and the HIP-enabled
+build, with staged oracle, cancellation and workspace validation. Canonical
+public-corpus performance qualification remains pending; earlier fixtures do
+not substitute for that study.
 
 ## Measured Improvement Rounds
 

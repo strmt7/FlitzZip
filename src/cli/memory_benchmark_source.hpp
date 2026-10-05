@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -9,7 +11,13 @@
 namespace superzip::cli {
 
 inline constexpr std::size_t kMemoryBenchmarkReferenceBytes = 64U * 1024U;
-inline constexpr std::size_t kMemoryBenchmarkCorpusMaxBytes = 64U * 1024U * 1024U;
+// Match the CLI extent representation; physical-memory admission supplies the operational limit.
+inline constexpr std::size_t kMemoryBenchmarkCorpusMaxBytes = std::numeric_limits<std::uint32_t>::max();
+
+// Purpose: Preload an exact bounded binary stream before measured codec work.
+// Inputs: Readable stream ending after size bytes; the 32-bit extent and current host-headroom limits apply.
+// Outputs: Owns the unmodified bytes or throws on admission, truncation, trailing data or read failure.
+std::vector<std::byte> load_memory_benchmark_stream(std::istream& input, std::size_t size);
 
 // Purpose: Fill generated or preloaded RAM workload bytes without filesystem access.
 // Inputs: Destination, offset/total and profile; optional immutable preloaded source must match total exactly.

@@ -607,6 +607,15 @@ hosted alert blocks final acceptance, including governance reports. Retain
 deliberately failing sanitizer controls and staged upstream header contracts;
 an empty alert list never justifies weakening them.
 
+An individually authorized public adversarial test fixture may retain its
+scanner false-positive report through an exact source-bound review. Bind the
+historical Git blob, current original archive, complete member, detector,
+location, scanner identity and exact match; retain sanitized raw reports and
+reject changed or additional findings. Such a disposition does not establish
+a vulnerability repair or revive historical source approvals. Never alter or
+obfuscate a useful test, exclude a path/detector, or change verification to
+manufacture a clean scan. Individual authorizations belong in review records.
+
 - Validate all archive entry names with `safe_join_archive_path` before extraction.
 - Compatibility archive support must use in-process parsers/writers. Do not
   shell out to `tar`, 7-Zip, WinRAR, PowerShell compression cmdlets, or other
@@ -875,7 +884,7 @@ an empty alert list never justifies weakening them.
   specific. Persist the effort value, not the row index; migrate legacy five-row
   settings without changing their selected effort. Unsupported tuning remains
   disabled rather than implying compression in an uncompressed container.
-  Neutron Star Mode is a separate native SUZIP mode below those nine rows. Show
+  Neutron star mode is a separate native SUZIP mode below those nine rows. Show
   it only for actual cached HIP availability and the required-GPU preference;
   persist its intent separately from the numeric effort. Keep its algorithms,
   benchmark evidence and tuning separate from numeric levels. Transfer an

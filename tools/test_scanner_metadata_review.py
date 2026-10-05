@@ -107,7 +107,11 @@ class ScannerMetadataReviewTests(unittest.TestCase):
     def test_approved_additional_metadata_roles(self):
         """Purpose: Bound approved role additions. Inputs: Exact paths and mutations. Outputs: Narrow admission."""
         original = self.name
-        for name in ("tools/benchmark_permissions.json", "docs/licenses/development-notices.json"):
+        for name in (
+            "tools/benchmark_permissions.json",
+            "docs/licenses/development-notices.json",
+            ".github/scanner-secret-reviews.json",
+        ):
             self.name = name
             self.path = self.root / name
             self.path.parent.mkdir(parents=True, exist_ok=True)

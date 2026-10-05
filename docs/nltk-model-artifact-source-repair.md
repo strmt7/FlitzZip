@@ -73,8 +73,13 @@ this document does not authorize a general NLTK or dependency suppression.
 Ignored local evidence includes `out/nltk-original-model-regressions-final.json`,
 `out/nltk-final-admission-evidence.json`, the upstream JUnit reports,
 `out/crawl4ai-osv-candidate-query.json`, the separate upstream-version query and
-`out/nltk-crawler-qualification-final-20261005.json`. Hosted qualification remains
-pending until the actual pushed commit's platform and security workflows pass.
+`out/nltk-crawler-qualification-final-20261005.json`. The actual pushed commit
+`ef3ff5c223e7033355036148467ce36d1475f693` passes all four hosted platform
+jobs, including normal dependency resolution, `pip check` and the model/API
+regressions. Its security workflow passes the dependency and source scanners
+but remains failed on the separately reviewed upstream SSRF test URI in the
+secret-history scan. The high-severity Dependabot alert also remains open;
+the advisory has no patched upstream release. Neither result is claimed closed.
 
 ## Continuing Maintenance
 

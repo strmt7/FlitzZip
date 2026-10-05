@@ -26,6 +26,31 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Initial feature-branch pushes have no previous branch commit. Treating that
+  event as a change to every inherited file caused an unrelated component-plan
+  failure on a dependency PR. The production tool now computes its merge base
+  with the default branch. Real Git fixtures require exactly the changed paths,
+  reject inherited files and fail on unavailable ancestry. Initial publication
+  of the default branch keeps complete tracked-file coverage.
+
+- A composite Zstandard migration fixture exceeded its aggregate deadline
+  although its individual operations remained bounded. The shared outer test
+  budget now accommodates the complete matrix, with explicit extraction and
+  rejection-child deadlines. Mutation controls reject missing child bounds;
+  the actual ASan suite, instrumentation negative control and migration cases
+  remain required. The [incident record](neutron-stability-investigation-2026-10-05.md)
+  retains the original timeout and successful qualification separately.
+
+- An upstream SSRF regression fixture triggered the URI secret detector on a
+  decoy prefix. The maintainer individually approved the exact public test
+  after original-source and detector review. The canonical redaction boundary
+  now retains every sanitized result and emits separate adjudication counts,
+  bound to the historical Git blob, current archive, complete member, exact
+  match, location and scanner image. Real Git/archive/Bash controls reject
+  changed identities, mixed findings and scanner errors. Useful adversarial
+  tests and immutable archives remain intact; historical source approvals are
+  not revived. See the [individual review](security-nltk-ssrf-fixture-review-2026-10-05.md).
+
 - Source review admissions were mistaken for remediation. The source preflight
   now counts every exact historical match as unresolved, and the hosted audit
   never consults the admission ledgers. Its complete inventory blocks every

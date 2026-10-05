@@ -221,7 +221,7 @@ void validate_native_compression_policy(NativeCompressionMode mode, int level, b
     }
     if (mode == NativeCompressionMode::NeutronStar) {
         if (level != kMaxCompressionLevel || !require_gpu || force_cpu) {
-            throw ArchiveError("Neutron Star Mode requires level nine and required AMD HIP execution");
+            throw ArchiveError("Neutron star mode requires level nine and required AMD HIP execution");
         }
         const auto info = query_gpu_info();
         if (!info.available) {

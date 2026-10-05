@@ -90,6 +90,8 @@ function Assert-ZstdRewritePolicy {
         @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_canonical_geometry("${content}" "${version}" content)', 'canonical complete geometry dispatch'),
         @('cmake/ZstdLegacyOwnedSequence.c', 'sequence.matchLength > available - sequence.litLength', 'canonical sequence extent'),
         @('tests/cmake/test_zstd_legacy_patch.cmake', 'prepare_historical_decoder_stage("${previous_canonical}" "complete")', 'canonical historical migration coverage'),
+        @('tests/cmake/test_zstd_legacy_patch.cmake', 'RESULT_VARIABLE extraction_result TIMEOUT 20)', 'dependency-patch extraction deadline'),
+        @('tests/cmake/test_zstd_legacy_patch.cmake', 'execute_process( COMMAND "${CMAKE_COMMAND}" "-DREPO_ROOT=${REPO_ROOT}" "-DPATCH_SOURCE_DIR=${root}" ${component_arguments} -P "${CMAKE_CURRENT_LIST_FILE}" RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 30)', 'dependency-patch rejection deadline dispatch'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_header_components("${source_dir}")', 'guarded header component dispatch'),
         @('cmake/ZstdHeaderComponents.cmake', 'if(NOT component_hash STREQUAL "${${key}_${part}_hash}")', 'complete header component identity'),
         @('cmake/ZstdHeaderComponents.cmake', 'if(EXISTS "${temporary}" OR EXISTS "${raw}")', 'header interrupted publication rejection'),

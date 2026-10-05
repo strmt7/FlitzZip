@@ -522,8 +522,9 @@ const BenchmarkSuiteCase& choose_benchmark_suite_recommendation(const std::vecto
 }
 
 // Purpose: Validate RAM benchmark arguments before host admission and any codec allocation.
-// Inputs: Options select generated geometry or a <=64 MiB immutable corpus with expected SHA-256 and backend policy.
-// Outputs: Returns checked input bytes or throws on invalid arguments; pipeline admission follows before allocation.
+// Inputs: Options select generated geometry or a memory-admitted 32-bit corpus with expected SHA-256 and backend
+// policy. Outputs: Returns checked input bytes or throws on invalid arguments; pipeline admission follows before
+// allocation.
 std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& options) {
     const bool corpus = options.corpus_bytes != 0U || !options.source.empty();
     if (!corpus && options.size_mib < 10240U) {
@@ -563,7 +564,7 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
     }
     if (corpus_bytes > kMemoryBenchmarkCorpusMaxBytes || options.expected_source_sha256.size() != 64U ||
         options.expected_source_sha256.find_first_not_of("0123456789abcdef") != std::string::npos) {
-        throw superzip::ArchiveError("corpus requires at most 64 MiB and a lowercase SHA-256 identity");
+        throw superzip::ArchiveError("corpus requires a 32-bit extent and a lowercase SHA-256 identity");
     }
     return corpus_bytes;
 }

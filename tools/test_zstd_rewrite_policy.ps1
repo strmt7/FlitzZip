@@ -101,6 +101,8 @@ try {
             @('cmake/ZstdLegacyCanonical.cmake', 'superzip_zstd_canonical_stream("${content}" "${version}" content)', '# omitted stream', 'legacy owned buffer patch dispatch'),
             @('cmake/ZstdLegacyOwnedSequence.c', 'sequence.matchLength > available - sequence.litLength', 'sequence.matchLength > available', 'canonical sequence extent'),
             @('tests/cmake/test_zstd_legacy_patch.cmake', 'prepare_historical_decoder_stage("${previous_canonical}" "complete")', '', 'canonical historical migration coverage'),
+            @('tests/cmake/test_zstd_legacy_patch.cmake', 'TIMEOUT 30)', 'TIMEOUT 0)', 'dependency-patch rejection deadline dispatch'),
+            @('tests/cmake/test_zstd_legacy_patch.cmake', 'RESULT_VARIABLE extraction_result', 'RESULT_VARIABLE extraction_result_disabled', 'dependency-patch extraction deadline'),
             @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_header_components("${source_dir}")', '', 'guarded header component dispatch'),
             @('cmake/ZstdHeaderComponents.cmake', 'if(NOT component_hash STREQUAL "${${key}_${part}_hash}")', 'if(FALSE)', 'complete header component identity'),
             @('cmake/ZstdHeaderComponents.cmake', 'if(EXISTS "${temporary}" OR EXISTS "${raw}")', 'if(FALSE)', 'header interrupted publication rejection'),

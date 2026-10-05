@@ -14,7 +14,7 @@ Write-Output "Corpus integration receipt: $($receipt.receipt_sha256)."
 # Inputs: Controlled argument strings contain no quotes/newlines or trailing backslash; Cli is the current binary.
 # Outputs: Returns status and complete streams bounded to 65536 characters each; kills its owned process on timeout.
 function Invoke-MemoryCorpusProbe {
-    param([string[]]$Argument)
+    param([string[]]$Argument, [byte[]]$InputBytes)
     if (@($Argument | Where-Object { $_ -match '["\r\n]' -or $_.EndsWith('\') }).Count) {
         throw 'Unsupported controlled corpus fixture argument.'
     }
@@ -22,10 +22,15 @@ function Invoke-MemoryCorpusProbe {
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.RedirectStandardInput = $PSBoundParameters.ContainsKey('InputBytes')
     $process = [Diagnostics.Process]::Start($info)
     try {
         $stdout = Read-BoundedBenchmarkStream -Reader $process.StandardOutput
         $stderr = Read-BoundedBenchmarkStream -Reader $process.StandardError
+        if ($info.RedirectStandardInput) {
+            $process.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
+            $process.StandardInput.Close()
+        }
         if (-not $process.WaitForExit(60000) -or -not $stdout.Wait(5000) -or -not $stderr.Wait(5000)) {
             throw 'Corpus CLI fixture deadline exceeded.'
         }
@@ -34,6 +39,51 @@ function Invoke-MemoryCorpusProbe {
         if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null }
         $process.Dispose()
     }
+}
+
+# Purpose: Prove CLI binary stdin preserves all byte values and accepts natural extents beyond the former ceiling.
+# Inputs: Tiny owned binary fixture, current native binary and actual HIP availability; no source file is written.
+# Outputs: Exact readback succeeds and invalid source declarations/transport fail; timings are correctness-only.
+function Test-MemoryCorpusStdin {
+    param([bool]$Hip)
+    [byte[]]$bytes = 0..255
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    $source = @('--source-stdin', '--source-bytes', '256', '--source-sha256', $hash)
+    $mode = if ($Hip) { '--neutron-star' } else { '--force-cpu' }
+    $result = Invoke-MemoryCorpusProbe -Argument (@('memory-benchmark', $mode) + $source) -InputBytes $bytes
+    if ($result.exit_code -ne 0 -or $result.stderr -or $result.stdout -notmatch 'validated_bytes=256 ' -or
+        $result.stdout -notmatch "source_sha256=$hash " -or $result.stdout -notmatch 'memory_only=true disk_write_bytes=0') {
+        throw "Binary stdin readback failed: $($result.stderr)"
+    }
+    $large = Invoke-MemoryCorpusProbe -Argument @('memory-benchmark', '--neutron-star', '--source-stdin', '--source-bytes',
+        '175101388', '--source-sha256', $hash, '--plan-only')
+    if ($large.exit_code -ne 0 -or $large.stderr -or $large.stdout -notmatch 'input_bytes=175101388 ' -or
+        $large.stdout -notmatch 'source_identity_verified=false') {
+        throw 'Large natural-file metadata admission failed or falsely claimed source authentication.'
+    }
+    $bad = @(
+        @{ arguments = @('--source-stdin'); cause = 'requires --source-bytes' },
+        @{ arguments = @('--source-bytes', '256'); cause = 'requires --source-stdin' },
+        @{ arguments = $source + '--source-stdin'; cause = 'duplicate --source-stdin' },
+        @{ arguments = $source + @('--source-bytes', '256'); cause = 'duplicate --source-bytes' },
+        @{ arguments = $source + @('--profile', 'Mixed'); cause = 'excludes file/generated input' },
+        @{ arguments = $source + @('--source-file', 'unused.bin'); cause = 'excludes file/generated input' },
+        @{ arguments = @('--source-stdin', '--source-bytes', '0', '--source-sha256', $hash); cause = '1..4294967295' },
+        @{ arguments = @('--source-stdin', '--source-bytes', '257', '--source-sha256', $hash); cause = 'read failed'; input_bytes = $bytes },
+        @{ arguments = @('--source-stdin', '--source-bytes', '255', '--source-sha256', $hash); cause = 'read failed'; input_bytes = $bytes },
+        @{ arguments = @('--source-stdin', '--source-bytes', '256', '--source-sha256', ('0' * 64)); cause = 'differs from expected identity'; input_bytes = $bytes }
+    )
+    foreach ($case in $bad) {
+        $probe = @{ Argument = @('memory-benchmark', $mode) + $case.arguments }
+        if ($case.ContainsKey('input_bytes')) { $probe.InputBytes = $case.input_bytes }
+        $result = Invoke-MemoryCorpusProbe @probe
+        if ($result.exit_code -ne 1 -or -not $result.stderr.Contains($case.cause) -or $result.stdout) {
+            throw "Binary stdin rejection disagrees with expected boundary: $($case.cause)"
+        }
+    }
+    Write-Output 'Binary stdin integration passed: exact all-byte readback, 175 MB metadata plan and ten rejection cases.'
 }
 
 # Purpose: Exercise the production controller and scheduler with this explicitly generated correctness snapshot.
@@ -153,7 +203,7 @@ try {
             @{ arguments = @('--source-file', $path, '--source-sha256', ('0' * 64)); cause = 'differs from expected identity' },
             @{ arguments = @('--source-file', $path, '--source-sha256', $hash.ToUpperInvariant()); cause = 'lowercase SHA-256' },
             @{ arguments = @('--source-sha256', $hash); cause = 'requires a preloaded corpus' },
-            @{ arguments = @('--source-file', $empty, '--source-sha256', $hash); cause = '1..67108864' },
+            @{ arguments = @('--source-file', $empty, '--source-sha256', $hash); cause = '1..4294967295' },
             @{ arguments = @('--source-file', $fixture, '--source-sha256', $hash); cause = 'regular file' }
         )
         foreach ($case in $bad) {
@@ -164,6 +214,7 @@ try {
         }
         Write-Output "Corpus integration passed: $($modes.Count * 7) metadata plans and backend/block cases, 9 rejection cases; GPU qualified=$hip."
     }
+    Test-MemoryCorpusStdin -Hip $hip
     Test-MemoryCorpusController -Path $path -Hash $hash -Fixture $fixture -Hip $hip
     $after = Invoke-MemoryCorpusProbe -Argument @('gpu-info')
     if ($hip -and ($after.exit_code -ne 0 -or $after.stdout -notmatch 'available=true')) { throw 'HIP readiness lost after corpus integration.' }
