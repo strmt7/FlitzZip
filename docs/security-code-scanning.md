@@ -202,6 +202,14 @@ CodeQL C++ retains 60 minutes, compared with 20 minutes for the observed
 
 ## Finding Triage
 
+The [individual Crawl4AI public-example review](security-crawl4ai-public-proxy-review-2026-10-05.md)
+records the maintainer's exact authorization for four historical URI examples
+and their public integrity identities. Its separate approval cohort preserves
+the original NLTK ledger bytes and bindings. Metadata admission requires the
+complete cohort hash and exact approved digest; source, location, value or
+scanner changes expire the relevant review. Every sanitized raw finding is
+retained, and no source-code vulnerability is closed by these dispositions.
+
 The maintainer approved the ten exact integrity metadata records in
 [the 5 October review](security-public-checksum-review-2026-10-05.md). These
 cover original corpus, comparator binary and license-notice hashes. Raw reports

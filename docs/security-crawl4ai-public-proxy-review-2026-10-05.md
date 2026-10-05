@@ -1,6 +1,17 @@
 # Crawl4AI Public Proxy Example Review, 5 October 2026
 
-Status: reviewed source evidence; no new disposition is authorized or active.
+Status: the maintainer explicitly approved these four exact public examples on
+5 October 2026. The ledger and bounded source consumer implement only those
+identities; hosted qualification remains separate.
+
+The original NLTK ledger bytes and their earlier metadata bindings are preserved.
+These approvals live in the independent
+`.github/scanner-secret-reviews-crawl4ai.json` cohort, whose normalized SHA-256 is
+`4ef7c35541ad8296e33f318df5606382398bf67986e858996b1cdb1478a3757d`.
+Its six distinct archive/member/match digest values are the exact public
+integrity identities approved here. DevSkim metadata reviews bind only those
+values to this complete cohort hash; changes expire those bindings. This does
+not admit source-code findings or change earlier approval identities.
 
 The secret-history job for commit
 `e56becc7db74453c2ea34b83fa96464dbf156020` failed with TruffleHog exit 183
@@ -54,22 +65,25 @@ reproduced the four locations and exact match identities. This diagnostic
 disabled remote credential verification; the production scanner remains
 unchanged and its original hosted report is retained.
 
-## Proposed Narrow Disposition
+## Approved Narrow Disposition
 
-An authorized review would bind each report to the exact archive, complete
+The authorized review binds each report to the exact archive, complete
 member, reported and source locations, match bytes, detector and scanner
-identity above. It would preserve every raw sanitized finding, reject source,
-location or scanner changes, and leave all other reports blocking. It would
-require bounded TAR-member validation in the existing review consumer, with
-ZIP behavior and the approved NLTK review unchanged. No archive, detector or
-path exclusion, upstream-archive edit, credential obfuscation or Git-history
-rewrite is proposed.
+identity above. It preserves every raw sanitized finding, rejects source,
+location or scanner changes, and leaves all other reports blocking. The existing
+consumer now bounds gzip expansion before parsing TAR metadata, rejects
+duplicate or linked members, and reads only the exact complete member. The
+approved NLTK record and its ZIP/source checks remain unchanged. No archive,
+detector or path exclusion, upstream-archive edit, credential obfuscation or
+Git-history rewrite is used.
 
-The repository's source-remediation policy does not authorize a new exception
-for these examples. They remain unresolved until the maintainer explicitly
-authorizes these exact public-example dispositions. This document does not
-close a source-code vulnerability or qualify the separate Windows crawler
-download repair.
+The reported line and actual source line are independently bound, including
+the 696/699 attribution pair. Regression controls reproduce each match from its
+original complete source and reject nearby reported/source locations, newly
+verified findings, duplicate members, links, excess expansion and unsupported
+formats. Original sanitized reports and unmatched findings remain visible.
+This individual approval does not close a source-code vulnerability or qualify
+the separate Windows crawler download repair.
 
 Local evidence: `out/crawl4ai-e56-secret-artifact/`,
 `out/crawl4ai-private-uri-diagnosis.json`, and the bounded diagnosis script.

@@ -6,15 +6,25 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
-from tools.redact_trufflehog import MAX_RECORD_BYTES, PublicFixtureReview, redact_finding, redact_stream, review_bytes
+from tools.redact_trufflehog import (
+    MAX_RECORD_BYTES,
+    PublicFixtureReview,
+    redact_finding,
+    redact_stream,
+    review_bytes,
+    reviewed_member,
+)
 
 FIXTURE_PRIVATE = "synthetic-private-fixture-do-not-publish"
 
@@ -226,16 +236,20 @@ class PublicFixtureReviewTests(unittest.TestCase):
     def setUpClass(cls):
         source_root = Path(__file__).resolve().parents[1]
         cls.ledger = json.loads((source_root / ".github/scanner-secret-reviews.json").read_text(encoding="utf-8"))
+        cohort = json.loads((source_root / ".github/scanner-secret-reviews-crawl4ai.json").read_text(encoding="utf-8"))
+        cls.ledger["reviews"].extend(cohort["reviews"])
         cls.review = cls.ledger["reviews"][0]
         cls.directory = tempfile.TemporaryDirectory(prefix="superzip-public-fixture-")
         cls.root = Path(cls.directory.name)
         cls.archive = cls.root / cls.review["archive_path"]
-        cls.archive.parent.mkdir(parents=True)
         cls.archive_bytes = (source_root / cls.review["archive_path"]).read_bytes()
-        cls.archive.write_bytes(cls.archive_bytes)
-        evidence = cls.root / cls.review["evidence"]
-        evidence.parent.mkdir(parents=True)
-        evidence.write_text("Isolated public fixture review evidence", encoding="utf-8")
+        for review in cls.ledger["reviews"]:
+            archive_path = cls.root / review["archive_path"]
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            archive_path.write_bytes((source_root / review["archive_path"]).read_bytes())
+            evidence = cls.root / review["evidence"]
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            evidence.write_text("Isolated public fixture review evidence", encoding="utf-8")
         (cls.root / ".github").mkdir()
         with zipfile.ZipFile(cls.archive) as archive:
             line = archive.read(cls.review["member"]).decode().splitlines()[cls.review["line"] - 1]
@@ -413,6 +427,101 @@ class PublicFixtureReviewTests(unittest.TestCase):
             raw = (self.root / "reports/secrets/trufflehog-git.jsonl").read_text()
             self.assertEqual(len(raw.splitlines()), len(records))
             self.assertNotIn(self.value, raw)
+
+    # Purpose: Reproduce every approved public example from its original complete member, including attribution shifts.
+    # Inputs: Canonical TAR archive and exact reported/source/hash commitments; no values reach test output.
+    # Outputs: Only the four exact matches pass; adjacent locations, source lines and verified findings remain blocking.
+    def test_public_archive_examples_and_location_boundaries(self):
+        reviews = [row for row in self.ledger["reviews"] if row.get("archive_format") == "tar.gz"]
+        self.assertEqual(len(reviews), 4)
+        reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
+        for review in reviews:
+            with tarfile.open(self.root / review["archive_path"], "r:gz") as archive:
+                source = archive.extractfile(review["member"]).read().decode("utf-8")
+            line = source.splitlines()[review["source_line"] - 1]
+            candidates = [
+                line[start.start() : end]
+                for start in re.finditer(r"https?://", line)
+                for end in range(start.end(), len(line) + 1)
+            ]
+            values = [
+                value for value in candidates if hashlib.sha256(value.encode()).hexdigest() == review["raw_v2_sha256"]
+            ]
+            self.assertEqual(len(values), 1, "Exact public example source match changed")
+            record = self.record()
+            record["RawV2"] = values[0]
+            location = record["SourceMetadata"]["Data"]["Git"]
+            location.update(file=review["archive_path"], line=review["line"])
+            self.assertTrue(reviewer.consider(record), "Exact public example was not admitted")
+            location["line"] += 1
+            self.assertFalse(reviewer.consider(record), "Adjacent reported line was admitted")
+            location["line"] = review["line"]
+            record["Verified"] = True
+            self.assertFalse(reviewer.consider(record), "Verified finding was admitted")
+            changed = copy.deepcopy(self.ledger)
+            changed["reviews"][changed["reviews"].index(review)]["source_line"] += 1
+            self.write_ledger(changed)
+            record["Verified"] = False
+            self.assertFalse(PublicFixtureReview(self.root, self.review["scanner_image"]).consider(record))
+            self.write_ledger(self.ledger)
+
+    # Purpose: Keep independent approval cohorts and their complete hashes visible without resealing earlier data.
+    # Inputs: Existing NLTK cohort, approved examples and a malformed second cohort in an owned fixture.
+    # Outputs: Both cohorts load and publish exact hashes; malformed additional policy fails closed.
+    def test_independent_review_cohort_binding(self):
+        self.write_ledger({"schema": 1, "reviews": self.ledger["reviews"][:1]})
+        path = self.root / ".github/scanner-secret-reviews-crawl4ai.json"
+        primary = (self.root / ".github/scanner-secret-reviews.json").read_bytes()
+        try:
+            path.write_text(json.dumps({"schema": 1, "reviews": self.ledger["reviews"][1:]}), encoding="utf-8")
+            reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
+            self.assertEqual(len(reviewer.reviews), len(self.ledger["reviews"]))
+            self.assertEqual(reviewer.ledger_sha256, hashlib.sha256(primary).hexdigest())
+            reviewer.publish(self.root / "cohort-report.json")
+            report = json.loads((self.root / "cohort-report.json").read_text())
+            self.assertEqual(len(report["ledger_sha256_by_path"]), 2)
+            self.assertEqual((self.root / ".github/scanner-secret-reviews.json").read_bytes(), primary)
+            path.write_text('{"schema": true, "reviews": []}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                PublicFixtureReview(self.root, self.review["scanner_image"])
+        finally:
+            path.unlink()
+
+
+class ReviewedTarMemberTests(unittest.TestCase):
+    # Purpose: Build owned in-memory archive controls without writing or extracting member payloads.
+    # Inputs: Explicit names, types and bytes. Outputs: A complete gzip/TAR fixture.
+    @staticmethod
+    def archive(members):
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            for name, kind, payload in members:
+                info = tarfile.TarInfo(name)
+                info.type = kind
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+        return data.getvalue()
+
+    # Purpose: Bound decompression before TAR metadata parsing and reject ambiguous or redirected source members.
+    # Inputs: Small regular, duplicate, linked, absent and over-limit owned archives.
+    # Outputs: Exact bytes only; all malformed or excessive controls raise without extraction.
+    def test_bounded_member_admission(self):
+        review = {"archive_format": "tar.gz", "member": "public.py"}
+        regular = [("public.py", tarfile.REGTYPE, b"owned public example")]
+        data = self.archive(regular)
+        self.assertEqual(reviewed_member(data, review), regular[0][2])
+        for entries in (
+            regular + regular,
+            [("public.py", tarfile.SYMTYPE, b"")],
+            [],
+            [("public.py", tarfile.REGTYPE, b"x" * (MAX_RECORD_BYTES + 1))],
+        ):
+            with self.assertRaises(ValueError):
+                reviewed_member(self.archive(entries), review)
+        with patch("tools.redact_trufflehog.MAX_REVIEW_EXPANDED_BYTES", 512), self.assertRaises(ValueError):
+            reviewed_member(data, review)
+        with self.assertRaises(ValueError):
+            reviewed_member(data, {**review, "archive_format": "unknown"})
 
 
 if __name__ == "__main__":

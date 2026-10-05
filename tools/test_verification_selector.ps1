@@ -379,7 +379,8 @@ foreach ($path in @("tools/test_semgrep_installation.py", "tools/test_semgrep_ru
 }
 
 foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.py", "tools/scan_trufflehog.sh",
-        ".github/scanner-secret-reviews.json", "third_party/upstream/nltk/source.zip")) {
+        ".github/scanner-secret-reviews.json", ".github/scanner-secret-reviews-crawl4ai.json",
+        "third_party/upstream/nltk/source.zip")) {
     $redactionPlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (-not $redactionPlan.scope.fullEscalationRequired) "secret report changes require their contracts, not product-wide tests: $path"
     Assert-Selector (Test-RequiredCommand -Plan $redactionPlan -Id "secret-report-tests") "redaction changes must execute their regressions: $path"

@@ -21,7 +21,7 @@ MAX_REVIEWS = 256
 METADATA_PATH = re.compile(
     r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/[^/]+\.json"
     r"|tools/benchmark_permissions\.json|docs/licenses/development-notices\.json"
-    r"|\.github/scanner-secret-reviews\.json)"
+    r"|\.github/scanner-secret-reviews(?:-crawl4ai)?\.json)"
 )
 COMMIT_METADATA_PATH = re.compile(r"third_party/upstream/nltk/([a-f0-9]{40})/build\.json")
 SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")

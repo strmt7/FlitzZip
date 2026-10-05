@@ -26,6 +26,22 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Portable host admission must remain linkable in every supported build
+  configuration. A device-dispatch regression must not call an optional HIP
+  implementation from a CPU-only test target. Keep one canonical host validator;
+  exercise that validator on CPU-only hosts and the real dispatcher on HIP hosts.
+  Preserve the device assertions rather than substituting CPU fallback. Validate
+  the actual test executable link and its consumer in both configurations when
+  moving this boundary. The [development review](final-development-review-2026-10-05.md)
+  records the linker failure and its repair.
+
+- Independent public-fixture approval cohorts must not change earlier source
+  commitments. Authenticate the complete current and historical archive, exact
+  member, match, reported location, source location and scanner identity. Bound
+  decompression before parsing archive metadata; retain every original finding
+  and reject redirects, ambiguous names, mixed findings and scanner errors.
+  An approved public example does not authorize source-code suppression.
+
 - Select C++ database reconstruction from its complete native input projection,
   source suffixes and query/build policy, including removals and both sides of
   renames. Keep each selected CodeQL database whole and its query suite intact.
