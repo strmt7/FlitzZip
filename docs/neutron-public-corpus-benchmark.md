@@ -85,6 +85,15 @@ system freeze or a GPU speedup.
 
 ## Reporting And Limits
 
+The [three-pass Canterbury follow-up](benchmarks/data/neutron-canterbury-repeated-2026-10-05.json)
+records 33 complete required-HIP observations at 256 KiB on the frontend-tested
+revision. Every repetition retained the preceding 1,008,754 complete modeled
+single-file archive bytes and restored every original source byte. The retained
+summary qualifies the complete study; streamed per-file records remain
+unqualified until that final source-bound summary succeeds. The follow-up is
+a current baseline for Neutron size experiments, not a new algorithm or a
+timing superiority claim.
+
 After Hyperfine's owned workers finish, emit completed per-file native protocols
 from the retained RAM slots to stdout; collect the whole stream without truncating
 tool output. A completed study

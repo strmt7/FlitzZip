@@ -105,7 +105,7 @@ are rejected by the existing runner before product execution.
 | lzbench | Only the explicitly reviewed LZ4/Zstd modules are admitted; its harness license does not cover every bundled codec. |
 | Household Power and HIGGS | UCI CC-BY-4.0 terms require dataset-specific attribution and accurate selection disclosure. Payloads are not shipped by the repository. |
 | Canterbury | The publisher expressly supplies the fixed corpus for lossless evaluation. Local inert-byte research and original measurements are admitted with attribution; constituent redistribution remains held. |
-| Govdocs1 Thread 0 | Digital Corpora's research-use and CC0 terms retain exceptions for separately copyrighted constituents. Use inert RAM bytes; no execution, rendering, payload publication or claim that every constituent is CC0. Full acquisition and benchmarking have not occurred in this round. |
+| Govdocs1 Thread 0 | Digital Corpora's research-use and CC0 terms retain exceptions for separately copyrighted constituents. All 991 original files were subsequently acquired and benchmarked as inert RAM bytes in the [public-corpus study](neutron-public-corpus-benchmark.md). No execution, rendering, payload publication or claim that every constituent is CC0 is authorized. |
 | WinZip | Benchmark execution/publication remain prohibited without an overriding agreement; the current [Corel terms](https://www.corel.com/en/eula/) retain the benchmark restriction. |
 | WinRAR and NanaZip | Held because the exact entitlement or package scope has not been cleared. |
 | Historical Silesia measurements | Rights remain unresolved; retain the historical audit record, exclude new runs and headline comparisons, and do not claim retroactive clearance. |
@@ -137,4 +137,4 @@ Remaining obligations are the exact release source offering/rebuild,
 historical Silesia rights, other-host tool entitlements, and a complete notice
 packet before any future redistribution of developer environments or benchmark
 payloads. No permission decision in this document lifts the open GPU stability
-incident or qualifies the pending Neutron runtime changes.
+incident or substitutes for source-bound Neutron runtime qualification.

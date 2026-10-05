@@ -1,6 +1,22 @@
 # SuperZip Enterprise Implementation Plan
 
-## Continuation Checkpoint
+## Active Development Review
+
+The current source-bound status is recorded in the
+[5 October development review](docs/final-development-review-2026-10-05.md).
+Neutron remains a separate required-HIP mode whose primary objective is minimum
+complete archive size. The full Govdocs1 study and seven-setting Canterbury
+sweep are retained in the [public-corpus record](docs/neutron-public-corpus-benchmark.md).
+They do not establish best-in-class ratios or statistically qualified speedups.
+The reported system-freeze investigation remains open. A new prerelease requires
+the maintainer's separate green light after final verification.
+
+The checkpoints below preserve historical decisions, failures and receipts.
+They are not current agent instructions or authorization to reuse a superseded
+scanner-admission policy. Current rules live in `AGENTS.md` and its operating
+guide; current closure requires repaired source and fresh analysis.
+
+## Historical Remediation Transition
 
 The maintainer requested a source remediation redesign after rejecting the
 earlier admission approach. The 27 source and 54 hosted dispositions below

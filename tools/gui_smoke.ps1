@@ -516,11 +516,79 @@ function Save-CompressionSmokeChoice {
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
 }
 
-# Purpose: Exercise Neutron's separate row, persisted intent and format/policy normalization through real GUI input.
-# Inputs: Owned GUI, redirected settings, actual CLI HIP capability and screenshot destination.
-# Outputs: Requires correct conditional selection and persistence, captures its row, and restores the applied choices.
+# Purpose: Verify a GUI-created Neutron archive with independent CPU validation and required-HIP extraction.
+# Inputs: Owned GUI, its redirected log, one bounded queued input and its isolated destination.
+# Outputs: Requires actual mode reporting, GPU decode telemetry and byte-exact recovery; preserves failed evidence.
+function Assert-NeutronArchiveOperation {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$InputPath, [string]$Destination)
+    $inputBytes = (Get-Item -LiteralPath $InputPath).Length
+    if ($inputBytes -le 0 -or $inputBytes -gt 65536) { throw 'Neutron GUI correctness input exceeds its smoke bound.' }
+    $archive = Join-Path $Destination 'SuperZip-output.suzip'
+    if (Test-Path -LiteralPath $archive) { throw 'Neutron GUI smoke requires an unused owned archive path.' }
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $length = (Get-Item -LiteralPath $logPath).Length
+    $lineCount = @(Get-Content -LiteralPath $logPath).Count
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1090 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Compress: completed'
+    $rows = @(Get-Content -LiteralPath $logPath -Encoding UTF8 | Select-Object -Skip $lineCount)
+    if (-not ($rows | Where-Object { $_.Contains('(Neutron star mode)') })) {
+        throw 'The GUI worker did not report its captured Neutron compression mode.'
+    }
+    if (-not (Test-Path -LiteralPath $archive) -or (Get-Item -LiteralPath $archive).Length -gt 131072) {
+        throw 'The GUI-created Neutron archive is missing or exceeds its smoke bound.'
+    }
+    $restoredRoot = Join-Path $Destination ('neutron-readback-' + [guid]::NewGuid().ToString('N'))
+    $cli = Join-Path $repo "build/$Configuration/superzip_cli.exe"
+    foreach ($invocation in @(
+        @{ Name = 'CPU verification'; Arguments = "verify --force-cpu `"$archive`"" },
+        @{ Name = 'HIP extraction'; Arguments = "extract --require-gpu --output `"$restoredRoot`" `"$archive`"" }
+    )) {
+        $start = [System.Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = $cli
+        # These paths end in fixed owned filenames or a GUID; Windows file paths cannot contain quotes.
+        $start.Arguments = $invocation.Arguments
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $child = [System.Diagnostics.Process]::Start($start)
+        try {
+            $stdout = $child.StandardOutput.ReadToEndAsync()
+            $stderr = $child.StandardError.ReadToEndAsync()
+            if (-not $child.WaitForExit(30000)) {
+                $child.Kill()
+                [void]$child.WaitForExit(5000)
+                throw "Neutron GUI $($invocation.Name) exceeded its bounded deadline."
+            }
+            $output = $stdout.GetAwaiter().GetResult()
+            $errorText = $stderr.GetAwaiter().GetResult()
+            if ($child.ExitCode -ne 0) { throw "Neutron GUI $($invocation.Name) failed: $errorText" }
+            if ($output -notmatch '(?:^|\s)entries=1(?:\s|$)') { throw 'Neutron GUI archive must contain exactly its queued input.' }
+            if ($invocation.Name -eq 'HIP extraction' -and
+                ($output -notmatch 'gpu_used=true' -or $output -notmatch 'gpu_kernel_launches=[1-9][0-9]*')) {
+                throw 'Neutron GUI readback did not execute actual HIP kernels.'
+            }
+        } finally {
+            $child.Dispose()
+        }
+    }
+    $files = @(Get-ChildItem -LiteralPath $restoredRoot -File -Recurse)
+    if ($files.Count -ne 1 -or $files[0].Name -cne (Split-Path -Leaf $InputPath) -or
+        (Get-FileHash -LiteralPath $files[0].FullName).Hash -ne (Get-FileHash -LiteralPath $InputPath).Hash) {
+        throw 'GUI-created Neutron archive did not restore its exact original bytes.'
+    }
+    Remove-Item -LiteralPath $files[0].FullName -Force
+    Remove-Item -LiteralPath $restoredRoot -Force
+    Write-Output "Neutron GUI compression, independent CPU verification and actual HIP readback passed; source_bytes=$inputBytes."
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+}
+
+# Purpose: Exercise Neutron's separate row, real operation, persisted intent and format/policy normalization.
+# Inputs: Owned GUI, redirected settings, actual CLI HIP capability, bounded queued input and isolated destination.
+# Outputs: Requires conditional selection and readback, captures its row, and restores the applied choices.
 function Assert-NeutronSelectionIsolation {
-    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension,
+        [string]$InputPath, [string]$Destination)
     $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
     $info = & (Join-Path $repo "build/$Configuration/superzip_cli.exe") gpu-info
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect actual HIP capability for Neutron GUI qualification.' }
@@ -538,6 +606,9 @@ function Assert-NeutronSelectionIsolation {
     Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
     Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected 9
     Assert-SettingsValue -Path $SettingsPath -Name 'neutronStarMode' -Expected $available
+    if ($available) {
+        Assert-NeutronArchiveOperation -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath -InputPath $InputPath -Destination $Destination
+    }
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 294 -Synchronous
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
@@ -1036,7 +1107,8 @@ $smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
 New-Item -ItemType Directory -Force -Path $smokeSettingsDir | Out-Null
 Remove-Item -LiteralPath $smokeDestination -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $smokeDestination | Out-Null
-Set-Content -LiteralPath $smokeInput -Value "SuperZip GUI smoke input" -NoNewline
+# A bounded correctness fixture exercises dictionary/entropy device readback; it is not a performance benchmark.
+Set-Content -LiteralPath $smokeInput -Value (("SuperZip GUI smoke input" * 2850).Substring(0, 65536)) -NoNewline -Encoding ASCII
 Set-Content -LiteralPath $smokeInputTwo -Value "Second SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
@@ -1224,7 +1296,7 @@ try {
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 0
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 542 -BasePath $basePath -Extension $extension
     Assert-CompressionEffortSelection -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile
-    Assert-NeutronSelectionIsolation -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
+    Assert-NeutronSelectionIsolation -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension -InputPath $smokeInput -Destination $smokeDestination
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 432

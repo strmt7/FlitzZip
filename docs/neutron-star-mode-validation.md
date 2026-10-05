@@ -4,9 +4,12 @@ The [system-freeze investigation](neutron-stability-investigation-2026-10-05.md)
 is open. Earlier finite correctness and timing results below do not establish
 that the reported freeze has been resolved. Device correctness execution has
 resumed after source review, host lifecycle contracts and the HIP-enabled
-build, with staged oracle, cancellation and workspace validation. Canonical
-public-corpus performance qualification remains pending; earlier fixtures do
-not substitute for that study.
+build, with staged oracle, cancellation and workspace validation. The
+[public-corpus study](neutron-public-corpus-benchmark.md) subsequently completed
+all 991 Govdocs1 files and all eleven Canterbury files at seven block settings.
+Those source-bound records establish complete workload coverage and exact
+sizes. Paired repeated timing qualification and comparisons with established
+formats remain pending; earlier research fixtures do not substitute for them.
 
 ## Measured Improvement Rounds
 

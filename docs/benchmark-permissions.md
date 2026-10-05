@@ -1,6 +1,7 @@
 # Benchmark Permissions And Tool Selection
 
-Reviewed **1 October 2026**. This is an evidence-backed engineering review,
+Reviewed **1 October 2026**, with a public-corpus addendum on **5 October 2026**.
+This is an evidence-backed engineering review,
 not a legal opinion or a claim that all repository licensing is settled.
 Execution, publication of our own numeric measurements, redistribution of
 software/data, and copying third-party artwork are separate decisions.
@@ -71,6 +72,19 @@ Beta builds, paid editions and new codec modules need separate review.
   official dataset, attribution, exact container/member pins and three
   disjoint complete-row excerpts. This supplies real measurements without
   treating one time series as a mixed-file workload. Payloads are not shipped.
+- **Canterbury: eligible for local lossless evaluation and original measurements.**
+  Preserve the publisher's complete fixed corpus and attribution. The
+  [source and acquisition contract](neutron-public-corpus-benchmark.md)
+  records original members, hashes and the RAM-only transport. Payload
+  redistribution remains held; the measured study does not distribute files.
+- **Govdocs1 Thread 0: eligible for inert-byte local research and original measurements.**
+  Attribute Garfinkel, Farrell, Roussev and Dinolt, *Bringing Science to Digital
+  Forensics with Standardized Forensic Corpora*, DFRWS 2009. The publisher's
+  [terms](https://digitalcorpora.org/about-digitalcorpora/terms-of-use/) retain
+  exceptions for separately copyrighted constituents. The
+  [991-file study](neutron-public-corpus-benchmark.md) uses original RAM bytes
+  without execution, rendering or payload publication. Corpus redistribution
+  remains held; no universal CC0 claim is made.
 - **Other corpora: unreviewed.** Public download access, a benchmark-tool
   license, or another reviewer's use does not license a dataset. Verify every
   constituent before use; do not copy review-site archives or media.

@@ -53,10 +53,44 @@ remains retained. Actual hosted full-history acceptance is still pending.
 The repository-wide refactoring inventory reported eight large-file observations.
 That inventory is planning evidence, not a line-by-line correctness audit.
 Changed functions passed the executable documentation and complexity gate.
-Frontend smoke currently proves Neutron selection and persistence; an actual
-GUI-created Neutron archive and independent CLI readback are the next consumer
-checks. Current documents that still describe the completed public-corpus study
-as pending must be reconciled with its source-bound retained results.
+Frontend smoke now starts a real Neutron job through production UI routing.
+The worker reports its captured mode through the existing log and history.
+Independent CPU verification and required-HIP extraction restored the complete
+65,536-byte correctness fixture, with actual GPU kernel telemetry. This bounded
+filesystem fixture is not a performance benchmark. Selection, persistence,
+numeric efforts, CPU-policy normalization and format normalization also passed.
+All eight pages were inspected at regular and compact sizes, together with the
+Neutron dropdown. The original failed mode-observation test is retained locally;
+history details alone had not supplied a log assertion.
+
+The HIP build and all seven CTest suites passed for native input identity
+`0ce207302a1a99692d644507cc8dd6a63126813c4f3a25a736be2eac5ec17d6f`,
+with build receipt identity
+`f10c5b704238a662da1e85b68547a83ef2cfef93a8aa4a4b3845b790c538ce99`.
+The repaired selected verifier completed all eight commands. No encoding
+algorithm or numeric effort changed in this frontend observability repair.
+
+Current validation, stability and permission documents now link the completed
+public-corpus records. The implementation plan distinguishes active status
+from historical approvals and checkpoints. A read-only inventory checked 274
+inline local file targets across all 116 tracked Markdown documents and found
+no missing file. That check does not validate anchors, reference-style links or
+every document's semantic claims. All 39 graph consumer tests passed, including
+real publication regeneration and hostile XML controls. The license notice
+generator and three inventory contracts passed; all eight native dependency
+roots and five adapted development notices remain covered. These checks do not
+settle unknown historical rights or prove the release rebuild obligation.
+
+Three subsequent Canterbury repetitions used the same qualified native input
+and receipt, 256 KiB blocks and the existing Hyperfine/RAM transport. All 33
+required-HIP observations validated 8,432,352 source bytes and recorded 75,183
+actual kernel launches. Each repetition produced 1,008,754 complete modeled
+single-file archive bytes from 2,810,784 source bytes. The
+[retained measurements](benchmarks/data/neutron-canterbury-repeated-2026-10-05.json)
+include per-file source identities and actual GPU telemetry. The study is
+complete; timing qualification remains false because host-isolation evidence
+is separate. No new corpus workload, payload disk write or timing superiority
+claim is introduced.
 
 The [public-corpus benchmark](neutron-public-corpus-benchmark.md) retains the
 991-file Govdocs1 study and seven-setting Canterbury sweep. Those measurements
@@ -70,3 +104,9 @@ The dependency review retains the actual one-time latest-version experiments
 and the incompatible Pydantic/core result. Dependabot's upstream NLTK advisory,
 the open dependency pull request, external scanner configuration and final
 release licensing obligations remain separate from passing local tests.
+The repository-variable inventory confirms the OIDC broker URL is absent;
+the live scanner reports `GREENBONE_SECRET_PROVIDER_URL repository variable is required`.
+The maintainer has been asked for its existing endpoint without credentials.
+The official NLTK release remains `v3.10.3` and the advisory still has no first
+patched version. The source repair is retained; alert metadata is not fabricated
+or dismissed to manufacture final acceptance.

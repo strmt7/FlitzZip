@@ -4,7 +4,12 @@
 
 The maintainer reported a system-wide freeze requiring a forced reboot on
 5 October 2026. The cause is **not established**. Neutron benchmarks and GPU
-execution stopped; no claim of a completed stability repair is made.
+execution initially stopped; no claim of a completed stability repair is made.
+After the source and lifecycle review recorded below, bounded device execution
+resumed. The later [public-corpus study](neutron-public-corpus-benchmark.md)
+completed all 991 Govdocs1 files and seven Canterbury block-setting runs with
+byte-exact HIP readback. These successful finite runs do not identify the
+incident's cause or establish universal safety.
 
 The bounded read-only Windows event review found black-screen diagnostic
 reports around the restart. It did not identify a SuperZip kernel, device
@@ -108,7 +113,9 @@ suites. Its direct CLI consumers passed fourteen CPU/required-HIP corpus
 cases, source and binary-stdin rejection controls, allocation-free planning
 for a 175 MiB source, and twelve controller correctness observations. Corpus
 payloads remained in RAM. These are correctness fixtures, not the requested
-canonical public-corpus performance study, which remains pending.
+canonical public-corpus performance study. That study was pending at this
+checkpoint and subsequently completed as linked above; paired repeated timing
+qualification remains separate.
 
 The sanitizer gate exposed a separate test-lifetime defect: a composite
 migration fixture took 123.79 seconds against its inherited 120-second outer
@@ -125,6 +132,6 @@ Retained evidence includes `out/neutron-native-unit-tests-verifier.log`,
 with regular and compact page screenshots and the Neutron selection reviewed.
 The incremental HIP build retained identical qualified product binaries;
 package smoke and license verification passed after the GUI closed.
-Publication and canonical benchmark qualification remain separate. The freeze investigation
+Publication and benchmark timing qualification remain separate. The freeze investigation
 remains open until its cause and relevant repair are evidenced; the event
 lifecycle improvement alone does not close it.

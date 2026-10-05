@@ -562,6 +562,10 @@ void MainWindow::start_compress() {
             std::ostringstream line;
             line << "Compressed " << archive_format_info(archive_format).key << " to " << path_diagnostic_utf8(output)
                  << " in " << stats.seconds << "s";
+            if (compression_mode == NativeCompressionMode::NeutronStar) {
+                line << " (Neutron star mode)";
+                append_log_entry(LogSeverity::Information, line.str());
+            }
             append_history_entry("Compress", path_diagnostic_utf8(output.filename()), path_diagnostic_utf8(output),
                                  line.str(), true);
             if (integrity) {

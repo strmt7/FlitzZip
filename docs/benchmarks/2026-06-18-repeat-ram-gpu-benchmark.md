@@ -1,7 +1,7 @@
 # 2026-06-18 Repeat RAM-Only GPU Benchmark
 
 Purpose: repeat the SUZIP GPU benchmark after external host load may have
-affected earlier observations. All commands were run from `C:\SuperZip` against
+affected earlier observations. All commands were run from the repository root against
 the current Release build. The benchmark stayed in RAM-only mode; no generated
 10 GiB workload was written to storage.
 
