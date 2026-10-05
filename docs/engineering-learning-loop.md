@@ -786,6 +786,15 @@ avoiding the linker's automatic restart. Confirm the effective link options and
 absence of restart diagnostics; report timing improvements only from measured
 comparisons under comparable conditions.
 
+Keep precompiled headers private, limited to stable standard headers and compiled
+independently for targets with different flags or definitions. Preserve explicit
+source includes and an existing full build without PCH to expose missing includes.
+Qualify mixed C/C++ consumers, target-local macros and the real scanner extraction
+mechanism before adoption. Bind the strategy to build receipts. Measure clean
+rebuilds in reversed pairs with host samples; compiler throughput evidence does
+not establish codec speed or hosted-analysis speed. The retained evidence and
+scope are in [build throughput validation](build-throughput-validation.md).
+
 Release identity and replacement policy share one implementation in
 `tools/release_workflow_policy.ps1`, used by changed-file hygiene and repository
 security scanning. Offline mutation contracts check commit binding and guard

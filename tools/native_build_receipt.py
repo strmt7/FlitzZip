@@ -354,7 +354,13 @@ def configured_recipe(root: Path, configuration: str) -> tuple[dict, dict]:
         key: value
         for key, value in cache.items()
         if key.startswith(("CMAKE_CXX_FLAGS", "CMAKE_C_FLAGS", "CMAKE_EXE_LINKER_FLAGS", "CMAKE_SHARED_LINKER_FLAGS"))
-        or key in ("CMAKE_MSVC_RUNTIME_LIBRARY", "CMAKE_GENERATOR_TOOLSET", "CMAKE_CONFIGURATION_TYPES")
+        or key
+        in (
+            "CMAKE_MSVC_RUNTIME_LIBRARY",
+            "CMAKE_GENERATOR_TOOLSET",
+            "CMAKE_CONFIGURATION_TYPES",
+            "CMAKE_DISABLE_PRECOMPILE_HEADERS",
+        )
     }
     recipe["configured_flags_sha256"] = hashlib.sha256(canonical(flags)).hexdigest()
     return recipe, cache

@@ -1078,5 +1078,8 @@ set(CPACK_WIX_PATCH_FILE
 if(SUPERZIP_MSI_INSTALL_SCOPE STREQUAL "perMachine")
   set(CPACK_WIX_ROOT_FOLDER_ID "ProgramFiles<64>Folder")
 endif()
+include(cmake/SuperZipPrecompiledHeaders.cmake)
+superzip_enable_precompiled_headers()
+
 set(CPACK_GENERATOR "ZIP")
 include(CPack)

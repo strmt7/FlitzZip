@@ -3,6 +3,7 @@ param(
     [string]$Configuration = "Release",
     [switch]$EnableHip,
     [switch]$CpuOnlyValidation,
+    [switch]$DisablePrecompiledHeaders,
     [switch]$ConfigureOnly,
     [ValidateSet("", "Visual Studio 17 2022", "Visual Studio 18 2026")]
     [string]$Generator = "",
@@ -131,6 +132,7 @@ $configureArgs = @(
     "-DSUPERZIP_BUILD_GUI=ON",
     "-DSUPERZIP_BUILD_TESTS=ON"
 )
+$configureArgs += "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=$($DisablePrecompiledHeaders.IsPresent.ToString().ToUpperInvariant())"
 if (-not $CpuOnlyValidation) {
     $sdkRoot = Resolve-RocmSdkRoot -RepoRoot $repo -RequestedPath $HipPath
     $configureArgs += "-DSUPERZIP_HIP_PATH=$sdkRoot"

@@ -7,6 +7,7 @@ on:
       - cmake/**
       - CMakeLists.txt
       - tests/zstd/**
+      - tests/cmake/precompiled_headers/**
       - tests/cpp/test_zstd*.cpp
       - tests/cmake/test_zstd*.cmake
       - mcp/**

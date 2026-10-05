@@ -442,6 +442,12 @@ foreach ($producerPath in @('CMakeLists.txt', 'tools/package.ps1')) {
         Assert-Selector (Test-RequiredCommand -Plan $producerPlan -Id $id) "actual release producers retain artifact qualification: $producerPath/$id"
     }
 }
+foreach ($pchPath in @('cmake/SuperZipPrecompiledHeaders.cmake', 'tests/cmake/precompiled_headers/contract.c',
+        'tools/test_precompiled_headers.ps1')) {
+    $pchPlan = Get-SuperZipVerificationPlan -ChangedPath @($pchPath)
+    Assert-Selector (Test-RequiredCommand -Plan $pchPlan -Id 'precompiled-header-tests') "PCH strategy changes must qualify actual mixed-language consumers: $pchPath"
+    Assert-Selector (Test-Workflow -Plan $pchPlan -Name 'component-contracts') "PCH contracts must run in hosted CI: $pchPath"
+}
 foreach ($releasePath in @('.github/workflows/release.yml')) {
     Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $releasePath) "release policy inputs must trigger hosted component contracts: $releasePath"
 }

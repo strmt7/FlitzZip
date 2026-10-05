@@ -25,6 +25,8 @@ Assert-CiContractPlan -Path 'tools/cocoindex_agent_search.py' -Required @('agent
 Assert-CiContractPlan -Path 'mcp/superzip_mcp.py' -Required @('mcp-python-compile', 'mcp-bounded-child-tests')
 Assert-CiContractPlan -Path 'tools/test_native_build_receipt.py' -Required @('native-build-receipt-tests')
 Assert-CiContractPlan -Path 'tools/build.ps1' -Required @('native-build-receipt-tests', 'rocm-toolchain-tests')
+Assert-CiContractPlan -Path 'cmake/SuperZipPrecompiledHeaders.cmake' -Required @('precompiled-header-tests')
+Assert-CiContractPlan -Path 'tests/cmake/precompiled_headers/contract.c' -Required @('precompiled-header-tests')
 Assert-CiContractPlan -Path 'src/core/checksum.cpp' -Required @()
 Assert-CiContractPlan -Path 'tools/verify_changes.ps1' -Required @('verification-runner-tests')
 Assert-CiContractPlan -Path 'tools/native_component_tests.ps1' -Required @('native-selection-contracts')

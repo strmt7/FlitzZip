@@ -74,6 +74,20 @@ class NativeBuildReceiptTests(unittest.TestCase):
             "\n".join(f"{key}:STRING={value}" for key, value in self.cache.items()), encoding="utf-8"
         )
 
+    # Purpose: Prevent a receipt from qualifying a build with a different forced-header strategy.
+    # Inputs: Successful nonexecutable fixture followed by a changed CMake PCH setting.
+    # Outputs: Old qualification fails and the next build requires fresh compilation.
+    def test_precompiled_header_strategy_invalidates_previous_qualification(self):
+        self.cache["CMAKE_DISABLE_PRECOMPILE_HEADERS"] = "FALSE"
+        self.write_cache()
+        self.successful()
+        self.cache["CMAKE_DISABLE_PRECOMPILE_HEADERS"] = "TRUE"
+        self.write_cache()
+        with self.assertRaisesRegex(ValueError, "configuration is stale"):
+            receipt.validate_current(self.root, "Release", False)
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        self.assertTrue(receipt.prepare(self.root, token, self.cmake)["clean_first_required"])
+
     # Purpose: Exercise the production start/prepare/finish path with explicit fresh-build acknowledgement.
     # Inputs: Private nonexecutable fixtures. Outputs: Completed successful receipt summary and transaction ID.
     def successful(self):

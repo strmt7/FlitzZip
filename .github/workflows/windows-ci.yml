@@ -67,10 +67,13 @@ jobs:
         include:
           - os: windows-2022
             generator: Visual Studio 17 2022
+            disable_pch: true
           - os: windows-2025-vs2026
             generator: Visual Studio 18 2026
+            disable_pch: false
     env:
       SUPERZIP_CMAKE_GENERATOR: ${{ matrix.generator }}
+      SUPERZIP_DISABLE_PCH: ${{ matrix.disable_pch }}
       # Shared build scheduling is derived from available RAM and logical CPUs.
     steps:
       - name: Checkout
@@ -102,7 +105,11 @@ jobs:
       - name: Build
         if: steps.native_plan.outputs.native_build == 'true'
         shell: pwsh
-        run: tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
+        # One existing compiler lane proves complete source/header independence;
+        # the other uses the same PCH strategy as ordinary local/product builds.
+        run: >-
+          tools/build.ps1 -CpuOnlyValidation -Generator $env:SUPERZIP_CMAKE_GENERATOR
+          -DisablePrecompiledHeaders:($env:SUPERZIP_DISABLE_PCH -eq 'true')
       - name: Validate actual native invocation receipt
         if: steps.native_plan.outputs.native_build == 'true'
         # Mechanism regressions run in the component-contracts lane when changed.
