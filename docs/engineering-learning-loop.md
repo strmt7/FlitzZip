@@ -36,6 +36,13 @@ the Security tab, released artifacts, or the product UI again.
   studies remain unqualified. Natural corpus runs validate the actual consumer
   in addition to mocked protocol contracts.
 
+- Corpus metadata checks must use the same detected backend as their readback
+  check. A hosted CPU-only runner must not request Neutron and then interpret
+  its correct HIP refusal as an input-admission failure. The offline transport
+  contract executes the actual corpus consumer with both capability states and
+  rejects the original unconditional Neutron request. Independent native plan
+  tests still require Neutron to refuse unavailable HIP; no fallback is added.
+
 - Initial feature-branch pushes have no previous branch commit. Treating that
   event as a change to every inherited file caused an unrelated component-plan
   failure on a dependency PR. The production tool now computes its merge base

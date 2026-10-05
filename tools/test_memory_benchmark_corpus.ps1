@@ -78,11 +78,11 @@ function Test-MemoryCorpusStdin {
         $result.stdout -notmatch "source_sha256=$hash " -or $result.stdout -notmatch 'memory_only=true disk_write_bytes=0') {
         throw "Binary stdin readback failed: $($result.stderr)"
     }
-    $large = Invoke-MemoryCorpusProbe -Argument @('memory-benchmark', '--neutron-star', '--source-stdin', '--source-bytes',
+    $large = Invoke-MemoryCorpusProbe -Argument @('memory-benchmark', $mode, '--source-stdin', '--source-bytes',
         '175101388', '--source-sha256', $hash, '--plan-only')
     if ($large.exit_code -ne 0 -or $large.stderr -or $large.stdout -notmatch 'input_bytes=175101388 ' -or
         $large.stdout -notmatch 'source_identity_verified=false') {
-        throw 'Large natural-file metadata admission failed or falsely claimed source authentication.'
+        throw "Large natural-file metadata admission failed or falsely claimed source authentication: $($large.stderr)"
     }
     $bad = @(
         @{ arguments = @('--source-stdin'); cause = 'requires --source-bytes' },

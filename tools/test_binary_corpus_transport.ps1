@@ -11,6 +11,48 @@ if (@($definition).Count -ne 1) { throw 'Actual binary corpus adapter is missing
 $original = $definition.Extent.Text
 . ([scriptblock]::Create($original))
 
+# Purpose: Exercise the actual corpus stdin consumer's backend selection without launching product code.
+# Inputs: The parsed production test function and an isolated capability-aware CLI probe double.
+# Outputs: Both capability paths reach the rejection controls; the original unconditional Neutron plan fails.
+function Test-CorpusPlanningBackend {
+    $consumer = $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false) |
+        Where-Object Name -eq 'Test-MemoryCorpusStdin'
+    if (@($consumer).Count -ne 1) { throw 'Actual corpus stdin consumer is missing or ambiguous.' }
+    foreach ($mutated in @($false, $true)) {
+        $text = $consumer.Extent.Text
+        if ($mutated) {
+            $text = $text.Replace("@('memory-benchmark', `$mode, '--source-stdin', '--source-bytes',", "@('memory-benchmark', '--neutron-star', '--source-stdin', '--source-bytes',")
+            if ($text -eq $consumer.Extent.Text) { throw 'Backend negative control no longer reaches the actual plan.' }
+        }
+        . ([scriptblock]::Create($text))
+        foreach ($hip in @($false, $true)) {
+            $expectedMode = if ($hip) { '--neutron-star' } else { '--force-cpu' }
+            $calls = [Collections.Generic.List[string]]::new()
+            # Purpose: Admit only the capability-selected backend and stop after the real consumer's plan check.
+            # Inputs: Actual consumer arguments, readback fixture extent and the scoped HIP capability.
+            # Outputs: Valid readback/metadata records or an explicit capability failure/rejection-phase sentinel.
+            function Invoke-MemoryCorpusProbe {
+                param([string[]]$Argument, [byte[]]$InputBytes)
+                $calls.Add($Argument[1])
+                if ($Argument[1] -ne $expectedMode) { throw 'Corpus plan requested an unavailable backend.' }
+                if ($Argument -contains '--plan-only') {
+                    return @{ exit_code = 0; stderr = ''; stdout = 'input_bytes=175101388 source_identity_verified=false' }
+                }
+                if ($calls.Count -gt 2) { throw 'corpus-backend-control-complete' }
+                if ($InputBytes.Length -ne 256) { throw 'Actual corpus readback fixture extent changed.' }
+                $hash = $Argument[$Argument.IndexOf('--source-sha256') + 1]
+                return @{ exit_code = 0; stderr = ''; stdout = "validated_bytes=256 source_sha256=$hash memory_only=true disk_write_bytes=0" }
+            }
+            $cause = ''
+            try { Test-MemoryCorpusStdin -Hip $hip } catch { $cause = $_.Exception.Message }
+            $expectedCause = if ($mutated -and -not $hip) { 'Corpus plan requested an unavailable backend.' } else { 'corpus-backend-control-complete' }
+            if ($cause -ne $expectedCause -or $calls.Count -lt 2) {
+                throw "Actual corpus capability path or its negative control failed: $cause"
+            }
+        }
+    }
+}
+
 if ($AllRuntimes) {
     foreach ($runtime in @('powershell', 'pwsh')) {
         $cli = (Get-Command $runtime -ErrorAction Stop).Source
@@ -20,6 +62,8 @@ if ($AllRuntimes) {
     }
     return
 }
+
+Test-CorpusPlanningBackend
 
 $cli = (& py -3 -B -c 'import sys; print(sys.executable)')
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cli -PathType Leaf)) { throw 'Python is required for the offline binary pipe consumer.' }
@@ -57,4 +101,4 @@ try {
     . ([scriptblock]::Create($original))
     [Console]::InputEncoding = $previousEncoding
 }
-Write-Output 'Offline binary corpus contracts passed: exact bytes, ambient preamble, failure restoration and negative control; no product build or benchmark.'
+Write-Output 'Offline binary corpus contracts passed: exact bytes, ambient preamble, failure restoration, backend selection and negative controls; no product build or benchmark.'
