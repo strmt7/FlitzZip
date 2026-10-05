@@ -8,6 +8,7 @@
 #include "lz4.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <future>
@@ -399,22 +400,24 @@ TEST_CASE(neutron_dictionary_archive_cancellation_preserves_destination) {
     std::filesystem::remove_all(root);
 }
 
-// Purpose: Cover the two extension plateaus above the lane count and the full legal 16-bit match range.
-// Inputs: A uniform independent 64 KiB segment with a closed-form minimum LZ4 representation.
+// Purpose: Cover extension plateaus across wavefronts, beyond the lane count and through the legal segment limit.
+// Inputs: Uniform independent segments with closed-form minimum LZ4 representations.
 // Outputs: Requires one long match with the exact minimum cost, independent LZ4 readback and production HIP readback.
 TEST_CASE(neutron_dictionary_full_segment_match_extension) {
     if (!superzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron full-length match requires HIP\n";
         return;
     }
-    const std::vector<std::byte> input(kSegmentBytes, std::byte{0x31});
-    const auto encoded = encode_neutron_segments(input);
-    const auto match_length = input.size() - 1U - 5U;
-    const auto match_extension = 1U + (match_length - 4U - 15U) / 255U;
-    const auto minimum_bytes = 1U + 1U + 2U + match_extension + 1U + 5U;
-    REQUIRE_EQ(encoded.segments.size(), 1U);
-    REQUIRE_EQ(encoded.segments.front().payload.size(), minimum_bytes);
-    require_neutron_roundtrip(input, encoded);
+    for (const auto size : {600U, 16384U, 32768U, 50000U, 65048U, kSegmentBytes}) {
+        const std::vector<std::byte> input(size, std::byte{0x31});
+        const auto encoded = encode_neutron_segments(input);
+        const auto match_length = input.size() - 1U - 5U;
+        const auto match_extension = 1U + (match_length - 4U - 15U) / 255U;
+        const auto minimum_bytes = 1U + 1U + 2U + match_extension + 1U + 5U;
+        REQUIRE_EQ(encoded.segments.size(), 1U);
+        REQUIRE_EQ(encoded.segments.front().payload.size(), minimum_bytes);
+        require_neutron_roundtrip(input, encoded);
+    }
 }
 
 // Purpose: Compare real HIP minimum-byte parsing against every legal transition in an independent small oracle.
@@ -448,6 +451,88 @@ TEST_CASE(neutron_dictionary_gpu_matches_exhaustive_oracle) {
                encode_neutron_segments(input).segments.front().payload);
 }
 
+// Purpose: Generate a bounded de Bruijn cycle whose four-byte windows are unique inside one dictionary segment.
+// Inputs: A four-digit base-16 recursion state with depth at most five and output bounded to 65,536 bytes.
+// Outputs: Appends the exact cycle without deep recursion, random assumptions or product encoder reuse.
+void append_unique_neutron_cycle(std::vector<std::byte>& output, std::array<std::uint32_t, 5>& digits,
+                                 std::size_t depth, std::size_t period) {
+    if (depth > 4U) {
+        if (4U % period == 0U) {
+            for (std::size_t index = 1U; index <= period; ++index) {
+                output.push_back(static_cast<std::byte>(digits[index]));
+            }
+        }
+        return;
+    }
+    digits[depth] = digits[depth - period];
+    append_unique_neutron_cycle(output, digits, depth + 1U, period);
+    for (auto symbol = digits[depth - period] + 1U; symbol < 16U; ++symbol) {
+        digits[depth] = symbol;
+        append_unique_neutron_cycle(output, digits, depth + 1U, depth);
+    }
+}
+
+// Purpose: Authenticate the no-match fixture independently before using it to qualify GPU parse admission.
+// Inputs: The bounded base-16 cycle generator and every complete four-byte source window.
+// Outputs: Returns one segment only after sorting proves that no usable exact-prefix match can exist.
+std::vector<std::byte> unique_neutron_segment() {
+    std::vector<std::byte> output;
+    output.reserve(kSegmentBytes);
+    std::array<std::uint32_t, 5> digits{};
+    append_unique_neutron_cycle(output, digits, 1U, 1U);
+    REQUIRE_EQ(output.size(), kSegmentBytes);
+    std::vector<std::uint32_t> words;
+    words.reserve(output.size() - 3U);
+    for (std::size_t position = 0U; position + 4U <= output.size(); ++position) {
+        std::uint32_t word = 0U;
+        for (std::size_t byte = 0U; byte < 4U; ++byte) {
+            word = (word << 8U) | std::to_integer<std::uint32_t>(output[position + byte]);
+        }
+        words.push_back(word);
+    }
+    std::sort(words.begin(), words.end());
+    REQUIRE_TRUE(std::adjacent_find(words.begin(), words.end()) == words.end());
+    return output;
+}
+
+// Purpose: Prove exact empty match graphs avoid dynamic programming while still encoding and decoding on HIP.
+// Inputs: Independently verified unique four-byte windows through the largest admitted batch and a mixed batch.
+// Outputs: Requires exact literal costs, zero parse launches for empty graphs and only the active segment's tiles.
+TEST_CASE(neutron_dictionary_empty_graph_and_mixed_admission) {
+    if (!superzip::query_gpu_info().available) {
+        std::cout << "[SKIP] Neutron match-graph admission requires HIP\n";
+        return;
+    }
+    const auto unique = unique_neutron_segment();
+    for (const auto size : {std::size_t{13U}, std::size_t{600U}, std::size_t{kSegmentBytes}, kMaxNeutronBatchBytes}) {
+        std::vector<std::byte> input(size);
+        for (std::size_t position = 0U; position < size; ++position) {
+            input[position] = unique[position % unique.size()];
+        }
+        const auto encoded = encode_neutron_segments(input);
+        REQUIRE_TRUE(encoded.gpu_used);
+        REQUIRE_EQ(encoded.neutron_active_segment_mask, 0U);
+        REQUIRE_EQ(encoded.neutron_parse_launches, 0U);
+        REQUIRE_EQ(encoded.explicit_kernel_launches,
+                   7U + (size + kNeutronSearchTileBytes - 1U) / kNeutronSearchTileBytes);
+        for (const auto& segment : encoded.segments) {
+            const auto bytes = segment.input_bytes;
+            const auto extension = bytes < 15U ? 0U : 1U + (bytes - 15U) / 255U;
+            REQUIRE_EQ(segment.payload.size(), 1U + bytes + extension);
+        }
+        require_neutron_roundtrip(input, encoded);
+    }
+    auto mixed = unique;
+    const std::vector<std::byte> repeated(600U, std::byte{0xFE});
+    mixed.insert(mixed.end(), repeated.begin(), repeated.end());
+    const auto encoded = encode_neutron_segments(mixed);
+    REQUIRE_EQ(encoded.neutron_active_segment_mask, 2U);
+    REQUIRE_EQ(encoded.neutron_parse_launches,
+               (repeated.size() + kNeutronParseTilePositions - 1U) / kNeutronParseTilePositions);
+    REQUIRE_EQ(encoded.segments.at(1).payload, encode_neutron_segments(repeated).segments.front().payload);
+    require_neutron_roundtrip(mixed, encoded);
+}
+
 // Purpose: Exercise cancellation during different synchronized stages and prove subsequent GPU work remains usable.
 // Inputs: Throwing checkpoints before admission, after initialization and during descending parse tiles.
 // Outputs: Requires exact cancellation propagation and successful byte-exact encoding after every interrupted run.
@@ -457,7 +542,7 @@ TEST_CASE(neutron_dictionary_cancellation_releases_workspace) {
         return;
     }
     const auto input = small_neutron_fixture(128U, 7139U, 4U);
-    for (const auto stop : {1U, 3U, 6U}) {
+    for (const auto stop : {1U, 3U, 6U, 7U}) {
         std::uint32_t checkpoints = 0U;
         bool cancelled = false;
         try {

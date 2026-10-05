@@ -63,7 +63,7 @@ by ordinary dictionary sampling. The long-repeat test demonstrates a further
 incremental improvement from longer matches. The random control demonstrates
 unchanged size for this input. These examples are not a broad corpus study.
 
-## Qualification Boundary
+## Rounds One Through Three Qualification Boundary
 
 The final incremental HIP build binds native inputs
 `2dcac6ebdc40ccad6a7e1b4b2491c88cbb9ac5698023c89a373593837bb97f24`
@@ -89,3 +89,102 @@ Completed checks are reused only for unchanged
 inputs and their recorded scope. Final hosted results must be bound to the
 pushed commit. Publication and unmeasured ratio or performance claims remain
 outside this validation record.
+
+## Fourth Round: Exact Reduction
+
+The fourth round replaces nine block barriers per integer minimum with two,
+using the actual hardware wavefront width and a shared-memory fallback. Its
+native input identity was
+`911f0e13db9092d716ac4bbbd128a12c27dadb4069533ed813aae89b61650552`,
+with successful receipt
+`04e3e75bb64b7bc9327ba7d86205f610c5bfc2019fa3c04f9700e94d38131bc7`
+and CLI SHA-256
+`afcfb337152adef7f1baed2b409088758e38e021ddf23a7eaf45f381135ada3d`.
+Six selected local checks passed. The closed-form uniform-segment contract
+also covered lengths 600, 16,384, 32,768, 50,000, 65,048 and 65,536 to exercise
+winning extension plateaus across wavefronts and beyond the lane count.
+
+Three source-bound fixtures retained exact complete archive sizes at every
+ordinary effort and at every supported Neutron block size. Separate capped
+archive smoke produced byte-identical archives to round three. Six fixed
+alternating timing pairs per fixture retained every observation and reported
+RAM-only execution, zero disk writes and bytewise source validation.
+
+| Fixture | Round three median compression seconds | Round four median compression seconds |
+| --- | ---: | ---: |
+| Isolated short repeats | 0.0219807 | 0.0224233 |
+| Long repeat | 0.848152 | 0.825842 |
+| Random control | 0.779677 | 0.772481 |
+
+These small differences overlap observed variation and do not establish a
+speedup. The reduction removes redundant synchronization while preserving
+the exact result. Hardware qualification used gfx1201; the 64-lane path has
+not been tested on a real 64-lane device. Host samples showed about 30 GiB
+available RAM, 8.96–16.78% CPU, 0–4% disk activity and no disk queue. The maximum
+individual GPU engine sample was 5%, including benchmark and other processes;
+it is not a summed GPU utilization metric.
+
+## Hosted Planning Contract Repair
+
+The first hosted Neutron integration passed all seven native suites but its
+planning consumer incorrectly required `gpu-info` to exit zero on a CPU-only
+runner. That command deliberately returns one with `available=false`. The
+planning probe now bounds both capability and planning subprocesses, requires
+exactly one valid availability field with its corresponding exit status, and
+checks that unavailable HIP rejects Neutron with the same reported cause and
+no execution claim. The available-HIP branch still requires distinct Neutron
+identity and exact allocation-free planning geometry. Malformed capability
+evidence and unexpected exits remain failures.
+
+## Fifth Round: Proven Empty Graphs
+
+The fifth round preserves every admitted transition but avoids parsing a graph
+that the GPU proves has no usable match. It also limits descending tiles to
+the longest active segment. The literal-only decision, its exact cost, output
+and validation remain on HIP. A bounded activity mask and parse launch count
+must agree with the exact source geometry before telemetry is accepted.
+
+The HIP build binds native inputs
+`5cc4876ed86391c8e80225f8132659d6d4b9973dee879ce31603cce45596774e`
+to successful receipt
+`651385840ca1cf356135875b79cf71fd8bb19e72f0799acfdc24e26e352101a9`
+and measured CLI SHA-256
+`3f8198feae23974aff3570a1cf10217fcf48b88cc811b8febe91383b0c297a79`.
+Seven selected local checks completed. The main executable passed 599 tests,
+including fourteen Neutron contracts; all seven CTest suites and the corpus,
+planning, version and benchmark-reporting consumers passed.
+
+The new recurrence guard constructs a base-16 de Bruijn segment, independently
+sorts every four-byte window to prove uniqueness, and checks exact literal-only
+cost and zero parse launches through 1 MiB. A mixed batch with an empty 64 KiB
+graph and an active 600-byte segment requires only nineteen parse launches and
+the same active payload as an independent encode. CPU/HIP readback, ordinary
+effort isolation, archive readback and cancellation remain required.
+
+The same three source-bound fixtures retained complete archive sizes at all
+nine ordinary efforts and all seven supported Neutron block sizes. Capped
+archive smoke was byte-identical to rounds three and four. Six fixed alternating
+timing pairs per fixture retained all observations, including separate
+conditioning samples. Every measurement performed RAM-only compression and
+bytewise readback with zero disk writes.
+
+| Fixture | Round four median compression seconds | Round five median compression seconds | Complete archive bytes |
+| --- | ---: | ---: | ---: |
+| Isolated short repeats | 0.0216521 | 0.0222745 | 692 |
+| Long repeat | 0.825174 | 0.832325 | 30,384 |
+| Random control | 0.779102 | 0.0186215 | 65,645 |
+
+On the random control, compression time fell by 97.61%, with total measured
+kernel launches falling from 2,075 to 28. Median summed HIP kernel time fell
+from 598.581 ms to 1.3495 ms. The GPU proved that this fixture had no usable
+matches; no compression candidate was omitted. The timing ranges were
+0.757556–0.792807 seconds before and 0.017846–0.0199771 seconds after. These are
+specific fixture results, not a universal GPU speedup or a comparison with CPU
+compression. The two active-graph fixtures show small overhead within observed
+variation, and no speed improvement is claimed for them.
+
+Concurrent host samples showed 30,113–30,597 MiB available RAM, 6.05–20.13% CPU,
+0–12% disk activity and a maximum disk queue of one. The maximum individual
+GPU engine sample was 6%, including benchmark and other processes. These
+context samples do not prove an idle host. Ordinary efforts retain their
+algorithms and tuning; no Neutron optimization has been transferred to them.

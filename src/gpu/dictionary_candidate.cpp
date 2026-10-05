@@ -157,14 +157,28 @@ void record_dictionary_batch(const PackedEncodedBatch& batch, std::size_t input_
 // Inputs: Completed Neutron batch and its exact nonempty admitted source extent.
 // Outputs: Rejects inconsistent launches, uploads or workspace before accumulating the actual device work.
 void record_neutron_batch(const PackedEncodedBatch& batch, std::size_t input_bytes, GpuTelemetry* telemetry) {
+    if (input_bytes == 0U || input_bytes > kMaxNeutronBatchBytes) {
+        throw GpuError("Neutron dictionary telemetry source extent is invalid");
+    }
     const auto segment_bytes = std::min<std::size_t>(input_bytes, kSegmentBytes);
+    const auto segments = (input_bytes + kSegmentBytes - 1U) / kSegmentBytes;
     const auto search_tiles = (input_bytes + kNeutronSearchTileBytes - 1U) / kNeutronSearchTileBytes;
-    const auto parse_tiles = (segment_bytes + kNeutronParseTilePositions - 1U) / kNeutronParseTilePositions;
     const auto emit_tiles = (segment_bytes / 4U + kNeutronEmitSequences) / kNeutronEmitSequences;
     const auto& encoded = batch.telemetry;
+    std::size_t parse_bytes = 0U;
+    for (std::size_t segment = 0U; segment < segments; ++segment) {
+        if ((encoded.neutron_active_segment_mask & (1U << segment)) != 0U) {
+            parse_bytes =
+                std::max(parse_bytes, std::min(input_bytes - segment * kSegmentBytes, std::size_t{kSegmentBytes}));
+        }
+    }
+    const auto expected_parse_launches = (parse_bytes + kNeutronParseTilePositions - 1U) / kNeutronParseTilePositions;
+    const auto admitted_segment_mask = (1U << segments) - 1U;
     if (!encoded.gpu_used || encoded.h2d_bytes != 0U ||
-        encoded.explicit_kernel_launches < 6U + search_tiles + parse_tiles ||
-        encoded.explicit_kernel_launches > 5U + search_tiles + parse_tiles + emit_tiles ||
+        (encoded.neutron_active_segment_mask & ~admitted_segment_mask) != 0U ||
+        encoded.neutron_parse_launches != expected_parse_launches ||
+        encoded.explicit_kernel_launches < 7U + search_tiles + expected_parse_launches ||
+        encoded.explicit_kernel_launches > 6U + search_tiles + expected_parse_launches + emit_tiles ||
         encoded.device_workspace_bytes < input_bytes || encoded.device_workspace_bytes > kMaxWorkspaceBytes) {
         throw GpuError("Neutron dictionary batch recorded inconsistent device work");
     }

@@ -4,11 +4,11 @@ $cli = Join-Path (Split-Path -Parent $PSScriptRoot) "build/$Configuration/superz
 . (Join-Path $PSScriptRoot 'benchmark_statistics.ps1')
 
 # Purpose: Probe native planning and invalid admission without executing a multi-gigabyte workload.
-# Inputs: Arguments are a controlled CLI fixture; each subprocess has bounded lifetime and output.
+# Inputs: Arguments and the planning/capability command are controlled fixtures; subprocess lifetime/output are bounded.
 # Outputs: Returns exit code and complete stdout/stderr, or terminates only the owned process on failure.
 function Invoke-MemoryBenchmarkPlanProbe {
-    param([string]$Arguments)
-    $info = [Diagnostics.ProcessStartInfo]::new($cli, "memory-benchmark --plan-only $Arguments")
+    param([string]$Arguments, [ValidateSet('memory-benchmark --plan-only', 'gpu-info')][string]$Command = 'memory-benchmark --plan-only')
+    $info = [Diagnostics.ProcessStartInfo]::new($cli, "$Command $Arguments")
     $info.UseShellExecute = $false; $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
     $process = [Diagnostics.Process]::Start($info)
@@ -55,15 +55,30 @@ foreach ($case in @(
         throw "Native planning accepted invalid admission or changed its failure cause: $($case.args): $($result.stderr)"
     }
 }
-$gpuInfo = & $cli gpu-info
-if ($LASTEXITCODE -ne 0) { throw 'Planning test cannot inspect actual HIP capability.' }
-if ($gpuInfo -ccontains 'available=true') {
+$gpuProbe = Invoke-MemoryBenchmarkPlanProbe -Command 'gpu-info' -Arguments ''
+$availableLines = @($gpuProbe.stdout -split '\r?\n' | Where-Object { $_ -cmatch '^available=' })
+if ($gpuProbe.stderr -or $availableLines.Count -ne 1 -or $availableLines[0] -cnotmatch '^available=(true|false)$') {
+    throw 'Planning test received malformed HIP capability evidence.'
+}
+$gpuAvailable = $availableLines[0] -ceq 'available=true'
+$expectedCapabilityExit = if ($gpuAvailable) { 0 } else { 1 }
+if ($gpuProbe.exit_code -ne $expectedCapabilityExit) {
+    throw 'Planning test received inconsistent HIP capability and exit status.'
+}
+if ($gpuAvailable) {
     $result = Invoke-MemoryBenchmarkPlanProbe -Arguments '--neutron-star --workers 1 --inflight 1 --decode-inflight 1'
     $stats = if ($result.exit_code -eq 0) { ConvertFrom-StatsLine -Line $result.stdout.Trim() } else { @{} }
     if ($result.exit_code -ne 0 -or $result.stderr -or $stats['compression_mode'] -cne 'neutron_star' -or
         $stats['workers'] -ne '1' -or $stats['inflight_chunks'] -ne '1' -or
         $stats['decode_inflight_chunks'] -ne '1' -or $result.stdout -match 'gpu_used=|seconds=|memory_only=') {
         throw 'Neutron planning must preserve separate mode identity without reporting executed GPU work.'
+    }
+} else {
+    $statusLines = @($gpuProbe.stdout -split '\r?\n' | Where-Object { $_ -cmatch '^status=.+' })
+    $result = Invoke-MemoryBenchmarkPlanProbe -Arguments '--neutron-star --workers 1 --inflight 1 --decode-inflight 1'
+    if ($statusLines.Count -ne 1 -or $result.exit_code -ne 1 -or
+        $result.stdout -match 'plan_only=true|entries=' -or -not $result.stderr.Contains($statusLines[0].Substring(7))) {
+        throw 'Neutron planning must reject unavailable HIP with the capability cause and no execution claims.'
     }
 }
 Write-Output 'memory_benchmark_plan status=passed measured_workloads=0'

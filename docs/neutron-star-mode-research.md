@@ -87,6 +87,29 @@ plateaus with bounded lane strides. Further rounds must measure their
 incremental effect against the preceding Neutron implementation; extra search
 work alone is not evidence of improvement.
 
+The fourth round changes only Neutron's private integer-minimum reduction.
+Hardware wavefronts independently reduce cost/position keys using HIP shuffles,
+then the first wavefront combines their staged minima. Two block barriers
+replace nine per reduction. The actual hardware width admits the 32- and
+64-lane paths; other widths retain the exact shared-memory reduction. Match
+search, parse tiles, cancellation checkpoints, memory limits, deterministic
+tie ordering and complete archive selection remain unchanged. Qualification
+must retain exact output and exercise winners across wavefront boundaries.
+[AMD's reduction guidance](https://rocm-handbook.amd.com/projects/amd-rocm-optimization-guide/en/latest/patterns/examples/reduction.html)
+describes the two-phase reduction pattern. Real-device results remain specific
+to the tested architecture; a supported code path does not establish testing
+on every AMD GPU.
+
+The fifth round classifies each completed match graph on HIP. A graph without
+any usable match has exactly one legal parse: a literal-only sequence. The GPU
+publishes that decision and its exact cost, then the existing GPU writer emits
+and validates it. Host scheduling receives only bounded zero/one activity words.
+It schedules parse tiles through the longest active segment; inactive segments
+do not enter the dynamic program. An activity mask and the exact parse launch
+count bind telemetry to source geometry. The gate is a proof over the admitted
+graph, not a data-type heuristic or an omitted compression candidate. Active
+graphs retain the complete previous minimum-byte search.
+
 ## Further Ratio Work
 
 The application portfolio must retain level-nine GPU candidates and select

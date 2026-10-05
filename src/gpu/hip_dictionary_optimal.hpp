@@ -66,10 +66,10 @@ __device__ void publish_minimum(std::uint64_t* tree, std::uint32_t base, std::ui
     }
 }
 
-// Purpose: Reduce one candidate per lane without warp-size assumptions or floating arithmetic.
+// Purpose: Retain a portable shared-memory reduction for other hardware wavefront widths.
 // Inputs: A lane-local key and exactly 256 shared slots, with all block lanes participating.
-// Outputs: Returns the same minimum key to every lane after synchronized reduction.
-__device__ std::uint64_t block_minimum(std::uint64_t candidate, std::uint64_t* shared) {
+// Outputs: Returns the same exact minimum key to every lane after synchronized reduction.
+__device__ std::uint64_t shared_block_minimum(std::uint64_t candidate, std::uint64_t* shared) {
     shared[threadIdx.x] = candidate;
     __syncthreads();
     for (auto stride = kLanes / 2U; stride != 0U; stride /= 2U) {
@@ -78,6 +78,42 @@ __device__ std::uint64_t block_minimum(std::uint64_t candidate, std::uint64_t* s
         }
         __syncthreads();
     }
+    return shared[0];
+}
+
+// Purpose: Reduce exact cost/position keys within one fully participating hardware wavefront.
+// Inputs: A lane-local key and the actual admitted hardware width, either 32 or 64.
+// Outputs: Returns the wavefront minimum in lane zero without shared-memory barriers.
+__device__ std::uint64_t wavefront_minimum(std::uint64_t candidate, std::uint32_t width) {
+    for (auto stride = width / 2U; stride != 0U; stride /= 2U) {
+        candidate = min(candidate, __shfl_down(candidate, stride, static_cast<int>(width)));
+    }
+    return candidate;
+}
+
+// Purpose: Reduce Neutron's exact keys with two block barriers on supported hardware wavefront widths.
+// Inputs: A lane-local key and 256 shared slots; every block lane participates in each barrier.
+// Outputs: Returns the same deterministic minimum to every lane, retaining the shared reduction for other widths.
+__device__ std::uint64_t block_minimum(std::uint64_t candidate, std::uint64_t* shared) {
+    const auto width = static_cast<std::uint32_t>(warpSize);
+    if (width != 32U && width != 64U) {
+        return shared_block_minimum(candidate, shared);
+    }
+    const auto lane = static_cast<std::uint32_t>(threadIdx.x) % width;
+    const auto wavefront = static_cast<std::uint32_t>(threadIdx.x) / width;
+    const auto partial = wavefront_minimum(candidate, width);
+    if (lane == 0U) {
+        shared[wavefront] = partial;
+    }
+    __syncthreads();
+    if (wavefront == 0U) {
+        const auto staged = lane < kLanes / width ? shared[lane] : kInfinity;
+        const auto best = wavefront_minimum(staged, width);
+        if (lane == 0U) {
+            shared[0] = best;
+        }
+    }
+    __syncthreads();
     return shared[0];
 }
 
@@ -92,6 +128,34 @@ __global__ void initialize(State state) {
     }
     for (auto index = static_cast<std::uint32_t>(threadIdx.x); index < kResidueTreeWords; index += kLanes) {
         residues[index] = kInfinity;
+    }
+}
+
+// Purpose: Prove which admitted match graphs need parsing and complete the exact empty-graph decision on HIP.
+// Inputs: Verified matches, initialized trees and one reusable status word per independent segment.
+// Outputs: Writes a zero/one activity flag; empty graphs receive their sole literal-only parse and exact byte cost.
+__global__ void classify_match_graphs(State state, std::uint32_t input_size, std::uint32_t* active_segments) {
+    const auto segment = static_cast<std::uint32_t>(blockIdx.x);
+    const auto start = segment * kSegmentBytes;
+    const auto size = min(input_size - start, kSegmentBytes);
+    auto candidate = kInfinity;
+    for (auto position = static_cast<std::uint32_t>(threadIdx.x); position < size; position += kLanes) {
+        const auto match = state.matches[start + position];
+        if (size - position >= 12U && match.distance != 0U && match.distance <= position && match.length >= 4U) {
+            candidate = key(0U, position);
+            break;
+        }
+    }
+    __shared__ std::uint64_t shared[kLanes];
+    const auto first_match = block_minimum(candidate, shared);
+    if (threadIdx.x == 0U) {
+        active_segments[segment] = first_match == kInfinity ? 0U : 1U;
+        if (first_match == kInfinity) {
+            const auto extension = size < 15U ? 0U : 1U + (size - 15U) / 255U;
+            state.next_matches[start] = size;
+            publish_minimum(state.suffix_tree + segment * kTreeWords, kSegmentBytes, 0U,
+                            key(1U + size + extension, 0U));
+        }
     }
 }
 
@@ -187,9 +251,13 @@ __device__ void choose_sequence(State state, std::uint32_t start, std::uint32_t 
 }
 
 // Purpose: Compute a bounded descending tile with one cooperative block per independent dictionary segment.
-// Inputs: Initialized trees, verified matches and completed later tiles; remaining_end is segment-local.
+// Inputs: Initialized trees, verified matches, activity flags and completed later tiles; remaining_end is local.
 // Outputs: Publishes up to 32 positions per segment; no device launch contains the full 64 KiB serial parse.
-__global__ void parse_tile(State state, std::uint32_t input_size, std::uint32_t remaining_end) {
+__global__ void parse_tile(State state, std::uint32_t input_size, std::uint32_t remaining_end,
+                           const std::uint32_t* active_segments) {
+    if (active_segments[blockIdx.x] == 0U) {
+        return;
+    }
     const auto start = static_cast<std::uint32_t>(blockIdx.x) * kSegmentBytes;
     const auto size = min(input_size - start, kSegmentBytes);
     const auto begin = remaining_end > kPositionsPerLaunch ? remaining_end - kPositionsPerLaunch : 0U;

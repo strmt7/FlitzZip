@@ -28,6 +28,7 @@ inline constexpr std::uint32_t kNeutronSearchTileBytes = 4096U;
 inline constexpr std::uint32_t kNeutronParseTilePositions = 32U;
 inline constexpr std::uint32_t kNeutronEmitSequences = 64U;
 inline constexpr std::uint32_t kEncodedSegmentCapacity = kGpuDictionaryEncodedSegmentCapacity;
+static_assert((kMaxNeutronBatchBytes + kSegmentBytes - 1U) / kSegmentBytes <= 16U);
 
 struct Effort {
     std::uint32_t max_candidates;
@@ -80,6 +81,8 @@ struct EncodedBatch {
     std::optional<double> compact_ms;
     std::optional<double> device_ms;
     std::uint32_t explicit_kernel_launches = 0;
+    std::uint32_t neutron_active_segment_mask = 0;
+    std::uint32_t neutron_parse_launches = 0;
     bool gpu_used = false;
 };
 

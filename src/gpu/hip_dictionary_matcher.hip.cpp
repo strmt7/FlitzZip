@@ -800,6 +800,8 @@ struct NeutronRun {
     std::optional<double> milliseconds = 0.0;
     std::uint32_t launches = 0U;
     std::size_t downloaded_size_bytes = 0U;
+    std::uint32_t active_segment_mask = 0U;
+    std::uint32_t parse_launches = 0U;
 };
 
 template <typename Kernel, typename... Args>
@@ -819,7 +821,7 @@ void run_neutron_stage(NeutronRun& run, const EncodeCheckpoint& checkpoint, Kern
 }
 
 // Purpose: Execute deeper matches, exact parsing and incremental output entirely on HIP.
-// Inputs: Borrowed device source/index and fully admitted workspace; host checks only sizes and cancellation.
+// Inputs: Borrowed device source/index and admitted workspace; host checks only activity, sizes and cancellation.
 // Outputs: Returns completed segment lengths and real launch/timing/transfer accounting or throws.
 std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const std::uint32_t* previous,
                                                std::uint32_t input_bytes, const NeutronShape& shape,
@@ -832,14 +834,33 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
         run_neutron_stage(run, checkpoint, search_neutron_matches, (count + kThreads - 1U) / kThreads, source,
                           input_bytes, previous, first, count, workspace.matches.get());
     }
+    run_neutron_stage(run, checkpoint, optimal::classify_match_graphs, segments, workspace.state, input_bytes,
+                      workspace.sizes.get());
+    std::vector<std::uint32_t> host_sizes(shape.segments);
+    check_hip(copy_on_codec_stream(host_sizes.data(), workspace.sizes.get(), shape.size_bytes, hipMemcpyDeviceToHost),
+              "download Neutron match-graph activity");
+    run.downloaded_size_bytes += shape.size_bytes;
+    std::uint32_t parse_bytes = 0U;
+    for (std::size_t segment = 0U; segment < host_sizes.size(); ++segment) {
+        const auto active = host_sizes[segment];
+        if (active > 1U) {
+            throw GpuError("Neutron match-graph activity is invalid");
+        }
+        if (active != 0U) {
+            run.active_segment_mask |= 1U << segment;
+            const auto bytes = std::min<std::size_t>(input_bytes - segment * kSegmentBytes, kSegmentBytes);
+            parse_bytes = std::max(parse_bytes, static_cast<std::uint32_t>(bytes));
+        }
+    }
     const auto segment_bytes = std::min(input_bytes, kSegmentBytes);
-    for (auto end = segment_bytes; end != 0U;) {
-        run_neutron_stage(run, checkpoint, optimal::parse_tile, segments, workspace.state, input_bytes, end);
+    for (auto end = parse_bytes; end != 0U;) {
+        run_neutron_stage(run, checkpoint, optimal::parse_tile, segments, workspace.state, input_bytes, end,
+                          workspace.sizes.get());
+        ++run.parse_launches;
         end = end > optimal::kPositionsPerLaunch ? end - optimal::kPositionsPerLaunch : 0U;
     }
     run_neutron_stage(run, checkpoint, optimal::initialize_writers, 1U, workspace.cursors.get(), workspace.sizes.get(),
                       segments);
-    std::vector<std::uint32_t> host_sizes(shape.segments);
     const auto maximum_launches =
         (segment_bytes / 4U + 1U + optimal::kSequencesPerLaunch - 1U) / optimal::kSequencesPerLaunch;
     for (std::uint32_t tile = 0U; tile < maximum_launches; ++tile) {
@@ -877,6 +898,8 @@ PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> i
             auto result =
                 finish_encoded_dictionary(workspace.output.get(), workspace.sizes.get(), sizes, packed, packed_capacity,
                                           metadata, run.milliseconds, run.launches + 3U, run.downloaded_size_bytes);
+            result.telemetry.neutron_active_segment_mask = run.active_segment_mask;
+            result.telemetry.neutron_parse_launches = run.parse_launches;
             workspace.release_checked();
             return result;
         },
