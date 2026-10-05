@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import io
 import json
 import os
@@ -17,6 +18,60 @@ import superzip_mcp
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_job_close_confirms_zero_and_is_idempotent(self) -> None:
+        """Purpose: Verify drain ordering. Inputs: Job accounting moving from one to zero. Outputs: Termination
+        then one close.
+        """
+        library = mock.Mock()
+        library.TerminateJobObject.return_value = True
+        active = iter((1, 0))
+
+        def query(handle, kind, result, size, returned):
+            """Purpose: Supply owned accounting. Inputs: Typed query buffer. Outputs: Next controlled active-
+            process count.
+            """
+            ctypes.cast(
+                result, ctypes.POINTER(superzip_mcp._JobObjectBasicAccountingInformation)
+            ).contents.active_processes = next(active)
+            return True
+
+        library.QueryInformationJobObject.side_effect = query
+        owner = superzip_mcp.ChildContainment.__new__(superzip_mcp.ChildContainment)
+        owner._handle, owner._kernel32 = 123, library
+        with mock.patch.object(superzip_mcp.time, "sleep"):
+            owner.close()
+            owner.close()
+        library.TerminateJobObject.assert_called_once_with(123, 1)
+        library.CloseHandle.assert_called_once_with(123)
+        self.assertEqual(library.QueryInformationJobObject.call_count, 2)
+
+    def test_job_close_rejects_query_failure_and_timeout(self) -> None:
+        """Purpose: Preserve shutdown failures. Inputs: Invalid accounting or no progress. Outputs: Failure plus
+        released owner.
+        """
+        for failed_query in (True, False):
+            with self.subTest(failed_query=failed_query):
+                library = mock.Mock()
+                library.TerminateJobObject.return_value = True
+
+                def query(handle, kind, result, size, returned, *, fail=failed_query):
+                    """Purpose: Model a shutdown failure. Inputs: Query buffer. Outputs: Failure or a persistently
+                    active job.
+                    """
+                    ctypes.cast(
+                        result, ctypes.POINTER(superzip_mcp._JobObjectBasicAccountingInformation)
+                    ).contents.active_processes = 1
+                    return not fail
+
+                library.QueryInformationJobObject.side_effect = query
+                owner = superzip_mcp.ChildContainment.__new__(superzip_mcp.ChildContainment)
+                owner._handle, owner._kernel32 = 123, library
+                expected = RuntimeError if failed_query else TimeoutError
+                with mock.patch.object(superzip_mcp.time, "monotonic", side_effect=(0, 6)), self.assertRaises(expected):
+                    owner.close()
+                library.CloseHandle.assert_called_once_with(123)
+                self.assertIsNone(owner._handle)
+
     def test_indirect_powershell_environment_is_child_only(self) -> None:
         """Purpose: Isolate PS5 discovery from PS7; inputs: mixed-case environment; outputs: no caller mutation."""
         values = {"PSMODULEPATH": "core-modules", "WinPSModulePath": "desktop-modules", "PATH": "unchanged"}

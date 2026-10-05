@@ -2,11 +2,13 @@
 
 Status: the maintainer explicitly approved these ten exact checksum
 dispositions on 5 October 2026. Every raw report remains retained. This record does not authorize source
-findings, change scanner rules, or dismiss GitHub alerts.
+findings or change scanner rules. Hosted dispositions require individual current
+binding and an audit comment; this approval does not apply them automatically.
 
-The current local preflight reports ten `DS173237` matches in integrity
+The original reviewed local preflight reported ten `DS173237` matches in integrity
 metadata and three `DS162092` matches in the pending Neutron corpus controller.
-The latter are outside this proposed review. Gitleaks reports zero findings;
+The latter were outside this review and are addressed by the separate transport
+redesign. That initial Gitleaks report contained zero findings;
 hosted history scanning and the exact pushed-commit audit remain required.
 
 ## Evidence And Scope
@@ -52,3 +54,17 @@ completion, GPU stability, or general absence of secrets. Changed source bytes,
 changed highlighted values, failed secret scans or an unfamiliar field require
 new investigation. Hosted false-positive disposition requires the specific
 individual audit comment and does not substitute for a completed scan.
+
+## Hosted Application
+
+The security workflow for commit `51edd74b593e111aae802cee8c55437e85081e62`
+completed successfully. Its DevSkim 1.0.100 report surfaced six corresponding
+metadata alerts: 8296 for the Canterbury pin and 8297–8301 for the five retained
+notice pins. Each exact committed source hash, highlighted value, structured
+checksum role and returned location was matched to the approved record before
+applying its individual false-positive disposition. The raw SARIF, alert snapshot,
+binding plan and API responses remain retained under ignored `out/`.
+
+No source-code alert was disposed. The two accepted external governance findings
+remain visible. This metadata decision does not certify native code, GPU stability,
+benchmark rights or the absence of other raw scanner observations.

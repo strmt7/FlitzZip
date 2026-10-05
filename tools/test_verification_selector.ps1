@@ -475,6 +475,12 @@ Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-python-compile") "
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-bounded-child-tests") "MCP changes must test bounded child execution"
 Assert-Selector (-not (Test-RequiredCommand -Plan $mcpPlan -Id "verification-selector-self-test")) "MCP implementation changes must not retest an unchanged planner"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id 'crawl4ai-contracts') 'process ownership changes must verify the crawler consumer'
+Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id 'neutron-public-corpus-test') 'process ownership changes must verify the Neutron controller consumer'
+foreach ($corpusPath in @('tools/neutron_corpus_benchmark.py', 'tools/neutron_corpus_ipc.py', 'tools/test_neutron_corpus_benchmark.py')) {
+    $corpusPlan = Get-SuperZipVerificationPlan -ChangedPath @($corpusPath)
+    Assert-Selector (Test-RequiredCommand -Plan $corpusPlan -Id 'neutron-public-corpus-test') 'RAM corpus exchange changes require their actual offline consumer'
+    Assert-Selector (-not (Test-RequiredCommand -Plan $corpusPlan -Id 'release-build')) 'offline corpus contracts must not launch a native build'
+}
 foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
         'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
     $crawlerPlan = Get-SuperZipVerificationPlan -ChangedPath @($crawlerPath)

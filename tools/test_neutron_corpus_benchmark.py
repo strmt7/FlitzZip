@@ -1,0 +1,413 @@
+"""Offline public-corpus admission, byte-preservation and native-protocol contracts."""
+
+import ctypes
+import gzip
+import hashlib
+import io
+import json
+import os
+import shlex
+import stat
+import struct
+import subprocess
+import sys
+import tarfile
+import unittest
+import zipfile
+from contextlib import ExitStack
+from multiprocessing.shared_memory import SharedMemory
+from types import SimpleNamespace
+from unittest import mock
+
+from tools import neutron_corpus_benchmark as corpus
+from tools import neutron_corpus_ipc as ipc
+
+
+# Purpose: Construct a tiny owned ZIP for archive-admission tests without fetching or writing a public corpus.
+# Inputs: Explicit name/payload pairs and optional Unix symlink metadata.
+# Outputs: In-memory ZIP bytes and a matching extent pin; fixtures are never performance evidence.
+def zip_fixture(rows: list[tuple[str, bytes]], *, link: bool = False) -> tuple[bytes, dict]:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in rows:
+            member = zipfile.ZipInfo(name)
+            member.filename = name
+            if link:
+                member.create_system = 3
+                member.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(member, data)
+    return output.getvalue(), {"file_count": len(rows), "decoded_bytes": sum(len(data) for _, data in rows)}
+
+
+# Purpose: Exercise reviewed natural-file ingestion and exact HIP observation admission without native work.
+# Inputs: Tiny controlled archive/protocol fixtures and mocked fixed-source network responses.
+# Outputs: Rejects malformed, changed, lossy, substituted or disk-writing observations; no benchmark is launched.
+class CorpusContracts(unittest.TestCase):
+    def test_hyperfine_parser_preserves_windows_arguments(self) -> None:
+        """Purpose: Preserve parser-specific arguments. Inputs: Windows paths and quotes. Outputs: Exact tokens."""
+        arguments = ["C:\\Program Files\\Python's\\python.exe", "-B", "--worker", "quotes ' \" $ ` ;", ""]
+        self.assertEqual(shlex.split(corpus.hyperfine_command(arguments)), arguments)
+        for invalid in ([], [None], ["embedded\0null"]):
+            with self.assertRaises(ValueError):
+                corpus.hyperfine_command(invalid)
+
+    # Purpose: Preserve every member byte and published order, including binary and text boundary markers.
+    # Inputs: Independent ZIP members with NUL, Ctrl-Z, CRLF and all byte values.
+    # Outputs: Requires unmodified bytes, exact SHA-256, correct totals and no artificial exclusions.
+    def test_original_bytes_order_and_hashes(self) -> None:
+        rows = [("a/x.txt", b"\x00\r\n\x1a"), ("b/y.bin", bytes(range(256)))]
+        data, pin = zip_fixture(rows)
+        files, provenance = corpus.decode_corpus(data, pin)
+        self.assertEqual([(row["name"], row["data"]) for row in files], rows)
+        self.assertEqual(files[1]["sha256"], hashlib.sha256(rows[1][1]).hexdigest())
+        self.assertEqual(provenance["admitted_file_count"], 2)
+        self.assertEqual(provenance["input_bytes"], 260)
+        self.assertEqual(provenance["excluded"], [])
+
+    # Purpose: Reject unsafe names, special members, duplicates and changes to the complete published inventory.
+    # Inputs: Independently malformed tiny ZIPs; limits are checked before public-file decoding.
+    # Outputs: Every unsupported ZIP raises ValueError instead of selecting a convenient subset.
+    def test_inventory_rejections(self) -> None:
+        for name in ("../x", "/x", "C:x", "a\\x", "a//x", "a/./x"):
+            data, pin = zip_fixture([(name, b"x")])
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                corpus.decode_corpus(data, pin)
+        data, pin = zip_fixture([("x", b"x")], link=True)
+        with self.assertRaises(ValueError):
+            corpus.decode_corpus(data, pin)
+        data, pin = zip_fixture([("x", b"x")])
+        for changed in ({**pin, "file_count": 2}, {**pin, "decoded_bytes": 2}, {**pin, "file_bytes": {"y": 1}}):
+            with self.assertRaises(ValueError):
+                corpus.decode_corpus(data, changed)
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            member = archive.infolist()[0]
+            with self.assertRaises(ValueError):
+                corpus.validate_members([member, member], {"file_count": 2, "decoded_bytes": 2})
+
+    # Purpose: Reject corrupt member CRCs before any native compression consumes the fixture.
+    # Inputs: A ZIP with one altered stored payload byte and intact original CRC metadata.
+    # Outputs: The standard ZIP decoder rejects the corrupted source rather than issuing a new accepted identity.
+    def test_corrupt_member_crc(self) -> None:
+        data, pin = zip_fixture([("x", b"abcdef")])
+        changed = bytearray(data)
+        changed[data.index(b"abcdef")] ^= 1
+        with self.assertRaises(zipfile.BadZipFile):
+            corpus.decode_corpus(bytes(changed), pin)
+
+    # Purpose: Require the original canonical TAR inventory and preserve text line endings exactly.
+    # Inputs: A fixed tiny TAR/gzip with CRLF plus a second pin claiming normalized text extent.
+    # Outputs: Original bytes pass; a changed member extent and excessive decoded container both fail.
+    def test_original_tar_extent_and_decoded_bound(self) -> None:
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode="w") as archive:
+            member = tarfile.TarInfo("alice29.txt")
+            member.size = 4
+            archive.addfile(member, io.BytesIO(b"a\r\nb"))
+        data = gzip.compress(output.getvalue())
+        pin = {"file_count": 1, "container_bytes_max": len(output.getvalue()), "file_bytes": {"alice29.txt": 4}}
+        files, _ = corpus.decode_canterbury(data, pin)
+        self.assertEqual(files[0]["data"], b"a\r\nb")
+        for changed in ({**pin, "file_bytes": {"alice29.txt": 3}}, {**pin, "container_bytes_max": 10}):
+            with self.assertRaises(ValueError):
+                corpus.decode_canterbury(data, changed)
+
+    # Purpose: Require complete published-corpus pins rather than a synthetic/repository replacement.
+    # Inputs: Checked-in source metadata and its independent known canonical lengths and natural-file counts.
+    # Outputs: Both presets retain the real full workload, including the 175 MB Govdocs member.
+    def test_canonical_pins(self) -> None:
+        pins = json.loads(corpus.PINS.read_text(encoding="utf-8"))
+        self.assertEqual(sum(pins["Canterbury"]["file_bytes"].values()), 2810784)
+        self.assertEqual(pins["Canterbury"]["file_bytes"]["alice29.txt"], 152089)
+        self.assertEqual(pins["Govdocs1Thread0"]["file_count"], 991)
+        self.assertLess(pins["Govdocs1Thread0"]["max_file_bytes"], corpus.MAX_FILE)
+
+    # Purpose: Keep complete archive sizes and actual GPU work bound to each exact RAM source.
+    # Inputs: Native protocol with original identity and independent invalid memory/mode/hash/extent/GPU mutations.
+    # Outputs: Correct protocol passes; every substitution fails closed.
+    def test_native_telemetry_contract(self) -> None:
+        member = {"bytes": 7, "sha256": "a" * 64}
+        fields = {
+            "input_bytes": "7",
+            "validated_bytes": "7",
+            "source_sha256": "a" * 64,
+            "compression_mode": "neutron_star",
+            "memory_only": "true",
+            "disk_write_bytes": "0",
+            "measurement_protocol": "bytewise-corpus-v1",
+            "data_source": "preloaded",
+            "gpu_used": "true",
+            "gpu_encode_chunks": "1",
+            "gpu_decode_chunks": "1",
+            "gpu_kernel_launches": "1",
+            "archive_bytes": "116",
+            "output_bytes": "7",
+            "compress_seconds": "0.125",
+        }
+
+        # Purpose: Serialize controlled native fields for independent admission mutations.
+        # Inputs: Fixture fields. Outputs: One ASCII key/value protocol line.
+        def encode(values: dict) -> bytes:
+            return " ".join(f"{key}={value}" for key, value in values.items()).encode()
+
+        self.assertEqual(corpus.parse_stats(encode(fields), member), fields)
+        for key, value in (
+            ("input_bytes", "8"),
+            ("validated_bytes", "0"),
+            ("source_sha256", "b" * 64),
+            ("compression_mode", "standard"),
+            ("disk_write_bytes", "1"),
+            ("memory_only", "false"),
+            ("gpu_used", "false"),
+            ("gpu_decode_chunks", "0"),
+            ("archive_bytes", "0"),
+            ("output_bytes", "8"),
+            ("compress_seconds", "nan"),
+            ("compress_seconds", "inf"),
+            ("compress_seconds", "-1"),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                corpus.parse_stats(encode({**fields, key: value}), member)
+
+    # Purpose: Validate binary process transport and enforce bounded output/deadline cleanup.
+    # Inputs: Owned Python children echoing binary bytes, overflowing stdout or waiting beyond the caller deadline.
+    # Outputs: Preserves every byte and rejects overflow/timeout without leaving the owned child alive.
+    def test_owned_process_transport(self) -> None:
+        data = bytes(range(256))
+        command = [sys.executable, "-B", "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"]
+        self.assertEqual(corpus.run_process(command, data, 10), data)
+        with self.assertRaises(ValueError):
+            corpus.run_process(
+                [sys.executable, "-B", "-c", "import sys; sys.stdout.buffer.write(b'x'*65537)"], None, 10
+            )
+        with self.assertRaises(subprocess.TimeoutExpired):
+            corpus.run_process([sys.executable, "-B", "-c", "import time; time.sleep(30)"], None, 1)
+
+
+def resident_fixture() -> list[dict]:
+    """Purpose: Own tiny binary IPC inputs. Inputs: None. Outputs: Natural boundary-marker fixtures, never
+    benchmark evidence.
+    """
+    return [
+        {"name": name, "data": data, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        for name, data in (("one", bytes(range(256))), ("two", b"\x00\r\n\x1a"))
+    ]
+
+
+def protocol_fixture(data: bytes) -> bytes:
+    """Purpose: Produce a labelled parser fixture. Inputs: Exact test bytes. Outputs: Mock protocol, never actual
+    HIP evidence.
+    """
+    return (
+        f"input_bytes={len(data)} validated_bytes={len(data)} output_bytes={len(data)} "
+        f"source_sha256={hashlib.sha256(data).hexdigest()} compression_mode=neutron_star "
+        "memory_only=true disk_write_bytes=0 measurement_protocol=bytewise-corpus-v1 data_source=preloaded "
+        "gpu_used=true gpu_encode_chunks=1 gpu_decode_chunks=1 gpu_kernel_launches=1 archive_bytes=116 "
+        "compress_seconds=0.125"
+    ).encode("ascii")
+
+
+@unittest.skipUnless(os.name == "nt", "Windows native controller")
+class RamExchangeContracts(unittest.TestCase):
+    """Purpose: Test real Windows IPC failure boundaries. Inputs: Owned tiny mappings. Outputs: Byte/lifetime
+    rejection proofs.
+    """
+
+    def test_cross_process_worker_and_cleanup(self) -> None:
+        """Purpose: Exercise production IPC and worker twice. Inputs: Separate CPU processes. Outputs: Ordered
+        complete slots.
+        """
+        files = resident_fixture()
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, files, 2, corpus.admit_memory)
+            self.assertTrue(all("data" not in row for row in files))
+            source, output, rows = ipc.open_session(stack, descriptor)
+            self.assertTrue(source.readonly)
+            with self.assertRaises(TypeError):
+                source[0] = 1
+            code = (
+                "import json, os, socket; from pathlib import Path; from unittest.mock import patch; "
+                "from tools import neutron_corpus_benchmark as c, neutron_corpus_ipc as i; "
+                "from tools.test_neutron_corpus_benchmark import protocol_fixture; "
+                "descriptor=json.loads(os.environ[i.SESSION_ENV]); "
+                "with_context=patch('socket.socket', side_effect=AssertionError('IPC must not open a socket')); "
+                "with_context.start(); c.run_process=lambda args,data,timeout: protocol_fixture(data); "
+                "c.worker(descriptor,Path('test-only-native-fixture'),256,10)"
+            )
+            environment = {**os.environ, ipc.SESSION_ENV: json.dumps(descriptor)}
+            for _ in range(2):
+                self.assertEqual(corpus.run_process([sys.executable, "-B", "-c", code], None, 10, env=environment), b"")
+            reports = list(ipc.observations(output, descriptor, files, corpus.parse_stats))
+            self.assertEqual([row["index"] for row in reports], [0, 1, 0, 1])
+            self.assertEqual([row["stats"]["input_bytes"] for row in reports], ["256", "4", "256", "4"])
+            with (
+                mock.patch.object(corpus, "run_process", side_effect=AssertionError("excess run reached native")),
+                self.assertRaises(ValueError),
+            ):
+                corpus.worker(descriptor, corpus.ROOT / "test-only-native-fixture", 256, 10)
+            self.assertEqual(len(rows), 2)
+        for name in (descriptor["source"], descriptor["results"]):
+            with self.assertRaises(FileNotFoundError):
+                SharedMemory(name=name, create=False)
+
+    def test_admission_before_mapping_creation(self) -> None:
+        """Purpose: Reject unsafe growth before allocation. Inputs: Refused RAM admission. Outputs: No mapping is
+        created.
+        """
+        with ExitStack() as stack, mock.patch.object(ipc, "SharedMemory") as create:
+            with self.assertRaises(MemoryError):
+                ipc.prepare_session(stack, resident_fixture(), 1, mock.Mock(side_effect=MemoryError("fixture")))
+            create.assert_not_called()
+
+    def test_corrupt_descriptor_and_manifest(self) -> None:
+        """Purpose: Reject altered extents and metadata. Inputs: Independent descriptor/manifest mutations.
+        Outputs: Fail closed.
+        """
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, resident_fixture(), 1, corpus.admit_memory)
+            for key, value in (
+                ("source_bytes", -1),
+                ("result_bytes", 1),
+                ("runs", True),
+                ("file_count", 2001),
+                ("mutex", "other"),
+                ("source", "other"),
+            ):
+                with self.subTest(key=key), self.assertRaises(ValueError):
+                    ipc.open_session(stack, {**descriptor, key: value})
+            mapping = SharedMemory(name=descriptor["source"], create=False)
+            stack.callback(mapping.close)
+            mapping.buf[0] ^= 1
+            with self.assertRaises(ValueError):
+                ipc.open_session(stack, descriptor)
+
+    def test_slots_reject_gaps_duplicates_overflow_and_partial_runs(self) -> None:
+        """Purpose: Reject incomplete or substituted results. Inputs: Slot mutations. Outputs: No partial study
+        admission.
+        """
+        files = resident_fixture()
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, files, 1, corpus.admit_memory)
+            _, output, _ = ipc.open_session(stack, descriptor)
+            with self.assertRaises(ValueError):
+                list(ipc.observations(output, descriptor, files, corpus.parse_stats))
+            for slot, payload in ((-1, b"x"), (2, b"x"), (0, b""), (0, b"x" * (ipc.MAX_PROTOCOL + 1))):
+                with self.assertRaises(ValueError):
+                    ipc.publish_observation(output, slot, payload)
+            ipc.publish_observation(output, 1, b"x")
+            with self.assertRaises(ValueError):
+                ipc.completed_slots(output)
+            struct.pack_into("<I", output, ipc.SLOT_BYTES, 0)
+            ipc.publish_observation(output, 0, protocol_fixture(bytes(range(256))))
+            with self.assertRaises(ValueError):
+                ipc.publish_observation(output, 0, b"x")
+            with (
+                mock.patch.object(corpus, "run_process", side_effect=AssertionError("partial run reached native")),
+                self.assertRaises(ValueError),
+            ):
+                corpus.worker(descriptor, corpus.ROOT / "test-only-native-fixture", 256, 10)
+            struct.pack_into("<I", output, 0, ipc.MAX_PROTOCOL + 1)
+            with self.assertRaises(ValueError):
+                ipc.completed_slots(output)
+
+    def test_concurrent_writer_rejected(self) -> None:
+        """Purpose: Prevent overlapping measured runs. Inputs: A held named mutex. Outputs: A separate worker fails
+        immediately.
+        """
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, resident_fixture(), 1, corpus.admit_memory)
+            code = (
+                "import sys; from tools.neutron_corpus_ipc import exclusive_writer; "
+                "exclusive_writer(sys.argv[1]).__enter__()"
+            )
+            with (
+                ipc.exclusive_writer(descriptor["mutex"]),
+                self.assertRaisesRegex(ValueError, "Concurrent corpus workers"),
+            ):
+                corpus.run_process([sys.executable, "-B", "-c", code, descriptor["mutex"]], None, 10)
+
+    def test_abandoned_writer_invalidates_study(self) -> None:
+        """Purpose: Reject interrupted ownership. Inputs: Worker exits while holding the mutex. Outputs: No
+        reusable study.
+        """
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, resident_fixture(), 1, corpus.admit_memory)
+            code = (
+                "import os,sys; from tools.neutron_corpus_ipc import exclusive_writer; "
+                "owner=exclusive_writer(sys.argv[1]); owner.__enter__(); os._exit(7)"
+            )
+            with self.assertRaises(ValueError):
+                corpus.run_process([sys.executable, "-B", "-c", code, descriptor["mutex"]], None, 10)
+            with self.assertRaisesRegex(ValueError, "abandoned"), ipc.exclusive_writer(descriptor["mutex"]):
+                self.fail("abandoned study admitted")
+
+    def test_changed_source_rejected_before_native(self) -> None:
+        """Purpose: Bind transported bytes. Inputs: Changed mapped source. Outputs: Rejection before the native
+        consumer.
+        """
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, resident_fixture(), 1, corpus.admit_memory)
+            mapping = SharedMemory(name=descriptor["source"], create=False)
+            stack.callback(mapping.close)
+            mapping.buf[descriptor["manifest_bytes"]] ^= 1
+            with (
+                mock.patch.object(corpus, "run_process", side_effect=AssertionError("changed bytes reached native")),
+                self.assertRaisesRegex(ValueError, "identity changed"),
+            ):
+                corpus.worker(descriptor, corpus.ROOT / "test-only-native-fixture", 256, 10)
+
+    def test_stale_native_receipt_refuses_before_acquisition(self) -> None:
+        """Purpose: Avoid wasted corpus acquisition. Inputs: Stale native identity. Outputs: No download or child
+        launch.
+        """
+        args = SimpleNamespace(corpus="Canterbury", configuration="Release")
+        with (
+            mock.patch.object(corpus, "validate_current", side_effect=ValueError("stale native fixture")),
+            mock.patch.object(corpus, "download") as download,
+            mock.patch.object(corpus, "run_process") as launch,
+            self.assertRaisesRegex(ValueError, "stale native fixture"),
+        ):
+            corpus.study(args)
+        download.assert_not_called()
+        launch.assert_not_called()
+
+    def test_partial_reports_remain_visible_and_unqualified(self) -> None:
+        """Purpose: Preserve failed-study evidence. Inputs: One completed slot. Outputs: Original protocol and
+        partial totals.
+        """
+        files = resident_fixture()
+        with ExitStack() as stack:
+            descriptor = ipc.prepare_session(stack, files, 1, corpus.admit_memory)
+            _, output, _ = ipc.open_session(stack, descriptor)
+            protocol = protocol_fixture(bytes(range(256)))
+            ipc.publish_observation(output, 0, protocol)
+            printed = io.StringIO()
+            with mock.patch.object(corpus.sys, "stdout", printed):
+                count, totals = corpus.emit_observations(output, descriptor, files)
+            row = json.loads(printed.getvalue())
+            self.assertEqual(row["protocol"], protocol.decode("ascii"))
+            self.assertFalse(row["study_qualified"])
+            self.assertEqual((count, totals[0]["input_bytes"], totals[0]["archive_bytes"]), (1, 256, 116))
+
+    def test_child_descendant_cannot_outlive_root(self) -> None:
+        """Purpose: Guard cleanup after root exit. Inputs: A root spawning a sleeping child. Outputs: Terminated
+        exit status.
+        """
+        code = (
+            "import subprocess,sys; p=subprocess.Popen([sys.executable,'-B','-c','import time; time.sleep(30)']); "
+            "print(p.pid,flush=True)"
+        )
+        child_id = int(corpus.run_process([sys.executable, "-B", "-c", code], None, 10))
+        library = ctypes.WinDLL("kernel32", use_last_error=True)
+        library.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        library.OpenProcess.restype = ctypes.c_void_p
+        handle = library.OpenProcess(0x00100000, False, child_id)
+        if handle:
+            try:
+                # Job accounting reaches zero after termination; final kernel-handle signalling can follow shortly.
+                self.assertEqual(ipc.mutex_api().WaitForSingleObject(handle, 5000), 0)
+            finally:
+                ipc.mutex_api().CloseHandle(handle)
+
+
+if __name__ == "__main__":
+    unittest.main()

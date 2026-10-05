@@ -143,22 +143,24 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
         failed = code != 0
         return code
     finally:
-        if containment is not None:
-            containment.close()
-        elif os.name != "nt":
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(child.pid, signal.SIGKILL)
-        if child.poll() is None:
-            child.kill()
-        child.wait(timeout=5)
-        if reader is not None:
-            reader.join(timeout=5)
-        if quiet and child.stdout is not None:
-            child.stdout.close()
-            if (failed or overflow.is_set()) and tail:
-                print(tail.decode("utf-8", errors="replace"), file=sys.stderr)
-            if overflow.is_set() and not failed:
-                raise ValueError("Crawler setup exceeded its 4 MiB output budget")
+        try:
+            if containment is not None:
+                containment.close()
+            elif os.name != "nt":
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(child.pid, signal.SIGKILL)
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+            if reader is not None:
+                reader.join(timeout=5)
+            if quiet and child.stdout is not None:
+                child.stdout.close()
+                if (failed or overflow.is_set()) and tail:
+                    print(tail.decode("utf-8", errors="replace"), file=sys.stderr)
+                if overflow.is_set() and not failed:
+                    raise ValueError("Crawler setup exceeded its 4 MiB output budget")
 
 
 def run(command: list[str], env: dict[str, str], timeout: int = 900) -> None:

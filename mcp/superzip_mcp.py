@@ -161,6 +161,21 @@ class _JobObjectBasicLimitInformation(ctypes.Structure):
     ]
 
 
+class _JobObjectBasicAccountingInformation(ctypes.Structure):
+    """Typed Windows accounting result used to confirm complete owned-tree shutdown."""
+
+    _fields_ = [
+        ("total_user_time", ctypes.c_longlong),
+        ("total_kernel_time", ctypes.c_longlong),
+        ("period_user_time", ctypes.c_longlong),
+        ("period_kernel_time", ctypes.c_longlong),
+        ("total_page_fault_count", wintypes.DWORD),
+        ("total_processes", wintypes.DWORD),
+        ("active_processes", wintypes.DWORD),
+        ("total_terminated_processes", wintypes.DWORD),
+    ]
+
+
 class _IoCounters(ctypes.Structure):
     _fields_ = [
         ("read_operation_count", ctypes.c_ulonglong),
@@ -368,13 +383,29 @@ class ChildContainment:
             process.kill()
 
     def close(self) -> None:
-        """Purpose: Release containment and kill any descendants that outlived a completed root child.
+        """Purpose: Terminate and drain the owned process tree before releasing containment.
         Inputs: None.
-        Outputs: Closes the Windows kill-on-close job handle exactly once.
+        Outputs: Confirms zero active processes within five seconds, or raises; always closes the job exactly once.
         """
         if self._handle is not None and self._kernel32 is not None:
-            self._kernel32.CloseHandle(self._handle)
-            self._handle = None
+            try:
+                if not self._kernel32.TerminateJobObject(self._handle, 1):
+                    raise RuntimeError(f"owned job termination failed ({ctypes.get_last_error()})")
+                deadline = time.monotonic() + 5
+                while True:
+                    accounting = _JobObjectBasicAccountingInformation()
+                    if not self._kernel32.QueryInformationJobObject(
+                        self._handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None
+                    ):
+                        raise RuntimeError(f"owned job shutdown query failed ({ctypes.get_last_error()})")
+                    if accounting.active_processes == 0:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("owned process tree did not finish termination within five seconds")
+                    time.sleep(0.01)
+            finally:
+                self._kernel32.CloseHandle(self._handle)
+                self._handle = None
 
 
 class BoundedOutput:
@@ -520,15 +551,17 @@ def run_bounded_command(
         containment = ChildContainment(process, admitted_bytes)
         resume_owned_child(process)
     except BaseException:
-        if containment is not None:
-            containment.close()
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=5)
-        if process.stdout is not None:
-            process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
+        try:
+            if containment is not None:
+                containment.close()
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
         raise
     output = BoundedOutput(max_output_bytes, response_tail_bytes)
     assert process.stdout is not None and process.stderr is not None
@@ -560,11 +593,13 @@ def run_bounded_command(
             containment.terminate(process)
             process.wait(timeout=5)
     finally:
-        containment.close()
-        for reader in readers:
-            reader.join(timeout=5)
-        process.stdout.close()
-        process.stderr.close()
+        try:
+            containment.close()
+        finally:
+            for reader in readers:
+                reader.join(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
 
     stdout, stdout_truncated = output.render("stdout")
     stderr, stderr_truncated = output.render("stderr")
