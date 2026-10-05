@@ -866,5 +866,10 @@ downstream source build, retain original provenance and notices, minimize and
 test the source delta, use normal dependency resolution, and verify the installed
 repair bytes on cache reuse. Exercise the actual affected API with its documented
 configuration type, plus refusal-before-write and ownership cleanup controls.
+Admit untrusted names before normalization and I/O backend selection: a custom
+opener is a file-handle boundary, and some runtimes select device or console I/O
+before invoking it. Exercise the composed destination-validation and write path
+on fresh platform installations as well as cache reuse; a hidden local process
+does not reproduce every hosted runtime context.
 The [portable crawler repair](crawl4ai-portable-download-repair-2026-10-05.md)
 records this incident; the reusable source and consumer gates select automatically.

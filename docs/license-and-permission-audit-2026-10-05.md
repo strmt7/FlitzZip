@@ -66,7 +66,7 @@ dependency appears without native notice coverage.
   The complete text is retained, and attribution appears in the research guide
   and both CLI help surfaces. Do not flatten this into an unqualified
   Apache-2.0 SPDX claim. The wrapper uses public upstream APIs. The identified
-  `0.9.4+superzip.portable1` [source repair](crawl4ai-portable-download-repair-2026-10-05.md)
+  `0.9.4+superzip.portable2` [source repair](crawl4ai-portable-download-repair-2026-10-05.md)
   retains the original source archive and full license, adds a modified-source
   notice, and grants Apache-2.0 terms explicitly to its new download helper.
   It changes the platform download opener and downstream identity; browser

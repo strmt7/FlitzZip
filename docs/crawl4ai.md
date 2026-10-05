@@ -6,7 +6,7 @@ archive application and requires no cloud account, API key, paid service or
 public server. The [latest stable release reviewed on 5 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4)
 is 0.9.4. Its base package and dependency wheels are pinned with upstream
 SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
-The installed crawler is the explicitly identified `0.9.4+superzip.portable1`
+The installed crawler is the explicitly identified `0.9.4+superzip.portable2`
 source build. It repairs the upstream HTTP download opener on Windows while
 preserving POSIX no-follow behavior; see [the repair and qualification](crawl4ai-portable-download-repair-2026-10-05.md).
 NLTK uses an explicitly identified upstream-source security build because the

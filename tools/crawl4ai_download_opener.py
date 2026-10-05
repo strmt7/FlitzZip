@@ -11,13 +11,18 @@ import os
 import stat
 
 
+def validate_download_name(name: str) -> None:
+    """Purpose: Reject Windows aliases before Python selects an I/O class. Inputs: Basename. Outputs: None/error."""
+    if os.name == "nt" and os.path.isreserved(name):
+        raise ValueError("Reserved Windows download destination")
+
+
 def windows_handle(path: str, flags: int) -> int:
     """Purpose: Open without following reparse points. Inputs: Confined path/open flags. Outputs: Owned handle."""
     import ctypes
     from ctypes import wintypes
 
-    if os.path.isreserved(path):
-        raise ValueError("Reserved Windows download destination")
+    validate_download_name(path)
     allowed = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_TRUNC | os.O_APPEND
     allowed |= os.O_BINARY | os.O_TEXT | os.O_NOINHERIT
     if flags & ~allowed or flags & (os.O_WRONLY | os.O_RDWR) == (os.O_WRONLY | os.O_RDWR):

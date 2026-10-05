@@ -24,9 +24,10 @@ class DownloadContracts(unittest.TestCase):
 
         if importlib.metadata.version("crawl4ai") != VERSION:
             raise AssertionError("Download regression requires the exact source-admitted Crawl4AI runtime")
-        from crawl4ai.async_crawler_strategy import _nofollow_opener
+        from crawl4ai.async_crawler_strategy import _nofollow_opener, _safe_download_filepath
 
         cls.opener = staticmethod(_nofollow_opener)
+        cls.destination = staticmethod(_safe_download_filepath)
 
     def test_real_creation_overwrite_and_descriptor_ownership(self):
         """Purpose: Preserve normal downloads. Inputs: Owned binary file. Outputs: Exact bytes and closed handle."""
@@ -85,16 +86,69 @@ class DownloadContracts(unittest.TestCase):
             target.write_bytes(b"preserved")
             link = Path(owned) / "hardlink"
             os.link(target, link)
-            for destination in (link, Path(owned) / "CON", Path(owned) / "target:stream", Path(owned) / "trailing."):
+            names = (
+                link.name,
+                "CON",
+                "con.json",
+                "CONIN$",
+                "NUL",
+                "AUX.txt",
+                "LPT1",
+                "COM1",
+                "target:stream",
+                "trailing.",
+            )
+            for name in names:
                 with (
-                    self.subTest(destination=destination.name),
+                    self.subTest(destination=name),
                     self.assertRaises((OSError, ValueError)),
-                    open(destination, "wb", opener=self.opener),
+                    open(self.destination(owned, name), "wb", opener=self.opener),
                 ):
                     pass
             self.assertEqual(target.read_bytes(), b"preserved")
             link.unlink()
             target.unlink()
+
+    @unittest.skipUnless(os.name == "nt", "Windows reserved-name admission")
+    def test_http_reserved_headers_refused_before_opening(self):
+        """Purpose: Protect the complete download consumer. Inputs: Remote reserved names. Outputs: No file opens."""
+        import aiofiles
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from crawl4ai import CrawlerRunConfig, HTTPCrawlerConfig
+        from crawl4ai.async_crawler_strategy import AsyncHTTPCrawlerStrategy, HTTPCrawlerError
+
+        async def respond(request):
+            """Purpose: Supply a hostile download name. Inputs: Owned request. Outputs: Typed named response."""
+            return web.Response(
+                body=b"reserved filename must not be written",
+                content_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{request.query["name"]}"'},
+            )
+
+        async def consume(root: str):
+            """Purpose: Exercise admission before file I/O. Inputs: Owned root. Outputs: Verified refusals."""
+            app = web.Application()
+            app.router.add_get("/reserved", respond)
+            async with TestServer(app) as server:
+                self.assertTrue(ipaddress.ip_address(server.host).is_loopback)
+                async with AsyncHTTPCrawlerStrategy(browser_config=HTTPCrawlerConfig(downloads_path=root)) as strategy:
+                    # The real admission must reject before aiofiles or CPython can select WindowsConsoleIO.
+                    with patch("crawl4ai.async_crawler_strategy.aiofiles.open", wraps=aiofiles.open) as opened:
+                        for name in ("CON", "CON.txt", "CONIN$", "NUL", "AUX.txt", "target:stream", "trailing."):
+                            url = server.make_url("/reserved").with_query(name=name)
+                            with (
+                                self.subTest(filename=name),
+                                self.assertRaisesRegex(HTTPCrawlerError, "Reserved Windows download destination"),
+                            ):
+                                await asyncio.wait_for(
+                                    strategy.crawl(str(url), CrawlerRunConfig(page_timeout=5000)), 10
+                                )
+                        opened.assert_not_called()
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+        with tempfile.TemporaryDirectory() as owned:
+            asyncio.run(consume(owned))
 
     def test_confined_http_consumer_preserves_complete_download_and_content(self):
         """Purpose: Exercise the failing HTTP path. Inputs: Owned JSON response. Outputs: Exact file/content."""

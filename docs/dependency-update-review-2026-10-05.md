@@ -48,3 +48,11 @@ contract or product test is removed.
 Evidence retained under ignored `out/`: `pr59-dependency.diff`,
 `pr59-crawler-failure.log`, `pr59-component-failure.log`,
 `pr59-current-pypi-metadata.json`, and `ci-initial-push-contracts.log`.
+
+The PR and advisory were refreshed after commit
+`e56becc7db74453c2ea34b83fa96464dbf156020`. The PR still has the exact head
+above and remains open and unmerged. The advisory still declares
+`first_patched_version: null` and affects upstream versions `<=3.10.3`.
+The new portable crawler revision retains the admitted NLTK source repair;
+its actual installed model/API regressions pass again. Neither a package
+version change nor the incompatible PR can close that database alert honestly.

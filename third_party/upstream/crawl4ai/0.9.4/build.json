@@ -2,7 +2,7 @@
   "schema": 1,
   "project": "crawl4ai",
   "upstream_version": "0.9.4",
-  "version": "0.9.4+superzip.portable1",
+  "version": "0.9.4+superzip.portable2",
   "source": "crawl4ai-0.9.4.tar.gz",
   "source_date_epoch": 1790165349,
   "source_url": "https://files.pythonhosted.org/packages/fc/df/39bf85e67faf31b6c1587d849ffb74b4cfb078c6f646e158a18768b15cdb/crawl4ai-0.9.4.tar.gz"

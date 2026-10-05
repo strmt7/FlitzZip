@@ -62,6 +62,10 @@ class SourceContracts(unittest.TestCase):
             (root / "crawl4ai/async_crawler_strategy.py").write_text("# changed upstream boundary\n")
             with self.assertRaisesRegex(ValueError, "requires renewed review"):
                 build.repair_source(root, build.recipe())
+        original = '    safe_name = os.path.basename(filename or "")\n    return os.open(path, flags | os.O_NOFOLLOW)'
+        for changed in (original.replace("safe_name =", "renamed ="), original + original):
+            with self.subTest(source=changed), self.assertRaisesRegex(ValueError, "requires renewed review"):
+                build.patched_strategy(changed)
 
     def test_extraction_rejects_traversal_links_duplicates_and_size_before_writing(self):
         """Purpose: Protect owned extraction. Inputs: Hostile synthetic tar members. Outputs: No published payload."""

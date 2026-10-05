@@ -25,7 +25,7 @@ def recipe() -> dict:
         data.get("schema") != 1
         or data.get("project") != "crawl4ai"
         or data.get("upstream_version") != "0.9.4"
-        or data.get("version") != "0.9.4+superzip.portable1"
+        or data.get("version") != "0.9.4+superzip.portable2"
         or data.get("source") != "crawl4ai-0.9.4.tar.gz"
         or type(data.get("source_date_epoch")) is not int
     ):
@@ -88,14 +88,38 @@ def extract_source(archive: Path, destination: Path) -> Path:
 def patched_strategy(original: str) -> str:
     """Purpose: Bind the repaired boundary. Inputs: Original strategy text. Outputs: Modified source or refusal."""
     previous = "    return os.open(path, flags | os.O_NOFOLLOW)"
-    if original.count(previous) != 1:
+    basename = '    safe_name = os.path.basename(filename or "")'
+    if original.count(previous) != 1 or original.count(basename) != 1:
         raise ValueError("Upstream download opener changed; repair requires renewed review")
-    return original.replace(
+    repaired = original.replace(
         previous,
         "    # SuperZip portable source repair: preserve no-follow checks on Windows.\n"
         "    from .superzip_download import open_download\n"
         "    return open_download(path, flags)",
     )
+    repaired = repaired.replace(
+        basename,
+        basename + "\n    # Validate before normalization or Python's console I/O selection.\n"
+        "    from .superzip_download import validate_download_name\n"
+        "    validate_download_name(safe_name)",
+    )
+    contracts = (
+        (
+            '    """Resolve a download destination confined to ``downloads_path``.',
+            '    """Purpose: Confine and admit downloads. Inputs: Root/remote name. Outputs: Safe path or refusal.\n\n'
+            "    Resolve a download destination confined to ``downloads_path``.",
+        ),
+        (
+            '    """Opener for ``open``/``aiofiles.open`` that refuses to follow a symlink at',
+            '    """Purpose: Open without following links. Inputs: Admitted path/flags. Outputs: Owned descriptor.\n\n'
+            "    Opener for ``open``/``aiofiles.open`` that refuses to follow a symlink at",
+        ),
+    )
+    for old, new in contracts:
+        if repaired.count(old) != 1:
+            raise ValueError("Upstream download contract changed; repair requires renewed review")
+        repaired = repaired.replace(old, new)
+    return repaired
 
 
 def patched_version(original: str, version: str) -> str:
@@ -138,7 +162,9 @@ def repair_source(source: Path, data: dict) -> None:
         "Upstream: https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4\n"
         f"Downstream version: {data['version']}\n"
         "Modified 5 October 2026: async_crawler_strategy.py delegates its download opener\n"
-        "to the included Apache-2.0 superzip_download.py. Windows uses a native no-follow\n"
+        "and pre-open filename validation to the included Apache-2.0 superzip_download.py.\n"
+        "Reserved Windows basenames are rejected before path normalization and opening.\n"
+        "Windows uses a native no-follow\n"
         "handle, validates it before truncation and transfers ownership to Python.\n"
         "POSIX retains O_NOFOLLOW. __version__.py and license packaging identify this build.\n"
         "No browser, URL, robots, request, extraction or dependency rules were changed.\n"
