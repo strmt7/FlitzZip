@@ -85,6 +85,73 @@ class CrawlerContracts(unittest.TestCase):
             self.assertEqual(pins["crawl4ai"], tool.VERSION)
             self.assertIn("importlib.metadata.version", argv[2])
 
+    def test_script_entrypoint_imports_its_checkout_from_another_directory(self):
+        """Purpose: Preserve direct script use. Inputs: External cwd/script path. Outputs: Local helper imports."""
+        with tempfile.TemporaryDirectory() as temp:
+            code = (
+                "import os,runpy,sys;from pathlib import Path;os.chdir(sys.argv[2]);"
+                "scope=runpy.run_path(sys.argv[1],run_name='entrypoint_contract');"
+                "scope['environment_paths'](Path(sys.argv[2]))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", code, str(Path(tool.__file__).resolve()), temp],
+                cwd=temp,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_provision_resolves_repaired_wheel_normally_before_admission(self):
+        """Purpose: Keep dependency/security gates mandatory. Inputs: Mocked setup. Outputs: Exact install order."""
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            python = directory / "python"
+            python.touch()
+            wheel = directory / "reviewed/nltk-security.whl"
+            with patch("tools.nltk_security_build.ensure_wheel", return_value=wheel), patch.object(tool, "run") as run:
+                tool.provision(directory, directory, python, "fixture-identity")
+            commands = [call.args[0] for call in run.call_args_list]
+            install = next(command for command in commands if "install" in command and "pip" in command)
+            self.assertIn("--require-hashes", install)
+            self.assertIn("--only-binary=:all:", install)
+            self.assertIn(str(wheel.parent), install)
+            self.assertNotIn("--no-deps", install)
+            check_index = next(i for i, command in enumerate(commands) if command[-2:] == ["pip", "check"])
+            model_index = next(
+                i for i, command in enumerate(commands) if command[-1] == "tools.test_nltk_model_security"
+            )
+            browser_index = next(i for i, command in enumerate(commands) if "playwright" in command)
+            self.assertLess(check_index, model_index)
+            self.assertLess(model_index, browser_index)
+            self.assertTrue((directory / "superzip-install.json").exists())
+
+    def test_changed_security_contract_reuses_dependencies_and_failed_gate_is_not_cached(self):
+        """Purpose: Reuse qualified installs. Inputs: Stale gate/owned receipt. Outputs: Only affected test runs."""
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            python = directory / "python"
+            python.touch()
+            receipt = directory / "superzip-install.json"
+            original = {"lock_sha256": "fixture", "platform": tool.platform.system(), "model_contract_sha256": "old"}
+            tool.write_install_receipt(receipt, original)
+            with (
+                patch.object(tool, "verify_versions"),
+                patch("tools.nltk_security_build.ensure_wheel") as builder,
+                patch.object(tool, "run", side_effect=ValueError("security contract failed")),
+                self.assertRaisesRegex(ValueError, "security contract failed"),
+            ):
+                tool.provision(directory, directory, python, "fixture")
+            self.assertEqual(json.loads(receipt.read_text()), original)
+            builder.assert_not_called()
+            with patch.object(tool, "verify_versions"), patch.object(tool, "run") as run:
+                tool.provision(directory, directory, python, "fixture")
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.args[0][-1], "tools.test_nltk_model_security")
+                tool.provision(directory, directory, python, "fixture")
+                self.assertEqual(run.call_count, 1)
+
     def test_lock_is_complete_hashed_and_latest_reviewed(self):
         """Purpose: Require immutable wheel selection. Inputs: Checked-in lock. Outputs: Every entry pinned/hashed."""
         text = tool.LOCK.read_text(encoding="utf-8")
@@ -132,7 +199,15 @@ class CrawlerContracts(unittest.TestCase):
             python.parent.mkdir(parents=True)
             python.touch()
             receipt = directory / "superzip-install.json"
-            receipt.write_text(json.dumps({"lock_sha256": identity, "platform": tool.platform.system()}))
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "lock_sha256": identity,
+                        "platform": tool.platform.system(),
+                        "model_contract_sha256": tool.text_identity(tool.ROOT / "tools/test_nltk_model_security.py"),
+                    }
+                )
+            )
             with patch.object(tool, "verify_versions") as verify, patch.object(tool, "run") as launch:
                 self.assertEqual(tool.install(home), python)
                 verify.assert_called_once()
@@ -140,7 +215,11 @@ class CrawlerContracts(unittest.TestCase):
             receipt.unlink()
             with (
                 patch.object(tool, "verify_versions"),
-                patch.object(tool, "run", side_effect=[None, None, subprocess.CalledProcessError(7, ["browser"])]),
+                patch("tools.nltk_security_build.ensure_wheel", return_value=home / "fixture.whl"),
+                patch.object(tool, "tool_environment", return_value={"PYTHONUTF8": "1"}),
+                patch.object(
+                    tool, "run", side_effect=[None, None, None, subprocess.CalledProcessError(7, ["browser"])]
+                ),
                 self.assertRaises(subprocess.CalledProcessError),
             ):
                 tool.install(home)

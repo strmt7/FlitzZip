@@ -15,12 +15,14 @@ from tools.scanner_hosted_review import match_historical_hosted_alerts, read_hos
 
 POLICY = Path(".github/scanner-metadata-reviews.csv")
 FIELDS = ("path", "rule", "input_sha256", "public_sha256", "evidence")
+TYPED_FIELDS = ("path", "rule", "input_sha256", "public_value", "value_kind", "evidence")
 MAX_POLICY_BYTES = 64 * 1024
 MAX_REVIEWS = 256
 METADATA_PATH = re.compile(
     r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/[^/]+\.json"
     r"|tools/benchmark_permissions\.json|docs/licenses/development-notices\.json)"
 )
+COMMIT_METADATA_PATH = re.compile(r"third_party/upstream/nltk/([a-f0-9]{40})/build\.json")
 SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")
 SOURCE_FIELDS = ("path", "rule", "input_sha256", "startLine", "startColumn", "endLine", "endColumn", "evidence")
 SOURCE_EVIDENCE = "docs/security-source-finding-review-2026-10-04.md"
@@ -219,30 +221,68 @@ def read_policy(root: Path) -> bytes:
     return payload
 
 
-# Purpose: Admit only exact reviewed public-checksum records, never source/test code or general suppressions.
+# Purpose: Admit exact reviewed public integrity records, never source/test code or general suppressions.
 # Inputs: Bounded version-controlled CSV bytes. Outputs: Validated records; unknown fields, roles and values fail.
 def read_reviews(payload: bytes) -> list[dict[str, str]]:
     if len(payload) > MAX_POLICY_BYTES:
         raise ValueError("Scanner metadata review policy exceeds its byte budget")
     reader = csv.DictReader(io.StringIO(payload.decode("utf-8")))
-    if tuple(reader.fieldnames or ()) != FIELDS:
+    fields = tuple(reader.fieldnames or ())
+    if fields not in (FIELDS, TYPED_FIELDS):
         raise ValueError("Scanner metadata review fields differ from the explicit policy contract")
     reviews, seen = [], set()
     for row in reader:
-        if len(reviews) >= MAX_REVIEWS or set(row) != set(FIELDS) or any(not value for value in row.values()):
+        if len(reviews) >= MAX_REVIEWS or set(row) != set(fields) or any(not value for value in row.values()):
             raise ValueError("Scanner metadata review row is malformed or exceeds admission")
-        if METADATA_PATH.fullmatch(row["path"]) is None or row["rule"] != "DS173237":
-            raise ValueError("Only public-checksum metadata can be reviewed; code and tests remain blocking")
-        if any(re.fullmatch(r"[0-9a-f]{64}", row[key]) is None for key in ("input_sha256", "public_sha256")):
+        if fields == FIELDS:
+            row["public_value"] = row.pop("public_sha256")
+            row["value_kind"] = "sha256"
+        checksum = row["value_kind"] == "sha256" and METADATA_PATH.fullmatch(row["path"]) is not None
+        commit_path = COMMIT_METADATA_PATH.fullmatch(row["path"])
+        commit = row["value_kind"] == "git_commit" and commit_path is not None and commit_path[1] == row["public_value"]
+        if row["rule"] != "DS173237" or not (checksum or commit):
+            raise ValueError("Only exact public integrity metadata can be reviewed; code and tests remain blocking")
+        length = 64 if checksum else 40
+        if (
+            re.fullmatch(r"[0-9a-f]{64}", row["input_sha256"]) is None
+            or re.fullmatch(r"[0-9a-f]{" + str(length) + r"}", row["public_value"]) is None
+        ):
             raise ValueError("Scanner metadata review has an invalid digest")
         if row["evidence"] != "docs/security-code-scanning.md#finding-triage":
             raise ValueError("Scanner metadata review lacks the canonical provenance evidence")
-        identity = (row["path"], row["rule"], row["public_sha256"])
+        identity = (row["path"], row["rule"], row["public_value"])
         if identity in seen:
             raise ValueError("Scanner metadata review identity is duplicated")
         seen.add(identity)
         reviews.append(row)
     return reviews
+
+
+def public_value_matches(row: dict, payload: bytes, region: dict) -> bool:
+    """Purpose: Bind public metadata to its exact role. Inputs: Approved row/source/region. Outputs: Exact match."""
+    if hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest() != row["input_sha256"]:
+        return False
+    offset, length = region.get("charOffset"), region.get("charLength")
+    expected = '"' + row["public_value"] + '"'
+    if type(offset) is not int or offset < 0 or type(length) is not int or length != len(expected):
+        return False
+    units = payload.decode("utf-8").encode("utf-16-le")
+    if units[offset * 2 : (offset + length) * 2].decode("utf-16-le") != expected:
+        return False
+    if row["value_kind"] == "git_commit":
+        try:
+            source = json.loads(payload)
+        except (ValueError, UnicodeDecodeError):
+            return False
+        value = row["public_value"]
+        return (
+            isinstance(source, dict)
+            and source.get("project") == "nltk"
+            and source.get("commit") == value
+            and source.get("source") == "nltk-source.zip"
+            and source.get("url") == "https://codeload.github.com/nltk/nltk/zip/" + value
+        )
+    return True
 
 
 # Purpose: Retain historical source review context while keeping every source finding blocking.
@@ -264,14 +304,7 @@ def review_findings(root: Path, report: Path, policy: bytes, source_policy: byte
                 payload = (root / name).read_bytes()
                 digest = hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest()
                 region = physical.get("region", {})
-                offset, length = region.get("charOffset"), region.get("charLength")
-                if type(offset) is int and offset >= 0 and type(length) is int and length == 66:
-                    units = payload.decode("utf-8").encode("utf-16-le")
-                    value = units[offset * 2 : (offset + length) * 2].decode("utf-16-le")
-                    accepted = any(
-                        digest == row["input_sha256"] and value == '"' + row["public_sha256"] + '"'
-                        for row in candidates
-                    )
+                accepted = any(public_value_matches(row, payload, region) for row in candidates)
             if accepted:
                 reviewed.append(
                     {

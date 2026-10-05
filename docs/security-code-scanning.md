@@ -82,12 +82,18 @@ contain leaked credentials and therefore has no folder-level secret exemption.
 The existing exact public-checksum exceptions retain field/value constraints.
 
 Local preflight retains every raw finding. Its metadata review ledger records
-only individually approved checksum matches in corpus descriptors, Gitleaks
+only individually approved public integrity matches in corpus descriptors, Gitleaks
 policy, the benchmark-permission manifest and the development-notice manifest.
-A verdict requires the exact metadata path, rule, highlighted
-public digest and complete reviewed file hash. Source and test paths cannot
-enter this ledger; changed contents and other findings remain blocking. CSV
-keeps the review records readable without changing the scanned source values.
+The typed contract also recognizes public Git provenance in an exact NLTK
+source-build recipe. A commit review must bind the path, JSON project and commit
+fields, original source archive name and official NLTK codeload URL to the same
+value. The existing checksum-only CSV remains supported; typed records distinguish
+SHA-256 values from Git commit identifiers.
+A verdict requires the exact metadata path, rule, highlighted value and complete
+reviewed file hash. Source and test paths cannot enter this ledger; changed
+contents and other findings remain blocking. CSV keeps the review records
+readable without changing the scanned source values. Recognizing a metadata role
+does not authorize a review record.
 This local admission does not dismiss hosted alerts or qualify release security.
 
 A successful analysis with the same DevSkim category can update obsolete
@@ -202,6 +208,11 @@ cover original corpus, comparator binary and license-notice hashes. Raw reports
 remain intact, changed file bytes or values expire admission, and source/test
 findings cannot use this metadata ledger. This approval does not dismiss hosted
 alerts or close unresolved legal, source, GPU or release obligations.
+
+The [NLTK public commit review](security-nltk-public-commit-review-2026-10-05.md)
+documents one additional provenance report. Its status and individual maintainer
+authorization are recorded in that review; the admission ledger cannot inherit
+the earlier checksum approvals for this separate value.
 
 The [latest individual review](security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
 records five metadata/namespace false-positive dispositions at `ed3ea0f`.

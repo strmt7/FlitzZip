@@ -74,13 +74,25 @@ async def fetch(owner, url: str, marker: str = "") -> dict:
 
 def source_identity() -> dict[str, str]:
     """Purpose: Bind qualification to integration bytes. Inputs: Repository sources. Outputs: Exact source digests."""
+    from tools import nltk_security_build
+
     paths = (
         "tools/crawl4ai_tool.py",
         "tools/crawl4ai_research.py",
         "tools/requirements/crawl4ai.txt",
         "tools/crawl4ai_sites.json",
+        "tools/nltk_security_build.py",
+        "tools/test_nltk_model_security.py",
+        "tools/requirements/nltk-build.txt",
     )
-    return {path: text_identity(ROOT / path) for path in paths}
+    identities = {path: text_identity(ROOT / path) for path in paths}
+    for name in ("build.json", "nltk-source.zip.sha256", "nltk-wheel.sha256"):
+        path = nltk_security_build.SOURCE_ROOT / name
+        identities[path.relative_to(ROOT).as_posix()] = text_identity(path)
+    identities["nltk_source_archive"] = nltk_security_build.digest(
+        nltk_security_build.SOURCE_ROOT / nltk_security_build.recipe()["source"]
+    )
+    return identities
 
 
 async def execute(args) -> int:

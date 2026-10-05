@@ -32,3 +32,19 @@ updates:
           - "*"
     commit-message:
       prefix: deps(python)
+  - package-ecosystem: pip
+    directory: /tools/requirements
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: UTC
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    groups:
+      research-tooling:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(research)

@@ -1,0 +1,74 @@
+name: crawl4ai-security
+
+on:
+  push:
+    paths: &research-inputs
+      - tools/crawl4ai_tool.py
+      - tools/crawl4ai_research.py
+      - tools/nltk_security_build.py
+      - tools/test_nltk_security_build.py
+      - tools/test_nltk_model_security.py
+      - tools/requirements/crawl4ai.txt
+      - tools/requirements/nltk-build.txt
+      - third_party/upstream/nltk/**
+      - .github/workflows/crawl4ai-security.yml
+  pull_request:
+    paths: *research-inputs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crawl4ai-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-repair:
+    name: Repaired crawler dependencies (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            python: "3.13"
+          - os: ubuntu-24.04
+            python: "3.13"
+          - os: macos-15
+            python: "3.13"
+          - os: ubuntu-24.04
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select supported interpreter
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            tools/requirements/crawl4ai.txt
+            tools/requirements/nltk-build.txt
+      - name: Verify source admission and normal dependency installation
+        shell: pwsh
+        run: |
+          # Build the standard wheel through the same production source/hash admission.
+          python -B -m unittest tools.test_nltk_security_build
+          if ($LASTEXITCODE -ne 0) { throw 'NLTK source/build contracts failed.' }
+          $wheel = python -c "from tools import nltk_security_build as n, crawl4ai_tool as t; print(n.ensure_wheel(t.cache_home()))"
+          if ($LASTEXITCODE -ne 0) { throw 'NLTK repaired wheel admission failed.' }
+          $runtime = Join-Path $env:RUNNER_TEMP 'crawler-runtime'
+          python -m venv $runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Crawler runtime creation failed.' }
+          $relativePython = if ($IsWindows) { 'Scripts/python.exe' } else { 'bin/python' }
+          $runtimePython = Join-Path $runtime $relativePython
+          & $runtimePython -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: --find-links (Split-Path $wheel) -r tools/requirements/crawl4ai.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Crawler normal dependency resolution failed.' }
+          & $runtimePython -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'Crawler dependency metadata conflicts.' }
+          & $runtimePython -B -m unittest tools.test_nltk_model_security
+          if ($LASTEXITCODE -ne 0) { throw 'Model-artifact source repair or crawler consumer failed.' }

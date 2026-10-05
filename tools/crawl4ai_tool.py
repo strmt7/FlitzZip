@@ -24,6 +24,9 @@ import venv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Purpose: Support script use. Inputs: This file's package context. Outputs: Exact checkout imports.
+if not __package__:
+    sys.path.insert(0, str(ROOT))
 LOCK = ROOT / "tools/requirements/crawl4ai.txt"
 VERSION = "0.9.4"
 ATTRIBUTION = (
@@ -53,7 +56,9 @@ def cache_home(override: str | None = None) -> Path:
 
 def environment_paths(home: Path) -> tuple[Path, Path, str]:
     """Purpose: Isolate dependency revisions. Inputs: Cache root. Outputs: Environment, Python and lock identity."""
-    identity = text_identity(LOCK)
+    from tools import nltk_security_build
+
+    identity = hashlib.sha256((text_identity(LOCK) + nltk_security_build.identity()).encode("ascii")).hexdigest()
     name = f"{VERSION}-py{sys.version_info.major}{sys.version_info.minor}-{identity[:16]}"
     directory = home / name
     python = directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -218,30 +223,63 @@ def installation_lock(directory: Path, timeout: float = 900):
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+def write_install_receipt(receipt: Path, recorded: dict) -> None:
+    """Purpose: Publish qualified setup atomically. Inputs: Owned receipt/data. Outputs: Replaced receipt."""
+    temporary = receipt.with_suffix(".tmp")
+    temporary.write_text(json.dumps(recorded), encoding="utf-8")
+    temporary.replace(receipt)
+
+
 def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
     """Purpose: Set up an owned environment. Inputs: Cache/paths/lock identity. Outputs: Pinned interpreter."""
     env = tool_environment(home)
     receipt = directory / "superzip-install.json"
+    model_contract = text_identity(ROOT / "tools/test_nltk_model_security.py")
+    model_command = [str(python), "-B", "-m", "unittest", "tools.test_nltk_model_security"]
     if python.exists() and receipt.exists():
         recorded = json.loads(receipt.read_text(encoding="utf-8"))
         if recorded.get("lock_sha256") == identity and recorded.get("platform") == platform.system():
             verify_versions(python, env)
+            if recorded.get("model_contract_sha256") != model_contract:
+                run(model_command, env, 60)
+                recorded["model_contract_sha256"] = model_contract
+                write_install_receipt(receipt, recorded)
             return python
     if not python.exists():
         venv.EnvBuilder(with_pip=True).create(directory)
+    from tools import nltk_security_build
+
+    repaired_wheel = nltk_security_build.ensure_wheel(home)
     run(
-        [str(python), "-m", "pip", "install", "--quiet", "--require-hashes", "--only-binary=:all:", "-r", str(LOCK)],
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--require-hashes",
+            "--only-binary=:all:",
+            "--find-links",
+            str(repaired_wheel.parent),
+            "-r",
+            str(LOCK),
+        ],
         env,
     )
     run([str(python), "-m", "pip", "check"], env, 60)
     verify_versions(python, env)
+    run(model_command, env, 60)
     run([str(python), "-m", "playwright", "install", "chromium"], env)
-    temporary = receipt.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps({"schema": 1, "version": VERSION, "lock_sha256": identity, "platform": platform.system()}),
-        encoding="utf-8",
+    write_install_receipt(
+        receipt,
+        {
+            "schema": 1,
+            "version": VERSION,
+            "lock_sha256": identity,
+            "platform": platform.system(),
+            "model_contract_sha256": model_contract,
+        },
     )
-    temporary.replace(receipt)
     return python
 
 

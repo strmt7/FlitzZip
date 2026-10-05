@@ -359,6 +359,8 @@ jobs:
     with:
       scan-args: |-
         --recursive
+        --lockfile=requirements.txt:tools/requirements/crawl4ai.txt
+        --lockfile=requirements.txt:tools/requirements/nltk-build.txt
         ./
 
   grype-filesystem:

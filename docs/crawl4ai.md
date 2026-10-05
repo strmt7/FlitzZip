@@ -6,6 +6,9 @@ archive application and requires no cloud account, API key, paid service or
 public server. The [latest stable release reviewed on 5 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4)
 is 0.9.4. Its base package and dependency wheels are pinned with upstream
 SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
+NLTK uses an explicitly identified upstream-source security build because the
+latest published NLTK release remains affected by a model-artifact sandbox
+bypass. See [the source repair and evidence](nltk-model-artifact-source-repair.md).
 
 Normal research invokes Crawl4AI's own `crwl crawl` command, forwarding its
 documented options without an alternative URL parser or extraction pipeline.
@@ -47,7 +50,13 @@ No optional Torch, cosine-model or transformer extra is requested. A cache
 override is available through `SUPERZIP_CRAWL4AI_HOME` or `--home <absolute-path>`;
 it must stay outside the source checkout. Browser downloads, package files and
 local Crawl4AI caches are installation data and are not committed or packaged.
-The environment identity includes Python's version and the complete lock hash.
+The environment identity includes Python's version, the complete lock hash and
+the pinned NLTK source/build identity. The repaired pure-Python wheel is built
+with pinned setuptools tooling in a separate external environment and admitted
+by its exact digest before normal dependency installation. A modified API
+regression contract rechecks the existing installed dependencies and updates
+its admission receipt only after success; it does not reinstall an unchanged
+dependency graph or browser.
 Text identities normalize CRLF to LF, matching Git's canonical text storage;
 checkout line endings alone cannot trigger a new environment or qualification.
 Package, wheel-hash or code changes still produce different identities.
@@ -56,6 +65,15 @@ without package or browser downloads. An OS file lock serializes setup across
 checkouts, and the success receipt is replaced atomically only after setup
 passes. Setup progress stays hidden; failures retain bounded diagnostics.
 Neither installation nor crawling requires a change to the archive application.
+
+OSV is given explicit parser/path arguments for both development dependency
+locks. Dependabot covers their directory. The `crawl4ai-security` workflow
+builds and verifies the repaired wheel, normal resolution, `pip check`, the
+affected model APIs and the actual stemming/filter consumer on Windows, Linux
+and macOS. It also checks Python 3.14 on Linux. Those hosted platform checks
+must pass before claiming cross-platform execution qualification; local path
+fixtures alone do not establish it. The platform dependency checks do not
+download browsers, crawl websites or build the archive application.
 
 Use `install` to provision ahead of time or `doctor` for installation diagnostics.
 Use `crawl --help` for the upstream CLI options. Browser, extraction and crawler
@@ -121,6 +139,12 @@ content successfully. Keep both runs' failures; do not turn intermittent site
 availability into an installation success claim.
 The earlier run using custom adapters is historical and does not qualify the
 upstream-default integration.
+
+After the NLTK source repair, the source-bound Windows run again passed **30 of
+32 websites**, retaining the GNU timeout and W3C challenge. The installed model
+boundary and crawler consumer regressions passed before that crawl. Original
+NLTK source, build configuration and wheel admission are included in the new
+qualification identity.
 
 Reuse unchanged source-bound qualification evidence. On another host, automatic
 setup and the intended target page are the ordinary first-use validation; use

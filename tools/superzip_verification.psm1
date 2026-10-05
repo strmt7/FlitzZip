@@ -279,8 +279,9 @@ function Get-SuperZipVerificationScope {
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
         '^tools/(fuzz_memory|test_fuzz_memory)\.py$',
         '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$',
-        '^tools/(crawl4ai_tool|crawl4ai_research|test_crawl4ai_tool|license_inventory|test_license_inventory)\.py$',
-        '^tools/(crawl4ai_sites\.json|requirements/crawl4ai\.txt)$',
+        '^tools/(crawl4ai_tool|crawl4ai_research|test_crawl4ai_tool|nltk_security_build|test_nltk_security_build|test_nltk_model_security|license_inventory|test_license_inventory)\.py$',
+        '^tools/(crawl4ai_sites\.json|requirements/(crawl4ai|nltk-build)\.txt)$',
+        '^third_party/upstream/nltk/',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
         '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
@@ -450,8 +451,10 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "greenbone-config-tests" -Stage "local" -Executable "node" -Arguments @("--test", ".github/openvas/resolve_config.test.cjs") -Reason "broker configuration must remain bounded, masked, and authorized before publishing step outputs") }
         @{ Pattern = @('^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$', '^\.agents/skills/(caveman|cocoindex-code-search)/', '^AGENTS\.md$')
            Command = (Get-SuperZipVerificationCommand -Id "agent-context-contracts" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_agent_context", "tools.test_cocoindex_agent_search") -Reason "mandatory skills, bounded source reads, note freshness and real semantic-routing receipts require executable contracts") }
-        @{ Pattern = @('^tools/(crawl4ai_tool|crawl4ai_research|test_crawl4ai_tool)\.py$', '^tools/(crawl4ai_sites\.json|requirements/crawl4ai\.txt)$', '^docs/crawl4ai\.md$', '^docs/licenses/', '^AGENTS\.md$', '^mcp/superzip_mcp\.py$')
+        @{ Pattern = @('^tools/(crawl4ai_tool|crawl4ai_research|test_crawl4ai_tool|nltk_security_build|test_nltk_security_build|test_nltk_model_security)\.py$', '^tools/(crawl4ai_sites\.json|requirements/(crawl4ai|nltk-build)\.txt)$', '^third_party/upstream/nltk/', '^docs/crawl4ai\.md$', '^docs/licenses/', '^AGENTS\.md$', '^mcp/superzip_mcp\.py$')
            Command = (Get-SuperZipVerificationCommand -Id 'crawl4ai-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_crawl4ai_tool') -Reason 'crawler integration must use upstream APIs, portable external installation and honest source-bound extraction results; offline contracts never install packages, launch browsers, crawl or build') }
+        @{ Pattern = @('^tools/(nltk_security_build|test_nltk_security_build|test_nltk_model_security|crawl4ai_tool)\.py$', '^tools/requirements/(crawl4ai|nltk-build)\.txt$', '^third_party/upstream/nltk/', '^\.github/workflows/(crawl4ai-security|security-code-scanning)\.yml$', '^\.github/dependabot\.yml$')
+           Command = (Get-SuperZipVerificationCommand -Id 'nltk-source-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_nltk_security_build') -Reason 'repaired dependency source, retained licenses, deterministic standard wheels, full runtime resolution and advisory discovery require offline artifact contracts; actual builds and model API regressions run in the isolated crawler and hosted platform matrix') }
         @{ Pattern = @('^tools/(license_inventory|test_license_inventory)\.py$', '^docs/licenses/', '^resources/licenses/', '^third_party/', '^tools/benchmark_permissions\.json$', '^AGENTS\.md$')
            Command = (Get-SuperZipVerificationCommand -Id 'license-inventory-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_license_inventory') -Reason 'all vendored roots and retained development notices must have explicit coverage; unknown rights and native source/rebuild obligations remain visible') }
         @{ Pattern = @('^mcp/')
@@ -633,6 +636,7 @@ function Get-SuperZipVerificationPlan {
     foreach ($pair in @(
         @('zstd-sanitizers', (@($local | Where-Object { $_.id -eq 'zstd-sanitizer-tests' }).Count -gt 0)),
         @("component-contracts", (@($local | Where-Object { Test-SuperZipToolContractCommand -Command $_ }).Count -gt 0)),
+        @('crawl4ai-security', (Test-SuperZipAnyPath -Path $paths -Pattern @('^tools/(crawl4ai_tool|crawl4ai_research|nltk_security_build|test_nltk_security_build|test_nltk_model_security)\.py$', '^tools/requirements/(crawl4ai|nltk-build)\.txt$', '^third_party/upstream/nltk/', '^\.github/workflows/crawl4ai-security\.yml$'))),
         @("lint", ($scope.touchesLintSurface -or $scope.touchesWorkflow -or $scope.touchesVerification -or $scope.fullEscalationRequired)),
         @("benchmark-graph", ($touchesBenchmarkGraph -or $scope.fullEscalationRequired -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/workflows/benchmark-graph\.yml$', '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$')))),
         @('windows-ci', $hostedNative.windows),

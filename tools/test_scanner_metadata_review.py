@@ -126,6 +126,53 @@ class ScannerMetadataReviewTests(unittest.TestCase):
                     review.read_reviews(self.policy.replace(name.encode(), other.encode()))
             original = name
 
+    def test_typed_public_commit_is_exact_role_bound_and_raw_report_retained(self):
+        """Purpose: Separate commit provenance from checksums. Inputs: Typed reviewed fixture. Outputs: Narrow match."""
+        value = hashlib.sha256(b"public commit fixture").hexdigest()[:40]
+        self.name = f"third_party/upstream/nltk/{value}/build.json"
+        self.path = self.root / self.name
+        self.path.parent.mkdir(parents=True)
+        data = {
+            "project": "nltk",
+            "commit": value,
+            "source": "nltk-source.zip",
+            "url": "https://codeload.github.com/nltk/nltk/zip/" + value,
+        }
+        self.payload = json.dumps(data) + "\n"
+        self.path.write_bytes(self.payload.encode("utf-8"))
+        stream = io.StringIO()
+        writer = csv.writer(stream, lineterminator="\n")
+        writer.writerow(review.TYPED_FIELDS)
+        writer.writerow(
+            (
+                self.name,
+                "DS173237",
+                hashlib.sha256(self.path.read_bytes()).hexdigest(),
+                value,
+                "git_commit",
+                "docs/security-code-scanning.md#finding-triage",
+            )
+        )
+        self.policy = stream.getvalue().encode()
+        self.finding["locations"][0]["physicalLocation"] = {
+            "artifactLocation": {"uri": self.name},
+            "region": {"charOffset": self.payload.index('"' + value + '"'), "charLength": len(value) + 2},
+        }
+        self.assertEqual(len(self.evaluate([self.finding])["reviewed_metadata"]), 1)
+        for replacement in (b"unknown_kind", b"sha256"):
+            with self.assertRaises(ValueError):
+                review.read_reviews(self.policy.replace(b"git_commit", replacement))
+        with self.assertRaises(ValueError):
+            review.read_reviews(self.policy.replace(self.name.encode(), b"src/manifest.json"))
+        self.path.write_text(self.payload + " ", encoding="utf-8")
+        self.assertEqual(self.evaluate([self.finding])["unresolved_count"], 1)
+        original_digest = hashlib.sha256(self.payload.encode()).hexdigest().encode()
+        self.path.write_bytes(
+            self.payload.replace("codeload.github.com/nltk/nltk", "invalid.example/unrelated").encode("utf-8")
+        )
+        self.policy = self.policy.replace(original_digest, hashlib.sha256(self.path.read_bytes()).hexdigest().encode())
+        self.assertEqual(self.evaluate([self.finding])["unresolved_count"], 1)
+
     # Purpose: Refuse redirected policy files and detect accidental drift in registered metadata snapshots.
     # Inputs: Real reviewed files plus a mocked junction. Outputs: Current hashes match and redirects fail.
     def test_policy_files_and_registered_snapshots(self):

@@ -482,12 +482,23 @@ foreach ($corpusPath in @('tools/neutron_corpus_benchmark.py', 'tools/neutron_co
     Assert-Selector (-not (Test-RequiredCommand -Plan $corpusPlan -Id 'release-build')) 'offline corpus contracts must not launch a native build'
 }
 foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
+        'tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
+        'third_party/upstream/nltk/README.md', 'tools/requirements/nltk-build.txt',
         'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
     $crawlerPlan = Get-SuperZipVerificationPlan -ChangedPath @($crawlerPath)
     Assert-Selector (Test-RequiredCommand -Plan $crawlerPlan -Id 'crawl4ai-contracts') "crawler inputs require offline contracts: $crawlerPath"
     Assert-Selector (-not $crawlerPlan.scope.fullEscalationRequired) "crawler integration does not imply native product changes: $crawlerPath"
     foreach ($id in @('release-build', 'native-tests', 'gui-smoke', 'verification-selector-self-test')) {
         Assert-Selector (-not (Test-RequiredCommand -Plan $crawlerPlan -Id $id)) "crawler-only checks must not select $id"
+    }
+}
+foreach ($nltkPath in @('tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
+        'tools/requirements/nltk-build.txt', 'tools/requirements/crawl4ai.txt', 'third_party/upstream/nltk/README.md')) {
+    $nltkPlan = Get-SuperZipVerificationPlan -ChangedPath @($nltkPath)
+    Assert-Selector (Test-RequiredCommand -Plan $nltkPlan -Id 'nltk-source-contracts') "NLTK source admission requires offline contracts: $nltkPath"
+    Assert-Selector (Test-Workflow -Plan $nltkPlan -Name 'crawl4ai-security') "NLTK source changes require the actual platform build/API matrix: $nltkPath"
+    foreach ($productId in @('release-build', 'unit-tests', 'gui-smoke', 'package-smoke')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $nltkPlan -Id $productId)) "NLTK tooling changes must not invoke unrelated product work: $productId"
     }
 }
 foreach ($licensePath in @('tools/license_inventory.py', 'tools/test_license_inventory.py', 'docs/licenses/development-notices.json')) {
