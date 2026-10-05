@@ -48,6 +48,11 @@ function Assert-ZstdSourceRequirement {
 function Assert-ZstdOwnedDecoderPolicy {
     param([string]$RepoRoot)
     $requirements = @(
+        @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_default_allocator("${source_dir}")', 'shared default allocator production dispatch'),
+        @('cmake/ZstdDefaultAllocator.cmake', 'ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;', 'shared default allocator declaration'),
+        @('cmake/ZstdDefaultAllocator.cmake', 'if(NOT actual STREQUAL _zstd_default_allocator_common_original)', 'shared default allocator source identity'),
+        @('tests/zstd/headers/CMakeLists.txt', 'require_default_allocator_sharing(FALSE)', 'shared default allocator negative control'),
+        @('tests/zstd/headers/CMakeLists.txt', 'require_default_allocator_sharing(TRUE)', 'shared default allocator production linkage'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_canonical("${source_dir}")', 'legacy complete decoder ownership dispatch'),
         @('cmake/ZstdLegacyBuffers.cpp', 'count > distance ||', 'legacy initialized history transfer extent'),
         @('cmake/ZstdLegacyBuffers.cpp', 'distance > owner->initialized', 'legacy initialized history distance'),

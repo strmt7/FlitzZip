@@ -275,6 +275,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(native_build_(provenance|receipt)|test_native_build_(provenance|receipt))\.py$',
         '^tools/(process_environment|test_process_environment)\.ps1$',
         '^tools/rocm-sdk-lock\.json$',
+        '^tools/cmake-toolchain\.sha256$',
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
         '^tools/(fuzz_memory|test_fuzz_memory)\.py$',
         '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$',
@@ -291,7 +292,7 @@ function Get-SuperZipVerificationScope {
         '^LICENSE$', '^tests/', '^resources/licenses/',
         '^tools/(build|compile_hip_object|hip_architecture|rocm_toolchain|process_environment|cmake_toolchain|build_parallelism|local_resources|version|generate_brand_logo_header|generate_license_notices_header)\.ps1$',
         '^tools/superzip_brand_logo\.psm1$', '^tools/native_build_(provenance|receipt)\.py$',
-        '^tools/(rocm-sdk-lock\.json|bootstrap_rocm_sdk\.py)$'
+        '^tools/(rocm-sdk-lock\.json|bootstrap_rocm_sdk\.py|cmake-toolchain\.sha256)$'
     )
     $touchesProductionSource = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/', '^CMakeLists\.txt$', '^cmake/', '^third_party/(?!upstream/)')
     $touchesArchiveParser = Test-SuperZipAnyPath -Path $paths -Pattern @(
@@ -367,7 +368,7 @@ function Get-SuperZipVerificationScope {
 function Get-SuperZipToolVerificationCommand {
     param([Parameter(Mandatory = $true)]$Scope, [string[]]$Paths)
     $definitions = @(
-        @{ Pattern = @('^tools/(test_zstd_sanitizers|cmake_toolchain|build_parallelism|local_resources|process_environment)\.ps1$', '^tools/native_build_provenance\.py$', '^\.github/workflows/zstd-sanitizers\.yml$', '^third_party/upstream/zstd/', '^tests/cpp/(zstd_legacy_fixture|test_util)\.hpp$', '^tests/cpp/test_main\.cpp$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
+        @{ Pattern = @('^tools/(test_zstd_sanitizers|cmake_toolchain|build_parallelism|local_resources|process_environment)\.ps1$', '^tools/native_build_provenance\.py$', '^tools/cmake-toolchain\.sha256$', '^\.github/workflows/zstd-sanitizers\.yml$', '^third_party/upstream/zstd/', '^tests/cpp/(zstd_legacy_fixture|test_util)\.hpp$', '^tests/cpp/test_main\.cpp$', '^cmake/(PatchZstdLegacy\.cmake|Zstd.*\.(c|cmake))$', '^tests/(cpp/test_zstd.*\.cpp|zstd/|cmake/test_zstd)', '^CMakeLists\.txt$')
            Command = (Get-SuperZipVerificationCommand -Id 'zstd-sanitizer-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_zstd_sanitizers.ps1') -Reason 'dependency memory and ownership rewrites require instrumented canonical-source tests and qualified Windows ASan controls in an isolated validation build') }
         @{ Pattern = @('^\.github/workflows/zstd-sanitizers\.yml$', '^tools/test_zstd_sanitizers\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id 'verification-selector-self-test' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_verification_selector.ps1') -Reason 'native sanitizer workflow changes must preserve affected-source coverage and offline-contract isolation') }
@@ -389,7 +390,7 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'hip-architecture-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_hip_architecture.ps1') -Reason 'changed target resolution requires explicit and portable architecture contracts') }
         @{ Pattern = @('^tools/(process_environment|test_process_environment|build|compile_hip_object|rocm_toolchain)\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id 'process-environment-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_process_environment.ps1') -Reason 'changed build environment ownership requires exact restoration contracts') }
-        @{ Pattern = @('^tools/(cmake_toolchain|test_cmake_toolchain|build)\.ps1$')
+        @{ Pattern = @('^tools/(cmake_toolchain|test_cmake_toolchain|build)\.ps1$', '^tools/cmake-toolchain\.sha256$')
            Command = (Get-SuperZipVerificationCommand -Id 'cmake-toolchain-tests' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_cmake_toolchain.ps1') -Reason 'changed CMake discovery requires official toolchain and path contracts') }
         @{ Pattern = @('^tools/(lint|test_lint_routing)\.ps1$', '^tools/(superzip_verification\.psm1|test_verification_selector\.ps1|verification_plan\.ps1|verify_changes\.ps1)$')
            Command = (Get-SuperZipVerificationCommand -Id "lint-routing-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_lint_routing.ps1") -Reason "changed/all/configuration lint routing must retain newly added files and cover owned CMake fixtures") }

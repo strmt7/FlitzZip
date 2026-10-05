@@ -37,22 +37,57 @@ foreach(extension IN ITEMS c cpp)
   require_header_compilation("original-repeated-${extension}" "${extension}" 1
                              FALSE)
 endforeach()
+
+# Purpose: Link actual common/error source with independent C and C++ clients.
+# Inputs: The isolated original or repaired dependency; expected_success selects
+# the storage-sharing result. Outputs: Requires unchanged null callbacks and one
+# object address; original per-unit copies form a failing runtime control.
+function(require_default_allocator_sharing expected_success)
+  try_run(
+    ran
+    compiled
+    SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/default_allocator_contract.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/default_allocator_a.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/default_allocator_b.cpp"
+    "${SOURCE_ROOT}/lib/common/zstd_common.c"
+    "${SOURCE_ROOT}/lib/common/error_private.c"
+    NO_CACHE
+    CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${SOURCE_ROOT}/lib" C_STANDARD 11
+                CXX_STANDARD 20
+    COMPILE_OUTPUT_VARIABLE diagnostic)
+  if(NOT compiled)
+    message(FATAL_ERROR "Default allocator linkage failed: ${diagnostic}")
+  endif()
+  if((expected_success AND NOT ran EQUAL 0)
+     OR (NOT expected_success AND NOT ran EQUAL 1))
+    message(FATAL_ERROR "Default allocator storage contract failed: ${ran}")
+  endif()
+endfunction()
+
+require_default_allocator_sharing(FALSE)
 superzip_patch_zstd_legacy("${SOURCE_ROOT}")
+require_default_allocator_sharing(TRUE)
 foreach(extension IN ITEMS c cpp)
   require_header_compilation("patched-repeated-${extension}" "${extension}" 1
                              TRUE)
-  try_compile(
-    allocations_compiled SOURCE_FROM_FILE
+  try_run(
+    allocations_ran allocations_compiled SOURCE_FROM_FILE
     "allocations.${extension}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/allocations_contract.c" NO_CACHE
+    "${CMAKE_CURRENT_SOURCE_DIR}/allocations_contract.c"
+    SOURCES "${SOURCE_ROOT}/lib/common/zstd_common.c"
+            "${SOURCE_ROOT}/lib/common/error_private.c" NO_CACHE
     CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${SOURCE_ROOT}/lib" CXX_STANDARD
                 20 C_STANDARD 11
-    OUTPUT_VARIABLE allocations_diagnostic LOG_DESCRIPTION
+    COMPILE_OUTPUT_VARIABLE allocations_diagnostic LOG_DESCRIPTION
                     "Zstandard private allocations first ${extension}")
   if(NOT allocations_compiled)
     message(
       FATAL_ERROR "Allocation header contract failed: ${allocations_diagnostic}"
     )
+  endif()
+  if(NOT allocations_ran EQUAL 0)
+    message(FATAL_ERROR "Allocation ownership contract failed: ${extension}")
   endif()
 endforeach()
 

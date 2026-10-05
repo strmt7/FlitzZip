@@ -186,6 +186,7 @@ add_executable(
   "${SUPERZIP_SOURCE_ROOT}/tests/zstd/legacy_driver.c"
   $<TARGET_OBJECTS:superzip_zstd_legacy_fault_objects>
   $<TARGET_OBJECTS:superzip_zstd_legacy_buffer_probe>
+  "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/zstd_common.c"
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/error_private.c"
   "${SUPERZIP_ZSTD_LIBRARY_DIR}/common/xxhash.c")
 target_include_directories(

@@ -23,6 +23,10 @@ function(superzip_add_zstd_library source_root)
     "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ZstdLegacyBuffers.cpp"
     "${resource_directory}/libzstd-dll.rc")
   target_compile_features(libzstd_shared PRIVATE cxx_std_20)
+  # DLL consumers must import both functions and the shared allocator object.
+  # Non-Windows validation retains ordinary external C linkage.
+  target_compile_definitions(
+    libzstd_shared INTERFACE "$<$<PLATFORM_ID:Windows>:ZSTD_DLL_IMPORT=1>")
   target_include_directories(
     libzstd_shared PRIVATE "${library_directory}"
                            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}")

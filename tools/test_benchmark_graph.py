@@ -180,9 +180,10 @@ def receipt_fixture() -> dict:
             "inputs_sha256": hashlib.sha256(canonical(files)).hexdigest(),
         },
         "toolchain": {
-            "scope": "cmake-msvc-probe-and-critical-compiler-files-v1",
+            "scope": "cmake-msvc-abi-probe-and-critical-compiler-files-v2",
             "cmake_version": "4.4.3",
             "cmake_sha256": "a" * 64,
+            "cmake_abi_header_sha256": "b" * 64,
             "host_compiler_id": "MSVC",
             "host_compiler_version": "19.51.36260.0",
             "host_compiler_files_sha256": {name: "a" * 64 for name in ("cl.exe", "c1xx.dll", "c2.dll")},

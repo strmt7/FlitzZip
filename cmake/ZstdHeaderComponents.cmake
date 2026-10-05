@@ -21,6 +21,9 @@ function(superzip_split_zstd_header content key)
   string(REPLACE "${${key}_static_condition}" "#ifndef ${${key}_static_guard}"
                  static "${static}")
   set(static "${license}${static}")
+  if(key STREQUAL "_zstd_header_component_zstd")
+    superzip_zstd_share_default_allocator("${static}" static)
+  endif()
   set(public "${public}\n")
   string(
     CONCAT dispatch
@@ -97,6 +100,11 @@ function(superzip_patch_zstd_header_components source_dir)
             FATAL_ERROR "Missing Zstandard header component: ${component}")
         endif()
         file(SHA256 "${component}" component_hash)
+        if(flavor STREQUAL "zstd" AND part STREQUAL "static")
+          superzip_zstd_migrate_default_allocator("${component}"
+                                                  "${component_hash}")
+          file(SHA256 "${component}" component_hash)
+        endif()
         if(NOT component_hash STREQUAL "${${key}_${part}_hash}")
           message(
             FATAL_ERROR
@@ -125,6 +133,7 @@ function(superzip_patch_zstd_header_components source_dir)
 endfunction()
 
 include("${CMAKE_CURRENT_LIST_DIR}/ZstdHashHeaderComponents.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/ZstdDefaultAllocator.cmake")
 
 set(_zstd_header_component_zstd_path "lib/zstd.h")
 set(_zstd_header_component_zstd_stem "zstd")
@@ -164,7 +173,7 @@ set(_zstd_header_component_zstd_patched
 set(_zstd_header_component_zstd_public_hash
     "575c4cf696d71c37bd0ed865c28ea85ead4bfbb8518dcf4ca8a41d6f8718f785")
 set(_zstd_header_component_zstd_static_hash
-    "58f72d1bbfa9d1a2349d7c6077a0414c8b6f56624eef4900816b067344d2733d")
+    "${_zstd_default_allocator_static_patched}")
 set(_zstd_header_component_zdict_patched
     "5bf49a85d91ef56074709802549be7e113a1acf11fb3ad39313037c08959f810")
 set(_zstd_header_component_zdict_public_hash

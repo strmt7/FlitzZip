@@ -70,11 +70,16 @@ replaced by an ordinary new build without manual marker deletion.
 The first receipt and changed configuration, observed toolchain or output bytes
 require `--clean-first`. Ordinary source changes retain CMake's incremental
 dependency behavior. Toolchain evidence records the CMake MSVC probe, hashes of
-CMake and MSVC's `cl.exe`, `c1xx.dll`, `c2.dll`, and, for HIP builds, the SDK lock,
+CMake, its guarded compiler ABI header, MSVC's `cl.exe`, `c1xx.dll`, `c2.dll`, and,
+for HIP builds, the SDK lock,
 `hipcc.exe`, Clang, HIP import library/version header and device bitcode files.
 It does not verify every SDK/compiler/header/library byte or authenticate which
 compiler produced each cached object. Complete distribution installation stays
-the shared provisioner's responsibility; no installed component is modified.
+the shared provisioner's responsibility; no ROCm SDK component is modified.
+The repository-owned CMake cache admits only the pinned original or guarded ABI
+header bytes. Its repair preserves the complete probe payload and leaves host
+installations unchanged. Historical receipts lacking that header identity can
+inform a clean rebuild decision, but cannot qualify current artifacts.
 Receipts contain relative filenames and hashes rather than installation paths.
 All Windows configurations now generate the common runtime manifest. CPU-only
 validation declares HIP disabled and has no AMD driver prerequisites; it retains

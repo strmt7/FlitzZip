@@ -741,6 +741,16 @@ provenance collector deliberately rejects missing files still present in the
 Git index; this prevents an incomplete checkout from producing an accepted
 build receipt. Review the staged deletions and preserve that rejection contract.
 
+Headers should declare shared immutable library values when callers require one
+identity; define their storage once in the owning production translation unit.
+Validate cross-language linkage, address identity and unchanged values with
+independent callers and an original-storage negative control. Tool source
+repairs require exact original and complete output identities, atomic publication,
+repeated-inclusion controls and runtime probe checks. Include repaired compiler
+probe bytes in native build receipts. Public artifact digests belong in standard
+checksum manifests with a closed inventory; retain the complete hexadecimal
+values, validate every record and bind the manifest to native inputs.
+
 When a dependency produces MSVC `/GL` objects, propagate explicit Release
 `/LTCG` to its link consumers. This preserves the required optimization while
 avoiding the linker's automatic restart. Confirm the effective link options and

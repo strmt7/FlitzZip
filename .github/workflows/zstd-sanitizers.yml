@@ -16,6 +16,7 @@ on:
       - third_party/upstream/zstd/**
       - tools/test_zstd_sanitizers.ps1
       - tools/cmake_toolchain.ps1
+      - tools/cmake-toolchain.sha256
       - tools/build_parallelism.ps1
       - tools/local_resources.ps1
       - tools/process_environment.ps1

@@ -267,6 +267,15 @@ foreach ($path in @('tools/analyze_hip_trace.py', 'tools/test_hip_trace.py')) {
     Assert-Selector (Test-Workflow -Plan $tracePlan -Name 'component-contracts') "trace contracts must run on the hosted component path: $path"
 }
 
+$cmakeManifestPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/cmake-toolchain.sha256')
+Assert-Selector $cmakeManifestPlan.scope.touchesVerification 'CMake provenance must be classified as verification input'
+Assert-Selector (Test-RequiredCommand -Plan $cmakeManifestPlan -Id 'release-build') 'Changed CMake provenance requires a native build'
+Assert-Selector (Test-RequiredCommand -Plan $cmakeManifestPlan -Id 'cmake-toolchain-tests') 'Changed CMake provenance requires its direct contracts'
+foreach ($workflow in @('windows-ci', 'rocm-qualification', 'zstd-sanitizers')) {
+    Assert-Selector (Test-Workflow -Plan $cmakeManifestPlan -Name $workflow) "CMake provenance must select $workflow"
+    Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow $workflow -Path 'tools/cmake-toolchain.sha256') "CMake provenance must trigger $workflow"
+}
+
 $workflowPlan = Get-SuperZipVerificationPlan -ChangedPath @(".github/workflows/security-code-scanning.yml")
 foreach ($path in @('tools/native_build_provenance.py', 'tools/native_build_receipt.py',
         'tools/test_native_build_provenance.py', 'tools/test_native_build_receipt.py')) {
@@ -385,7 +394,7 @@ foreach ($guardPath in @('tools/zstd_rewrite_policy.ps1', 'tools/test_zstd_rewri
     Assert-Selector (Test-OwnedWorkflowPathFilter -Workflow 'component-contracts' -Path $guardPath) "Zstandard guard inputs must trigger hosted contracts: $guardPath"
 }
 foreach ($sanitizerPath in @('tools/test_zstd_sanitizers.ps1', '.github/workflows/zstd-sanitizers.yml',
-        'tools/cmake_toolchain.ps1', 'tools/build_parallelism.ps1', 'tools/local_resources.ps1',
+        'tools/cmake_toolchain.ps1', 'tools/cmake-toolchain.sha256', 'tools/build_parallelism.ps1', 'tools/local_resources.ps1',
         'tools/process_environment.ps1', 'tools/native_build_provenance.py', 'tests/cpp/test_util.hpp',
         'tests/cpp/test_main.cpp',
         'cmake/ZstdFutureBoundary.c', 'tests/zstd/future/header.c', 'tests/cpp/test_zstd_future.cpp',

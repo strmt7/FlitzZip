@@ -115,6 +115,19 @@ struct Samples {
 using CompressionOwner = std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)>;
 using DecompressionOwner = std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)>;
 
+// Purpose: Require the production shared-library allocator data ABI and default factory semantics.
+// Inputs: The actual imported immutable allocator value; contexts own their allocations.
+// Outputs: Both advanced factories construct valid contexts with unchanged null callbacks.
+TEST_CASE(zstd_default_allocator_shared_library_linkage) {
+    REQUIRE_TRUE(ZSTD_defaultCMem.customAlloc == nullptr);
+    REQUIRE_TRUE(ZSTD_defaultCMem.customFree == nullptr);
+    REQUIRE_TRUE(ZSTD_defaultCMem.opaque == nullptr);
+    CompressionOwner compressor(ZSTD_createCCtx_advanced(ZSTD_defaultCMem), &ZSTD_freeCCtx);
+    DecompressionOwner decoder(ZSTD_createDCtx_advanced(ZSTD_defaultCMem), &ZSTD_freeDCtx);
+    REQUIRE_TRUE(compressor != nullptr);
+    REQUIRE_TRUE(decoder != nullptr);
+}
+
 // Purpose: Require a trained dictionary to compress and decode real independent sample bytes.
 // Inputs: dictionary is a successful complete dictionary; samples owns its deterministic source records.
 // Outputs: Requires successful production-DLL compression, exact read-back and untouched output canaries.

@@ -77,9 +77,9 @@ def validate_hash_map(value: object, maximum: int, prefix: str = "") -> dict:
 
 
 # Purpose: Share strict receipt schema validation between local consumers and offline graph publication.
-# Inputs: Untrusted receipt metadata, without claiming that its author or build is authenticated.
-# Outputs: Canonical digest; rejects extra/path-bearing fields, inconsistent inputs, or unsupported scope.
-def validate_receipt(value: dict) -> str:
+# Inputs: Untrusted metadata; explicit historical mode is only for rebuild decisions.
+# Outputs: Canonical digest; current consumers reject narrower historical toolchain scopes.
+def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -> str:
     keys = {
         "schema_version",
         "kind",
@@ -135,7 +135,9 @@ def validate_receipt(value: dict) -> str:
         or not re.fullmatch(SHA256, recipe["configured_flags_sha256"])
     ):
         raise ValueError("invalid native recipe scope")
-    validate_toolchain_schema(value["toolchain"], recipe["SUPERZIP_ENABLE_HIP"] == "ON")
+    validate_toolchain_schema(
+        value["toolchain"], recipe["SUPERZIP_ENABLE_HIP"] == "ON", allow_historical=allow_historical_toolchain
+    )
     outputs = validate_hash_map(value["outputs_sha256"], 256, "build/")
     required = {
         f"build/{recipe['configuration']}/superzip_cli.exe",
@@ -153,22 +155,36 @@ def validate_receipt(value: dict) -> str:
 
 
 # Purpose: Reject unsupported or path-bearing observed toolchain fields in portable receipts.
-# Inputs: Untrusted toolchain and required HIP flag. Outputs: Validates explicit probe/component scope or raises.
-def validate_toolchain_schema(value: object, hip: bool) -> None:
+# Inputs: Untrusted toolchain, required HIP flag and explicit historical-only mode.
+# Outputs: Validates an exact current or admitted historical schema; rejects unknown fields and scopes.
+def validate_toolchain_schema(value: object, hip: bool, *, allow_historical: bool = False) -> None:
+    historical = (
+        allow_historical
+        and isinstance(value, dict)
+        and value.get("scope") == "cmake-msvc-probe-and-critical-compiler-files-v1"
+    )
     keys = {
         "scope",
         "cmake_version",
         "cmake_sha256",
+        "cmake_abi_header_sha256",
         "host_compiler_id",
         "host_compiler_version",
         "host_compiler_files_sha256",
     }
     if hip:
         keys.add("hip_sdk")
+    if historical:
+        keys.remove("cmake_abi_header_sha256")
     if not isinstance(value, dict) or set(value) != keys:
         raise ValueError("invalid native toolchain schema")
     if (
-        value["scope"] != "cmake-msvc-probe-and-critical-compiler-files-v1"
+        value["scope"]
+        != (
+            "cmake-msvc-probe-and-critical-compiler-files-v1"
+            if historical
+            else "cmake-msvc-abi-probe-and-critical-compiler-files-v2"
+        )
         or value["host_compiler_id"] != "MSVC"
         or not isinstance(value["cmake_version"], str)
         or not re.fullmatch(r"\d+\.\d+\.\d+", value["cmake_version"])
@@ -176,6 +192,13 @@ def validate_toolchain_schema(value: object, hip: bool) -> None:
         or not re.fullmatch(r"[0-9.]+", value["host_compiler_version"])
         or not isinstance(value["cmake_sha256"], str)
         or not re.fullmatch(SHA256, value["cmake_sha256"])
+        or (
+            not historical
+            and (
+                not isinstance(value["cmake_abi_header_sha256"], str)
+                or not re.fullmatch(SHA256, value["cmake_abi_header_sha256"])
+            )
+        )
         or set(validate_hash_map(value["host_compiler_files_sha256"], 3)) != {"cl.exe", "c1xx.dll", "c2.dll"}
     ):
         raise ValueError("invalid observed native compiler scope")
@@ -361,9 +384,14 @@ def observe_toolchain(root: Path, cache: dict, cmake: Path) -> dict:
         name: file_digest(input_path(compiler.parent, name)) for name in (compiler.name, "c1xx.dll", "c2.dll")
     }
     toolchain = {
-        "scope": "cmake-msvc-probe-and-critical-compiler-files-v1",
+        "scope": "cmake-msvc-abi-probe-and-critical-compiler-files-v2",
         "cmake_version": version,
         "cmake_sha256": file_digest(input_path(cmake.parent, cmake.name)),
+        "cmake_abi_header_sha256": file_digest(
+            input_path(
+                cmake.parent.parent, f"share/cmake-{'.'.join(version.split('.')[:2])}/Modules/CMakeCompilerABI.h"
+            )
+        ),
         "host_compiler_id": values["CMAKE_CXX_COMPILER_ID"],
         "host_compiler_version": values["CMAKE_CXX_COMPILER_VERSION"],
         "host_compiler_files_sha256": host_files,
@@ -396,7 +424,9 @@ def prepare(root: Path, token: str, cmake: Path) -> dict:
     previous_path = root / "build" / RECEIPT
     if previous_path.exists():
         previous = read_metadata(root, f"build/{RECEIPT}")
-        validate_receipt(previous)
+        # Exact historical schemas may inform rebuild decisions, never current
+        # acceptance. Their narrower toolchain always requires clean-first.
+        validate_receipt(previous, allow_historical_toolchain=True)
         try:
             current_outputs = capture_outputs(root, state["configuration"])
         except FileNotFoundError:

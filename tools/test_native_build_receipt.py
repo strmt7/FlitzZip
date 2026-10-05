@@ -35,6 +35,9 @@ class NativeBuildReceiptTests(unittest.TestCase):
         for name in ("cl.exe", "c1xx.dll", "c2.dll", "cmake.exe"):
             (self.compiler / name).write_bytes(name.encode("ascii"))
         self.cmake = self.compiler / "cmake.exe"
+        self.abi_header = self.root / "share/cmake-4.4/Modules/CMakeCompilerABI.h"
+        self.abi_header.parent.mkdir(parents=True)
+        self.abi_header.write_bytes(b"bounded nonexecutable compiler ABI fixture")
         self.cache = {key: "" for key in receipt.RECIPE_KEYS}
         self.cache.update(
             CMAKE_GENERATOR="Visual Studio 18 2026",
@@ -97,6 +100,50 @@ class NativeBuildReceiptTests(unittest.TestCase):
             receipt.validate_current(self.root, "Release", True)
         with self.assertRaises(ValueError):
             receipt.validate_current(self.root, "Debug", False)
+
+    # Purpose: Bind the tool source component and detect edits during a native build transaction.
+    # Inputs: Private compiler ABI header mutated after source/recipe capture.
+    # Outputs: Independent digest equality and rejection of changed tool inputs.
+    def test_compiler_abi_source_is_bound_to_transaction(self):
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        prepared = receipt.prepare(self.root, token, self.cmake)
+        state = receipt.read_metadata(self.root, f"build/{receipt.TRANSACTION}")
+        self.assertEqual(
+            state["toolchain"]["cmake_abi_header_sha256"], hashlib.sha256(self.abi_header.read_bytes()).hexdigest()
+        )
+        self.abi_header.write_bytes(self.abi_header.read_bytes() + b"changed ABI payload")
+        with self.assertRaisesRegex(ValueError, "observed toolchain changed"):
+            receipt.finish(self.root, token, self.cmake, prepared["clean_first_required"])
+
+    # Purpose: Migrate exact narrower receipts without accepting them as current build evidence.
+    # Inputs: Valid v1 toolchain metadata and malformed sibling controls.
+    # Outputs: Requires clean-first, preserves old bytes, rejects current acceptance and unknown metadata.
+    def test_historical_toolchain_requires_rebuild_and_retains_evidence(self):
+        self.successful()
+        old = receipt.read_metadata(self.root, f"build/{receipt.RECEIPT}")
+        old["toolchain"].pop("cmake_abi_header_sha256")
+        old["toolchain"]["scope"] = "cmake-msvc-probe-and-critical-compiler-files-v1"
+        with self.assertRaises(ValueError):
+            receipt.validate_receipt(old)
+        receipt.validate_receipt(old, allow_historical_toolchain=True)
+        bad = json.loads(json.dumps(old))
+        bad["toolchain"]["unexpected"] = "unknown"
+        with self.assertRaises(ValueError):
+            receipt.validate_receipt(bad, allow_historical_toolchain=True)
+        bad = json.loads(json.dumps(old))
+        bad["toolchain"]["cmake_sha256"] = "malformed"
+        with self.assertRaises(ValueError):
+            receipt.validate_receipt(bad, allow_historical_toolchain=True)
+        receipt.publish(self.root, receipt.RECEIPT, old)
+        old_bytes = (self.build / receipt.RECEIPT).read_bytes()
+        token = receipt.begin(self.root, "Release")["transaction_id"]
+        prepared = receipt.prepare(self.root, token, self.cmake)
+        self.assertTrue(prepared["clean_first_required"])
+        with self.assertRaisesRegex(ValueError, "fresh build"):
+            receipt.finish(self.root, token, self.cmake, False)
+        receipt.finish(self.root, token, self.cmake, True)
+        archive = self.build / "native-build-history" / (hashlib.sha256(old_bytes).hexdigest() + ".json")
+        self.assertEqual(old_bytes, archive.read_bytes())
 
     # Purpose: Refuse absent and incomplete builds while preserving a previous successful receipt on failed attempts.
     # Inputs: New, unfinished, configure-only and failed transactions. Outputs: No stale successful acceptance.

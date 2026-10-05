@@ -100,6 +100,7 @@ execute_process(
     "zstd-1.5.7/lib/dictBuilder/fastcover.c"
     "zstd-1.5.7/lib/dictBuilder/zdict.c"
     "zstd-1.5.7/lib/common/entropy_common.c" "zstd-1.5.7/lib/common/huf.h"
+    "zstd-1.5.7/lib/common/zstd_common.c"
     "zstd-1.5.7/lib/common/xxhash.h" "zstd-1.5.7/lib/compress/fse_compress.c"
     "zstd-1.5.7/lib/common/fse.h"
     "zstd-1.5.7/lib/compress/zstd_compress_sequences.c"
@@ -468,6 +469,7 @@ set(COMPONENT_BOUNDARIES
     "lib/common/xxhash_implementation.h")
 set(BOUNDARIES
     ${COMPONENT_BOUNDARIES}
+    "lib/common/zstd_common.c"
     "lib/zstd.h"
     "lib/common/fse.h"
     "lib/compress/zstd_compress_sequences.c"

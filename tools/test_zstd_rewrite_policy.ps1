@@ -49,6 +49,7 @@ try {
     foreach ($relative in @('cmake/ZstdRawBlockWriter.c', 'cmake/ZstdCoverSelection.cpp', 'cmake/ZstdDictionaryBounds.cmake', 'cmake/PatchZstdLegacy.cmake',
             'cmake/ZstdDictionaryEvaluation.cmake',
             'cmake/ZstdHeaderComponents.cmake', 'tests/zstd/headers/header_contract.c',
+            'cmake/ZstdDefaultAllocator.cmake', 'tests/zstd/headers/CMakeLists.txt',
             'cmake/ZstdHuffmanTable.c', 'tests/cpp/test_zstd_huffman_table.cpp', 'tests/zstd/fault_allocator.cpp',
             'cmake/ZstdCoverWorkGroup.cpp', 'tests/cpp/test_zstd_work_group.cpp',
             'cmake/ZstdCoverWorkGroup.cmake',
@@ -68,6 +69,21 @@ try {
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination
     }
     Assert-ZstdRewritePolicy -RepoRoot $fixtureRoot
+    Assert-ZstdPolicyMutation -Path 'cmake/PatchZstdLegacy.cmake' `
+        -Original 'superzip_patch_zstd_default_allocator("${source_dir}")' `
+        -Replacement '# omitted shared allocator' -Cause 'shared default allocator production dispatch'
+    Assert-ZstdPolicyMutation -Path 'cmake/ZstdDefaultAllocator.cmake' `
+        -Original 'ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;' `
+        -Replacement 'static ZSTD_customMem const ZSTD_defaultCMem;' -Cause 'shared default allocator declaration'
+    Assert-ZstdPolicyMutation -Path 'cmake/ZstdDefaultAllocator.cmake' `
+        -Original 'if(NOT actual STREQUAL _zstd_default_allocator_common_original)' `
+        -Replacement 'if(FALSE)' -Cause 'shared default allocator source identity'
+    Assert-ZstdPolicyMutation -Path 'tests/zstd/headers/CMakeLists.txt' `
+        -Original 'require_default_allocator_sharing(FALSE)' -Replacement '# omitted original control' `
+        -Cause 'shared default allocator negative control'
+    Assert-ZstdPolicyMutation -Path 'tests/zstd/headers/CMakeLists.txt' `
+        -Original 'require_default_allocator_sharing(TRUE)' -Replacement '# omitted production test' `
+        -Cause 'shared default allocator production linkage'
     foreach ($mutation in @(
             @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT recognized)', 'if(FALSE)', 'canonical exact source admission'),
             @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT actual STREQUAL "${_zstd_canonical_${version}_patched}")', 'if(FALSE)', 'canonical complete output identity'),

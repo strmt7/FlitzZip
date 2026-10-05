@@ -12,12 +12,95 @@ function Assert-CMakeToolHash {
     }
 }
 
+# Purpose: Load public tool provenance from a standard SHA-256 checksum manifest.
+# Inputs: Path is the repository manifest or a private validation fixture.
+# Outputs: Complete release, executable and ABI identities; rejects duplicate, missing or malformed records.
+function Get-CMakeToolchainLock {
+    param([string]$Path = (Join-Path $PSScriptRoot 'cmake-toolchain.sha256'))
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+        ((Get-Item -LiteralPath $Path).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        (Get-Item -LiteralPath $Path).Length -gt 16384) {
+        throw 'Pinned CMake provenance manifest is missing, linked or oversized.'
+    }
+    $records = @{}
+    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+        if ($line -cnotmatch '^([0-9a-f]{64})  ([A-Za-z0-9_./-]+)$' -or $records.ContainsKey($Matches[2])) {
+            throw 'Pinned CMake provenance record is malformed or duplicated.'
+        }
+        $records[$Matches[2]] = $Matches[1]
+    }
+    $archive = 'cmake-4.4.3-windows-x86_64.zip'
+    $keys = @($archive, 'bin/cmake.exe', 'bin/cpack.exe', 'bin/ctest.exe',
+        'Modules/CMakeCompilerABI.upstream.h', 'Modules/CMakeCompilerABI.guarded.h')
+    if (@(Compare-Object $keys @($records.Keys)).Count -ne 0) {
+        throw 'Pinned CMake provenance inventory is invalid.'
+    }
+    return [pscustomobject]@{
+        version = '4.4.3'
+        archive_sha256 = $records[$archive]
+        executables_sha256 = [pscustomobject]@{
+            'cmake.exe' = $records['bin/cmake.exe']
+            'cpack.exe' = $records['bin/cpack.exe']
+            'ctest.exe' = $records['bin/ctest.exe']
+        }
+        abi_header_original_sha256 = $records['Modules/CMakeCompilerABI.upstream.h']
+        abi_header_patched_sha256 = $records['Modules/CMakeCompilerABI.guarded.h']
+    }
+}
+
+# Purpose: Make the pinned ABI probe safe for repeated inclusion without altering its payload.
+# Inputs: Install is an unlinked, verified CMake installation; admits only exact original or repaired bytes.
+# Outputs: Atomically adds a complete header guard, or rejects drift, links and interrupted publication.
+function Repair-CMakeCompilerAbiHeader {
+    param([Parameter(Mandatory = $true)][string]$Install)
+    $directory = $Install
+    foreach ($part in @('share', 'cmake-4.4', 'Modules')) {
+        $directory = Join-Path $directory $part
+        if (-not (Test-Path -LiteralPath $directory -PathType Container) -or
+            ((Get-Item -LiteralPath $directory).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Pinned CMake ABI module directory is missing or linked.'
+        }
+    }
+    $path = Join-Path $directory 'CMakeCompilerABI.h'
+    $lock = Get-CMakeToolchainLock
+    $original = $lock.abi_header_original_sha256
+    $repaired = $lock.abi_header_patched_sha256
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+        ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Pinned CMake ABI header is missing or linked.'
+    }
+    $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    if ($actual -eq $repaired) { return }
+    Assert-CMakeToolHash -Path $path -Expected $original
+    $body = [IO.File]::ReadAllText($path)
+    $content = "#ifndef SUPERZIP_CMAKE_COMPILER_ABI_H`n#define SUPERZIP_CMAKE_COMPILER_ABI_H`n" +
+        $body + "`n#endif /* SUPERZIP_CMAKE_COMPILER_ABI_H */`n"
+    $temporary = "$path.superzip-abi"
+    $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($content)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
+    try {
+        Assert-CMakeToolHash -Path $temporary -Expected $repaired
+        Assert-CMakeToolHash -Path $path -Expected $original
+        [IO.File]::Replace($temporary, $path, [NullString]::Value)
+        Assert-CMakeToolHash -Path $path -Expected $repaired
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }
+    }
+}
+
 # Purpose: Provision the same stable Windows x64 CMake toolchain for local and hosted builds.
-# Inputs: RepoRoot is the checkout root; uses Kitware's pinned 4.4.3 release and ignored out cache.
-# Outputs: Returns verified cmake.exe; downloads only on a cache miss and never changes host installations or PATH.
+# Inputs: RepoRoot is the checkout root; uses the pinned release and reviewed ABI header repair.
+# Outputs: Returns verified cmake.exe and guarded module bytes; never changes host installations or PATH.
 function Find-CMake {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
-    $version = '4.4.3'
+    $lock = Get-CMakeToolchainLock
+    $version = $lock.version
     $root = [IO.Path]::GetFullPath($RepoRoot)
     $out = Join-Path $root 'out'
     $tools = Join-Path $out 'tools'
@@ -32,7 +115,7 @@ function Find-CMake {
     $install = Join-Path $cache $package
     if (-not (Test-Path -LiteralPath $install)) {
         $archive = Join-Path $cache "$package.zip"
-        $expected = '4d52ebab7193a698651639ed80d8d04fd903358843572cf44c7fd234cb7c26ab'
+        $expected = $lock.archive_sha256
         if (-not (Test-Path -LiteralPath $archive)) {
             $partial = "$archive.partial"
             if (Test-Path -LiteralPath $partial) { throw 'An incomplete CMake download already exists.' }
@@ -58,13 +141,10 @@ function Find-CMake {
     if ((Get-Item -LiteralPath $bin).Attributes -band [IO.FileAttributes]::ReparsePoint) {
         throw 'Refusing a linked CMake binary directory.'
     }
-    foreach ($tool in @(
-        @('cmake.exe', 'AB8247CA4554871E5D75C0EE118EE8663727BD6FDF37AD76B17E9CC8D5F286A8'),
-        @('cpack.exe', '5B096261D79B67945B0070030E0E4AC7F276E0641F3A52CF72ACE038D77D4371'),
-        @('ctest.exe', '083F482C8656C86932C28906445CB3C10C0C5EE649A90FF3E0080EE4447D3DFC')
-    )) {
-        Assert-CMakeToolHash -Path (Join-Path $bin $tool[0]) -Expected $tool[1]
+    foreach ($tool in @('cmake.exe', 'cpack.exe', 'ctest.exe')) {
+        Assert-CMakeToolHash -Path (Join-Path $bin $tool) -Expected $lock.executables_sha256.$tool
     }
+    Repair-CMakeCompilerAbiHeader -Install $install
     return Join-Path $bin 'cmake.exe'
 }
 

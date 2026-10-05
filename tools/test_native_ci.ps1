@@ -38,7 +38,7 @@ foreach ($path in @('src/gpu/hip_codec.hip.cpp', 'src/gpu/hip_codec_static_prefi
 }
 foreach ($path in @('CMakeLists.txt', 'cmake/ResolveHipArchitecture.cmake', 'src/core/checksum.hpp',
         'src/gpu/hip_device.cpp', 'src/gpu/hip_codec_support.hpp', 'tools/build.ps1',
-        'tools/rocm-sdk-lock.json', 'tools/compile_hip_object.ps1', 'tools/native_build_receipt.py',
+        'tools/rocm-sdk-lock.json', 'tools/cmake-toolchain.sha256', 'tools/compile_hip_object.ps1', 'tools/native_build_receipt.py',
         'third_party/lzma_sdk/CpuArch.c')) {
     $selection = Get-SuperZipHostedWorkflowSelection -Paths @($path)
     Assert-NativeCi ($selection.windows -and $selection.rocm) "shared/native ABI inputs retain both builds: $path"
