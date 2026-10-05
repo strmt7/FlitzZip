@@ -764,6 +764,15 @@ The standard namespace is an identifier, not a network request; preserve the
 Keep templates in publication/scanner scope, reject active markup and oversized
 inputs, and check the real published charts for byte-exact regeneration.
 
+Minimize owned dependencies around their actual enabled capability contracts.
+Preserve upstream provenance and supported public interfaces; require compiler
+token equivalence for working configurations and retain a failing original
+control for each additional source repair. Cover language, staged inclusion and
+optional-API combinations. Discover compiler include paths from its actual
+build instead of guessing host installations, and use the selected compiler's
+standard option. Dependency specialization does not establish a performance
+improvement or repair an algorithm that the product does not enable.
+
 When a dependency produces MSVC `/GL` objects, propagate explicit Release
 `/LTCG` to its link consumers. This preserves the required optimization while
 avoiding the linker's automatic restart. Confirm the effective link options and

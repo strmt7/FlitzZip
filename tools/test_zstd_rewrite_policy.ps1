@@ -50,6 +50,7 @@ try {
             'cmake/ZstdDictionaryEvaluation.cmake',
             'cmake/ZstdHeaderComponents.cmake', 'tests/zstd/headers/header_contract.c',
             'cmake/ZstdDefaultAllocator.cmake', 'tests/zstd/headers/CMakeLists.txt',
+            'cmake/ZstdHashHeaderComponents.cmake', 'tests/zstd/headers/hash_contract.c',
             'cmake/ZstdHuffmanTable.c', 'tests/cpp/test_zstd_huffman_table.cpp', 'tests/zstd/fault_allocator.cpp',
             'cmake/ZstdCoverWorkGroup.cpp', 'tests/cpp/test_zstd_work_group.cpp',
             'cmake/ZstdCoverWorkGroup.cmake',
@@ -85,6 +86,14 @@ try {
         -Original 'require_default_allocator_sharing(TRUE)' -Replacement '# omitted production test' `
         -Cause 'shared default allocator production linkage'
     foreach ($mutation in @(
+            @('cmake/ZstdHeaderComponents.cmake', 'superzip_specialize_zstd_hash_implementation("${implementation}" implementation)', '# omitted owned hash', 'classic hash production dispatch'),
+            @('cmake/ZstdHeaderComponents.cmake', 'superzip_migrate_zstd_hash_implementation("${component}" "${component_hash}")', '# omitted migration', 'classic hash cache migration dispatch'),
+            @('cmake/ZstdHashHeaderComponents.cmake', 'if(NOT actual STREQUAL "${_zstd_header_component_xxhash_implementation_original}")', 'if(FALSE)', 'classic hash complete input identity'),
+            @('cmake/ZstdHashHeaderComponents.cmake', 'if(NOT proposed STREQUAL "${_zstd_header_component_xxhash_implementation_hash}")', 'if(FALSE)', 'classic hash complete output identity'),
+            @('tests/zstd/headers/CMakeLists.txt', 'require_classic_hash_contracts(original)', '# omitted control', 'classic hash original control'),
+            @('tests/zstd/headers/CMakeLists.txt', 'require_classic_hash_contracts(patched)', '# omitted test', 'classic hash production contracts'),
+            @('tests/zstd/headers/CMakeLists.txt', 'elseif(NOT actual STREQUAL "${hash_preprocessing_${extension}_${mode}}")', 'elseif(FALSE)', 'classic hash token equivalence'),
+            @('tests/zstd/headers/hash_contract.c', '#ifndef XXH_NO_XXH3', '#if 0', 'classic hash capability boundary'),
             @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT recognized)', 'if(FALSE)', 'canonical exact source admission'),
             @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT actual STREQUAL "${_zstd_canonical_${version}_patched}")', 'if(FALSE)', 'canonical complete output identity'),
             @('cmake/ZstdLegacyCanonical.cmake', 'if(NOT archive_hash STREQUAL _zstd_canonical_archive_hash)', 'if(FALSE)', 'canonical immutable provenance identity'),

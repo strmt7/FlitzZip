@@ -84,4 +84,62 @@ set(_zstd_header_component_xxhash_public_hash
 set(_zstd_header_component_xxhash_static_hash
     "ddbb9277eaae16da08df87b21d4a75ec30aa4b0515d69738bdbd0201d8750ccf")
 set(_zstd_header_component_xxhash_implementation_hash
+    "eb4ad90d196d13bb7688d992fa4dc70448a681fa1db9925de0ff5f75beb39be0")
+set(_zstd_header_component_xxhash_implementation_original
     "012b2e525a28b1345d0c0b636c01a40b9c8a9b99188a8f1fd6161142eeb52072")
+
+# Purpose: Own only the classic algorithms enabled by Zstandard's dispatcher.
+# Inputs: The exact original generated implementation, including its inactive
+# XXH3 region. Outputs: Same XXH32/XXH64 source and outer long-long guard;
+# preserves upstream provenance and closes C++ linkage when XXH64 is omitted.
+function(superzip_specialize_zstd_hash_implementation content output)
+  string(SHA256 actual "${content}")
+  if(NOT actual STREQUAL
+     "${_zstd_header_component_xxhash_implementation_original}")
+    message(FATAL_ERROR "Zstandard hash specialization input identity mismatch")
+  endif()
+  set(start "#ifndef XXH_NO_XXH3\n")
+  string(CONCAT finish "#endif  /* XXH_NO_LONG_LONG */\n"
+                "#endif  /* XXH_NO_XXH3 */")
+  string(FIND "${content}" "${start}" begin)
+  string(FIND "${content}" "${finish}" end)
+  if(begin LESS 0 OR end LESS_EQUAL begin)
+    message(FATAL_ERROR "Zstandard hash specialization boundary mismatch")
+  endif()
+  string(LENGTH "${finish}" finish_length)
+  math(EXPR suffix_begin "${end} + ${finish_length}")
+  string(SUBSTRING "${content}" 0 ${begin} prefix)
+  string(SUBSTRING "${content}" ${suffix_begin} -1 suffix)
+  string(
+    CONCAT content
+           "${prefix}"
+           "/* Zstandard owns only the classic XXH32/XXH64 implementation. */\n"
+           "#endif  /* XXH_NO_LONG_LONG */\n"
+           "#if defined(__cplusplus) && defined(XXH_NO_LONG_LONG)\n"
+           "} /* Close the classic C linkage when XXH64 is omitted. */\n"
+           "#endif${suffix}")
+  string(SHA256 proposed "${content}")
+  if(NOT proposed STREQUAL
+     "${_zstd_header_component_xxhash_implementation_hash}")
+    message(
+      FATAL_ERROR "Zstandard hash specialization output identity mismatch")
+  endif()
+  set(${output}
+      "${content}"
+      PARENT_SCOPE)
+endfunction()
+
+# Purpose: Upgrade only the exact previously published implementation component.
+# Inputs: Component path and its observed digest. Outputs: Atomically publishes
+# the classic implementation; unknown, interrupted and altered sources reject.
+function(superzip_migrate_zstd_hash_implementation path actual)
+  if(NOT actual STREQUAL
+     "${_zstd_header_component_xxhash_implementation_original}")
+    return()
+  endif()
+  file(READ "${path}" content)
+  superzip_specialize_zstd_hash_implementation("${content}" content)
+  superzip_write_verified_zstd_patch(
+    "${path}" "${actual}"
+    "${_zstd_header_component_xxhash_implementation_hash}" "${content}")
+endfunction()

@@ -125,7 +125,24 @@ the full suffix order, transformed bytes and primary index across short lengths,
 larger boundaries and four alphabets; separate malformed-group fixtures preserve
 workspace canaries. The original algorithm and provenance remain covered.
 
-## Remaining Source Work
+The owned hash dependency implements only the classic XXH32/XXH64 algorithms
+enabled by Zstandard's existing dispatcher. Its public/static headers,
+namespace and implementation opt-in sequence remain unchanged. The generated
+implementation omits the already-disabled XXH3 algorithm; the complete original
+source remains in the immutable provenance archive. No scanner path or rule is
+removed, and no compression-speed improvement is claimed from this change.
+
+The expanded compiler contract exposed an inherited unclosed C++ linkage block
+when XXH64 is omitted. The owned implementation closes that block. The original
+C++ XXH32-only fixture must fail, the repaired fixture must compile and run, and all
+previously compilable modes must retain identical preprocessed tokens. C and
+C++ runtime cases cover streaming, copied state and canonical representations
+through every bounded input length, alignment, profile and seed. Exact old
+component migration, complete output identities and source drift/interruption
+rejections remain enforced. The rejected XXH3 performance experiments are
+research evidence, not an upstream performance repair.
+
+## Historical Finding Groups And Closure Requirements
 
 The earlier inventory contains 28 DevSkim and 53 CodeQL source reports. Its
 reported source locations, including build-derived dependencies and the CMake
@@ -143,7 +160,8 @@ different production contracts:
 | Staged headers/default allocator | Public/static/inline inclusion and allocator contracts preserved | C and C++ first/repeated inclusion and real allocator consumers |
 | Upstream quality/probe observations | Actual upstream interface or research work, with truthful provenance | Relevant compiler and direct-consumer contracts |
 
-None of these rows is marked complete by this document. Replacing a primitive
+This table records closure requirements rather than a current backlog. Use a
+fresh exact-commit post-push audit for current hosted status. Replacing a primitive
 name, moving a file out of coverage, discarding an old-source reproducer or
 adding whole-file guards to staged headers cannot close a row. New runtime
 dependencies still require the ordinary maintainer approval.

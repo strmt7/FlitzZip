@@ -104,6 +104,10 @@ function(superzip_patch_zstd_header_components source_dir)
           superzip_zstd_migrate_default_allocator("${component}"
                                                   "${component_hash}")
           file(SHA256 "${component}" component_hash)
+        elseif(flavor STREQUAL "xxhash" AND part STREQUAL "implementation")
+          superzip_migrate_zstd_hash_implementation("${component}"
+                                                    "${component_hash}")
+          file(SHA256 "${component}" component_hash)
         endif()
         if(NOT component_hash STREQUAL "${${key}_${part}_hash}")
           message(
@@ -119,6 +123,8 @@ function(superzip_patch_zstd_header_components source_dir)
     file(READ "${source}" content)
     if(flavor STREQUAL "xxhash")
       superzip_split_zstd_hash_header("${content}" "${key}")
+      superzip_specialize_zstd_hash_implementation("${implementation}"
+                                                   implementation)
     else()
       superzip_split_zstd_header("${content}" "${key}")
     endif()

@@ -48,6 +48,14 @@ function Assert-ZstdSourceRequirement {
 function Assert-ZstdOwnedDecoderPolicy {
     param([string]$RepoRoot)
     $requirements = @(
+        @('cmake/ZstdHeaderComponents.cmake', 'superzip_specialize_zstd_hash_implementation("${implementation}" implementation)', 'classic hash production dispatch'),
+        @('cmake/ZstdHeaderComponents.cmake', 'superzip_migrate_zstd_hash_implementation("${component}" "${component_hash}")', 'classic hash cache migration dispatch'),
+        @('cmake/ZstdHashHeaderComponents.cmake', 'if(NOT actual STREQUAL "${_zstd_header_component_xxhash_implementation_original}")', 'classic hash complete input identity'),
+        @('cmake/ZstdHashHeaderComponents.cmake', 'if(NOT proposed STREQUAL "${_zstd_header_component_xxhash_implementation_hash}")', 'classic hash complete output identity'),
+        @('tests/zstd/headers/CMakeLists.txt', 'require_classic_hash_contracts(original)', 'classic hash original control'),
+        @('tests/zstd/headers/CMakeLists.txt', 'require_classic_hash_contracts(patched)', 'classic hash production contracts'),
+        @('tests/zstd/headers/CMakeLists.txt', 'elseif(NOT actual STREQUAL "${hash_preprocessing_${extension}_${mode}}")', 'classic hash token equivalence'),
+        @('tests/zstd/headers/hash_contract.c', '#ifndef XXH_NO_XXH3', 'classic hash capability boundary'),
         @('cmake/PatchZstdLegacy.cmake', 'superzip_patch_zstd_default_allocator("${source_dir}")', 'shared default allocator production dispatch'),
         @('cmake/ZstdDefaultAllocator.cmake', 'ZSTDLIB_STATIC_API extern ZSTD_customMem const ZSTD_defaultCMem;', 'shared default allocator declaration'),
         @('cmake/ZstdDefaultAllocator.cmake', 'if(NOT actual STREQUAL _zstd_default_allocator_common_original)', 'shared default allocator source identity'),
