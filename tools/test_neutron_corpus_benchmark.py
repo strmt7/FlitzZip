@@ -140,7 +140,7 @@ class CorpusContracts(unittest.TestCase):
             "gpu_decode_chunks": "1",
             "gpu_kernel_launches": "1",
             "archive_bytes": "116",
-            "output_bytes": "7",
+            "output_bytes": "3",
             "compress_seconds": "0.125",
         }
 
@@ -150,6 +150,8 @@ class CorpusContracts(unittest.TestCase):
             return " ".join(f"{key}={value}" for key, value in values.items()).encode()
 
         self.assertEqual(corpus.parse_stats(encode(fields), member), fields)
+        expanded = {**fields, "output_bytes": "8"}
+        self.assertEqual(corpus.parse_stats(encode(expanded), member), expanded)
         for key, value in (
             ("input_bytes", "8"),
             ("validated_bytes", "0"),
@@ -160,7 +162,9 @@ class CorpusContracts(unittest.TestCase):
             ("gpu_used", "false"),
             ("gpu_decode_chunks", "0"),
             ("archive_bytes", "0"),
-            ("output_bytes", "8"),
+            ("output_bytes", "0"),
+            ("output_bytes", "-1"),
+            ("output_bytes", "117"),
             ("compress_seconds", "nan"),
             ("compress_seconds", "inf"),
             ("compress_seconds", "-1"),
@@ -182,6 +186,16 @@ class CorpusContracts(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             corpus.run_process([sys.executable, "-B", "-c", "import time; time.sleep(30)"], None, 1)
 
+    # Purpose: Preserve an orchestrator's worker diagnostic without admitting the failed measurement.
+    # Inputs: Owned child with distinct bounded stdout/stderr and nonzero exit. Outputs: Both causes survive failure.
+    def test_owned_failure_preserves_both_streams(self) -> None:
+        code = "import sys; print('worker-root-cause'); print('orchestrator-failed', file=sys.stderr); sys.exit(7)"
+        with self.assertRaises(ValueError) as failure:
+            corpus.run_process([sys.executable, "-B", "-c", code], None, 10)
+        self.assertIn("benchmark child failed (7)", str(failure.exception))
+        self.assertIn("stdout=worker-root-cause", str(failure.exception))
+        self.assertIn("stderr=orchestrator-failed", str(failure.exception))
+
 
 def resident_fixture() -> list[dict]:
     """Purpose: Own tiny binary IPC inputs. Inputs: None. Outputs: Natural boundary-marker fixtures, never
@@ -201,7 +215,7 @@ def protocol_fixture(data: bytes) -> bytes:
         f"input_bytes={len(data)} validated_bytes={len(data)} output_bytes={len(data)} "
         f"source_sha256={hashlib.sha256(data).hexdigest()} compression_mode=neutron_star "
         "memory_only=true disk_write_bytes=0 measurement_protocol=bytewise-corpus-v1 data_source=preloaded "
-        "gpu_used=true gpu_encode_chunks=1 gpu_decode_chunks=1 gpu_kernel_launches=1 archive_bytes=116 "
+        f"gpu_used=true gpu_encode_chunks=1 gpu_decode_chunks=1 gpu_kernel_launches=1 archive_bytes={len(data) + 109} "
         "compress_seconds=0.125"
     ).encode("ascii")
 
@@ -386,7 +400,7 @@ class RamExchangeContracts(unittest.TestCase):
             row = json.loads(printed.getvalue())
             self.assertEqual(row["protocol"], protocol.decode("ascii"))
             self.assertFalse(row["study_qualified"])
-            self.assertEqual((count, totals[0]["input_bytes"], totals[0]["archive_bytes"]), (1, 256, 116))
+            self.assertEqual((count, totals[0]["input_bytes"], totals[0]["archive_bytes"]), (1, 256, 365))
 
     def test_child_descendant_cannot_outlive_root(self) -> None:
         """Purpose: Guard cleanup after root exit. Inputs: A root spawning a sleeping child. Outputs: Terminated

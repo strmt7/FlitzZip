@@ -26,6 +26,16 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Binary benchmark transport must not inherit text encoding or treat compressed
+  payload bytes as restored input coverage. The native protocol's
+  `validated_bytes` proves complete readback; `output_bytes` counts compressed
+  payload and must fit its complete framed archive. Admission controls cover
+  both compression and expansion. The actual stdin consumer now runs under a
+  preamble-capable ambient encoding and sets its owned writer to omit a
+  preamble. Hyperfine forwards bounded worker diagnostics; failed and partial
+  studies remain unqualified. Natural corpus runs validate the actual consumer
+  in addition to mocked protocol contracts.
+
 - Initial feature-branch pushes have no previous branch commit. Treating that
   event as a change to every inherited file caused an unrelated component-plan
   failure on a dependency PR. The production tool now computes its merge base

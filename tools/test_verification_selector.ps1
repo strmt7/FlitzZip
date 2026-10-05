@@ -644,4 +644,9 @@ Assert-Selector (($acquisitionPlan.requiredLocalCommands.id -contains 'benchmark
     ($acquisitionPlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
     ($acquisitionPlan.requiredLocalCommands.id -notcontains 'release-build')) 'corpus acquisition must select its admission and publication contracts without unrelated product builds or native tests'
 
+$binaryPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/test_memory_benchmark_corpus.ps1')
+Assert-Selector (($binaryPlan.requiredLocalCommands.id -contains 'binary-corpus-transport-tests') -and
+    ($binaryPlan.requiredLocalCommands.id -notcontains 'release-build') -and
+    ($binaryPlan.requiredLocalCommands.id -notcontains 'unit-tests')) 'binary adapter changes must invoke their actual offline consumer without unrelated native work'
+
 Write-Output "Verification selector self-test passed."

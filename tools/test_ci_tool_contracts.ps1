@@ -38,6 +38,7 @@ Assert-CiContractPlan -Path 'cmake/ZstdLegacyHistoryV05.c' -Required @('zstd-rew
 Assert-CiContractPlan -Path '.github/scanner-source-reviews.csv' -Required @('scanner-metadata-review-tests')
 Assert-CiContractPlan -Path '.github/scanner-secret-reviews.json' -Required @('secret-report-tests')
 Assert-CiContractPlan -Path 'third_party/upstream/nltk/source.zip' -Required @('secret-report-tests')
+Assert-CiContractPlan -Path 'tools/test_memory_benchmark_corpus.ps1' -Required @('binary-corpus-transport-tests')
 
 # Load the actual production comparison helper without executing any selected command.
 . $runner -ChangedPath 'README.md' -PlanOnly | Out-Null

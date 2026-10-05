@@ -23,13 +23,29 @@ function Invoke-MemoryCorpusProbe {
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     $info.RedirectStandardInput = $PSBoundParameters.ContainsKey('InputBytes')
-    $process = [Diagnostics.Process]::Start($info)
+    $hasInputEncoding = [bool]$info.PSObject.Properties['StandardInputEncoding']
+    if ($info.RedirectStandardInput -and $hasInputEncoding) {
+        # Process creates a text writer even when its BaseStream carries binary bytes.
+        # Prevent an inherited encoding from writing its preamble before the payload.
+        $info.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+    }
+    $previousConsoleEncoding = [Console]::InputEncoding
+    try {
+        # .NET Framework constructs this owned pipe from the ambient encoding instead of an instance setting.
+        if ($info.RedirectStandardInput -and -not $hasInputEncoding) {
+            [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+        }
+        $process = [Diagnostics.Process]::Start($info)
+    } finally { [Console]::InputEncoding = $previousConsoleEncoding }
     try {
         $stdout = Read-BoundedBenchmarkStream -Reader $process.StandardOutput
         $stderr = Read-BoundedBenchmarkStream -Reader $process.StandardError
         if ($info.RedirectStandardInput) {
-            $process.StandardInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
-            $process.StandardInput.Close()
+            $binaryInput = $process.StandardInput
+            # Windows PowerShell's .NET Framework lacks the encoding setter; validate its actual writer too.
+            if ($binaryInput.Encoding.GetPreamble().Length -ne 0) { throw 'Binary corpus writer can prepend a text preamble.' }
+            $binaryInput.BaseStream.Write($InputBytes, 0, $InputBytes.Length)
+            $binaryInput.Close()
         }
         if (-not $process.WaitForExit(60000) -or -not $stdout.Wait(5000) -or -not $stderr.Wait(5000)) {
             throw 'Corpus CLI fixture deadline exceeded.'
@@ -52,7 +68,12 @@ function Test-MemoryCorpusStdin {
     finally { $hasher.Dispose() }
     $source = @('--source-stdin', '--source-bytes', '256', '--source-sha256', $hash)
     $mode = if ($Hip) { '--neutron-star' } else { '--force-cpu' }
-    $result = Invoke-MemoryCorpusProbe -Argument (@('memory-benchmark', $mode) + $source) -InputBytes $bytes
+    $previousEncoding = [Console]::InputEncoding
+    try {
+        # Retain the hosted failure trigger: a preamble-capable ambient encoding must not change binary transport.
+        [Console]::InputEncoding = [Text.UTF8Encoding]::new($true)
+        $result = Invoke-MemoryCorpusProbe -Argument (@('memory-benchmark', $mode) + $source) -InputBytes $bytes
+    } finally { [Console]::InputEncoding = $previousEncoding }
     if ($result.exit_code -ne 0 -or $result.stderr -or $result.stdout -notmatch 'validated_bytes=256 ' -or
         $result.stdout -notmatch "source_sha256=$hash " -or $result.stdout -notmatch 'memory_only=true disk_write_bytes=0') {
         throw "Binary stdin readback failed: $($result.stderr)"

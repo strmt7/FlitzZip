@@ -221,7 +221,7 @@ def write_input(stream, data: bytes) -> None:
 
 # Purpose: Run an existing executable with bounded binary I/O and an owned lifetime.
 # Inputs: Structured argument vector, optional RAM input/environment and finite timeout; no shell interprets arguments.
-# Outputs: Complete bounded stdout or explicit failure; all reader/writer threads and child processes finish.
+# Outputs: Complete bounded stdout or explicit failure retaining both diagnostic streams; all owned children finish.
 def run_process(arguments: list[str], data: bytes | None, timeout: int, *, env: dict | None = None) -> bytes:
     owner = process_owner()
     admitted_bytes = owner.admit_child_memory_bytes()
@@ -261,7 +261,9 @@ def run_process(arguments: list[str], data: bytes | None, timeout: int, *, env: 
                 writer.result(timeout=5)
             if process.returncode or errors:
                 raise ValueError(
-                    f"benchmark child failed ({process.returncode}): {errors.decode('utf-8', errors='replace')}"
+                    f"benchmark child failed ({process.returncode}): "
+                    f"stderr={errors.decode('utf-8', errors='replace')} "
+                    f"stdout={output.decode('utf-8', errors='replace')}"
                 )
             return output
         finally:
@@ -294,13 +296,15 @@ def parse_stats(payload: bytes, member: dict) -> dict:
         "source_sha256": member["sha256"],
         "input_bytes": str(member["bytes"]),
         "validated_bytes": str(member["bytes"]),
-        "output_bytes": str(member["bytes"]),
     }
     if any(fields.get(key) != value for key, value in expected.items()):
         raise ValueError("Neutron corpus telemetry disagrees with the exact RAM source or required backend")
     for key in ("gpu_encode_chunks", "gpu_decode_chunks", "gpu_kernel_launches", "archive_bytes", "output_bytes"):
         if int(fields.get(key, "0")) <= 0:
             raise ValueError("Neutron corpus telemetry lacks complete archive or actual GPU work")
+    # Native output_bytes counts compressed payload; restored byte coverage is validated_bytes.
+    if int(fields["output_bytes"]) > int(fields["archive_bytes"]):
+        raise ValueError("Neutron compressed payload exceeds the complete framed archive")
     seconds = float(fields.get("compress_seconds", "nan"))
     if not math.isfinite(seconds) or seconds < 0:
         raise ValueError("Neutron corpus telemetry lacks a finite compression duration")
@@ -466,7 +470,7 @@ def study(args: argparse.Namespace) -> None:
                     "--style",
                     "basic",
                     "--output",
-                    "pipe",
+                    "inherit",
                     "--command-name",
                     f"Neutron/{args.corpus}",
                     command,
