@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import copy
 import unittest
-import xml.etree.ElementTree as ET
 
+from tools.render_svg_graph import parse_bounded_document
 from tools.render_tradeoff_graph import LEVELS, collect, frontier, render
 from tools.run_archive_comparison import command_templates
 from tools.test_comparison_graph import fixture
@@ -48,7 +48,7 @@ class TradeoffGraphTests(unittest.TestCase):
         self.assertIn(b"logarithmic", image)
         self.assertIn(b"?>\r\n<svg", image)
         self.assertNotIn(b"\n", image.replace(b"\r\n", b""))
-        root = ET.fromstring(image)
+        root = parse_bounded_document(image)
         self.assertEqual(root.attrib["role"], "img")
         self.assertIn("Segoe UI", root.attrib["font-family"])
 

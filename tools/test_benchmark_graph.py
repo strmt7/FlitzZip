@@ -6,12 +6,12 @@ import copy
 import hashlib
 import json
 import unittest
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools import render_benchmark_graph as graph
 from tools.native_build_provenance import canonical
 from tools.native_build_receipt import RECIPE_KEYS, validate_receipt
+from tools.render_svg_graph import parse_bounded_document
 
 
 # Purpose: Build one complete paired-run record without depending on a real GPU or filesystem benchmark.
@@ -494,7 +494,7 @@ class BenchmarkGraphTests(unittest.TestCase):
             self.assertEqual(metric["throughput_max_gib_s"], 10 / min(timings))
             self.assertEqual(metric["sample_count"], 3)
             self.assertGreater(metric["elapsed_std_dev_seconds"], 0)
-        root = ET.fromstring(graph.render_svg(identity, rows))
+        root = parse_bounded_document(graph.render_svg(identity, rows))
         ranges = root.findall(f'.//{{{graph.SVG}}}g[@class="sample-range"]')
         self.assertIn("encoded payload bytes, excluding archive metadata", root.find(f"{{{graph.SVG}}}desc").text)
         self.assertEqual(rows[0]["metrics"]["GPU"]["output_bytes"], record["runs"][1]["output_bytes"])
@@ -510,7 +510,7 @@ class BenchmarkGraphTests(unittest.TestCase):
     # Outputs: Current ranges have zero width; historical schemas retain their original rendering.
     def test_zero_variance_range_is_not_artificially_widened(self) -> None:
         identity, rows = graph.summarize_records([sampling_fixture()], allow_dirty=False)
-        root = ET.fromstring(graph.render_svg(identity, rows))
+        root = parse_bounded_document(graph.render_svg(identity, rows))
         for group in root.findall(f'.//{{{graph.SVG}}}g[@class="sample-range"]'):
             line = group.find(f"{{{graph.SVG}}}line")
             self.assertEqual(line.attrib["x1"], line.attrib["x2"])
@@ -663,7 +663,7 @@ class BenchmarkGraphTests(unittest.TestCase):
         self.assertEqual(first, graph.render_svg(identity, rows))
         self.assertTrue(first.endswith(b"\r\n"))
         self.assertEqual(first.count(b"\n"), first.count(b"\r\n"))
-        root = ET.fromstring(first)
+        root = parse_bounded_document(first)
         self.assertEqual(root.attrib["role"], "img")
         self.assertIn("encoded payload size", root.find(f"{{{graph.SVG}}}desc").text)
         self.assertIn(b"Synthetic workloads only", first)

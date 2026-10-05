@@ -8,7 +8,70 @@ from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "resources/benchmarks/chart-template.svg"
 MAX_TEMPLATE_BYTES = 1024
+MAX_DOCUMENT_BYTES = 1024 * 1024
+MAX_DOCUMENT_DEPTH = 32
+MAX_DOCUMENT_NODES = 32768
 ROOT_ATTRIBUTES = {"viewBox", "width", "height", "font-family", "role", "aria-labelledby"}
+
+
+# Purpose: Enforce structural resource limits before allocating each XML element.
+# Inputs: XMLParser callbacks for one bounded document.
+# Outputs: Builds an ElementTree or rejects declarations, processing instructions and oversized trees.
+class BoundedDocumentBuilder(ET.TreeBuilder):
+    # Purpose: Initialize independent counters for one document.
+    # Inputs: None. Outputs: Empty builder with zero depth and node count.
+    def __init__(self) -> None:
+        super().__init__()
+        self.depth = 0
+        self.nodes = 0
+
+    # Purpose: Admit one element before constructing it.
+    # Inputs: Expanded tag and attribute mapping. Outputs: Element or a resource-limit failure.
+    def start(self, tag: str, attrs: dict[str, str]) -> ET.Element:
+        self.depth += 1
+        self.nodes += 1
+        if self.depth > MAX_DOCUMENT_DEPTH or self.nodes > MAX_DOCUMENT_NODES:
+            raise ValueError("XML document exceeds its structural bounds")
+        return super().start(tag, attrs)
+
+    # Purpose: Close one admitted element and maintain the live-depth counter.
+    # Inputs: Expanded closing tag. Outputs: Completed element.
+    def end(self, tag: str) -> ET.Element:
+        result = super().end(tag)
+        self.depth -= 1
+        return result
+
+    # Purpose: Reject a DTD independently of the lexical admission guard.
+    # Inputs: Document type identifiers. Outputs: Always raises before processing declarations.
+    def doctype(self, name: str, pubid: str | None, system: str | None) -> None:
+        raise ValueError("XML document type declarations are forbidden")
+
+    # Purpose: Reject processing instructions instead of silently discarding them.
+    # Inputs: Instruction target and data. Outputs: Always raises.
+    def pi(self, target: str, text: str) -> None:
+        raise ValueError("XML processing instructions are forbidden")
+
+
+# Purpose: Parse only bounded UTF-8 XML without DTDs, entities or unbounded tree construction.
+# Inputs: Complete bytes or text from a generated or reviewed chart.
+# Outputs: Returns the document root; raises ValueError before declaration processing or on invalid input.
+def parse_bounded_document(payload: bytes | str) -> ET.Element:
+    if not isinstance(payload, (bytes, str)) or len(payload) > MAX_DOCUMENT_BYTES:
+        raise ValueError("XML document exceeds its byte bound")
+    try:
+        text = payload.decode("utf-8", errors="strict") if isinstance(payload, bytes) else payload
+        if len(text.encode("utf-8")) > MAX_DOCUMENT_BYTES or "\x00" in text or "<!" in text:
+            raise ValueError("XML document contains a declaration or exceeds its byte bound")
+        return ET.fromstring(text, parser=ET.XMLParser(target=BoundedDocumentBuilder()))
+    except (UnicodeError, ET.ParseError) as error:
+        raise ValueError("malformed UTF-8 XML document") from error
+
+
+# Purpose: Read and parse one chart without first loading an unbounded file into memory.
+# Inputs: Chart path. Outputs: Document root or an admission/parse failure.
+def read_bounded_document(path: Path) -> ET.Element:
+    with path.open("rb") as stream:
+        return parse_bounded_document(stream.read(MAX_DOCUMENT_BYTES + 1))
 
 
 # Purpose: Load only the bounded, passive document skeleton owned by the repository.
@@ -17,12 +80,9 @@ ROOT_ATTRIBUTES = {"viewBox", "width", "height", "font-family", "role", "aria-la
 def load_template(path: Path = TEMPLATE_PATH) -> ET.Element:
     with path.open("rb") as stream:
         payload = stream.read(MAX_TEMPLATE_BYTES + 1)
-    if len(payload) > MAX_TEMPLATE_BYTES or b"<!" in payload:
-        raise ValueError("SVG template exceeds its bound or contains a declaration")
-    try:
-        root = ET.fromstring(payload)
-    except ET.ParseError as error:
-        raise ValueError("malformed SVG template") from error
+    if len(payload) > MAX_TEMPLATE_BYTES:
+        raise ValueError("SVG template exceeds its bound")
+    root = parse_bounded_document(payload)
     if not isinstance(root.tag, str) or not root.tag.startswith("{") or not root.tag.endswith("}svg"):
         raise ValueError("SVG template requires a namespaced document root")
     namespace = root.tag[:-3]

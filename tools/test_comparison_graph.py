@@ -6,11 +6,11 @@ import copy
 import json
 import tempfile
 import unittest
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
 from tools import render_comparison_graph as graph
+from tools.render_svg_graph import parse_bounded_document
 from tools.run_archive_comparison import CASES, EXPECTED, command_templates
 
 
@@ -197,7 +197,7 @@ class ComparisonGraphTests(unittest.TestCase):
         self.assertEqual(image, graph.render(commit, rows))
         self.assertIn(b"?>\r\n<svg", image)
         self.assertNotIn(b"\n", image.replace(b"\r\n", b""))
-        root = ET.fromstring(image)
+        root = parse_bounded_document(image)
         self.assertEqual(root.attrib["role"], "img")
         self.assertIn(b"ranges are observed, not confidence intervals", image)
 

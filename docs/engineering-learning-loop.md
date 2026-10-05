@@ -763,6 +763,13 @@ The standard namespace is an identifier, not a network request; preserve the
 [W3C SVG namespace](https://www.w3.org/TR/SVG2/struct.html#Namespace).
 Keep templates in publication/scanner scope, reject active markup and oversized
 inputs, and check the real published charts for byte-exact regeneration.
+Route graph tests and template loading through the same bounded UTF-8 XML
+boundary. Reject declarations before parsing, enforce depth/node limits during
+construction, and cap reads before allocating file contents. Cover encoded DTDs,
+external and parameter entities, processing instructions, malformed encodings,
+exact structural limits and real published documents. Keep the DTD callback as
+an independent guard; do not rely on a byte-pattern check that alternate XML
+encodings can bypass.
 
 Minimize owned dependencies around their actual enabled capability contracts.
 Preserve upstream provenance and supported public interfaces; require compiler

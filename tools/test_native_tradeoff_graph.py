@@ -5,11 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import unittest
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools.render_benchmark_graph import validate_record
 from tools.render_native_tradeoff_graph import LEVELS, collect, render
+from tools.render_svg_graph import parse_bounded_document
 from tools.test_benchmark_graph import fixture_record
 
 
@@ -69,7 +69,7 @@ class NativeTradeoffGraphTests(unittest.TestCase):
         self.assertIn(b"truncated axis", image)
         self.assertIn(b"257,130,692", image)
         self.assertEqual(image.count(b"\n"), image.count(b"\r\n"))
-        root = ET.fromstring(image)
+        root = parse_bounded_document(image)
         self.assertEqual(root.attrib["role"], "img")
 
     # Purpose: Prevent incomplete, dirty, or mismatched native records from being published.
