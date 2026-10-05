@@ -92,6 +92,8 @@ function Test-MemoryCorpusStdin {
         @{ arguments = $source + @('--profile', 'Mixed'); cause = 'excludes file/generated input' },
         @{ arguments = $source + @('--source-file', 'unused.bin'); cause = 'excludes file/generated input' },
         @{ arguments = @('--source-stdin', '--source-bytes', '0', '--source-sha256', $hash); cause = '1..4294967295' },
+        @{ arguments = @('--source-stdin', '--source-bytes', '4294967296', '--source-sha256', $hash); cause = 'invalid value for --source-bytes' },
+        @{ arguments = @('--source-stdin', '--source-bytes', '4294967295', '--source-bytes', '1', '--source-sha256', $hash); cause = 'duplicate --source-bytes' },
         @{ arguments = @('--source-stdin', '--source-bytes', '257', '--source-sha256', $hash); cause = 'read failed'; input_bytes = $bytes },
         @{ arguments = @('--source-stdin', '--source-bytes', '255', '--source-sha256', $hash); cause = 'read failed'; input_bytes = $bytes },
         @{ arguments = @('--source-stdin', '--source-bytes', '256', '--source-sha256', ('0' * 64)); cause = 'differs from expected identity'; input_bytes = $bytes }
@@ -104,7 +106,7 @@ function Test-MemoryCorpusStdin {
             throw "Binary stdin rejection disagrees with expected boundary: $($case.cause)"
         }
     }
-    Write-Output 'Binary stdin integration passed: exact all-byte readback, 175 MB metadata plan and ten rejection cases.'
+    Write-Output 'Binary stdin integration passed: exact all-byte readback, 175 MB metadata plan and twelve rejection cases.'
 }
 
 # Purpose: Exercise the production controller and scheduler with this explicitly generated correctness snapshot.

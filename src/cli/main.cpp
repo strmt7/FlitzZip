@@ -979,7 +979,7 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
             throw superzip::ArchiveError(
                 "--source-stdin requires --source-bytes and --source-sha256; excludes file/generated input");
         }
-        if (*source_arguments.bytes == 0U || *source_arguments.bytes > superzip::cli::kMemoryBenchmarkCorpusMaxBytes) {
+        if (*source_arguments.bytes == 0U) {
             throw superzip::ArchiveError(
                 "benchmark corpus must contain 1..4294967295 bytes within current host headroom");
         }
