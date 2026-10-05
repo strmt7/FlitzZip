@@ -1,10 +1,11 @@
 # Research Dependency Update Review, 5 October 2026
 
 The [Dependabot pull request](https://github.com/strmt7/SuperZip/pull/59) at
-`451143a2f30581da5bc4db8fff4900e52b78e018` proposes six independently selected
-updates to the crawler lock. All four platform installation jobs reject its
+`451143a2f30581da5bc4db8fff4900e52b78e018` proposed six independently selected
+updates to the crawler lock. All four platform installation jobs rejected its
 dependency graph. This proves a resolver conflict, not that every newer package
-fails at runtime. The proposed lock must not be merged as written. The one-time
+fails at runtime. The proposal was closed without merging after the review
+described below. The one-time
 runtime experiment below distinguishes declared restrictions from API failures.
 
 Current publisher metadata and the actual consuming distributions establish:
@@ -125,3 +126,14 @@ Bounded diagnostics and exact wheel identities are retained under ignored
 are retained separately and are not package-incompatibility evidence. Temporary
 overlays and the diagnostic source copy were cleaned up. No permanent workflow,
 production override or recurring requirement-bypass procedure was added.
+
+## Review Decision, 6 October
+
+The exact reviewed PR head remained
+`451143a2f30581da5bc4db8fff4900e52b78e018`. Its incompatible grouped proposal
+was closed without merging on 5 October at 22:45 UTC (6 October locally).
+The qualified dependency graph and ordinary update policy remain intact.
+GitHub's `MERGEABLE` field describes Git conflict status; it does not resolve
+the documented package/API incompatibility. The retained diff, experiments
+and review preserve the proposed updates for later compatible consumer releases.
+Closing this PR does not close Dependabot alert 23 or repair an advisory database.

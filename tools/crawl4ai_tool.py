@@ -179,7 +179,7 @@ def run(command: list[str], env: dict[str, str], timeout: int = 900) -> None:
 
 def verify_versions(python: Path, env: dict[str, str]) -> None:
     """Purpose: Verify dependency/repair bytes. Inputs: Isolated runtime/environment. Outputs: Exact pins or error."""
-    from tools import crawl4ai_source_build
+    from tools import crawl4ai_source_build, nltk_security_build
 
     pins = dict(re.findall(r"^([\w-]+)==([^\s]+)", LOCK.read_text(encoding="utf-8"), re.M))
     script = (
@@ -188,9 +188,21 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
         "dist=importlib.metadata.distribution('crawl4ai'); expected=json.loads(sys.argv[2]); "
         "bad.extend(n for n,h in expected.items() if "
         "hashlib.sha256(dist.locate_file(n).read_bytes().replace(b'\\r\\n',b'\\n')).hexdigest()!=h); "
-        "sys.exit('Locked dependency or crawler repair bytes changed: '+','.join(bad)) if bad else None"
+        "sys.exit('Locked dependency or crawler repair bytes changed: '+','.join(bad)) if bad else None; "
+        "from tools.nltk_security_build import verify_installed_runtime; verify_installed_runtime(sys.argv[3])"
     )
-    run([str(python), "-c", script, json.dumps(pins), json.dumps(crawl4ai_source_build.runtime_hashes())], env, 60)
+    run(
+        [
+            str(python),
+            "-c",
+            script,
+            json.dumps(pins),
+            json.dumps(crawl4ai_source_build.runtime_hashes()),
+            nltk_security_build.runtime_source_sha256(),
+        ],
+        env,
+        60,
+    )
 
 
 @contextlib.contextmanager

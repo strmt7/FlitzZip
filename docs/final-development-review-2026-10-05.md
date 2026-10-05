@@ -5,6 +5,32 @@ The maintainer requested a final development round, comprehensive consistency
 review, actual HIP tests and frontend Neutron qualification. Publication of a
 new prerelease remains subject to separate maintainer approval.
 
+The checkpoint paragraphs below preserve their recorded earlier states.
+The latest published source checkpoint is
+`047629267cbf8dd866976ed6f4ddcf9b876b8389`; all nine selected hosted workflows
+passed, including CodeQL C++, fuzzing and the full secret-history scanner.
+The post-push audit still blocks on the two existing Scorecard governance
+alerts. Dependabot 23 separately remains open because its upstream advisory
+has no patched release, despite the admitted source repair. PR 59's exact
+reviewed incompatible proposal is now closed without merging. The complete
+current Govdocs1 GPU study remains in progress.
+
+The standard-format Canterbury size reference demonstrates a remaining gap:
+741,174 complete Neutron bytes exceed 729,272 for ZIP/DEFLATE, 543,236 for
+TAR/bzip2 and 494,376 for TAR/XZ. Every reference used all eleven original files,
+complete single-file containers and bytewise RAM-only readback. This is a
+size comparison; it does not establish comparative speed or general superiority.
+The source-integrity guard passed all nine selected local commands, including
+seventeen crawler-launcher, five crawler-source and nine NLTK-source contracts.
+An actual installed-cache consumer also passed. Cached crawler startup now
+verifies the admitted NLTK Python source inventory and content before import,
+rather than relying only on its version metadata. Mutation controls cover the
+guarded I/O/model modules, version marker and initializer, missing/added source,
+case aliases, noncanonical names, special archive entries and read budgets.
+The admitted package/wheel and resolved dependency graph are unchanged; no
+native build or package reinstall was required. Its subsequent exact-revision
+hosted qualification remains pending until publication completes.
+
 ## Native Build Repair
 
 Commit `bab6b88abb59d51d75127863c48225993d2c1586` failed both hosted Windows

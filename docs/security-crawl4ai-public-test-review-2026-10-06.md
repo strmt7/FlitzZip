@@ -83,4 +83,18 @@ ledger bytes, checked every complete cohort hash and rejected malformed policy.
 The affected selector, CI projection, runner and publication-policy contracts
 also passed. No native target was rebuilt for this approval batch. The initial
 lint failure was a one-character comment-length violation; the corrected
-affected checks passed. A fresh hosted all-detector run remains required.
+affected checks passed. At that checkpoint, a fresh hosted all-detector run
+was still required; its subsequent result is recorded below.
+
+At commit `047629267cbf8dd866976ed6f4ddcf9b876b8389`, the normal hosted
+secret-history scan passed. Its retained artifact reported five findings,
+five individually reviewed public fixtures and zero unresolved results, with
+the exact three cohort hashes and pinned scanner image. The URI-only diagnostic
+and direct-consumer regressions retain the eight exact URI identities; the
+different production finding count does not justify removing unmatched-report
+controls or establish that network verification will always return the same
+results. The twelve hosted DS173237 integrity-metadata alerts were separately
+checked against this commit's original Git blob, complete cohort hash, exact
+highlighted locations and the five authorized public values. Their existing
+maintainer-authorized false-positive dispositions were applied individually;
+raw SARIF and sanitized secret reports remain retained.

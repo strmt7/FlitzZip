@@ -157,3 +157,31 @@ informs bounded parallel work and transfer accounting. The author manuscript
 suggests adaptive bit-plane research, but its reported results are not SuperZip
 or AMD HIP benchmark evidence. No external compression runtime, neural model
 or new product dependency is adopted by this primitive.
+
+The [current standard-format size reference](neutron-public-corpus-benchmark.md#standard-format-size-reference-6-october)
+shows a substantial remaining ratio gap on Canterbury: Neutron uses 741,174
+complete bytes, compared with 729,272 for ZIP/DEFLATE, 543,236 for TAR/bzip2 and
+494,376 for TAR/XZ. Further work must target that measured gap, rather than
+treating additional trial count or GPU activity as progress.
+
+Primary sources read through Crawl4AI on 6 October include
+[DFloat11](https://arxiv.org/html/2504.11651),
+[exponent concentration](https://arxiv.org/html/2510.02676),
+[Falcon](https://arxiv.org/html/2511.04140),
+[DietGPU](https://github.com/facebookresearch/dietgpu) and the
+[bzip2 manual](https://sourceware.org/bzip2/manual/manual.html).
+They support two distinct hypotheses: separate low-entropy numeric fields from
+high-entropy payload bits, and exploit longer contexts through reversible
+block sorting and stronger entropy coding. Their CUDA throughput, model-specific
+results and numeric assumptions are not measurements of SuperZip or AMD HIP.
+Two eScholarship GPU-paper pages returned HTTP 202 with one-character content;
+their extraction provided no usable paper evidence and is retained as an
+access failure, despite the crawler's success flag.
+
+The next experiments need independent original-bit readers, bounded GPU work
+and complete framed-cost selection. An actual trained-model corpus is needed
+before claiming numeric/model benefits; the public Apache-2.0
+[Pythia models](https://github.com/EleutherAI/pythia#license) provide one possible
+source after exact artifact admission. General text, binary and already-compressed
+files must remain in the study. These are research directions, not implemented
+codecs, new runtime dependencies or demonstrated general improvements.

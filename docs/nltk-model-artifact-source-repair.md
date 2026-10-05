@@ -93,3 +93,24 @@ the downstream source build only after normal locked resolution, model API
 regressions, consumer checks and the relevant platform workflows pass. Keep
 unresolved reports and platform gaps visible; do not change vulnerability gates
 to obtain a green checkpoint.
+
+## Installed Source Integrity, 6 October
+
+Cached crawler startup previously compared NLTK's distribution version without
+checking its installed Python source. It now compares a deterministic inventory
+and content digest with the admitted upstream archive, including the correctly
+identified downstream `VERSION` file, before importing package code. Every
+Python source member participates; changed, missing or additional source files
+are refused even when installed distribution metadata still claims the same
+version. Runtime source inspection rejects redirects and special files and
+uses bounded directory traversal and reads. It does not execute inspected code.
+
+Source extraction and the integrity reader share complete ZIP metadata
+admission. Ambiguous case aliases, normalized-path aliases, special members
+and duplicate or escaping entries are rejected before extraction writes.
+The archive, wheel, version and locked dependency graph are unchanged; this
+guard does not rebuild a valid admitted wheel or reinstall a qualified graph.
+The original six-API negative control and repaired nine-test model/consumer
+evidence still bind the same runtime source. New source-integrity contracts and
+an actual installed-cache consumer are required for this guard; their results
+are recorded in the current development review.

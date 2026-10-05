@@ -85,6 +85,8 @@ class CrawlerContracts(unittest.TestCase):
             self.assertEqual(pins["crawl4ai"], tool.VERSION)
             self.assertIn("importlib.metadata.version", argv[2])
             self.assertIn("crawl4ai/superzip_download.py", json.loads(argv[4]))
+            self.assertIn("verify_installed_runtime(sys.argv[3])", argv[2])
+            self.assertRegex(argv[5], r"^[a-f0-9]{64}$")
 
     def test_script_entrypoint_imports_its_checkout_from_another_directory(self):
         """Purpose: Preserve direct script use. Inputs: External cwd/script path. Outputs: Local helper imports."""

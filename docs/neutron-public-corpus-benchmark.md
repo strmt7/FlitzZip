@@ -272,3 +272,44 @@ separate settings, rather than comparisons against that baseline.
 
 These single-pass setting checks establish coverage and recovery. They do not
 change the default block size or qualify a throughput comparison.
+
+## Standard-Format Size Reference, 6 October
+
+The [complete RAM-only reference](benchmarks/data/neutron-canterbury-standard-size-reference-2026-10-06.json)
+uses all eleven original Canterbury files and the exact source digests from
+the current 33-observation Neutron study. Each independent container uses the
+native RAM model's `memory-benchmark.bin` entry name. Complete container bytes
+are counted, including the ZIP directory or TAR headers and padding. Every
+standard-codec decompression and archive-member read was compared bytewise
+with its entire original source. No corpus or archive payload was written to
+disk, and the GPU observations were reused rather than repeated.
+
+| Complete independent-file containers | Total archive bytes |
+| --- | ---: |
+| Current Neutron, 256 KiB blocks | 741,174 |
+| ZIP, DEFLATE level 9 | 729,272 |
+| TAR, gzip level 9 | 729,330 |
+| TAR, bzip2 level 9 | 543,236 |
+| TAR, XZ preset 9 with extreme search | 494,376 |
+| Uncompressed TAR | 2,887,680 |
+
+Neutron is larger than every compressed reference on this corpus. This result
+does not satisfy the target of dramatically smaller archives. Uncompressed
+TAR is an inventory/container baseline, not a competitive compression method.
+The measurements are size references, not application-speed comparisons or a
+solid whole-corpus archive study. Settings, windows and dictionaries differ
+between algorithms; their numeric effort labels do not imply equal work.
+
+The producer is CPython 3.13.16 with zlib 1.3.1, using the existing standard
+`zipfile`, `tarfile`, `gzip`, `bz2` and `lzma` implementations. ZIP uses a fixed
+1980 timestamp, DEFLATE 9 and regular-file mode 0644. TAR uses USTAR, mode 0644,
+zero timestamps/IDs and empty owner names; each complete TAR is then filtered
+using `gzip.compress(..., compresslevel=9, mtime=0)`, `bz2.compress(...,
+compresslevel=9)` or `lzma.compress(..., format=FORMAT_XZ, preset=9 |
+PRESET_EXTREME)`. Source acquisition and original-member validation use the
+existing canonical corpus controller. The owned producer ran below normal
+priority and admitted one GiB before compression because
+[preset 9 can require up to 800 MiB](https://docs.python.org/3.13/library/lzma.html).
+The local producer and full successful output remain under ignored `out/`.
+Only measurement metadata is published; no comparator runtime is added to the
+application and no external project code is copied.

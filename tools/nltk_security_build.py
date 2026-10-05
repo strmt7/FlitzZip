@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import stat
 import tempfile
 import venv
 import zipfile
@@ -72,28 +73,42 @@ def identity() -> str:
     return hashlib.sha256("\n".join(values).encode("ascii")).hexdigest()
 
 
+def source_entries(source: zipfile.ZipFile, commit: str) -> list[zipfile.ZipInfo]:
+    """Purpose: Admit complete source metadata. Inputs: ZIP/commit. Outputs: Bounded canonical members or refusal."""
+    prefix = f"nltk-{commit}/"
+    entries = source.infolist()
+    if len(entries) > 2000 or sum(item.file_size for item in entries) > MAX_SOURCE_BYTES:
+        raise ValueError("NLTK source archive exceeds its reviewed extent")
+    seen = set()
+    for item in entries:
+        name = item.filename
+        relative = PurePosixPath(name[len(prefix) :])
+        tail = name[len(prefix) :]
+        kind = (item.external_attr >> 16) & 0o170000
+        if (
+            not name.startswith(prefix)
+            or name != item.orig_filename
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or "\\" in name
+            or ":" in name
+            or (tail and relative.as_posix() != tail.rstrip("/"))
+            or kind not in (0, stat.S_IFREG, stat.S_IFDIR)
+            or (kind == stat.S_IFDIR and not item.is_dir())
+            or (kind == stat.S_IFREG and item.is_dir())
+            or name.casefold() in seen
+        ):
+            raise ValueError("Unsafe or duplicate NLTK source member")
+        seen.add(name.casefold())
+    return entries
+
+
 def extract_source(archive: Path, destination: Path, commit: str) -> Path:
-    """Purpose: Unpack only bounded owned source. Inputs: Verified ZIP/destination/commit. Outputs: Source tree."""
+    """Purpose: Unpack only admitted owned source. Inputs: ZIP/destination/commit. Outputs: Complete source tree."""
     prefix = f"nltk-{commit}/"
     with zipfile.ZipFile(archive) as source:
-        entries = source.infolist()
-        if len(entries) > 2000 or sum(item.file_size for item in entries) > MAX_SOURCE_BYTES:
-            raise ValueError("NLTK source archive exceeds its reviewed extent")
-        seen = set()
-        for item in entries:
-            name = item.filename
-            relative = PurePosixPath(name[len(prefix) :])
-            if (
-                not name.startswith(prefix)
-                or relative.is_absolute()
-                or ".." in relative.parts
-                or "\\" in name
-                or ":" in name
-                or (item.external_attr >> 16) & 0o170000 == 0o120000
-                or name in seen
-            ):
-                raise ValueError("Unsafe or duplicate NLTK source member")
-            seen.add(name)
+        for item in source_entries(source, commit):
+            relative = PurePosixPath(item.filename[len(prefix) :])
             target = destination.joinpath(*relative.parts)
             if item.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
@@ -101,6 +116,75 @@ def extract_source(archive: Path, destination: Path, commit: str) -> Path:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(source.read(item))
     return destination
+
+
+def runtime_source_sha256() -> str:
+    """Purpose: Bind every runtime source member. Inputs: Admitted source/recipe. Outputs: Canonical package digest."""
+    data = recipe()
+    prefix = f"nltk-{data['commit']}/"
+    hashes = {}
+    with zipfile.ZipFile(SOURCE_ROOT / data["source"]) as source:
+        for item in source_entries(source, data["commit"]):
+            name = item.filename[len(prefix) :]
+            if name.startswith("nltk/") and name.lower().endswith(".py"):
+                hashes[name] = hashlib.sha256(source.read(item).replace(b"\r\n", b"\n")).hexdigest()
+        if source.read(prefix + "nltk/VERSION").decode("ascii").strip() != data["upstream_version"]:
+            raise ValueError("Unexpected upstream NLTK runtime version")
+    if not hashes or "nltk/__init__.py" not in hashes:
+        raise ValueError("NLTK runtime source is incomplete")
+    hashes["nltk/VERSION"] = hashlib.sha256((data["version"] + "\n").encode("ascii")).hexdigest()
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()
+
+
+def installed_runtime_sha256(root: Path) -> str:
+    """Purpose: Measure installed source without importing it. Inputs: Package directory. Outputs: Bounded digest."""
+    root_info = root.lstat()
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or getattr(root_info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
+        raise ValueError("NLTK installed runtime is missing or redirected")
+    hashes = {}
+    total = entries = 0
+    pending = [root]
+    while pending:
+        with os.scandir(pending.pop()) as children:
+            for child in children:
+                entries += 1
+                info = child.stat(follow_symlinks=False)
+                if (
+                    entries > 10000
+                    or stat.S_ISLNK(info.st_mode)
+                    or (getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                ):
+                    raise ValueError("NLTK installed runtime exceeds admission or contains a redirect")
+                path = Path(child.path)
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(path)
+                    continue
+                name = path.relative_to(root).as_posix()
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("NLTK installed runtime contains a special file")
+                if path.suffix.lower() != ".py" and name != "VERSION":
+                    continue
+                with path.open("rb") as stream:
+                    contents = stream.read(MAX_SOURCE_BYTES - total + 1)
+                total += len(contents)
+                if total > MAX_SOURCE_BYTES:
+                    raise ValueError("NLTK installed runtime exceeds its source byte budget")
+                hashes["nltk/" + name] = hashlib.sha256(contents.replace(b"\r\n", b"\n")).hexdigest()
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()
+
+
+def verify_installed_runtime(expected_sha256: str) -> None:
+    """Purpose: Refuse cache drift before code import. Inputs: Admitted digest. Outputs: Success or source refusal."""
+    import importlib.metadata
+
+    if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
+        raise ValueError("Malformed NLTK runtime source identity")
+    root = Path(importlib.metadata.distribution("nltk").locate_file("nltk"))
+    if installed_runtime_sha256(root) != expected_sha256:
+        raise ValueError("NLTK installed runtime source changed; repaired dependency refused")
 
 
 def identify_build(source: Path, data: dict) -> None:

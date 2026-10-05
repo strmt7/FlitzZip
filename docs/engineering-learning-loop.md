@@ -911,3 +911,15 @@ against that buffer before forming a view. Convert fixed object representations
 through exact-size byte arrays and typed value conversion; retain signature
 and version checks. A trusted provider does not make an unchecked byte extent
 an ownership contract.
+
+A dependency version check cannot establish that its security repair is still
+installed. For an admitted source build, derive a bounded runtime source
+inventory and content identity from the original artifact and documented
+packaging changes. Verify that identity before loading the dependency on cache
+reuse, retain normal dependency resolution, and reject added, missing or changed
+source without retrying through an unverified installation. Share archive
+metadata admission with the build reader; check path aliases, redirects, file
+types and budgets before reads or extraction writes. Exercise real admitted
+source plus mutation controls and an installed-cache consumer. Verification
+changes can reuse an unchanged, hash-admitted build artifact; they must not
+silently regenerate a wheel or weaken its source/recipe/output binding.

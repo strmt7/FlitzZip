@@ -11,6 +11,7 @@ import unittest
 import warnings
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools import nltk_security_build as build
@@ -84,6 +85,77 @@ class SecurityBuildTests(unittest.TestCase):
             self.assertEqual((source / "nltk/VERSION").read_text().strip(), data["version"])
             self.assertIn("not a published NLTK release", (source / "SUPERZIP_BUILD_NOTICE.txt").read_text())
             self.assertIn("SUPERZIP_BUILD_NOTICE.txt", (source / "setup.cfg").read_text())
+
+    def test_installed_runtime_binds_original_sources_without_import_or_version_fallback(self):
+        """Purpose: Reject installed source drift. Inputs: Original owned tree and mutations. Outputs: Exact refusal."""
+        data = build.recipe()
+        expected = build.runtime_source_sha256()
+        with tempfile.TemporaryDirectory() as temp:
+            source = build.extract_source(build.SOURCE_ROOT / data["source"], Path(temp), data["commit"])
+            build.identify_build(source, data)
+            root = source / "nltk"
+            distribution = SimpleNamespace(locate_file=lambda name: source / name)
+            with patch("importlib.metadata.distribution", return_value=distribution):
+                build.verify_installed_runtime(expected)
+                for name in (
+                    "pathsec.py",
+                    "picklesec.py",
+                    "data.py",
+                    "tag/perceptron.py",
+                    "parse/transitionparser.py",
+                    "classify/maxent.py",
+                    "VERSION",
+                    "__init__.py",
+                ):
+                    path = root / name
+                    original = path.read_bytes()
+                    path.write_bytes(b"raise RuntimeError('integrity probe must never import package code')\n")
+                    with self.assertRaisesRegex(ValueError, "runtime source changed"):
+                        build.verify_installed_runtime(expected)
+                    path.write_bytes(original)
+                for name in ("unexpected.py", "unexpected.PY"):
+                    extra = root / name
+                    extra.write_text("# unexpected installed source\n", encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "runtime source changed"):
+                        build.verify_installed_runtime(expected)
+                    extra.unlink()
+                missing = root / "tag/perceptron.py"
+                original = missing.read_bytes()
+                missing.unlink()
+                with self.assertRaisesRegex(ValueError, "runtime source changed"):
+                    build.verify_installed_runtime(expected)
+                missing.write_bytes(original)
+                build.verify_installed_runtime(expected)
+                with self.assertRaisesRegex(ValueError, "Malformed NLTK runtime"):
+                    build.verify_installed_runtime("unreviewed")
+                with patch.object(build, "MAX_SOURCE_BYTES", 1), self.assertRaisesRegex(ValueError, "byte budget"):
+                    build.verify_installed_runtime(expected)
+
+    def test_source_metadata_rejects_case_alias_and_normalized_names_before_writes(self):
+        """Purpose: Preserve source identity. Inputs: Ambiguous ZIPs. Outputs: Refusal before extraction."""
+        commit = build.recipe()["commit"]
+        prefix = f"nltk-{commit}/"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for index, names in enumerate((("a.py", "A.py"), ("first.py", "folder//second.py"))):
+                archive = root / f"alias-{index}.zip"
+                with zipfile.ZipFile(archive, "w") as source:
+                    for name in names:
+                        source.writestr(prefix + name, b"# owned source\n")
+                target = root / f"target-{index}"
+                with self.assertRaisesRegex(ValueError, "Unsafe or duplicate"):
+                    build.extract_source(archive, target, commit)
+                self.assertFalse(target.exists())
+            for kind in (0o010000, 0o020000, 0o060000, 0o040000):
+                archive = root / f"special-{kind}.zip"
+                with zipfile.ZipFile(archive, "w") as source:
+                    member = zipfile.ZipInfo(prefix + "model.py")
+                    member.external_attr = kind << 16
+                    source.writestr(member, b"# inadmissible source type\n")
+                target = root / f"target-special-{kind}"
+                with self.assertRaisesRegex(ValueError, "Unsafe or duplicate"):
+                    build.extract_source(archive, target, commit)
+                self.assertFalse(target.exists())
 
     def test_canonical_wheel_is_host_independent_and_record_valid(self):
         """Purpose: Preserve standard wheel integrity. Inputs: Equivalent platform ZIPs. Outputs: Equal valid wheels."""

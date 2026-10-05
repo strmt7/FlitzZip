@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "format_size_matrix",
+  "corpus": "Canterbury",
+  "memory_only": true,
+  "disk_write_bytes": 0,
+  "size_qualified": true,
+  "timing_qualified": false,
+  "producer": {
+    "implementation": "cpython",
+    "python": "3.13.16",
+    "zlib": "1.3.1"
+  },
+  "entry_name": "memory-benchmark.bin",
+  "provenance": {
+    "archive_sha256": "f140e8a5b73d3f53198555a63bfb827889394a42f20825df33c810c3d5e3f8fb",
+    "published_file_count": 11,
+    "admitted_file_count": 11,
+    "input_bytes": 2810784,
+    "excluded": [],
+    "ordering": "original publisher TAR order; independent unmodified files"
+  },
+  "native_inputs_sha256": "e7c048469aa87bed41ac903defd08a3e73e78a3c7f19ada2871c85c244bf7fac",
+  "native_receipt_sha256": "11c1e62f753331033a3f57ffe4eef341fbfdf7b7d45e2857f7e64dc62e38dd7b",
+  "method": "Independent single-file containers; stdlib codecs; every complete decode compared bytewise.",
+  "limits": "Size-only reference, no timing result, no whole-corpus solid archive or application-speed claim.",
+  "totals": {
+    "Neutron": 741174,
+    "ZIP/DEFLATE-9": 729272,
+    "TAR": 2887680,
+    "TAR/gzip-9": 729330,
+    "TAR/bzip2-9": 543236,
+    "TAR/XZ-9-extreme": 494376
+  },
+  "cases": [
+    {
+      "file": "alice29.txt",
+      "input_bytes": 152089,
+      "sha256": "7467306ee0feed4971260f3c87421154a05be571d944e9cb021a5713700c38f0",
+      "sizes": {
+        "Neutron": 68405,
+        "ZIP/DEFLATE-9": 54302,
+        "TAR": 163840,
+        "TAR/gzip-9": 54373,
+        "TAR/bzip2-9": 43280,
+        "TAR/XZ-9-extreme": 48624
+      }
+    },
+    {
+      "file": "asyoulik.txt",
+      "input_bytes": 125179,
+      "sha256": "eaa3526fe53859f34ecdf255712f9ecf0b2c903451d4755b2edaa2e2599cb0fc",
+      "sizes": {
+        "Neutron": 60721,
+        "ZIP/DEFLATE-9": 48910,
+        "TAR": 133120,
+        "TAR/gzip-9": 48953,
+        "TAR/bzip2-9": 39717,
+        "TAR/XZ-9-extreme": 44672
+      }
+    },
+    {
+      "file": "cp.html",
+      "input_bytes": 24603,
+      "sha256": "e0cd21cef5b6c4069461e949be100080c3ce887de6f1dd8626c480528efaaf61",
+      "sizes": {
+        "Neutron": 10089,
+        "ZIP/DEFLATE-9": 8072,
+        "TAR": 30720,
+        "TAR/gzip-9": 8067,
+        "TAR/bzip2-9": 7732,
+        "TAR/XZ-9-extreme": 7736
+      }
+    },
+    {
+      "file": "fields.c",
+      "input_bytes": 11150,
+      "sha256": "85d73e354cc50cec76cb5a50537cf8dc035f8cbb8480f9e1cbe2f7d6c23393c7",
+      "sizes": {
+        "Neutron": 4029,
+        "ZIP/DEFLATE-9": 3247,
+        "TAR": 20480,
+        "TAR/gzip-9": 3246,
+        "TAR/bzip2-9": 3132,
+        "TAR/XZ-9-extreme": 3128
+      }
+    },
+    {
+      "file": "grammar.lsp",
+      "input_bytes": 3721,
+      "sha256": "1b0805dfc0ae706b35aac2bb4e15f02485efd24dda5dbd29de7b2f84d1a88c15",
+      "sizes": {
+        "Neutron": 1835,
+        "ZIP/DEFLATE-9": 1354,
+        "TAR": 10240,
+        "TAR/gzip-9": 1330,
+        "TAR/bzip2-9": 1366,
+        "TAR/XZ-9-extreme": 1376
+      }
+    },
+    {
+      "file": "kennedy.xls",
+      "input_bytes": 1029744,
+      "sha256": "9af47239ca29dfe20e633f80bbbb9a4cc9783d0803d7b2b5626f42e4c3790420",
+      "sizes": {
+        "Neutron": 91087,
+        "ZIP/DEFLATE-9": 207161,
+        "TAR": 1034240,
+        "TAR/gzip-9": 207156,
+        "TAR/bzip2-9": 129885,
+        "TAR/XZ-9-extreme": 52332
+      }
+    },
+    {
+      "file": "lcet10.txt",
+      "input_bytes": 426754,
+      "sha256": "5314ba1dbb03f471df88bec6cd120a938ef60d0fd3511c5c1dce61bf7463245f",
+      "sizes": {
+        "Neutron": 182019,
+        "ZIP/DEFLATE-9": 144571,
+        "TAR": 430080,
+        "TAR/gzip-9": 144558,
+        "TAR/bzip2-9": 107734,
+        "TAR/XZ-9-extreme": 119560
+      }
+    },
+    {
+      "file": "plrabn12.txt",
+      "input_bytes": 481861,
+      "sha256": "07e2e0b461af78c7c647cb53dab39de560198e16f799b4516eccf0fbd69f764c",
+      "sizes": {
+        "Neutron": 243935,
+        "ZIP/DEFLATE-9": 194464,
+        "TAR": 491520,
+        "TAR/gzip-9": 194505,
+        "TAR/bzip2-9": 145655,
+        "TAR/XZ-9-extreme": 165604
+      }
+    },
+    {
+      "file": "ptt5",
+      "input_bytes": 513216,
+      "sha256": "0ec3a75089bb52342813496b17e51377bc9eba3cb519a444d67025354841d650",
+      "sizes": {
+        "Neutron": 61239,
+        "ZIP/DEFLATE-9": 52353,
+        "TAR": 522240,
+        "TAR/gzip-9": 52365,
+        "TAR/bzip2-9": 49881,
+        "TAR/XZ-9-extreme": 39896
+      }
+    },
+    {
+      "file": "sum",
+      "input_bytes": 38240,
+      "sha256": "ee5733cd76ecc2f9d8ff156adc3c02a7a851051dcf43a2d56ff4ee4ff606bdb3",
+      "sizes": {
+        "Neutron": 15297,
+        "ZIP/DEFLATE-9": 12970,
+        "TAR": 40960,
+        "TAR/gzip-9": 12927,
+        "TAR/bzip2-9": 13016,
+        "TAR/XZ-9-extreme": 9552
+      }
+    },
+    {
+      "file": "xargs.1",
+      "input_bytes": 4227,
+      "sha256": "c58aeb5d2d1e12751d47e7412b45784405fc30a5671b03d480fa05776e183619",
+      "sizes": {
+        "Neutron": 2518,
+        "ZIP/DEFLATE-9": 1868,
+        "TAR": 10240,
+        "TAR/gzip-9": 1850,
+        "TAR/bzip2-9": 1838,
+        "TAR/XZ-9-extreme": 1896
+      }
+    }
+  ],
+  "source_commit": "047629267cbf8dd866976ed6f4ddcf9b876b8389",
+  "recorded_utc": "2026-10-05T22:39:52.570268+00:00",
+  "source_generator": "CPython standard codecs; canonical corpus controller acquisition and original-member inventory",
+  "memory_admission_bytes": 1073741824
+}
