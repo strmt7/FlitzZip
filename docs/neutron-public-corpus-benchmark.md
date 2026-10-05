@@ -117,10 +117,44 @@ and [abandoned-mutex semantics](https://learn.microsoft.com/en-us/windows/win32/
 The exchange is local process coordination, not a boundary against another
 process already authorized by the same account's object policy.
 
-Offline fixture checks exercise actual shared-memory and process ownership.
-They do not measure compression or establish GPU stability. The complete native
-HIP build and canonical corpus measurements remain pending during the freeze
-investigation.
+The subsequent complete Govdocs run admitted and bytewise-validated all **991**
+original files: **593,182,383 input bytes** produced **339,637,257 modeled complete
+single-file archive bytes**, or **57.2568%** of the input total. The original
+175,101,388-byte file completed under the explicit 3,600-second per-file budget;
+the 7,200-second suite ceiling and all GPU launch/workspace limits were retained.
+The complete compact [per-file size record](benchmarks/data/neutron-govdocs1-thread0-baseline-2026-10-05.json)
+preserves every natural file, the exact native build identities and the digest
+of the original observation stream. The source ZIP is the same measured archive
+as the earlier failed prefix. No corpus payload is redistributed.
+
+The protocol reports `memory_only=true`, `disk_write_bytes=0`, 593,182,383 validated
+bytes and 5,613,659 actual GPU kernel launches. Native compression totaled
+2,104.565 seconds; Hyperfine's full worker run was 2,563.039 seconds. This single
+shared-host pass qualifies workload coverage, deterministic sizes and readback,
+with `timing_qualified=false`; it establishes neither GPU superiority nor a
+controlled throughput comparison. Corpus, archive and restored payloads remained
+in RAM. This is not a claim of zero operating-system or reporting I/O.
+
+Offline fixtures and the completed corpus do not establish universal GPU
+stability or explain the earlier system freeze. Its cause remains unconfirmed.
+
+The retained natural-file results also identify where this workload's bytes
+remain. These groups use published filename extensions; they do not establish
+payload types or substitute a smaller subset for the complete corpus.
+
+| Extension | Files | Original bytes | Complete archive bytes | Archive/input |
+| --- | ---: | ---: | ---: | ---: |
+| txt | 84 | 184,623,823 | 24,110,688 | 13.06% |
+| pdf | 257 | 152,833,695 | 125,940,522 | 82.40% |
+| ppt | 54 | 118,157,466 | 104,955,562 | 88.83% |
+| jpg | 104 | 40,228,145 | 39,532,198 | 98.27% |
+| xls | 60 | 28,383,868 | 12,245,671 | 43.14% |
+| doc | 67 | 27,133,440 | 15,729,225 | 57.97% |
+
+Subsequent Neutron candidates must compare complete encoded sizes on every
+original file and retain the prior winner. Favoring one group or changing a
+representation is not an improvement until byte-exact readback, total metadata
+cost and the complete corpus comparison have passed.
 
 The [transport review](neutron-corpus-transport-review-2026-10-05.md) records its
 ownership boundaries, real Hyperfine integration and explicitly offline evidence.
