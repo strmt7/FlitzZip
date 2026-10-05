@@ -1,5 +1,6 @@
 #include "core/archive_blocks.hpp"
 #include "core/compound_block.hpp"
+#include "core/byte_plane_block.hpp"
 #include "core/dictionary_block.hpp"
 #include "core/huffman_lookup.hpp"
 #include "core/parallel_ranges.hpp"
@@ -471,6 +472,9 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
             if (block.kind == BlockKind::GpuCompound) {
                 (void)parse_gpu_compound_block(payload.subspan(offset, encoded_len), block);
             }
+            if (block.kind == BlockKind::GpuBytePlane) {
+                (void)parse_gpu_byte_plane_block(payload.subspan(offset, encoded_len), block);
+            }
             if (is_gpu_sparse_pattern_kind(block.kind)) {
                 (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                  static_cast<std::size_t>(block.encoded_len)),
@@ -492,6 +496,26 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
         throw ArchiveError("decoded size does not match expected output size");
     }
     return offsets;
+}
+
+// Purpose: Independently restore a byte-plane frame through the portable reader.
+// Inputs: Exact bounded frame/output spans with a closed nonrecursive GPU inner kind.
+// Outputs: Decodes the transformed stream and reconstructs full records plus the unchanged partial tail.
+static void materialize_byte_plane_cpu(std::span<const std::byte> encoded, const BlockDescriptor& block,
+                                       std::span<std::byte> output) {
+    const auto stage = parse_gpu_byte_plane_block(encoded, block);
+    (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), output.size());
+    std::vector<std::byte> transformed(output.size());
+    const ArchiveCodecOptions stage_options{.worker_count = 1};
+    decode_chunk_cpu(stage.payload, std::span(&stage.inner, 1U), transformed, stage_options);
+    const auto records = output.size() / stage.width;
+    for (std::size_t plane = 0U; plane < stage.width; ++plane) {
+        for (std::size_t record = 0U; record < records; ++record) {
+            output[record * stage.width + plane] = transformed[plane * records + record];
+        }
+    }
+    const auto tail_offset = records * stage.width;
+    std::ranges::copy(std::span(transformed).subspan(tail_offset), output.subspan(tail_offset).begin());
 }
 
 // Purpose: Copy, fill, inflate, or expand decoded blocks over a validated block table.
@@ -536,6 +560,10 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_dictionary_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                            static_cast<std::size_t>(block.encoded_len)),
                                            output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::GpuBytePlane) {
+                materialize_byte_plane_cpu(
+                    payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block,
+                    output.subspan(out_pos, len));
             } else if (block.kind == BlockKind::GpuCompound) {
                 const auto stages = parse_gpu_compound_block(
                     payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block);
@@ -641,8 +669,8 @@ std::uint64_t count_decode_block_windows(std::span<const BlockDescriptor> blocks
 bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuCompound || kind == BlockKind::GpuDictionary ||
-           is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuCompound || kind == BlockKind::GpuBytePlane ||
+           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Encode a contiguous native CPU block range with one bounded worker-owned Zstandard context.

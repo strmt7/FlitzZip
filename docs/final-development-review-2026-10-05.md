@@ -165,3 +165,73 @@ before execution with GitHub's annotation, "The job was not acquired by Runner
 of type hosted even after multiple attempts". Those jobs remain unvalidated;
 their cancellation is not treated as a passing check or a demonstrated code
 failure. Final exact-revision hosted acceptance remains required.
+
+The subsequent byte-plane implementation passed all twenty selected local
+commands, all seven native suites, the independent version-ten reader and
+downgrade controls, malformed-frame rejection before kernel dispatch, raw/tiny
+owned and batch consumers, cancellation and unchanged numeric-mode oracles.
+Both forward and inverse permutations execute through HIP. The portable reader
+uses independent plane/record reconstruction. The valid version-ten fuzz seed
+and existing version-nine seeds passed the instrumented smoke. Interoperability,
+the 36-format matrix, Windows ASan, package and tool contracts also passed.
+The GUI created a real Neutron archive, independently verified it on CPU and
+restored all 65,536 source bytes through required HIP. All seventeen regular,
+compact and Neutron-selector screenshots were reviewed without a new layout
+regression. This establishes bounded correctness on the exercised host, not
+universal compatibility or resolution of the earlier freeze.
+
+Two initial test-contract failures are retained locally. A portable-reader call
+incorrectly inherited the required-GPU default while forcing CPU. An older
+portfolio oracle did not understand a smaller byte-plane winner. The corrected
+reader selects CPU explicitly. The extended oracle independently inverts the
+new frame and recreates the ordinary GPU payload before retaining every exact
+baseline-byte and descriptor comparison. It preserves the existing compound
+branch and cancellation controls instead of removing them.
+
+The qualified native input identity is
+`e7c048469aa87bed41ac903defd08a3e73e78a3c7f19ada2871c85c244bf7fac`;
+the canonical build receipt identity is
+`11c1e62f753331033a3f57ffe4eef341fbfdf7b7d45e2857f7e64dc62e38dd7b`.
+The [33-observation Canterbury record](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
+qualifies size for these exact native identities. All eleven file sizes and
+the 741,174-byte repetition totals matched the preceding round. No incremental
+size improvement is demonstrated. Native compression increased to 58.89–59.30
+seconds per pass, with 412,062 kernel launches across the study. The new trials
+remain specific to Neutron; trained-model and broader workload benefits are
+still unqualified. The current full Govdocs1 study is in progress.
+
+The initial Canterbury run completed all 33 observations but failed its
+controller: Hyperfine exited zero while printing an outlier warning to stderr.
+That failed study remains unqualified. The repaired owned-process contract
+permits successful diagnostics only with explicit byte retention; strict
+native telemetry, nonzero failures, memory/output bounds and owned-child
+cleanup remain intact. All 22 corpus-controller regressions and four selected
+tooling commands passed without rebuilding native targets. The subsequent
+complete study retained exact diagnostics and kept timing unqualified.
+
+The subsequent hosted snapshot passed Windows CI, ROCm qualification, lint,
+component contracts, benchmark graphs and CodeQL C++. Secret history failed:
+seven retained results included five approved fixtures and two unresolved
+reports at archive locations 165 and 176. Several other hosted jobs were
+cancelled before execution with the runner-acquisition annotation quoted above.
+Those jobs need a successful current-revision run; no source defect or clean
+scan is inferred from their cancellation.
+
+Twelve hosted DS173237 ledger alerts were individually verified against the
+analyzed Git blob, current complete cohort hash, exact highlighted locations
+and the six previously authorized public digest values. Their existing
+false-positive dispositions were applied in GitHub with per-alert provenance;
+the raw SARIF and local audit remain retained. This does not repair source
+code or authorize additional immutable upstream test reports.
+
+On 6 October the maintainer separately authorized the four exact Crawl4AI
+public parser/filter fixture reports at archive attributions 165, 176, 232 and
+292, with their five public integrity values. The [individual review](security-crawl4ai-public-test-review-2026-10-06.md)
+records complete source/member/match/scanner binding. A third independent
+cohort preserves both earlier ledgers and is now loaded by the scanner
+consumer. Eighteen secret-report, fourteen metadata and seven hosted-review
+contracts passed, including original-archive matches and negative mutations;
+the affected verification and CI projection contracts also passed. Sanitized
+raw findings remain retained and every unmatched report remains blocking.
+This approval batch does not rebuild native targets or establish fresh hosted
+all-detector acceptance.

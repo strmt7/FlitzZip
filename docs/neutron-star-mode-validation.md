@@ -8,10 +8,33 @@ build, with staged oracle, cancellation and workspace validation. The
 [public-corpus study](neutron-public-corpus-benchmark.md) subsequently completed
 all 991 Govdocs1 files and all eleven Canterbury files at seven block settings.
 Those source-bound records establish complete workload coverage and exact
-sizes. Paired repeated timing qualification and comparisons with established
+sizes for their recorded earlier revisions. They do not qualify the subsequent
+composition, stronger secondary search or byte-plane implementation. Paired
+repeated timing qualification and comparisons with established
 formats remain pending; earlier research fixtures do not substitute for them.
 
 ## Measured Improvement Rounds
+
+The version-ten byte-plane round passed all twenty selected local commands,
+including all seven native suites, actual HIP forward/inverse transforms,
+independent CPU decoding, malformed-frame rejection before GPU dispatch,
+owned/batch inputs, cancellation, unchanged ordinary-effort oracles, fuzzing,
+Windows ASan, interoperability, the format matrix, GUI and package consumers.
+The native input identity is
+`e7c048469aa87bed41ac903defd08a3e73e78a3c7f19ada2871c85c244bf7fac`,
+with canonical receipt
+`11c1e62f753331033a3f57ffe4eef341fbfdf7b7d45e2857f7e64dc62e38dd7b`.
+The numeric fixture proves a smaller byte-plane winner and byte-exact readback;
+it does not establish a trained-model compression benefit.
+
+The [33-observation Canterbury byte-plane record](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
+retains all eleven original files and three complete repetitions. Every file
+size and the 741,174-byte repetition total matched the stronger secondary
+round. This round demonstrates no further size reduction on Canterbury.
+Native compression took 58.89–59.30 seconds per pass and the study recorded
+412,062 kernel launches. Timing remains unqualified. The current 991-file
+Govdocs1 study is still in progress; its earlier source-bound results cannot
+substitute for this implementation's evidence.
 
 The version-nine composition round passed all twenty selected verification
 commands, including all seven native suites (612 main test cases), independent

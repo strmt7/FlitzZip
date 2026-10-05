@@ -92,8 +92,12 @@ class PublicFixtureReview:
         self.scanner_image = scanner_image
         self.reviews = []
         self.ledger_hashes = {}
-        for name in (".github/scanner-secret-reviews.json", ".github/scanner-secret-reviews-crawl4ai.json"):
-            if name.endswith("-crawl4ai.json") and not (self.root / name).exists():
+        for name in (
+            ".github/scanner-secret-reviews.json",
+            ".github/scanner-secret-reviews-crawl4ai.json",
+            ".github/scanner-secret-reviews-crawl4ai-tests.json",
+        ):
+            if name != ".github/scanner-secret-reviews.json" and not (self.root / name).exists():
                 continue
             raw = review_bytes(self.root, name, 65536)
             self.load_ledger(json.loads(raw))

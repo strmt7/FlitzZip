@@ -6,6 +6,7 @@
 #include "core/progress.hpp"
 #include "core/archive.hpp"
 #include "core/compound_block.hpp"
+#include "core/byte_plane_block.hpp"
 #include "test_util.hpp"
 #include "lz4.h"
 
@@ -678,7 +679,8 @@ TEST_CASE(neutron_dictionary_batched_parse_equals_isolated_blocks) {
 
 // Purpose: Preserve the exact ordinary first-stage winner when grouped dictionary trials lose but composition wins.
 // Inputs: One MiB of authenticated unique-window segments and four independently framed native archive blocks.
-// Outputs: Reconstructs every original payload byte and descriptor, requires smaller composition and dual readback.
+// Outputs: Reconstructs every baseline byte/descriptor through the selected stage, with strict savings and dual
+// readback.
 TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
     if (!superzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron grouped portfolio requires HIP\n";
@@ -707,7 +709,24 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
         const auto payload =
             std::span(encoded.payload).subspan(static_cast<std::size_t>(original.encoded_offset), original.encoded_len);
         original.encoded_offset = restored_payload.size();
-        if (original.kind == superzip::BlockKind::GpuCompound) {
+        if (original.kind == superzip::BlockKind::GpuBytePlane) {
+            // A different permutation may now beat composition. Independently invert it before recreating the
+            // unchanged ordinary GPU payload; retain the exact baseline byte and descriptor oracle below.
+            std::vector<std::byte> restored_source(original.uncompressed_len);
+            auto local = original;
+            local.encoded_offset = 0U;
+            superzip::decode_chunk_cpu(payload, std::span(&local, 1U), restored_source, {});
+            REQUIRE_TRUE(
+                std::ranges::equal(restored_source, std::span(input).subspan(index * block_bytes, block_bytes)));
+            const auto restored = superzip::encode_chunk(
+                restored_source, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9});
+            REQUIRE_EQ(restored.blocks.size(), 1U);
+            REQUIRE_TRUE(payload.size() < restored.payload.size());
+            original = restored.blocks.front();
+            original.encoded_offset = restored_payload.size();
+            restored_payload.insert(restored_payload.end(), restored.payload.begin(), restored.payload.end());
+            ++composed;
+        } else if (original.kind == superzip::BlockKind::GpuCompound) {
             const auto stages = superzip::parse_gpu_compound_block(payload, original);
             std::vector<std::byte> intermediate(stages.inner.uncompressed_len);
             superzip::decode_chunk_cpu(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, {});

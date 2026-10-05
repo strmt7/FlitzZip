@@ -136,7 +136,7 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
 std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const MemoryBenchmarkOptions& options) {
     superzip::HostPipelineWorkspace workspace;
     if (options.compression_mode == NativeCompressionMode::NeutronStar) {
-        workspace.per_window_bytes = superzip::kMaxArchiveChunkBytes * 3U;
+        workspace.per_window_bytes = superzip::kMaxArchiveChunkBytes * 5U;
     }
     if (!options.require_gpu) {
         workspace = superzip::cpu_encode_workspace_estimate(

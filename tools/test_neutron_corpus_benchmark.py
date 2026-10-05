@@ -1,5 +1,6 @@
 """Offline public-corpus admission, byte-preservation and native-protocol contracts."""
 
+import base64
 import ctypes
 import gzip
 import hashlib
@@ -216,6 +217,23 @@ class CorpusContracts(unittest.TestCase):
         self.assertIn("stdout=worker-root-cause", str(failure.exception))
         self.assertIn("stderr=orchestrator-failed", str(failure.exception))
 
+    # Purpose: Distinguish successful tool diagnostics from the strict native telemetry protocol.
+    # Inputs: Real owned children with arbitrary binary stderr, zero/nonzero exit and excessive diagnostics.
+    # Outputs: Explicit byte retention permits success; strict callers, failures and output overflow still reject.
+    def test_successful_diagnostics_require_explicit_retention(self) -> None:
+        code = "import sys; sys.stdout.buffer.write(b'result'); sys.stderr.buffer.write(bytes(range(256)))"
+        command = [sys.executable, "-B", "-c", code]
+        with self.assertRaisesRegex(ValueError, "benchmark child failed \\(0\\)"):
+            corpus.run_process(command, None, 10)
+        diagnostics: list[bytes] = []
+        self.assertEqual(corpus.run_process(command, None, 10, successful_stderr=diagnostics), b"result")
+        self.assertEqual(diagnostics, [bytes(range(256))])
+        for child in (code + "; sys.exit(7)", "import sys; sys.stderr.buffer.write(b'x'*65537)"):
+            diagnostics = []
+            with self.subTest(child=child), self.assertRaises(ValueError):
+                corpus.run_process([sys.executable, "-B", "-c", child], None, 10, successful_stderr=diagnostics)
+            self.assertEqual(diagnostics, [])
+
 
 def resident_fixture() -> list[dict]:
     """Purpose: Own tiny binary IPC inputs. Inputs: None. Outputs: Natural boundary-marker fixtures, never
@@ -421,6 +439,57 @@ class RamExchangeContracts(unittest.TestCase):
             self.assertEqual(row["protocol"], protocol.decode("ascii"))
             self.assertFalse(row["study_qualified"])
             self.assertEqual((count, totals[0]["input_bytes"], totals[0]["archive_bytes"]), (1, 256, 365))
+
+    # Purpose: Retain successful timing-tool diagnostics without converting them into a timing qualification.
+    # Inputs: A complete mocked study over tiny RAM fixtures and arbitrary diagnostic bytes; no GPU/network work.
+    # Outputs: All observations qualify for size, exact stderr survives, and timing remains explicitly unqualified.
+    def test_complete_study_retains_diagnostics(self) -> None:
+        files, diagnostic = resident_fixture(), bytes(range(256))
+        source_bytes = [member["data"] for member in files]
+        executable = mock.Mock()
+        executable.open.return_value = io.BytesIO(b"reviewed executable fixture")
+        identity = {"inputs_sha256": "a" * 64, "receipt_sha256": "b" * 64}
+        args = SimpleNamespace(
+            corpus="Canterbury",
+            configuration="Release",
+            runs=1,
+            block_size_kib=256,
+            file_timeout=10,
+            suite_timeout=10,
+        )
+
+        # Purpose: Fill the real RAM observation transport. Inputs: Controller launch role. Outputs: Fixture telemetry.
+        def launch(arguments, data, timeout, **kwargs):
+            if "--version" in arguments:
+                self.assertNotIn("successful_stderr", kwargs)
+                return b"hyperfine 1.20.0\n"
+            kwargs["successful_stderr"].append(diagnostic)
+            descriptor = json.loads(kwargs["env"][ipc.SESSION_ENV])
+            with ExitStack() as stack:
+                _, output, _ = ipc.open_session(stack, descriptor)
+                for index, data in enumerate(source_bytes):
+                    ipc.publish_observation(output, index, protocol_fixture(data))
+            return b"successful timing fixture"
+
+        printed = io.StringIO()
+        with (
+            mock.patch.object(corpus, "require_permission"),
+            mock.patch.object(corpus, "validate_current", return_value=identity),
+            mock.patch.object(corpus, "hold_build"),
+            mock.patch.object(corpus, "HYPERFINE", executable),
+            mock.patch.object(corpus, "admit_memory"),
+            mock.patch.object(corpus, "download", return_value=b"archive fixture"),
+            mock.patch.object(corpus, "decode_canterbury", return_value=(files, {})),
+            mock.patch.object(corpus, "run_process", side_effect=launch),
+            mock.patch.object(corpus.sys, "stdout", printed),
+        ):
+            corpus.study(args)
+        summary = json.loads(printed.getvalue().splitlines()[-1])
+        self.assertTrue(summary["study_qualified"])
+        self.assertFalse(summary["timing_qualified"])
+        self.assertEqual(summary["observation_count"], len(files))
+        self.assertEqual(base64.b64decode(summary["hyperfine_stderr_base64"]), diagnostic)
+        self.assertEqual(summary["hyperfine_stderr_sha256"], hashlib.sha256(diagnostic).hexdigest())
 
     def test_child_descendant_cannot_outlive_root(self) -> None:
         """Purpose: Guard cleanup after root exit. Inputs: A root spawning a sleeping child. Outputs: Terminated

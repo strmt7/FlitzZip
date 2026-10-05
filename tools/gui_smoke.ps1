@@ -582,8 +582,8 @@ function Assert-NeutronArchiveOperation {
         throw 'The GUI-created Neutron archive is missing or exceeds its smoke bound.'
     }
     $archiveBytes = [IO.File]::ReadAllBytes($archive)
-    if ($archiveBytes.Length -lt 24 -or [BitConverter]::ToUInt32($archiveBytes, $archiveBytes.Length - 20) -ne 9) {
-        throw 'The GUI correctness input must exercise actual version-nine Neutron composition.'
+    if ($archiveBytes.Length -lt 24 -or [BitConverter]::ToUInt32($archiveBytes, $archiveBytes.Length - 20) -notin @(9, 10)) {
+        throw 'The GUI correctness input must exercise actual Neutron compound or byte-plane framing.'
     }
     $restoredRoot = Join-Path $Destination ('neutron-readback-' + [guid]::NewGuid().ToString('N'))
     $cli = Join-Path $repo "build/$Configuration/superzip_cli.exe"

@@ -1,5 +1,6 @@
 #include "core/archive_index.hpp"
 #include "core/compound_block.hpp"
+#include "core/byte_plane_block.hpp"
 #include "core/result.hpp"
 
 #include <cstddef>
@@ -33,6 +34,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                                                      {.kind = superzip::BlockKind::GpuCompound,
                                                       .uncompressed_len = decoded_bytes,
                                                       .encoded_len = static_cast<std::uint32_t>(payload.size())});
+        } catch (const superzip::Error&) {
+        }
+        try {
+            (void)superzip::parse_gpu_byte_plane_block(payload,
+                                                       {.kind = superzip::BlockKind::GpuBytePlane,
+                                                        .uncompressed_len = decoded_bytes,
+                                                        .encoded_len = static_cast<std::uint32_t>(payload.size())});
         } catch (const superzip::Error&) {
         }
     }

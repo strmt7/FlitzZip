@@ -6,6 +6,7 @@
 
 #include "core/result.hpp"
 #include "core/compound_block.hpp"
+#include "core/byte_plane_block.hpp"
 #include "core/dictionary_block.hpp"
 #include "core/huffman_lookup.hpp"
 #include "core/sparse_pattern_block.hpp"
@@ -560,6 +561,24 @@ inline std::size_t checked_gpu_decoded_length(const BlockDescriptor& block, std:
     return len;
 }
 
+// Purpose: Declare the layout validator for bounded, closed staged-codec validation.
+// Inputs: Exact untrusted payload/table/output extents and the caller's block-size setting.
+// Outputs: Rejects malformed layouts before dispatch; stage validation never admits recursive frames.
+inline void validate_decode_layout(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                   std::size_t output_len, std::uint32_t block_size);
+
+// Purpose: Validate a byte-plane frame and its plain inner codec before any device work.
+// Inputs: Untrusted payload bytes and a byte-plane descriptor with a bounded decoded extent.
+// Outputs: Returns only for exact spans and valid closed-stage metadata; malformed frames throw.
+inline void validate_byte_plane_decode_layout(std::span<const std::byte> payload, const BlockDescriptor& block) {
+    if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
+        throw ArchiveError("GPU byte-plane block exceeds payload buffer");
+    }
+    const auto stage = parse_gpu_byte_plane_block(
+        payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block);
+    validate_decode_layout(stage.payload, std::span(&stage.inner, 1U), stage.inner.uncompressed_len, 0U);
+}
+
 // Purpose: Validate block layout before launching the HIP decode kernel.
 // Inputs: `payload`, `blocks`, `output`, and `block_size` are caller-provided decode spans.
 // Outputs: Validates supported GPU layouts and closed composition stages; throws before kernels can read out of
@@ -630,6 +649,8 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
             validate_gpu_huffman_payload_table(payload, block, len);
         } else if (block.kind == BlockKind::GpuDictionary) {
             validate_gpu_dictionary_payload(payload, block);
+        } else if (block.kind == BlockKind::GpuBytePlane) {
+            validate_byte_plane_decode_layout(payload, block);
         } else if (block.kind == BlockKind::GpuCompound) {
             if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
                 throw ArchiveError("GPU compound block exceeds payload buffer");

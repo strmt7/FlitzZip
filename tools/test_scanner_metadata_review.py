@@ -111,6 +111,8 @@ class ScannerMetadataReviewTests(unittest.TestCase):
             "tools/benchmark_permissions.json",
             "docs/licenses/development-notices.json",
             ".github/scanner-secret-reviews.json",
+            ".github/scanner-secret-reviews-crawl4ai.json",
+            ".github/scanner-secret-reviews-crawl4ai-tests.json",
         ):
             self.name = name
             self.path = self.root / name
@@ -125,7 +127,13 @@ class ScannerMetadataReviewTests(unittest.TestCase):
             changed = copy.deepcopy(self.finding)
             changed["locations"][0]["physicalLocation"]["region"]["charOffset"] += 1
             self.assertEqual(self.evaluate([changed])["unresolved_count"], 1)
-            for other in ("tools/other_permissions.json", "docs/licenses/other-notices.json", "src/manifest.json"):
+            for other in (
+                "tools/other_permissions.json",
+                "docs/licenses/other-notices.json",
+                "src/manifest.json",
+                ".github/scanner-secret-reviews-unapproved.json",
+                ".github/scanner-secret-reviews-crawl4ai-more.json",
+            ):
                 with self.assertRaises(ValueError):
                     review.read_reviews(self.policy.replace(name.encode(), other.encode()))
             original = name

@@ -179,6 +179,8 @@ bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
         return version >= 8;
     case BlockKind::GpuCompound:
         return version >= 9;
+    case BlockKind::GpuBytePlane:
+        return version >= 10;
     }
     return false;
 }

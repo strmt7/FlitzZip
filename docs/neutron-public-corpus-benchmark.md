@@ -1,5 +1,16 @@
 # Neutron star mode public-corpus benchmark
 
+The [byte-plane study](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
+completed three byte-exact Canterbury repetitions at 256 KiB. Every pass still
+produced 741,174 complete modeled independent-file archive bytes; all eleven
+file sizes matched the preceding round. Native compression totals increased
+to 58.89–59.30 seconds and the study recorded 412,062 actual kernel launches,
+against 148,350 previously. The additional trials have no measured size benefit
+on this corpus. They remain isolated to Neutron. Correctness on a controlled
+numeric fixture does not establish effectiveness on trained model checkpoints
+or arbitrary files. The current Govdocs1 study is separate; older Govdocs1
+results below qualify only their own source revisions.
+
 The [stronger secondary-stage study](benchmarks/data/neutron-canterbury-secondary-2026-10-05.json)
 completed three byte-exact Canterbury repetitions at 256 KiB, producing 741,174
 complete modeled independent-file archive bytes from 2,810,784 source bytes.
@@ -52,6 +63,11 @@ retain separately claimed constituent copyrights.
 Use the installed reviewed Hyperfine 1.20.0 for repetitions and overall command
 timing. Its command adapter feeds the existing production `memory-benchmark`
 engine; it does not invent another compressor or timing/statistics engine.
+Successful timing-tool diagnostics are retained as text, original Base64 bytes
+and SHA-256. Native telemetry still rejects stderr, and all nonzero exits and
+bounded-output violations fail. Size qualification requires every expected
+observation and unchanged native qualification. A successful tool exit or an
+outlier warning cannot establish host isolation; timing remains unqualified.
 
 ```powershell
 py -3 -B -m tools.neutron_corpus_benchmark --corpus Canterbury --runs 3

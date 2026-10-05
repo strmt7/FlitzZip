@@ -54,6 +54,24 @@ explicit:
   Version-nine decode and Neutron creation admission include an additional
   decoded-window allowance for retained intermediate/trial storage. No
   external dictionary, model or decoder installation is required.
+- Version 10 adds GPU byte-plane blocks as kind 12, created only by Neutron
+  star mode. A four-byte header contains a width (two, four or eight), the
+  plain inner GPU kind, its fill value and a zero reserved byte. Inner kinds
+  use the same closed plain set as compound stages, including fill; raw, CPU,
+  compound, byte-plane and unknown inner kinds are rejected. Unused fill
+  values must be zero. The inner decoder produces exactly the outer decoded
+  extent. For N bytes and width W, R = floor(N/W): transformed byte p*R+r
+  holds original byte r*W+p. Bytes from R*W through N retain their original
+  order. This is an integer permutation, without numeric interpretation or
+  quantization. The complete frame must be strictly smaller than the decoded
+  block. Creation selects it only when its complete payload also beats the
+  preceding Neutron winner. Both the transform and required-GPU inverse run
+  through HIP; the independent CPU reader preserves portability. Trials run
+  serially, count all framing bytes and retain losses/ties exactly. Neutron
+  creation admission includes five extra decoded-window extents for retained
+  source/winner/framing and bounded transform/trial storage. Decode retains
+  the existing one-window intermediate allowance. Versions one through nine
+  retain their original layouts; earlier readers reject version ten.
 - Entropy encoding compares a bounded nested portfolio of static, adaptive,
   and Huffman candidates by complete measured block payload. It packs only
   winning entropy tables and preserves baseline bytes on ties. Candidate

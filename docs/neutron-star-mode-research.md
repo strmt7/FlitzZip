@@ -11,6 +11,13 @@ numeric effort. Its minimum-byte dictionary primitive retains the independent
 LZ4 block representation. Neutron additionally evaluates a closed second GPU
 encoding stage over the selected payload; a strictly smaller complete result
 uses the [version-nine compound representation](native-suzip-format.md).
+Neutron also evaluates exact byte-plane permutations at widths two, four and
+eight against that winner, using the closed version-ten representation only
+for a smaller complete result. Transform and inverse execute through HIP.
+The [three-run Canterbury study](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
+retained identical complete archive sizes and increased computation. Numeric
+correctness fixtures exercise an actual byte-plane winner, but do not establish
+a real-model or general-workload size benefit. Broader qualification remains open.
 Both required-HIP decode stages execute on the GPU. The independent CPU
 decoder verifies portability without providing a Neutron creation fallback.
 It is not a claim of universal minimum size, best-in-class compression or an
@@ -58,7 +65,9 @@ not a guarantee of a particular runtime on every GPU.
 
 ## Resource And Correctness Contracts
 
-The input admission limit is 1 MiB. Tree, match, decision, writer, size and
+The minimum-byte primitive admits at most 1 MiB per batch; archive dispatch
+iterates admitted batches inside the existing native block and chunk limits.
+Tree, match, decision, writer, size and
 output buffers are counted before the shared index reserves GPU memory;
 source, radix-sort and packed-output allocations also count toward the
 existing 256 MiB per-batch limit and process-wide device admission. The CPU
@@ -115,6 +124,18 @@ graph, not a data-type heuristic or an omitted compression candidate. Active
 graphs retain the complete previous minimum-byte search.
 
 ## Further Ratio Work
+
+The byte-plane experiment follows established reversible preconditioning in
+[Blosc](https://www.blosc.org/c-blosc2/reference/blosc1.html) and
+[ZipNN](https://github.com/zipnn/zipnn), reviewed through Crawl4AI on 2026-10-05,
+with the [ZipNN paper](https://arxiv.org/html/2411.05239v2) providing numeric-field
+motivation. Model compression results do not predict arbitrary-file results.
+SuperZip imports neither their runtime nor their source code. It tests the
+three byte permutations on generic source bytes, including incomplete tails,
+and measures their complete GPU codec output. Input names, extensions and
+corpus identities never select a transform. Independent source-byte readback,
+malformed-frame controls and representative public measurements must qualify
+the experiment before claims or publication.
 
 The [2026-10-05 ratio review](neutron-ratio-research-2026-10-05.md) evaluates
 recent lossless AI-model coding, tile-addressable ANS, reversible field

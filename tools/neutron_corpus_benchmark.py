@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import gzip
 import hashlib
@@ -220,9 +221,16 @@ def write_input(stream, data: bytes) -> None:
 
 
 # Purpose: Run an existing executable with bounded binary I/O and an owned lifetime.
-# Inputs: Structured argument vector, optional RAM input/environment and finite timeout; no shell interprets arguments.
-# Outputs: Complete bounded stdout or explicit failure retaining both diagnostic streams; all owned children finish.
-def run_process(arguments: list[str], data: bytes | None, timeout: int, *, env: dict | None = None) -> bytes:
+# Inputs: Structured arguments, RAM input/environment, deadline and optional successful-diagnostic byte sink.
+# Outputs: Bounded stdout; stderr requires explicit retention, nonzero exits always fail, and owned children finish.
+def run_process(
+    arguments: list[str],
+    data: bytes | None,
+    timeout: int,
+    *,
+    env: dict | None = None,
+    successful_stderr: list[bytes] | None = None,
+) -> bytes:
     owner = process_owner()
     admitted_bytes = owner.admit_child_memory_bytes()
     with ExitStack() as stack:
@@ -259,12 +267,14 @@ def run_process(arguments: list[str], data: bytes | None, timeout: int, *, env: 
             output, errors = stdout.result(timeout=5), stderr.result(timeout=5)
             if writer:
                 writer.result(timeout=5)
-            if process.returncode or errors:
+            if process.returncode or (errors and successful_stderr is None):
                 raise ValueError(
                     f"benchmark child failed ({process.returncode}): "
                     f"stderr={errors.decode('utf-8', errors='replace')} "
                     f"stdout={output.decode('utf-8', errors='replace')}"
                 )
+            if successful_stderr is not None:
+                successful_stderr.append(errors)
             return output
         finally:
             try:
@@ -418,7 +428,7 @@ def hyperfine_command(arguments: list[str]) -> str:
 
 # Purpose: Run a complete public-corpus study with existing Hyperfine, fixed residency and exact native qualification.
 # Inputs: Reviewed preset, bounded repetitions/block size/deadlines and current successful HIP build.
-# Outputs: Progress plus complete raw observations and Hyperfine summary on stdout; no corpus/archive/report files.
+# Outputs: Raw observations, retained Hyperfine diagnostics and size qualification; timing stays unqualified.
 def study(args: argparse.Namespace) -> None:
     require_permission(args.corpus, "execute")
     require_permission("Hyperfine", "execute", version="1.20.0")
@@ -457,6 +467,7 @@ def study(args: argparse.Namespace) -> None:
                 str(args.file_timeout),
             ]
         )
+        diagnostics: list[bytes] = []
         try:
             summary = run_process(
                 [
@@ -478,6 +489,7 @@ def study(args: argparse.Namespace) -> None:
                 None,
                 args.suite_timeout,
                 env=environment,
+                successful_stderr=diagnostics,
             )
         finally:
             count, totals = emit_observations(output, descriptor, files)
@@ -489,6 +501,9 @@ def study(args: argparse.Namespace) -> None:
                     "native_inputs_sha256": before["inputs_sha256"],
                     "native_receipt_sha256": before["receipt_sha256"],
                     "hyperfine": summary.decode("utf-8"),
+                    "hyperfine_stderr": diagnostics[0].decode("utf-8", errors="replace"),
+                    "hyperfine_stderr_base64": base64.b64encode(diagnostics[0]).decode("ascii"),
+                    "hyperfine_stderr_sha256": hashlib.sha256(diagnostics[0]).hexdigest(),
                     "hyperfine_sha256": hyperfine_sha256,
                     "memory_only": True,
                     "disk_write_bytes": 0,

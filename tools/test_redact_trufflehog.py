@@ -236,8 +236,11 @@ class PublicFixtureReviewTests(unittest.TestCase):
     def setUpClass(cls):
         source_root = Path(__file__).resolve().parents[1]
         cls.ledger = json.loads((source_root / ".github/scanner-secret-reviews.json").read_text(encoding="utf-8"))
-        cohort = json.loads((source_root / ".github/scanner-secret-reviews-crawl4ai.json").read_text(encoding="utf-8"))
-        cls.ledger["reviews"].extend(cohort["reviews"])
+        cls.cohorts = {}
+        for name in ("scanner-secret-reviews-crawl4ai.json", "scanner-secret-reviews-crawl4ai-tests.json"):
+            cohort = json.loads((source_root / ".github" / name).read_text(encoding="utf-8"))
+            cls.cohorts[name] = cohort
+            cls.ledger["reviews"].extend(cohort["reviews"])
         cls.review = cls.ledger["reviews"][0]
         cls.directory = tempfile.TemporaryDirectory(prefix="superzip-public-fixture-")
         cls.root = Path(cls.directory.name)
@@ -430,10 +433,10 @@ class PublicFixtureReviewTests(unittest.TestCase):
 
     # Purpose: Reproduce every approved public example from its original complete member, including attribution shifts.
     # Inputs: Canonical TAR archive and exact reported/source/hash commitments; no values reach test output.
-    # Outputs: Only the four exact matches pass; adjacent locations, source lines and verified findings remain blocking.
+    # Outputs: Only approved exact matches pass; adjacent locations, source lines and verified findings remain blocking.
     def test_public_archive_examples_and_location_boundaries(self):
         reviews = [row for row in self.ledger["reviews"] if row.get("archive_format") == "tar.gz"]
-        self.assertEqual(len(reviews), 4)
+        self.assertEqual(len(reviews), 8)
         reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
         for review in reviews:
             with tarfile.open(self.root / review["archive_path"], "r:gz") as archive:
@@ -466,26 +469,35 @@ class PublicFixtureReviewTests(unittest.TestCase):
             self.write_ledger(self.ledger)
 
     # Purpose: Keep independent approval cohorts and their complete hashes visible without resealing earlier data.
-    # Inputs: Existing NLTK cohort, approved examples and a malformed second cohort in an owned fixture.
-    # Outputs: Both cohorts load and publish exact hashes; malformed additional policy fails closed.
+    # Inputs: Existing NLTK cohort and approved additional cohorts, including malformed mutations in an owned fixture.
+    # Outputs: Exact cohort hashes preserve earlier bytes; malformed additional policy fails closed.
     def test_independent_review_cohort_binding(self):
         self.write_ledger({"schema": 1, "reviews": self.ledger["reviews"][:1]})
-        path = self.root / ".github/scanner-secret-reviews-crawl4ai.json"
         primary = (self.root / ".github/scanner-secret-reviews.json").read_bytes()
+        paths = [self.root / ".github" / name for name in self.cohorts]
         try:
-            path.write_text(json.dumps({"schema": 1, "reviews": self.ledger["reviews"][1:]}), encoding="utf-8")
+            for path in paths:
+                path.write_text(json.dumps(self.cohorts[path.name]), encoding="utf-8")
             reviewer = PublicFixtureReview(self.root, self.review["scanner_image"])
             self.assertEqual(len(reviewer.reviews), len(self.ledger["reviews"]))
             self.assertEqual(reviewer.ledger_sha256, hashlib.sha256(primary).hexdigest())
             reviewer.publish(self.root / "cohort-report.json")
             report = json.loads((self.root / "cohort-report.json").read_text())
-            self.assertEqual(len(report["ledger_sha256_by_path"]), 2)
+            self.assertEqual(len(report["ledger_sha256_by_path"]), 3)
             self.assertEqual((self.root / ".github/scanner-secret-reviews.json").read_bytes(), primary)
-            path.write_text('{"schema": true, "reviews": []}', encoding="utf-8")
-            with self.assertRaises(ValueError):
-                PublicFixtureReview(self.root, self.review["scanner_image"])
+            for path in paths:
+                self.assertEqual(
+                    report["ledger_sha256_by_path"][path.relative_to(self.root).as_posix()],
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                )
+                original = path.read_bytes()
+                path.write_text('{"schema": true, "reviews": []}', encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    PublicFixtureReview(self.root, self.review["scanner_image"])
+                path.write_bytes(original)
         finally:
-            path.unlink()
+            for path in paths:
+                path.unlink(missing_ok=True)
 
 
 class ReviewedTarMemberTests(unittest.TestCase):
