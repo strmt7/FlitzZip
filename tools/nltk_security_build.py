@@ -134,7 +134,7 @@ def identify_build(source: Path, data: dict) -> None:
     )
 
 
-def canonical_wheel(built: Path, destination: Path, data: dict) -> None:
+def canonical_wheel(built: Path, destination: Path, data: dict, *, project: str = "nltk") -> None:
     """Purpose: Make pure wheels reproducible. Inputs: Standard wheel/recipe. Outputs: Canonical standard wheel."""
     with zipfile.ZipFile(built) as original:
         entries = original.infolist()
@@ -149,11 +149,11 @@ def canonical_wheel(built: Path, destination: Path, data: dict) -> None:
                 raise ValueError("Unsafe NLTK wheel member")
             if not name.endswith("/"):
                 files[name] = original.read(name)
-    info = f"nltk-{data['version']}.dist-info/"
+    info = f"{project}-{data['version']}.dist-info/"
     metadata_path = info + "METADATA"
     metadata = BytesParser().parsebytes(files[metadata_path])
-    if metadata["Name"] != "nltk" or metadata["Version"] != data["version"]:
-        raise ValueError("NLTK wheel identity mismatch")
+    if metadata["Name"].casefold() != project or metadata["Version"] != data["version"]:
+        raise ValueError(f"{project} wheel identity mismatch")
     # Setuptools writes platform line endings; normalize generated metadata only.
     files[metadata_path] = files[metadata_path].replace(b"\r\n", b"\n")
     record_path = info + "RECORD"

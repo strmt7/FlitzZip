@@ -6,6 +6,9 @@ archive application and requires no cloud account, API key, paid service or
 public server. The [latest stable release reviewed on 5 October 2026](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.4)
 is 0.9.4. Its base package and dependency wheels are pinned with upstream
 SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
+The installed crawler is the explicitly identified `0.9.4+superzip.portable1`
+source build. It repairs the upstream HTTP download opener on Windows while
+preserving POSIX no-follow behavior; see [the repair and qualification](crawl4ai-portable-download-repair-2026-10-05.md).
 NLTK uses an explicitly identified upstream-source security build because the
 latest published NLTK release remains affected by a model-artifact sandbox
 bypass. See [the source repair and evidence](nltk-model-artifact-source-repair.md).
@@ -13,7 +16,7 @@ bypass. See [the source repair and evidence](nltk-model-artifact-source-repair.m
 Normal research invokes Crawl4AI's own `crwl crawl` command, forwarding its
 documented options without an alternative URL parser or extraction pipeline.
 The qualification lane uses the public `AsyncWebCrawler` API and upstream
-browser defaults. The integration does not patch Crawl4AI or Playwright, replace their
+browser defaults. The integration does not patch browser internals or Playwright, replace their
 browser manager, change Chromium flags, or implement an alternative robots
 parser. Qualification uses `CacheMode.BYPASS` to fetch current content and the
 documented `check_robots_txt=True` option for Crawl4AI's own robots handling.
@@ -51,10 +54,15 @@ override is available through `SUPERZIP_CRAWL4AI_HOME` or `--home <absolute-path
 it must stay outside the source checkout. Browser downloads, package files and
 local Crawl4AI caches are installation data and are not committed or packaged.
 The environment identity includes Python's version, the complete lock hash and
-the pinned NLTK source/build identity. The repaired pure-Python wheel is built
+both pinned source/build identities. The repaired pure-Python wheels are built
 with pinned setuptools tooling in a separate external environment and admitted
-by its exact digest before normal dependency installation. A modified API
-regression contract rechecks the existing installed dependencies and updates
+by their exact digests before normal dependency installation. A modified API
+regression also covers the source-built crawler's real HTTP download consumer.
+Its original published source archive, complete license and attribution remain
+unchanged. Both repaired wheels use normal hash-locked dependency resolution;
+the installer verifies the installed crawler repair bytes even when reusing a
+qualified environment. No installed source is edited or monkey-patched.
+An updated regression contract rechecks the existing installed dependencies and updates
 its admission receipt only after success; it does not reinstall an unchanged
 dependency graph or browser.
 Text identities normalize CRLF to LF, matching Git's canonical text storage;
@@ -151,6 +159,12 @@ setup and the intended target page are the ordinary first-use validation; use
 `doctor` when diagnosing installation failures. Rerun broad website
 qualification when the crawler, lock or browser configuration changes. Normal
 research must not repeatedly crawl the entire manifest or rebuild the app.
+
+The final portable download source build passed five installed API/security
+regressions and another source-bound **30 of 32** upstream-default public-site
+run. GNU again timed out and W3C remained challenged. The exact raw JSON URL
+that failed in the HTTP strategy now returns HTTP 200 through that same API;
+the repair preserves its native no-follow destination checks.
 
 ## License And Attribution
 

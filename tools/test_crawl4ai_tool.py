@@ -81,9 +81,10 @@ class CrawlerContracts(unittest.TestCase):
         with patch.object(tool, "run") as child:
             tool.verify_versions(Path(sys.executable), dict(os.environ))
             argv = child.call_args.args[0]
-            pins = json.loads(argv[-1])
+            pins = json.loads(argv[3])
             self.assertEqual(pins["crawl4ai"], tool.VERSION)
             self.assertIn("importlib.metadata.version", argv[2])
+            self.assertIn("crawl4ai/superzip_download.py", json.loads(argv[4]))
 
     def test_script_entrypoint_imports_its_checkout_from_another_directory(self):
         """Purpose: Preserve direct script use. Inputs: External cwd/script path. Outputs: Local helper imports."""
@@ -110,7 +111,11 @@ class CrawlerContracts(unittest.TestCase):
             python = directory / "python"
             python.touch()
             wheel = directory / "reviewed/nltk-security.whl"
-            with patch("tools.nltk_security_build.ensure_wheel", return_value=wheel), patch.object(tool, "run") as run:
+            with (
+                patch("tools.nltk_security_build.ensure_wheel", return_value=wheel),
+                patch("tools.crawl4ai_source_build.ensure_wheel", return_value=wheel),
+                patch.object(tool, "run") as run,
+            ):
                 tool.provision(directory, directory, python, "fixture-identity")
             commands = [call.args[0] for call in run.call_args_list]
             install = next(command for command in commands if "install" in command and "pip" in command)
@@ -147,10 +152,11 @@ class CrawlerContracts(unittest.TestCase):
             builder.assert_not_called()
             with patch.object(tool, "verify_versions"), patch.object(tool, "run") as run:
                 tool.provision(directory, directory, python, "fixture")
-                self.assertEqual(run.call_count, 1)
-                self.assertEqual(run.call_args.args[0][-1], "tools.test_nltk_model_security")
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args_list[0].args[0][-1], "tools.test_nltk_model_security")
+                self.assertEqual(run.call_args_list[1].args[0][-1], "tools.test_crawl4ai_downloads")
                 tool.provision(directory, directory, python, "fixture")
-                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_count, 2)
 
     def test_lock_is_complete_hashed_and_latest_reviewed(self):
         """Purpose: Require immutable wheel selection. Inputs: Checked-in lock. Outputs: Every entry pinned/hashed."""
@@ -205,6 +211,7 @@ class CrawlerContracts(unittest.TestCase):
                         "lock_sha256": identity,
                         "platform": tool.platform.system(),
                         "model_contract_sha256": tool.text_identity(tool.ROOT / "tools/test_nltk_model_security.py"),
+                        "download_contract_sha256": tool.text_identity(tool.ROOT / "tools/test_crawl4ai_downloads.py"),
                     }
                 )
             )
@@ -216,6 +223,7 @@ class CrawlerContracts(unittest.TestCase):
             with (
                 patch.object(tool, "verify_versions"),
                 patch("tools.nltk_security_build.ensure_wheel", return_value=home / "fixture.whl"),
+                patch("tools.crawl4ai_source_build.ensure_wheel", return_value=home / "fixture.whl"),
                 patch.object(tool, "tool_environment", return_value={"PYTHONUTF8": "1"}),
                 patch.object(
                     tool, "run", side_effect=[None, None, None, subprocess.CalledProcessError(7, ["browser"])]

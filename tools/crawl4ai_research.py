@@ -23,7 +23,7 @@ SITES = ROOT / "tools/crawl4ai_sites.json"
 
 
 def crawler():
-    """Purpose: Construct the unmodified upstream crawler. Inputs: Installed package. Outputs: Crawler owner."""
+    """Purpose: Construct the source-admitted upstream crawler. Inputs: Installed package. Outputs: Crawler owner."""
     if importlib.metadata.version("crawl4ai") != VERSION:
         raise ValueError("Crawler version does not match the reviewed integration")
     from crawl4ai import AsyncWebCrawler
@@ -74,7 +74,7 @@ async def fetch(owner, url: str, marker: str = "") -> dict:
 
 def source_identity() -> dict[str, str]:
     """Purpose: Bind qualification to integration bytes. Inputs: Repository sources. Outputs: Exact source digests."""
-    from tools import nltk_security_build
+    from tools import crawl4ai_source_build, nltk_security_build
 
     paths = (
         "tools/crawl4ai_tool.py",
@@ -84,6 +84,9 @@ def source_identity() -> dict[str, str]:
         "tools/nltk_security_build.py",
         "tools/test_nltk_model_security.py",
         "tools/requirements/nltk-build.txt",
+        "tools/crawl4ai_source_build.py",
+        "tools/crawl4ai_download_opener.py",
+        "tools/test_crawl4ai_downloads.py",
     )
     identities = {path: text_identity(ROOT / path) for path in paths}
     for name in ("build.json", "nltk-source.zip.sha256", "nltk-wheel.sha256"):
@@ -92,6 +95,7 @@ def source_identity() -> dict[str, str]:
     identities["nltk_source_archive"] = nltk_security_build.digest(
         nltk_security_build.SOURCE_ROOT / nltk_security_build.recipe()["source"]
     )
+    identities["crawl4ai_source_build"] = crawl4ai_source_build.identity()
     return identities
 
 

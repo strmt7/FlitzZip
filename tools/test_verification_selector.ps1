@@ -483,6 +483,8 @@ foreach ($corpusPath in @('tools/neutron_corpus_benchmark.py', 'tools/neutron_co
     Assert-Selector (-not (Test-RequiredCommand -Plan $corpusPlan -Id 'release-build')) 'offline corpus contracts must not launch a native build'
 }
 foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
+        'tools/crawl4ai_source_build.py', 'tools/test_crawl4ai_source_build.py',
+        'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.4/build.json',
         'tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
         'third_party/upstream/nltk/README.md', 'tools/requirements/nltk-build.txt',
         'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
@@ -492,6 +494,13 @@ foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py
     foreach ($id in @('release-build', 'native-tests', 'gui-smoke', 'verification-selector-self-test')) {
         Assert-Selector (-not (Test-RequiredCommand -Plan $crawlerPlan -Id $id)) "crawler-only checks must not select $id"
     }
+}
+foreach ($crawlerSourcePath in @('tools/crawl4ai_source_build.py', 'tools/test_crawl4ai_source_build.py',
+        'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.4/build.json')) {
+    $sourcePlan = Get-SuperZipVerificationPlan -ChangedPath @($crawlerSourcePath)
+    Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id 'crawl4ai-source-contracts') 'crawler source changes require the actual source/platform contract'
+    Assert-Selector (Test-Workflow -Plan $sourcePlan -Name 'crawl4ai-security') 'crawler source changes require the hosted platform consumer'
+    Assert-Selector (-not (Test-RequiredCommand -Plan $sourcePlan -Id 'release-build')) 'crawler source changes do not build the archive application'
 }
 foreach ($nltkPath in @('tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
         'tools/requirements/nltk-build.txt', 'tools/requirements/crawl4ai.txt', 'third_party/upstream/nltk/README.md')) {

@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if not __package__:
     sys.path.insert(0, str(ROOT))
 LOCK = ROOT / "tools/requirements/crawl4ai.txt"
-VERSION = "0.9.4"
+VERSION = "0.9.4+superzip.portable1"
 ATTRIBUTION = (
     "This product includes software developed by UncleCode (https://x.com/unclecode) "
     "as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai)."
@@ -56,9 +56,11 @@ def cache_home(override: str | None = None) -> Path:
 
 def environment_paths(home: Path) -> tuple[Path, Path, str]:
     """Purpose: Isolate dependency revisions. Inputs: Cache root. Outputs: Environment, Python and lock identity."""
-    from tools import nltk_security_build
+    from tools import crawl4ai_source_build, nltk_security_build
 
-    identity = hashlib.sha256((text_identity(LOCK) + nltk_security_build.identity()).encode("ascii")).hexdigest()
+    identity = hashlib.sha256(
+        (text_identity(LOCK) + nltk_security_build.identity() + crawl4ai_source_build.identity()).encode("ascii")
+    ).hexdigest()
     name = f"{VERSION}-py{sys.version_info.major}{sys.version_info.minor}-{identity[:16]}"
     directory = home / name
     python = directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -176,14 +178,19 @@ def run(command: list[str], env: dict[str, str], timeout: int = 900) -> None:
 
 
 def verify_versions(python: Path, env: dict[str, str]) -> None:
-    """Purpose: Verify locked dependencies. Inputs: Isolated interpreter/environment. Outputs: Exact pins or error."""
+    """Purpose: Verify dependency/repair bytes. Inputs: Isolated runtime/environment. Outputs: Exact pins or error."""
+    from tools import crawl4ai_source_build
+
     pins = dict(re.findall(r"^([\w-]+)==([^\s]+)", LOCK.read_text(encoding="utf-8"), re.M))
     script = (
-        "import importlib.metadata,json,sys; pins=json.loads(sys.argv[1]); "
+        "import importlib.metadata,json,sys,hashlib; pins=json.loads(sys.argv[1]); "
         "bad=[n for n,v in pins.items() if importlib.metadata.version(n)!=v]; "
-        "sys.exit('Locked dependency versions changed: '+','.join(bad)) if bad else None"
+        "dist=importlib.metadata.distribution('crawl4ai'); expected=json.loads(sys.argv[2]); "
+        "bad.extend(n for n,h in expected.items() if "
+        "hashlib.sha256(dist.locate_file(n).read_bytes().replace(b'\\r\\n',b'\\n')).hexdigest()!=h); "
+        "sys.exit('Locked dependency or crawler repair bytes changed: '+','.join(bad)) if bad else None"
     )
-    run([str(python), "-c", script, json.dumps(pins)], env, 60)
+    run([str(python), "-c", script, json.dumps(pins), json.dumps(crawl4ai_source_build.runtime_hashes())], env, 60)
 
 
 @contextlib.contextmanager
@@ -236,6 +243,8 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
     receipt = directory / "superzip-install.json"
     model_contract = text_identity(ROOT / "tools/test_nltk_model_security.py")
     model_command = [str(python), "-B", "-m", "unittest", "tools.test_nltk_model_security"]
+    download_contract = text_identity(ROOT / "tools/test_crawl4ai_downloads.py")
+    download_command = [str(python), "-B", "-m", "unittest", "tools.test_crawl4ai_downloads"]
     if python.exists() and receipt.exists():
         recorded = json.loads(receipt.read_text(encoding="utf-8"))
         if recorded.get("lock_sha256") == identity and recorded.get("platform") == platform.system():
@@ -244,12 +253,17 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
                 run(model_command, env, 60)
                 recorded["model_contract_sha256"] = model_contract
                 write_install_receipt(receipt, recorded)
+            if recorded.get("download_contract_sha256") != download_contract:
+                run(download_command, env, 60)
+                recorded["download_contract_sha256"] = download_contract
+                write_install_receipt(receipt, recorded)
             return python
     if not python.exists():
         venv.EnvBuilder(with_pip=True).create(directory)
-    from tools import nltk_security_build
+    from tools import crawl4ai_source_build, nltk_security_build
 
     repaired_wheel = nltk_security_build.ensure_wheel(home)
+    crawler_wheel = crawl4ai_source_build.ensure_wheel(home)
     run(
         [
             str(python),
@@ -261,6 +275,8 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
             "--only-binary=:all:",
             "--find-links",
             str(repaired_wheel.parent),
+            "--find-links",
+            str(crawler_wheel.parent),
             "-r",
             str(LOCK),
         ],
@@ -269,6 +285,7 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
     run([str(python), "-m", "pip", "check"], env, 60)
     verify_versions(python, env)
     run(model_command, env, 60)
+    run(download_command, env, 60)
     run([str(python), "-m", "playwright", "install", "chromium"], env)
     write_install_receipt(
         receipt,
@@ -278,6 +295,7 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
             "lock_sha256": identity,
             "platform": platform.system(),
             "model_contract_sha256": model_contract,
+            "download_contract_sha256": download_contract,
         },
     )
     return python

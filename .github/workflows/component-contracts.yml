@@ -30,6 +30,7 @@ on:
       - .github/scanner-metadata-reviews.csv
       - .github/scanner-secret-reviews.json
       - third_party/upstream/nltk/**
+      - third_party/upstream/crawl4ai/**
       - .github/scanner-source-reviews.csv
       - .github/scanner-hosted-reviews.csv
       - .github/scanner-hosted-approval.csv

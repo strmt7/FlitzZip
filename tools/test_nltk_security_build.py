@@ -143,7 +143,10 @@ class SecurityBuildTests(unittest.TestCase):
         workflow = (build.ROOT / ".github/workflows/crawl4ai-security.yml").read_text(encoding="utf-8")
         for required in ("windows-2022", "ubuntu-24.04", "macos-15", "tools.test_nltk_model_security", "pip check"):
             self.assertIn(required, workflow)
-        self.assertIn("--require-hashes --only-binary=:all:", workflow)
+        self.assertIn("'--require-hashes'", workflow)
+        self.assertIn("'--only-binary=:all:'", workflow)
+        self.assertIn("& $runtimePython @installArguments", workflow)
+        self.assertNotIn("'--no-deps'", workflow)
         self.assertNotIn("--no-deps", workflow)
         dependabot = (build.ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
         self.assertIn("directory: /tools/requirements", dependabot)

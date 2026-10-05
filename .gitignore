@@ -19,6 +19,7 @@ __pycache__/
 *.tar
 *.gz
 !third_party/upstream/wimlib/1.14.5/wimlib-1.14.5.tar.gz
+!third_party/upstream/crawl4ai/0.9.4/crawl4ai-0.9.4.tar.gz
 *.log
 *.dmp
 *.tmp

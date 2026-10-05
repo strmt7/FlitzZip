@@ -858,3 +858,13 @@ production workflows. actionlint 1.7.12 and the current Semgrep action-pin rule
 do not recognize `$/`. The release pipeline now declares its stages directly
 in workflow source, preserving commands and pinned tools without a redundant
 local action or scanner exception.
+
+Treat platform-specific dependency failures at their production boundary.
+Preserve the upstream security property with the host's native equivalent;
+never replace an unavailable protection flag with zero. For an identified
+downstream source build, retain original provenance and notices, minimize and
+test the source delta, use normal dependency resolution, and verify the installed
+repair bytes on cache reuse. Exercise the actual affected API with its documented
+configuration type, plus refusal-before-write and ownership cleanup controls.
+The [portable crawler repair](crawl4ai-portable-download-repair-2026-10-05.md)
+records this incident; the reusable source and consumer gates select automatically.
