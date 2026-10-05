@@ -26,6 +26,15 @@ the Security tab, released artifacts, or the product UI again.
 
 ## Current Guardrails
 
+- Select C++ database reconstruction from its complete native input projection,
+  source suffixes and query/build policy, including removals and both sides of
+  renames. Keep each selected CodeQL database whole and its query suite intact.
+  Scheduled, manual and initial-push scans remain unconditional. Missing history
+  fails planning; failed planning or missing/malformed output requests full C++
+  analysis. Other security jobs continue on every push. The offline contracts
+  exercise the real Git ranges, receipt projection and workflow consumer, so
+  document or unrelated tool edits do not habitually retrace an unchanged build.
+
 - Binary benchmark transport must not inherit text encoding or treat compressed
   payload bytes as restored input coverage. The native protocol's
   `validated_bytes` proves complete readback; `output_bytes` counts compressed

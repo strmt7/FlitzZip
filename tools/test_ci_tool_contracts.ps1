@@ -39,6 +39,8 @@ Assert-CiContractPlan -Path '.github/scanner-source-reviews.csv' -Required @('sc
 Assert-CiContractPlan -Path '.github/scanner-secret-reviews.json' -Required @('secret-report-tests')
 Assert-CiContractPlan -Path 'third_party/upstream/nltk/source.zip' -Required @('secret-report-tests')
 Assert-CiContractPlan -Path 'tools/test_memory_benchmark_corpus.ps1' -Required @('binary-corpus-transport-tests')
+Assert-CiContractPlan -Path 'tools/cpp_security_plan.py' -Required @('cpp-security-plan-tests')
+Assert-CiContractPlan -Path '.github/workflows/security-code-scanning.yml' -Required @('cpp-security-plan-tests')
 
 # Load the actual production comparison helper without executing any selected command.
 . $runner -ChangedPath 'README.md' -PlanOnly | Out-Null

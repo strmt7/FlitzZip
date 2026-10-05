@@ -14,8 +14,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cpp-security-plan:
+    name: Select whole-database C++ analysis
+    runs-on: windows-2022
+    timeout-minutes: 5
+    outputs:
+      codeql_cpp: ${{ steps.cpp_plan.outputs.codeql_cpp }}
+    steps:
+      - name: Checkout complete change range
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Select from native and query inputs
+        id: cpp_plan
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: >-
+          python -B -m tools.cpp_security_plan --event $env:EVENT_NAME
+          --push-base "$env:PUSH_BASE" --github-output $env:GITHUB_OUTPUT
+
   codeql-cpp:
     name: CodeQL C++
+    needs: cpp-security-plan
+    if: >-
+      ${{ !cancelled() && (needs.cpp-security-plan.result != 'success' ||
+          needs.cpp-security-plan.outputs.codeql_cpp != 'false') }}
     runs-on: windows-2022
     timeout-minutes: 60
     # The build script derives compiler admission from RAM and logical CPUs,

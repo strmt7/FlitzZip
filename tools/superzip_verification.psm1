@@ -286,6 +286,7 @@ function Get-SuperZipVerificationScope {
         '^tools/test_refactor_audit\.ps1$',
         '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
         '^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$',
+        '^tools/(cpp_security_plan|test_cpp_security_plan)\.py$',
         '^\.clusterfuzzlite/(build\.sh|local_smoke\.sh|Dockerfile|project\.yaml)$',
         '^mcp/',
         '^\.agents/skills/'
@@ -379,6 +380,8 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'zstd-rewrite-policy-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_zstd_rewrite_policy.ps1') -Reason 'known extent, nullable-buffer, allocation and patch-dispatch defects require source recurrence mutation controls') }
         @{ Pattern = @('^tools/(release_workflow_policy|test_release_workflow_policy|security_scan|verify_change_hygiene)\.ps1$', '^\.github/workflows/release\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'release-workflow-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_release_workflow_policy.ps1') -Reason 'release action identity and replacement/title safeguards require their offline contracts without publishing artifacts') }
+        @{ Pattern = @('^tools/(cpp_security_plan|test_cpp_security_plan)\.py$', '^\.github/workflows/security-code-scanning\.yml$')
+           Command = (Get-SuperZipVerificationCommand -Id 'cpp-security-plan-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_cpp_security_plan') -Reason 'C++ analysis routing must retain the whole native/query closure, complete Git ranges and unconditional scheduled/manual scans without rebuilding unchanged inputs') }
         @{ Pattern = @('^tools/(native_ci|ci_native_plan|test_native_ci)\.ps1$', '^tools/superzip_verification\.psm1$', '^\.github/workflows/(windows-ci|rocm-qualification)\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id 'native-ci-contracts' -Stage 'local' -Executable 'powershell' -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tools/test_native_ci.ps1') -Reason 'hosted CPU/HIP routing, event ranges and conditional native/matrix work must match real workflow contracts') }
         @{ Pattern = @('^tests/cpp/test_main\.cpp$', '^tools/test_native_runner\.ps1$')
