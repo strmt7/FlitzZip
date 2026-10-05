@@ -248,28 +248,6 @@ std::vector<std::byte> encode_neutron_candidate(std::span<const std::byte> input
     return frame_dictionary_candidate(segment_sizes, packed, baseline_bytes);
 }
 
-// Purpose: Admit the complete Neutron layout before any device pointer, allocation or replacement mutation.
-// Inputs: Source extent, descriptors and equally sized existing winner slots.
-// Outputs: Rejects zero, overflowing, incomplete or unrepresentable geometry before GPU work.
-void validate_neutron_layout(std::size_t input_bytes, std::span<const BlockDescriptor> blocks,
-                             std::span<const std::vector<std::byte>> replacements) {
-    std::size_t covered = 0U;
-    for (std::size_t index = 0U; index < blocks.size(); ++index) {
-        const auto bytes = static_cast<std::size_t>(blocks[index].uncompressed_len);
-        if (bytes == 0U || covered > input_bytes || bytes > input_bytes - covered) {
-            throw GpuError("Neutron replacement block exceeds its source chunk");
-        }
-        const auto baseline = replacements[index].empty() ? blocks[index].encoded_len : replacements[index].size();
-        if (baseline > std::numeric_limits<std::uint32_t>::max()) {
-            throw GpuError("Neutron replacement baseline exceeds native block limits");
-        }
-        covered += bytes;
-    }
-    if (covered != input_bytes) {
-        throw GpuError("Neutron replacement blocks do not cover their source chunk");
-    }
-}
-
 // Purpose: Group only complete segment-aligned blocks whose framing can still beat their existing winner.
 // Inputs: Validated descriptor and winner bytes; the caller also bounds the total batch to one MiB.
 // Outputs: Returns true for a competitive aligned block without changing any payload or GPU limit.

@@ -30,8 +30,8 @@ namespace {
 using namespace superzip::dictionary;
 
 // Purpose: Reject the complete malformed layout before entering a GPU boundary or changing prior winners.
-// Inputs: Live host storage, inconsistent descriptors and a checkpoint that aborts before any device access.
-// Outputs: Requires the precise layout error, no checkpoint calls and no GPU allocation or launches on any host.
+// Inputs: Live host storage and inconsistent descriptors; HIP builds also exercise the device dispatcher checkpoint.
+// Outputs: Requires precise host-layout rejection in both builds and rejection before actual HIP work when compiled.
 TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
     const std::array<std::byte, 4> input{};
     superzip::BlockDescriptor first{};
@@ -44,10 +44,14 @@ TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
         unsigned int checkpoints = 0U;
         bool rejected = false;
         try {
+#if SUPERZIP_ENABLE_HIP
             improve_neutron_replacements(input, input.data(), blocks, replacements, &telemetry, [&] {
                 ++checkpoints;
                 throw std::runtime_error("Neutron device boundary must not be reached");
             });
+#else
+            validate_neutron_layout(input.size(), blocks, replacements);
+#endif
         } catch (const superzip::GpuError& error) {
             rejected = std::string_view(error.what()) == expected;
         }
@@ -63,6 +67,14 @@ TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
     require_rejection({first, invalid}, "Neutron replacement block exceeds its source chunk");
     invalid.uncompressed_len = std::numeric_limits<std::uint32_t>::max();
     require_rejection({first, invalid}, "Neutron replacement block exceeds its source chunk");
+    validate_neutron_layout(input.size(), std::array{first, first}, DictionaryReplacements(2U));
+    bool count_rejected = false;
+    try {
+        validate_neutron_layout(input.size(), std::array{first, first}, DictionaryReplacements(1U));
+    } catch (const superzip::GpuError& error) {
+        count_rejected = std::string_view(error.what()) == "Neutron replacement inputs are inconsistent";
+    }
+    REQUIRE_TRUE(count_rejected);
 }
 
 // Purpose: Keep Neutron separate and invisible unless native format, real HIP capability and required-GPU policy agree.
