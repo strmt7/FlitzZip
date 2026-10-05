@@ -11,10 +11,9 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from tools.render_svg_graph import SVG, new_document
 from tools.run_archive_comparison import CASES, EXPECTED, command_templates
 
-SVG = "http://www.w3.org/2000/svg"
-ET.register_namespace("", SVG)
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -310,8 +309,7 @@ def bar(
 # Outputs: Returns repeatable, accessible UTF-8 SVG bytes.
 def render(commit: str, rows: list[dict]) -> bytes:
     height = 176 + 145 * len(rows)
-    root = ET.Element(
-        f"{{{SVG}}}svg",
+    root = new_document(
         {
             "viewBox": f"0 0 1600 {height}",
             "width": "1600",
@@ -320,14 +318,11 @@ def render(commit: str, rows: list[dict]) -> bytes:
             "aria-labelledby": "title desc",
             "font-family": "Segoe UI, Arial, sans-serif",
         },
-    )
-    ET.SubElement(root, f"{{{SVG}}}title", {"id": "title"}).text = "SuperZip application comparison on Silesia files"
-    ET.SubElement(root, f"{{{SVG}}}desc", {"id": "desc"}).text = (
+        "SuperZip application comparison on Silesia files",
         "Same-host, same-format ZIP and Zstandard comparisons. Exact archive sizes and median full CLI "
         "compression times. Both extraction times in a case use the same comparator-created archive. "
-        "Time whiskers show observed minimum and maximum. Lower is better."
+        "Time whiskers show observed minimum and maximum. Lower is better.",
     )
-    ET.SubElement(root, f"{{{SVG}}}rect", {"width": "1600", "height": str(height), "fill": "#ffffff"})
     label(root, 28, 42, "Archive application comparison", 25, "bold", "#17252b")
     minimum_runs = min(metric["runs"] for row in rows for metric in row["metrics"])
     label(

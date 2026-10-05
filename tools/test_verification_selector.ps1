@@ -309,6 +309,12 @@ Assert-Selector $workflowPlan.postPushAuditRequired "workflow changes must requi
 $benchmarkPlan = Get-SuperZipVerificationPlan -ChangedPath @("docs/benchmarks/data/effort-native-L5.json")
 Assert-Selector (Test-Workflow -Plan $benchmarkPlan -Name "benchmark-graph") "benchmark records must wait for graph regeneration"
 Assert-Selector (Test-RequiredCommand -Plan $benchmarkPlan -Id "benchmark-tooling-tests") "benchmark data must retain graph contracts"
+$svgPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/render_svg_graph.py', 'tools/test_svg_graph.py', 'resources/benchmarks/chart-template.svg')
+Assert-Selector (-not $svgPlan.scope.requiresClassificationReview) 'shared SVG document changes must have an explicit graph classification'
+$svgTests = @($svgPlan.requiredLocalCommands | Where-Object { $_.id -eq 'benchmark-tooling-tests' })
+Assert-Selector ($svgTests.Count -eq 1 -and $svgTests[0].arguments -contains 'tools.test_svg_graph') 'shared SVG document changes must run their passive-markup contracts'
+Assert-Selector (Test-Workflow -Plan $svgPlan -Name 'benchmark-graph') 'shared SVG document changes must select hosted byte-exact graph checks'
+Assert-Selector (-not (Test-RequiredCommand -Plan $svgPlan -Id 'release-build')) 'shared SVG documentation tooling must not trigger a product rebuild'
 foreach ($path in @('docs/benchmarks/corpora.md', 'docs/benchmarks/household-power-diagnostic-2026-10-03.md')) {
     $benchmarkNarrativePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
     Assert-Selector (-not (Test-RequiredCommand -Plan $benchmarkNarrativePlan -Id 'benchmark-tooling-tests')) "benchmark narrative alone must not rerun unchanged graph contracts: $path"

@@ -77,7 +77,7 @@ def validate_hash_map(value: object, maximum: int, prefix: str = "") -> dict:
 
 
 # Purpose: Share strict receipt schema validation between local consumers and offline graph publication.
-# Inputs: Untrusted metadata; explicit historical mode is only for rebuild decisions.
+# Inputs: Untrusted metadata; explicit historical mode reads existing evidence without qualifying current builds.
 # Outputs: Canonical digest; current consumers reject narrower historical toolchain scopes.
 def validate_receipt(value: dict, *, allow_historical_toolchain: bool = False) -> str:
     keys = {

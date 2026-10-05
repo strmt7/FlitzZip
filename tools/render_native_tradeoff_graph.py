@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools.render_benchmark_graph import SVG, add_text, validate_record
+from tools.render_svg_graph import new_document
 
 LEVELS = (1, 3, 5, 7, 9)
 COLORS = {"CPU": "#b15a22", "GPU": "#087e83"}
@@ -74,8 +75,7 @@ def collect(records: list[dict]) -> tuple[tuple, list[dict]]:
 # Outputs: Returns an accessible deterministic CRLF SVG with exact numeric table and observed timing ranges.
 def render(identity: tuple, points: list[dict]) -> bytes:
     width, height = 1230, 670
-    root = ET.Element(
-        f"{{{SVG}}}svg",
+    root = new_document(
         {
             "width": str(width),
             "height": str(height),
@@ -84,16 +84,11 @@ def render(identity: tuple, points: list[dict]) -> bytes:
             "aria-labelledby": "title description",
             "font-family": "Segoe UI, Arial, sans-serif",
         },
-    )
-    ET.SubElement(
-        root, f"{{{SVG}}}title", {"id": "title"}
-    ).text = "Native archive size versus compression time by effort"
-    ET.SubElement(root, f"{{{SVG}}}desc", {"id": "description"}).text = (
+        "Native archive size versus compression time by effort",
         "Ten GiB RAM-only Mixed workload with three paired runs per level. "
         "The archive-size axis is truncated and explicitly labeled; table values are exact bytes. "
-        "Timing ranges are observed minima and maxima, not confidence intervals."
+        "Timing ranges are observed minima and maxima, not confidence intervals.",
     )
-    ET.SubElement(root, f"{{{SVG}}}rect", {"width": str(width), "height": str(height), "fill": "#ffffff"})
     add_text(root, 35, 44, "Native CPU and GPU effort tradeoffs", 24, "bold")
     add_text(root, 35, 70, "10 GiB Mixed data in RAM  |  16 MiB blocks  |  three paired runs per level", 13)
     add_text(root, 35, 91, f"Source {identity[0][:12]}  |  smaller archive left, faster compression lower", 12)

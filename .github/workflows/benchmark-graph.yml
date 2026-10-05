@@ -21,6 +21,8 @@ on:
       - tools/render_tradeoff_graph.py
       - tools/render_native_tradeoff_graph.py
       - tools/render_benchmark_graph.py
+      - tools/render_svg_graph.py
+      - tools/test_svg_graph.py
       - tools/native_build_provenance.py
       - tools/native_build_receipt.py
       - tools/test_native_build_provenance.py
@@ -49,6 +51,8 @@ on:
       - tools/render_tradeoff_graph.py
       - tools/render_native_tradeoff_graph.py
       - tools/render_benchmark_graph.py
+      - tools/render_svg_graph.py
+      - tools/test_svg_graph.py
       - tools/native_build_provenance.py
       - tools/native_build_receipt.py
       - tools/test_native_build_provenance.py
@@ -84,6 +88,7 @@ jobs:
       - name: Test graph validation
         run: >-
           python -m unittest tools.test_benchmark_graph tools.test_archive_comparison
+          tools.test_svg_graph
           tools.test_comparison_graph tools.test_tradeoff_graph tools.test_native_tradeoff_graph
           tools.test_benchmark_comparators tools.test_benchmark_cache
           tools.test_native_build_provenance tools.test_native_build_receipt

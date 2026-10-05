@@ -10,10 +10,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools.render_comparison_graph import SVG, label, summarize
+from tools.render_svg_graph import new_document
 
 LEVELS = (1, 3, 5, 7, 9)
 COLORS = {"SuperZip": "#087e83", "7-Zip": "#b15a22", "Zstd": "#b15a22"}
-ET.register_namespace("", SVG)
 
 
 # Purpose: Validate a complete same-host, same-binary effort sweep.
@@ -125,8 +125,7 @@ def y_of(value: float, bottom: int, plot_top: int, low: float, high: float) -> f
 # Outputs: Returns a deterministic, accessible CRLF SVG with observed timing ranges.
 def render(commit: str, panels: list[dict]) -> bytes:
     width, height = 1240, 1280
-    root = ET.Element(
-        f"{{{SVG}}}svg",
+    root = new_document(
         {
             "width": str(width),
             "height": str(height),
@@ -135,15 +134,12 @@ def render(commit: str, panels: list[dict]) -> bytes:
             "aria-labelledby": "title description",
             "font-family": "Segoe UI, Arial, sans-serif",
         },
-    )
-    ET.SubElement(root, f"{{{SVG}}}title", {"id": "title"}).text = "Archive size versus compression time by effort"
-    ET.SubElement(root, f"{{{SVG}}}desc", {"id": "description"}).text = (
+        "Archive size versus compression time by effort",
         "Silesia Windows application benchmark. ZIP and Zstandard cases are separate. "
         "The vertical time axis is logarithmic; lines connect each tool's explicit effort settings. "
         "Outlined points are measured non-dominated points, not confidence-backed winners. "
-        "Rows list exact archive bytes and median seconds with observed min-max ranges."
+        "Rows list exact archive bytes and median seconds with observed min-max ranges.",
     )
-    ET.SubElement(root, f"{{{SVG}}}rect", {"width": str(width), "height": str(height), "fill": "#ffffff"})
     label(root, 36, 45, "Compression tradeoffs on real files", 24, "bold", "#24343a")
     label(root, 36, 69, "Smaller archive to the left; faster creation lower on each logarithmic time axis", 13)
     label(root, 36, 91, f"Silesia subset  |  source {commit[:12]}  |  10 warm-cache runs per point", 12)

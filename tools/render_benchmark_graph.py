@@ -14,13 +14,13 @@ from pathlib import Path
 
 try:
     from tools.native_build_receipt import validate_receipt
+    from tools.render_svg_graph import SVG, new_document
 except ModuleNotFoundError:
     from native_build_receipt import validate_receipt
+    from render_svg_graph import SVG, new_document
 
-SVG = "http://www.w3.org/2000/svg"
 MAX_CONFIRMATION_COUNT = 1024
 MAX_EXACT_REQUESTED_COUNT = 2**53 - 1
-ET.register_namespace("", SVG)
 
 
 # Purpose: Validate optional runtime provenance while preserving historical unknown identities.
@@ -374,12 +374,12 @@ def validate_artifact_measurement_identity(record: dict) -> tuple:
     return (policy, tuple(sorted(dependencies.items())))
 
 
-# Purpose: Bind a portable build receipt to the measured CLI, app-local DLLs and required-HIP scope.
-# Inputs: Untrusted exported receipt, canonical digests and observation lanes.
-# Outputs: Distinct grouping identity or fail-closed error.
+# Purpose: Bind a historical or current exported receipt to its actual measured artifacts.
+# Inputs: Untrusted exported receipt, canonical digests and observation lanes; no live build is qualified.
+# Outputs: Distinct toolchain-scope grouping identity or fail-closed error; missing historical evidence stays missing.
 def validate_native_receipt_record(record: dict) -> tuple:
     receipt = record.get("native_build_receipt")
-    digest = validate_receipt(receipt)
+    digest = validate_receipt(receipt, allow_historical_toolchain=True)
     inputs_digest = receipt["inputs"]["inputs_sha256"]
     if record.get("native_build_receipt_sha256") != digest or record.get("native_inputs_sha256") != inputs_digest:
         raise ValueError("native receipt or input digest differs from measured identity")
@@ -399,7 +399,7 @@ def validate_native_receipt_record(record: dict) -> tuple:
         run.get("lane") == "GPU" for run in record.get("runs", []) + record.get("pilot_runs", [])
     ):
         raise ValueError("required-HIP observations have a CPU-only build receipt")
-    return (digest, inputs_digest, configuration)
+    return (digest, inputs_digest, configuration, receipt["toolchain"]["scope"])
 
 
 # Purpose: Reject malformed or unreviewed benchmark data before charting it.
@@ -641,8 +641,18 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
     if len(rows) > 16:
         raise ValueError("README chart is limited to 16 explicit cases; split larger studies")
     height = 182 + len(rows) * 92
-    root = ET.Element(
-        f"{{{SVG}}}svg",
+    description = (
+        "Paired forced-CPU and required-AMD-HIP SUZIP results. Left: exact encoded payload size, lower is better. "
+        "Right: median encode, verify, and decode throughput, higher is better. Synthetic workloads only."
+    )
+    if identity[5] == 3:
+        description = (
+            "Paired forced-CPU and required-HIP RAM-only synthetic SUZIP results. "
+            "Left: exact encoded payload bytes, excluding archive metadata. "
+            "Right: throughput from median elapsed time; "
+            "whiskers retain every confirmation sample's min-max range, not confidence intervals."
+        )
+    root = new_document(
         {
             "viewBox": f"0 0 1200 {height}",
             "width": "1200",
@@ -651,20 +661,9 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
             "role": "img",
             "aria-labelledby": "title desc",
         },
+        "SuperZip RAM-only benchmark",
+        description,
     )
-    ET.SubElement(root, f"{{{SVG}}}title", {"id": "title"}).text = "SuperZip RAM-only benchmark"
-    ET.SubElement(root, f"{{{SVG}}}desc", {"id": "desc"}).text = (
-        "Paired forced-CPU and required-AMD-HIP SUZIP results. Left: exact encoded payload size, lower is better. "
-        "Right: median encode, verify, and decode throughput, higher is better. Synthetic workloads only."
-    )
-    if identity[5] == 3:
-        root.find(f"{{{SVG}}}desc").text = (
-            "Paired forced-CPU and required-HIP RAM-only synthetic SUZIP results. "
-            "Left: exact encoded payload bytes, excluding archive metadata. "
-            "Right: throughput from median elapsed time; "
-            "whiskers retain every confirmation sample's min-max range, not confidence intervals."
-        )
-    ET.SubElement(root, f"{{{SVG}}}rect", {"width": "1200", "height": str(height), "fill": "#ffffff"})
     add_text(root, 32, 42, "SuperZip | measured native-format performance", 25, "bold", "#17252b")
     subtitle = "RAM-only synthetic workloads. Paired runs; no archive disk writes."
     if identity[4]:

@@ -486,6 +486,7 @@ function Get-SuperZipLocalVerificationCommand {
     }
     if ($touchesBenchmarkGraph -or $scope.fullEscalationRequired) {
         $benchmarkTests = @('-3', '-m', 'unittest', 'tools.test_benchmark_graph',
+            'tools.test_svg_graph',
             'tools.test_archive_comparison', 'tools.test_comparison_graph', 'tools.test_tradeoff_graph',
             'tools.test_native_tradeoff_graph', 'tools.test_benchmark_comparators', 'tools.test_benchmark_cache')
         Add-SuperZipVerificationCommand -List $local -Seen $seen -Command (Get-SuperZipVerificationCommand -Id "benchmark-tooling-tests" -Stage "local" -Executable "py" -Arguments $benchmarkTests -Reason "benchmark permissions, cache identity and graph contracts require offline tests, never a timed workload")

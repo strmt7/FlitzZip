@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import unittest
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from tools import render_benchmark_graph as graph
 from tools.native_build_provenance import canonical
-from tools.native_build_receipt import RECIPE_KEYS
+from tools.native_build_receipt import RECIPE_KEYS, validate_receipt
 
 
 # Purpose: Build one complete paired-run record without depending on a real GPU or filesystem benchmark.
@@ -224,6 +226,39 @@ def receipt_fixture() -> dict:
 
 
 class BenchmarkGraphTests(unittest.TestCase):
+    # Purpose: Preserve exact historical receipt reading without admitting it as a current build.
+    # Inputs: Current fixture reduced to the complete original toolchain schema.
+    # Outputs: Historical graph acceptance, strict live-build rejection and separate cohort identity.
+    def test_historical_receipt_scope(self):
+        current = receipt_fixture()
+        historical = copy.deepcopy(current)
+        receipt = historical["native_build_receipt"]
+        receipt["toolchain"]["scope"] = "cmake-msvc-probe-and-critical-compiler-files-v1"
+        receipt["toolchain"].pop("cmake_abi_header_sha256")
+        digest = hashlib.sha256(canonical(receipt)).hexdigest()
+        historical["native_build_receipt_sha256"] = digest
+        for run in historical["runs"] + historical["pilot_runs"]:
+            run["measurement_identity"]["native_build_receipt_sha256"] = digest
+        graph.validate_record(historical, False)
+        with self.assertRaisesRegex(ValueError, "toolchain schema"):
+            validate_receipt(receipt)
+        with self.assertRaises(ValueError):
+            graph.summarize_records([historical, current], False)
+        receipt["toolchain"]["cmake_abi_header_sha256"] = "a" * 64
+        with self.assertRaisesRegex(ValueError, "toolchain schema"):
+            graph.validate_record(historical, False)
+
+    # Purpose: Exercise the actual reviewed publication consumer when shared schemas change.
+    # Inputs: Immutable historical beta record and its checked-in reviewed chart.
+    # Outputs: Requires byte-identical graph regeneration without inventing newer toolchain evidence.
+    def test_reviewed_historical_beta_regeneration(self):
+        root = Path(__file__).resolve().parents[1]
+        record = json.loads((root / "docs/benchmarks/data/beta-mixed-l5-b8192-20261003.json").read_text("utf-8"))
+        self.assertNotIn("cmake_abi_header_sha256", record["native_build_receipt"]["toolchain"])
+        identity, rows = graph.summarize_records([record], False)
+        expected = (root / "resources/benchmarks/beta-native-cpu-hip.svg").read_bytes()
+        self.assertEqual(graph.render_svg(identity, rows), expected)
+
     # Purpose: Reject inconsistent, private, incomplete and CPU-fallback receipt-backed publication metadata.
     # Inputs: Independently mutated exported fixture receipts.
     # Outputs: Accepts one complete fixture and rejects inconsistent mutations.

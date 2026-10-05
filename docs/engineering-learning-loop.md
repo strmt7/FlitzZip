@@ -751,6 +751,19 @@ probe bytes in native build receipts. Public artifact digests belong in standard
 checksum manifests with a closed inventory; retain the complete hexadecimal
 values, validate every record and bind the manifest to native inputs.
 
+When a portable evidence schema changes, exercise its real checked-in records
+and their publication consumers alongside synthetic mutation fixtures. Historical
+readers may admit an exact older schema in a separate cohort; they must not
+invent missing evidence or qualify current builds. Keep current artifact
+validation strict and preserve byte-for-byte regeneration of reviewed outputs.
+
+Shared graph document structure belongs in the passive SVG template; renderers
+instantiate independent documents and insert measurements through XML APIs.
+The standard namespace is an identifier, not a network request; preserve the
+[W3C SVG namespace](https://www.w3.org/TR/SVG2/struct.html#Namespace).
+Keep templates in publication/scanner scope, reject active markup and oversized
+inputs, and check the real published charts for byte-exact regeneration.
+
 When a dependency produces MSVC `/GL` objects, propagate explicit Release
 `/LTCG` to its link consumers. This preserves the required optimization while
 avoiding the linker's automatic restart. Confirm the effective link options and
