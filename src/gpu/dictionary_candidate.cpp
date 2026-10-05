@@ -248,6 +248,88 @@ std::vector<std::byte> encode_neutron_candidate(std::span<const std::byte> input
     return frame_dictionary_candidate(segment_sizes, packed, baseline_bytes);
 }
 
+// Purpose: Admit the complete Neutron layout before any device pointer, allocation or replacement mutation.
+// Inputs: Source extent, descriptors and equally sized existing winner slots.
+// Outputs: Rejects zero, overflowing, incomplete or unrepresentable geometry before GPU work.
+void validate_neutron_layout(std::size_t input_bytes, std::span<const BlockDescriptor> blocks,
+                             std::span<const std::vector<std::byte>> replacements) {
+    std::size_t covered = 0U;
+    for (std::size_t index = 0U; index < blocks.size(); ++index) {
+        const auto bytes = static_cast<std::size_t>(blocks[index].uncompressed_len);
+        if (bytes == 0U || covered > input_bytes || bytes > input_bytes - covered) {
+            throw GpuError("Neutron replacement block exceeds its source chunk");
+        }
+        const auto baseline = replacements[index].empty() ? blocks[index].encoded_len : replacements[index].size();
+        if (baseline > std::numeric_limits<std::uint32_t>::max()) {
+            throw GpuError("Neutron replacement baseline exceeds native block limits");
+        }
+        covered += bytes;
+    }
+    if (covered != input_bytes) {
+        throw GpuError("Neutron replacement blocks do not cover their source chunk");
+    }
+}
+
+// Purpose: Group only complete segment-aligned blocks whose framing can still beat their existing winner.
+// Inputs: Validated descriptor and winner bytes; the caller also bounds the total batch to one MiB.
+// Outputs: Returns true for a competitive aligned block without changing any payload or GPU limit.
+bool can_group_neutron_block(const BlockDescriptor& block, const std::vector<std::byte>& replacement) {
+    const auto bytes = static_cast<std::size_t>(block.uncompressed_len);
+    const auto baseline = replacement.empty() ? block.encoded_len : replacement.size();
+    const auto table_bytes = (bytes / kSegmentBytes + 1U) * sizeof(std::uint32_t);
+    return bytes % kSegmentBytes == 0U && bytes <= kMaxNeutronBatchBytes && table_bytes < baseline;
+}
+
+// Purpose: Share one bounded Neutron parse across adjacent blocks while preserving independent block framing.
+// Inputs: Admitted aligned host/device extent, matching descriptors/winners, telemetry and checkpoint.
+// Outputs: Replaces only smaller complete block payloads; validates packed extents before forming subviews.
+void encode_neutron_group(std::span<const std::byte> input, const std::byte* device_input,
+                          std::span<const BlockDescriptor> blocks, std::span<std::vector<std::byte>> replacements,
+                          GpuTelemetry* telemetry, const EncodeCheckpoint& checkpoint) {
+    const auto encoded = encode_neutron_segments_from_device_hip(input, device_input, checkpoint);
+    record_neutron_batch(encoded, input.size(), telemetry);
+    if (encoded.segment_sizes.size() != input.size() / kSegmentBytes) {
+        throw GpuError("Neutron group segment count differs from its source extent");
+    }
+    std::size_t packed_bytes = 0U;
+    for (const auto size : encoded.segment_sizes) {
+        if (size == 0U || size > encoded.payload.size() - packed_bytes) {
+            throw GpuError("Neutron group segment exceeds its packed payload");
+        }
+        packed_bytes += size;
+    }
+    if (packed_bytes != encoded.payload.size()) {
+        throw GpuError("Neutron group sizes do not cover its packed payload");
+    }
+    std::size_t segment_offset = 0U;
+    std::size_t payload_offset = 0U;
+    for (std::size_t index = 0U; index < blocks.size(); ++index) {
+        const auto count = blocks[index].uncompressed_len / kSegmentBytes;
+        if (count > encoded.segment_sizes.size() - segment_offset) {
+            throw GpuError("Neutron group has fewer segments than its block descriptors");
+        }
+        const auto sizes = std::span(encoded.segment_sizes).subspan(segment_offset, count);
+        std::size_t bytes = 0U;
+        for (const auto size : sizes) {
+            if (size > encoded.payload.size() - payload_offset - bytes) {
+                throw GpuError("Neutron group block exceeds its packed payload");
+            }
+            bytes += size;
+        }
+        const auto baseline = replacements[index].empty() ? blocks[index].encoded_len : replacements[index].size();
+        auto candidate = frame_dictionary_candidate(sizes, std::span(encoded.payload).subspan(payload_offset, bytes),
+                                                    static_cast<std::uint32_t>(baseline));
+        if (!candidate.empty()) {
+            replacements[index] = std::move(candidate);
+        }
+        segment_offset += count;
+        payload_offset += bytes;
+    }
+    if (segment_offset != encoded.segment_sizes.size() || payload_offset != encoded.payload.size()) {
+        throw GpuError("Neutron group descriptors do not cover its packed segments");
+    }
+}
+
 // Purpose: Encode independent 64 KiB segments from borrowed HIP input and admit only a smaller full block.
 // Inputs: One source block, its device mirror, baseline payload bytes, effort, and telemetry.
 // Outputs: Returns complete table-plus-segment bytes when smaller; otherwise an empty vector.
@@ -415,25 +497,33 @@ void improve_neutron_replacements(std::span<const std::byte> input, const std::b
     if (device_input == nullptr || blocks.size() != replacements.size()) {
         throw GpuError("Neutron replacement inputs are inconsistent");
     }
+    validate_neutron_layout(input.size(), blocks, replacements);
     std::size_t offset = 0U;
-    for (std::size_t index = 0U; index < blocks.size(); ++index) {
+    for (std::size_t index = 0U; index < blocks.size();) {
         const auto bytes = static_cast<std::size_t>(blocks[index].uncompressed_len);
-        if (bytes == 0U || offset > input.size() || bytes > input.size() - offset) {
-            throw GpuError("Neutron replacement block exceeds its source chunk");
+        std::size_t end = index;
+        std::size_t group_bytes = 0U;
+        while (end < blocks.size() && can_group_neutron_block(blocks[end], replacements[end]) &&
+               blocks[end].uncompressed_len <= kMaxNeutronBatchBytes - group_bytes) {
+            group_bytes += blocks[end].uncompressed_len;
+            ++end;
+        }
+        if (end > index + 1U) {
+            encode_neutron_group(input.subspan(offset, group_bytes), device_input + offset,
+                                 blocks.subspan(index, end - index),
+                                 std::span(replacements).subspan(index, end - index), telemetry, checkpoint);
+            offset += group_bytes;
+            index = end;
+            continue;
         }
         const auto baseline = replacements[index].empty() ? blocks[index].encoded_len : replacements[index].size();
-        if (baseline > std::numeric_limits<std::uint32_t>::max()) {
-            throw GpuError("Neutron replacement baseline exceeds native block limits");
-        }
         auto candidate = encode_neutron_candidate(input.subspan(offset, bytes), device_input + offset,
                                                   static_cast<std::uint32_t>(baseline), telemetry, checkpoint);
         if (!candidate.empty()) {
             replacements[index] = std::move(candidate);
         }
         offset += bytes;
-    }
-    if (offset != input.size()) {
-        throw GpuError("Neutron replacement blocks do not cover their source chunk");
+        ++index;
     }
 }
 

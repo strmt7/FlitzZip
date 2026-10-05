@@ -130,7 +130,7 @@ as the earlier failed prefix. No corpus payload is redistributed.
 The protocol reports `memory_only=true`, `disk_write_bytes=0`, 593,182,383 validated
 bytes and 5,613,659 actual GPU kernel launches. Native compression totaled
 2,104.565 seconds; Hyperfine's full worker run was 2,563.039 seconds. This single
-shared-host pass qualifies workload coverage, deterministic sizes and readback,
+measured pass qualifies workload coverage, deterministic sizes and readback,
 with `timing_qualified=false`; it establishes neither GPU superiority nor a
 controlled throughput comparison. Corpus, archive and restored payloads remained
 in RAM. This is not a claim of zero operating-system or reporting I/O.
@@ -158,3 +158,72 @@ cost and the complete corpus comparison have passed.
 
 The [transport review](neutron-corpus-transport-review-2026-10-05.md) records its
 ownership boundaries, real Hyperfine integration and explicitly offline evidence.
+
+## Neutron Batching Round
+
+Neutron now shares its existing bounded parse across adjacent, complete,
+64 KiB-aligned archive blocks, up to the unchanged one-MiB primitive limit.
+Each block retains its independent framing and preceding winner. The minimum-byte
+parse, per-launch work, kernels, driver boundary and ordinary numeric levels
+are unchanged. The complete descriptor layout is admitted before device-pointer
+arithmetic, GPU work or replacement mutation.
+
+The HIP Release build and all 32 affected native cases passed. The added
+regressions reject malformed complete layouts before the device checkpoint,
+compare all sixteen batched segment payloads byte-for-byte against isolated
+calls with independent CPU/HIP readback, and exercise preservation of losing
+trials through the real production dispatcher. Existing cancellation,
+workspace, archive readback and ordinary-level consumer checks remain covered.
+
+The complete [batched Govdocs record](benchmarks/data/neutron-govdocs1-thread0-batched-2026-10-05.json)
+compares every original file, in order, against the retained baseline. All
+**991 archive sizes are identical**, with no regressions: 593,182,383 input bytes
+still produce 339,637,257 complete independent single-file archive bytes.
+Required-HIP bytewise readback covers the complete input. Corpus, archive and
+restored payloads remained in RAM with `disk_write_bytes=0`.
+
+Actual kernel launches fell from 5,613,659 to **2,776,684**, removing 2,836,975
+launches, approximately 50.5%. Native compression totaled **934.165 seconds**,
+55.6% less than the preceding 2,104.565-second measurement. Hyperfine's complete
+worker run took **1,401.004 seconds**, 45.3% less than the preceding 2,563.039
+seconds. These are observed elapsed-time improvements for the same workload,
+block size and benchmark tool, with identical per-file sizes and complete
+readback.
+
+The maintainer reports that the PC was near-idle. No recorded system-load
+telemetry establishes contention. The `timing_qualified=false` label records
+that paired repetitions and system-load telemetry were not collected; it does
+not mean that background load was detected or that the measured times are
+invalid. A single before/after comparison does not establish statistical
+variation or a universal speedup. The earlier system-freeze cause remains
+unconfirmed.
+
+The accepted run binds native inputs
+`f74dca25f3befecb5f73d2a23bb6ebd5c405478767c7d1caf6c2322c6ba23712`
+and build receipt
+`ae32f072cc4316a9e37a57e1a08a2b2e6d395bbcb98b8877507d4a846be78326`.
+The original publisher ZIP hash, all per-file sizes and the full observation
+stream digest are retained in the new record. Neither corpus nor archive
+payloads are redistributed.
+
+The same native build then completed all eleven original Canterbury files at
+each supported block-size setting, totaling 77 byte-exact required-HIP readbacks.
+The [complete block-settings record](benchmarks/data/neutron-canterbury-block-settings-2026-10-05.json)
+retains the original publisher order, every file size, real launch counts and
+each complete observation-stream digest. Every run reports RAM-only payloads
+and zero benchmark payload disk writes. The 256 KiB result exactly matches the
+preceding 1,008,754-byte Canterbury total; totals at different block sizes are
+separate settings, rather than comparisons against that baseline.
+
+| Block size (KiB) | Original input bytes | Complete single-file archive bytes |
+| --- | --- | --- |
+| 256 | 2,810,784 | 1,008,754 |
+| 512 | 2,810,784 | 1,008,644 |
+| 1,024 | 2,810,784 | 1,008,622 |
+| 2,048 | 2,810,784 | 1,008,622 |
+| 4,096 | 2,810,784 | 1,008,622 |
+| 8,192 | 2,810,784 | 1,008,622 |
+| 16,384 | 2,810,784 | 1,008,622 |
+
+These single-pass setting checks establish coverage and recovery. They do not
+change the default block size or qualify a throughput comparison.

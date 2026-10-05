@@ -1,4 +1,5 @@
 #include "gpu/dictionary_matcher.hpp"
+#include "gpu/dictionary_candidate.hpp"
 #include "gpu/gpu_codec.hpp"
 #include "app/compression_mode_selection.hpp"
 #include "core/result.hpp"
@@ -27,6 +28,42 @@
 namespace {
 
 using namespace superzip::dictionary;
+
+// Purpose: Reject the complete malformed layout before entering a GPU boundary or changing prior winners.
+// Inputs: Live host storage, inconsistent descriptors and a checkpoint that aborts before any device access.
+// Outputs: Requires the precise layout error, no checkpoint calls and no GPU allocation or launches on any host.
+TEST_CASE(neutron_dictionary_layout_admission_precedes_device_work) {
+    const std::array<std::byte, 4> input{};
+    superzip::BlockDescriptor first{};
+    first.uncompressed_len = 2U;
+    first.encoded_len = 4096U;
+    const auto require_rejection = [&](std::vector<superzip::BlockDescriptor> blocks, std::string_view expected) {
+        DictionaryReplacements replacements(blocks.size());
+        const auto original = replacements;
+        superzip::GpuTelemetry telemetry;
+        unsigned int checkpoints = 0U;
+        bool rejected = false;
+        try {
+            improve_neutron_replacements(input, input.data(), blocks, replacements, &telemetry, [&] {
+                ++checkpoints;
+                throw std::runtime_error("Neutron device boundary must not be reached");
+            });
+        } catch (const superzip::GpuError& error) {
+            rejected = std::string_view(error.what()) == expected;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(checkpoints, 0U);
+        REQUIRE_EQ(replacements, original);
+        REQUIRE_EQ(telemetry.kernel_launches.load(), 0U);
+        REQUIRE_EQ(telemetry.device_allocation_bytes.load(), 0U);
+    };
+    require_rejection({first}, "Neutron replacement blocks do not cover their source chunk");
+    auto invalid = first;
+    invalid.uncompressed_len = 0U;
+    require_rejection({first, invalid}, "Neutron replacement block exceeds its source chunk");
+    invalid.uncompressed_len = std::numeric_limits<std::uint32_t>::max();
+    require_rejection({first, invalid}, "Neutron replacement block exceeds its source chunk");
+}
 
 // Purpose: Keep Neutron separate and invisible unless native format, real HIP capability and required-GPU policy agree.
 // Inputs: Every combination of the three admission prerequisites and an existing Neutron choice.
@@ -590,4 +627,75 @@ TEST_CASE(neutron_dictionary_segment_and_workspace_boundaries) {
         std::cout << "Neutron segment correctness input_bytes=" << size << " neutron_bytes=" << neutron_bytes
                   << " ordinary_level9_bytes=" << ordinary_bytes << " memory_only=true disk_write_bytes=0\n";
     }
+}
+
+// Purpose: Prove bounded batching preserves every independent minimum-byte parse and reduces actual launch count.
+// Inputs: Sixteen full segments mixing verified empty graphs and long matches, using at most one MiB per call.
+// Outputs: Requires byte-identical segment payloads against four isolated calls and independent CPU/HIP readback.
+TEST_CASE(neutron_dictionary_batched_parse_equals_isolated_blocks) {
+    if (!superzip::query_gpu_info().available) {
+        std::cout << "[SKIP] Neutron batched parsing requires HIP\n";
+        return;
+    }
+    const auto unique = unique_neutron_segment();
+    std::vector<std::byte> input(kMaxNeutronBatchBytes);
+    for (std::size_t offset = 0U; offset < input.size(); offset += kSegmentBytes) {
+        const auto segment = offset / kSegmentBytes;
+        if (segment % 3U == 0U) {
+            std::copy(unique.begin(), unique.end(), input.begin() + static_cast<std::ptrdiff_t>(offset));
+        } else {
+            std::fill_n(input.begin() + static_cast<std::ptrdiff_t>(offset), kSegmentBytes,
+                        static_cast<std::byte>(segment));
+        }
+    }
+    const auto grouped = encode_neutron_segments(input);
+    REQUIRE_EQ(grouped.segments.size(), input.size() / kSegmentBytes);
+    std::uint64_t isolated_launches = 0U;
+    constexpr auto block_bytes = kMaxNeutronBatchBytes / 4U;
+    for (std::size_t offset = 0U; offset < input.size(); offset += block_bytes) {
+        const auto isolated = encode_neutron_segments(std::span(input).subspan(offset, block_bytes));
+        isolated_launches += isolated.explicit_kernel_launches;
+        for (std::size_t index = 0U; index < isolated.segments.size(); ++index) {
+            REQUIRE_EQ(grouped.segments[offset / kSegmentBytes + index].payload, isolated.segments[index].payload);
+        }
+    }
+    REQUIRE_TRUE(grouped.explicit_kernel_launches < isolated_launches);
+    require_neutron_roundtrip(input, grouped);
+}
+
+// Purpose: Retain every ordinary winner through the real Neutron dispatcher when grouped dictionary trials lose.
+// Inputs: One MiB of authenticated unique-window segments and four independently framed native archive blocks.
+// Outputs: Requires unchanged payload/descriptors, complete CRC and byte-exact CPU/HIP recovery, entirely in RAM.
+TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
+    if (!superzip::query_gpu_info().available) {
+        std::cout << "[SKIP] Neutron grouped portfolio requires HIP\n";
+        return;
+    }
+    const auto unique = unique_neutron_segment();
+    std::vector<std::byte> input(kMaxNeutronBatchBytes);
+    for (std::size_t offset = 0U; offset < input.size(); offset += unique.size()) {
+        std::copy(unique.begin(), unique.end(), input.begin() + static_cast<std::ptrdiff_t>(offset));
+    }
+    constexpr auto block_bytes = static_cast<std::uint32_t>(kMaxNeutronBatchBytes / 4U);
+    const auto baseline =
+        superzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9});
+    const auto encoded =
+        superzip::encode_chunk(input, {.require_gpu = true,
+                                       .block_size = block_bytes,
+                                       .compression_level = 9,
+                                       .compression_mode = superzip::NativeCompressionMode::NeutronStar});
+    REQUIRE_EQ(encoded.payload, baseline.payload);
+    REQUIRE_EQ(encoded.blocks.size(), 4U);
+    for (std::size_t index = 0U; index < encoded.blocks.size(); ++index) {
+        REQUIRE_EQ(encoded.blocks[index].kind, baseline.blocks[index].kind);
+        REQUIRE_EQ(encoded.blocks[index].encoded_len, baseline.blocks[index].encoded_len);
+        REQUIRE_EQ(encoded.blocks[index].encoded_offset, baseline.blocks[index].encoded_offset);
+    }
+    REQUIRE_EQ(encoded.source_crc32, baseline.source_crc32);
+    REQUIRE_TRUE(encoded.source_crc32_available && encoded.gpu_used);
+    std::vector<std::byte> decoded(input.size());
+    superzip::decode_chunk_cpu(encoded.payload, encoded.blocks, decoded, {});
+    REQUIRE_EQ(decoded, input);
+    REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = true}));
+    REQUIRE_EQ(decoded, input);
 }
