@@ -1,0 +1,34 @@
+{
+  "Canterbury": {
+    "url": "https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz",
+    "archive_bytes": 739071,
+    "archive_sha256": "f140e8a5b73d3f53198555a63bfb827889394a42f20825df33c810c3d5e3f8fb",
+    "hash_basis": "Local SHA-256 of original publisher HTTPS response; not a separately signed publisher digest",
+    "file_count": 11,
+    "decoded_bytes": 2810784,
+    "max_file_bytes": 1029744,
+    "container_bytes_max": 4194304,
+    "file_bytes": {
+      "alice29.txt": 152089,
+      "asyoulik.txt": 125179,
+      "cp.html": 24603,
+      "fields.c": 11150,
+      "grammar.lsp": 3721,
+      "kennedy.xls": 1029744,
+      "lcet10.txt": 426754,
+      "plrabn12.txt": 481861,
+      "ptt5": 513216,
+      "sum": 38240,
+      "xargs.1": 4227
+    }
+  },
+  "Govdocs1Thread0": {
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/govdocs1/threads/thread0.zip",
+    "archive_bytes": 322469174,
+    "etag": "\"853266986a1d22c5bc4c5652dac7bb02-39\"",
+    "hash_basis": "Publisher HTTPS object length and multipart ETag pinned initially; record full archive SHA-256 after acquisition. ETag is not a cryptographic source checksum.",
+    "file_count": 991,
+    "decoded_bytes": 593182383,
+    "max_file_bytes": 175101388
+  }
+}

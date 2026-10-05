@@ -17,7 +17,10 @@ POLICY = Path(".github/scanner-metadata-reviews.csv")
 FIELDS = ("path", "rule", "input_sha256", "public_sha256", "evidence")
 MAX_POLICY_BYTES = 64 * 1024
 MAX_REVIEWS = 256
-METADATA_PATH = re.compile(r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/[^/]+\.json)")
+METADATA_PATH = re.compile(
+    r"(?:\.github/gitleaks\.toml|docs/benchmarks/corpora/[^/]+\.json"
+    r"|tools/benchmark_permissions\.json|docs/licenses/development-notices\.json)"
+)
 SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")
 SOURCE_FIELDS = ("path", "rule", "input_sha256", "startLine", "startColumn", "endLine", "endColumn", "evidence")
 SOURCE_EVIDENCE = "docs/security-source-finding-review-2026-10-04.md"

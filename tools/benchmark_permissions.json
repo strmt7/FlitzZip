@@ -110,6 +110,22 @@
       "evidence": ["https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption", "https://archive.ics.uci.edu/static/public/235/individual%2Bhousehold%2Belectric%2Bpower%2Bconsumption.zip", "https://doi.org/10.24432/C58K54", "https://creativecommons.org/licenses/by/4.0/", "https://creativecommons.org/licenses/by/4.0/legalcode.en"],
       "conditions": ["Attribute Georges Hebrail and Alice Berard (2006), Individual Household Electric Power Consumption, UCI, DOI 10.24432/C58K54 and CC-BY-4.0.", "Record exact source hashes, byte windows and complete-row trimming; preserve missing values and line endings without padding, cycling or generated substitution.", "Do not commit or ship dataset payloads. Publish original numerical measurements with attribution and selection limits; do not imply UCI or creator endorsement."]
     },
+    "Canterbury": {
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "University of Canterbury explicitly supplies this fixed eleven-file corpus for lossless compression evaluation. This admits local benchmarking and original measurements; it does not establish a blanket copyright license for embedded works or program code.",
+      "evidence": ["https://corpus.canterbury.ac.nz/purpose.html", "https://corpus.canterbury.ac.nz/descriptions/", "https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz"],
+      "conditions": ["Use the original fixed natural corpus with exact bytes and published file lengths; reject mirrors with normalized line endings.", "Attribute Arnold and Bell (1997), A corpus for the evaluation of lossless compression algorithms, DCC 1997.", "Keep payloads in RAM; do not execute constituents, copy embedded source into the product or commit/redistribute corpus files.", "Publish original numerical measurements and disclose corpus age and limited coverage; do not imply university endorsement."]
+    },
+    "Govdocs1Thread0": {
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "Digital Corpora explicitly releases Govdocs1 for research and supplies standardized pilot-study threads. Its CC0 terms exclude materials claiming separate copyrights; local inert-byte compression measurements do not establish redistribution rights for every constituent.",
+      "evidence": ["https://digitalcorpora.org/corpora/file-corpora/files/", "https://digitalcorpora.org/about-digitalcorpora/terms-of-use/", "https://digitalcorpora.s3.amazonaws.com/corpora/files/govdocs1/threads/thread0.zip"],
+      "conditions": ["Use the entire current published thread0 inventory; preserve natural file bytes and report the actual current count rather than the historical nominal 1000.", "Attribute Garfinkel, Farrell, Roussev and Dinolt (2009), Bringing Science to Digital Forensics with Standardized Forensic Corpora, DFRWS 2009.", "The publisher warns that some corpus files contain malware. Treat members exclusively as inert RAM byte sequences; never execute, render, extract to disk or disable antivirus protections.", "Record source object identity and full archive/member SHA-256 fingerprints; never call a multipart ETag a cryptographic checksum.", "Do not commit or ship corpus payloads. This is a broad forensic-file workload, not a universal compression ranking or a current AI-model dataset."]
+    },
     "HIGGS": {
       "execute": "allowed",
       "publish_results": "allowed",

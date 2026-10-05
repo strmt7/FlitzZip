@@ -52,6 +52,11 @@ and capability limits in `docs/archive-format-support.md` and
   Neither skill changes product runtime behavior. Use the current skill files,
   not an installed-tool assumption; [development context](docs/development-context.md)
   explains bounded startup, actual-use evidence and freshness checks.
+- Use the self-hosted [Crawl4AI research tool](docs/crawl4ai.md) for web-page
+  reading and crawling. Its portable launcher installs automatically when absent;
+  use documented upstream APIs and configuration, and retain access failures.
+  Search tools remain available for discovery. The operating guide defines
+  evidence reuse, permissions and headless-operation limits.
 
 ## Required Reading
 

@@ -82,8 +82,9 @@ contain leaked credentials and therefore has no folder-level secret exemption.
 The existing exact public-checksum exceptions retain field/value constraints.
 
 Local preflight retains every raw finding. Its metadata review ledger records
-only the four already reviewed checksum matches in the corpus descriptor and
-Gitleaks policy. A verdict requires the exact metadata path, rule, highlighted
+only individually approved checksum matches in corpus descriptors, Gitleaks
+policy, the benchmark-permission manifest and the development-notice manifest.
+A verdict requires the exact metadata path, rule, highlighted
 public digest and complete reviewed file hash. Source and test paths cannot
 enter this ledger; changed contents and other findings remain blocking. CSV
 keeps the review records readable without changing the scanned source values.
@@ -194,6 +195,13 @@ CodeQL C++ retains 60 minutes, compared with 20 minutes for the observed
 2026-10-01 build/analysis. A timeout is a failed gate, never clean-scan evidence.
 
 ## Finding Triage
+
+The maintainer approved the ten exact integrity metadata records in
+[the 5 October review](security-public-checksum-review-2026-10-05.md). These
+cover original corpus, comparator binary and license-notice hashes. Raw reports
+remain intact, changed file bytes or values expire admission, and source/test
+findings cannot use this metadata ledger. This approval does not dismiss hosted
+alerts or close unresolved legal, source, GPU or release obligations.
 
 The [latest individual review](security-finding-review-2026-10-03.md#latest-individual-metadata-triage)
 records five metadata/namespace false-positive dispositions at `ed3ea0f`.

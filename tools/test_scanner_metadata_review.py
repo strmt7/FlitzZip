@@ -104,6 +104,28 @@ class ScannerMetadataReviewTests(unittest.TestCase):
         self.path.write_bytes(self.payload.replace("\n", "\r\n").encode())
         self.assertEqual(len(self.evaluate([self.finding])["reviewed_metadata"]), 1)
 
+    def test_approved_additional_metadata_roles(self):
+        """Purpose: Bound approved role additions. Inputs: Exact paths and mutations. Outputs: Narrow admission."""
+        original = self.name
+        for name in ("tools/benchmark_permissions.json", "docs/licenses/development-notices.json"):
+            self.name = name
+            self.path = self.root / name
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_bytes(self.payload.encode())
+            self.policy = self.policy.replace(original.encode(), name.encode())
+            self.finding["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] = name
+            self.assertEqual(len(self.evaluate([self.finding])["reviewed_metadata"]), 1)
+            self.path.write_text(self.payload + "changed", encoding="utf-8")
+            self.assertEqual(self.evaluate([self.finding])["unresolved_count"], 1)
+            self.path.write_bytes(self.payload.encode())
+            changed = copy.deepcopy(self.finding)
+            changed["locations"][0]["physicalLocation"]["region"]["charOffset"] += 1
+            self.assertEqual(self.evaluate([changed])["unresolved_count"], 1)
+            for other in ("tools/other_permissions.json", "docs/licenses/other-notices.json", "src/manifest.json"):
+                with self.assertRaises(ValueError):
+                    review.read_reviews(self.policy.replace(name.encode(), other.encode()))
+            original = name
+
     # Purpose: Refuse redirected policy files and detect accidental drift in registered metadata snapshots.
     # Inputs: Real reviewed files plus a mocked junction. Outputs: Current hashes match and redirects fail.
     def test_policy_files_and_registered_snapshots(self):

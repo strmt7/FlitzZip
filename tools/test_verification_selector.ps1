@@ -474,6 +474,21 @@ Assert-Selector (-not $mcpPlan.scope.fullEscalationRequired) "MCP changes must t
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-python-compile") "MCP changes must compile Python"
 Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id "mcp-bounded-child-tests") "MCP changes must test bounded child execution"
 Assert-Selector (-not (Test-RequiredCommand -Plan $mcpPlan -Id "verification-selector-self-test")) "MCP implementation changes must not retest an unchanged planner"
+Assert-Selector (Test-RequiredCommand -Plan $mcpPlan -Id 'crawl4ai-contracts') 'process ownership changes must verify the crawler consumer'
+foreach ($crawlerPath in @('tools/crawl4ai_tool.py', 'tools/crawl4ai_research.py', 'tools/test_crawl4ai_tool.py',
+        'tools/crawl4ai_sites.json', 'tools/requirements/crawl4ai.txt', 'docs/crawl4ai.md')) {
+    $crawlerPlan = Get-SuperZipVerificationPlan -ChangedPath @($crawlerPath)
+    Assert-Selector (Test-RequiredCommand -Plan $crawlerPlan -Id 'crawl4ai-contracts') "crawler inputs require offline contracts: $crawlerPath"
+    Assert-Selector (-not $crawlerPlan.scope.fullEscalationRequired) "crawler integration does not imply native product changes: $crawlerPath"
+    foreach ($id in @('release-build', 'native-tests', 'gui-smoke', 'verification-selector-self-test')) {
+        Assert-Selector (-not (Test-RequiredCommand -Plan $crawlerPlan -Id $id)) "crawler-only checks must not select $id"
+    }
+}
+foreach ($licensePath in @('tools/license_inventory.py', 'tools/test_license_inventory.py', 'docs/licenses/development-notices.json')) {
+    $licensePlan = Get-SuperZipVerificationPlan -ChangedPath @($licensePath)
+    Assert-Selector (Test-RequiredCommand -Plan $licensePlan -Id 'license-inventory-contracts') "license inventory inputs require their contracts: $licensePath"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $licensePlan -Id 'release-build')) 'development notice checks must not build the product'
+}
 
 $focusedVerifierPlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/superzip_verification.psm1')
 Assert-Selector (-not $focusedVerifierPlan.scope.fullEscalationRequired) 'planner changes must execute routing contracts without global escalation'

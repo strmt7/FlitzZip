@@ -279,6 +279,8 @@ function Get-SuperZipVerificationScope {
         '^tools/(fuzz_resources|test_fuzz_resources)\.ps1$',
         '^tools/(fuzz_memory|test_fuzz_memory)\.py$',
         '^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$',
+        '^tools/(crawl4ai_tool|crawl4ai_research|test_crawl4ai_tool|license_inventory|test_license_inventory)\.py$',
+        '^tools/(crawl4ai_sites\.json|requirements/crawl4ai\.txt)$',
         '^tools/test_github_post_push_audit\.ps1$',
         '^tools/test_refactor_audit\.ps1$',
         '^tools/(native_test_selection|native_component_tests|test_native_selection|test_native_runner)\.ps1$',
@@ -446,6 +448,10 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "greenbone-config-tests" -Stage "local" -Executable "node" -Arguments @("--test", ".github/openvas/resolve_config.test.cjs") -Reason "broker configuration must remain bounded, masked, and authorized before publishing step outputs") }
         @{ Pattern = @('^tools/(agent_context|test_agent_context|cocoindex_agent_search|test_cocoindex_agent_search)\.py$', '^\.agents/skills/(caveman|cocoindex-code-search)/', '^AGENTS\.md$')
            Command = (Get-SuperZipVerificationCommand -Id "agent-context-contracts" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_agent_context", "tools.test_cocoindex_agent_search") -Reason "mandatory skills, bounded source reads, note freshness and real semantic-routing receipts require executable contracts") }
+        @{ Pattern = @('^tools/(crawl4ai_tool|crawl4ai_research|test_crawl4ai_tool)\.py$', '^tools/(crawl4ai_sites\.json|requirements/crawl4ai\.txt)$', '^docs/crawl4ai\.md$', '^docs/licenses/', '^AGENTS\.md$', '^mcp/superzip_mcp\.py$')
+           Command = (Get-SuperZipVerificationCommand -Id 'crawl4ai-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_crawl4ai_tool') -Reason 'crawler integration must use upstream APIs, portable external installation and honest source-bound extraction results; offline contracts never install packages, launch browsers, crawl or build') }
+        @{ Pattern = @('^tools/(license_inventory|test_license_inventory)\.py$', '^docs/licenses/', '^resources/licenses/', '^third_party/', '^tools/benchmark_permissions\.json$', '^AGENTS\.md$')
+           Command = (Get-SuperZipVerificationCommand -Id 'license-inventory-contracts' -Stage 'local' -Executable 'py' -Arguments @('-3', '-B', '-m', 'unittest', 'tools.test_license_inventory') -Reason 'all vendored roots and retained development notices must have explicit coverage; unknown rights and native source/rebuild obligations remain visible') }
         @{ Pattern = @('^mcp/')
            Command = (Get-SuperZipVerificationCommand -Id "mcp-python-compile" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "py_compile", "mcp/superzip_mcp.py") -Reason "MCP Python changes require syntax validation") }
         @{ Pattern = @('^mcp/')
