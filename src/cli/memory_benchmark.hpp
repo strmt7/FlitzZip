@@ -25,9 +25,11 @@ struct MemoryBenchmarkOptions {
     std::uint32_t decode_inflight_chunks = 0;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
+    NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
 };
 
 struct MemoryBenchmarkPlan {
+    NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
     std::string expected_source_sha256;
     std::uint64_t input_bytes = 0;
     std::uint32_t workers = 0;
@@ -46,6 +48,7 @@ struct MemoryBenchmarkResult {
     std::uint32_t decode_codec_workers = 1;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
+    NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
     double compress_seconds = 0.0;
     // Summed task time, including overlap; neither field is elapsed wall time.
     double source_generation_worker_seconds = 0.0;

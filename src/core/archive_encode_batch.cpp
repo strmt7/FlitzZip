@@ -120,13 +120,18 @@ void compress_manifest_batch(std::span<const ManifestEntry> entries, const Compr
     if (progress.cancelled()) {
         throw ArchiveError("operation cancelled");
     }
-    const auto batch = encode_owned_block_batch(std::move(input), lengths,
-                                                {.require_gpu = options.gpu_required,
-                                                 .force_cpu = options.force_cpu,
-                                                 .block_size = options.block_size,
-                                                 .worker_count = 1,
-                                                 .compression_level = options.compression_level,
-                                                 .telemetry = telemetry});
+    const auto batch =
+        encode_owned_block_batch(std::move(input), lengths,
+                                 {.require_gpu = options.gpu_required,
+                                  .force_cpu = options.force_cpu,
+                                  .block_size = options.block_size,
+                                  .worker_count = 1,
+                                  .compression_level = options.compression_level,
+                                  .compression_mode = options.compression_mode,
+                                  .encode_checkpoint = options.compression_mode == NativeCompressionMode::NeutronStar
+                                                           ? make_cancellation_checkpoint(progress, callback)
+                                                           : ProgressCheckpoint{},
+                                  .telemetry = telemetry});
     if (batch.encoded.blocks.size() != entries.size() || batch.block_crc32.size() != entries.size()) {
         throw ArchiveError("batched archive encoder returned an inconsistent file count");
     }

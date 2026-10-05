@@ -372,8 +372,11 @@ const ArchiveNameEncodingChoice& selected_name_encoding(const UiState& state) {
 
 // Purpose: Return the user-facing compression-level label.
 // Inputs: `index` is the mutable compression-level selection in UI state.
-// Outputs: Returns the numeric product effort, independent of backend codec settings.
+// Outputs: Returns a numeric effort label or the separate Neutron mode label.
 std::wstring compression_level_text(int index) {
+    if (index == kNeutronCompressionLevelIndex) {
+        return L"Neutron Star Mode";
+    }
     return std::to_wstring(compression_level_value(index));
 }
 
@@ -463,19 +466,42 @@ std::wstring io_drive_option_text(int index) {
 // Inputs: `index` is the mutable compression-level selection in UI state.
 // Outputs: Returns effort 1-9; normalization handles out-of-range UI indices without signed overflow.
 int compression_level_value(int index) {
+    if (index == kNeutronCompressionLevelIndex) {
+        return kMaxCompressionLevel;
+    }
     const int normalized =
         (index % kCompressionLevelOptionCount + kCompressionLevelOptionCount) % kCompressionLevelOptionCount;
     return kMinCompressionLevel + normalized;
 }
 
+// Purpose: Resolve Neutron eligibility from the exact registry format, cached HIP capability, and user policy.
+// Inputs: A synchronized UI snapshot; no GPU query or filesystem work occurs here.
+// Outputs: Returns whether the separate Neutron row can be displayed and selected.
+bool neutron_selection_available(const UiState& state) {
+    return neutron_mode_eligible(compression_format_value(state.compression_format_index) == ArchiveFormat::SuperZip,
+                                 state.gpu_available, state.gpu_required);
+}
+
+// Purpose: Normalize Neutron after a format, GPU policy, settings, or capability change.
+// Inputs: Locked mutable UI state.
+// Outputs: Returns whether an unavailable Neutron choice was explicitly changed to ordinary level 9.
+bool normalize_compression_selection(UiState& state) {
+    return normalize_neutron_selection(state, compression_format_value(state.compression_format_index) ==
+                                                  ArchiveFormat::SuperZip);
+}
+
 // Purpose: Run the selected create backend for a GUI compression job.
 // Inputs: `sources`, `output`, `archive_format`, GPU options, `verify_after_write`, `block_size`, `compression_level`,
-// and a synchronous progress callback describe the job. Read-back verification is supported by SUZIP and ZIP.
-// Outputs: Returns backend telemetry or throws when the selected format cannot be created.
+// `compression_mode`, and a synchronous progress callback describe the job. Read-back verification is supported by
+// SUZIP and ZIP. Outputs: Returns backend telemetry or throws when the selected format cannot be created.
 OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
                                     const std::filesystem::path& output, ArchiveFormat archive_format,
                                     bool gpu_required, bool verify_after_write, std::uint32_t block_size,
-                                    int compression_level, const ProgressCallback& progress_callback) {
+                                    int compression_level, NativeCompressionMode compression_mode,
+                                    const ProgressCallback& progress_callback) {
+    if (compression_mode != NativeCompressionMode::Standard && archive_format != ArchiveFormat::SuperZip) {
+        throw ArchiveError("Neutron Star Mode is available only for SUZIP");
+    }
     if (verify_after_write && archive_format != ArchiveFormat::SuperZip && archive_format != ArchiveFormat::Zip) {
         throw ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");
     }
@@ -485,6 +511,7 @@ OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& so
         options.gpu_required = gpu_required;
         options.block_size = block_size;
         options.compression_level = compression_level;
+        options.compression_mode = compression_mode;
         options.verify_after_write = verify_after_write;
         return compress_suzip(sources, output, options, progress_callback);
     }
@@ -689,6 +716,7 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
     state.integrity_hash_opt_in = settings.integrity_hash_opt_in;
     state.defender_scan_opt_in = settings.defender_scan_opt_in;
     state.verify_after_write_opt_in = settings.verify_after_write_opt_in;
+    normalize_compression_selection(state);
 }
 
 // Purpose: Capture the Settings-owned fields from visible UI state.
@@ -697,7 +725,7 @@ void apply_settings_to_state(const AppSettings& settings, UiState& state) {
 AppSettings settings_from_state(const UiState& state) {
     AppSettings settings;
     settings.compression_format_index = std::clamp(state.compression_format_index, 0, kCompressionFormatMaxIndex);
-    settings.compression_level_index = std::clamp(state.compression_level_index, 0, kCompressionLevelOptionCount - 1);
+    settings.compression_level_index = std::clamp(state.compression_level_index, 0, kNeutronCompressionLevelIndex);
     settings.compression_block_size_index =
         std::clamp(state.compression_block_size_index, 0, kCompressionBlockSizeMaxIndex);
     settings.log_level_index = std::clamp(state.log_level_index, 0, 2);
@@ -768,6 +796,11 @@ AppSettings parse_settings_json(std::string_view json) {
     settings.open_destination_after_extract =
         json_bool_setting(json, "openDestinationAfterExtract", settings.open_destination_after_extract);
     settings.gpu_required = json_bool_setting(json, "gpuRequired", settings.gpu_required);
+    if (json_bool_setting(json, "neutronStarMode", false) && persisted_effort == kMaxCompressionLevel &&
+        settings.gpu_required &&
+        compression_format_value(settings.compression_format_index) == ArchiveFormat::SuperZip) {
+        settings.compression_level_index = kNeutronCompressionLevelIndex;
+    }
     settings.overwrite = json_bool_setting(json, "overwrite", settings.overwrite);
     settings.integrity_hash_opt_in = json_bool_setting(json, "integrityHashOptIn", settings.integrity_hash_opt_in);
     settings.defender_scan_opt_in = json_bool_setting(json, "defenderScanOptIn", settings.defender_scan_opt_in);
@@ -786,6 +819,8 @@ std::string settings_to_json(const AppSettings& settings) {
         << "  \"schema\": \"superzip.settings.v3\",\n"
         << "  \"compressionFormatIndex\": " << settings.compression_format_index << ",\n"
         << "  \"compressionLevel\": " << compression_level_value(settings.compression_level_index) << ",\n"
+        << "  \"neutronStarMode\": " << bool_text(settings.compression_level_index == kNeutronCompressionLevelIndex)
+        << ",\n"
         << "  \"compressionBlockSizeIndex\": " << settings.compression_block_size_index << ",\n"
         << "  \"logLevelIndex\": " << settings.log_level_index << ",\n"
         << "  \"logRetentionIndex\": " << settings.log_retention_index << ",\n"
@@ -967,9 +1002,9 @@ std::wstring history_status_filter_text(int index) {
 }
 
 // Purpose: Return the display options for an expanded dropdown.
-// Inputs: `id` identifies the dropdown control.
+// Inputs: `id` identifies the dropdown control and `state` supplies format, capability, and user policy.
 // Outputs: Returns ordered labels matching the selectable rows.
-std::vector<std::wstring> dropdown_options(DropdownId id) {
+std::vector<std::wstring> dropdown_options(DropdownId id, const UiState& state) {
     switch (id) {
     case DropdownId::CompressFormat: {
         std::vector<std::wstring> formats;
@@ -981,8 +1016,9 @@ std::vector<std::wstring> dropdown_options(DropdownId id) {
     }
     case DropdownId::CompressLevel: {
         std::vector<std::wstring> options;
-        options.reserve(kCompressionLevelOptionCount);
-        for (int index = 0; index < kCompressionLevelOptionCount; ++index) {
+        const auto count = compression_selection_count(neutron_selection_available(state));
+        options.reserve(count);
+        for (int index = 0; index < count; ++index) {
             options.push_back(compression_level_text(index));
         }
         return options;

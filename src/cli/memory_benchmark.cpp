@@ -536,10 +536,8 @@ std::uint64_t validate_memory_benchmark_options(const MemoryBenchmarkOptions& op
         (corpus && options.profile != "Corpus")) {
         throw superzip::ArchiveError("unknown memory benchmark profile: " + options.profile);
     }
-    if (options.compression_level < superzip::kMinCompressionLevel ||
-        options.compression_level > superzip::kMaxCompressionLevel) {
-        throw superzip::ArchiveError("compression level must be between 1 and 9");
-    }
+    superzip::validate_native_compression_policy(options.compression_mode, options.compression_level,
+                                                 options.require_gpu, options.force_cpu);
     if (options.block_size < superzip::kMinArchiveBlockBytes || options.block_size > superzip::kMaxArchiveBlockBytes) {
         throw superzip::ArchiveError("memory benchmark block size is outside SuperZip resource limits");
     }
@@ -592,6 +590,7 @@ std::string validate_memory_benchmark_source_identity(const MemoryBenchmarkOptio
 MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options) {
     MemoryBenchmarkPlan plan;
     plan.input_bytes = validate_memory_benchmark_options(options);
+    plan.compression_mode = options.compression_mode;
     plan.expected_source_sha256 = options.expected_source_sha256;
     plan.workers = resolve_memory_benchmark_workers(options.workers);
     plan.inflight_chunks = resolve_memory_benchmark_inflight(plan.workers, options);
@@ -604,6 +603,7 @@ MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options)
         .block_size = options.block_size,
         .worker_count = plan.codec_workers,
         .compression_level = options.compression_level,
+        .compression_mode = options.compression_mode,
     };
     const auto admitted_decode =
         superzip::resolve_owned_decode_inflight(plan.inflight_chunks, superzip::kMaxArchiveChunkBytes, codec_options);
@@ -623,6 +623,8 @@ MemoryBenchmarkPlan plan_memory_benchmark(const MemoryBenchmarkOptions& options)
 // Outputs: Prints exact configuration fields and the explicit plan-only marker, without timing or gpu_used fields.
 void print_memory_benchmark_plan(const MemoryBenchmarkPlan& plan) {
     std::cout << "plan_only=true input_bytes=" << plan.input_bytes << " workers=" << plan.workers
+              << " compression_mode="
+              << (plan.compression_mode == NativeCompressionMode::NeutronStar ? "neutron_star" : "standard")
               << " inflight_chunks=" << plan.inflight_chunks << " codec_workers=" << plan.codec_workers
               << " decode_inflight_chunks=" << plan.decode_inflight_chunks
               << " decode_codec_workers=" << plan.decode_codec_workers
@@ -646,6 +648,8 @@ void print_memory_benchmark_stats(const MemoryBenchmarkResult& result) {
         << " inflight_chunks=" << stats.inflight_chunks << " codec_workers=" << result.codec_workers
         << " decode_inflight_chunks=" << result.decode_inflight_chunks << " block_size_bytes=" << result.block_size
         << " decode_codec_workers=" << result.decode_codec_workers << " compression_level=" << result.compression_level
+        << " compression_mode="
+        << (result.compression_mode == NativeCompressionMode::NeutronStar ? "neutron_star" : "standard")
         << " gpu_used=" << (stats.gpu_used ? "true" : "false")
         << " gpu_encode_chunks=" << stats.gpu_runtime.encode_chunks
         << " gpu_decode_chunks=" << stats.gpu_runtime.decode_chunks
@@ -746,6 +750,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
         .block_size = options.block_size,
         .worker_count = codec_workers,
         .compression_level = options.compression_level,
+        .compression_mode = options.compression_mode,
         .telemetry = telemetry,
     };
 
@@ -759,6 +764,7 @@ MemoryBenchmarkResult run_memory_benchmark(const MemoryBenchmarkOptions& options
     result.decode_codec_workers = plan.decode_codec_workers;
     result.block_size = options.block_size;
     result.compression_level = options.compression_level;
+    result.compression_mode = options.compression_mode;
     superzip::ArchiveIndex modeled_index;
     modeled_index.version = superzip::kSuperZipMaxReadableVersion;
     modeled_index.entries.push_back(superzip::ArchiveEntry{

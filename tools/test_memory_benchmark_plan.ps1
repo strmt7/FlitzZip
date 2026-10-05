@@ -28,9 +28,12 @@ function Invoke-MemoryBenchmarkPlanProbe {
 
 foreach ($mode in @('--force-cpu', '--require-gpu')) {
     $result = Invoke-MemoryBenchmarkPlanProbe -Arguments "$mode --workers 4 --inflight 1 --decode-inflight 1"
+    $stats = if ($result.exit_code -eq 0) { ConvertFrom-StatsLine -Line $result.stdout.Trim() } else { @{} }
     if ($result.exit_code -ne 0 -or $result.stderr -or $result.stdout -notmatch '^plan_only=true ' -or
-        $result.stdout -notmatch ' input_bytes=10737418240 workers=4 inflight_chunks=1 codec_workers=4 ' -or
-        $result.stdout -notmatch ' decode_inflight_chunks=1 decode_codec_workers=4' -or
+        $stats['input_bytes'] -ne '10737418240' -or $stats['workers'] -ne '4' -or
+        $stats['inflight_chunks'] -ne '1' -or $stats['codec_workers'] -ne '4' -or
+        $stats['decode_inflight_chunks'] -ne '1' -or $stats['decode_codec_workers'] -ne '4' -or
+        $stats['compression_mode'] -cne 'standard' -or
         $result.stdout -match 'gpu_used=|seconds=|memory_only=') {
         throw "Native planning must preserve exact geometry without timing or GPU claims: $($result.stderr)"
     }
@@ -43,11 +46,24 @@ foreach ($case in @(
         @{ args = '--workers 65'; cause = 'resource limit' },
         @{ args = '--size-mib 10239'; cause = 'at least 10240 MiB' },
         @{ args = '--force-cpu --require-gpu'; cause = 'mutually exclusive' },
-        @{ args = '--profile Unknown'; cause = 'unknown memory benchmark profile' }
+        @{ args = '--profile Unknown'; cause = 'unknown memory benchmark profile' },
+        @{ args = '--neutron-star --force-cpu'; cause = 'excludes --force-cpu' },
+        @{ args = '--neutron-star --compression-level 8'; cause = 'requires compression level 9' }
     )) {
     $result = Invoke-MemoryBenchmarkPlanProbe -Arguments $case.args
     if ($result.exit_code -eq 0 -or $result.stdout -match 'plan_only=true|entries=' -or $result.stderr -notmatch $case.cause) {
         throw "Native planning accepted invalid admission or changed its failure cause: $($case.args): $($result.stderr)"
     }
 }
-Write-Output 'memory_benchmark_plan status=passed probes=10 measured_workloads=0'
+$gpuInfo = & $cli gpu-info
+if ($LASTEXITCODE -ne 0) { throw 'Planning test cannot inspect actual HIP capability.' }
+if ($gpuInfo -ccontains 'available=true') {
+    $result = Invoke-MemoryBenchmarkPlanProbe -Arguments '--neutron-star --workers 1 --inflight 1 --decode-inflight 1'
+    $stats = if ($result.exit_code -eq 0) { ConvertFrom-StatsLine -Line $result.stdout.Trim() } else { @{} }
+    if ($result.exit_code -ne 0 -or $result.stderr -or $stats['compression_mode'] -cne 'neutron_star' -or
+        $stats['workers'] -ne '1' -or $stats['inflight_chunks'] -ne '1' -or
+        $stats['decode_inflight_chunks'] -ne '1' -or $result.stdout -match 'gpu_used=|seconds=|memory_only=') {
+        throw 'Neutron planning must preserve separate mode identity without reporting executed GPU work.'
+    }
+}
+Write-Output 'memory_benchmark_plan status=passed measured_workloads=0'

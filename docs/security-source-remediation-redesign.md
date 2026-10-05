@@ -180,6 +180,14 @@ history remains available, but a dismissal is not evidence of source repair.
 Branch controls and external attestations require actual governance evidence;
 source rewrites cannot truthfully satisfy them.
 
+On 2026-10-05, the maintainer accepted the remaining `Scorecard/CodeReviewID`
+and `Scorecard/CIIBestPracticesID` governance observations for this work. At
+commit `eeb5e8a5a607c1e705ee6be761a91ad580c031e3`, all eight relevant hosted
+workflows passed and these were the only open alerts. This acceptance does not
+claim either control is implemented. The alerts remain visible, and the strict
+post-push audit continues to report them. Source findings and future findings
+retain their existing repair and verification requirements.
+
 For each related batch, run the change-aware planner once, complete the affected
 production/consumer contracts, and preserve failures before widening coverage.
 Use completed receipts only for unchanged inputs and their actual recorded

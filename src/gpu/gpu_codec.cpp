@@ -62,9 +62,8 @@ void validate_gpu_codec_options(const GpuCodecOptions& options) {
     if (options.block_size < kMinArchiveBlockBytes || options.block_size > kMaxArchiveBlockBytes) {
         throw ArchiveError("codec block size is outside SuperZip resource limits");
     }
-    if (options.compression_level < kMinCompressionLevel || options.compression_level > kMaxCompressionLevel) {
-        throw ArchiveError("codec compression level must be between 1 and 9");
-    }
+    validate_native_compression_policy(options.compression_mode, options.compression_level, options.require_gpu,
+                                       options.force_cpu);
 }
 
 // Purpose: Reject direct codec spans that exceed the bounded archive chunk contract.
@@ -209,6 +208,27 @@ void publish_successful_gpu_attempt(GpuTelemetry* target, const std::shared_ptr<
 #endif
 
 }  // namespace
+
+// Purpose: Enforce one native compression policy at archive, benchmark and direct-codec boundaries.
+// Inputs: Explicit mode, effort and CPU/HIP selection flags.
+// Outputs: Returns for supported policy; Neutron requires level nine and an available required-HIP backend.
+void validate_native_compression_policy(NativeCompressionMode mode, int level, bool require_gpu, bool force_cpu) {
+    if (level < kMinCompressionLevel || level > kMaxCompressionLevel) {
+        throw ArchiveError("codec compression level must be between 1 and 9");
+    }
+    if (mode != NativeCompressionMode::Standard && mode != NativeCompressionMode::NeutronStar) {
+        throw ArchiveError("unknown native compression mode");
+    }
+    if (mode == NativeCompressionMode::NeutronStar) {
+        if (level != kMaxCompressionLevel || !require_gpu || force_cpu) {
+            throw ArchiveError("Neutron Star Mode requires level nine and required AMD HIP execution");
+        }
+        const auto info = query_gpu_info();
+        if (!info.available) {
+            throw GpuError(info.status);
+        }
+    }
+}
 
 // Purpose: Inspect the AMD HIP runtime/device from the HIP translation unit.
 // Inputs: None.

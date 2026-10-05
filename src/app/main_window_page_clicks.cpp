@@ -572,16 +572,18 @@ bool MainWindow::handle_settings_click(const RECT& content, int x, int y) {
 // Outputs: Returns true when the click was consumed by dropdown close or selection.
 bool MainWindow::handle_active_dropdown_click(int x, int y) {
     DropdownId active = DropdownId::None;
+    int option_count = 0;
     {
         std::lock_guard lock(mutex_);
         active = state_.active_dropdown;
+        option_count = static_cast<int>(dropdown_options(active, state_).size());
     }
     if (active == DropdownId::None) {
         return false;
     }
 
     const RECT content = content_rect();
-    const auto layout = dropdown_layout(active, content);
+    const auto layout = dropdown_layout(active, content, option_count);
     const RECT menu = layout.menu;
     const RECT anchor = dropdown_anchor_rect(active, content);
     if (contains_point(menu, x, y)) {

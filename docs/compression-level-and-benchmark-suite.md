@@ -29,6 +29,16 @@ mode, so the product exposes the non-store levels.
 | 8 | `--compression-level 8` | Additional high-effort search. |
 | 9 | `--compression-level 9` | Highest miniz effort for Deflate; required-HIP `.suzip` evaluates full-block entropy samples. |
 
+Native SUZIP additionally offers the separate experimental
+[Neutron Star Mode](neutron-star-mode-research.md), selected by `--neutron-star`
+and shown below 9 only when actual HIP capability and the required-GPU setting
+permit it. Its persisted intent and benchmark `compression_mode=neutron_star`
+identity are separate from numeric effort. The ordinary numeric-level protocol
+requires `compression_mode=standard`; Neutron measurements and tuning do not
+enter its autotuning, scoring or comparison cohorts. Only a later independently
+qualified change proving both smaller archives and higher speed may transfer a
+Neutron improvement to a numeric effort.
+
 Level 5 is the default in `CompressOptions`, GPU codec options, the CLI, the
 GUI, and `tools\bench.ps1`. The GUI exposes every effort from 1 through 9.
 Settings store the actual effort rather than its dropdown row; legacy

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/archive_blocks.hpp"
+#include "gpu/dictionary_matcher.hpp"
 
 #include <cstddef>
 #include <span>
@@ -20,6 +21,13 @@ using DictionaryReplacements = std::vector<std::vector<std::byte>>;
 DictionaryReplacements select_dictionary_replacements(std::span<const std::byte> input, const std::byte* device_input,
                                                       std::span<const BlockDescriptor> blocks, int level,
                                                       GpuTelemetry* telemetry);
+
+// Purpose: Improve the complete level-nine GPU portfolio using bounded minimum-byte dictionary trials.
+// Inputs: Exact host/device mirrors, competitive block costs, original dictionary winners and a throwing checkpoint.
+// Outputs: Replaces only proven-smaller complete payloads; preserves every baseline winner and all block CRC semantics.
+void improve_neutron_replacements(std::span<const std::byte> input, const std::byte* device_input,
+                                  std::span<const BlockDescriptor> blocks, DictionaryReplacements& replacements,
+                                  GpuTelemetry* telemetry, const EncodeCheckpoint& checkpoint);
 
 // Purpose: Replace only proven-smaller blocks while preserving source CRC and block order.
 // Inputs: A complete baseline chunk and corresponding optional dictionary payloads.

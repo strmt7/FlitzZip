@@ -503,6 +503,70 @@ function Assert-CompressionEffortSelection {
     Write-Output 'All nine compression effort selections and persistence passed.'
 }
 
+# Purpose: Persist a compression smoke choice through the real draft/apply route.
+# Inputs: Owned GUI handle/DPI and its fixed redirected settings file.
+# Outputs: Waits for the successful Apply event before returning to Compress.
+function Save-CompressionSmokeChoice {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath)
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 6 -Synchronous
+    $logPath = Join-Path (Split-Path -Parent $SettingsPath) 'superzip.log'
+    $length = (Get-Item -LiteralPath $logPath).Length
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 1110 -DesignY 666 -Synchronous
+    Wait-GuiLogEvent -Path $logPath -PreviousLength $length -Message 'Settings applied'
+    Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
+}
+
+# Purpose: Exercise Neutron's separate row, persisted intent and format/policy normalization through real GUI input.
+# Inputs: Owned GUI, redirected settings, actual CLI HIP capability and screenshot destination.
+# Outputs: Requires correct conditional selection and persistence, captures its row, and restores the applied choices.
+function Assert-NeutronSelectionIsolation {
+    param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension)
+    $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
+    $info = & (Join-Path $repo "build/$Configuration/superzip_cli.exe") gpu-info
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect actual HIP capability for Neutron GUI qualification.' }
+    $available = @($info | Where-Object { $_ -ceq 'available=true' }).Count -eq 1
+    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index 0
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 294 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    if ($available) {
+        [void](Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Neutron-Selection$Extension")
+    }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
+    Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected 9
+    Assert-SettingsValue -Path $SettingsPath -Name 'neutronStarMode' -Expected $available
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 294 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
+    Assert-SettingsValue -Path $SettingsPath -Name 'neutronStarMode' -Expected $false
+    Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected 9
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 294 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index 1
+    Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
+    Assert-SettingsValue -Path $SettingsPath -Name 'neutronStarMode' -Expected $false
+    Assert-SettingsValue -Path $SettingsPath -Name 'compressionLevel' -Expected 9
+    Select-CompressFormatIndex -Handle $Handle -Dpi $Dpi -Index $original.compressionFormatIndex
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 500 -DesignY 294 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey $(if ($original.gpuRequired) { 0x24 } else { 0x23 })
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x24
+    for ($row = 1; $row -lt $original.compressionLevel; ++$row) { Invoke-ClientKey -Handle $Handle -VirtualKey 0x28 }
+    Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
+    Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
+    Assert-SettingsValue -Path $SettingsPath -Name 'neutronStarMode' -Expected $false
+    Write-Output "Neutron GUI row and policy/format isolation passed; actual_hip_available=$available."
+}
+
 # Purpose: Verify the applied summary preference changes completion navigation, including a locked-output failure.
 # Inputs: Handle/Dpi identify the owned window; InputPath and Destination are isolated smoke data; SettingsPath is redirected.
 # Outputs: Captures enabled/disabled/failure results, checks output and navigation, then leaves the queue empty and summary off.
@@ -1160,6 +1224,7 @@ try {
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 0
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 542 -BasePath $basePath -Extension $extension
     Assert-CompressionEffortSelection -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile
+    Assert-NeutronSelectionIsolation -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 432

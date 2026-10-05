@@ -128,6 +128,17 @@ void append_segment_offset(std::vector<std::byte>& payload, std::uint32_t offset
     }
 }
 
+// Purpose: Record exact completed dictionary work after its encoder-specific admission has been checked.
+// Inputs: Validated telemetry, borrowed source bytes and optional operation counters.
+// Outputs: Accumulates actual transfers, owned workspace, launches and HIP event time, including discarded trials.
+void record_dictionary_work(const EncodedBatch& encoded, std::size_t input_bytes, GpuTelemetry* telemetry) {
+    record_gpu_h2d_bytes(telemetry, encoded.h2d_bytes);
+    record_gpu_d2h_bytes(telemetry, encoded.d2h_bytes);
+    record_gpu_device_allocation_bytes(telemetry, encoded.device_workspace_bytes - input_bytes);
+    record_gpu_kernel_work(telemetry, encoded.explicit_kernel_launches,
+                           encoded.device_ms.value_or(std::numeric_limits<double>::quiet_NaN()));
+}
+
 // Purpose: Account for the measured work of one dictionary batch using an existing device input buffer.
 // Inputs: Validated packed batch metadata, borrowed input bytes, and optional operation telemetry.
 // Outputs: Adds metadata transfers, allocated workspace, explicit launches, and HIP device time.
@@ -139,11 +150,25 @@ void record_dictionary_batch(const PackedEncodedBatch& batch, std::size_t input_
         encoded.device_workspace_bytes < input_bytes) {
         throw GpuError("borrowed dictionary input recorded an invalid transfer or workspace");
     }
-    record_gpu_h2d_bytes(telemetry, encoded.h2d_bytes);
-    record_gpu_d2h_bytes(telemetry, encoded.d2h_bytes);
-    record_gpu_device_allocation_bytes(telemetry, encoded.device_workspace_bytes - input_bytes);
-    record_gpu_kernel_work(telemetry, encoded.explicit_kernel_launches,
-                           encoded.device_ms.value_or(std::numeric_limits<double>::quiet_NaN()));
+    record_dictionary_work(encoded, input_bytes, telemetry);
+}
+
+// Purpose: Require honest variable-launch telemetry from the staged minimum-byte borrowed-input encoder.
+// Inputs: Completed Neutron batch and its exact nonempty admitted source extent.
+// Outputs: Rejects inconsistent launches, uploads or workspace before accumulating the actual device work.
+void record_neutron_batch(const PackedEncodedBatch& batch, std::size_t input_bytes, GpuTelemetry* telemetry) {
+    const auto segment_bytes = std::min<std::size_t>(input_bytes, kSegmentBytes);
+    const auto search_tiles = (input_bytes + kNeutronSearchTileBytes - 1U) / kNeutronSearchTileBytes;
+    const auto parse_tiles = (segment_bytes + kNeutronParseTilePositions - 1U) / kNeutronParseTilePositions;
+    const auto emit_tiles = (segment_bytes / 4U + kNeutronEmitSequences) / kNeutronEmitSequences;
+    const auto& encoded = batch.telemetry;
+    if (!encoded.gpu_used || encoded.h2d_bytes != 0U ||
+        encoded.explicit_kernel_launches < 6U + search_tiles + parse_tiles ||
+        encoded.explicit_kernel_launches > 5U + search_tiles + parse_tiles + emit_tiles ||
+        encoded.device_workspace_bytes < input_bytes || encoded.device_workspace_bytes > kMaxWorkspaceBytes) {
+        throw GpuError("Neutron dictionary batch recorded inconsistent device work");
+    }
+    record_dictionary_work(encoded, input_bytes, telemetry);
 }
 
 // Purpose: Frame one block's contiguous LZ4 segments only when its complete payload wins.
@@ -175,6 +200,38 @@ std::vector<std::byte> frame_dictionary_candidate(std::span<const std::uint32_t>
     }
     payload.insert(payload.end(), packed.begin(), packed.end());
     return payload;
+}
+
+// Purpose: Compare a complete bounded minimum-byte parse against one block's best existing payload.
+// Inputs: One admitted source/device mirror, baseline full payload bytes, telemetry and cancellation checkpoint.
+// Outputs: Returns a smaller framed dictionary payload or empty; abandons trials that already cannot win.
+std::vector<std::byte> encode_neutron_candidate(std::span<const std::byte> input, const std::byte* device_input,
+                                                std::uint32_t baseline_bytes, GpuTelemetry* telemetry,
+                                                const EncodeCheckpoint& checkpoint) {
+    const auto segment_count = (input.size() + kSegmentBytes - 1U) / kSegmentBytes;
+    const auto table_bytes = (segment_count + 1U) * sizeof(std::uint32_t);
+    if (table_bytes >= baseline_bytes) {
+        return {};
+    }
+    std::vector<std::uint32_t> segment_sizes;
+    std::vector<std::byte> packed;
+    segment_sizes.reserve(segment_count);
+    for (std::size_t offset = 0U; offset < input.size();) {
+        const auto bytes = std::min(kMaxNeutronBatchBytes, input.size() - offset);
+        auto encoded =
+            encode_neutron_segments_from_device_hip(input.subspan(offset, bytes), device_input + offset, checkpoint);
+        record_neutron_batch(encoded, bytes, telemetry);
+        if (encoded.payload.size() >= baseline_bytes - table_bytes - packed.size()) {
+            return {};
+        }
+        segment_sizes.insert(segment_sizes.end(), encoded.segment_sizes.begin(), encoded.segment_sizes.end());
+        packed.insert(packed.end(), encoded.payload.begin(), encoded.payload.end());
+        offset += bytes;
+    }
+    if (segment_sizes.size() != segment_count) {
+        throw GpuError("Neutron candidate segment count differs from its source block");
+    }
+    return frame_dictionary_candidate(segment_sizes, packed, baseline_bytes);
 }
 
 // Purpose: Encode independent 64 KiB segments from borrowed HIP input and admit only a smaller full block.
@@ -333,6 +390,37 @@ DictionaryReplacements select_dictionary_replacements(std::span<const std::byte>
                                 effort, distances, telemetry, std::span(replacements).subspan(first, index - first));
     }
     return replacements;
+}
+
+// Purpose: Retain the complete ordinary portfolio while considering stronger minimum-byte GPU dictionary payloads.
+// Inputs: Exact source/device mirrors, validated block descriptors, existing winners, telemetry and checkpoint.
+// Outputs: Mutates only winning replacement slots; rejects coverage inconsistencies before pointer formation.
+void improve_neutron_replacements(std::span<const std::byte> input, const std::byte* device_input,
+                                  std::span<const BlockDescriptor> blocks, DictionaryReplacements& replacements,
+                                  GpuTelemetry* telemetry, const EncodeCheckpoint& checkpoint) {
+    if (device_input == nullptr || blocks.size() != replacements.size()) {
+        throw GpuError("Neutron replacement inputs are inconsistent");
+    }
+    std::size_t offset = 0U;
+    for (std::size_t index = 0U; index < blocks.size(); ++index) {
+        const auto bytes = static_cast<std::size_t>(blocks[index].uncompressed_len);
+        if (bytes == 0U || offset > input.size() || bytes > input.size() - offset) {
+            throw GpuError("Neutron replacement block exceeds its source chunk");
+        }
+        const auto baseline = replacements[index].empty() ? blocks[index].encoded_len : replacements[index].size();
+        if (baseline > std::numeric_limits<std::uint32_t>::max()) {
+            throw GpuError("Neutron replacement baseline exceeds native block limits");
+        }
+        auto candidate = encode_neutron_candidate(input.subspan(offset, bytes), device_input + offset,
+                                                  static_cast<std::uint32_t>(baseline), telemetry, checkpoint);
+        if (!candidate.empty()) {
+            replacements[index] = std::move(candidate);
+        }
+        offset += bytes;
+    }
+    if (offset != input.size()) {
+        throw GpuError("Neutron replacement blocks do not cover their source chunk");
+    }
 }
 
 // Purpose: Publish only smaller dictionary blocks without changing baseline bytes for other blocks.

@@ -37,6 +37,12 @@ create/extract capabilities and method limits. `.suzip` is a distinct versioned
 format, not a renamed ZIP file; its [format specification](docs/native-suzip-format.md)
 documents compatibility and verification. Unsupported methods fail explicitly.
 
+Native SUZIP also has a separate experimental [Neutron Star Mode](docs/neutron-star-mode-research.md)
+below the nine numeric efforts. It requires a compatible AMD HIP GPU and the
+required-GPU setting; the CLI selects it with `--neutron-star`. Its
+[validation record](docs/neutron-star-mode-validation.md) describes measured
+improvement rounds and their limits.
+
 ## Requirements
 
 Runtime systems need:

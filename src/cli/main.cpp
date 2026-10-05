@@ -105,10 +105,12 @@ void usage() {
         << "  superzip_cli memory-benchmark --size-mib <n> --profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
-        << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
+        << kBlockSizeUsage
+        << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>] [--plan-only]\n"
         << "  superzip_cli memory-benchmark --source-file <file> --source-sha256 <lowercase-hex> [--plan-only] "
            "[--require-gpu|--force-cpu] [--workers <n>] [--block-size-kib <"
-        << kBlockSizeUsage << ">] [--compression-level <1-9>] [--inflight <n>] [--decode-inflight <n>]\n"
+        << kBlockSizeUsage
+        << ">] [--compression-level <1-9>] [--neutron-star] [--inflight <n>] [--decode-inflight <n>]\n"
         << "  superzip_cli benchmark-suite [--size-mib <n>] [--profile "
            "Mixed|Compressible|Incompressible|RepeatedRecord|SparseRecord|LongSparseRecord|SegmentedRecords] "
            "[--workers "
@@ -117,7 +119,7 @@ void usage() {
         << "  superzip_cli compress --format suzip --output <archive> [--require-gpu|--force-cpu] [--workers <n>] "
            "[--inflight <n>] [--block-size-kib <"
         << kBlockSizeUsage
-        << ">] [--compression-level <1-9>] "
+        << ">] [--compression-level <1-9>] [--neutron-star] "
            "[--verify-after-write] [--sha256] [--defender-scan] <path>...\n"
         << "  superzip_cli compress --format "
            "zip|tar|tar.gz|tgz|tar.bz2|tbz|tbz2|tar.zst|tzst|gz|gzip|bz2|bzip2|zst|zstd|z|compress|cpio|cpio.gz|"
@@ -390,6 +392,7 @@ struct CliCompressCommand {
     bool suzip_tuning_requested = false;
     int compression_level = superzip::kDefaultCompressionLevel;
     bool compression_level_requested = false;
+    bool neutron_star = false;
     bool verify_after_write = false;
     bool sha256 = false;
     bool defender_scan = false;
@@ -485,6 +488,8 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
             command.compression_level_requested = true;
         } else if (args[i] == "--verify-after-write") {
             command.verify_after_write = true;
+        } else if (args[i] == "--neutron-star") {
+            command.neutron_star = true;
         } else if (args[i] == "--sha256") {
             command.sha256 = true;
         } else if (args[i] == "--defender-scan") {
@@ -493,6 +498,14 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
             command.sources.push_back(cli_path_argument(args[i]));
         }
     }
+    if (command.neutron_star) {
+        if (command.force_cpu ||
+            (command.compression_level_requested && command.compression_level != superzip::kMaxCompressionLevel)) {
+            throw superzip::ArchiveError("--neutron-star excludes --force-cpu and requires compression level 9");
+        }
+        command.require_gpu = true;
+        command.compression_level = superzip::kMaxCompressionLevel;
+    }
     return command;
 }
 
@@ -500,6 +513,9 @@ CliCompressCommand parse_compress_command(const std::vector<std::string>& args) 
 // Inputs: `archive_format` is concrete and `command` contains parsed compression options, including optional read-back.
 // Outputs: Returns operation statistics; throws for unsupported formats or backend errors.
 superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_format, const CliCompressCommand& command) {
+    if (command.neutron_star && archive_format != superzip::ArchiveFormat::SuperZip) {
+        throw superzip::ArchiveError("Neutron Star Mode is available only for native SUZIP creation");
+    }
     if (command.verify_after_write && archive_format != superzip::ArchiveFormat::SuperZip &&
         archive_format != superzip::ArchiveFormat::Zip) {
         throw superzip::ArchiveError("verify-after-write is currently supported only for SUZIP and ZIP");
@@ -513,6 +529,8 @@ superzip::OperationStats compress_by_format(superzip::ArchiveFormat archive_form
         options.max_inflight_chunks = command.inflight;
         options.block_size = command.block_size;
         options.compression_level = command.compression_level;
+        options.compression_mode = command.neutron_star ? superzip::NativeCompressionMode::NeutronStar
+                                                        : superzip::NativeCompressionMode::Standard;
         options.verify_after_write = command.verify_after_write;
         return superzip::compress_suzip(command.sources, command.output, options);
     }
@@ -881,6 +899,7 @@ std::vector<std::byte> load_memory_benchmark_corpus(const std::filesystem::path&
 int run_memory_benchmark_command(const std::vector<std::string>& args) {
     superzip::cli::MemoryBenchmarkOptions options;
     bool plan_only = false;
+    bool level_requested = false;
     bool generated_geometry = false;
     std::optional<std::filesystem::path> source_file;
     for (std::size_t i = 1; i < args.size(); ++i) {
@@ -915,9 +934,19 @@ int run_memory_benchmark_command(const std::vector<std::string>& args) {
         } else if (args[i] == "--compression-level") {
             options.compression_level = require_int_arg(args, i, "--compression-level", superzip::kMinCompressionLevel,
                                                         superzip::kMaxCompressionLevel);
+            level_requested = true;
+        } else if (args[i] == "--neutron-star") {
+            options.compression_mode = superzip::NativeCompressionMode::NeutronStar;
         } else {
             throw superzip::ArchiveError("unknown memory-benchmark argument: " + args[i]);
         }
+    }
+    if (options.compression_mode == superzip::NativeCompressionMode::NeutronStar) {
+        if (options.force_cpu || (level_requested && options.compression_level != superzip::kMaxCompressionLevel)) {
+            throw superzip::ArchiveError("--neutron-star excludes --force-cpu and requires compression level 9");
+        }
+        options.require_gpu = true;
+        options.compression_level = superzip::kMaxCompressionLevel;
     }
     std::vector<std::byte> source;
     if (source_file) {

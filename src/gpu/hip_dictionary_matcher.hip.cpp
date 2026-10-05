@@ -1,6 +1,7 @@
 #include "gpu/dictionary_matcher.hpp"
 #include "gpu/dictionary_device.hpp"
 #include "gpu/hip_codec_support.hpp"
+#include "gpu/hip_dictionary_optimal.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -260,10 +261,10 @@ __device__ std::uint32_t extend_dictionary_match(const std::byte* input, std::ui
     return length;
 }
 
+template <bool Periodic, bool Neutron = false>
 // Purpose: Search one deterministic predecessor chain with explicit per-position work budgets.
 // Inputs: Immutable source, valid position, selected index data, and bounded effort.
-// Outputs: Returns a verified match up to 8 KiB normally or 32 KiB for periodic input, preserving nearest ties.
-template <bool Periodic>
+// Outputs: Returns a verified match up to 8 KiB normally, 32 KiB for periodic work, or 65,535 bytes for Neutron.
 __device__ Match search_dictionary_position(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
                                             const std::uint16_t* distances, Effort effort, std::uint32_t position) {
     Match best{};
@@ -272,7 +273,8 @@ __device__ Match search_dictionary_position(const std::byte* input, std::uint32_
     if (end - position < kMinMatchBytes) {
         return best;
     }
-    const auto limit = min(Periodic ? kMaxPeriodicMatchBytes : kMaxMatchBytes, end - position);
+    const auto limit =
+        min(Neutron ? kMaxNeutronMatchBytes : (Periodic ? kMaxPeriodicMatchBytes : kMaxMatchBytes), end - position);
     auto candidate = predecessor_at<Periodic>(input, size, position, previous, distances);
     while (candidate < position && candidate >= segment_start && best.length < limit &&
            best.candidates_examined < effort.max_candidates && best.bytes_compared < effort.max_byte_comparisons) {
@@ -302,6 +304,18 @@ __global__ void search_dictionary_matches(const std::byte* input, std::uint32_t 
     const auto position = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
     if (position < size) {
         matches[position] = search_dictionary_position<false>(input, size, previous, nullptr, effort, position);
+    }
+}
+
+// Purpose: Materialize deeper verified matches in a bounded launch rather than one unbounded whole-input search.
+// Inputs: Exact predecessor links, admitted source and a tile of at most 4096 positions.
+// Outputs: Writes one verified match per tile byte; sixteen-bit work counters cannot overflow their fixed budgets.
+__global__ void search_neutron_matches(const std::byte* input, std::uint32_t size, const std::uint32_t* previous,
+                                       std::uint32_t first, std::uint32_t count, Match* matches) {
+    const auto offset = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    if (offset < count) {
+        matches[first + offset] = search_dictionary_position<false, true>(
+            input, size, previous, nullptr, {.max_candidates = 1024U, .max_byte_comparisons = 65535U}, first + offset);
     }
 }
 
@@ -585,6 +599,49 @@ auto with_selected_index(std::span<const std::byte> input, std::size_t consumer_
     return with_dictionary_index(input, consumer_bytes, consume, borrowed_device_input);
 }
 
+// Purpose: Compact validated device segments and preserve exact resource and event telemetry.
+// Inputs: Complete output slots, device sizes, downloaded sizes and an admitted reusable packed allocation.
+// Outputs: Returns only used bytes in segment order; rejects capacity mismatches before host output allocation.
+PackedEncodedBatch finish_encoded_dictionary(const std::byte* output, const std::uint32_t* sizes,
+                                             std::span<const std::uint32_t> host_sizes, std::byte* packed_device,
+                                             std::size_t packed_capacity, const MatchBatch& metadata,
+                                             std::optional<double> encode_ms, std::uint32_t kernel_launches,
+                                             std::size_t downloaded_size_bytes) {
+    std::size_t packed_bytes = 0U;
+    for (const auto encoded_size : host_sizes) {
+        if (encoded_size == 0U || encoded_size > kEncodedSegmentCapacity) {
+            throw GpuError("dictionary encoder exceeded its segment capacity");
+        }
+        packed_bytes = checked_add_bytes(packed_bytes, encoded_size, "dictionary packed payload");
+    }
+    if (packed_bytes > packed_capacity) {
+        throw GpuError("dictionary packed payload exceeds the reserved device buffer");
+    }
+    auto compact_events = make_hip_event_pair("create dictionary compact timing events");
+    launch_measured_kernel(compact_dictionary_segments, static_cast<unsigned int>(host_sizes.size()), kThreads, 0,
+                           hipStreamPerThread, compact_events, "launch dictionary compaction", output, sizes,
+                           static_cast<std::uint32_t>(host_sizes.size()), packed_device);
+    const auto compact_ms = finish_dictionary_stage(compact_events);
+    std::vector<std::byte> packed(packed_bytes);
+    check_hip(copy_on_codec_stream(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
+              "download packed dictionary blocks");
+    PackedEncodedBatch result;
+    result.telemetry.device_workspace_bytes = metadata.device_workspace_bytes;
+    result.telemetry.h2d_bytes = metadata.h2d_bytes;
+    result.telemetry.d2h_bytes = downloaded_size_bytes + packed_bytes;
+    result.telemetry.index_ms = metadata.index_ms;
+    result.telemetry.encode_ms = encode_ms;
+    result.telemetry.compact_ms = compact_ms;
+    if (encode_ms && compact_ms && (metadata.primitive_version == 0U || metadata.index_ms)) {
+        result.telemetry.device_ms = metadata.index_ms.value_or(0.0) + *encode_ms + *compact_ms;
+    }
+    result.telemetry.explicit_kernel_launches = kernel_launches;
+    result.telemetry.gpu_used = true;
+    result.payload = std::move(packed);
+    result.segment_sizes.assign(host_sizes.begin(), host_sizes.end());
+    return result;
+}
+
 }  // namespace
 
 // Purpose: Download diagnostic matches from the shared HIP dictionary search.
@@ -659,49 +716,177 @@ PackedEncodedBatch encode_segments_hip_impl(std::span<const std::byte> input, co
             std::vector<std::uint32_t> host_sizes(segment_count);
             check_hip(copy_on_codec_stream(host_sizes.data(), sizes, sizes_bytes, hipMemcpyDeviceToHost),
                       "download dictionary encoded sizes");
-            std::size_t packed_bytes = 0U;
-            for (const auto encoded_size : host_sizes) {
-                if (encoded_size == 0U || encoded_size > kEncodedSegmentCapacity) {
-                    throw GpuError("dictionary encoder exceeded its segment capacity");
-                }
-                packed_bytes = checked_add_bytes(packed_bytes, encoded_size, "dictionary packed payload");
-            }
-            if (packed_bytes > packed_capacity) {
-                throw GpuError("dictionary packed payload exceeds the reserved device buffer");
-            }
-            auto compact_events = make_hip_event_pair("create dictionary compact timing events");
-            launch_measured_kernel(compact_dictionary_segments, static_cast<unsigned int>(segment_count), kThreads, 0,
-                                   hipStreamPerThread, compact_events, "launch dictionary compaction", output, sizes,
-                                   static_cast<std::uint32_t>(segment_count), packed_device);
-            const auto compact_ms = finish_dictionary_stage(compact_events);
-            std::vector<std::byte> packed(packed_bytes);
-            check_hip(copy_on_codec_stream(packed.data(), packed_device, packed_bytes, hipMemcpyDeviceToHost),
-                      "download packed dictionary blocks");
-            PackedEncodedBatch result;
-            result.telemetry.device_workspace_bytes = metadata.device_workspace_bytes;
-            result.telemetry.h2d_bytes = metadata.h2d_bytes;
-            result.telemetry.d2h_bytes = sizes_bytes + packed_bytes;
-            result.telemetry.index_ms = metadata.index_ms;
-            result.telemetry.encode_ms = encode_ms;
-            result.telemetry.compact_ms = compact_ms;
-            if (encode_ms && compact_ms && (periodic_distances.size() != 0U || metadata.index_ms)) {
-                result.telemetry.device_ms = metadata.index_ms.value_or(0.0) + *encode_ms + *compact_ms;
-            }
-            result.telemetry.explicit_kernel_launches = periodic_distances.empty() ? 4U : 2U;
-            result.telemetry.gpu_used = true;
-            result.payload = std::move(packed);
-            result.segment_sizes = std::move(host_sizes);
+            auto result = finish_encoded_dictionary(output, sizes, host_sizes, packed_device, packed_capacity, metadata,
+                                                    encode_ms, periodic_distances.empty() ? 4U : 2U, sizes_bytes);
             encode_buffers.reset_checked("free dictionary encoded buffers");
             return result;
         },
         borrowed_device_input, periodic_distances);
 }
 
-// Purpose: Preserve the standalone dictionary encoder's owned-upload contract.
-// Inputs: Validated source and effort.
-// Outputs: Returns independent LZ4 blocks with one owned host-to-device source upload.
-EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort) {
-    auto packed = encode_segments_hip_impl(input, effort, nullptr, {});
+struct NeutronShape {
+    std::size_t segments;
+    std::size_t tree_bytes;
+    std::size_t match_bytes;
+    std::size_t decision_bytes;
+    std::size_t cursor_bytes;
+    std::size_t size_bytes;
+    std::size_t output_bytes;
+    std::size_t total_bytes;
+};
+
+// Purpose: Admit every transient optimal-parse allocation before the index reserves GPU memory.
+// Inputs: Nonempty source bounded by the Neutron batch limit.
+// Outputs: Returns exact checked byte extents; the shared index also counts source, sorting and packed output.
+NeutronShape neutron_shape(std::size_t input_bytes) {
+    const auto segments = (input_bytes + kSegmentBytes - 1U) / kSegmentBytes;
+    NeutronShape shape{
+        .segments = segments,
+        .tree_bytes =
+            checked_multiply_bytes(segments, (optimal::kTreeWords + optimal::kResidueTreeWords) * sizeof(std::uint64_t),
+                                   "Neutron parse trees"),
+        .match_bytes = checked_multiply_bytes(input_bytes, sizeof(Match), "Neutron matches"),
+        .decision_bytes = checked_multiply_bytes(input_bytes, 3U * sizeof(std::uint32_t), "Neutron decisions"),
+        .cursor_bytes = checked_multiply_bytes(segments, sizeof(optimal::EmitCursor), "Neutron cursors"),
+        .size_bytes = checked_multiply_bytes(segments, sizeof(std::uint32_t), "Neutron sizes"),
+        .output_bytes = checked_multiply_bytes(segments, kEncodedSegmentCapacity, "Neutron output"),
+        .total_bytes = 0U};
+    for (const auto bytes : {shape.tree_bytes, shape.match_bytes, shape.decision_bytes, shape.cursor_bytes,
+                             shape.size_bytes, shape.output_bytes}) {
+        shape.total_bytes = checked_add_bytes(shape.total_bytes, bytes, "Neutron consumer workspace");
+    }
+    return shape;
+}
+
+struct NeutronWorkspace {
+    HipDeviceBuffer<std::uint64_t> trees;
+    HipDeviceBuffer<Match> matches;
+    HipDeviceBuffer<std::uint32_t> decisions;
+    HipDeviceBuffer<optimal::EmitCursor> cursors;
+    HipDeviceBuffer<std::uint32_t> sizes;
+    HipDeviceBuffer<std::byte> output;
+    optimal::State state;
+
+    // Purpose: Own independently aligned buffers under the index's aggregate memory reservation.
+    // Inputs: Exact admitted shape and source byte count.
+    // Outputs: Allocates all state or releases earlier allocations on failure; no source ownership is retained.
+    NeutronWorkspace(const NeutronShape& shape, std::size_t input_bytes)
+        : trees(shape.tree_bytes, "allocate Neutron parse trees"),
+          matches(shape.match_bytes, "allocate Neutron matches"),
+          decisions(shape.decision_bytes, "allocate Neutron decisions"),
+          cursors(shape.cursor_bytes, "allocate Neutron cursors"), sizes(shape.size_bytes, "allocate Neutron sizes"),
+          output(shape.output_bytes, "allocate Neutron output"),
+          state{.matches = matches.get(),
+                .suffix_tree = trees.get(),
+                .residue_tree = trees.get() + shape.segments * optimal::kTreeWords,
+                .match_costs = decisions.get(),
+                .match_ends = decisions.get() + input_bytes,
+                .next_matches = decisions.get() + 2U * input_bytes} {}
+
+    // Purpose: Surface successful-operation release failures before payload publication.
+    // Inputs: Completed synchronized work; automatic destruction still owns any buffers remaining after an error.
+    // Outputs: Releases all transient state with checked HIP calls before the aggregate reservation is returned.
+    void release_checked() {
+        output.reset_checked("free Neutron output");
+        sizes.reset_checked("free Neutron sizes");
+        cursors.reset_checked("free Neutron cursors");
+        decisions.reset_checked("free Neutron decisions");
+        matches.reset_checked("free Neutron matches");
+        trees.reset_checked("free Neutron trees");
+    }
+};
+
+struct NeutronRun {
+    std::optional<double> milliseconds = 0.0;
+    std::uint32_t launches = 0U;
+    std::size_t downloaded_size_bytes = 0U;
+};
+
+template <typename Kernel, typename... Args>
+// Purpose: Bound cancellation latency to one measured launch and preserve unavailable event timing.
+// Inputs: Admitted kernel/arguments, a shared stage accumulator and an optional throwing checkpoint.
+// Outputs: Synchronizes before the next launch, accumulates real event time and counts the executed kernel.
+void run_neutron_stage(NeutronRun& run, const EncodeCheckpoint& checkpoint, Kernel kernel, unsigned int blocks,
+                       Args... args) {
+    if (checkpoint) {
+        checkpoint();
+    }
+    auto events = make_hip_event_pair("create Neutron stage events");
+    launch_measured_kernel(kernel, blocks, kThreads, 0, hipStreamPerThread, events, "launch Neutron stage", args...);
+    const auto elapsed = finish_dictionary_stage(events);
+    run.milliseconds = run.milliseconds && elapsed ? std::optional<double>{*run.milliseconds + *elapsed} : std::nullopt;
+    ++run.launches;
+}
+
+// Purpose: Execute deeper matches, exact parsing and incremental output entirely on HIP.
+// Inputs: Borrowed device source/index and fully admitted workspace; host checks only sizes and cancellation.
+// Outputs: Returns completed segment lengths and real launch/timing/transfer accounting or throws.
+std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const std::uint32_t* previous,
+                                               std::uint32_t input_bytes, const NeutronShape& shape,
+                                               NeutronWorkspace& workspace, NeutronRun& run,
+                                               const EncodeCheckpoint& checkpoint) {
+    const auto segments = static_cast<unsigned int>(shape.segments);
+    run_neutron_stage(run, checkpoint, optimal::initialize, segments, workspace.state);
+    for (std::uint32_t first = 0U; first < input_bytes; first += optimal::kSearchPositionsPerLaunch) {
+        const auto count = std::min(optimal::kSearchPositionsPerLaunch, input_bytes - first);
+        run_neutron_stage(run, checkpoint, search_neutron_matches, (count + kThreads - 1U) / kThreads, source,
+                          input_bytes, previous, first, count, workspace.matches.get());
+    }
+    const auto segment_bytes = std::min(input_bytes, kSegmentBytes);
+    for (auto end = segment_bytes; end != 0U;) {
+        run_neutron_stage(run, checkpoint, optimal::parse_tile, segments, workspace.state, input_bytes, end);
+        end = end > optimal::kPositionsPerLaunch ? end - optimal::kPositionsPerLaunch : 0U;
+    }
+    run_neutron_stage(run, checkpoint, optimal::initialize_writers, 1U, workspace.cursors.get(), workspace.sizes.get(),
+                      segments);
+    std::vector<std::uint32_t> host_sizes(shape.segments);
+    const auto maximum_launches =
+        (segment_bytes / 4U + 1U + optimal::kSequencesPerLaunch - 1U) / optimal::kSequencesPerLaunch;
+    for (std::uint32_t tile = 0U; tile < maximum_launches; ++tile) {
+        run_neutron_stage(run, checkpoint, optimal::emit_tile, segments, source, input_bytes, workspace.state,
+                          workspace.output.get(), workspace.cursors.get(), workspace.sizes.get());
+        check_hip(
+            copy_on_codec_stream(host_sizes.data(), workspace.sizes.get(), shape.size_bytes, hipMemcpyDeviceToHost),
+            "download Neutron writer status");
+        run.downloaded_size_bytes += shape.size_bytes;
+        if (std::all_of(host_sizes.begin(), host_sizes.end(), [](auto bytes) { return bytes != 0U; })) {
+            return host_sizes;
+        }
+    }
+    throw GpuError("Neutron segment writer exceeded its admitted sequence count");
+}
+
+// Purpose: Reuse the exact-prefix index and aggregate admission for a stronger minimum-byte segment encoder.
+// Inputs: Admitted nonempty source, optional borrowed HIP mirror and cancellation checkpoint.
+// Outputs: Returns contiguous LZ4 segments; all allocations unwind before the index reservation is released.
+PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> input,
+                                                    const std::byte* borrowed_device_input,
+                                                    const EncodeCheckpoint& checkpoint) {
+    const auto shape = neutron_shape(input.size());
+    return with_dictionary_index(
+        input, shape.total_bytes,
+        [&](const std::byte* source, const std::uint32_t* previous, const std::uint16_t*, std::byte* packed,
+            std::size_t packed_capacity, const MatchBatch& metadata) {
+            NeutronWorkspace workspace(shape, input.size());
+            NeutronRun run;
+            const auto sizes = run_neutron_encoder(source, previous, static_cast<std::uint32_t>(input.size()), shape,
+                                                   workspace, run, checkpoint);
+            if (checkpoint) {
+                checkpoint();
+            }
+            auto result =
+                finish_encoded_dictionary(workspace.output.get(), workspace.sizes.get(), sizes, packed, packed_capacity,
+                                          metadata, run.milliseconds, run.launches + 3U, run.downloaded_size_bytes);
+            workspace.release_checked();
+            return result;
+        },
+        borrowed_device_input);
+}
+
+// Purpose: Expose contiguous downloaded dictionary payloads as independent diagnostic segments.
+// Inputs: Exact source extent and an already validated packed result.
+// Outputs: Returns unchanged telemetry and bounded per-segment owned payloads.
+EncodedBatch unpack_dictionary_batch(std::span<const std::byte> input, PackedEncodedBatch packed) {
     auto result = std::move(packed.telemetry);
     result.segments.reserve(packed.segment_sizes.size());
     std::size_t offset = 0U;
@@ -716,6 +901,35 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
         result.segments.push_back(std::move(segment));
     }
     return result;
+}
+
+// Purpose: Preserve the ordinary standalone dictionary encoder's owned-upload contract.
+// Inputs: Validated source and effort.
+// Outputs: Returns independent LZ4 blocks with one owned host-to-device source upload.
+EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort) {
+    return unpack_dictionary_batch(input, encode_segments_hip_impl(input, effort, nullptr, {}));
+}
+
+// Purpose: Expose the bounded minimum-byte encoder through the same independent-segment diagnostic contract.
+// Inputs: Admitted source and optional throwing checkpoint.
+// Outputs: Returns complete GPU segments with one owned upload and no CPU parse.
+EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint) {
+    return unpack_dictionary_batch(input, encode_neutron_segments_hip_impl(input, nullptr, checkpoint));
+}
+
+// Purpose: Admit the production borrowed-input boundary before any stronger search or parse allocation.
+// Inputs: Nonempty bounded host/device mirrors and optional throwing checkpoint.
+// Outputs: Returns complete GPU segments or rejects invalid spans; CPU fallback is never used.
+PackedEncodedBatch encode_neutron_segments_from_device_hip(std::span<const std::byte> input,
+                                                           const std::byte* device_input,
+                                                           const EncodeCheckpoint& checkpoint) {
+    if (input.empty() || input.size() > kMaxNeutronBatchBytes || device_input == nullptr) {
+        throw GpuError("Neutron dictionary device encoding request is invalid");
+    }
+    if (checkpoint) {
+        checkpoint();
+    }
+    return encode_neutron_segments_hip_impl(input, device_input, checkpoint);
 }
 
 // Purpose: Encode a production candidate from bytes already uploaded by the native HIP pipeline.

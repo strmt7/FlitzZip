@@ -696,9 +696,9 @@ void draw_nav_icon(HDC dc, Page page, const RECT& rect, COLORREF color) {
 
 // Purpose: Return whether the copied GPU status represents an active AMD HIP backend.
 // Inputs: `state` is the copied UI state.
-// Outputs: Returns true when the status string reports AMD HIP readiness.
+// Outputs: Returns the actual cached backend capability, independent of display text.
 bool gpu_ready(const UiState& state) {
-    return state.gpu_status.find("AMD HIP ready") != std::string::npos;
+    return state.gpu_available;
 }
 
 }  // namespace superzip::app

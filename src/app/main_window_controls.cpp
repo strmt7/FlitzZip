@@ -190,11 +190,11 @@ void MainWindow::draw_active_dropdown(HDC dc, const RECT& content, const UiState
     if (state.active_dropdown == DropdownId::None) {
         return;
     }
-    const auto options = dropdown_options(state.active_dropdown);
+    const auto options = dropdown_options(state.active_dropdown, state);
     if (options.empty()) {
         return;
     }
-    const auto layout = dropdown_layout(state.active_dropdown, content);
+    const auto layout = dropdown_layout(state.active_dropdown, content, static_cast<int>(options.size()));
     const RECT menu = layout.menu;
     if (menu.right <= menu.left || menu.bottom <= menu.top) {
         return;
@@ -298,16 +298,23 @@ RECT MainWindow::dropdown_anchor_rect(DropdownId id, const RECT& content) const 
 // Purpose: Resolve the overlay menu rectangle for a dropdown.
 // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
 // Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
-RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) const {
-    return dropdown_layout(id, content).menu;
+RECT MainWindow::dropdown_menu_rect(DropdownId id, const RECT& content) {
+    return dropdown_layout(id, content, dropdown_option_count(id)).menu;
+}
+
+// Purpose: Read the actual available row count without copying unrelated history or queue state.
+// Inputs: Dropdown ID; callers must not hold the UI state mutex.
+// Outputs: Returns the synchronized number of selectable options.
+int MainWindow::dropdown_option_count(DropdownId id) {
+    std::lock_guard lock(mutex_);
+    return static_cast<int>(dropdown_options(id, state_).size());
 }
 
 // Purpose: Resolve bounded popup rows from shared geometry.
-// Inputs: id identifies the options and anchor; content is the physical page viewport.
+// Inputs: id identifies the anchor; content is the physical viewport; option_count comes from the same UI snapshot.
 // Outputs: Returns contained rows and optional scroll-arrow bands.
-DropdownLayout MainWindow::dropdown_layout(DropdownId id, const RECT& content) const {
-    const auto options = dropdown_options(id);
-    return make_dropdown_layout(dropdown_anchor_rect(id, content), content, dpi_, static_cast<int>(options.size()),
+DropdownLayout MainWindow::dropdown_layout(DropdownId id, const RECT& content, int option_count) const {
+    return make_dropdown_layout(dropdown_anchor_rect(id, content), content, dpi_, option_count,
                                 dropdown_scroll_first_row_);
 }
 

@@ -16,6 +16,7 @@ namespace superzip::app {
 constexpr int kDefaultCompressionBlockSizeIndex = 5;
 constexpr int kCompressionLevelOptionCount = kMaxCompressionLevel - kMinCompressionLevel + 1;
 constexpr int kDefaultCompressionLevelIndex = kDefaultCompressionLevel - kMinCompressionLevel;
+constexpr int kNeutronCompressionLevelIndex = kCompressionLevelOptionCount;
 
 enum class Page {
     Queue,
@@ -184,6 +185,7 @@ struct UiState {
     std::vector<LogEntry> logs;
     std::string status = "Ready";
     std::string gpu_status;
+    bool gpu_available = false;
     std::string gpu_runtime_name;
     std::string gpu_device_name;
     std::string gpu_arch;

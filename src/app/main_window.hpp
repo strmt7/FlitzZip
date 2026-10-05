@@ -685,10 +685,11 @@ class MainWindow {
     // Purpose: Resolve the overlay menu rectangle for a dropdown.
     // Inputs: `id` identifies the dropdown and `content` is the current content rectangle.
     // Outputs: Returns a DPI-scaled menu rectangle positioned inside the content area.
-    [[nodiscard]] RECT dropdown_menu_rect(DropdownId id, const RECT& content) const;
+    [[nodiscard]] RECT dropdown_menu_rect(DropdownId id, const RECT& content);
 
     // Purpose: Share popup rows and scrolling geometry; inputs: dropdown and viewport; outputs: bounded layout.
-    [[nodiscard]] DropdownLayout dropdown_layout(DropdownId id, const RECT& content) const;
+    [[nodiscard]] DropdownLayout dropdown_layout(DropdownId id, const RECT& content, int option_count) const;
+    [[nodiscard]] int dropdown_option_count(DropdownId id);
 
     // Purpose: Reveal keyboard selection; inputs: active dropdown; outputs: updates bounded scroll offset.
     void reveal_dropdown_selection(DropdownId id);

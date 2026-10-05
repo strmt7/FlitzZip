@@ -866,6 +866,12 @@ an empty alert list never justifies weakening them.
   specific. Persist the effort value, not the row index; migrate legacy five-row
   settings without changing their selected effort. Unsupported tuning remains
   disabled rather than implying compression in an uncompressed container.
+  Neutron Star Mode is a separate native SUZIP mode below those nine rows. Show
+  it only for actual cached HIP availability and the required-GPU preference;
+  persist its intent separately from the numeric effort. Keep its algorithms,
+  benchmark evidence and tuning separate from numeric levels. Transfer an
+  improvement to another level only after controlled evidence establishes both
+  smaller complete archives and higher speed at that level without regressions.
 - Dropdown arrows must be vertically centered in their value boxes and use one
   consistent shape and inset throughout the app.
 - Live graph axis labels must render as plain top-layer text over the graph;

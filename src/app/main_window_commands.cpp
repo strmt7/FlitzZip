@@ -500,7 +500,7 @@ void MainWindow::cycle_compression_level() {
     {
         std::lock_guard lock(mutex_);
         state_.compression_level_index =
-            compression_level_value(state_.compression_level_index) % kCompressionLevelOptionCount;
+            (state_.compression_level_index + 1) % compression_selection_count(neutron_selection_available(state_));
         state_.status = "Compression level changed";
     }
     request_repaint();
@@ -517,6 +517,7 @@ void MainWindow::start_compress() {
     bool verify_after_write = false;
     std::uint32_t block_size = superzip::kDefaultArchiveBlockBytes;
     int compression_level = superzip::kDefaultCompressionLevel;
+    NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
     ArchiveFormat archive_format = ArchiveFormat::SuperZip;
     std::filesystem::path output;
     std::filesystem::path destination_to_open;
@@ -534,6 +535,9 @@ void MainWindow::start_compress() {
         verify_after_write = state_.verify_after_write_opt_in;
         block_size = compression_block_size_bytes(state_.compression_block_size_index);
         compression_level = compression_level_value(state_.compression_level_index);
+        compression_mode = state_.compression_level_index == kNeutronCompressionLevelIndex
+                               ? NativeCompressionMode::NeutronStar
+                               : NativeCompressionMode::Standard;
         archive_format = compression_format_value(state_.compression_format_index);
         output = compression_output_path_for(state_);
         destination_to_open = operation_destination_path(OperationKind::Compress, output,
@@ -549,12 +553,12 @@ void MainWindow::start_compress() {
     }
     run_job(
         [this, sources, output, archive_format, gpu_required, integrity, defender, verify_after_write, block_size,
-         compression_level] {
+         compression_level, compression_mode] {
             auto progress_callback = [this](const ProgressSnapshot& snapshot) {
                 publish_progress_snapshot_or_cancel(snapshot);
             };
             const auto stats = compress_gui_archive(sources, output, archive_format, gpu_required, verify_after_write,
-                                                    block_size, compression_level, progress_callback);
+                                                    block_size, compression_level, compression_mode, progress_callback);
             std::ostringstream line;
             line << "Compressed " << archive_format_info(archive_format).key << " to " << path_diagnostic_utf8(output)
                  << " in " << stats.seconds << "s";

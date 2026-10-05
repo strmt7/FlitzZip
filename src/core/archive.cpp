@@ -186,15 +186,6 @@ void validate_archive_options(std::uint64_t chunk_size, std::uint32_t block_size
     }
 }
 
-// Purpose: Validate the shared native CPU codec effort before any block work.
-// Inputs: `compression_level` is the caller-selected product level.
-// Outputs: Returns for supported levels one through nine; throws `ArchiveError` otherwise.
-void validate_compression_level(int compression_level) {
-    if (compression_level < kMinCompressionLevel || compression_level > kMaxCompressionLevel) {
-        throw ArchiveError("compression level must be between 1 and 9");
-    }
-}
-
 // Purpose: Read a bounded chunk from an input file.
 // Inputs: `input` is an open binary stream and `max_bytes` is the maximum byte count to allocate/read.
 // Outputs: Returns the bytes read, possibly fewer at EOF; throws `ArchiveError` on read failure.
@@ -783,6 +774,10 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
         .block_size = options.block_size,
         .worker_count = resolve_codec_worker_count(budget, entry_chunks),
         .compression_level = options.compression_level,
+        .compression_mode = options.compression_mode,
+        .encode_checkpoint = options.compression_mode == NativeCompressionMode::NeutronStar
+                                 ? make_cancellation_checkpoint(progress, progress_callback)
+                                 : ProgressCheckpoint{},
         .telemetry = gpu_telemetry,
     };
 
@@ -847,9 +842,13 @@ std::uint32_t required_archive_version(const ArchiveIndex& index) {
 // on invalid inputs, resource limits, cancellation, codec/verification failure, or write failure.
 OperationStats compress_suzip(const std::vector<std::filesystem::path>& sources,
                               const std::filesystem::path& output_archive, const CompressOptions& options,
-                              const ProgressCallback& progress_callback) {
+                              const ProgressCallback& callback) {
     validate_archive_options(options.chunk_size, options.block_size, options.worker_count, options.max_inflight_chunks);
-    validate_compression_level(options.compression_level);
+    validate_native_compression_policy(options.compression_mode, options.compression_level, options.gpu_required,
+                                       options.force_cpu);
+    const auto progress_callback = options.compression_mode == NativeCompressionMode::NeutronStar
+                                       ? serialize_progress_callback(callback)
+                                       : callback;
     const auto budget =
         resolve_pipeline_budget(options.chunk_size, options.worker_count, options.max_inflight_chunks, &options);
     const auto gpu_telemetry = std::make_shared<GpuTelemetry>();

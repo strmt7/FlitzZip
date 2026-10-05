@@ -18,6 +18,7 @@ struct CompressOptions {
     std::uint32_t worker_count = 0;         // Aggregate codec worker limit; zero selects host capacity.
     std::uint32_t max_inflight_chunks = 0;  // Queue upper bound, also limited by workers and admitted host memory.
     int compression_level = kDefaultCompressionLevel;
+    NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
     bool verify_after_write = false;
 };
 

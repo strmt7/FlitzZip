@@ -1282,8 +1282,12 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
                 competitive_blocks[index].encoded_len = static_cast<std::uint32_t>(sparse_replacements[index].size());
             }
         }
-        const auto dictionary_replacements = dictionary::select_dictionary_replacements(
+        auto dictionary_replacements = dictionary::select_dictionary_replacements(
             input, device_input.get(), competitive_blocks, options.compression_level, telemetry);
+        if (options.compression_mode == NativeCompressionMode::NeutronStar) {
+            dictionary::improve_neutron_replacements(input, device_input.get(), competitive_blocks,
+                                                     dictionary_replacements, telemetry, options.encode_checkpoint);
+        }
         record_encode_phase(telemetry, GpuEncodeStage::Dictionary, phase_started);
         const bool has_dictionary = std::ranges::any_of(
             dictionary_replacements, [](const std::vector<std::byte>& replacement) { return !replacement.empty(); });

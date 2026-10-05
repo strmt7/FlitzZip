@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -116,12 +117,24 @@ struct GpuTelemetry {
     std::array<std::atomic<std::uint64_t>, kOwnedDecodeStageCount> owned_decode_stage_worker_microseconds{};
 };
 
+enum class NativeCompressionMode : std::uint8_t {
+    Standard,
+    NeutronStar,
+};
+
+// Purpose: Admit native effort/mode policy before encoding, allocation or publication.
+// Inputs: Explicit mode, level and backend policy, including direct API calls.
+// Outputs: Rejects invalid modes and any Neutron request that could encode on CPU or use a weaker effort.
+void validate_native_compression_policy(NativeCompressionMode mode, int level, bool require_gpu, bool force_cpu);
+
 struct GpuCodecOptions {
     bool require_gpu = true;
     bool force_cpu = false;
     std::uint32_t block_size = kDefaultArchiveBlockBytes;
     std::uint32_t worker_count = 1;
     int compression_level = kDefaultCompressionLevel;
+    NativeCompressionMode compression_mode = NativeCompressionMode::Standard;
+    std::function<void()> encode_checkpoint;
     std::shared_ptr<GpuTelemetry> telemetry;
     std::shared_ptr<HipHostOutputPool> host_output_pool;
 };

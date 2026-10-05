@@ -109,24 +109,6 @@ public static class SuperZipProcessIoCounters
     $script:ProcessIoCountersAvailable = $false
 }
 
-# Purpose: Parse one stable `superzip_cli` key/value statistics line.
-# Inputs: Line contains measured seconds or an explicit plan_only=true admission record.
-# Outputs: Returns a dictionary of parsed keys and values.
-function ConvertFrom-StatsLine {
-    param([Parameter(Mandatory = $true)][string]$Line)
-    $result = @{}
-    foreach ($part in ($Line -split "\s+")) {
-        $pair = $part -split "=", 2
-        if ($pair.Count -eq 2) {
-            $result[$pair[0]] = $pair[1]
-        }
-    }
-    if (-not $result.ContainsKey("seconds") -and $result['plan_only'] -ne 'true') {
-        throw "CLI did not emit an operation statistics line: $Line"
-    }
-    return $result
-}
-
 # Purpose: Quote one Windows command-line argument for `ProcessStartInfo.Arguments`.
 # Inputs: `Value` is one exact command-line argument.
 # Outputs: Returns a string that the Windows C runtime parses back to the same argument.
@@ -879,6 +861,16 @@ function Assert-BytewiseBenchmarkValidation {
     }
 }
 
+# Purpose: Keep numeric-level measurements separate from Neutron research evidence.
+# Inputs: A current native CLI planning or measured statistics record.
+# Outputs: Throws unless its explicitly reported compression mode is standard.
+function Assert-StandardBenchmarkMode {
+    param([Parameter(Mandatory = $true)][hashtable]$Stats)
+    if ($Stats['compression_mode'] -cne 'standard') {
+        throw 'The numeric-level benchmark protocol requires compression_mode=standard; Neutron must use separate evidence.'
+    }
+}
+
 # Purpose: Execute one memory-only benchmark lane and enforce expected GPU usage.
 # Inputs: `Lane` is the display name, `ModeFlag` is `--force-cpu` or `--require-gpu`, and `BlockSizeKiB` selects the production archive block size.
 # Outputs: Returns measured compress/verify/extract statistics without creating benchmark files.
@@ -893,11 +885,13 @@ function Invoke-MemoryBenchmarkLane {
     if ($null -eq $geometry) { throw "No frozen admission plan for ${Lane}:$BlockSizeKiB." }
     $arguments = @(Get-MemoryBenchmarkArgument -ModeFlag $ModeFlag -BlockSizeKiB $BlockSizeKiB -Geometry $geometry)
     $preflight = Invoke-SuperZipStat -Arguments @($arguments + '--plan-only')
+    Assert-StandardBenchmarkMode -Stats $preflight
     Assert-BenchmarkGeometry -Stats $preflight -Expected $geometry -PlanOnly
     $observation = Invoke-FrozenMemoryBenchmark -Arguments $arguments -Expected $script:BenchmarkArtifactState `
         -RepositoryRoot $repo -BinaryPath $cli -JournalPath $script:BenchmarkJournalPath `
         -JournalContext @{ lane = $Lane; block_size_kib = $BlockSizeKiB; iteration = $Iteration }
     $stats = $observation.Stats
+    Assert-StandardBenchmarkMode -Stats $stats
     Assert-BenchmarkGeometry -Stats $stats -Expected $geometry
 
     $expectedGpu = if ($ModeFlag -eq "--require-gpu") { "true" } else { "false" }

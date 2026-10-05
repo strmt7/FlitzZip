@@ -28,7 +28,10 @@ void MainWindow::initialize_settings() {
         {
             std::lock_guard lock(mutex_);
             apply_settings_to_state(applied_settings_, state_);
-            state_.status = "Settings loaded";
+            if (applied_settings_.compression_level_index == state_.compression_level_index) {
+                state_.status = "Settings loaded";
+            }
+            applied_settings_ = settings_from_state(state_);
         }
         reset_performance_timer(applied_settings_.performance_update_seconds);
         write_settings_file(settings_file_path(), applied_settings_);

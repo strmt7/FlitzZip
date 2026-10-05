@@ -16,6 +16,18 @@ foreach ($definition in $definitions) {
     . ([scriptblock]::Create($definition.Extent.Text))
 }
 
+Assert-StandardBenchmarkMode -Stats @{ compression_mode = 'standard' }
+foreach ($mode in @('neutron_star', 'unknown', 'Standard', '')) {
+    $rejectedMode = $false
+    try { Assert-StandardBenchmarkMode -Stats @{ compression_mode = $mode } }
+    catch { $rejectedMode = $_.Exception.Message -match 'Neutron must use separate evidence' }
+    if (-not $rejectedMode) { throw "Numeric-level protocol accepted an unsupported compression mode: $mode" }
+}
+$missingModeRejected = $false
+try { Assert-StandardBenchmarkMode -Stats @{} }
+catch { $missingModeRejected = $_.Exception.Message -match 'Neutron must use separate evidence' }
+if (-not $missingModeRejected) { throw 'Numeric-level protocol accepted missing compression mode evidence.' }
+
 # Purpose: Verify priority assignment handles completion races without hiding failures on live processes.
 # Inputs: Controlled process properties represent alive, completed, racing and failing owned processes.
 # Outputs: Requires the intended assignment count and exception behavior without launching any process.

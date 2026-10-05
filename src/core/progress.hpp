@@ -85,6 +85,17 @@ class ProgressState {
 };
 
 using ProgressCallback = std::function<void(const ProgressSnapshot&)>;
+using ProgressCheckpoint = std::function<void()>;
+
+// Purpose: Preserve synchronous observer semantics when a costly codec also reports from worker threads.
+// Inputs: Optional observer whose copies belong to one operation.
+// Outputs: Returns shared serialized callback copies; no progress-state lock is held while invoking the observer.
+ProgressCallback serialize_progress_callback(const ProgressCallback& callback);
+
+// Purpose: Check operation cancellation between bounded codec launches without flooding progress observers.
+// Inputs: Operation-owned progress and observer; progress outlives every returned checkpoint copy.
+// Outputs: Returns a throwing checkpoint; callback failures cancel sibling work and propagate unchanged.
+ProgressCheckpoint make_cancellation_checkpoint(ProgressState& progress, const ProgressCallback& callback);
 
 // Purpose: Deliver a progress snapshot when a callback is present.
 // Inputs: `progress` is the state to snapshot and `callback` is optional.

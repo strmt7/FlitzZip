@@ -19,6 +19,11 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
 // Outputs: Returns encoded blocks, or throws on HIP/resource failure.
 EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort);
 
+// Purpose: Execute admitted deeper search and minimum-byte segment parsing on HIP.
+// Inputs: Nonempty bounded source and optional cancellation checkpoint.
+// Outputs: Returns GPU-encoded segments; propagates resource/runtime/cancellation failures.
+EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint);
+
 // Purpose: Execute HIP decoding after host-side segment-size admission.
 // Inputs: Nonempty bounded segments and their exact total decoded byte count.
 // Outputs: Returns complete decoded bytes or throws before exposing partial output.
@@ -93,6 +98,30 @@ EncodedBatch encode_segments(std::span<const std::byte> input, int level) {
 #else
     (void)effort;
     throw GpuError("AMD HIP dictionary encoding is not compiled into this build");
+#endif
+}
+
+// Purpose: Admit bounded minimum-byte parsing without permitting CPU fallback or overlarge workspaces.
+// Inputs: Immutable source and optional throwing cancellation checkpoint.
+// Outputs: Returns empty input unchanged or verified GPU segments; throws on invalid size or unavailable HIP.
+EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint) {
+    if (input.size() > kMaxNeutronBatchBytes) {
+        throw ArchiveError("Neutron dictionary batch exceeds its bounded input limit");
+    }
+    if (checkpoint) {
+        checkpoint();
+    }
+    if (input.empty()) {
+        return {};
+    }
+#if SUPERZIP_ENABLE_HIP
+    const auto info = query_gpu_info();
+    if (!info.available) {
+        throw GpuError(info.status);
+    }
+    return encode_neutron_segments_hip(input, checkpoint);
+#else
+    throw GpuError("AMD HIP Neutron dictionary encoding is not compiled into this build");
 #endif
 }
 

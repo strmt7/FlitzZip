@@ -4,12 +4,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <type_traits>
 #include <vector>
 
 namespace superzip::dictionary {
+
+using EncodeCheckpoint = std::function<void()>;
 
 // Shared HIP dictionary-codec limits for standalone diagnostics and native version-four blocks.
 inline constexpr std::uint32_t kSegmentBytes = kGpuDictionarySegmentBytes;
@@ -19,6 +22,11 @@ inline constexpr std::size_t kMaxBatchBytes = 4U * 1024U * 1024U;
 // The verified periodic index uses less workspace and can admit a larger borrowed-input batch.
 inline constexpr std::size_t kMaxPeriodicBatchBytes = 16U * 1024U * 1024U;
 inline constexpr std::size_t kMaxWorkspaceBytes = 256U * 1024U * 1024U;
+inline constexpr std::size_t kMaxNeutronBatchBytes = 1U * 1024U * 1024U;
+inline constexpr std::uint32_t kMaxNeutronMatchBytes = 65535U;
+inline constexpr std::uint32_t kNeutronSearchTileBytes = 4096U;
+inline constexpr std::uint32_t kNeutronParseTilePositions = 32U;
+inline constexpr std::uint32_t kNeutronEmitSequences = 64U;
 inline constexpr std::uint32_t kEncodedSegmentCapacity = kGpuDictionaryEncodedSegmentCapacity;
 
 struct Effort {
@@ -106,6 +114,12 @@ MatchBatch find_matches(std::span<const std::byte> input, int level);
 // Outputs: Returns bounded LZ4-format block payloads and resource counts; throws if HIP is unavailable.
 // Empty input produces no blocks and needs no GPU work. No frame or SUZIP metadata is emitted.
 EncodedBatch encode_segments(std::span<const std::byte> input, int level);
+
+// Purpose: Minimize complete LZ4 segment byte cost over a deeper verified HIP match search.
+// Inputs: At most 1 MiB of immutable source; checkpoint may throw between bounded kernel launches to cancel.
+// Outputs: Returns GPU-encoded independent segments and actual resource telemetry; rejects unavailable HIP.
+// Empty input needs no GPU; this primitive does not emit archive metadata or claim a universal minimum encoding.
+EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint = {});
 
 // Purpose: Decode independent dictionary segments on HIP without CPU materialization or fallback.
 // Inputs: At most 64 blocks, each declaring 1..65536 decoded bytes and a bounded nonempty payload.

@@ -105,6 +105,9 @@ bool MainWindow::toggle_bool_setting(bool UiState::* member, ToggleId id) {
         previous = state_.*member;
         state_.*member = !previous;
         next = state_.*member;
+        if (id == ToggleId::GpuRequired) {
+            normalize_compression_selection(state_);
+        }
         reset_security_review_locked();
     }
     start_toggle_animation(id, previous, next);

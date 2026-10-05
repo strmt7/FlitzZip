@@ -1,4 +1,7 @@
 #include "core/progress.hpp"
+#include "core/result.hpp"
+
+#include <memory>
 
 namespace superzip {
 
@@ -92,6 +95,56 @@ void publish_progress(const ProgressState& progress, const ProgressCallback& cal
     if (callback) {
         callback(progress.snapshot());
     }
+}
+
+// Purpose: Serialize one operation's observer invocations across main and codec worker threads.
+// Inputs: Optional callback retained by value; all wrapper copies share a private mutex.
+// Outputs: Returns an empty callback or a serialized wrapper that propagates the original exception.
+ProgressCallback serialize_progress_callback(const ProgressCallback& callback) {
+    if (!callback) {
+        return {};
+    }
+    auto mutex = std::make_shared<std::recursive_mutex>();
+    return [callback, mutex](const ProgressSnapshot& snapshot) {
+        std::lock_guard lock(*mutex);
+        callback(snapshot);
+    };
+}
+
+// Purpose: Bound cooperative codec cancellation and publish throttled snapshots without holding the progress lock.
+// Inputs: Borrowed operation state and retained callback; copies share a synchronized publication clock.
+// Outputs: Throws promptly for cancellation; publishes at most once per 50 ms and cancels on observer failure.
+ProgressCheckpoint make_cancellation_checkpoint(ProgressState& progress, const ProgressCallback& callback) {
+    struct PublicationClock {
+        std::mutex mutex;
+        std::chrono::steady_clock::time_point last{};
+    };
+    auto clock = std::make_shared<PublicationClock>();
+    return [&progress, callback, clock] {
+        if (progress.cancelled()) {
+            throw ArchiveError("operation cancelled");
+        }
+        bool publish = false;
+        {
+            std::lock_guard lock(clock->mutex);
+            const auto now = std::chrono::steady_clock::now();
+            publish = now - clock->last >= std::chrono::milliseconds{50};
+            if (publish) {
+                clock->last = now;
+            }
+        }
+        if (publish) {
+            try {
+                publish_progress(progress, callback);
+            } catch (...) {
+                progress.request_cancel();
+                throw;
+            }
+        }
+        if (progress.cancelled()) {
+            throw ArchiveError("operation cancelled");
+        }
+    };
 }
 
 }  // namespace superzip

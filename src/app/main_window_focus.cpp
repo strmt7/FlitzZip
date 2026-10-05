@@ -270,7 +270,7 @@ bool MainWindow::activate_focus_target(const FocusTarget& target, WPARAM key) {
 // Inputs: `key` is an arrow/Home/End key, `active` identifies the dropdown, and `state` is a stable UI snapshot.
 // Outputs: Updates dropdown keyboard index and repaints when the dropdown consumes the key.
 bool MainWindow::handle_dropdown_navigation_key(WPARAM key, DropdownId active, const UiState& state) {
-    const auto options = dropdown_options(active);
+    const auto options = dropdown_options(active, state);
     if (options.empty()) {
         return true;
     }

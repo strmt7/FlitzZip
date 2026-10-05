@@ -36,13 +36,13 @@ void MainWindow::open_dropdown(DropdownId id) {
 
 // Purpose: Keep keyboard selection on-screen; inputs: active dropdown ID; outputs: updates the first visible option.
 void MainWindow::reveal_dropdown_selection(DropdownId id) {
-    const auto layout = dropdown_layout(id, content_rect());
+    const auto layout = dropdown_layout(id, content_rect(), dropdown_option_count(id));
     dropdown_scroll_first_row_ = dropdown_first_row_for_selection(layout, dropdown_keyboard_index_);
 }
 
 // Purpose: Move a popup by whole rows; inputs: active ID and signed row delta; outputs: bounded offset and repaint.
 void MainWindow::scroll_dropdown_rows(DropdownId id, int rows) {
-    const auto layout = dropdown_layout(id, content_rect());
+    const auto layout = dropdown_layout(id, content_rect(), dropdown_option_count(id));
     dropdown_scroll_first_row_ = std::clamp(layout.first_row + rows, 0, layout.max_first_row);
     request_repaint();
 }
@@ -82,7 +82,8 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
         state.status = "Format changed";
         break;
     case DropdownId::CompressLevel:
-        state.compression_level_index = std::clamp(option_index, 0, kCompressionLevelOptionCount - 1);
+        state.compression_level_index =
+            std::clamp(option_index, 0, compression_selection_count(neutron_selection_available(state)) - 1);
         state.status = "Compression level changed";
         break;
     case DropdownId::CompressMethod:
@@ -129,6 +130,7 @@ void apply_primary_dropdown_selection(UiState& state, DropdownId id, int option_
     default:
         break;
     }
+    normalize_compression_selection(state);
 }
 
 // Purpose: Apply a Settings dropdown choice to synchronized UI state.

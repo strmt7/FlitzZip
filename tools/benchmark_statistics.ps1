@@ -2,6 +2,24 @@
 # No measured observation is trimmed, winsorized, or excluded as an outlier.
 . (Join-Path $PSScriptRoot 'benchmark_corpus.ps1')
 
+# Purpose: Parse one stable superzip_cli key/value statistics line for measurements and their direct planning tests.
+# Inputs: Line contains measured seconds or an explicit plan_only=true admission record.
+# Outputs: Returns the same parsed keys and values independent of field ordering; rejects non-statistics output.
+function ConvertFrom-StatsLine {
+    param([Parameter(Mandatory = $true)][string]$Line)
+    $result = @{}
+    foreach ($part in ($Line -split "\s+")) {
+        $pair = $part -split "=", 2
+        if ($pair.Count -eq 2) {
+            $result[$pair[0]] = $pair[1]
+        }
+    }
+    if (-not $result.ContainsKey("seconds") -and $result['plan_only'] -ne 'true') {
+        throw "CLI did not emit an operation statistics line: $Line"
+    }
+    return $result
+}
+
 # Purpose: Drain an owned subprocess pipe asynchronously while bounding retained text and allocation growth.
 # Inputs: Reader is one redirected stdout/stderr stream; the character ceiling is 65536 per pipe.
 # Outputs: Returns a Task of complete text or a faulted task on excess output; no output is silently truncated.

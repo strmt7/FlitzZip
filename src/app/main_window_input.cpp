@@ -502,7 +502,8 @@ LRESULT MainWindow::handle_mouse_wheel(WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     if (state.active_dropdown != DropdownId::None) {
-        const auto layout = dropdown_layout(state.active_dropdown, content_rect());
+        const auto layout = dropdown_layout(state.active_dropdown, content_rect(),
+                                            static_cast<int>(dropdown_options(state.active_dropdown, state).size()));
         if (contains_point(layout.menu, point.x, point.y)) {
             dropdown_wheel_delta_remainder_ += GET_WHEEL_DELTA_WPARAM(wparam);
             const int steps = dropdown_wheel_delta_remainder_ / WHEEL_DELTA;

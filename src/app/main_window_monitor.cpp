@@ -106,6 +106,8 @@ void MainWindow::refresh_gpu_status() {
     const auto info = query_gpu_info();
     std::lock_guard lock(mutex_);
     state_.gpu_status = info.status;
+    state_.gpu_available = info.available;
+    normalize_compression_selection(state_);
     state_.gpu_runtime_name = info.runtime_name;
     state_.gpu_device_name = info.device_name;
     state_.gpu_arch = info.gcn_arch;
@@ -350,6 +352,8 @@ void MainWindow::refresh_gpu_memory_cache(std::chrono::steady_clock::time_point 
     last_gpu_memory_sample_time_ = now;
     std::lock_guard lock(mutex_);
     state_.gpu_status = info.status;
+    state_.gpu_available = info.available;
+    normalize_compression_selection(state_);
     state_.gpu_runtime_name = info.runtime_name;
     state_.gpu_device_name = info.device_name;
     state_.gpu_arch = info.gcn_arch;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/main_window_state.hpp"
+#include "app/compression_mode_selection.hpp"
 #include "app/window_layout.hpp"
 #include "core/archive.hpp"
 #include "core/archive_format.hpp"
@@ -185,10 +186,16 @@ int normalize_io_drive_index(int index);
 std::wstring io_drive_option_text(int index);
 // Purpose: Resolve product effort; inputs: signed UI index; outputs: normalized effort 1-9.
 int compression_level_value(int index);
+// Purpose: Resolve Neutron eligibility; inputs: synchronized UI snapshot; outputs: actual format/capability/policy
+// gate.
+bool neutron_selection_available(const UiState& state);
+// Purpose: Normalize unavailable Neutron; inputs: mutable synchronized UI state; outputs: changed selection and status.
+bool normalize_compression_selection(UiState& state);
 OperationStats compress_gui_archive(const std::vector<std::filesystem::path>& sources,
                                     const std::filesystem::path& output, ArchiveFormat archive_format,
                                     bool gpu_required, bool verify_after_write, std::uint32_t block_size,
-                                    int compression_level, const ProgressCallback& progress_callback);
+                                    int compression_level, NativeCompressionMode compression_mode,
+                                    const ProgressCallback& progress_callback);
 std::wstring compression_block_size_text(int index);
 std::uint32_t compression_block_size_bytes(int index);
 std::wstring log_level_text(int index);
@@ -208,7 +215,7 @@ void append_log_file_entry(const std::filesystem::path& path, LogSeverity severi
                            std::chrono::system_clock::time_point timestamp);
 std::wstring history_operation_filter_text(int index);
 std::wstring history_status_filter_text(int index);
-std::vector<std::wstring> dropdown_options(DropdownId id);
+std::vector<std::wstring> dropdown_options(DropdownId id, const UiState& state);
 int dropdown_selected_index(const UiState& state, DropdownId id);
 COLORREF blend_color(COLORREF from, COLORREF to, double t);
 double ease_out(double t);
