@@ -43,6 +43,26 @@ def zip_fixture(rows: list[tuple[str, bytes]], *, link: bool = False) -> tuple[b
 # Inputs: Tiny controlled archive/protocol fixtures and mocked fixed-source network responses.
 # Outputs: Rejects malformed, changed, lossy, substituted or disk-writing observations; no benchmark is launched.
 class CorpusContracts(unittest.TestCase):
+    def test_explicit_long_file_deadline_remains_bounded(self) -> None:
+        """Purpose: Admit slow natural files. Inputs: Real CLI deadline arguments. Outputs: Explicit bounded
+        limits; no worker or native launch.
+        """
+        for arguments, expected in (([], 300), (["--file-timeout", "3600"], 3600)):
+            with mock.patch.object(sys, "argv", ["corpus", *arguments]), mock.patch.object(corpus, "study") as study:
+                corpus.main()
+                self.assertEqual(study.call_args.args[0].file_timeout, expected)
+                self.assertEqual(study.call_args.args[0].suite_timeout, 3600)
+        for value in ("0", "3601"):
+            with (
+                mock.patch.object(sys, "argv", ["corpus", "--file-timeout", value]),
+                mock.patch.object(corpus, "study") as study,
+                mock.patch.object(sys, "stderr", io.StringIO()),
+                self.assertRaises(SystemExit) as rejected,
+            ):
+                corpus.main()
+            self.assertEqual(rejected.exception.code, 2)
+            study.assert_not_called()
+
     def test_hyperfine_parser_preserves_windows_arguments(self) -> None:
         """Purpose: Preserve parser-specific arguments. Inputs: Windows paths and quotes. Outputs: Exact tokens."""
         arguments = ["C:\\Program Files\\Python's\\python.exe", "-B", "--worker", "quotes ' \" $ ` ;", ""]

@@ -37,16 +37,35 @@ compress an already quantized model without performing additional quantization.
 
 ## Ordered Neutron Experiments
 
+The subsequent primary-source review used the installed self-hosted Crawl4AI
+HTTP strategy with robots checks, without starting Chromium alongside GPU work.
+The following mechanisms extend the candidate list; their published results are
+not measurements of SuperZip or AMD HIP.
+
+| Primary source | Mechanism and Neutron application | Qualification limit |
+| --- | --- | --- |
+| [2026 Algorithmic Information Theory Data Compression Challenge](https://arxiv.org/html/2606.17712v1), sections 2.2–2.3 and 2.9 | Combines reversible transforms with statistical coding, including adaptive pipeline selection and deterministic online context mixing. Treat classification as candidate ordering; retain measured alternatives rather than trusting an inferred file type. Fixed-point predictors are a potential route to reproducible learned coding without a large external model. | The challenge constrains memory and decoder size, requires exact recovery of every file, and separates training from testing. Its specialized generator detection is dataset-dependent evidence. Research selectors, libraries and code have not been imported or qualified here. |
+| [Invariant Bit Packing for ML](https://arxiv.org/html/2605.30728v1), sections 3–4 | Learns common bit masks, keeps exceptions through participation bits, and packs varying bits with warp scans. The described implementation performs preprocessing and compression on GPU as well as GPU decompression. A Neutron trial can use integer bit patterns and count masks, exception flags, alignment and tails before selecting it. | CUDA zero-copy and ML-tensor performance are different from an AMD archive codec. Validate device capabilities and every byte, including NaN payloads and signed zero; never replace exact representation with quantization. Arbitrary archive bytes lack the paper's aligned tensor contract. |
+| [NVIDIA nvCOMP Cascaded compression](https://docs.nvidia.com/cuda/nvcomp/cascaded.html) | Combines run-length, delta and frame-of-reference bit packing. Trial different reversible orders on validated integer widths and compare complete output, including expanded run metadata and remainders. | Borrow algorithmic principles, not the CUDA runtime or reference code. Width, signedness, overflow and inverse prefix scans require explicit format and HIP contracts. |
+| [Meta dietgpu](https://github.com/facebookresearch/dietgpu) | Bytewise GPU rANS is an entropy layer for transformed streams, including dictionary literals and sequence components. Float exponent separation illustrates why byte/bit layout can expose redundancy hidden from an untyped byte model. | The repository is archived and its implementation targets CUDA. Published throughput is not an AMD result or a complete archive ratio. No production dependency or source import is made. |
+
 1. Establish complete canonical-corpus baselines using the existing native RAM
    engine and Hyperfine. Report each file's complete archive bytes; preserve the
    published natural files and their order. Keep old repository-file diagnostic
    observations separate from canonical evidence.
 2. Develop a Neutron-only entropy representation for literals and LZ sequence
-   components. Evaluate bounded HIP rANS streams against the existing GPU
+   components. First evaluate composition with the existing HIP entropy
+   portfolio, counting its tables and explicit intermediate-length metadata;
+   then evaluate bounded HIP rANS streams against the existing GPU
    Huffman representation, counting all metadata. Start with byte symbols and
    independent streams before adding complex probability models. Build an
    independent reference decoder and malformed-stream regressions before
    integration. Iterative parsing must use the candidate's actual entropy prices.
+   Composition requires a new versioned representation, a closed set of
+   permitted inner kinds, no recursive nesting, checked intermediate extents,
+   both decode stages on HIP when required, and an independent CPU reference.
+   A codec that compresses only the original byte stream cannot demonstrate the
+   benefit of entropy coding dictionary output.
 3. Evaluate reversible byte shuffles and bit planes at widths two, four and
    eight. The transform is an exact integer permutation, including unaligned
    tails; it must not reinterpret floats or infer a type from a filename.

@@ -35,7 +35,7 @@ engine; it does not invent another compressor or timing/statistics engine.
 
 ```powershell
 py -3 -B -m tools.neutron_corpus_benchmark --corpus Canterbury --runs 3
-py -3 -B -m tools.neutron_corpus_benchmark --corpus Govdocs1Thread0 --runs 1
+py -3 -B -m tools.neutron_corpus_benchmark --corpus Govdocs1Thread0 --runs 1 --file-timeout 3600 --suite-timeout 7200
 ```
 
 Acquire each published archive once per study, decode with bounded standard
@@ -65,6 +65,23 @@ outputs, build transaction and corpus/tool definitions. Do not rehash the entire
 repository before and after every file. A failed, changed or incomplete study
 does not qualify results. Per-process and study deadlines clean up only the
 controller's owned process tree; acquisition has a separate finite deadline.
+The default per-file deadline remains 300 seconds. A caller may explicitly
+select up to 3600 seconds for a slow natural file, while the separate complete
+study deadline remains bounded to at most 7200 seconds. This changes process
+lifetime admission, not HIP launch size, synchronization, cancellation, memory
+admission or compression search. A timeout is a failed study, never permission
+to omit, truncate or replace the file.
+
+The first complete Govdocs attempt on 5 October 2026 reached 175 byte-validated
+files, covering 82,765,977 input bytes and 65,430,295 complete single-file archive
+bytes. The following 175,101,388-byte natural file exceeded the explicitly
+selected 600-second deadline. The controller terminated its owned tree and
+retained the completed prefix with `study_qualified=false`; these partial totals
+are not a Govdocs baseline. All 991 original members were admitted from the
+published ZIP, whose measured SHA-256 was
+`662343a0725b350d1d37496b8d2a53ee85bfa27a48e05209ddd8d3de5163e84a`.
+This timeout establishes an incomplete workload, not the cause of the earlier
+system freeze or a GPU speedup.
 
 ## Reporting And Limits
 

@@ -514,7 +514,7 @@ def main() -> None:
     parser.add_argument("--configuration", choices=("Release", "Debug", "RelWithDebInfo"), default="Release")
     parser.add_argument("--runs", type=int, choices=range(1, 11), default=3)
     parser.add_argument("--block-size-kib", type=int, choices=(256, 512, 1024, 2048, 4096, 8192, 16384), default=256)
-    parser.add_argument("--file-timeout", type=int, choices=range(1, 601), default=300)
+    parser.add_argument("--file-timeout", type=int, choices=range(1, 3601), default=300)
     parser.add_argument("--suite-timeout", type=int, choices=range(1, 7201), default=3600)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
