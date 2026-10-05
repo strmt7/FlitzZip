@@ -46,7 +46,7 @@ void record_worker_duration(std::atomic<std::uint64_t>& counter, std::chrono::st
 
 // Purpose: Convert backend-selection options to CPU archive codec options.
 // Inputs: `options` contains GPU requirement flags plus shared codec tuning.
-// Outputs: Returns the CPU codec subset used for forced-CPU operations and optional CPU fallback.
+// Outputs: Returns the CPU codec subset used for explicit CPU operations and known CPU-only compatibility routes.
 ArchiveCodecOptions archive_codec_options(const GpuCodecOptions& options) {
     return ArchiveCodecOptions{
         .block_size = options.block_size,
@@ -124,18 +124,33 @@ EncodedBlockBatch encode_block_batch_cpu(std::span<const std::byte> input, std::
     return batch;
 }
 
-#if SUPERZIP_ENABLE_HIP
-// Purpose: Reject CPU-only block tables before entering the AMD HIP-only decode path.
-// Inputs: `blocks` is the archive chunk block table and `action` labels the failing operation.
-// Outputs: Returns for HIP-supported block kinds; throws `GpuError` for CPU-compressed data.
-void reject_cpu_only_blocks_for_hip(std::span<const BlockDescriptor> blocks, const char* action) {
-    if (block_table_contains_cpu_only(blocks)) {
-        throw GpuError(std::string("AMD HIP ") + action +
-                       " cannot process CPU-compressed SUZIP blocks; use the CPU codec or recreate the archive with "
-                       "the HIP codec");
+// Purpose: Select an explicit codec backend before work; never retry a failed HIP operation on CPU.
+// Inputs: Validated options and an optional native block table; neither is modified.
+// Outputs: Returns true for HIP or false for expected CPU routes; contradictory/required policies throw GpuError.
+bool select_hip_codec(const GpuCodecOptions& options, std::span<const BlockDescriptor> blocks = {}) {
+    if (options.force_cpu) {
+        if (options.require_gpu) {
+            throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+        }
+        return false;
     }
+    if (block_table_contains_cpu_only(blocks)) {
+        if (options.require_gpu) {
+            throw GpuError("required AMD HIP cannot process CPU-compressed SUZIP blocks; use the CPU codec");
+        }
+        return false;
+    }
+#if SUPERZIP_ENABLE_HIP
+    return options.require_gpu || hip_device_available();
+#else
+    if (options.require_gpu) {
+        throw GpuError("SuperZip was built without HIP acceleration");
+    }
+    return false;
+#endif
 }
 
+#if SUPERZIP_ENABLE_HIP
 // Purpose: Add one telemetry counter into another without losing concurrent atomic updates.
 // Inputs: `counter` is the destination telemetry field and `value` is the source count.
 // Outputs: Atomically adds nonzero source values to the operation telemetry.
@@ -184,7 +199,7 @@ void merge_successful_gpu_attempt(GpuTelemetry* target, const GpuTelemetry& sour
                                    source.kernel_microseconds.load(std::memory_order_relaxed));
 }
 
-// Purpose: Route optional HIP work through temporary telemetry so failed attempts do not pollute CPU fallback stats.
+// Purpose: Route optional HIP work through temporary telemetry so failed operations do not publish successful counters.
 // Inputs: `options` is the requested codec configuration; `attempt_telemetry` receives temporary counters when needed.
 // Outputs: Returns codec options for the HIP attempt.
 GpuCodecOptions gpu_attempt_options(const GpuCodecOptions& options, std::shared_ptr<GpuTelemetry>& attempt_telemetry) {
@@ -503,38 +518,29 @@ GpuDiagnosticResult run_gpu_diagnostic(const GpuDiagnosticOptions& options) {
 
 // Purpose: Encode borrowed input using validated CPU/HIP policy and transactional GPU telemetry.
 // Inputs: `input` remains readable until return; `options` selects effort, block sizing, and backend requirements.
-// Outputs: Returns owned encoded bytes; empty input reports no GPU work, and required-HIP failures never fall back.
+// Outputs: Returns owned encoded bytes; empty input reports no GPU work, and selected HIP failures never fall back.
 EncodedChunk encode_chunk(std::span<const std::byte> input, const GpuCodecOptions& options) {
     validate_gpu_codec_options(options);
     reject_oversized_codec_span(input.size(), "codec input");
     const auto cpu_options = archive_codec_options(options);
 
+    const bool use_hip = select_hip_codec(options);
 #if SUPERZIP_ENABLE_HIP
-    if (!options.force_cpu) {
+    if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
-        try {
-            auto encoded = encode_chunk_hip(input, hip_options);
-            encoded.gpu_used = !encoded.blocks.empty();
-            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return encoded;
-        } catch (const GpuError&) {
-            if (options.require_gpu) {
-                throw;
-            }
-        }
-    } else if (options.require_gpu) {
-        throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+        auto encoded = encode_chunk_hip(input, hip_options);
+        encoded.gpu_used = !encoded.blocks.empty();
+        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        return encoded;
     }
 #else
-    if (options.require_gpu) {
-        throw GpuError("SuperZip was built without HIP acceleration");
-    }
+    (void)use_hip;
 #endif
     return encode_chunk_cpu(input, cpu_options);
 }
 
-// Purpose: Encode owned chunk memory through HIP when available and preserve CPU fallback semantics.
+// Purpose: Encode owned chunk memory through HIP when available and preserve explicit backend selection.
 // Inputs: `input` owns uncompressed bytes and `options` selects backend, block size, workers, and telemetry.
 // Outputs: Returns encoded blocks/payload/CRC; empty input reports no GPU work, and raw payload may move from input.
 EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOptions& options) {
@@ -542,27 +548,18 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
     reject_oversized_codec_span(input.size(), "codec input");
     const auto cpu_options = archive_codec_options(options);
 
+    const bool use_hip = select_hip_codec(options);
 #if SUPERZIP_ENABLE_HIP
-    if (!options.force_cpu) {
+    if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
-        try {
-            auto encoded = encode_owned_chunk_hip(input, hip_options);
-            encoded.gpu_used = !encoded.blocks.empty();
-            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return encoded;
-        } catch (const GpuError&) {
-            if (options.require_gpu) {
-                throw;
-            }
-        }
-    } else if (options.require_gpu) {
-        throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+        auto encoded = encode_owned_chunk_hip(input, hip_options);
+        encoded.gpu_used = !encoded.blocks.empty();
+        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        return encoded;
     }
 #else
-    if (options.require_gpu) {
-        throw GpuError("SuperZip was built without HIP acceleration");
-    }
+    (void)use_hip;
 #endif
     auto encoded = encode_chunk_cpu(std::span<const std::byte>(input.data(), input.size()), cpu_options);
     encoded.source_crc32 = crc32(std::span<const std::byte>(input.data(), input.size()));
@@ -570,7 +567,7 @@ EncodedChunk encode_owned_chunk(std::vector<std::byte> input, const GpuCodecOpti
     return encoded;
 }
 
-// Purpose: Dispatch a bounded independent-block batch without changing fallback or required-HIP semantics.
+// Purpose: Dispatch a bounded independent-block batch with explicit backend selection and propagated HIP failures.
 // Inputs: input owns bytes, block_lengths define exact independent boundaries, and options select backend policy.
 // Outputs: Returns one descriptor/CRC per input block; invalid layouts fail before any GPU attempt.
 EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::span<const std::uint32_t> block_lengths,
@@ -578,27 +575,18 @@ EncodedBlockBatch encode_owned_block_batch(std::vector<std::byte> input, std::sp
     validate_gpu_codec_options(options);
     reject_oversized_codec_span(input.size(), "codec batch input");
     validate_encode_batch(input.size(), block_lengths, options.block_size);
+    const bool use_hip = select_hip_codec(options);
 #if SUPERZIP_ENABLE_HIP
-    if (!options.force_cpu) {
+    if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
-        try {
-            auto batch = encode_owned_block_batch_hip(input, block_lengths, hip_options);
-            batch.encoded.gpu_used = !block_lengths.empty();
-            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return batch;
-        } catch (const GpuError&) {
-            if (options.require_gpu) {
-                throw;
-            }
-        }
-    } else if (options.require_gpu) {
-        throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+        auto batch = encode_owned_block_batch_hip(input, block_lengths, hip_options);
+        batch.encoded.gpu_used = !block_lengths.empty();
+        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        return batch;
     }
 #else
-    if (options.require_gpu) {
-        throw GpuError("SuperZip was built without HIP acceleration");
-    }
+    (void)use_hip;
 #endif
     return encode_block_batch_cpu(input, block_lengths, archive_codec_options(options));
 }
@@ -617,27 +605,17 @@ bool decode_chunk(std::span<const std::byte> payload, std::span<const BlockDescr
     }
     const auto cpu_options = archive_codec_options(options);
 
+    const bool use_hip = select_hip_codec(options, blocks);
 #if SUPERZIP_ENABLE_HIP
-    if (!options.force_cpu) {
+    if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
-        try {
-            reject_cpu_only_blocks_for_hip(blocks, "decode");
-            decode_chunk_hip(payload, blocks, output, hip_options);
-            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return !output.empty();
-        } catch (const GpuError&) {
-            if (options.require_gpu) {
-                throw;
-            }
-        }
-    } else if (options.require_gpu) {
-        throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+        decode_chunk_hip(payload, blocks, output, hip_options);
+        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        return !output.empty();
     }
 #else
-    if (options.require_gpu) {
-        throw GpuError("SuperZip was built without HIP acceleration");
-    }
+    (void)use_hip;
 #endif
     decode_chunk_cpu(payload, blocks, output, cpu_options);
     return false;
@@ -659,30 +637,20 @@ DecodedChunkCrc crc_decoded_chunk(std::span<const std::byte> payload, std::span<
     }
     const auto cpu_options = archive_codec_options(options);
 
+    const bool use_hip = select_hip_codec(options, blocks);
 #if SUPERZIP_ENABLE_HIP
-    if (!options.force_cpu) {
+    if (use_hip) {
         std::shared_ptr<GpuTelemetry> attempt_telemetry;
         const auto hip_options = gpu_attempt_options(options, attempt_telemetry);
-        try {
-            reject_cpu_only_blocks_for_hip(blocks, "CRC verification");
-            auto decoded = DecodedChunkCrc{
-                .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
-                .gpu_used = output_size != 0U,
-            };
-            publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
-            return decoded;
-        } catch (const GpuError&) {
-            if (options.require_gpu) {
-                throw;
-            }
-        }
-    } else if (options.require_gpu) {
-        throw GpuError("cannot require AMD HIP while forcing the CPU codec");
+        auto decoded = DecodedChunkCrc{
+            .crc32 = crc_decoded_chunk_hip(payload, blocks, output_size, hip_options),
+            .gpu_used = output_size != 0U,
+        };
+        publish_successful_gpu_attempt(options.telemetry.get(), attempt_telemetry);
+        return decoded;
     }
 #else
-    if (options.require_gpu) {
-        throw GpuError("SuperZip was built without HIP acceleration");
-    }
+    (void)use_hip;
 #endif
     std::vector<std::byte> decoded(static_cast<std::size_t>(output_size));
     decode_chunk_cpu(payload, blocks, decoded, cpu_options);

@@ -897,3 +897,17 @@ cost improvement, independent reference decoding, real required-backend
 readback, closed stage kinds, corruption/downgrade controls and cancellation
 at the added stage. Protocol limits belong in the native format contract;
 individual measurements and failed assertions belong in dated validation records.
+
+Keep backend selection separate from operation failure. Expected absence and
+known unsupported block kinds can select an explicitly permitted CPU route
+before work begins. An error after HIP selection must remain an error; a broad
+exception handler must not turn failed device work into successful CPU output.
+Exercise CPU-only and HIP builds, optional and required policies, independent
+readback and telemetry for the same dispatcher. Storage/allocator compatibility
+choices must preserve the selected backend and retain their documented bounds.
+
+For metadata returned inside an owned API buffer, admit the reported location
+against that buffer before forming a view. Convert fixed object representations
+through exact-size byte arrays and typed value conversion; retain signature
+and version checks. A trusted provider does not make an unchecked byte extent
+an ownership contract.

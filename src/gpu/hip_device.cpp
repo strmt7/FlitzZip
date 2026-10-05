@@ -6,8 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
-#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -196,8 +196,17 @@ std::optional<HipRuntimeVersion> read_locked_runtime_version(const std::filesyst
         length < sizeof(VS_FIXEDFILEINFO)) {
         return std::nullopt;
     }
-    VS_FIXEDFILEINFO fixed{};
-    std::memcpy(&fixed, value, sizeof(fixed));
+    // Treat the API-returned pointer as an untrusted byte location until it is contained in the owned buffer.
+    const auto begin = reinterpret_cast<std::uintptr_t>(metadata.data());
+    const auto address = reinterpret_cast<std::uintptr_t>(value);
+    if (address < begin || address - begin > metadata.size() ||
+        sizeof(VS_FIXEDFILEINFO) > metadata.size() - (address - begin)) {
+        return std::nullopt;
+    }
+    std::array<std::byte, sizeof(VS_FIXEDFILEINFO)> fixed_bytes{};
+    std::copy_n(metadata.begin() + static_cast<std::ptrdiff_t>(address - begin), fixed_bytes.size(),
+                fixed_bytes.begin());
+    const auto fixed = std::bit_cast<VS_FIXEDFILEINFO>(fixed_bytes);
     if (fixed.dwSignature != VS_FFI_SIGNATURE) {
         return std::nullopt;
     }
@@ -284,13 +293,16 @@ struct HipDeviceIdentity {
 };
 
 // Purpose: Validate live device enumeration and the calling thread's selection without querying properties or VRAM.
-// Inputs: The trusted HIP runtime has already been loaded.
-// Outputs: Returns the current device identity or throws GpuError without changing the selected device.
-HipDeviceIdentity checked_hip_device_identity() {
+// Inputs: The trusted HIP runtime is loaded; allow_absent permits only a successful zero-device enumeration.
+// Outputs: Returns the current identity, or {0, -1} for admitted absence; other failures throw GpuError.
+HipDeviceIdentity checked_hip_device_identity(bool allow_absent = false) {
     int count = 0;
     const auto count_status = hipGetDeviceCount(&count);
     if (count_status != hipSuccess) {
         throw GpuError(std::string("Unable to enumerate AMD HIP devices: ") + hipGetErrorString(count_status));
+    }
+    if (count == 0 && allow_absent) {
+        return HipDeviceIdentity{0, -1};
     }
     if (count <= 0) {
         throw GpuError("No AMD HIP device is available");
@@ -322,6 +334,17 @@ void require_hip_device_ready() {
     (void)checked_hip_device_identity();
 #else
     throw GpuError("Built without HIP acceleration");
+#endif
+}
+
+// Purpose: Distinguish expected HIP absence from a failure on a present runtime/device.
+// Inputs: None; preserves the calling thread's selection and performs no allocation or property queries.
+// Outputs: Returns false only for a missing runtime/build or zero devices; unexpected HIP errors propagate.
+bool hip_device_available() {
+#if SUPERZIP_ENABLE_HIP
+    return load_hip_runtime() && checked_hip_device_identity(true).selected >= 0;
+#else
+    return false;
 #endif
 }
 
@@ -547,9 +570,8 @@ GpuInfo query_hip_gpu_info() {
     }
     info.available = true;
     info.selected_device = selected;
-    std::uint64_t adapter_luid = 0;
-    static_assert(sizeof(adapter_luid) == sizeof(props.luid));
-    std::memcpy(&adapter_luid, props.luid, sizeof(adapter_luid));
+    static_assert(sizeof(std::uint64_t) == sizeof(props.luid));
+    const auto adapter_luid = std::bit_cast<std::uint64_t>(std::to_array(props.luid));
     if (adapter_luid != 0U) {
         info.adapter_luid = adapter_luid;
     }

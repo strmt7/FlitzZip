@@ -1,6 +1,18 @@
 # Neutron star mode public-corpus benchmark
 
-The [version-nine composition study](benchmarks/data/neutron-canterbury-compound-2026-10-05.json)
+The [stronger secondary-stage study](benchmarks/data/neutron-canterbury-secondary-2026-10-05.json)
+completed three byte-exact Canterbury repetitions at 256 KiB, producing 741,174
+complete modeled independent-file archive bytes from 2,810,784 source bytes.
+It saved 3,008 bytes (0.40%) against the preceding composition round. Only
+`kennedy.xls` became smaller; the other ten files retained identical sizes.
+All 33 observations used real HIP and zero payload disk writes. This is a
+small, workload-dependent gain, not evidence of broadly dramatic compression.
+The native compression totals were 20.91–21.09 seconds per repetition, against
+about 8.7 seconds previously; actual kernel launches increased from 75,567 to
+148,350 across the study. Timing qualification remains false. The additional
+effort therefore has a measured size benefit and a substantial observed cost.
+
+The preceding [version-nine composition study](benchmarks/data/neutron-canterbury-compound-2026-10-05.json)
 completed three identical-size Canterbury repetitions at 256 KiB, with real
 HIP readback and zero payload disk writes. It reduced complete modeled
 independent-file archive bytes from 1,008,754 to 744,182 (26.23%). The preceding

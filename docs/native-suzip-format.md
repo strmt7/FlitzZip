@@ -114,6 +114,10 @@ flowchart TD
 - Do not infer GPU support from the extension alone; use archive metadata and
   operation options.
 - Do not accept CPU-only fallback in required-GPU mode.
+- Automatic selection may choose CPU before execution for absent HIP or
+  CPU-only archive blocks. Once HIP is selected, its errors propagate without
+  a CPU retry. Neutron creation always requires HIP. Choosing heap instead of
+  pinned host storage does not change the selected codec backend.
 - Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, GPU
   static-prefix, GPU adaptive-prefix, GPU Huffman, GPU dictionary, GPU sparse-pattern, and
   GPU long-sparse-pattern blocks, and Neutron-only GPU compound blocks. It must not emit CPU Deflate or Zstandard

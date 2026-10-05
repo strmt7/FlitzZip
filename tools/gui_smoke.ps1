@@ -516,6 +516,50 @@ function Save-CompressionSmokeChoice {
     Invoke-SidebarClick -Handle $Handle -Dpi $Dpi -PageIndex 1 -Synchronous
 }
 
+# Purpose: Remove only an owned smoke directory after checking containment and reparse-point ancestors.
+# Inputs: A strict descendant of this script's smoke root, never the smoke root itself.
+# Outputs: Removes generated data or throws on unsafe paths and cleanup failures before recursive deletion.
+function Remove-GuiSmokeDirectory {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $root = [IO.Path]::GetFullPath($smokeRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $target = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if (-not $target.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'GUI cleanup target is not a strict descendant of its owned smoke root.'
+    }
+    $ancestor = $target
+    while ($ancestor) {
+        if (Test-Path -LiteralPath $ancestor) {
+            if ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'GUI cleanup refuses reparse-point ancestry.'
+            }
+        }
+        $parent = [IO.Directory]::GetParent($ancestor)
+        $ancestor = if ($parent) { $parent.FullName } else { $null }
+    }
+    if ((Test-Path -LiteralPath $target) -and $PSCmdlet.ShouldProcess($target, 'Remove owned GUI smoke directory')) {
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+}
+
+# Purpose: Create a bounded printable motif that exercises secondary GPU encoding in the real GUI worker.
+# Inputs: The owned correctness-fixture path; no external corpus or performance claim is involved.
+# Outputs: Writes exactly 64 KiB of deterministic correctness data without invoking native build or benchmark tools.
+function Write-NeutronGuiFixture {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $motif = New-Object byte[] 16384
+    [uint32]$state = 0x37A84E91
+    for ($index = 0; $index -lt $motif.Length; ++$index) {
+        $state = [uint32](($state -bxor ($state -shl 13)) -band 0xFFFFFFFFL)
+        $state = [uint32](($state -bxor ($state -shr 17)) -band 0xFFFFFFFFL)
+        $state = [uint32](($state -bxor ($state -shl 5)) -band 0xFFFFFFFFL)
+        $motif[$index] = [byte](0x41 + ($state -band 15))
+    }
+    $bytes = New-Object byte[] 65536
+    for ($index = 0; $index -lt $bytes.Length; ++$index) { $bytes[$index] = $motif[$index % $motif.Length] }
+    [IO.File]::WriteAllBytes($Path, $bytes)
+}
+
 # Purpose: Verify a GUI-created Neutron archive with independent CPU validation and required-HIP extraction.
 # Inputs: Owned GUI, its redirected log, one bounded queued input and its isolated destination.
 # Outputs: Requires actual mode reporting, GPU decode telemetry and byte-exact recovery; preserves failed evidence.
@@ -536,6 +580,10 @@ function Assert-NeutronArchiveOperation {
     }
     if (-not (Test-Path -LiteralPath $archive) -or (Get-Item -LiteralPath $archive).Length -gt 131072) {
         throw 'The GUI-created Neutron archive is missing or exceeds its smoke bound.'
+    }
+    $archiveBytes = [IO.File]::ReadAllBytes($archive)
+    if ($archiveBytes.Length -lt 24 -or [BitConverter]::ToUInt32($archiveBytes, $archiveBytes.Length - 20) -ne 9) {
+        throw 'The GUI correctness input must exercise actual version-nine Neutron composition.'
     }
     $restoredRoot = Join-Path $Destination ('neutron-readback-' + [guid]::NewGuid().ToString('N'))
     $cli = Join-Path $repo "build/$Configuration/superzip_cli.exe"
@@ -1105,10 +1153,10 @@ $smokeCloseFile = Join-Path $smokeRoot "close.request"
 $smokeSettingsDir = Join-Path ([System.IO.Path]::GetTempPath()) "SuperZip"
 $smokeSettingsFile = Join-Path $smokeSettingsDir "gui-smoke-settings.json"
 New-Item -ItemType Directory -Force -Path $smokeSettingsDir | Out-Null
-Remove-Item -LiteralPath $smokeDestination -Recurse -Force -ErrorAction SilentlyContinue
+Remove-GuiSmokeDirectory -Path $smokeDestination
 New-Item -ItemType Directory -Force -Path $smokeDestination | Out-Null
 # A bounded correctness fixture exercises dictionary/entropy device readback; it is not a performance benchmark.
-Set-Content -LiteralPath $smokeInput -Value (("SuperZip GUI smoke input" * 2850).Substring(0, 65536)) -NoNewline -Encoding ASCII
+Write-NeutronGuiFixture -Path $smokeInput
 Set-Content -LiteralPath $smokeInputTwo -Value "Second SuperZip GUI smoke input" -NoNewline
 New-Item -ItemType Directory -Force -Path $smokeFolder | Out-Null
 Set-Content -LiteralPath (Join-Path $smokeFolder "nested.txt") -Value "Nested GUI smoke input" -NoNewline
@@ -1429,7 +1477,7 @@ try {
     Start-Sleep -Milliseconds 150
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
-    Remove-Item -LiteralPath $extractOutput -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-GuiSmokeDirectory -Path $extractOutput
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @(
         (Resolve-Path -LiteralPath $smokeArchive).Path,
         (Resolve-Path -LiteralPath $smokeArchiveTwo).Path
@@ -1462,7 +1510,7 @@ try {
     Start-Sleep -Milliseconds 250
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2
     Start-Sleep -Milliseconds 250
-    Remove-Item -LiteralPath $extractOutput -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-GuiSmokeDirectory -Path $extractOutput
     New-Item -ItemType Directory -Force -Path $extractOutput | Out-Null
     Set-Content -LiteralPath (Join-Path $extractOutput "existing-output.txt") -Value "Existing extraction output" -NoNewline
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Extract-Overwrite-Ask" -OpenX 900 -OpenY 225 -SelectX 900 -SelectY 266 -MenuLeft 657 -MenuTop 250 -MenuRight 1158 -MenuBottom 318 -BasePath $basePath -Extension $extension
@@ -1485,7 +1533,7 @@ try {
     Start-Sleep -Milliseconds 150
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 1134 -DesignY 91
     Start-Sleep -Milliseconds 150
-    Remove-Item -LiteralPath (Join-Path $smokeRoot "SuperZip-extracted") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-GuiSmokeDirectory -Path (Join-Path $smokeRoot "SuperZip-extracted")
     Invoke-FileDrop -Handle $windowHandle -Dpi $windowDpi -Paths @((Resolve-Path -LiteralPath $badArchive).Path)
     Start-Sleep -Milliseconds 250
     Invoke-SidebarClick -Handle $windowHandle -Dpi $windowDpi -PageIndex 2

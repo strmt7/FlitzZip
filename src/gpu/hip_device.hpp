@@ -12,6 +12,11 @@ namespace superzip {
 // Outputs: Returns when a current device is admitted; throws GpuError on missing HIP or runtime/device failure.
 void require_hip_device_ready();
 
+// Purpose: Select optional HIP without treating runtime/device errors as ordinary absence.
+// Inputs: None; preserves device selection and does not cache availability or allocate storage.
+// Outputs: Returns false for absent HIP only; unexpected enumeration/selection failures throw GpuError.
+bool hip_device_available();
+
 // Outstanding host pin reservations, not VRAM; release failures remain reserved conservatively.
 struct HipPinnedHostStats {
     std::uint64_t reserved_bytes = 0;

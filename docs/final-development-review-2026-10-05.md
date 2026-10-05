@@ -133,3 +133,35 @@ they do not claim established-format superiority or resolution of the freeze.
 Agent startup now delivers the existing Crawl4AI directive directly from
 AGENTS.md, with current launcher provenance and executable missing-rule/tool
 mutation controls. It does not install or requalify unchanged crawler packages.
+
+The stronger secondary-stage refinement passed all twelve selected commands,
+including all seven native suites, real Neutron frontend creation, independent
+CPU verification, required-HIP extraction, the format matrix and instrumented
+fuzzing. The frontend fixture selects a version-nine compound frame. All eight
+pages were inspected at regular and compact sizes, together with the Neutron
+selector. The source also selects optional CPU execution before device work for
+known CPU-only blocks or explicitly absent HIP. Errors after HIP selection
+propagate instead of silently retrying the codec on CPU. Two device metadata
+copies now validate owned extents and use typed representation conversion.
+The GUI smoke cleanup admits only non-reparse descendants of its owned root.
+Initial scanner and PowerShell lint failures were repaired at those boundaries;
+the subsequent checks passed without new dispositions or suppressions.
+
+The native input identity is
+`1aaca9df2ca1e4c3bb2435cf4492e4087a1f7e1e0a47a64bc2906865f4d91b9c`;
+the canonical successful build receipt identity is
+`a6226ef9a3a0e97bdc05941e84c8372544b9c32768f33d96a2ef51c4b662eeca`.
+The [33-observation refinement record](benchmarks/data/neutron-canterbury-secondary-2026-10-05.json)
+produced 741,174 complete archive bytes in every repetition, a further 3,008-byte
+decrease. Only the spreadsheet improved; no file regressed. Kernel launches
+increased to 148,350 and native compression time to about 21 seconds per pass.
+This small gain has a substantial computation cost and does not establish a
+general size advantage or qualified timing result. Earlier Govdocs1 and block
+sweeps remain qualified only for their recorded source revisions.
+
+The published composition revision has passing lint, component contracts,
+Zstandard sanitizers and Scorecard workflows. Several other jobs were cancelled
+before execution with GitHub's annotation, "The job was not acquired by Runner
+of type hosted even after multiple attempts". Those jobs remain unvalidated;
+their cancellation is not treated as a passing check or a demonstrated code
+failure. Final exact-revision hosted acceptance remains required.

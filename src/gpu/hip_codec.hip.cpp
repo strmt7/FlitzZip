@@ -1207,12 +1207,15 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
     }
 }
 
+enum class HipEncodeRole { Source, CompoundTrial };
+
 // Purpose: Declare the bounded HIP encoder shared by source blocks and nonrecursive composition trials.
 // Inputs: Source ownership, GPU policy, optional exact block lengths and checksum destinations.
-// Outputs: Returns GPU payloads; source_selection controls source-kind and phase accounting for nested trials.
+// Outputs: Returns GPU payloads; role bounds composition depth and source-kind/phase accounting.
 EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
                                    const GpuCodecOptions& options, std::span<const std::uint32_t> block_lengths = {},
-                                   std::vector<std::uint32_t>* block_crcs = nullptr, bool source_selection = true);
+                                   std::vector<std::uint32_t>* block_crcs = nullptr,
+                                   HipEncodeRole role = HipEncodeRole::Source);
 
 // Purpose: Evaluate exactly one extra GPU encoding stage over each eligible Neutron winner.
 // Inputs: A dense immutable baseline and required-HIP Neutron policy; ordinary levels never call this helper.
@@ -1230,7 +1233,7 @@ EncodedChunk compose_neutron_winners(EncodedChunk baseline, const GpuCodecOption
     result.blocks.reserve(baseline.blocks.size());
     result.payload.reserve(baseline.payload.size());
     auto inner_options = options;
-    inner_options.compression_mode = NativeCompressionMode::Standard;
+    inner_options.compression_mode = NativeCompressionMode::NeutronStar;
     inner_options.compression_level = 9;
     for (auto descriptor : baseline.blocks) {
         const auto offset = static_cast<std::size_t>(descriptor.encoded_offset);
@@ -1248,11 +1251,16 @@ EncodedChunk compose_neutron_winners(EncodedChunk baseline, const GpuCodecOption
                 options.encode_checkpoint();
             }
             (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), descriptor.uncompressed_len);
-            const auto inner = encode_chunk_hip_impl(original, nullptr, inner_options, {}, nullptr, false);
+            const auto inner =
+                encode_chunk_hip_impl(original, nullptr, inner_options, {}, nullptr, HipEncodeRole::CompoundTrial);
             if (inner.blocks.size() != 1U) {
                 throw GpuError("Neutron composition must produce exactly one inner block");
             }
             const auto& stage = inner.blocks.front();
+            if (stage.uncompressed_len != original.size() || stage.encoded_offset != 0U ||
+                stage.encoded_len != inner.payload.size() || !inner.source_crc32_available) {
+                throw GpuError("Neutron secondary encoder returned inconsistent stage metadata");
+            }
             if ((is_gpu_compound_stage(stage.kind) || stage.kind == BlockKind::Fill) &&
                 inner.payload.size() < original.size() - kGpuCompoundHeaderBytes) {
                 result.payload.push_back(static_cast<std::byte>(stage.kind));
@@ -1282,6 +1290,18 @@ EncodedChunk compose_neutron_winners(EncodedChunk baseline, const GpuCodecOption
     return result;
 }
 
+// Purpose: Release completed Neutron trial storage and enforce the fixed source/trial composition depth.
+// Inputs: A fully owned winner, required-HIP policy/role and candidate buffers no longer borrowed by the winner.
+// Outputs: Returns the winner or a smaller composed result; trial roles never start a recursive composition.
+static EncodedChunk finish_neutron_encoding(EncodedChunk selected, const GpuCodecOptions& options, HipEncodeRole role,
+                                            dictionary::DictionaryReplacements& dictionary_replacements,
+                                            std::vector<std::vector<std::byte>>& sparse_replacements) {
+    // The selected payload owns copies; releasing trial storage cannot invalidate either stage's source span.
+    dictionary_replacements.clear();
+    sparse_replacements.clear();
+    return role == HipEncodeRole::Source ? compose_neutron_winners(std::move(selected), options) : std::move(selected);
+}
+
 // Purpose: Compute source integrity once for ordinary chunks or independently framed dense batches.
 // Inputs: A bounded device source, exact optional block lengths and operation-owned CRC destinations/telemetry.
 // Outputs: Returns device-computed source CRC, combining independent batch block CRCs in source order.
@@ -1306,7 +1326,7 @@ static std::uint32_t encoded_source_crc_hip(const std::byte* device_input, std::
 // success.
 EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
                                    const GpuCodecOptions& options, std::span<const std::uint32_t> block_lengths,
-                                   std::vector<std::uint32_t>* block_crcs, bool source_selection) {
+                                   std::vector<std::uint32_t>* block_crcs, HipEncodeRole role) {
     if (input.empty()) {
         EncodedChunk empty;
         empty.source_crc32 = 0;
@@ -1314,6 +1334,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         return empty;
     }
     auto* telemetry = options.telemetry.get();
+    const bool source_selection = role == HipEncodeRole::Source;
     auto* phase_telemetry = source_selection ? telemetry : nullptr;
     // Nested trial work contributes device counters; its enclosing source publication owns the phase duration.
     auto phase_started = std::chrono::steady_clock::now();
@@ -1412,7 +1433,8 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
         }
         if (options.compression_mode == NativeCompressionMode::NeutronStar) {
-            selected = compose_neutron_winners(std::move(selected), options);
+            selected = finish_neutron_encoding(std::move(selected), options, role, dictionary_replacements,
+                                               sparse_replacements);
         }
         if (source_selection) {
             record_selected_block_kinds(selected, telemetry);

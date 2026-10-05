@@ -129,11 +129,13 @@ PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t r
     const auto workers =
         requested_workers == 0 ? std::min<std::uint32_t>(hardware_threads, kMaxArchiveWorkers) : requested_workers;
     HostPipelineWorkspace workspace;
-    if (composed_decode ||
-        (compression != nullptr && compression->compression_mode == NativeCompressionMode::NeutronStar)) {
+    if (composed_decode) {
         // Composed CPU workers' intermediates sum to at most their decoded window; HIP uses one at a time.
-        // Neutron encode also retains its original payload while framing winning secondary trials.
         workspace.per_window_bytes = chunk_size;
+    }
+    if (compression != nullptr && compression->compression_mode == NativeCompressionMode::NeutronStar) {
+        // Source, baseline and framing output coexist with one secondary portfolio of at most three block buffers.
+        workspace.per_window_bytes = chunk_size * 3U;
     }
     if (compression != nullptr && !compression->gpu_required) {
         workspace = cpu_encode_workspace_estimate(

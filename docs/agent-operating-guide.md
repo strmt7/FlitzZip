@@ -330,7 +330,7 @@ Guidelines, and SEI CERT C++.
 - `src/core/`: archive format, manifest, path safety, progress, Defender opt-in scan, SHA-256 integrity.
 - `src/cpio/`: CPIO and CPIO.GZ compatibility adapter for SVR4 new ASCII archives with two-pass path validation and verified file publication.
 - `src/gzip/`: Gzip compatibility streams using miniz raw deflate with CRC32/ISIZE verification.
-- `src/gpu/`: AMD HIP codec integration and CPU fallback used only when GPU is not required.
+- `src/gpu/`: AMD HIP codecs and explicit CPU routing for forced CPU, absent HIP, or CPU-only archive blocks. Selected HIP failures propagate; required-HIP work never retries on CPU.
 - `src/hqx/`: Extract-only BinHex 4.0 `.hqx` data-fork adapter with strict HQX alphabet parsing, RLE expansion, header/data/resource CRC validation, path-safe header names, and verified file publication.
 - `src/iso/`: Read-only basic ISO 9660 compatibility adapter with two-pass path validation and verified file publication.
 - `src/lha/`: Read-only LHA/LZH adapter using the vendored Lhasa 0.6.0 decoder with two-pass validation and verified file publication.

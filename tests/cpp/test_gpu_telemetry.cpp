@@ -475,6 +475,57 @@ TEST_CASE(owned_decoded_chunk_required_gpu_rejects_cpu_blocks) {
     }
 }
 
+// Purpose: Preserve explicit CPU compatibility selection without attempting unsupported HIP decode.
+// Inputs: Independently CPU-produced Deflate/Zstd blocks and optional-HIP options on either build configuration.
+// Outputs: Requires exact bytes/CRC and zero device activity, while required HIP still rejects the same archives.
+TEST_CASE(optional_hip_selects_cpu_only_blocks_before_device_work) {
+    for (const auto size : {1024U, 4096U}) {
+        std::vector<std::byte> source(size);
+        for (std::size_t index = 0; index < source.size(); ++index) {
+            source[index] = static_cast<std::byte>(index & 15U);
+        }
+        superzip::GpuCodecOptions cpu;
+        cpu.require_gpu = false;
+        cpu.force_cpu = true;
+        cpu.block_size = 4096U;
+        const auto encoded = superzip::encode_chunk(source, cpu);
+        REQUIRE_EQ(encoded.blocks.front().kind,
+                   size == 1024U ? superzip::BlockKind::Deflate : superzip::BlockKind::CpuZstd);
+        auto optional = cpu;
+        optional.force_cpu = false;
+        optional.telemetry = std::make_shared<superzip::GpuTelemetry>();
+        std::vector<std::byte> decoded(source.size());
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, optional));
+        REQUIRE_TRUE(decoded == source);
+        const auto checked = superzip::crc_decoded_chunk(encoded.payload, encoded.blocks, source.size(), optional);
+        REQUIRE_TRUE(!checked.gpu_used);
+        REQUIRE_EQ(checked.crc32, superzip::crc32(source));
+        const auto stats = superzip::snapshot_gpu_telemetry(*optional.telemetry);
+        REQUIRE_EQ(stats.kernel_launches + stats.h2d_bytes + stats.d2h_bytes + stats.device_allocation_bytes, 0U);
+    }
+}
+
+// Purpose: Distinguish expected absent-HIP CPU operation from real available-device work.
+// Inputs: Live readiness plus borrowed, owned and independent-block optional encoding on a small RAM fixture.
+// Outputs: Requires the selected backend identity and exact CPU readback; the CPU-only build exercises absence.
+TEST_CASE(optional_hip_encoding_uses_explicit_availability) {
+    const bool available = superzip::hip_device_available();
+    superzip::GpuCodecOptions options;
+    options.require_gpu = false;
+    options.block_size = 4096U;
+    const std::vector<std::byte> source(4096U, std::byte{73});
+    const std::array<std::uint32_t, 1> lengths{4096U};
+    for (const auto& encoded : {superzip::encode_chunk(source, options), superzip::encode_owned_chunk(source, options),
+                                superzip::encode_owned_block_batch(source, lengths, options).encoded}) {
+        REQUIRE_EQ(encoded.gpu_used, available);
+        std::vector<std::byte> decoded(source.size());
+        auto cpu = options;
+        cpu.force_cpu = true;
+        REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu));
+        REQUIRE_TRUE(decoded == source);
+    }
+}
+
 // Purpose: Keep allocator compatibility decisions tied to the loaded numeric DLL version rather than SDK labels.
 // Inputs: Missing metadata, the reproducing older runtime, minimum-version boundaries, and newer numeric versions.
 // Outputs: Requires conservative legacy eligibility and exact path-free dotted diagnostic formatting.
