@@ -127,10 +127,39 @@ class CrawlerContracts(unittest.TestCase):
             model_index = next(
                 i for i, command in enumerate(commands) if command[-1] == "tools.test_nltk_model_security"
             )
+            download_index = next(
+                i for i, command in enumerate(commands) if command[-1] == "tools.test_crawl4ai_downloads"
+            )
             browser_index = next(i for i, command in enumerate(commands) if "playwright" in command)
             self.assertLess(check_index, model_index)
-            self.assertLess(model_index, browser_index)
+            self.assertLess(model_index, download_index)
+            self.assertLess(download_index, browser_index)
             self.assertTrue((directory / "superzip-install.json").exists())
+
+    def test_fresh_install_never_admits_a_failed_dependency_or_api_gate(self):
+        """Purpose: Enforce setup admission. Inputs: Failed fresh dependency/API gates. Outputs: No receipt."""
+        for failed in ("install", "check", "tools.test_nltk_model_security", "tools.test_crawl4ai_downloads"):
+            with self.subTest(gate=failed), tempfile.TemporaryDirectory() as owned:
+                directory = Path(owned)
+                python = directory / "python"
+                python.touch()
+                commands = []
+
+                def admit(command, *args, _calls=commands, _gate=failed, **kwargs):
+                    """Purpose: Fail one actual setup command. Inputs: Production argv. Outputs: Recorded call/error."""
+                    _calls.append(command)
+                    if _gate in command:
+                        raise subprocess.CalledProcessError(1, command)
+
+                with (
+                    patch("tools.nltk_security_build.ensure_wheel", return_value=directory / "nltk.whl"),
+                    patch("tools.crawl4ai_source_build.ensure_wheel", return_value=directory / "crawl4ai.whl"),
+                    patch.object(tool, "run", side_effect=admit),
+                    self.assertRaises(subprocess.CalledProcessError),
+                ):
+                    tool.provision(directory, directory, python, "fresh-admission")
+                self.assertFalse((directory / "superzip-install.json").exists())
+                self.assertFalse(any("playwright" in command for command in commands))
 
     def test_changed_security_contract_reuses_dependencies_and_failed_gate_is_not_cached(self):
         """Purpose: Reuse qualified installs. Inputs: Stale gate/owned receipt. Outputs: Only affected test runs."""

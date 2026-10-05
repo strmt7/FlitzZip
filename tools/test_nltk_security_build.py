@@ -135,19 +135,11 @@ class SecurityBuildTests(unittest.TestCase):
                 build.ensure_wheel(home)
             builder.assert_not_called()
 
-    def test_hosted_admission_scans_nonstandard_manifest_names_and_runtime_api(self):
-        """Purpose: Prevent false empty dependency scans. Inputs: Owned workflows. Outputs: Explicit graph/API gates."""
+    def test_hosted_scanners_discover_nonstandard_manifest_names(self):
+        """Purpose: Prevent false empty dependency scans. Inputs: Owned scanners. Outputs: Explicit graph discovery."""
         scanner = (build.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         for name in ("crawl4ai", "nltk-build"):
             self.assertIn(f"--lockfile=requirements.txt:tools/requirements/{name}.txt", scanner)
-        workflow = (build.ROOT / ".github/workflows/crawl4ai-security.yml").read_text(encoding="utf-8")
-        for required in ("windows-2022", "ubuntu-24.04", "macos-15", "tools.test_nltk_model_security", "pip check"):
-            self.assertIn(required, workflow)
-        self.assertIn("'--require-hashes'", workflow)
-        self.assertIn("'--only-binary=:all:'", workflow)
-        self.assertIn("& $runtimePython @installArguments", workflow)
-        self.assertNotIn("'--no-deps'", workflow)
-        self.assertNotIn("--no-deps", workflow)
         dependabot = (build.ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
         self.assertIn("directory: /tools/requirements", dependabot)
 

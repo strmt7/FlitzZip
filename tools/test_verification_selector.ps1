@@ -499,14 +499,14 @@ foreach ($crawlerSourcePath in @('tools/crawl4ai_source_build.py', 'tools/test_c
         'tools/crawl4ai_download_opener.py', 'tools/test_crawl4ai_downloads.py', 'third_party/upstream/crawl4ai/0.9.4/build.json')) {
     $sourcePlan = Get-SuperZipVerificationPlan -ChangedPath @($crawlerSourcePath)
     Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id 'crawl4ai-source-contracts') 'crawler source changes require the actual source/platform contract'
-    Assert-Selector (Test-Workflow -Plan $sourcePlan -Name 'crawl4ai-security') 'crawler source changes require the hosted platform consumer'
+    Assert-Selector (-not (Test-Workflow -Plan $sourcePlan -Name 'crawl4ai-security')) 'qualified research setup must not select a retired continuous workflow'
     Assert-Selector (-not (Test-RequiredCommand -Plan $sourcePlan -Id 'release-build')) 'crawler source changes do not build the archive application'
 }
 foreach ($nltkPath in @('tools/nltk_security_build.py', 'tools/test_nltk_security_build.py', 'tools/test_nltk_model_security.py',
         'tools/requirements/nltk-build.txt', 'tools/requirements/crawl4ai.txt', 'third_party/upstream/nltk/README.md')) {
     $nltkPlan = Get-SuperZipVerificationPlan -ChangedPath @($nltkPath)
     Assert-Selector (Test-RequiredCommand -Plan $nltkPlan -Id 'nltk-source-contracts') "NLTK source admission requires offline contracts: $nltkPath"
-    Assert-Selector (Test-Workflow -Plan $nltkPlan -Name 'crawl4ai-security') "NLTK source changes require the actual platform build/API matrix: $nltkPath"
+    Assert-Selector (-not (Test-Workflow -Plan $nltkPlan -Name 'crawl4ai-security')) "NLTK installation admission must not select a retired continuous workflow: $nltkPath"
     foreach ($productId in @('release-build', 'unit-tests', 'gui-smoke', 'package-smoke')) {
         Assert-Selector (-not (Test-RequiredCommand -Plan $nltkPlan -Id $productId)) "NLTK tooling changes must not invoke unrelated product work: $productId"
     }

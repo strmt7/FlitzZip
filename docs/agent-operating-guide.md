@@ -1029,6 +1029,16 @@ On a new host, validate installation and the intended target. Reuse qualificatio
 only for unchanged integration, dependency and configuration identities; do not
 reinstall or crawl the entire qualification matrix at every unchanged checkpoint.
 
+Treat a qualified, pinned research tool as stable development infrastructure.
+Ordinary product work must not modify, reinstall or repeatedly requalify it.
+Use its portable launcher to admit a fresh installation; retain setup-time
+package and behavioral checks. Tool maintenance is justified by an applicable
+security advisory, an installation failure, an affected integration change or
+an explicit requested update. Keep repository dependency/source scanning active,
+and qualify the affected hosts and consumers when such maintenance is required.
+A standalone continuous crawler qualification workflow is not part of ordinary
+product CI.
+
 Before using, modifying, benchmarking, publishing or redistributing third-party
 material, check the action-specific rights and retained notices in the
 [license audit](license-and-permission-audit-2026-10-05.md) and

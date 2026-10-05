@@ -90,3 +90,10 @@ public browser run qualified 31 of 32 independent sites: GNU succeeded on this
 run, while W3C's Cloudflare challenge remained blocked. This does not guarantee
 site availability or authorize bypassing access restrictions. The exact receipt
 is retained under ignored `out/crawl4ai-portable2-qualification-20261005.json`.
+
+The exact pushed commit `84304a5c33e7403c8dbc10ec4aeab51517be5c1d` passed
+[all four fresh-install platform jobs](https://github.com/strmt7/SuperZip/actions/runs/37342384453),
+including Windows console-backed destination validation. The maintainer then
+requested retirement of the dedicated continuous workflow. The verified pinned
+source and setup-time package/API admission remain intact; ordinary product
+development does not requalify an unchanged research environment.

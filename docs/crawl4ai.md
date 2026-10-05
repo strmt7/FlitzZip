@@ -75,13 +75,18 @@ passes. Setup progress stays hidden; failures retain bounded diagnostics.
 Neither installation nor crawling requires a change to the archive application.
 
 OSV is given explicit parser/path arguments for both development dependency
-locks. Dependabot covers their directory. The `crawl4ai-security` workflow
-builds and verifies the repaired wheel, normal resolution, `pip check`, the
-affected model APIs and the actual stemming/filter consumer on Windows, Linux
-and macOS. It also checks Python 3.14 on Linux. Those hosted platform checks
-must pass before claiming cross-platform execution qualification; local path
-fixtures alone do not establish it. The platform dependency checks do not
-download browsers, crawl websites or build the archive application.
+locks. Dependabot covers their directory. The pinned revision passed a
+[one-time fresh-install qualification](https://github.com/strmt7/SuperZip/actions/runs/37342384453)
+on Windows and macOS with Python 3.13, and Linux with Python 3.13 and 3.14.
+That run built and admitted both repaired wheels, resolved dependencies normally,
+ran `pip check`, and passed the model and download consumers. The dedicated
+qualification workflow was then retired at the maintainer's request.
+Ordinary product changes do not reinstall or requalify this research tool.
+The portable installer retains the package, byte-admission and API checks before
+accepting any new environment. Actual tool changes still select their offline
+contracts and repository dependency/source scans. Maintain this qualified pin
+unless an advisory, installation failure or requested update requires maintenance;
+that maintenance needs fresh evidence for its affected hosts and consumers.
 
 Use `install` to provision ahead of time or `doctor` for installation diagnostics.
 Use `crawl --help` for the upstream CLI options. Browser, extraction and crawler
@@ -93,8 +98,9 @@ On Linux, missing Chromium system libraries must be provisioned by the host's
 normal administrator or container-image process. The documented upstream command
 is `<environment-python> -m playwright install-deps chromium`; do not silently
 escalate privileges. The Python tool is portable; SuperZip's native application
-still has its separate Windows-only build requirements. Linux/macOS execution
-has not been validated on this Windows host.
+still has its separate Windows-only build requirements. Linux/macOS package
+installation and API execution were validated by the hosted qualification above;
+public browser extraction was qualified on Windows.
 
 ## Headless Operation And Host Policy
 
