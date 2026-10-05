@@ -3,8 +3,9 @@
 The [Dependabot pull request](https://github.com/strmt7/SuperZip/pull/59) at
 `451143a2f30581da5bc4db8fff4900e52b78e018` proposes six independently selected
 updates to the crawler lock. All four platform installation jobs reject its
-dependency graph. This is a real compatibility failure, not a scanner false
-positive, and the proposed lock must not be merged.
+dependency graph. This proves a resolver conflict, not that every newer package
+fails at runtime. The proposed lock must not be merged as written. The one-time
+runtime experiment below distinguishes declared restrictions from API failures.
 
 Current publisher metadata and the actual consuming distributions establish:
 
@@ -56,3 +57,71 @@ above and remains open and unmerged. The advisory still declares
 The new portable crawler revision retains the admitted NLTK source repair;
 its actual installed model/API regressions pass again. Neither a package
 version change nor the incompatible PR can close that database alert honestly.
+
+## One-Time Runtime Exception
+
+The maintainer explicitly authorized testing newer packages beyond declared
+consumer constraints for this round only. This authorization does not change
+the installer, agent rules, update policy, normal resolution or admission gates.
+The qualified environment and its installation receipt remained unchanged.
+
+On Windows x64 with CPython 3.13, disposable import overlays installed the
+official, non-yanked wheels after checking their publisher SHA-256 identities.
+Only this isolated experiment omitted dependency resolution. A passing
+unchanged-graph control preceded the assessed overrides. Each passing individual
+override also passed the six actual crawler download regressions and nine NLTK
+model-artifact/API regressions. No external model weights were downloaded.
+
+| New package tested | Version | Actual consumer evidence |
+| --- | --- | --- |
+| multidict | 7.0.0 | aiohttp client/server: repeated query values, duplicate headers and exact body; crawler HTTP regressions passed |
+| pydantic-core | 2.49.0 | Rejected by Pydantic 2.13.5's runtime version check; further isolated API diagnostic failed |
+| pyee | 14.0.0 | Async events and a real headless Playwright Chromium page, click and event lifecycle passed |
+| huggingface-hub | 2.1.1 | Actual Hub HEAD/GET download from an owned loopback fixture and Tokenizers byte-exact readback passed |
+| snowballstemmer | 3.1.1 | English stemming and Crawl4AI's actual BM25 content selection matched the control |
+| xxhash | 4.0.1 | Crawl4AI's actual content hashes and incremental hashing matched the control |
+
+The Hub version is newer than the PR's proposed 2.0.0; this tests the latest
+publisher release observed during the exception, not that exact PR wheel.
+The other five versions match the PR. These are focused Windows results,
+not complete upstream suites, fresh normal installations or cross-platform
+qualification. They do not authorize declaring all five integrations compatible.
+
+For the core diagnostic, a disposable copy of Pydantic changed only its expected
+core-version constant from 2.46.5 to 2.49.0. The installed package and production
+guard were untouched. Even beyond that version check, ordinary
+`BaseModel.model_json_schema()` failed:
+
+```text
+TypeError: No method for generating JsonSchema for core_schema.type='fraction'
+(expected: GenerateJsonSchema.fraction_schema)
+```
+
+This is a demonstrated API incompatibility, not merely stale dependency
+metadata. The combined latest graph consequently fails. The earlier basic
+validation and JSON serialization steps passed in this diagnostic; they were
+insufficient to establish compatibility. Do not drop schema coverage or ship
+the experimental guard change to make the grouped update pass.
+
+The [released Pydantic schema generator](https://github.com/pydantic/pydantic/blob/v2.13.5/pydantic/json_schema.py)
+lacks that handler. The [core 2.49.0 publisher source distribution](https://pypi.org/project/pydantic-core/2.49.0/)
+defines the new `fraction` schema type and its constructor. Its authenticated
+`python/pydantic_core/core_schema.py` member has SHA-256
+`c4bc7cf4e48da8508a48bfaaa260e4c3f348b543668e590dad6f6ee0f368ad08`.
+The parent needs a matching implementation; widening a requirement or changing
+the expected-version constant alone does not supply it. Crawl4AI's installed
+HTTP strategy read the primary publisher pages with robots checks; no browser
+was started alongside the GPU benchmark.
+
+The control also exposed an upstream serialization limitation:
+`CrawlResult.model_dump_json()` without markdown raises
+`PydanticSerializationError` on the unchanged qualified graph. The actual
+`model_dump()` consumer with a populated markdown result passed. The broader
+method limitation remains an observation; it was not repaired or attributed to
+these updates.
+
+Bounded diagnostics and exact wheel identities are retained under ignored
+`out/pr59-runtime-exception-20261005.json`. Initial experiment-fixture failures
+are retained separately and are not package-incompatibility evidence. Temporary
+overlays and the diagnostic source copy were cleaned up. No permanent workflow,
+production override or recurring requirement-bypass procedure was added.
