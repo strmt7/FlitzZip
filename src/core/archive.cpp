@@ -78,7 +78,8 @@ struct ArchiveValidationSummary {
 bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuCompound || kind == BlockKind::GpuDictionary ||
+           is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -122,11 +123,18 @@ std::uint64_t count_stream_windows(std::uint64_t bytes, std::uint64_t window_byt
 // Inputs: Validated resource options; optional borrowed compression options identify CPU fallback costs.
 // Outputs: Returns bounded concurrency or throws when one complete pipeline estimate cannot fit.
 PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t requested_workers,
-                                       std::uint32_t requested_inflight, const CompressOptions* compression = nullptr) {
+                                       std::uint32_t requested_inflight, const CompressOptions* compression = nullptr,
+                                       bool composed_decode = false) {
     const auto hardware_threads = std::max(1U, std::thread::hardware_concurrency());
     const auto workers =
         requested_workers == 0 ? std::min<std::uint32_t>(hardware_threads, kMaxArchiveWorkers) : requested_workers;
     HostPipelineWorkspace workspace;
+    if (composed_decode ||
+        (compression != nullptr && compression->compression_mode == NativeCompressionMode::NeutronStar)) {
+        // Composed CPU workers' intermediates sum to at most their decoded window; HIP uses one at a time.
+        // Neutron encode also retains its original payload while framing winning secondary trials.
+        workspace.per_window_bytes = chunk_size;
+    }
     if (compression != nullptr && !compression->gpu_required) {
         workspace = cpu_encode_workspace_estimate(
             chunk_size, {.block_size = compression->block_size, .compression_level = compression->compression_level},
@@ -520,7 +528,8 @@ void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescri
     if (block.kind != BlockKind::Raw && block.kind != BlockKind::Fill && block.kind != BlockKind::Deflate &&
         block.kind != BlockKind::CpuZstd && block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
         block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuHuffman &&
-        block.kind != BlockKind::GpuDictionary && !is_gpu_sparse_pattern_kind(block.kind)) {
+        block.kind != BlockKind::GpuCompound && block.kind != BlockKind::GpuDictionary &&
+        !is_gpu_sparse_pattern_kind(block.kind)) {
         throw ArchiveError("archive block has unknown encoding kind");
     }
     if (block.uncompressed_len == 0) {
@@ -611,6 +620,12 @@ std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const B
         require_dense_payload_offset(entry, block, payload_cursor, "GPU dictionary");
         return checked_add_u64(payload_cursor, block.encoded_len, "GPU dictionary block payload size overflows");
     }
+    case BlockKind::GpuCompound:
+        if (block.encoded_len < 8U || block.encoded_len >= block.uncompressed_len) {
+            throw ArchiveError("GPU compound block metadata is invalid");
+        }
+        require_dense_payload_offset(entry, block, payload_cursor, "GPU compound");
+        return checked_add_u64(payload_cursor, block.encoded_len, "GPU compound block payload size overflows");
     case BlockKind::GpuSparsePattern:
     case BlockKind::GpuLongSparsePattern:
         if (block.encoded_len < kSparsePatternHeaderBytes + 2U + kSparsePatternPatchBytes ||
@@ -811,12 +826,14 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 
 // Purpose: Select the smallest native version that defines every encoded block.
 // Inputs: A completed archive index with all file block descriptors.
-// Outputs: Returns version three through eight without downgrading a new block kind.
+// Outputs: Returns version three through nine without downgrading a new block kind.
 std::uint32_t required_archive_version(const ArchiveIndex& index) {
     std::uint32_t version = kSuperZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == BlockKind::GpuHuffman) {
+            if (block.kind == BlockKind::GpuCompound) {
+                version = std::max(version, 9U);
+            } else if (block.kind == BlockKind::GpuHuffman) {
                 version = std::max(version, 8U);
             } else if (block.kind == BlockKind::GpuLongSparsePattern) {
                 version = std::max(version, 7U);
@@ -971,7 +988,8 @@ OperationStats extract_suzip(const std::filesystem::path& archive_path, const st
     // Validate the complete index up front so extraction cannot create files for malformed metadata.
     const auto validation = validate_archive_index_metadata(index);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
-    auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
+    auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks,
+                                          nullptr, index.version >= 9U);
     budget.inflight_chunks = resolve_owned_decode_inflight(
         budget.inflight_chunks, static_cast<std::size_t>(decode_window_bytes),
         GpuCodecOptions{.require_gpu = options.gpu_required, .force_cpu = options.force_cpu});
@@ -1083,7 +1101,8 @@ OperationStats verify_suzip(const std::filesystem::path& archive_path, const Ext
     auto index = read_index_from_file(input);
     const auto validation = validate_archive_index_metadata(index);
     const auto decode_window_bytes = resolve_decode_window_bytes(options, validation);
-    const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks);
+    const auto budget = resolve_pipeline_budget(decode_window_bytes, options.worker_count, options.max_inflight_chunks,
+                                                nullptr, index.version >= 9U);
     ProgressState progress;
     progress.start(OperationKind::Verify, validation.total_uncompressed_bytes, index.entries.size());
     OperationStats stats;

@@ -7,8 +7,12 @@ The implementation is a bounded HIP dictionary primitive with separate
 application, CLI and benchmark mode routing. Its GUI row follows the nine
 numeric efforts and requires native SUZIP, actual cached HIP availability and
 the required-GPU preference. Settings store the mode separately from the
-numeric effort. The primitive retains the existing independent LZ4 block representation,
-so it does not require a new archive block kind or change decoder semantics.
+numeric effort. Its minimum-byte dictionary primitive retains the independent
+LZ4 block representation. Neutron additionally evaluates a closed second GPU
+encoding stage over the selected payload; a strictly smaller complete result
+uses the [version-nine compound representation](native-suzip-format.md).
+Both required-HIP decode stages execute on the GPU. The independent CPU
+decoder verifies portability without providing a Neutron creation fallback.
 It is not a claim of universal minimum size, best-in-class compression or an
 unmeasured GPU speedup.
 

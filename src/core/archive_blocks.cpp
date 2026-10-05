@@ -1,4 +1,5 @@
 #include "core/archive_blocks.hpp"
+#include "core/compound_block.hpp"
 #include "core/dictionary_block.hpp"
 #include "core/huffman_lookup.hpp"
 #include "core/parallel_ranges.hpp"
@@ -467,6 +468,9 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
                     throw ArchiveError("GPU dictionary block metadata is invalid");
                 }
             }
+            if (block.kind == BlockKind::GpuCompound) {
+                (void)parse_gpu_compound_block(payload.subspan(offset, encoded_len), block);
+            }
             if (is_gpu_sparse_pattern_kind(block.kind)) {
                 (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                  static_cast<std::size_t>(block.encoded_len)),
@@ -532,6 +536,15 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_dictionary_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                            static_cast<std::size_t>(block.encoded_len)),
                                            output.subspan(out_pos, len));
+            } else if (block.kind == BlockKind::GpuCompound) {
+                const auto stages = parse_gpu_compound_block(
+                    payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block);
+                (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), block.uncompressed_len);
+                std::vector<std::byte> intermediate(stages.inner.uncompressed_len);
+                const ArchiveCodecOptions stage_options{.worker_count = 1};
+                decode_chunk_cpu(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, stage_options);
+                decode_chunk_cpu(intermediate, std::span(&stages.original, 1U), output.subspan(out_pos, len),
+                                 stage_options);
             } else if (is_gpu_sparse_pattern_kind(block.kind)) {
                 materialize_sparse_pattern_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                                static_cast<std::size_t>(block.encoded_len)),
@@ -628,7 +641,8 @@ std::uint64_t count_decode_block_windows(std::span<const BlockDescriptor> blocks
 bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
-           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuHuffman || kind == BlockKind::GpuCompound || kind == BlockKind::GpuDictionary ||
+           is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Encode a contiguous native CPU block range with one bounded worker-owned Zstandard context.

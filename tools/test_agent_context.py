@@ -182,8 +182,34 @@ class AgentContextTests(unittest.TestCase):
         for skill in delivered["skills"]:
             actual, digest = context.read_source(context.ROOT, skill["path"])
             self.assertEqual((skill["instructions"], skill["sha256"]), (actual, digest))
+        agents, digest = context.read_source(context.ROOT, "AGENTS.md")
+        research = delivered["research"]
+        self.assertIn(research["instructions"], agents)
+        self.assertEqual(research["sha256"], digest)
+        self.assertEqual(research["launcher_sha256"], context.read_source(context.ROOT, research["launcher"])[1])
         (self.root / "AGENTS.md").write_text("Mandatory skills are missing.\n", encoding="utf-8")
         with self.assertRaises(ValueError):
+            context.startup(self.root)
+
+    def test_startup_rejects_removed_research_rule_and_missing_portable_launcher(self):
+        """Purpose: Prevent silent research-route removal.
+        Inputs: real current instructions and missing tool/rule mutations.
+        Outputs: offline startup fails; no crawler installation or ordinary native build occurs."""
+        agents, _ = context.read_source(context.ROOT, "AGENTS.md")
+        for name in context.SKILLS:
+            relative = f".agents/skills/{name}/SKILL.md"
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(context.read_source(context.ROOT, relative)[0], encoding="utf-8")
+        (self.root / "AGENTS.md").write_bytes(agents.encode("utf-8"))
+        with self.assertRaises(FileNotFoundError):
+            context.startup(self.root)
+        target = self.root / "tools/crawl4ai_tool.py"
+        target.parent.mkdir()
+        target.write_text(context.read_source(context.ROOT, "tools/crawl4ai_tool.py")[0], encoding="utf-8")
+        delivered = context.startup(self.root)
+        (self.root / "AGENTS.md").write_bytes(agents.replace(delivered["research"]["instructions"], "").encode("utf-8"))
+        with self.assertRaisesRegex(ValueError, "Crawl4AI"):
             context.startup(self.root)
 
     def test_cli_budget_errors_and_stale_exit_remain_machine_visible(self):

@@ -822,6 +822,7 @@ if(SUPERZIP_BUILD_TESTS)
     superzip_test_objects OBJECT
     tests/cpp/test_main.cpp
     tests/cpp/test_archive_roundtrip.cpp
+    tests/cpp/test_compound_block.cpp
     tests/cpp/test_archive_verification.cpp
     tests/cpp/test_integrity.cpp
     tests/cpp/test_archive_format.cpp

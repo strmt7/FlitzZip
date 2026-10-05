@@ -1,5 +1,13 @@
 # Neutron star mode public-corpus benchmark
 
+The [version-nine composition study](benchmarks/data/neutron-canterbury-compound-2026-10-05.json)
+completed three identical-size Canterbury repetitions at 256 KiB, with real
+HIP readback and zero payload disk writes. It reduced complete modeled
+independent-file archive bytes from 1,008,754 to 744,182 (26.23%). The preceding
+Govdocs1 and block-setting results below retain their own source qualifications;
+they are not measurements of this new representation. Timing superiority and
+comparisons with established formats remain unqualified.
+
 ## Workloads
 
 The [Canterbury corpus](https://corpus.canterbury.ac.nz/descriptions/) is a fixed

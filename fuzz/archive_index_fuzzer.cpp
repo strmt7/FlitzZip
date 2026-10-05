@@ -1,4 +1,5 @@
 #include "core/archive_index.hpp"
+#include "core/compound_block.hpp"
 #include "core/result.hpp"
 
 #include <cstddef>
@@ -6,7 +7,7 @@
 #include <sstream>
 #include <string>
 
-// Purpose: Feed arbitrary bytes into the SuperZip archive-index parser.
+// Purpose: Feed arbitrary bytes into the native index and closed compound-header parsers.
 // Inputs: `data` and `size` are libFuzzer-owned bytes for one fuzz iteration.
 // Outputs: Returns 0 after successful parsing or expected parser rejection; sanitizer findings crash the process.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
@@ -19,6 +20,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     try {
         (void)superzip::read_archive_index(input);
     } catch (const superzip::Error&) {
+    }
+    if (size >= sizeof(std::uint32_t)) {
+        std::uint32_t decoded_bytes = 0U;
+        for (std::size_t byte = 0U; byte < sizeof(decoded_bytes); ++byte) {
+            decoded_bytes |= static_cast<std::uint32_t>(data[byte]) << (byte * 8U);
+        }
+        const auto payload =
+            std::span(reinterpret_cast<const std::byte*>(data + sizeof(decoded_bytes)), size - sizeof(decoded_bytes));
+        try {
+            (void)superzip::parse_gpu_compound_block(payload,
+                                                     {.kind = superzip::BlockKind::GpuCompound,
+                                                      .uncompressed_len = decoded_bytes,
+                                                      .encoded_len = static_cast<std::uint32_t>(payload.size())});
+        } catch (const superzip::Error&) {
+        }
     }
     return 0;
 }

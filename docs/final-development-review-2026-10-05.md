@@ -110,3 +110,26 @@ The maintainer has been asked for its existing endpoint without credentials.
 The official NLTK release remains `v3.10.3` and the advisory still has no first
 patched version. The source repair is retained; alert metadata is not fabricated
 or dismissed to manufacture final acceptance.
+
+The subsequent Neutron composition batch passed twenty selected local commands,
+all seven native suites and the 612-case main suite, the registered format
+matrix, interoperability, instrumented fuzzing, Windows ASan and packaging.
+Version-nine compound frames are closed, bounded, self-contained and created
+only through Neutron's required-HIP path. Both required-HIP decode stages and
+CRC execute on the device. Ordinary numeric encoding policies remain separate.
+Two initial fixture assertions were corrected: one input legitimately chose an
+improved uncomposed result, while the grouped test now reconstructs every exact
+first-stage byte before checking its unchanged oracle. Independent decoder,
+malformed-kind, downgrade and cancellation coverage remain intact.
+
+The [source-bound Canterbury composition record](benchmarks/data/neutron-canterbury-compound-2026-10-05.json)
+reports 744,182 complete modeled independent-file archive bytes in each of
+three repetitions, from the same 2,810,784 source bytes. The retained preceding
+implementation produced 1,008,754 bytes. The size decrease is 26.23%; no file
+regressed. All 33 readbacks used real HIP and no payload disk writes. Timing
+qualification remains false. These observations qualify their recorded source;
+they do not claim established-format superiority or resolution of the freeze.
+
+Agent startup now delivers the existing Crawl4AI directive directly from
+AGENTS.md, with current launcher provenance and executable missing-rule/tool
+mutation controls. It does not install or requalify unchanged crawler packages.

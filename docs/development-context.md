@@ -29,7 +29,11 @@ At a new context boundary, deliver the current mandatory skill files:
 py -3 tools/agent_context.py startup
 ```
 
-The output contains both complete skill instructions and their source hashes.
+The output contains both complete skill instructions and their source hashes,
+plus the authoritative Crawl4AI research directive extracted from AGENTS.md and
+the portable launcher's source identity. Startup and its offline mutation tests
+fail if that research directive or launcher is removed. This delivers the
+existing policy without duplicating it or installing the crawler during startup.
 Missing files or an absent mandatory declaration fail explicitly. Read
 AGENTS.md and the relevant domain sections as well; startup does not claim they
 were reviewed. Within an unchanged context, do not reload the same skills at

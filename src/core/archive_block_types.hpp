@@ -16,6 +16,7 @@ enum class BlockKind : std::uint8_t {
     CpuZstd = 8,
     GpuLongSparsePattern = 9,
     GpuHuffman = 10,
+    GpuCompound = 11,
 };
 
 // Purpose: Group the two versioned sparse GPU encodings without conflating their period limits.

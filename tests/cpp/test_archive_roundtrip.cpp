@@ -1,6 +1,7 @@
 #include "core/archive_index.hpp"
 #include "core/archive.hpp"
 #include "core/checksum.hpp"
+#include "core/compound_block.hpp"
 #include "core/file_publish.hpp"
 #include "core/result.hpp"
 #include "core/resource_limits.hpp"
@@ -2152,7 +2153,7 @@ TEST_CASE(suzip_extract_rejects_file_entry_with_child_entry) {
 }
 
 // Purpose: Exhaustively check the serialized byte kind against every readable native version.
-// Inputs: One small in-memory descriptor, every kind byte and versions one through eight.
+// Inputs: One small in-memory descriptor, every kind byte and every readable version.
 // Outputs: Requires exact kind preservation for supported values and ArchiveError for all other values.
 TEST_CASE(suzip_index_block_kind_version_matrix) {
     superzip::ArchiveIndex index;
@@ -2164,7 +2165,7 @@ TEST_CASE(suzip_index_block_kind_version_matrix) {
     std::ostringstream encoded(std::ios::binary);
     superzip::write_archive_index(encoded, index);
     const auto original = encoded.str();
-    constexpr std::array<unsigned int, 11> first_versions{1U, 1U, 1U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U};
+    constexpr std::array<unsigned int, 12> first_versions{1U, 1U, 1U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U};
     constexpr std::size_t kind_offset = 12U + 2U + 1U + 1U + 24U + 4U + 4U;
     REQUIRE_EQ(original.size(), kind_offset + 18U);
     for (std::uint32_t version = 1U; version <= superzip::kSuperZipMaxReadableVersion; ++version) {

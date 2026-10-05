@@ -14,7 +14,11 @@ graph. It still has independent 64 KiB segments and fixed-width two-byte match
 distances. Those representation limits leave substantial room for research:
 additional search cannot exploit redundancy that the representation cannot
 express. The existing native portfolio compares complete framed candidates and
-retains its preceding winner. Future Neutron trials must retain that property.
+retains its preceding winner. Neutron now also evaluates one closed second
+GPU stage over the selected representation, using version-nine compound
+framing and retaining the first-stage result on ties or losses. This is a
+bounded composition experiment, not entropy-priced reparsing or an exhaustive
+search of codec combinations. Future trials must retain measured comparison.
 
 ## Primary Sources And Transferable Ideas
 

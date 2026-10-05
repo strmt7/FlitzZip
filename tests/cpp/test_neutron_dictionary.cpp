@@ -5,6 +5,7 @@
 #include "core/result.hpp"
 #include "core/progress.hpp"
 #include "core/archive.hpp"
+#include "core/compound_block.hpp"
 #include "test_util.hpp"
 #include "lz4.h"
 
@@ -675,9 +676,9 @@ TEST_CASE(neutron_dictionary_batched_parse_equals_isolated_blocks) {
     require_neutron_roundtrip(input, grouped);
 }
 
-// Purpose: Retain every ordinary winner through the real Neutron dispatcher when grouped dictionary trials lose.
+// Purpose: Preserve the exact ordinary first-stage winner when grouped dictionary trials lose but composition wins.
 // Inputs: One MiB of authenticated unique-window segments and four independently framed native archive blocks.
-// Outputs: Requires unchanged payload/descriptors, complete CRC and byte-exact CPU/HIP recovery, entirely in RAM.
+// Outputs: Reconstructs every original payload byte and descriptor, requires smaller composition and dual readback.
 TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
     if (!superzip::query_gpu_info().available) {
         std::cout << "[SKIP] Neutron grouped portfolio requires HIP\n";
@@ -691,18 +692,40 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
     constexpr auto block_bytes = static_cast<std::uint32_t>(kMaxNeutronBatchBytes / 4U);
     const auto baseline =
         superzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9});
+    std::size_t checkpoints = 0U;
     const auto encoded =
         superzip::encode_chunk(input, {.require_gpu = true,
                                        .block_size = block_bytes,
                                        .compression_level = 9,
-                                       .compression_mode = superzip::NativeCompressionMode::NeutronStar});
-    REQUIRE_EQ(encoded.payload, baseline.payload);
+                                       .compression_mode = superzip::NativeCompressionMode::NeutronStar,
+                                       .encode_checkpoint = [&] { ++checkpoints; }});
     REQUIRE_EQ(encoded.blocks.size(), 4U);
+    std::vector<std::byte> restored_payload;
+    std::size_t composed = 0U;
     for (std::size_t index = 0U; index < encoded.blocks.size(); ++index) {
-        REQUIRE_EQ(encoded.blocks[index].kind, baseline.blocks[index].kind);
-        REQUIRE_EQ(encoded.blocks[index].encoded_len, baseline.blocks[index].encoded_len);
-        REQUIRE_EQ(encoded.blocks[index].encoded_offset, baseline.blocks[index].encoded_offset);
+        auto original = encoded.blocks[index];
+        const auto payload =
+            std::span(encoded.payload).subspan(static_cast<std::size_t>(original.encoded_offset), original.encoded_len);
+        original.encoded_offset = restored_payload.size();
+        if (original.kind == superzip::BlockKind::GpuCompound) {
+            const auto stages = superzip::parse_gpu_compound_block(payload, original);
+            std::vector<std::byte> intermediate(stages.inner.uncompressed_len);
+            superzip::decode_chunk_cpu(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, {});
+            original = stages.original;
+            original.encoded_offset = restored_payload.size();
+            REQUIRE_TRUE(payload.size() < intermediate.size());
+            restored_payload.insert(restored_payload.end(), intermediate.begin(), intermediate.end());
+            ++composed;
+        } else {
+            restored_payload.insert(restored_payload.end(), payload.begin(), payload.end());
+        }
+        REQUIRE_EQ(original.kind, baseline.blocks[index].kind);
+        REQUIRE_EQ(original.encoded_len, baseline.blocks[index].encoded_len);
+        REQUIRE_EQ(original.encoded_offset, baseline.blocks[index].encoded_offset);
     }
+    REQUIRE_TRUE(composed > 0U);
+    REQUIRE_EQ(restored_payload, baseline.payload);
+    REQUIRE_TRUE(encoded.payload.size() < baseline.payload.size());
     REQUIRE_EQ(encoded.source_crc32, baseline.source_crc32);
     REQUIRE_TRUE(encoded.source_crc32_available && encoded.gpu_used);
     std::vector<std::byte> decoded(input.size());
@@ -710,4 +733,25 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
     REQUIRE_EQ(decoded, input);
     REQUIRE_TRUE(superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = true}));
     REQUIRE_EQ(decoded, input);
+    // The final observed checkpoint is the last secondary trial; cancellation must not enter a CPU fallback.
+    std::size_t observed = 0U;
+    bool cancelled = false;
+    try {
+        (void)superzip::encode_chunk(input, {.require_gpu = true,
+                                             .block_size = block_bytes,
+                                             .compression_level = 9,
+                                             .compression_mode = superzip::NativeCompressionMode::NeutronStar,
+                                             .encode_checkpoint = [&] {
+                                                 if (++observed == checkpoints) {
+                                                     throw superzip::ArchiveError("cancel secondary trial");
+                                                 }
+                                             }});
+    } catch (const superzip::ArchiveError&) {
+        cancelled = true;
+    }
+    REQUIRE_TRUE(cancelled);
+    REQUIRE_EQ(observed, checkpoints);
+    REQUIRE_EQ(
+        superzip::encode_chunk(input, {.require_gpu = true, .block_size = block_bytes, .compression_level = 9}).payload,
+        baseline.payload);
 }

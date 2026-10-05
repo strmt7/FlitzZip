@@ -7,6 +7,7 @@
 #include "gpu/dictionary_candidate.hpp"
 
 #include "core/checksum.hpp"
+#include "core/host_memory_budget.hpp"
 #include "core/result.hpp"
 
 #include <algorithm>
@@ -292,9 +293,17 @@ void record_selected_block_kinds(const EncodedChunk& chunk, GpuTelemetry* teleme
     std::uint64_t dictionaries = 0U;
     std::uint64_t sparse_blocks = 0U;
     for (const auto& block : chunk.blocks) {
-        prefixes += is_gpu_prefix_block(block);
-        dictionaries += block.kind == BlockKind::GpuDictionary;
-        sparse_blocks += is_gpu_sparse_pattern_kind(block.kind);
+        auto original = block;
+        if (block.kind == BlockKind::GpuCompound) {
+            original =
+                parse_gpu_compound_block(
+                    std::span(chunk.payload).subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len),
+                    block)
+                    .original;
+        }
+        prefixes += is_gpu_prefix_block(original);
+        dictionaries += original.kind == BlockKind::GpuDictionary;
+        sparse_blocks += is_gpu_sparse_pattern_kind(original.kind);
     }
     record_gpu_prefix_blocks(telemetry, prefixes);
     record_gpu_dictionary_blocks(telemetry, dictionaries);
@@ -1198,14 +1207,106 @@ GpuDiagnosticResult run_gpu_diagnostic_hip(const GpuDiagnosticOptions& options) 
     }
 }
 
+// Purpose: Declare the bounded HIP encoder shared by source blocks and nonrecursive composition trials.
+// Inputs: Source ownership, GPU policy, optional exact block lengths and checksum destinations.
+// Outputs: Returns GPU payloads; source_selection controls source-kind and phase accounting for nested trials.
+EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
+                                   const GpuCodecOptions& options, std::span<const std::uint32_t> block_lengths = {},
+                                   std::vector<std::uint32_t>* block_crcs = nullptr, bool source_selection = true);
+
+// Purpose: Evaluate exactly one extra GPU encoding stage over each eligible Neutron winner.
+// Inputs: A dense immutable baseline and required-HIP Neutron policy; ordinary levels never call this helper.
+// Outputs: Returns only strictly smaller complete compound frames, preserving original bytes on losses and ties.
+EncodedChunk compose_neutron_winners(EncodedChunk baseline, const GpuCodecOptions& options) {
+    if (std::ranges::none_of(baseline.blocks, [](const BlockDescriptor& block) {
+            return is_gpu_compound_stage(block.kind) && block.encoded_len > kGpuCompoundHeaderBytes;
+        })) {
+        return baseline;
+    }
+    EncodedChunk result;
+    result.source_crc32 = baseline.source_crc32;
+    result.source_crc32_available = baseline.source_crc32_available;
+    result.gpu_used = baseline.gpu_used;
+    result.blocks.reserve(baseline.blocks.size());
+    result.payload.reserve(baseline.payload.size());
+    auto inner_options = options;
+    inner_options.compression_mode = NativeCompressionMode::Standard;
+    inner_options.compression_level = 9;
+    for (auto descriptor : baseline.blocks) {
+        const auto offset = static_cast<std::size_t>(descriptor.encoded_offset);
+        if (offset > baseline.payload.size() || descriptor.encoded_len > baseline.payload.size() - offset) {
+            throw GpuError("Neutron composition baseline exceeds its payload");
+        }
+        const auto original = std::span(baseline.payload).subspan(offset, descriptor.encoded_len);
+        descriptor.encoded_offset = result.payload.size();
+        bool selected = false;
+        if (is_gpu_compound_stage(descriptor.kind) && original.size() > kGpuCompoundHeaderBytes) {
+            if (original.size() >= descriptor.uncompressed_len) {
+                throw GpuError("Neutron composition requires a smaller original encoding");
+            }
+            if (options.encode_checkpoint) {
+                options.encode_checkpoint();
+            }
+            (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), descriptor.uncompressed_len);
+            const auto inner = encode_chunk_hip_impl(original, nullptr, inner_options, {}, nullptr, false);
+            if (inner.blocks.size() != 1U) {
+                throw GpuError("Neutron composition must produce exactly one inner block");
+            }
+            const auto& stage = inner.blocks.front();
+            if ((is_gpu_compound_stage(stage.kind) || stage.kind == BlockKind::Fill) &&
+                inner.payload.size() < original.size() - kGpuCompoundHeaderBytes) {
+                result.payload.push_back(static_cast<std::byte>(stage.kind));
+                result.payload.push_back(static_cast<std::byte>(descriptor.kind));
+                result.payload.push_back(stage.kind == BlockKind::Fill ? static_cast<std::byte>(stage.fill_value)
+                                                                       : std::byte{0});
+                result.payload.push_back(std::byte{0});
+                for (std::size_t byte = 0U; byte < sizeof(std::uint32_t); ++byte) {
+                    result.payload.push_back(static_cast<std::byte>(descriptor.encoded_len >> (byte * 8U)));
+                }
+                result.payload.insert(result.payload.end(), inner.payload.begin(), inner.payload.end());
+                descriptor.kind = BlockKind::GpuCompound;
+                descriptor.fill_value = 0U;
+                descriptor.encoded_len = static_cast<std::uint32_t>(kGpuCompoundHeaderBytes + inner.payload.size());
+                (void)parse_gpu_compound_block(
+                    std::span(result.payload)
+                        .subspan(static_cast<std::size_t>(descriptor.encoded_offset), descriptor.encoded_len),
+                    descriptor);
+                selected = true;
+            }
+        }
+        if (!selected) {
+            result.payload.insert(result.payload.end(), original.begin(), original.end());
+        }
+        result.blocks.push_back(descriptor);
+    }
+    return result;
+}
+
+// Purpose: Compute source integrity once for ordinary chunks or independently framed dense batches.
+// Inputs: A bounded device source, exact optional block lengths and operation-owned CRC destinations/telemetry.
+// Outputs: Returns device-computed source CRC, combining independent batch block CRCs in source order.
+static std::uint32_t encoded_source_crc_hip(const std::byte* device_input, std::size_t input_bytes,
+                                            std::span<const std::uint32_t> block_lengths,
+                                            std::vector<std::uint32_t>* block_crcs, GpuTelemetry* telemetry) {
+    if (block_crcs == nullptr) {
+        return compute_crc32_device(device_input, input_bytes, telemetry, "encode CRC device memory");
+    }
+    *block_crcs = compute_block_crc32_device(device_input, block_lengths, telemetry);
+    std::uint32_t crc = 0U;
+    for (std::size_t index = 0U; index < block_lengths.size(); ++index) {
+        crc = crc32_combine(crc, (*block_crcs)[index], block_lengths[index]);
+    }
+    return crc;
+}
+
 // Purpose: Classify one uncompressed chunk on the AMD GPU and compute its source CRC in VRAM.
 // Inputs: input is bounded host bytes, owned_input optionally owns them, and options supplies tuning.
 // Optional block_lengths define exact independent boundaries; block_crcs receives their GPU checksums when supplied.
-// Outputs: Returns fill/raw/pattern descriptors, payload bytes, and GPU source CRC; may move `owned_input` after
+// Outputs: Returns selected GPU-native descriptors, payload bytes, and GPU source CRC; may move `owned_input` after
 // success.
 EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector<std::byte>* owned_input,
-                                   const GpuCodecOptions& options, std::span<const std::uint32_t> block_lengths = {},
-                                   std::vector<std::uint32_t>* block_crcs = nullptr) {
+                                   const GpuCodecOptions& options, std::span<const std::uint32_t> block_lengths,
+                                   std::vector<std::uint32_t>* block_crcs, bool source_selection) {
     if (input.empty()) {
         EncodedChunk empty;
         empty.source_crc32 = 0;
@@ -1213,10 +1314,12 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         return empty;
     }
     auto* telemetry = options.telemetry.get();
+    auto* phase_telemetry = source_selection ? telemetry : nullptr;
+    // Nested trial work contributes device counters; its enclosing source publication owns the phase duration.
     auto phase_started = std::chrono::steady_clock::now();
     record_gpu_encode_chunk(telemetry);
     require_hip_device_ready();
-    record_encode_phase(telemetry, GpuEncodeStage::Readiness, phase_started);
+    record_encode_phase(phase_telemetry, GpuEncodeStage::Readiness, phase_started);
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     const auto computed_block_count =
         block_lengths.empty() ? (input.size() + block_size - 1U) / block_size : block_lengths.size();
@@ -1225,28 +1328,20 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     }
     const auto block_count = static_cast<std::uint32_t>(computed_block_count);
     auto host_candidates = build_encode_analysis_candidates(input, block_size, block_count, block_lengths);
-    record_encode_phase(telemetry, GpuEncodeStage::HostAnalysis, phase_started);
+    record_encode_phase(phase_telemetry, GpuEncodeStage::HostAnalysis, phase_started);
     auto classification_started = phase_started;
     HipDeviceMemoryReservation reservation(input.size(), "encode input");
     HipDeviceBuffer<std::byte> device_input(input.size(), "hipMalloc input");
     record_gpu_device_allocation_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
-    record_classification_phase(telemetry, GpuClassificationStage::InputAllocation, classification_started);
+    record_classification_phase(phase_telemetry, GpuClassificationStage::InputAllocation, classification_started);
     {
         check_hip(copy_on_codec_stream(device_input.get(), input.data(), input.size(), hipMemcpyHostToDevice),
                   "hipMemcpy input");
         record_gpu_h2d_bytes(telemetry, static_cast<std::uint64_t>(input.size()));
-        record_classification_phase(telemetry, GpuClassificationStage::InputUpload, classification_started);
-        std::uint32_t source_crc32 = 0;
-        if (block_crcs != nullptr) {
-            *block_crcs = compute_block_crc32_device(device_input.get(), block_lengths, telemetry);
-            for (std::size_t i = 0; i < block_lengths.size(); ++i) {
-                source_crc32 = crc32_combine(source_crc32, (*block_crcs)[i], block_lengths[i]);
-            }
-        } else {
-            source_crc32 = compute_crc32_device(device_input.get(), static_cast<std::uint64_t>(input.size()), telemetry,
-                                                "encode CRC device memory");
-        }
-        record_classification_phase(telemetry, GpuClassificationStage::SourceChecksum, classification_started);
+        record_classification_phase(phase_telemetry, GpuClassificationStage::InputUpload, classification_started);
+        const auto source_crc32 =
+            encoded_source_crc_hip(device_input.get(), input.size(), block_lengths, block_crcs, telemetry);
+        record_classification_phase(phase_telemetry, GpuClassificationStage::SourceChecksum, classification_started);
         const auto verify_block_size =
             block_lengths.empty() ? block_size : *std::max_element(block_lengths.begin(), block_lengths.end());
         const auto mismatches = verify_encode_analysis_candidates_device(device_input.get(), input.size(),
@@ -1259,21 +1354,25 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         std::uint64_t pattern_blocks = 0;
         const bool all_raw =
             append_verified_encode_descriptors(out, host_candidates, mismatches, encoded_offset, pattern_blocks);
-        record_gpu_pattern_blocks(telemetry, pattern_blocks);
-        record_classification_phase(telemetry, GpuClassificationStage::CandidateValidation, classification_started);
-        record_encode_phase(telemetry, GpuEncodeStage::DeviceClassification, phase_started);
+        if (source_selection) {
+            record_gpu_pattern_blocks(telemetry, pattern_blocks);
+        }
+        record_classification_phase(phase_telemetry, GpuClassificationStage::CandidateValidation,
+                                    classification_started);
+        record_encode_phase(phase_telemetry, GpuEncodeStage::DeviceClassification, phase_started);
         std::optional<EncodedChunk> prefix_encoded;
         if (std::ranges::any_of(out.blocks,
                                 [](const BlockDescriptor& block) { return block.kind == BlockKind::Raw; })) {
             prefix_encoded = encode_native_prefix_chunk_device(device_input.get(), input, block_size, out.blocks,
                                                                options.compression_level, telemetry);
         }
-        record_encode_phase(telemetry, GpuEncodeStage::Prefix, phase_started);
+        record_encode_phase(phase_telemetry, GpuEncodeStage::Prefix, phase_started);
         auto& baseline_blocks = prefix_encoded ? prefix_encoded->blocks : out.blocks;
         auto sparse_replacements =
             sparse_pattern::select_replacements(input, device_input.get(), baseline_blocks, telemetry);
-        record_encode_phase(telemetry, GpuEncodeStage::Sparse, phase_started);
+        record_encode_phase(phase_telemetry, GpuEncodeStage::Sparse, phase_started);
         auto competitive_blocks = std::vector<BlockDescriptor>(baseline_blocks.begin(), baseline_blocks.end());
+        // Dictionary admission compares against the smallest complete sparse/prefix candidate, not raw size alone.
         for (std::size_t index = 0U; index < sparse_replacements.size(); ++index) {
             if (!sparse_replacements[index].empty()) {
                 competitive_blocks[index].kind = read_sparse_u32(sparse_replacements[index], 0U) > kMaxGpuPatternBytes
@@ -1288,7 +1387,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
             dictionary::improve_neutron_replacements(input, device_input.get(), competitive_blocks,
                                                      dictionary_replacements, telemetry, options.encode_checkpoint);
         }
-        record_encode_phase(telemetry, GpuEncodeStage::Dictionary, phase_started);
+        record_encode_phase(phase_telemetry, GpuEncodeStage::Dictionary, phase_started);
         const bool has_dictionary = std::ranges::any_of(
             dictionary_replacements, [](const std::vector<std::byte>& replacement) { return !replacement.empty(); });
         for (std::size_t index = 0U; index < dictionary_replacements.size(); ++index) {
@@ -1299,28 +1398,26 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
         const bool has_sparse = std::ranges::any_of(
             sparse_replacements, [](const std::vector<std::byte>& replacement) { return !replacement.empty(); });
         device_input.reset_checked("hipFree input");
-        if (prefix_encoded) {
-            prefix_encoded->source_crc32 = source_crc32;
-            prefix_encoded->source_crc32_available = true;
-            auto selected = has_dictionary ? dictionary::apply_dictionary_replacements(std::move(*prefix_encoded),
-                                                                                       dictionary_replacements)
-                                           : std::move(*prefix_encoded);
-            if (has_sparse) {
-                selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
-            }
-            record_selected_block_kinds(selected, telemetry);
-            record_encode_phase(telemetry, GpuEncodeStage::Publication, phase_started);
-            return selected;
+        // The original device source is released before secondary encoding; baseline bytes stay owned until selection.
+        if (!prefix_encoded) {
+            append_verified_encode_payload(out, input, block_size, host_candidates, mismatches, all_raw, owned_input);
         }
-        append_verified_encode_payload(out, input, block_size, host_candidates, mismatches, all_raw, owned_input);
+        auto baseline = prefix_encoded ? std::move(*prefix_encoded) : std::move(out);
+        baseline.source_crc32 = source_crc32;
+        baseline.source_crc32_available = true;
         auto selected = has_dictionary
-                            ? dictionary::apply_dictionary_replacements(std::move(out), dictionary_replacements)
-                            : std::move(out);
+                            ? dictionary::apply_dictionary_replacements(std::move(baseline), dictionary_replacements)
+                            : std::move(baseline);
         if (has_sparse) {
             selected = sparse_pattern::apply_replacements(std::move(selected), sparse_replacements);
         }
-        record_selected_block_kinds(selected, telemetry);
-        record_encode_phase(telemetry, GpuEncodeStage::Publication, phase_started);
+        if (options.compression_mode == NativeCompressionMode::NeutronStar) {
+            selected = compose_neutron_winners(std::move(selected), options);
+        }
+        if (source_selection) {
+            record_selected_block_kinds(selected, telemetry);
+        }
+        record_encode_phase(phase_telemetry, GpuEncodeStage::Publication, phase_started);
         return selected;
     }
 }
@@ -1353,8 +1450,8 @@ EncodedBlockBatch encode_owned_block_batch_hip(std::vector<std::byte>& input, st
 // Inputs: `payload` and `blocks` are validated archive metadata, `output` is exact decoded storage, and `options`
 // supplies telemetry. Outputs: Validates even empty layouts; writes decoded bytes or throws for invalid/CPU-only
 // blocks.
-void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
-                      std::span<std::byte> output, const GpuCodecOptions& options) {
+static void decode_plain_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                   std::span<std::byte> output, const GpuCodecOptions& options) {
     if (output.empty()) {
         validate_decode_layout(payload, blocks, 0U, options.block_size);
         return;
@@ -1405,6 +1502,79 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
     device_blocks.reset_checked("hipFree decode blocks");
 }
 
+// Purpose: Materialize a closed two-stage Neutron block exclusively through existing HIP decoders.
+// Inputs: A validated exact compound payload, its descriptor, output extent, and required device policy.
+// Outputs: Decodes both stages on HIP; admits bounded intermediate RAM and never invokes a CPU materializer.
+static void decode_compound_block_hip(std::span<const std::byte> encoded, const BlockDescriptor& block,
+                                      std::span<std::byte> output, const GpuCodecOptions& options) {
+    const auto stages = parse_gpu_compound_block(encoded, block);
+    (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), block.uncompressed_len);
+    std::vector<std::byte> intermediate(stages.inner.uncompressed_len);
+    decode_plain_chunk_hip(stages.inner_payload, std::span(&stages.inner, 1U), intermediate, options);
+    decode_plain_chunk_hip(intermediate, std::span(&stages.original, 1U), output, options);
+}
+
+// Purpose: Decode native GPU blocks, including the bounded nonrecursive version-nine composition.
+// Inputs: Exact payload/layout/output spans and operation-owned HIP policy and telemetry.
+// Outputs: Validates all outer and inner layouts before device work and materializes bytes through HIP only.
+void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                      std::span<std::byte> output, const GpuCodecOptions& options) {
+    validate_decode_layout(payload, blocks, output.size(), options.block_size);
+    if (std::ranges::any_of(blocks, [](const BlockDescriptor& block) {
+            return block.kind == BlockKind::Deflate || block.kind == BlockKind::CpuZstd;
+        })) {
+        throw GpuError("AMD HIP decode does not support CPU-compressed blocks");
+    }
+    if (std::ranges::none_of(blocks,
+                             [](const BlockDescriptor& block) { return block.kind == BlockKind::GpuCompound; })) {
+        decode_plain_chunk_hip(payload, blocks, output, options);
+        return;
+    }
+    std::size_t output_offset = 0U;
+    for (auto block : blocks) {
+        const auto encoded = block.kind == BlockKind::Fill
+                                 ? std::span<const std::byte>{}
+                                 : payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
+        const auto decoded = output.subspan(output_offset, block.uncompressed_len);
+        block.encoded_offset = 0U;
+        if (block.kind == BlockKind::GpuCompound) {
+            decode_compound_block_hip(encoded, block, decoded, options);
+        } else {
+            decode_plain_chunk_hip(encoded, std::span(&block, 1U), decoded, options);
+        }
+        output_offset += block.uncompressed_len;
+    }
+}
+
+// Purpose: Verify mixed composed archives with GPU decoding and GPU CRC over bounded single-block buffers.
+// Inputs: A fully validated layout, output byte count and HIP telemetry configuration.
+// Outputs: Returns ordered combined source CRC without any CPU codec or checksum substitution.
+static std::uint32_t crc_compound_chunk_hip(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
+                                            const GpuCodecOptions& options) {
+    std::uint32_t crc = 0U;
+    for (auto block : blocks) {
+        (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), block.uncompressed_len);
+        std::vector<std::byte> decoded(block.uncompressed_len);
+        const auto encoded = block.kind == BlockKind::Fill
+                                 ? std::span<const std::byte>{}
+                                 : payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
+        block.encoded_offset = 0U;
+        decode_chunk_hip(encoded, std::span(&block, 1U), decoded, options);
+        HipDeviceMemoryReservation reservation(decoded.size(), "compound CRC input");
+        HipDeviceBuffer<std::byte> device_input(decoded.size(), "hipMalloc compound CRC input");
+        auto* telemetry = options.telemetry.get();
+        record_gpu_device_allocation_bytes(telemetry, decoded.size());
+        check_hip(copy_on_codec_stream(device_input.get(), decoded.data(), decoded.size(), hipMemcpyHostToDevice),
+                  "hipMemcpy compound CRC input");
+        record_gpu_h2d_bytes(telemetry, decoded.size());
+        const auto block_crc =
+            compute_crc32_device(device_input.get(), decoded.size(), telemetry, "compound CRC workspace");
+        crc = crc32_combine(crc, block_crc, block.uncompressed_len);
+        device_input.reset_checked("hipFree compound CRC input");
+    }
+    return crc;
+}
+
 // Purpose: Verify a decoded chunk by checksumming GPU-supported block metadata directly in VRAM.
 // Inputs: `payload`/`blocks` describe encoded bytes, `output_size` is decoded byte count, and `options` supplies
 // telemetry. Outputs: Validates even empty layouts, then returns CRC while copying back only compact segment metadata.
@@ -1426,6 +1596,11 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     require_hip_device_ready();
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
+
+    if (std::ranges::any_of(blocks,
+                            [](const BlockDescriptor& block) { return block.kind == BlockKind::GpuCompound; })) {
+        return crc_compound_chunk_hip(payload, blocks, options);
+    }
 
     bool needs_materialized_crc = false;
     for (const auto& block : blocks) {

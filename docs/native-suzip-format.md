@@ -36,6 +36,24 @@ explicit:
   incomplete or conflicting tables and out-of-range offsets before HIP decode.
   Earlier versions remain readable; readers predating each new version reject
   its new block kind.
+- Version 9 adds GPU compound blocks as kind 11, created only by Neutron star
+  mode. A fixed eight-byte header contains the secondary kind, original kind,
+  secondary fill value, a zero reserved byte, and a little-endian 32-bit
+  intermediate size. The remaining bytes encode the original codec's payload.
+  Decoding applies the secondary codec and then the original codec. Both stages
+  are restricted to pattern, static/adaptive prefix, Huffman, dictionary and
+  short/long sparse codecs; the secondary stage may also be fill. Raw, CPU
+  codecs, unknown kinds and compound stages are rejected. Nesting is therefore
+  impossible. Unused fill values must be zero. The complete compound payload
+  must be strictly smaller than the intermediate payload, which must itself be
+  strictly smaller than the decoded block. All three extents are bounded by
+  the native block limit. Existing per-stage framing checks remain mandatory.
+  The encoder runs both stages through HIP and preserves the previous winner
+  on ties or losses. Required-HIP decoding and CRC verification also execute
+  through HIP; the independent CPU reader retains archive compatibility.
+  Version-nine decode and Neutron creation admission include an additional
+  decoded-window allowance for retained intermediate/trial storage. No
+  external dictionary, model or decoder installation is required.
 - Entropy encoding compares a bounded nested portfolio of static, adaptive,
   and Huffman candidates by complete measured block payload. It packs only
   winning entropy tables and preserves baseline bytes on ties. Candidate
@@ -98,7 +116,7 @@ flowchart TD
 - Do not accept CPU-only fallback in required-GPU mode.
 - Required-GPU `.suzip` compression may emit raw, fill, GPU-pattern, GPU
   static-prefix, GPU adaptive-prefix, GPU Huffman, GPU dictionary, GPU sparse-pattern, and
-  GPU long-sparse-pattern blocks. It must not emit CPU Deflate or Zstandard
+  GPU long-sparse-pattern blocks, and Neutron-only GPU compound blocks. It must not emit CPU Deflate or Zstandard
   blocks.
 - GPU static-prefix, adaptive-prefix, and Huffman blocks are native SUZIP blocks. They are
   not ZIP, Deflate, Zstandard, or a compatibility-format wrapper.

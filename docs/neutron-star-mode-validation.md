@@ -13,6 +13,28 @@ formats remain pending; earlier research fixtures do not substitute for them.
 
 ## Measured Improvement Rounds
 
+The version-nine composition round passed all twenty selected verification
+commands, including all seven native suites (612 main test cases), independent
+CPU/HIP compound decoding and GPU CRC, all-byte kind/version rejection,
+cancellation at the secondary trial, instrumented header fuzzing, Windows ASan,
+the 36-format matrix and packaging. The grouped portfolio regression reconstructs
+the exact original winning payload before comparing it with its retained oracle;
+it does not remove the oracle when a new representation wins.
+
+The subsequent [Canterbury composition measurements](benchmarks/data/neutron-canterbury-compound-2026-10-05.json)
+contain 33 real HIP roundtrips over the same eleven original files at 256 KiB.
+Each repetition used 2,810,784 input bytes and produced 744,182 complete modeled
+independent-file archive bytes, compared with 1,008,754 for the retained preceding
+implementation: 264,572 fewer bytes, or 26.23%. No file increased in size.
+The three repetitions recorded 75,567 actual kernel launches and zero payload
+disk writes. Their native input identity is
+`f328d78fdf1245ec930fbc7db583fe319dbab6d7585aa9893b822efe7f076bbc`,
+with receipt
+`f8d175d2f786ff18fb261ae58a2ba59a1548cce2219c33ee0e91b9af8fcce37b`.
+This establishes a corpus-specific size gain, not timing superiority or an
+established-format comparison. The preceding Govdocs1 and block-setting studies
+retain their recorded source identities and do not qualify the new composition.
+
 These bounded research fixtures establish correctness and specific size
 improvements. They do not establish representative performance, a GPU speedup,
 or best-in-class compression. Neutron remains a separate native mode; numeric

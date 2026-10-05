@@ -177,6 +177,8 @@ bool block_kind_supported_in_version(BlockKind kind, std::uint32_t version) {
         return version >= 7;
     case BlockKind::GpuHuffman:
         return version >= 8;
+    case BlockKind::GpuCompound:
+        return version >= 9;
     }
     return false;
 }

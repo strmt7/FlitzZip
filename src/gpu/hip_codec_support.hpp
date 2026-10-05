@@ -5,6 +5,7 @@
 #include "gpu/device_memory_budget.hpp"
 
 #include "core/result.hpp"
+#include "core/compound_block.hpp"
 #include "core/dictionary_block.hpp"
 #include "core/huffman_lookup.hpp"
 #include "core/sparse_pattern_block.hpp"
@@ -544,9 +545,24 @@ inline void validate_gpu_sparse_pattern_payload(std::span<const std::byte> paylo
         block.kind == BlockKind::GpuLongSparsePattern ? kMaxGpuLongSparsePatternBytes : kMaxGpuPatternBytes);
 }
 
+// Purpose: Check a single decoded extent without constructing output pointers or allocating storage.
+// Inputs: One untrusted descriptor, accumulated decoded position and exact output extent.
+// Outputs: Returns its bounded nonzero length or throws before output/device pointer formation.
+inline std::size_t checked_gpu_decoded_length(const BlockDescriptor& block, std::size_t out_pos,
+                                              std::size_t output_len) {
+    const auto len = static_cast<std::size_t>(block.uncompressed_len);
+    if (len == 0U || len > kMaxArchiveBlockBytes) {
+        throw ArchiveError("decode block length is outside SuperZip resource limits");
+    }
+    if (out_pos > output_len || len > output_len - out_pos) {
+        throw ArchiveError("decode block exceeds output buffer");
+    }
+    return len;
+}
+
 // Purpose: Validate block layout before launching the HIP decode kernel.
 // Inputs: `payload`, `blocks`, `output`, and `block_size` are caller-provided decode spans.
-// Outputs: Returns normally for a dense fill/raw layout; throws `ArchiveError` before any kernel can read out of
+// Outputs: Validates supported GPU layouts and closed composition stages; throws before kernels can read out of
 // bounds.
 inline void validate_decode_layout(std::span<const std::byte> payload, std::span<const BlockDescriptor> blocks,
                                    std::size_t output_len, std::uint32_t /*block_size*/) {
@@ -556,16 +572,7 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
     std::size_t out_pos = 0;
     for (std::size_t i = 0; i < blocks.size(); ++i) {
         const auto& block = blocks[i];
-        const auto len = static_cast<std::size_t>(block.uncompressed_len);
-        if (len == 0) {
-            throw ArchiveError("decode block has zero length");
-        }
-        if (len > kMaxArchiveBlockBytes) {
-            throw ArchiveError("decode block exceeds SuperZip block size limit");
-        }
-        if (out_pos > output_len || len > output_len - out_pos) {
-            throw ArchiveError("decode block exceeds output buffer");
-        }
+        const auto len = checked_gpu_decoded_length(block, out_pos, output_len);
         if (block.kind == BlockKind::Fill) {
             if (block.encoded_len != 0) {
                 throw ArchiveError("fill block contains encoded payload bytes");
@@ -623,6 +630,14 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
             validate_gpu_huffman_payload_table(payload, block, len);
         } else if (block.kind == BlockKind::GpuDictionary) {
             validate_gpu_dictionary_payload(payload, block);
+        } else if (block.kind == BlockKind::GpuCompound) {
+            if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
+                throw ArchiveError("GPU compound block exceeds payload buffer");
+            }
+            const auto stages = parse_gpu_compound_block(
+                payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block);
+            validate_decode_layout(stages.inner_payload, std::span(&stages.inner, 1U), stages.inner.uncompressed_len,
+                                   0U);
         } else if (is_gpu_sparse_pattern_kind(block.kind)) {
             validate_gpu_sparse_pattern_payload(payload, block);
         } else {

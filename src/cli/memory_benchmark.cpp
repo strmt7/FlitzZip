@@ -135,6 +135,9 @@ std::uint64_t checked_multiply_cli_u64(std::uint64_t lhs, std::uint64_t rhs, con
 // Outputs: Returns a depth admitted by production workspace policy plus benchmark reserve, or throws ArchiveError.
 std::uint32_t resolve_memory_benchmark_inflight(std::uint32_t workers, const MemoryBenchmarkOptions& options) {
     superzip::HostPipelineWorkspace workspace;
+    if (options.compression_mode == NativeCompressionMode::NeutronStar) {
+        workspace.per_window_bytes = superzip::kMaxArchiveChunkBytes;
+    }
     if (!options.require_gpu) {
         workspace = superzip::cpu_encode_workspace_estimate(
             superzip::kMaxArchiveChunkBytes,

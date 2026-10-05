@@ -889,3 +889,11 @@ on fresh platform installations as well as cache reuse; a hidden local process
 does not reproduce every hosted runtime context.
 The [portable crawler repair](crawl4ai-portable-download-repair-2026-10-05.md)
 records this incident; the reusable source and consumer gates select automatically.
+
+When introducing a composed encoding, retain the preceding representation's
+independent oracle. Reconstruct and compare its exact bytes instead of deleting
+an equality check when the outer frame changes. Require strict complete-frame
+cost improvement, independent reference decoding, real required-backend
+readback, closed stage kinds, corruption/downgrade controls and cancellation
+at the added stage. Protocol limits belong in the native format contract;
+individual measurements and failed assertions belong in dated validation records.

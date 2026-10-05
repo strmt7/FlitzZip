@@ -244,9 +244,9 @@ def recall(root: Path, key: str) -> dict:
 
 
 def startup(root: Path) -> dict:
-    """Purpose: Expose mandatory skills.
+    """Purpose: Expose mandatory skills and the authoritative research route.
     Inputs: checkout.
-    Outputs: current full skill instructions and source hashes."""
+    Outputs: current instructions and source hashes; no installation or network activity."""
     agents, agents_hash = read_source(root, "AGENTS.md")
     if not re.search(r"caveman\s+and\s+cocoindex\s+are\s+mandatory", agents, re.IGNORECASE):
         raise ValueError("AGENTS.md must declare Caveman and CocoIndex mandatory")
@@ -257,9 +257,23 @@ def startup(root: Path) -> dict:
             raise ValueError("AGENTS.md must declare mandatory Caveman and CocoIndex routing")
         text, digest = read_source(root, name)
         instructions.append({"path": name, "sha256": digest, "instructions": text})
+    research = re.findall(
+        r"(?m)^- [^\n]*\[Crawl4AI research tool\]\(docs/crawl4ai\.md\)[^\n]*\n(?:[ \t]+[^\n]*\n)*", agents
+    )
+    if len(research) != 1 or not research[0].startswith("- Use the self-hosted "):
+        raise ValueError("AGENTS.md must declare the mandatory self-hosted Crawl4AI research route")
+    launcher = "tools/crawl4ai_tool.py"
+    _, launcher_hash = read_source(root, launcher)
     return {
         "skills": instructions,
         "agents_sha256": agents_hash,
+        "research": {
+            "path": "AGENTS.md",
+            "sha256": agents_hash,
+            "instructions": research[0].rstrip(),
+            "launcher": launcher,
+            "launcher_sha256": launcher_hash,
+        },
         "next": "Apply the AGENTS.md reading map; index/search for broad concepts, then verify exact source.",
         "acceptance": "instruction_delivery_only_not_proof_of_model_behavior",
     }
