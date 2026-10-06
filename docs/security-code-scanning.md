@@ -142,7 +142,7 @@ metadata dispositions remain visible in GitHub's audit history.
 
 | Scanner | Purpose | Output |
 | --- | --- | --- |
-| CodeQL C++ | Manual Windows whole-database CPU build plus a change-aware HIP build for compiled GPU host branches; archive parsers, paths, CLI, UI and vendored C/C++ remain covered; not HIP device-kernel extraction | GitHub code scanning |
+| CodeQL C++ | Separate manual Windows whole-repository CPU and change-aware HIP-host databases; archive parsers, paths, CLI, UI and vendored C/C++ remain covered in each configuration; not HIP device-kernel extraction | GitHub code scanning |
 | CodeQL Actions | Workflow injection and Actions misuse | GitHub code scanning |
 | Language linters | C/C++ style drift, PowerShell warnings, Python helper lint/format issues, YAML workflow issues, Markdown issues, and CMake style problems | Workflow check |
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
@@ -204,8 +204,9 @@ not a finding filter, and successful upload does not establish zero alerts.
 The upstream generic hexadecimal-literal rule remains enabled;
 upgrading the CLI does not establish that public-digest matches are secrets
 or that all old findings were fixed. Locally defined scanner jobs have explicit time budgets;
-CodeQL C++ retains 60 minutes, compared with 20 minutes for the observed
-2026-10-01 build/analysis. A timeout is a failed gate, never clean-scan evidence.
+Each CodeQL C++ configuration has a 90-minute job budget. The separate jobs
+compile and analyze their complete inputs independently. A timeout is a failed
+gate, never clean-scan evidence.
 
 ## Finding Triage
 
@@ -509,9 +510,15 @@ variables.
   sources and produced parser-artifact alerts such as namespace qualifiers,
   macros, and typed pointer arithmetic being reported as code issues. Manual
   Windows tracing is the default security signal because it uses real compiler
-  inputs. GPU/shared input changes and broad qualifications also compile the HIP
-  configuration into that same database, retaining CPU branches and covering
-  HIP-only host orchestration and trusted module admission. Device-kernel
+  inputs. Native/query input changes and broad qualifications also compile the HIP
+  configuration in its own complete database, retaining CPU branches and covering
+  HIP-only host orchestration and trusted module admission. Mutually exclusive
+  definitions must not be merged: identical static registrar constructors can
+  otherwise refer to only one variant of a conditionally compiled test callback.
+  The CPU analysis keeps `/language:c-cpp`; HIP uses the additional stable
+  `/language:c-cpp/configuration:hip-host` category. Both retain complete SARIF
+  and the security-extended/security-and-quality suites. A failed planner admits
+  both configurations. Device-kernel
   extraction is not claimed; the six-target compile lane, source scanners,
   kernel review and actual GPU tests retain that separate coverage.
 - Do not split CodeQL C++ by SuperZip subdirectory. Subdirectory-parallel CodeQL

@@ -783,11 +783,13 @@ manufacture a clean scan. Individual authorizations belong in review records.
   environment variables instead of direct `${{ github.* }}` interpolation.
   CI tool installs must be version-pinned and hash-verified when the package
   manager bootstrap is known to be mutable or runner-dependent.
-- CodeQL C++ must use a manual Windows 2022 build database through
-  `tools/build.ps1 -Configuration Release -CpuOnlyValidation`, adding the HIP
-  configuration to the same database for GPU/shared input changes and broad
-  qualification. This includes HIP-only host code; device-kernel extraction
-  remains unqualified. Build-free C/C++
+- CodeQL C++ must use separate whole-repository manual Windows 2022 databases
+  for CPU validation and HIP host compilation when native/query inputs change
+  or broad qualification is selected. Keep mutually exclusive definitions in
+  their actual compilation contexts, with stable configuration categories and
+  complete retained reports. A failed planner must admit both configurations.
+  This includes HIP-only host code; device-kernel extraction remains unqualified.
+  Build-free C/C++
   analysis produces unacceptable parser-artifact alerts for this Win32/HIP
   codebase and must not be restored for speed.
 - Do not run build/package jobs in parallel with GUI smoke tests or a manually

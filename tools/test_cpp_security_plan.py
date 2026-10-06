@@ -20,6 +20,7 @@ class CppSecurityContracts(unittest.TestCase):
         for name in [*cpp.INPUT_FILES, *(root + "/future.input" for root in cpp.INPUT_ROOTS)]:
             with self.subTest(path=name):
                 self.assertTrue(cpp.select_cpp([name])["codeql_cpp"])
+                self.assertTrue(cpp.select_cpp([name])["codeql_hip_host"])
                 self.assertTrue(cpp.select_cpp([name])["whole_database"])
 
     def test_independent_push_jobs_and_query_changes(self):
@@ -89,7 +90,10 @@ class CppSecurityContracts(unittest.TestCase):
             output = Path(directory) / "job-output"
             with mock.patch.object(sys, "argv", ["cpp-plan", "--event", "schedule", "--github-output", str(output)]):
                 cpp.main()
-            self.assertEqual(output.read_bytes(), b"codeql_cpp=true\ncodeql_hip_host=true\n")
+            self.assertEqual(
+                output.read_bytes(),
+                b'codeql_cpp=true\ncodeql_hip_host=true\ncodeql_configurations=["cpu","hip-host"]\n',
+            )
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         for required in [
             "needs: cpp-security-plan",
@@ -101,18 +105,43 @@ class CppSecurityContracts(unittest.TestCase):
             "queries: security-extended,security-and-quality",
             "build-mode: manual",
             "codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}",
-            "needs.cpp-security-plan.outputs.codeql_hip_host != 'false'",
+            "codeql_configurations: ${{ steps.cpp_plan.outputs.codeql_configurations }}",
+            "fromJSON((needs.cpp-security-plan.result == 'success' && "
+            "needs.cpp-security-plan.outputs.codeql_configurations)",
+            '|| \'["cpu","hip-host"]\')',
+            "if: matrix.configuration == 'cpu'",
+            "if: matrix.configuration == 'hip-host'",
+            "fail-fast: false",
             "tools/build.ps1 -Configuration Release -HipArch gfx1201",
             "Join-Path $env:RUNNER_TOOL_CACHE",
             "bootstrap_rocm_sdk.py --parent $sdkParent",
             "-HipPath $env:HIP_PATH",
             "output: out/codeql-cpp-sarif",
-            "name: codeql-cpp-raw-${{ github.sha }}",
+            "'/language:c-cpp' || '/language:c-cpp/configuration:hip-host'",
+            "name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}",
             "if-no-files-found: error",
         ]:
-            self.assertIn(required, workflow)
+            self.assertIn(required, " ".join(workflow.split()))
         self.assertNotIn("paths-ignore", workflow)
         self.assertNotIn("continue-on-error", workflow)
+
+    def test_actual_workflow_rejects_database_merging_and_configuration_loss(self):
+        """Purpose: Prevent recurrence. Inputs: Actual workflow and scope mutations. Outputs: Fail-closed admission."""
+        workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
+        cpp.validate_workflow(workflow)
+        for original, replacement in (
+            ("fail-fast: false", "fail-fast: true"),
+            ("queries: security-extended,security-and-quality", "queries: security-extended"),
+            ("if: matrix.configuration == 'cpu'", "if: matrix.configuration == 'hip-host'"),
+            ("if: matrix.configuration == 'hip-host'", "if: always()"),
+            ('|| \'["cpu","hip-host"]\'', "|| '[\"cpu\"]'"),
+            ("if-no-files-found: error", "if-no-files-found: ignore"),
+            ("-CpuOnlyValidation", "-CpuOnlyValidation\n          tools/build.ps1 -Configuration Release"),
+        ):
+            with self.subTest(original=original):
+                self.assertIn(original, workflow)
+                with self.assertRaisesRegex(ValueError, "C\\+\\+ security"):
+                    cpp.validate_workflow(workflow.replace(original, replacement))
 
     def test_hip_host_inputs_add_real_compilation_without_retiring_cpu_configuration(self):
         """Purpose: Cover HIP host branches. Inputs: Shared/unrelated paths. Outputs: Exact extra-build roles."""
@@ -123,17 +152,23 @@ class CppSecurityContracts(unittest.TestCase):
             "src/core/resource_limits.hpp",
             "cmake/WritePackagedRuntimeIdentity.cmake",
             "CMakeLists.txt",
+            "src/core/checksum.cpp",
+            "src/app/main_window_pages.cpp",
+            "tests/cpp/test_gpu_telemetry.cpp",
+            "third_party/lz4/lz4.c",
             *cpp.POLICY_FILES,
         ]:
             with self.subTest(path=path):
-                self.assertTrue(cpp.select_cpp([path])["codeql_hip_host"])
+                plan = cpp.select_cpp([path])
+                self.assertTrue(plan["codeql_hip_host"])
+                self.assertEqual(plan["codeql_configurations"], ["cpu", "hip-host"])
         for path in [
             "README.md",
-            "src/core/checksum.cpp",
-            "src/app/main_window_pages.cpp",
             "tools/requirements/crawl4ai.txt",
         ]:
-            self.assertFalse(cpp.select_cpp([path])["codeql_hip_host"])
+            plan = cpp.select_cpp([path])
+            self.assertFalse(plan["codeql_hip_host"])
+            self.assertEqual(plan["codeql_configurations"], ["cpu"])
         self.assertTrue(cpp.select_cpp([], full=True)["codeql_hip_host"])
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         self.assertIn("tools/build.ps1 -Configuration Release -CpuOnlyValidation", workflow)

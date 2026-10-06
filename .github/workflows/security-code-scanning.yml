@@ -21,6 +21,7 @@ jobs:
     outputs:
       codeql_cpp: ${{ steps.cpp_plan.outputs.codeql_cpp }}
       codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}
+      codeql_configurations: ${{ steps.cpp_plan.outputs.codeql_configurations }}
     steps:
       - name: Checkout complete change range
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,13 +43,19 @@ jobs:
           --push-base "$env:PUSH_BASE" --github-output $env:GITHUB_OUTPUT
 
   codeql-cpp:
-    name: CodeQL C++
+    name: CodeQL C++ (${{ matrix.configuration }})
     needs: cpp-security-plan
     if: >-
       ${{ !cancelled() && (needs.cpp-security-plan.result != 'success' ||
           needs.cpp-security-plan.outputs.codeql_cpp != 'false') }}
     runs-on: windows-2022
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: >-
+          ${{ fromJSON((needs.cpp-security-plan.result == 'success' &&
+              needs.cpp-security-plan.outputs.codeql_configurations) || '["cpu","hip-host"]') }}
     # The build script derives compiler admission from RAM and logical CPUs,
     # and applies one shared CMake/MSBuild job budget without a fixed CPU cap.
     # Keep C++ analysis whole-repository. Do not split SuperZip into
@@ -58,9 +65,10 @@ jobs:
     # under-models SuperZip's Win32, GDI+, host GPU-boundary, and vendored C sources
     # and produces parser-artifact alerts that are not acceptable security
     # signals for this repository.
-    # Retain CPU configuration branches, adding the HIP configuration to the
-    # same database when GPU/shared inputs change. Device-kernel extraction is
-    # not claimed; device compilation/review and execution remain separate gates.
+    # Each complete configuration has its own database: merging mutually
+    # exclusive CPU/HIP definitions can detach static registrars from callbacks.
+    # Retain the baseline category and add a stable HIP-host category when needed.
+    # Device-kernel extraction is not claimed; its existing gates remain separate.
     # CodeQL needs action metadata for analysis, repository contents to build,
     # and security-events write permission to upload SARIF.
     permissions:
@@ -77,7 +85,7 @@ jobs:
         with:
           python-version: "3.14.8"
       - name: Provision pinned HIP headers and compiler
-        if: needs.cpp-security-plan.result != 'success' || needs.cpp-security-plan.outputs.codeql_hip_host != 'false'
+        if: matrix.configuration == 'hip-host'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -97,23 +105,24 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
       - name: Build C++ database input
+        if: matrix.configuration == 'cpu'
         shell: pwsh
         run: tools/build.ps1 -Configuration Release -CpuOnlyValidation
       - name: Build HIP host database input
-        if: needs.cpp-security-plan.result != 'success' || needs.cpp-security-plan.outputs.codeql_hip_host != 'false'
+        if: matrix.configuration == 'hip-host'
         shell: pwsh
         run: tools/build.ps1 -Configuration Release -HipArch gfx1201 -HipPath $env:HIP_PATH
       - name: Analyze C++
         id: analyze_cpp
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          category: /language:c-cpp
+          category: ${{ matrix.configuration == 'cpu' && '/language:c-cpp' || '/language:c-cpp/configuration:hip-host' }}
           output: out/codeql-cpp-sarif
       - name: Retain complete C++ analysis reports
         if: always() && steps.analyze_cpp.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: codeql-cpp-raw-${{ github.sha }}
+          name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}
           path: out/codeql-cpp-sarif/*.sarif
           if-no-files-found: error
           retention-days: 14

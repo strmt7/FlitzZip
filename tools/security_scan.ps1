@@ -219,7 +219,11 @@ function Test-WorkflowSecurityPolicy {
                 'build-mode: manual',
                 'tools/build.ps1 -Configuration Release -CpuOnlyValidation',
                 'tools/build.ps1 -Configuration Release -HipArch gfx1201',
-                "needs.cpp-security-plan.outputs.codeql_hip_host != 'false'")) {
+                'codeql_configurations: ${{ steps.cpp_plan.outputs.codeql_configurations }}',
+                "if: matrix.configuration == 'cpu'",
+                "if: matrix.configuration == 'hip-host'",
+                "'/language:c-cpp' || '/language:c-cpp/configuration:hip-host'",
+                'name: codeql-cpp-raw-${{ matrix.configuration }}-${{ github.sha }}')) {
             if ($securityWorkflowText -notmatch [regex]::Escape($requiredSnippet)) {
                 throw "CodeQL C++ workflow is missing required manual Windows build setting: $requiredSnippet"
             }
