@@ -62,6 +62,25 @@ struct GpuBytePlaneContextStages {
     std::span<const std::byte> payload;
 };
 
+// Purpose: Classify one nonempty plane's canonical codec metadata independently from payload containment.
+// Inputs: An untrusted child kind/fill/encoded extent and its nonzero derived decoded length.
+// Outputs: True only for exact raw/fill extents or a strictly smaller nonrecursive plain GPU encoding.
+inline bool is_canonical_gpu_byte_plane_context_stage(const BlockDescriptor& stage) {
+    if (stage.uncompressed_len == 0U) {
+        return false;
+    }
+    if (stage.kind == BlockKind::Fill) {
+        return stage.encoded_len == 0U;
+    }
+    if (stage.fill_value != 0U) {
+        return false;
+    }
+    if (stage.kind == BlockKind::Raw) {
+        return stage.encoded_len == stage.uncompressed_len;
+    }
+    return is_gpu_compound_stage(stage.kind) && stage.encoded_len != 0U && stage.encoded_len < stage.uncompressed_len;
+}
+
 // Purpose: Admit a closed, dense table of independently encoded byte planes before allocation or dispatch.
 // Inputs: Exact frame bytes and a bounded outer descriptor; decoded plane lengths are derived from its extent.
 // Outputs: Returns nonrecursive plain-stage descriptors or rejects noncanonical kinds, lengths and trailing data.
@@ -93,18 +112,18 @@ inline GpuBytePlaneContextStages parse_gpu_byte_plane_contexts(std::span<const s
             bytes |= static_cast<std::uint32_t>(encoded[offset + 2U + byte]) << (byte * 8U);
         }
         const auto decoded = records + (plane + 1U == width ? outer.uncompressed_len % width : 0U);
-        if ((!is_gpu_compound_stage(kind) && kind != BlockKind::Raw && kind != BlockKind::Fill) ||
-            (kind != BlockKind::Fill && fill != 0U) || (kind == BlockKind::Fill && bytes != 0U) ||
-            (kind == BlockKind::Raw && bytes != decoded) ||
-            (kind != BlockKind::Raw && kind != BlockKind::Fill && (bytes == 0U || bytes >= decoded)) ||
-            cursor > stages.payload.size() || bytes > stages.payload.size() - cursor) {
+        const BlockDescriptor stage{.kind = kind,
+                                    .fill_value = fill,
+                                    .uncompressed_len = decoded,
+                                    .encoded_offset = cursor,
+                                    .encoded_len = bytes};
+        if (!is_canonical_gpu_byte_plane_context_stage(stage)) {
             throw ArchiveError("GPU byte-plane context stage is unsupported or noncanonical");
         }
-        stages.blocks[plane] = {.kind = kind,
-                                .fill_value = fill,
-                                .uncompressed_len = decoded,
-                                .encoded_offset = cursor,
-                                .encoded_len = bytes};
+        if (cursor > stages.payload.size() || bytes > stages.payload.size() - cursor) {
+            throw ArchiveError("GPU byte-plane context stage is unsupported or noncanonical");
+        }
+        stages.blocks[plane] = stage;
         cursor += bytes;
     }
     if (cursor != stages.payload.size()) {

@@ -9,11 +9,82 @@ build, with staged oracle, cancellation and workspace validation. The
 all 991 Govdocs1 files and all eleven Canterbury files at seven block settings.
 Those source-bound records establish complete workload coverage and exact
 sizes for their recorded earlier revisions. They do not qualify the subsequent
-composition, stronger secondary search or byte-plane implementation. Paired
-repeated timing qualification and comparisons with established
-formats remain pending; earlier research fixtures do not substitute for them.
+independent-context implementation or later revisions. Paired
+repeated timing qualification remains pending. The
+[complete standard-format size reference](neutron-public-corpus-benchmark.md#standard-format-size-reference-6-october)
+now compares the current Canterbury output with ZIP and compressed TAR.
+Neutron at 256 KiB is larger than every compressed reference on this corpus; earlier
+research fixtures do not substitute for those natural-file results. This
+comparison refers to the retained pruning study at 256 KiB; the separate
+context results and their explicit 1 MiB geometry are described below.
 
 ## Measured Improvement Rounds
+
+The subsequent canonical-stage admission refactor separates codec metadata from
+payload containment and tests every serialized kind value against an independent
+wire fixture, including raw/fill and compressed extent boundaries. It preserves
+version-eleven encoding and required-HIP policy. Native inputs
+`79d4b9af1d886f6fbc06294ecea9c6e5360bf99d8c7668ff6c4f579e62f5b107`
+and successful receipt
+`c46dc154232de308dc014610db54d936db93e5834b011a84215915fb5a47f6e7`
+passed all 626 main tests, all seven CTest suites and the direct CPU/HIP block,
+binary-input and frozen-controller consumers. This is fresh correctness evidence;
+the retained size studies below remain qualified for their original identities.
+
+The version-eleven independent-context candidate has a successful HIP-enabled
+build with native inputs
+`135cdfab866a0be7df5533396db42ceb8d0a2061323805b11aab02f509cb5289`
+and receipt
+`b6cf73f0ab8ca2d3bf1b6729e4e0c2cee49a379bdf23a0270e26b47bea90f95a`.
+All 625 main tests passed, including independent CPU/HIP readers for every
+supported context width and tail, malformed tables, exhaustive version-kind
+admission, real context selection, ownership, cancellation and ordinary-effort
+isolation. The parser sanitizer smoke, independent interoperability and
+36-format matrix also passed. Earlier failed test builds and a grouped-portfolio
+memory-admission failure remain retained. That latter failure did not reproduce
+in isolation or in a complete suite with read-only RAM sampling; its cause is
+unconfirmed and the admission policy was not weakened.
+
+The [complete original Pythia14M pilot](benchmarks/data/neutron-pythia14m-contexts-pilot-2026-10-06.json)
+produced 24,162,233 complete modeled archive bytes from 28,143,920 original
+bytes, saving 1,935,715 bytes against the preceding 1 MiB pruning result.
+It used 102,771 actual HIP kernel launches and 26.7244 seconds of native
+compression. All bytes were recovered through required HIP with zero payload
+writes. The [subsequent three complete model repetitions](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json)
+produced the identical 24,162,233-byte result each, with 26.6517–26.8313 seconds
+of native compression and the same source/build identities. This is a 7.42%
+size saving against the preceding same-setting Neutron record. The
+[three complete Canterbury repetitions](benchmarks/data/neutron-canterbury-contexts-block-1024-2026-10-06.json)
+retained 723,429 bytes each: every one of the eleven file sizes was unchanged.
+These qualify the measured file sizes, not comparative speed, universal model
+effectiveness or this candidate's full Govdocs1 coverage. Ordinary efforts
+remain separate. The previous all-setting and 991-file records below apply
+only to their recorded earlier source identities.
+
+The exact match-graph pruning round passed its seven selected local commands,
+including the HIP build, all seven native suites and the changed-function
+gate. Its native inputs are
+`a746f655406a5d7edd942a7b5146c5ca692578137d549331279cb76b49b4c7ab`,
+with successful receipt
+`ce73ff0a2c71741fe499279cab6f2a596c7a407cbf1fdecaff7a4f51f4a5dfb5`.
+Regressions preserve exact competitive payloads, reject incomplete budget
+groups before device work, prove losing nonempty graphs, and cancel at every
+observed successful checkpoint with subsequent device recovery. The
+[33-observation Canterbury record](benchmarks/data/neutron-canterbury-pruning-2026-10-06.json)
+retains every complete file size while reducing actual kernel launches from
+412,062 to 384,309. The complete original Pythia14M trained checkpoint also
+passed required-HIP bytewise RAM readback: 28,143,920 bytes became 26,177,306
+complete modeled archive bytes. Its independent ZIP, bzip2 and XZ references
+were all smaller for that observation. Timing remains unqualified. That pruning
+revision's full Govdocs1 record subsequently completed. The [pruning Canterbury setting record](benchmarks/data/neutron-canterbury-pruning-block-settings-2026-10-06.json)
+now retains all eleven files at all seven settings, with 99 actual observations
+and explicit repetition counts. Sizes fall to 723,429 bytes at 1 MiB and above;
+the block-setting result qualifies this corpus only.
+Three subsequent Pythia14M repetitions at 1 MiB also passed complete HIP
+readback and produced identical 26,097,948-byte archives, using 91,034 kernel
+launches each. Their exact record preserves the earlier 256 KiB observation
+and reuses unchanged standard-container references. Those references remain
+smaller; neither workload establishes the intended broadly dramatic ratio.
 
 The version-ten byte-plane round passed all twenty selected local commands,
 including all seven native suites, actual HIP forward/inverse transforms,
@@ -33,8 +104,11 @@ size and the 741,174-byte repetition total matched the stronger secondary
 round. This round demonstrates no further size reduction on Canterbury.
 Native compression took 58.89–59.30 seconds per pass and the study recorded
 412,062 kernel launches. Timing remains unqualified. The current 991-file
-Govdocs1 study is still in progress; its earlier source-bound results cannot
-substitute for this implementation's evidence.
+Govdocs1 attempt reached its 7,200-second deadline after 643 completed files.
+Its [partial record](neutron-public-corpus-benchmark.md#incomplete-current-govdocs-attempt-6-october)
+preserves their exact sizes and GPU readback, but the whole study remains
+unqualified. Earlier source-bound results cannot substitute for this
+implementation's complete-corpus evidence.
 
 The version-nine composition round passed all twenty selected verification
 commands, including all seven native suites (612 main test cases), independent

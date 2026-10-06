@@ -89,6 +89,13 @@ source-build recipe. A commit review must bind the path, JSON project and commit
 fields, original source archive name and official NLTK codeload URL to the same
 value. The existing checksum-only CSV remains supported; typed records distinguish
 SHA-256 values from Git commit identifiers.
+A model-artifact commit review additionally binds the exact corpus or permission
+manifest, the complete reviewed file hash and the highlighted public commit.
+The corpus role requires the Pythia14M inert-file descriptor, original
+`model.safetensors` name and official EleutherAI immutable artifact URL. The
+permission role requires that same sole reviewed version and the official
+EleutherAI and Hugging Face evidence URLs. These roles require individual
+authorization; recognition alone does not activate a disposition.
 A verdict requires the exact metadata path, rule, highlighted value and complete
 reviewed file hash. Source and test paths cannot enter this ledger; changed
 contents and other findings remain blocking. CSV keeps the review records
@@ -149,7 +156,7 @@ metadata dispositions remain visible in GitHub's audit history.
 | TruffleHog | Independent full git history secret scan | JSONL artifact |
 | Dependency Review | Blocks vulnerable dependency changes on PRs | PR-only workflow |
 | OSSF Scorecard | Default-branch repository supply-chain security posture | SARIF upload |
-| Greenbone/OpenVAS | Always-on scanner integration audit plus scheduled/manual network vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON artifact and Vulnetix upload |
+| Greenbone/OpenVAS | Always-on scanner integration audit plus scheduled/manual network vulnerability scan through hash-locked `requirements-*.txt` GVM tools for authorized targets | XML/JSON/SARIF artifact and Vulnetix upload |
 | Vulnetix | External vulnerability-management upload for authorized live OpenVAS results | Vulnetix project |
 
 Semgrep produces JSON coverage evidence and SARIF in the same invocation. The
@@ -434,7 +441,8 @@ The broker must return this JSON object after validating the OIDC token:
   "greenbone_port_list_id": "",
   "greenbone_max_minutes": "180",
   "greenbone_delete_task": "true",
-  "vulnetix_org_id": "redacted"
+  "vulnetix_org_id": "<organization UUID>",
+  "vulnetix_api_key": "<hexadecimal API key>"
 }
 ```
 
@@ -447,8 +455,10 @@ Required returned fields:
 - `greenbone_target`: Authorized host, IP, or CIDR to scan by default. A
   manual `workflow_dispatch` target is a request for broker authorization, not
   an override. Only the broker-returned target becomes the effective scan target.
-- `vulnetix_org_id`: Vulnetix organization identifier for uploading OpenVAS
-  artifacts after the scan.
+- `vulnetix_org_id`: Vulnetix organization UUID for uploading OpenVAS results.
+- `vulnetix_api_key`: Hexadecimal API key used by the pinned action to
+  authenticate and verify access before uploading the complete SARIF report.
+  The resolver validates and masks both fields before emitting any outputs.
 
 Optional returned fields:
 

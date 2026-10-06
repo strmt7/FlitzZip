@@ -1,5 +1,44 @@
 # Neutron star mode public-corpus benchmark
 
+The [independent-context Pythia14M pilot](benchmarks/data/neutron-pythia14m-contexts-pilot-2026-10-06.json)
+compressed the complete original checkpoint to **24,162,233** modeled archive
+bytes at 1 MiB, saving **1,935,715** bytes against the same-setting pruning
+baseline. Required-HIP bytewise readback passed with zero payload writes.
+The [subsequent three complete model repetitions](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json)
+reproduced that exact size in every run, a 7.42% saving against the same-setting
+Neutron baseline. No paired timing improvement is claimed.
+The [three-run Canterbury context study](benchmarks/data/neutron-canterbury-contexts-block-1024-2026-10-06.json)
+retained all eleven file sizes and 723,429-byte totals. One trained checkpoint
+does not establish broad model benefits; unchanged Canterbury sizes demonstrate
+no additional size improvement on that corpus. Comparative timing and this
+new representation's full Govdocs1 coverage remain unqualified.
+
+The [complete 1 MiB Govdocs pruning study](benchmarks/data/neutron-govdocs1-thread0-pruning-block-1024-2026-10-06.json)
+admitted and bytewise-validated all 991 original files in RAM, producing
+331,334,741 complete modeled independent-file archive bytes from 593,182,383
+source bytes. It recorded 10,146,702 actual HIP kernel launches and
+4,210.85 seconds of native compression. The complete study finished within
+its unchanged 7,200-second deadline and retained Hyperfine's diagnostics.
+Benchmark payload writes were zero; timing remains unqualified.
+
+Against the earlier complete 256 KiB batched record, 652 files became smaller,
+311 were equal and 28 grew, saving 8,302,516 bytes overall. Against the 643
+matched files of the incomplete byte-plane attempt, 81 became smaller,
+497 were equal and 65 grew, saving 1,021,912 bytes overall. These comparisons
+include different block geometry and preceding algorithm changes. They do
+not isolate pruning, establish a speedup or justify changing the default block
+setting. Individual increases remain visible in the record.
+
+The [exact graph-pruning study](benchmarks/data/neutron-canterbury-pruning-2026-10-06.json)
+completed three further byte-exact repetitions over the eleven original
+Canterbury files. Every file retained its prior size: each pass produced
+741,174 complete modeled independent-file archive bytes from 2,810,784 source
+bytes. Actual kernel launches fell from 412,062 to 384,309 across the 33
+observations. Native compression totals were 55.05–55.45 seconds per pass.
+These observations qualify sizes and launch counts; they do not qualify a
+paired timing improvement or the full Govdocs1 corpus. No new representation,
+device workspace or changes to ordinary numeric efforts were introduced.
+
 The [byte-plane study](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
 completed three byte-exact Canterbury repetitions at 256 KiB. Every pass still
 produced 741,174 complete modeled independent-file archive bytes; all eleven
@@ -8,7 +47,7 @@ to 58.89–59.30 seconds and the study recorded 412,062 actual kernel launches,
 against 148,350 previously. The additional trials have no measured size benefit
 on this corpus. They remain isolated to Neutron. Correctness on a controlled
 numeric fixture does not establish effectiveness on trained model checkpoints
-or arbitrary files. The current Govdocs1 study is separate; older Govdocs1
+or arbitrary files. The completed 1 MiB Govdocs1 study is separate; older Govdocs1
 results below qualify only their own source revisions.
 
 The [stronger secondary-stage study](benchmarks/data/neutron-canterbury-secondary-2026-10-05.json)
@@ -30,6 +69,31 @@ independent-file archive bytes from 1,008,754 to 744,182 (26.23%). The preceding
 Govdocs1 and block-setting results below retain their own source qualifications;
 they are not measurements of this new representation. Timing superiority and
 comparisons with established formats remain unqualified.
+
+## Pruning-Round Canterbury Block Settings
+
+The [complete seven-setting record](benchmarks/data/neutron-canterbury-pruning-block-settings-2026-10-06.json)
+retains 99 actual observations: the existing three 256 KiB repetitions and
+one complete repetition at each larger setting. All eleven original files
+passed required-HIP bytewise RAM readback at every setting with zero payload
+writes, the same native source/receipt and no omitted member. The unequal
+repetition counts are explicit; their timings are observational.
+
+| Block setting, KiB | Complete independent-file archive bytes per repetition |
+| ---: | ---: |
+| 256 | 741,174 |
+| 512 | 724,740 |
+| 1024 | 723,429 |
+| 2048 | 723,429 |
+| 4096 | 723,429 |
+| 8192 | 723,429 |
+| 16384 | 723,429 |
+
+The 1 MiB setting is 5,843 bytes, about 0.8%, smaller than the independent
+729,272-byte ZIP reference on this corpus. It remains larger than bzip2 and
+XZ, and it does not establish a broadly dramatic improvement or the best
+setting for another workload. Production settings and ordinary efforts are
+unchanged. The 256 KiB comparisons below retain their exact stated geometry.
 
 ## Workloads
 
@@ -58,6 +122,19 @@ and original measurements are reviewed in `tools/benchmark_permissions.json`;
 payload redistribution remains on hold. The [publisher terms](https://digitalcorpora.org/about-digitalcorpora/terms-of-use/)
 retain separately claimed constituent copyrights.
 
+The `Pythia14M` preset selects one actual trained EleutherAI checkpoint,
+`model.safetensors`, at immutable artifact revision
+`94f7c35d5e9f2e9bac8ca839329f505b4d007d5d`. Its complete 28,143,920 bytes and
+SHA-256 are pinned from the official Hugging Face repository API. EleutherAI
+licenses Pythia models and copyrightable artifacts under Apache-2.0; the
+permission catalog admits local inert-byte compression and original numerical
+measurements while retaining the repository's payload-redistribution hold.
+This single small model extends workload coverage; it cannot establish
+general trained-model effectiveness. Acquisition follows the publisher's
+bounded HTTPS delivery inside reviewed `huggingface.co` and `hf.co` domains,
+then authenticates the complete artifact before any GPU work. No model
+runtime, tensor selection, pickle deserialization or training code is used.
+
 ## Existing Tools And RAM Transport
 
 Use the installed reviewed Hyperfine 1.20.0 for repetitions and overall command
@@ -72,6 +149,7 @@ outlier warning cannot establish host isolation; timing remains unqualified.
 ```powershell
 py -3 -B -m tools.neutron_corpus_benchmark --corpus Canterbury --runs 3
 py -3 -B -m tools.neutron_corpus_benchmark --corpus Govdocs1Thread0 --runs 1 --file-timeout 3600 --suite-timeout 7200
+py -3 -B -m tools.neutron_corpus_benchmark --corpus Pythia14M --runs 1 --file-timeout 3600 --suite-timeout 7200
 ```
 
 Acquire each published archive once per study, decode with bounded standard
@@ -293,7 +371,7 @@ disk, and the GPU observations were reused rather than repeated.
 | TAR, XZ preset 9 with extreme search | 494,376 |
 | Uncompressed TAR | 2,887,680 |
 
-Neutron is larger than every compressed reference on this corpus. This result
+At 256 KiB, Neutron is larger than every compressed reference on this corpus. This result
 does not satisfy the target of dramatically smaller archives. Uncompressed
 TAR is an inventory/container baseline, not a competitive compression method.
 The measurements are size references, not application-speed comparisons or a
@@ -313,3 +391,74 @@ priority and admitted one GiB before compression because
 The local producer and full successful output remain under ignored `out/`.
 Only measurement metadata is published; no comparator runtime is added to the
 application and no external project code is copied.
+
+## Retained Incomplete Govdocs Attempt, 6 October
+
+The [retained partial record](benchmarks/data/neutron-govdocs1-thread0-byte-plane-partial-2026-10-06.json)
+contains 643 completed original files before the unchanged 7,200-second suite
+deadline terminated the worker. They cover 439,277,560 source bytes and
+222,323,480 modeled complete archive bytes, with bytewise required-HIP readback
+and zero payload disk writes. Compared with those same files in the earlier
+batched implementation, 424 sizes decreased, 219 remained equal and none grew,
+saving 4,681,153 bytes. This compares several subsequent algorithm rounds; it
+does not isolate the byte-plane transform's contribution.
+
+The controller retained the completed protocols and released its owned children
+and measurement lease. That revision's entire 991-file study remains unqualified: 348 files
+did not produce completed observations, and Hyperfine produced no complete
+timing result. Native compression alone totaled 6,764.901 seconds across the
+completed observations, with 16,560,123 actual kernel launches. Increasing a
+deadline would not remedy that cost. The subsequent exact graph-pruning round
+completed Canterbury, the Pythia checkpoint and a separate full Govdocs1 study;
+it does not retroactively qualify the unfinished Govdocs1 observations.
+
+## Actual Trained Checkpoint, 6 October
+
+The subsequent [three-run 1 MiB study](benchmarks/data/neutron-pythia14m-pruning-block-1024-2026-10-06.json)
+preserved the exact original file and produced 26,097,948 complete archive
+bytes in every repetition, 79,358 bytes smaller than the 256 KiB setting.
+Each repetition recorded 91,034 actual kernel launches and native compression
+between 24.2921 and 25.6028 seconds. The earlier single 256 KiB observation
+recorded 276,788 launches and 102.263 seconds. The settings differ and no
+paired timing qualification is claimed. The standard-container measurements
+are reused after matching their identical original source and encoder settings;
+their codec work is not repeated. ZIP is still 83,909 bytes smaller than this
+Neutron result, and bzip2 and XZ remain smaller as well.
+
+The [complete Pythia14M HIP observation](benchmarks/data/neutron-pythia14m-pruning-2026-10-06.json)
+compressed the entire original 28,143,920-byte artifact into 26,177,306 complete
+modeled archive bytes, a 6.99% reduction. The single run performed bytewise
+required-HIP readback with zero payload disk writes, recording 276,788 actual
+kernel launches and 102.263 seconds of native compression. Its complete raw
+protocol, Hyperfine output and exact native input/receipt identities remain
+bound to the record. One run qualifies that original file's size and
+correctness; it does not establish timing superiority, stability of every
+system or effectiveness on other models.
+
+The [independent size reference](benchmarks/data/neutron-pythia14m-standard-size-reference-2026-10-06.json)
+reused that qualified GPU observation and authenticated the complete original
+artifact again for standard-library container encoding and bytewise RAM
+readback. The inert safetensors JSON header identifies 76 tensors, all `F16`;
+no tensor payload was deserialized, selected or altered. Every container used
+the native RAM model's `memory-benchmark.bin` name, and counts include full
+container framing. The producer and settings match the Canterbury size
+reference above, with one GiB admitted before XZ preset 9.
+
+| Complete single-file container | Archive bytes |
+| --- | ---: |
+| Neutron, 256 KiB blocks | 26,177,306 |
+| ZIP, DEFLATE level 9 | 26,014,039 |
+| TAR, gzip level 9 | 26,014,034 |
+| TAR, bzip2 level 9 | 25,251,543 |
+| TAR, XZ preset 9 with extreme search | 25,345,744 |
+| Uncompressed TAR | 28,149,760 |
+
+Neutron is larger than every compressed reference on this checkpoint as well.
+That statement applies to the pruning observations in this section. The
+subsequent independently framed context result above is 24,162,233 bytes,
+smaller than all four unchanged compressed references for the exact same
+original artifact. This is a measured checkpoint benefit; the broader size
+objective remains unmet. A representation change must be tested on
+these actual bytes and broader natural corpora before any effectiveness claim.
+Attribution: EleutherAI, Pythia, Apache-2.0; all measurements are original,
+and repository payload redistribution remains on hold.

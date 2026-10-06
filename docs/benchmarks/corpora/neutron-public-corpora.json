@@ -22,6 +22,19 @@
       "xargs.1": 4227
     }
   },
+  "Pythia14M": {
+    "source_kind": "file",
+    "file_name": "model.safetensors",
+    "revision": "94f7c35d5e9f2e9bac8ca839329f505b4d007d5d",
+    "url": "https://huggingface.co/EleutherAI/pythia-14m/resolve/94f7c35d5e9f2e9bac8ca839329f505b4d007d5d/model.safetensors",
+    "redirect_domains": ["huggingface.co", "hf.co"],
+    "archive_bytes": 28143920,
+    "archive_sha256": "116a02532db461f91386a5b20f942ff2c8d4de7341e21b55caafc3d7b25f49a1",
+    "hash_basis": "Official Hugging Face repository API LFS SHA-256 and complete artifact length; immutable artifact commit, checked 2026-10-06",
+    "file_count": 1,
+    "decoded_bytes": 28143920,
+    "max_file_bytes": 28143920
+  },
   "Govdocs1Thread0": {
     "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/govdocs1/threads/thread0.zip",
     "archive_bytes": 322469174,

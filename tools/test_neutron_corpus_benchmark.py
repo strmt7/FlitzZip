@@ -13,12 +13,15 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import unittest
 import zipfile
 from contextlib import ExitStack
 from multiprocessing.shared_memory import SharedMemory
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from urllib.request import Request
 
 from tools import neutron_corpus_benchmark as corpus
 from tools import neutron_corpus_ipc as ipc
@@ -44,6 +47,106 @@ def zip_fixture(rows: list[tuple[str, bytes]], *, link: bool = False) -> tuple[b
 # Inputs: Tiny controlled archive/protocol fixtures and mocked fixed-source network responses.
 # Outputs: Rejects malformed, changed, lossy, substituted or disk-writing observations; no benchmark is launched.
 class CorpusContracts(unittest.TestCase):
+    def test_pinned_publisher_redirect_boundary(self) -> None:
+        """Purpose: Guard CDN transport. Inputs: Publisher URLs and boundary mutations. Outputs: Only bounded HTTPS."""
+        handler = corpus.PinnedCorpusRedirects(["huggingface.co", "hf.co"])
+        source = Request("https://huggingface.co/organization/model")
+        for url in (source.full_url, "https://eu.cdn.hf.co/model?opaque=delivery", "https://hf.co:443/model"):
+            redirected = handler.redirect_request(source, None, 302, "Found", {}, url)
+            self.assertEqual(redirected.full_url, url)
+        for scheme, authority, suffix in (
+            ("http", "hf.co", "/model"),
+            ("https", "hf.co.example.org", "/model"),
+            ("https", "otherhf.co", "/model"),
+            ("https", "user@hf.co", "/model"),
+            ("https", "hf.co:8443", "/model"),
+            ("https", "hf.co:invalid", "/model"),
+            ("https", "hf.co.", "/model"),
+            ("https", "hf.co", "/model#fragment"),
+            ("https", "hf.co", "/model\n"),
+            ("https", "hf.co", "/" + "x" * 16384),
+        ):
+            with self.subTest(scheme=scheme, authority=authority), self.assertRaisesRegex(ValueError, "boundary"):
+                handler.redirect_request(source, None, 302, "Found", {}, f"{scheme}://{authority}{suffix}")
+        for domains in ([], "hf.co", [None], ["HF.co"], ["hf.co/"], ["hf.co", "hf.co"], ["192.0.2.1"]):
+            with self.subTest(domains=domains), self.assertRaisesRegex(ValueError, "domains"):
+                corpus.PinnedCorpusRedirects(domains)
+        self.assertEqual((handler.max_redirections, handler.max_repeats), (3, 1))
+
+    def test_redirected_download_authenticates_complete_artifact(self) -> None:
+        """Purpose: Bind delivered bytes. Inputs: RAM response and pin mutations. Outputs: Exact digest only."""
+        payload = bytes(range(256))
+        pin = {
+            "url": "https://huggingface.co/organization/model",
+            "redirect_domains": ["huggingface.co", "hf.co"],
+            "archive_sha256": hashlib.sha256(payload).hexdigest(),
+            "archive_bytes": len(payload),
+        }
+        response = io.BytesIO(payload)
+        response.status, response.headers = 200, {}
+        with mock.patch.object(corpus, "build_opener") as opener:
+            opener.return_value.open.return_value = response
+            self.assertEqual(corpus.download(pin, deadline=float("inf")), payload)
+            self.assertIsInstance(opener.call_args.args[0], corpus.PinnedCorpusRedirects)
+        for changed in (
+            {**pin, "archive_sha256": ""},
+            {**pin, "archive_sha256": "a" * 63},
+            {**pin, "redirect_domains": []},
+            {**pin, "url": "https://example.org/model"},
+        ):
+            with mock.patch.object(corpus, "build_opener") as opener, self.assertRaises(ValueError):
+                corpus.download(changed, deadline=float("inf"))
+            opener.assert_not_called()
+        for changed in ({**pin, "archive_sha256": "a" * 64}, {**pin, "archive_bytes": 255}):
+            response = io.BytesIO(payload)
+            response.status, response.headers = 200, {}
+            with mock.patch.object(corpus, "build_opener") as opener, self.assertRaises(ValueError):
+                opener.return_value.open.return_value = response
+                corpus.download(changed, deadline=float("inf"))
+
+    def test_complete_single_artifact_preserves_bytes(self) -> None:
+        """Purpose: Admit inert checkpoints. Inputs: Binary file and identity mutations. Outputs: No selection."""
+        payload = bytes(range(256)) + b"\x00\r\n\x1a"
+        pin = {
+            "file_name": "model.safetensors",
+            "file_count": 1,
+            "decoded_bytes": len(payload),
+            "max_file_bytes": len(payload),
+            "archive_sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        files, provenance = corpus.decode_single_file(payload, pin)
+        self.assertIs(files[0]["data"], payload)
+        self.assertEqual((len(files), provenance["input_bytes"], provenance["excluded"]), (1, len(payload), []))
+        for key, value in (
+            ("file_count", 2),
+            ("decoded_bytes", len(payload) - 1),
+            ("max_file_bytes", len(payload) - 1),
+            ("archive_sha256", "a" * 64),
+            ("file_name", "../model.safetensors"),
+            ("file_name", "C:model.safetensors"),
+            ("file_name", "model\0.safetensors"),
+        ):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                corpus.decode_single_file(payload, {**pin, key: value})
+        with self.assertRaises(ValueError):
+            corpus.decode_single_file(payload[:-1] + b"x", pin)
+
+    def test_model_permission_is_bound_before_acquisition(self) -> None:
+        """Purpose: Refuse unreviewed revisions. Inputs: Model preset and denial. Outputs: No native or network work."""
+        revision = json.loads(corpus.PINS.read_text(encoding="utf-8"))["Pythia14M"]["revision"]
+        with (
+            mock.patch.object(
+                corpus, "require_permission", side_effect=ValueError("test revision not reviewed")
+            ) as permission,
+            mock.patch.object(corpus, "validate_current") as native,
+            mock.patch.object(corpus, "download") as download,
+            self.assertRaisesRegex(ValueError, "revision not reviewed"),
+        ):
+            corpus.study(SimpleNamespace(corpus="Pythia14M"))
+        permission.assert_called_once_with("Pythia14M", "execute", version=revision)
+        native.assert_not_called()
+        download.assert_not_called()
+
     def test_explicit_long_file_deadline_remains_bounded(self) -> None:
         """Purpose: Admit slow natural files. Inputs: Real CLI deadline arguments. Outputs: Explicit bounded
         limits; no worker or native launch.
@@ -422,6 +525,74 @@ class RamExchangeContracts(unittest.TestCase):
         download.assert_not_called()
         launch.assert_not_called()
 
+    def test_hyperfine_provisioning_evidence_and_mutation(self) -> None:
+        """Purpose: Admit pins before probes. Inputs: Bootstrap receipts/mutation. Outputs: Evidence or refusal."""
+        receipt = {"tool": "Hyperfine", "version": "1.20.0", "binary_sha256": "a" * 64, "archive_sha256": "b" * 64}
+        with tempfile.TemporaryDirectory() as temporary:
+            bootstrap = Path(temporary) / "bootstrap.ps1"
+            bootstrap.write_bytes(b"reviewed bootstrap fixture")
+            digest = hashlib.sha256(bootstrap.read_bytes()).hexdigest()
+            with (
+                mock.patch.object(corpus, "COMPARISON_BOOTSTRAP", bootstrap),
+                mock.patch.object(corpus, "run_process", return_value=json.dumps(receipt).encode()) as launch,
+            ):
+                self.assertEqual(corpus.provision_hyperfine(), {**receipt, "bootstrap_sha256": digest})
+                self.assertEqual(launch.call_args.args[0][-2:], ["-Tool", "Hyperfine"])
+                self.assertNotIn("--version", launch.call_args.args[0])
+            invalid = [
+                [],
+                {**receipt, "extra": True},
+                {**receipt, "version": "different"},
+                {**receipt, "binary_sha256": "a"},
+            ]
+            for candidate in invalid:
+                with (
+                    self.subTest(candidate=candidate),
+                    mock.patch.object(corpus, "COMPARISON_BOOTSTRAP", bootstrap),
+                    mock.patch.object(corpus, "run_process", return_value=json.dumps(candidate).encode()),
+                    self.assertRaises(ValueError),
+                ):
+                    corpus.provision_hyperfine()
+
+            # Purpose: Model a concurrent bootstrap edit. Inputs: Owned fixture. Outputs: Valid-looking stale receipt.
+            def change(*args, **kwargs):
+                bootstrap.write_bytes(b"changed bootstrap fixture")
+                return json.dumps(receipt).encode()
+
+            with (
+                mock.patch.object(corpus, "COMPARISON_BOOTSTRAP", bootstrap),
+                mock.patch.object(corpus, "run_process", side_effect=change),
+                self.assertRaisesRegex(ValueError, "source changed"),
+            ):
+                corpus.provision_hyperfine()
+
+    def test_changed_hyperfine_refuses_before_probe_or_acquisition(self) -> None:
+        """Purpose: Enforce leased pins. Inputs: Changed tool/source. Outputs: Refusal before probe or acquisition."""
+        args = SimpleNamespace(corpus="Canterbury", configuration="Release")
+        with tempfile.TemporaryDirectory() as temporary:
+            binary, bootstrap = Path(temporary) / "fixture.exe", Path(temporary) / "bootstrap.ps1"
+            binary.write_bytes(b"reviewed executable fixture")
+            bootstrap.write_bytes(b"reviewed bootstrap fixture")
+            evidence = {
+                "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+                "bootstrap_sha256": hashlib.sha256(bootstrap.read_bytes()).hexdigest(),
+            }
+            for key in evidence:
+                with (
+                    self.subTest(changed=key),
+                    mock.patch.object(corpus, "HYPERFINE", binary),
+                    mock.patch.object(corpus, "COMPARISON_BOOTSTRAP", bootstrap),
+                    mock.patch.object(corpus, "provision_hyperfine", return_value={**evidence, key: "c" * 64}),
+                    mock.patch.object(corpus, "validate_current", return_value={"fixture": "unchanged"}),
+                    mock.patch.object(corpus, "hold_build"),
+                    mock.patch.object(corpus, "download") as download,
+                    mock.patch.object(corpus, "run_process") as launch,
+                    self.assertRaisesRegex(ValueError, "identity changed"),
+                ):
+                    corpus.study(args)
+                download.assert_not_called()
+                launch.assert_not_called()
+
     def test_partial_reports_remain_visible_and_unqualified(self) -> None:
         """Purpose: Preserve failed-study evidence. Inputs: One completed slot. Outputs: Original protocol and
         partial totals.
@@ -449,6 +620,10 @@ class RamExchangeContracts(unittest.TestCase):
         executable = mock.Mock()
         executable.open.return_value = io.BytesIO(b"reviewed executable fixture")
         identity = {"inputs_sha256": "a" * 64, "receipt_sha256": "b" * 64}
+        provisioning = {
+            "binary_sha256": hashlib.sha256(b"reviewed executable fixture").hexdigest(),
+            "bootstrap_sha256": hashlib.sha256(corpus.COMPARISON_BOOTSTRAP.read_bytes()).hexdigest(),
+        }
         args = SimpleNamespace(
             corpus="Canterbury",
             configuration="Release",
@@ -475,6 +650,7 @@ class RamExchangeContracts(unittest.TestCase):
         with (
             mock.patch.object(corpus, "require_permission"),
             mock.patch.object(corpus, "validate_current", return_value=identity),
+            mock.patch.object(corpus, "provision_hyperfine", return_value=provisioning),
             mock.patch.object(corpus, "hold_build"),
             mock.patch.object(corpus, "HYPERFINE", executable),
             mock.patch.object(corpus, "admit_memory"),
@@ -488,6 +664,7 @@ class RamExchangeContracts(unittest.TestCase):
         self.assertTrue(summary["study_qualified"])
         self.assertFalse(summary["timing_qualified"])
         self.assertEqual(summary["observation_count"], len(files))
+        self.assertEqual(summary["hyperfine_provisioning"], provisioning)
         self.assertEqual(base64.b64decode(summary["hyperfine_stderr_base64"]), diagnostic)
         self.assertEqual(summary["hyperfine_stderr_sha256"], hashlib.sha256(diagnostic).hexdigest())
 

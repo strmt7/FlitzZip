@@ -180,8 +180,113 @@ access failure, despite the crawler's success flag.
 
 The next experiments need independent original-bit readers, bounded GPU work
 and complete framed-cost selection. An actual trained-model corpus is needed
-before claiming numeric/model benefits; the public Apache-2.0
-[Pythia models](https://github.com/EleutherAI/pythia#license) provide one possible
-source after exact artifact admission. General text, binary and already-compressed
+before claiming numeric/model benefits. The public Apache-2.0
+[Pythia models](https://github.com/EleutherAI/pythia#license) supply the pinned
+complete 14M checkpoint. Its [actual GPU observation](benchmarks/data/neutron-pythia14m-pruning-2026-10-06.json)
+and independent standard-container comparison now qualify that file's exact
+size and correctness. That pruning observation was larger than its ZIP,
+bzip2 and XZ references; the subsequent context measurement below beats those
+unchanged references for the same complete checkpoint. General text, binary and already-compressed
 files must remain in the study. These are research directions, not implemented
 codecs, new runtime dependencies or demonstrated general improvements.
+
+## Exact Dictionary Work Admission
+
+The current experiment uses the complete verified match graph to bound the
+number of source bytes that every legal LZ4 parse must emit as literals. A
+parallel prefix maximum forms the union of match intervals; uncovered positions
+must remain literal bytes. For `L` such bytes, the payload costs at least
+`L + 1 + ceil(max(0, L - 14) / 255)`. Every sequence has a token, every additional
+sequence has a two-byte offset, and each extension byte accommodates at most
+255 further literals after the fourteen-byte extension-free allowance. Adding
+another sequence costs more than the extension saving it can provide.
+
+Only when the sum of these conservative segment prices reaches a complete
+group's exclusive payload limit can that dictionary candidate be discarded.
+The limit excludes its offset-table framing and comes from the preceding
+measured winner. Competitive groups retain the full existing optimal parser;
+ordinary numeric efforts are untouched. HIP performs the graph analysis and
+literal materialization, with the existing workspace and per-launch limits.
+The HIP regressions passed, including exact competitive output, losing
+nonempty graphs, partial tails, budget admission and cancellation/recovery.
+The [complete Canterbury record](benchmarks/data/neutron-canterbury-pruning-2026-10-06.json)
+preserved every archive size and used 27,753 fewer kernel launches across
+33 observations. This qualifies that corpus's sizes and launch counts, not a
+paired speed improvement or other unfinished workloads. The pruning changes
+no representation and admits no heuristic omission of a competitive graph.
+
+## Independent Entropy Contexts
+
+The current development candidate adds a version-eleven closed context frame
+and initially trials two byte planes independently through the existing plain
+HIP portfolio. The reader supports widths two, four and eight with derived
+plane extents and exact tail reconstruction. Handcrafted mixed raw/fill/pattern
+fixtures, malformed tables, version admission and independent CPU/HIP readers
+are part of its qualification. No compression result is claimed until the
+candidate passes actual GPU execution and representative bytewise studies.
+The [complete Pythia14M pilot](benchmarks/data/neutron-pythia14m-contexts-pilot-2026-10-06.json)
+now provides the first actual measurement of this candidate: 28,143,920 original
+bytes became 24,162,233 complete modeled archive bytes at a 1 MiB block size,
+with byte-exact required-HIP readback and zero payload writes. This saves
+1,935,715 bytes against the preceding same-block-size result and beats the
+retained ZIP, bzip2 and XZ references for this checkpoint. One file and one
+repetition do not establish broad effectiveness or comparative speed. The
+[subsequent three-run measurement](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json)
+reproduced the identical size in every run, preserving those qualification limits.
+
+The trained checkpoint exposes a specific limitation in the current byte-plane
+trial: it reorders the complete block and then supplies that whole block to
+one primitive stage. A permutation preserves a pooled byte histogram; a
+single global entropy table cannot exploit differing distributions between
+planes solely because their order changed. This follows from the current
+trial geometry and is an algorithmic inference, not a measured new codec.
+
+The [Bitshuffle project](https://github.com/kiyo-masui/bitshuffle) describes
+reversible bit transposition followed by compression and explicitly limits
+its effectiveness to suitable correlated data. The June 2026 preprint
+[Approaching Shannon Bound with Lossless LLM Weight Compression](https://arxiv.org/html/2606.15789)
+studies representation-specific entropy, tile-addressable ANS and GPU
+decompression integrated with inference. Their assumptions and CUDA results
+do not qualify HIP archive performance or justify modifying original weights.
+Both primary pages were retrieved through Crawl4AI; retained text includes
+the actual method discussion rather than a search excerpt.
+
+The implemented byte-field experiment includes every context's framing in
+selection and retains the existing winner whenever the complete candidate
+does not improve size. Its explicit format version, bounded HIP forward/inverse
+work, independent original-bit reader and malformed-frame rejection are
+documented in the native format contract. Bit-field contexts remain a separate
+research direction. Every file byte, including model headers, is preserved;
+there is no quantization, model execution, workload-specific omission or
+transfer to ordinary efforts.
+
+A RAM-only independent histogram oracle examined every byte of the same
+28,143,920-byte trained checkpoint in 1 MiB blocks. Unconstrained Huffman bit
+cost, rounded to bytes without format framing, was 25,934,479 with a pooled
+distribution, 23,911,319 with two byte-plane contexts, 23,906,678 with four,
+and 23,900,318 with eight. The existing twelve-bit code-length limit, lookup
+tables, segment offsets and complete container overhead are absent from these
+estimates. This is evidence for testing the representation, not an encoded
+archive, a production implementation, a GPU result or a speed claim. More
+contexts barely improve the unframed cost here and may lose after their
+additional tables are counted.
+
+## Prospective Match-Sequence Bound
+
+A private independent CPU oracle checked 1,872 legal small match graphs,
+including exhaustive sixteen-byte graphs and sampled extension/tail cases.
+For 1,836 graphs, including the unavoidable match-token/offset cost produced
+a stronger lower bound than uncovered literals alone. Every bound remained
+at or below the independently enumerated optimal LZ4 parse price. This is a
+prospective proof check, not a production implementation or GPU measurement.
+
+Let `L` be the uncovered literal count, `N` the source size, and `M` the largest
+legal verified match length. With `m` matches, literal count is at least
+`max(L, N - m * M)`, while tokens and offsets cost at least `3 * m + 1`.
+Ignoring extensions relaxes the price conservatively. For `M > 0`, write
+`N - L = q * M + r`; the relaxed minimum is
+`L + 3 * q + 1 + min(r, 3)`. Taking the maximum of that price and the existing
+literal-extension lower bound is still conservative. With no legal match,
+the exact literal-only price applies. Production adoption would require
+admitted GPU maximum-length evidence, independent price validation, competitive
+payload equivalence, cancellation and actual-corpus qualification.

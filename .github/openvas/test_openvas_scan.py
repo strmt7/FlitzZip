@@ -59,9 +59,9 @@ class FakeGmp:
             "<progress>100</progress></task></get_tasks_response>"
         )
 
-    def get_report(self, report_id, details):
+    def get_report(self, report_id, details, ignore_pagination=False):
         """Purpose: Return a clean fake report; inputs: report request; outputs: XML report."""
-        self.calls.append(("get_report", report_id, details))
+        self.calls.append(("get_report", report_id, details, ignore_pagination))
         return ET.fromstring("<get_reports_response><report/></get_reports_response>")
 
     def stop_task(self, task_id):
@@ -116,7 +116,10 @@ class OpenvasScanTests(unittest.TestCase):
                     "low": 0,
                 },
             )
-        self.assertIn(("get_report", "report-1", True), fake.calls)
+            sarif = json.loads((Path(output_dir) / "openvas-report.sarif").read_text(encoding="utf-8"))
+            self.assertEqual(sarif["version"], "2.1.0")
+            self.assertEqual(sarif["runs"][0]["results"], [])
+        self.assertIn(("get_report", "report-1", True, True), fake.calls)
         self.assertIn(("delete_task", "task-1", True), fake.calls)
         self.assertIn(("delete_target", "target-1", True), fake.calls)
 
@@ -131,6 +134,81 @@ class OpenvasScanTests(unittest.TestCase):
                 self.assertFalse(any(call[0] == "get_report" for call in fake.calls))
                 self.assertIn(("delete_task", "task-1", True), fake.calls)
                 self.assertIn(("delete_target", "target-1", True), fake.calls)
+
+    def test_sarif_preserves_all_results_and_summary_severity_boundaries(self):
+        """Purpose: Preserve complete reports. Inputs: Repeated rules and severity boundaries.
+        Outputs: Every result retained.
+        """
+        scores = [9, 7, 4, 0.1, 0, -1] * 20
+        root = ET.Element("get_reports_response")
+        results = ET.SubElement(ET.SubElement(root, "report"), "results")
+        for index, score in enumerate(scores):
+            result = ET.SubElement(results, "result", {"id": f"result-{index}"})
+            ET.SubElement(result, "severity").text = str(score)
+            ET.SubElement(result, "name").text = f"Finding {index}"
+            ET.SubElement(result, "description").text = f"Complete evidence {index}"
+            ET.SubElement(result, "host").text = "scan-target.example"
+            ET.SubElement(result, "port").text = "443/tcp"
+            ET.SubElement(result, "nvt", {"oid": f"nvt-{index % 2}"})
+        with tempfile.TemporaryDirectory() as directory:
+            xml_path, sarif_path = Path(directory) / "report.xml", Path(directory) / "report.sarif"
+            SCAN.serialize_xml(root, xml_path)
+            summary = SCAN.summarize_report(xml_path, "scan-target.example", {"status": "Done"}, sarif_path)
+            run = json.loads(sarif_path.read_text(encoding="utf-8"))["runs"][0]
+        self.assertEqual(summary["severity_counts"], {"critical": 20, "high": 20, "medium": 20, "low": 20, "log": 40})
+        self.assertEqual(len(run["tool"]["driver"]["rules"]), 2)
+        self.assertEqual(len(run["results"]), len(scores))
+        for index, result in enumerate(run["results"]):
+            self.assertEqual(
+                result["properties"],
+                {
+                    "result_id": f"result-{index}",
+                    "severity": scores[index],
+                    "host": "scan-target.example",
+                    "port": "443/tcp",
+                },
+            )
+            self.assertEqual(result["ruleId"], f"nvt-{index % 2}")
+            self.assertEqual(result["message"]["text"], f"Finding {index}\nComplete evidence {index}")
+            self.assertEqual(
+                result["level"], "error" if scores[index] >= 7 else "warning" if scores[index] >= 4 else "note"
+            )
+        with self.assertRaises(ValueError):
+            GATE.validate_summary(summary)
+
+    def test_invalid_severity_cannot_produce_a_qualified_summary_or_sarif(self):
+        """Purpose: Fail closed on corrupted scores. Inputs: Missing, invalid and nonfinite severity.
+        Outputs: No admitted report.
+        """
+        for score in (None, "", "invalid", "NaN", "Infinity", "-Infinity", "1e999"):
+            with self.subTest(score=score), tempfile.TemporaryDirectory() as directory:
+                xml_path, sarif_path = Path(directory) / "report.xml", Path(directory) / "report.sarif"
+                root = ET.Element("report")
+                result = ET.SubElement(root, "result")
+                if score is not None:
+                    ET.SubElement(result, "severity").text = score
+                SCAN.serialize_xml(root, xml_path)
+                with self.assertRaisesRegex(ValueError, "severity"):
+                    SCAN.summarize_report(xml_path, "scan-target.example", {"status": "Done"}, sarif_path)
+                self.assertFalse(sarif_path.exists())
+
+    def test_empty_nvt_fields_keep_valid_sarif_rule_and_message(self):
+        """Purpose: Retain generic scanner results. Inputs: Empty optional names and OID.
+        Outputs: Nonempty SARIF identifiers.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            xml_path, sarif_path = Path(directory) / "report.xml", Path(directory) / "report.sarif"
+            xml_path.write_text(
+                '<report><result><severity>0</severity><name/><nvt oid=""><name/></nvt></result></report>',
+                encoding="utf-8",
+            )
+            SCAN.summarize_report(xml_path, "scan-target.example", {"status": "Done"}, sarif_path)
+            run = json.loads(sarif_path.read_text(encoding="utf-8"))["runs"][0]
+        self.assertEqual(
+            run["tool"]["driver"]["rules"], [{"id": "greenbone/result", "shortDescription": {"text": "OpenVAS result"}}]
+        )
+        self.assertEqual(run["results"][0]["ruleId"], "greenbone/result")
+        self.assertTrue(run["results"][0]["message"]["text"].strip())
 
     def test_gate_rejects_incomplete_and_malformed_summaries(self):
         """Purpose: Fail closed on partial or invalid reports; inputs: malformed data; outputs: ValueError."""

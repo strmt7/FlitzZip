@@ -24,6 +24,10 @@ METADATA_PATH = re.compile(
     r"|\.github/scanner-secret-reviews(?:-crawl4ai(?:-tests)?)?\.json)"
 )
 COMMIT_METADATA_PATH = re.compile(r"third_party/upstream/nltk/([a-f0-9]{40})/build\.json")
+CORPUS_COMMIT_PATHS = (
+    "docs/benchmarks/corpora/neutron-public-corpora.json",
+    "tools/benchmark_permissions.json",
+)
 SOURCE_POLICY = Path(".github/scanner-source-reviews.csv")
 SOURCE_FIELDS = ("path", "rule", "input_sha256", "startLine", "startColumn", "endLine", "endColumn", "evidence")
 SOURCE_EVIDENCE = "docs/security-source-finding-review-2026-10-04.md"
@@ -240,7 +244,9 @@ def read_reviews(payload: bytes) -> list[dict[str, str]]:
             row["value_kind"] = "sha256"
         checksum = row["value_kind"] == "sha256" and METADATA_PATH.fullmatch(row["path"]) is not None
         commit_path = COMMIT_METADATA_PATH.fullmatch(row["path"])
-        commit = row["value_kind"] == "git_commit" and commit_path is not None and commit_path[1] == row["public_value"]
+        commit = row["value_kind"] == "git_commit" and (
+            (commit_path is not None and commit_path[1] == row["public_value"]) or row["path"] in CORPUS_COMMIT_PATHS
+        )
         if row["rule"] != "DS173237" or not (checksum or commit):
             raise ValueError("Only exact public integrity metadata can be reviewed; code and tests remain blocking")
         length = 64 if checksum else 40
@@ -276,6 +282,8 @@ def public_value_matches(row: dict, payload: bytes, region: dict) -> bool:
         except (ValueError, UnicodeDecodeError):
             return False
         value = row["public_value"]
+        if row["path"] in CORPUS_COMMIT_PATHS:
+            return public_corpus_commit_matches(row, source)
         return (
             isinstance(source, dict)
             and source.get("project") == "nltk"
@@ -284,6 +292,32 @@ def public_value_matches(row: dict, payload: bytes, region: dict) -> bool:
             and source.get("url") == "https://codeload.github.com/nltk/nltk/zip/" + value
         )
     return True
+
+
+def public_corpus_commit_matches(row: dict, source: dict) -> bool:
+    """Purpose: Bind reviewed model provenance. Inputs: Exact row/JSON. Outputs: Official artifact role only."""
+    if not isinstance(source, dict):
+        return False
+    value = row["public_value"]
+    if row["path"] == CORPUS_COMMIT_PATHS[0]:
+        model = source.get("Pythia14M")
+        return (
+            isinstance(model, dict)
+            and model.get("revision") == value
+            and model.get("source_kind") == "file"
+            and model.get("file_name") == "model.safetensors"
+            and model.get("url") == f"https://huggingface.co/EleutherAI/pythia-14m/resolve/{value}/model.safetensors"
+        )
+    subjects = source.get("subjects")
+    model = subjects.get("Pythia14M") if isinstance(subjects, dict) else None
+    return (
+        row["path"] == CORPUS_COMMIT_PATHS[1]
+        and isinstance(model, dict)
+        and model.get("versions") == [value]
+        and isinstance(model.get("evidence"), list)
+        and "https://github.com/EleutherAI/pythia" in model["evidence"]
+        and "https://huggingface.co/EleutherAI/pythia-14m" in model["evidence"]
+    )
 
 
 # Purpose: Retain historical source review context while keeping every source finding blocking.

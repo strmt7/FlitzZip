@@ -42,173 +42,32 @@ jobs:
       - name: Install Greenbone tools
         shell: bash
         run: python -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/requirements-gvm-tools-linux.txt
-      - name: Validate OpenVAS script and workflow contract
+      - name: Validate complete report and gate contracts offline
         shell: bash
         run: |
           set -euo pipefail
+          python .github/openvas/test_openvas_scan.py
           mkdir -p reports/openvas
-          python -m py_compile .github/openvas/openvas_scan.gmp.py
           python - <<'PY'
-          import importlib.util
-          import pathlib
-          import tempfile
-          import xml.etree.ElementTree as ET
-
-          script_path = pathlib.Path(".github/openvas/openvas_scan.gmp.py")
-          spec = importlib.util.spec_from_file_location("openvas_scan", script_path)
-          if spec is None or spec.loader is None:
-              raise SystemExit("Unable to import OpenVAS scan script.")
-          module = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(module)
-          parsed = module.parse_args([
-              "openvas_scan.gmp.py",
-              "scan-target.example",
-              "reports/openvas",
-              module.DEFAULT_SCAN_CONFIG_ID,
-              module.DEFAULT_SCANNER_ID,
-              "",
-              "5",
-              "true",
-          ])
-          if parsed.target != "scan-target.example" or parsed.max_minutes != 5:
-              raise SystemExit("OpenVAS parser returned unexpected values.")
-          try:
-              module.parse_args(["openvas_scan.gmp.py", "bad target with spaces", "reports/openvas"])
-          except SystemExit:
-              pass
-          else:
-              raise SystemExit("OpenVAS parser accepted an invalid target.")
-
-          class FakeGmp:
-              def __init__(self):
-                  self.calls = []
-
-              def create_target(self, **kwargs):
-                  self.calls.append(("create_target", kwargs))
-                  return {"id": "target-1"}
-
-              def create_task(self, **kwargs):
-                  self.calls.append(("create_task", kwargs))
-                  return {"id": "task-1"}
-
-              def start_task(self, task_id):
-                  self.calls.append(("start_task", task_id))
-                  return ET.fromstring("<start_task_response><report_id>report-1</report_id></start_task_response>")
-
-              def get_task(self, task_id):
-                  self.calls.append(("get_task", task_id))
-                  return ET.fromstring(
-                      "<get_tasks_response>"
-                      "<task><status>Done</status><progress>100</progress></task>"
-                      "</get_tasks_response>"
-                  )
-
-              def get_report(self, report_id, details):
-                  self.calls.append(("get_report", report_id, details))
-                  return ET.fromstring(
-                      "<get_reports_response>"
-                      "<report><result><severity>0.0</severity></result></report>"
-                      "</get_reports_response>"
-                  )
-
-              def stop_task(self, task_id):
-                  self.calls.append(("stop_task", task_id))
-
-              def delete_task(self, task_id, ultimate=False):
-                  self.calls.append(("delete_task", task_id, ultimate))
-
-              def delete_target(self, target_id, ultimate=False):
-                  self.calls.append(("delete_target", target_id, ultimate))
-
-          fake = FakeGmp()
-          with tempfile.TemporaryDirectory() as tmpdir:
-              args = type("Args", (), {})()
-              args.argv = [
-                  "openvas_scan.gmp.py",
-                  "scan-target.example",
-                  tmpdir,
-                  module.DEFAULT_SCAN_CONFIG_ID,
-                  module.DEFAULT_SCANNER_ID,
-                  "",
-                  "5",
-                  "true",
-              ]
-              if module.main(fake, args) != 0:
-                  raise SystemExit("OpenVAS fake scan returned a non-zero code.")
-              if not (pathlib.Path(tmpdir) / "openvas-summary.json").exists():
-                  raise SystemExit("OpenVAS fake scan did not write a summary.")
-
-          expected_cleanup = {
-              ("delete_task", "task-1", True),
-              ("delete_target", "target-1", True),
-          }
-          missing_cleanup = [call for call in expected_cleanup if call not in fake.calls]
-          if missing_cleanup:
-              raise SystemExit(f"OpenVAS cleanup calls missing: {missing_cleanup!r}; calls={fake.calls!r}")
-
-          fake.calls.clear()
-          cleanup_errors = module.cleanup_greenbone_resources(fake, "task-2", "target-2", True, False)
-          if cleanup_errors:
-              raise SystemExit(f"OpenVAS unfinished-task cleanup reported errors: {cleanup_errors!r}")
-          expected_unfinished_cleanup = {
-              ("stop_task", "task-2"),
-              ("delete_task", "task-2", True),
-              ("delete_target", "target-2", True),
-          }
-          if set(fake.calls) != expected_unfinished_cleanup:
-              raise SystemExit(f"OpenVAS unfinished-task cleanup calls were wrong: {fake.calls!r}")
-          PY
-          python -m unittest discover -s .github/openvas -p 'test_*.py'
-      - name: Write integration audit report
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import datetime as dt
+          import importlib.metadata
           import json
-          import os
           from pathlib import Path
 
           output_dir = Path("reports/openvas")
-          output_dir.mkdir(parents=True, exist_ok=True)
           summary = {
-              "tool": "Greenbone/OpenVAS",
-              "status": "integration-validated",
-              "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
-              "event_name": os.environ["GITHUB_EVENT_NAME"],
-              "head_sha": os.environ["GITHUB_SHA"],
-              "live_network_scan": {
-                  "status": "requires-authorized-target-and-oidc-broker",
-                  "trigger_events": ["workflow_dispatch", "schedule"],
-                  "required_variables": [
-                      "GREENBONE_SECRET_PROVIDER_URL",
-                  ],
-                  "required_broker_fields": [
-                      "greenbone_host",
-                      "greenbone_username",
-                      "greenbone_password",
-                      "greenbone_target or workflow_dispatch target",
-                      "vulnetix_org_id",
-                  ],
-                  "optional_broker_fields": [
-                      "greenbone_port",
-                      "greenbone_scan_config_id",
-                      "greenbone_scanner_id",
-                      "greenbone_port_list_id",
-                      "greenbone_max_minutes",
-                      "greenbone_delete_task (temporary task and target cleanup)",
-                  ],
-              },
+              "tool": "Greenbone/OpenVAS integration audit",
+              "status": "offline-contracts-passed",
+              "python_gvm_version": importlib.metadata.version("python-gvm"),
+              "live_scan_status": "requires-authorized-target-and-oidc-broker",
+              "configuration_contract": "docs/security-code-scanning.md",
           }
           (output_dir / "openvas-integration-summary.json").write_text(
-              json.dumps(summary, indent=2),
-              encoding="utf-8",
+              json.dumps(summary, indent=2), encoding="utf-8",
           )
           (output_dir / "openvas-integration-summary.md").write_text(
               "# Greenbone/OpenVAS integration audit\n\n"
-              "The workflow, locked scanner dependencies, and GMP script parsed successfully. "
-              "A live network vulnerability scan requires the documented OIDC broker "
-              "and runs in the separate `greenbone-openvas-live` workflow.\n",
+              "The canonical report, completion, cleanup and vulnerability-gate contracts passed offline. "
+              "An authenticated live scan and upload require the documented OIDC broker and authorized target.\n",
               encoding="utf-8",
           )
           PY

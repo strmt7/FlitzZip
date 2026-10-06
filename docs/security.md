@@ -102,13 +102,14 @@ upload and vulnerability management lanes are documented in
 ## Vulnetix / OpenVAS Future Lane
 
 The Greenbone/OpenVAS and Vulnetix live workflow resolves scanner credentials
-through an external OIDC broker, then uses a pinned `Vulnetix/cli` action after
-a real authorized OpenVAS scan has produced artifacts. The current pin is:
-
-- `uses: Vulnetix/cli@bcfaca703d9c893a97d0a8e584ebd5b0070b109a`
-- `org-id: ${{ steps.config.outputs.vulnetix_org_id }}`
-- optional `task: upload`
-- optional `artifact-path: ./reports/`
+through an external OIDC broker. The [canonical live workflow](../.github/workflows/greenbone-openvas-live.yml)
+contains the reviewed immutable `Vulnetix/cli` pin and matching upstream tag.
+It authenticates with the broker's organization UUID and hexadecimal API key,
+then uploads a complete OpenVAS SARIF report using the documented `upload-file`
+input. The original XML and summary JSON remain in the workflow artifact.
+Report retrieval explicitly disables pagination. Invalid or nonfinite severity
+values fail qualification; partial scans cannot be uploaded. A complete report
+containing vulnerabilities is still uploaded when the vulnerability gate fails.
 
 The SuperZip workflow fails closed until `GREENBONE_SECRET_PROVIDER_URL` points
 to a broker that validates GitHub OIDC claims and returns the authorized
@@ -118,6 +119,6 @@ Manual workflow-dispatch target text is sent to that broker only as a target
 request; the checked-in workflow must use the broker-returned
 `greenbone_target` as the effective OpenVAS target.
 
-Note: the action is pinned to the `v3.32.0` commit resolved from the annotated
-upstream tag on June 22, 2026. The upstream tag object was unsigned, so keep the
-full commit SHA pin and re-check the upstream action before rotating it again.
+Recheck the annotated tag's resolved commit, supported inputs, authentication
+and accepted report formats before rotating the action. Keep one authenticated
+upload invocation; a default informational invocation does not verify access.

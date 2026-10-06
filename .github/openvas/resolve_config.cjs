@@ -37,10 +37,19 @@ function parseConfiguration(config) {
         scanner_id: get("greenbone_scanner_id", "08b69003-5fc2-4037-a479-93b440211c73"),
         port_list_id: get("greenbone_port_list_id"),
         vulnetix_org_id: get("vulnetix_org_id"),
+        vulnetix_api_key: get("vulnetix_api_key"),
     };
-    const missing = ["host", "username", "password", "target", "vulnetix_org_id"].filter((key) => !values[key]);
+    const missing = ["host", "username", "password", "target", "vulnetix_org_id", "vulnetix_api_key"]
+        .filter((key) => !values[key]);
     if (missing.length !== 0) {
         throw new ConfigurationError(`Greenbone broker omitted required fields: ${missing.join(", ")}`);
+    }
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(values.vulnetix_org_id)) {
+        throw new ConfigurationError("Greenbone broker field vulnetix_org_id must be a UUID");
+    }
+    if (typeof config.vulnetix_api_key !== "string" || !/^[0-9a-f]+$/iu.test(values.vulnetix_api_key) ||
+        values.vulnetix_api_key.length % 2 !== 0) {
+        throw new ConfigurationError("Greenbone broker field vulnetix_api_key must be a hexadecimal digest");
     }
     return values;
 }

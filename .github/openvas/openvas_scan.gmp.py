@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import re
 import sys
 import time
@@ -33,7 +34,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Run a Greenbone/OpenVAS scan.")
     parser.add_argument("target", help="Authorized scan target host, IP, or CIDR.")
-    parser.add_argument("output_dir", help="Directory for XML and JSON reports.")
+    parser.add_argument("output_dir", help="Directory for XML, JSON and SARIF reports.")
     parser.add_argument(
         "scan_config_id",
         nargs="?",
@@ -218,19 +219,25 @@ def cleanup_greenbone_resources(
     return errors
 
 
-def summarize_report(report_xml_path: Path, target: str, task_state: dict[str, Any]) -> dict[str, Any]:
+def summarize_report(
+    report_xml_path: Path, target: str, task_state: dict[str, Any], sarif_path: Path | None = None
+) -> dict[str, Any]:
     """Purpose: Build a compact JSON summary from a Greenbone XML report.
     Inputs: `report_xml_path` points to the downloaded XML report, `target` names the
     authorized scan target, and `task_state` contains the terminal task status.
-    Outputs: Summary dictionary with severity bucket counts.
+    Outputs: Summary counts and optional SARIF preserving every reported result; invalid scores fail closed.
     """
     root = ET.fromstring(report_xml_path.read_bytes())
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "log": 0}
+    sarif_results = []
+    rules = {}
     for result in root.findall(".//result"):
         try:
-            severity = float(xml_text(result, "severity", "0") or "0")
-        except ValueError:
-            severity = 0.0
+            severity = float(xml_text(result, "severity", ""))
+        except ValueError as error:
+            raise ValueError("OpenVAS report contains an invalid severity") from error
+        if not math.isfinite(severity):
+            raise ValueError("OpenVAS report contains a nonfinite severity")
         if severity >= 9.0:
             counts["critical"] += 1
         elif severity >= 7.0:
@@ -241,6 +248,33 @@ def summarize_report(report_xml_path: Path, target: str, task_state: dict[str, A
             counts["low"] += 1
         else:
             counts["log"] += 1
+        if sarif_path is not None:
+            nvt = result.find("nvt")
+            rule_id = (nvt.get("oid") if nvt is not None else None) or "greenbone/result"
+            name = xml_text(result, "name", "") or xml_text(result, "nvt/name", "") or "OpenVAS result"
+            rules.setdefault(rule_id, {"id": rule_id, "shortDescription": {"text": name}})
+            host = xml_text(result, "host", "")
+            port = xml_text(result, "port", "")
+            sarif_results.append(
+                {
+                    "ruleId": rule_id,
+                    "level": "error" if severity >= 7.0 else "warning" if severity >= 4.0 else "note",
+                    "message": {"text": name + "\n" + xml_text(result, "description", "")},
+                    "locations": [{"logicalLocations": [{"name": host + " (" + port + ")"}]}],
+                    "properties": {"result_id": result.get("id", ""), "severity": severity, "host": host, "port": port},
+                }
+            )
+    if sarif_path is not None:
+        report = {
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {"driver": {"name": "Greenbone/OpenVAS", "rules": list(rules.values())}},
+                    "results": sarif_results,
+                }
+            ],
+        }
+        sarif_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     return {
         "tool": "Greenbone/OpenVAS",
         "target": target,
@@ -253,7 +287,7 @@ def summarize_report(report_xml_path: Path, target: str, task_state: dict[str, A
 def main(gmp: Any, args: Any) -> int:
     """Purpose: gvm-script entrypoint for CI OpenVAS scanning.
     Inputs: `gmp` is the authenticated GMP session and `args.argv` is provided by gvm-script.
-    Outputs: Process exit code; writes XML and JSON reports to the requested directory.
+    Outputs: Process exit code; writes complete XML, summary JSON and uploadable SARIF reports.
     """
     parsed = parse_args(args.argv)
     output_dir = Path(parsed.output_dir)
@@ -278,10 +312,10 @@ def main(gmp: Any, args: Any) -> int:
         task_state = wait_for_task(gmp, task_id, parsed.max_minutes)
         task_finished = True
         require_completed_task(task_state)
-        report = gmp.get_report(report_id=report_id, details=True)
+        report = gmp.get_report(report_id=report_id, details=True, ignore_pagination=True)
         xml_path = output_dir / "openvas-report.xml"
         serialize_xml(report, xml_path)
-        summary = summarize_report(xml_path, parsed.target, task_state)
+        summary = summarize_report(xml_path, parsed.target, task_state, output_dir / "openvas-report.sarif")
         summary["target_id"] = target_id
         summary["task_id"] = task_id
         summary["report_id"] = report_id

@@ -118,6 +118,15 @@
       "evidence": ["https://corpus.canterbury.ac.nz/purpose.html", "https://corpus.canterbury.ac.nz/descriptions/", "https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz"],
       "conditions": ["Use the original fixed natural corpus with exact bytes and published file lengths; reject mirrors with normalized line endings.", "Attribute Arnold and Bell (1997), A corpus for the evaluation of lossless compression algorithms, DCC 1997.", "Keep payloads in RAM; do not execute constituents, copy embedded source into the product or commit/redistribute corpus files.", "Publish original numerical measurements and disclose corpus age and limited coverage; do not imply university endorsement."]
     },
+    "Pythia14M": {
+      "versions": ["94f7c35d5e9f2e9bac8ca839329f505b4d007d5d"],
+      "execute": "allowed",
+      "publish_results": "allowed",
+      "redistribute": "hold",
+      "basis": "EleutherAI explicitly applies Apache-2.0 to Pythia code, models and copyrightable artifacts. Review on 2026-10-06 admits local inert-byte compression of this complete immutable trained checkpoint and original measurements; the catalog's existing expiry remains unchanged.",
+      "evidence": ["https://github.com/EleutherAI/pythia", "https://huggingface.co/EleutherAI/pythia-14m", "https://huggingface.co/api/models/EleutherAI/pythia-14m/tree/main?recursive=false&expand=true"],
+      "conditions": ["Attribute EleutherAI, Pythia, and Apache-2.0. Use only the pinned complete model.safetensors artifact and authenticate its exact publisher LFS digest before benchmarking.", "Treat the complete checkpoint as inert RAM bytes. Never load a model, deserialize pickle, execute training code, extract selected tensors or write corpus payloads to disk.", "Admit bounded HTTPS redirects only inside the reviewed huggingface.co and hf.co publisher domains; retain complete artifact hashing and reject changed identity.", "Publish original numerical measurements with this single small model's coverage limitation; do not imply general AI-model effectiveness or upstream endorsement. Payload redistribution remains on hold as repository policy."]
+    },
     "Govdocs1Thread0": {
       "execute": "allowed",
       "publish_results": "allowed",

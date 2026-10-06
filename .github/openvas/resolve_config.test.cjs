@@ -9,7 +9,8 @@ const valid = {
     greenbone_username: "test-user",
     greenbone_password: "fixture%0Avalue%25with::markers",
     greenbone_target: "authorized.example",
-    vulnetix_org_id: "fixture-organization",
+    vulnetix_org_id: "00000000-0000-4000-8000-000000000001",
+    vulnetix_api_key: "a1".repeat(32),
 };
 
 // Purpose: Capture resolver effects without real credentials, files, or network traffic.
@@ -41,6 +42,7 @@ test("official masking receives exact values before any outputs and target stays
     const outputs = result.calls.filter(([kind]) => kind === "output");
     assert.equal(outputs.find(([, key]) => key === "target")[2], "authorized.example");
     assert.equal(outputs.find(([, key]) => key === "password")[2], valid.greenbone_password);
+    assert.equal(outputs.find(([, key]) => key === "vulnetix_api_key")[2], valid.vulnetix_api_key);
     assert.ok(result.calls.some(([kind, value]) => kind === "mask" && value === valid.greenbone_password));
     const firstOutput = result.calls.findIndex(([kind]) => kind === "output");
     assert.ok(result.calls.slice(firstOutput).every(([kind]) => kind === "output"));
@@ -48,6 +50,25 @@ test("official masking receives exact values before any outputs and target stays
     assert.equal(result.request.redirect, "error");
     assert.ok(result.request.signal instanceof AbortSignal);
     assert.equal(result.reports.length, 0);
+});
+
+test("Vulnetix credentials reject shell syntax, nonhex keys and missing authentication before outputs", async () => {
+    const cases = [
+        { ...valid, vulnetix_org_id: "invalid-organization" },
+        { ...valid, vulnetix_org_id: valid.vulnetix_org_id + "'" },
+        { ...valid, vulnetix_api_key: "" },
+        { ...valid, vulnetix_api_key: undefined },
+        { ...valid, vulnetix_api_key: true },
+        { ...valid, vulnetix_api_key: "a" },
+        { ...valid, vulnetix_api_key: "gh" },
+        { ...valid, vulnetix_api_key: valid.vulnetix_api_key + "'" },
+    ];
+    for (const config of cases) {
+        const result = await exercise(config);
+        assert.ok(result.calls.some(([kind]) => kind === "failed"));
+        assert.ok(!result.calls.some(([kind]) => kind === "output" || kind === "mask"));
+        assert.ok(!JSON.stringify(result.reports).includes(valid.vulnetix_api_key));
+    }
 });
 
 test("invalid, missing, and compound fields fail before any output", async () => {

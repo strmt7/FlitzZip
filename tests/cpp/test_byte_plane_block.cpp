@@ -117,6 +117,58 @@ std::pair<std::vector<std::byte>, std::vector<std::byte>> context_plane_fixture(
 
 }  // namespace
 
+// Purpose: Keep the context-stage catalog and every extent/fill refusal independent from production classification.
+// Inputs: All serialized byte kinds, an explicit format catalog and independently constructed dense tables.
+// Outputs: Requires the exact accepted catalog and rejection of noncanonical fill, raw and compressed extents.
+TEST_CASE(suzip_byte_plane_context_stage_catalog_and_extent_admission) {
+    const std::array<std::uint8_t, 9> admitted_kinds{0U, 1U, 3U, 4U, 5U, 6U, 7U, 9U, 10U};
+    // Purpose: Build an independent two-plane table. Inputs: First child metadata. Outputs: A dense wire frame.
+    const auto make_frame = [](std::uint8_t kind, std::uint8_t fill, std::uint32_t bytes) {
+        std::vector<std::byte> frame(16U + bytes, std::byte{0});
+        frame[0] = std::byte{2};
+        frame[4] = static_cast<std::byte>(kind);
+        frame[5] = static_cast<std::byte>(fill);
+        frame[10] = std::byte{1};
+        for (std::size_t byte = 0U; byte < sizeof(bytes); ++byte) {
+            frame[6U + byte] = static_cast<std::byte>((bytes >> (byte * 8U)) & 255U);
+        }
+        return frame;
+    };
+    // Purpose: Exercise actual frame admission. Inputs: Independent wire bytes. Outputs: Acceptance, without decode.
+    const auto admitted = [](const std::vector<std::byte>& frame) {
+        const superzip::BlockDescriptor outer{.kind = superzip::BlockKind::GpuBytePlaneContexts,
+                                              .uncompressed_len = 128U,
+                                              .encoded_len = static_cast<std::uint32_t>(frame.size())};
+        try {
+            (void)superzip::parse_gpu_byte_plane_contexts(frame, outer);
+            return true;
+        } catch (const superzip::ArchiveError&) {
+            return false;
+        }
+    };
+    for (std::uint16_t kind = 0U; kind < 256U; ++kind) {
+        const auto value = static_cast<std::uint8_t>(kind);
+        const bool expected = std::find(admitted_kinds.begin(), admitted_kinds.end(), value) != admitted_kinds.end();
+        const auto bytes = kind == 0U ? 64U : kind == 1U ? 0U : 2U;
+        REQUIRE_EQ(admitted(make_frame(value, 0U, bytes)), expected);
+        if (expected && kind != 1U) {
+            REQUIRE_TRUE(!admitted(make_frame(value, 255U, bytes)));
+        }
+    }
+    for (const std::uint8_t fill : {0U, 1U, 255U}) {
+        REQUIRE_TRUE(admitted(make_frame(1U, fill, 0U)));
+        REQUIRE_TRUE(!admitted(make_frame(1U, fill, 1U)));
+    }
+    for (const std::uint32_t bytes : {0U, 1U, 63U, 65U}) {
+        REQUIRE_TRUE(!admitted(make_frame(0U, 0U, bytes)));
+    }
+    for (const std::uint8_t kind : {3U, 4U, 5U, 6U, 7U, 9U, 10U}) {
+        for (const std::uint32_t bytes : {0U, 64U, 65U}) {
+            REQUIRE_TRUE(!admitted(make_frame(kind, 0U, bytes)));
+        }
+    }
+}
+
 // Purpose: Independently qualify dense context tables, mixed child codecs and every tail through CPU/HIP readers.
 // Inputs: Handcrafted version-eleven frames at segment/block boundaries and all admitted widths.
 // Outputs: Requires byte-exact reconstruction, actual HIP decoding and GPU CRC equal to the independent oracle.

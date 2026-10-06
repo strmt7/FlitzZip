@@ -12,6 +12,7 @@ import io
 import json
 import math
 import os
+import re
 import shlex
 import stat
 import subprocess
@@ -22,7 +23,8 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
-from urllib.request import Request, build_opener
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from tools import neutron_corpus_ipc as ipc
 from tools.benchmark_comparators import NoReleaseRedirects, require_permission
@@ -34,7 +36,60 @@ PINS = ROOT / "docs/benchmarks/corpora/neutron-public-corpora.json"
 MAX_FILE = (1 << 32) - 1
 MAX_OUTPUT = 65536
 MAX_CORPUS = 768 * 1024 * 1024
-HYPERFINE = ROOT / ("out/benchmark-tools/hyperfine/unpacked/hyperfine-v1.20.0-x86_64-pc-windows-msvc/hyperfine.exe")
+HYPERFINE = ROOT / "out/tools/hyperfine-v1.20.0-x86_64-pc-windows-msvc/hyperfine.exe"
+COMPARISON_BOOTSTRAP = ROOT / "tools/bootstrap_comparison_tools.ps1"
+
+
+class PinnedCorpusRedirects(HTTPRedirectHandler):
+    """Admit bounded HTTPS transport only for digest-pinned, reviewed publisher domains."""
+
+    max_redirections = 3
+    max_repeats = 1
+
+    def __init__(self, domains: list[str]) -> None:
+        """Purpose: Own reviewed domains. Inputs: Publisher domain list. Outputs: Closed transport policy."""
+        label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+        if (
+            not isinstance(domains, list)
+            or not domains
+            or any(
+                not isinstance(domain, str)
+                or len(domain) > 253
+                or not re.fullmatch(rf"{label}(?:\.{label})+", domain)
+                or domain.rsplit(".", 1)[-1].isdigit()
+                for domain in domains
+            )
+            or len(set(domains)) != len(domains)
+        ):
+            raise ValueError("Invalid pinned corpus redirect domains")
+        self.domains = tuple(domains)
+
+    def validate_target(self, url: str) -> None:
+        """Purpose: Validate delivery URLs. Inputs: HTTPS target. Outputs: Admission or value-free refusal."""
+        try:
+            target = urlsplit(url)
+            admitted = (
+                len(url) <= 16384
+                and target.scheme == "https"
+                and target.username is None
+                and target.password is None
+                and target.port in (None, 443)
+                and not target.fragment
+                and not any(ord(character) < 33 or ord(character) == 127 for character in url)
+                and any(
+                    target.hostname == domain or (target.hostname or "").endswith("." + domain)
+                    for domain in self.domains
+                )
+            )
+        except ValueError:
+            admitted = False
+        if not admitted:
+            raise ValueError("Corpus transport left its reviewed HTTPS publisher boundary")
+
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        """Purpose: Admit publisher transport. Inputs: Redirect target. Outputs: Bounded HTTPS request or refusal."""
+        self.validate_target(new_url)
+        return super().redirect_request(request, response, code, message, headers, new_url)
 
 
 # Purpose: Admit corpus residency while preserving the shared host's physical-memory reserve.
@@ -67,11 +122,17 @@ def admit_memory(owned_bytes: int) -> None:
 
 # Purpose: Download one fixed reviewed source entirely in RAM with byte and lifetime limits.
 # Inputs: Pinned HTTPS URL, maximum bytes, exact expected length and optional authenticated content digest.
-# Outputs: Immutable bytes; redirects, excess data, changed identity and incomplete responses fail closed.
+# Outputs: Immutable bytes; unreviewed redirects, excess data, changed identity and incomplete responses fail closed.
 def download(spec: dict, *, deadline: float) -> bytes:
+    domains = spec.get("redirect_domains")
+    if domains is not None and not re.fullmatch(r"[0-9a-f]{64}", spec.get("archive_sha256", "")):
+        raise ValueError("Redirected corpus artifacts require an authenticated content digest")
+    redirect = PinnedCorpusRedirects(domains) if domains is not None else NoReleaseRedirects()
+    if domains is not None:
+        redirect.validate_target(spec["url"])
     request = Request(spec["url"], headers={"User-Agent": "Mozilla/5.0 SuperZip-public-corpus-research"})
     payload = io.BytesIO()
-    with build_opener(NoReleaseRedirects()).open(request, timeout=30) as response:
+    with build_opener(redirect).open(request, timeout=30) as response:
         if response.status != 200:
             raise ValueError("corpus download did not return a complete HTTPS response")
         if spec.get("etag") and response.headers.get("ETag") != spec["etag"]:
@@ -150,6 +211,36 @@ def decode_corpus(payload: bytes, spec: dict) -> tuple[list[dict], dict]:
         "input_bytes": sum(row["bytes"] for row in files),
         "excluded": excluded,
         "ordering": "published ZIP member order; independent files; no split, padding, repeat or generated replacement",
+    }
+
+
+# Purpose: Admit one complete publisher artifact as inert bytes without loading its model or executing source.
+# Inputs: Exact authenticated artifact, canonical flat name and pinned source extent.
+# Outputs: One unmodified RAM file and its provenance, or a closed inventory/identity refusal.
+def decode_single_file(payload: bytes, spec: dict) -> tuple[list[dict], dict]:
+    name = spec["file_name"]
+    digest = hashlib.sha256(payload).hexdigest()
+    if (
+        spec["file_count"] != 1
+        or not name
+        or name != PurePosixPath(name).name
+        or "\\" in name
+        or ":" in name
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+        or name in (".", "..")
+        or len(payload) != spec["decoded_bytes"]
+        or len(payload) != spec["max_file_bytes"]
+        or not 0 < len(payload) <= min(MAX_FILE, MAX_CORPUS)
+        or digest != spec["archive_sha256"]
+    ):
+        raise ValueError("Single-file corpus identity or inventory changed")
+    return [{"name": name, "bytes": len(payload), "sha256": digest, "data": payload}], {
+        "archive_sha256": digest,
+        "published_file_count": 1,
+        "admitted_file_count": 1,
+        "input_bytes": len(payload),
+        "excluded": [],
+        "ordering": "one complete unmodified publisher artifact; no tensor extraction or generated replacement",
     }
 
 
@@ -379,6 +470,7 @@ def hold_build(stack: ExitStack, receipt: dict) -> None:
         "build/CMakeCache.txt",
         "tools/neutron_corpus_benchmark.py",
         "tools/neutron_corpus_ipc.py",
+        COMPARISON_BOOTSTRAP.relative_to(ROOT).as_posix(),
         HYPERFINE.relative_to(ROOT).as_posix(),
         "mcp/superzip_mcp.py",
         "tools/benchmark_permissions.json",
@@ -426,26 +518,78 @@ def hyperfine_command(arguments: list[str]) -> str:
     return shlex.join(arguments)
 
 
-# Purpose: Run a complete public-corpus study with existing Hyperfine, fixed residency and exact native qualification.
+# Purpose: Provision the reviewed timing tool before executing it.
+# Inputs: Canonical repository bootstrap and an owned bounded child; bootstrap pins remain authoritative.
+# Outputs: Strict tool/hash evidence bound to unchanged bootstrap source, or an error before any tool probe.
+def provision_hyperfine() -> dict:
+    before = hashlib.sha256(COMPARISON_BOOTSTRAP.read_bytes()).hexdigest()
+    result = run_process(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(COMPARISON_BOOTSTRAP),
+            "-Tool",
+            "Hyperfine",
+        ],
+        None,
+        300,
+    )
+    receipt = json.loads(result)
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) != {"tool", "version", "binary_sha256", "archive_sha256"}
+        or receipt["tool"] != "Hyperfine"
+        or receipt["version"] != "1.20.0"
+        or any(not re.fullmatch(r"[0-9a-f]{64}", str(receipt[key])) for key in ("binary_sha256", "archive_sha256"))
+        or hashlib.sha256(COMPARISON_BOOTSTRAP.read_bytes()).hexdigest() != before
+    ):
+        raise ValueError("Hyperfine provisioning evidence or bootstrap source changed")
+    return {**receipt, "bootstrap_sha256": before}
+
+
+# Purpose: Bind provisioned tool bytes to the acquired measurement lease before launch.
+# Inputs: Bootstrap evidence and already-held source/executable files.
+# Outputs: The matching executable digest or a refusal; neither mismatched file is executed.
+def verify_hyperfine(evidence: dict) -> str:
+    with HYPERFINE.open("rb") as executable:
+        digest = hashlib.file_digest(executable, "sha256").hexdigest()
+    if (
+        digest != evidence["binary_sha256"]
+        or hashlib.sha256(COMPARISON_BOOTSTRAP.read_bytes()).hexdigest() != evidence["bootstrap_sha256"]
+    ):
+        raise ValueError("Provisioned Hyperfine identity changed before the measurement lease")
+    return digest
+
+
+# Purpose: Run a complete public-corpus study with pinned Hyperfine, fixed residency and exact native qualification.
 # Inputs: Reviewed preset, bounded repetitions/block size/deadlines and current successful HIP build.
 # Outputs: Raw observations, retained Hyperfine diagnostics and size qualification; timing stays unqualified.
 def study(args: argparse.Namespace) -> None:
-    require_permission(args.corpus, "execute")
-    require_permission("Hyperfine", "execute", version="1.20.0")
     spec = json.loads(PINS.read_text(encoding="utf-8"))[args.corpus]
+    require_permission(args.corpus, "execute", version=spec.get("revision"))
+    require_permission("Hyperfine", "execute", version="1.20.0")
     with ExitStack() as stack:
         before = validate_current(ROOT, args.configuration, True)
+        provisioning = provision_hyperfine()
         hold_build(stack, before)
         if validate_current(ROOT, args.configuration, True) != before:
             raise ValueError("native identity changed while acquiring the measurement lease")
+        hyperfine_sha256 = verify_hyperfine(provisioning)
         banner = run_process([str(HYPERFINE), "--version"], None, 10).decode("ascii").strip()
         if banner != "hyperfine 1.20.0":
             raise ValueError("Installed Hyperfine does not match the reviewed version")
-        with HYPERFINE.open("rb") as executable:
-            hyperfine_sha256 = hashlib.file_digest(executable, "sha256").hexdigest()
         admit_memory(2 * spec["archive_bytes"] + spec["decoded_bytes"] + 2 * spec["max_file_bytes"])
         payload = download(spec, deadline=time.monotonic() + 180)
-        decoder = decode_canterbury if args.corpus == "Canterbury" else decode_corpus
+        decoder = (
+            decode_single_file
+            if spec.get("source_kind") == "file"
+            else (decode_canterbury if args.corpus == "Canterbury" else decode_corpus)
+        )
         files, provenance = decoder(payload, spec)
         del payload
         print(json.dumps({"corpus": args.corpus, **provenance}), flush=True)
@@ -505,6 +649,7 @@ def study(args: argparse.Namespace) -> None:
                     "hyperfine_stderr_base64": base64.b64encode(diagnostics[0]).decode("ascii"),
                     "hyperfine_stderr_sha256": hashlib.sha256(diagnostics[0]).hexdigest(),
                     "hyperfine_sha256": hyperfine_sha256,
+                    "hyperfine_provisioning": provisioning,
                     "memory_only": True,
                     "disk_write_bytes": 0,
                     "observation_count": count,
@@ -525,7 +670,7 @@ def study(args: argparse.Namespace) -> None:
 # Outputs: Study/protocol stdout or an actionable nonzero failure; no native build is invoked implicitly.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", choices=("Canterbury", "Govdocs1Thread0"), default="Canterbury")
+    parser.add_argument("--corpus", choices=("Canterbury", "Govdocs1Thread0", "Pythia14M"), default="Canterbury")
     parser.add_argument("--configuration", choices=("Release", "Debug", "RelWithDebInfo"), default="Release")
     parser.add_argument("--runs", type=int, choices=range(1, 11), default=3)
     parser.add_argument("--block-size-kib", type=int, choices=(256, 512, 1024, 2048, 4096, 8192, 16384), default=256)

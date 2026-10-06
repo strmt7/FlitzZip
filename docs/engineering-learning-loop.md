@@ -956,3 +956,18 @@ intended mutation explicitly and require rejection before any network request.
 This isolates the property under test without retaining an unnecessary combined
 protocol-and-origin example or removing downgrade coverage. Such tests remain
 inside source analysis; every raw report and unmatched finding stays retained.
+
+Keep codec canonicality separate from payload containment. Validate the finite
+codec catalog, exact raw/fill extents and compressed-child constraints before
+checking the containing byte span or dispatching work. Exhaust all serialized
+kind values and test extent boundaries with an independent wire fixture; a
+shorter Boolean expression alone does not establish equivalent admission.
+
+An immutable Action pin must resolve from its documented upstream tag. Review
+the actual pinned action and CLI together before changing integration: inputs,
+authentication and report formats must agree. Retrieve complete scanner reports
+explicitly, retain original results, reject malformed numeric scores, and test
+both findings and empty results. Validate private broker credentials before
+passing them to a third-party action, mask them before outputs, and keep their
+values out of failure diagnostics. Offline contracts do not prove a live scan
+or authenticated upload; those require the authorized broker and target.

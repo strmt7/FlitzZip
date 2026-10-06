@@ -197,6 +197,68 @@ class ScannerMetadataReviewTests(unittest.TestCase):
         with patch.object(Path, "is_junction", return_value=True), self.assertRaises(ValueError):
             review.read_policy(root)
 
+    def test_model_commit_requires_exact_official_metadata_role(self):
+        """Purpose: Bind model provenance. Inputs: Typed roles and independent mutations. Outputs: Closed match."""
+        value = hashlib.sha256(b"public model commit fixture").hexdigest()[:40]
+        roles = (
+            {
+                "Pythia14M": {
+                    "revision": value,
+                    "source_kind": "file",
+                    "file_name": "model.safetensors",
+                    "url": f"https://huggingface.co/EleutherAI/pythia-14m/resolve/{value}/model.safetensors",
+                }
+            },
+            {
+                "subjects": {
+                    "Pythia14M": {
+                        "versions": [value],
+                        "evidence": [
+                            "https://github.com/EleutherAI/pythia",
+                            "https://huggingface.co/EleutherAI/pythia-14m",
+                        ],
+                    }
+                }
+            },
+        )
+        for name, source in zip(review.CORPUS_COMMIT_PATHS, roles, strict=True):
+            payload = (json.dumps(source) + "\n").encode()
+            row = {
+                "path": name,
+                "rule": "DS173237",
+                "input_sha256": hashlib.sha256(payload).hexdigest(),
+                "public_value": value,
+                "value_kind": "git_commit",
+                "evidence": "docs/security-code-scanning.md#finding-triage",
+            }
+            region = {"charOffset": payload.decode().index('"' + value + '"'), "charLength": 42}
+            stream = io.StringIO()
+            writer = csv.DictWriter(stream, fieldnames=review.TYPED_FIELDS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerow(row)
+            self.assertEqual(review.read_reviews(stream.getvalue().encode()), [row])
+            self.assertTrue(review.public_value_matches(row, payload, region))
+            self.assertFalse(review.public_value_matches(row, payload + b" ", region))
+            self.assertFalse(
+                review.public_value_matches(row, payload, {**region, "charOffset": region["charOffset"] + 1})
+            )
+            model = source["Pythia14M"] if name == review.CORPUS_COMMIT_PATHS[0] else source["subjects"]["Pythia14M"]
+            for key in model:
+                changed = copy.deepcopy(source)
+                target = (
+                    changed["Pythia14M"] if name == review.CORPUS_COMMIT_PATHS[0] else changed["subjects"]["Pythia14M"]
+                )
+                del target[key]
+                self.assertFalse(review.public_corpus_commit_matches(row, changed), key)
+            wrong = payload.replace(b"EleutherAI", b"unknown-publisher")
+            self.assertFalse(
+                review.public_value_matches({**row, "input_sha256": hashlib.sha256(wrong).hexdigest()}, wrong, region)
+            )
+            self.assertFalse(review.public_corpus_commit_matches(row, []))
+            self.assertFalse(review.public_corpus_commit_matches(row, {}))
+            with self.assertRaises(ValueError):
+                review.read_reviews(stream.getvalue().replace(name, "src/model.json").encode())
+
 
 class ScannerSourceReviewTests(unittest.TestCase):
     # Purpose: Bind regression fixtures to the approved ledger and real source without running detectors again.

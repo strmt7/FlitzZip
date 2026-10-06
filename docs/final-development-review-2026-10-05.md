@@ -6,14 +6,71 @@ review, actual HIP tests and frontend Neutron qualification. Publication of a
 new prerelease remains subject to separate maintainer approval.
 
 The checkpoint paragraphs below preserve their recorded earlier states.
-The latest published source checkpoint is
-`047629267cbf8dd866976ed6f4ddcf9b876b8389`; all nine selected hosted workflows
-passed, including CodeQL C++, fuzzing and the full secret-history scanner.
-The post-push audit still blocks on the two existing Scorecard governance
+The subsequent version-eleven context candidate passed all 625
+main native tests, the parser sanitizer smoke, independent interoperability
+and the 36-format matrix. Its complete Pythia14M GPU pilot saves 1,935,715 bytes
+at the same 1 MiB block size, producing 24,162,233 complete modeled archive
+bytes. Three Canterbury repetitions retained every file size and 723,429-byte
+totals. These are source-bound size/correctness results, not broad superiority
+or paired timing evidence. The earlier grouped-portfolio memory-admission
+failure remains recorded with an unconfirmed cause; sampled isolated and full
+suite consumers passed without weakening policy. Full new-revision Govdocs1
+and hosted qualification remain separate gates.
+
+The same source reproduced the trained-checkpoint size in three additional
+complete GPU repetitions. The frontend created and independently read back a
+real Neutron archive under actual HIP availability. Review of its smoke
+consumer found two stale boundaries: the new wire version was missing from
+its closed accepted list, and the Neutron selector capture was written but
+omitted from the returned manifest. Both are repaired in the test consumer;
+the app's rendering and numeric-effort behavior are unchanged. The repaired
+consumer passed its full actual-GUI run and returned 79 current capture records,
+including the previously omitted Neutron selector. All seventeen regular,
+compact and Neutron-selector page captures were inspected without a new layout
+regression. The CLI planning, fourteen backend/block corpus cases, binary-input
+readback, frozen controller confirmations, version/help and invalid-selection
+consumers also passed against the unchanged successful native build.
+
+The last published codec/crawler checkpoint is
+`7dfb6fd639cbac825c683707ba5c7b91c6de109e`; all nine selected workflows passed,
+including both Windows native environments, ROCm qualification, C++ and Actions
+CodeQL, component contracts, lint, Scorecard, fuzzing, Zstandard sanitizers and
+benchmark graphs. Its fresh post-push audit reported five additional actionable
+alerts: a complex descriptor predicate and mismatched/stale Vulnetix action
+references. The current repair separates codec canonicality from containment,
+exhausts all serialized kind values and resolves the action pin from its actual
+upstream tag. Review of the pinned upload interface also found unsupported
+inputs, missing authentication and an unsupported XML upload. The repair uses
+broker-validated credentials and complete SARIF reports while retaining XML.
+The repaired candidate has now passed its HIP-enabled build, all 626 main native
+tests, all seven CTest suites, fourteen CPU/HIP block consumers, binary-input
+readback and frozen controller confirmations. Its native inputs are
+`79d4b9af1d886f6fbc06294ecea9c6e5360bf99d8c7668ff6c4f579e62f5b107`;
+the successful receipt is
+`c46dc154232de308dc014610db54d936db93e5834b011a84215915fb5a47f6e7`.
+Selected offline checks passed, including language lint, function contracts,
+security policy, benchmark reporting, metadata admission and license inventory.
+The changed-file scan admits only the eight individually approved metadata
+values, with no source admissions or unresolved reports. The complete OpenVAS
+report contracts passed; empty, generic and 120-result SARIF outputs also passed
+the official schema. The integration workflow now runs the canonical regression
+suite instead of a copied implementation. Fresh hosted qualification remains
+required. These reader/integration repairs do not relabel earlier benchmark
+source identities or establish a live authorized network scan.
+The preceding native checkpoint
+`047629267cbf8dd866976ed6f4ddcf9b876b8389` passed all nine selected workflows,
+including CodeQL C++, fuzzing and the full secret-history scanner.
+The post-push audit also blocks on the two existing Scorecard governance
 alerts. Dependabot 23 separately remains open because its upstream advisory
 has no patched release, despite the admitted source repair. PR 59's exact
-reviewed incompatible proposal is now closed without merging. The complete
-current Govdocs1 GPU study remains in progress.
+reviewed incompatible proposal is now closed without merging. The earlier
+Govdocs1 byte-plane attempt reached its 7,200-second deadline after 643 files.
+The subsequent 1 MiB pruning study completed all 991 original files within the
+same deadline, with actual HIP execution, bytewise validation and zero payload
+writes. Its 331,334,741 complete modeled archive bytes save 8,302,516 bytes
+overall against the preceding complete 256 KiB batched record; 28 files grew.
+Different geometry and implementation revisions prevent isolated pruning or
+timing claims. The failed preceding attempt remains retained separately.
 
 The standard-format Canterbury size reference demonstrates a remaining gap:
 741,174 complete Neutron bytes exceed 729,272 for ZIP/DEFLATE, 543,236 for
@@ -29,7 +86,47 @@ guarded I/O/model modules, version marker and initializer, missing/added source,
 case aliases, noncanonical names, special archive entries and read budgets.
 The admitted package/wheel and resolved dependency graph are unchanged; no
 native build or package reinstall was required. Its subsequent exact-revision
-hosted qualification remains pending until publication completes.
+hosted qualification passed at the source-integrity checkpoint above.
+
+A subsequent inert unchecked-hash bytecode control showed that source
+admission alone did not bind executed code. The crawler now uses standard
+Python cache-prefix isolation and disabled bytecode writes for its runtime
+commands. Pure-Python NLTK admission rejects native executable additions and
+sourceless bytecode. Actual cache-import controls, child flag/lifetime
+contracts, the unchanged installed nine-test model/API consumer and a primary
+HTML crawl qualify this change locally. No package or browser reinstall was
+required; the source received hosted qualification at the published checkpoint
+above.
+
+The subsequent dictionary-pruning experiment passed all seven selected local
+commands, including the HIP-enabled build, all seven native suites and the
+changed-function gate. GPU regressions compare an unpruned nonempty graph with
+its proven-losing result, preserve exact competitive payload bytes in a mixed
+group with a partial tail, perform independent CPU/HIP readback and cancel at
+every observed checkpoint. Three complete Canterbury repetitions preserve
+every archive size and reduce actual kernel launches from 412,062 to 384,309.
+The complete Pythia14M trained checkpoint also passed actual HIP bytewise
+RAM readback with zero payload writes, reducing 28,143,920 source bytes to
+26,177,306 complete archive bytes. ZIP, bzip2 and XZ references remain smaller.
+The current Canterbury block-setting record retains 99 actual observations
+covering all eleven files and all seven settings. At 1 MiB and above, it
+produces 723,429 bytes, about 0.8% smaller than the ZIP reference and still
+larger than bzip2 and XZ. The subsequent complete Govdocs1 record is described
+above; hosted qualification of the unpublished batch remains unfinished.
+No comparative timing claim is made. The pinned model's
+publisher transport and immutable-source admission passed the 26 offline
+controller contracts; new exact commit-role mutations passed separately.
+The initial full metadata suite reported fourteen passes and one stale
+snapshot failure pending individual approval of eight public metadata bindings.
+The maintainer has now approved the [eight exact reports](security-pythia-public-metadata-review-2026-10-06.md)
+and complete proposal identity; the metadata ledger has been activated without
+admitting source findings. The model/controller, comparator and metadata
+consumers passed together, and the current preflight passed with exactly those
+eight raw metadata reports retained. The original raw reports are retained.
+The three subsequent 1 MiB Pythia14M repetitions produced identical
+26,097,948-byte archives with 91,034 actual launches each. The complete
+991-file Govdocs study subsequently completed at that tested setting, with
+all observations and final receipt checks retained in its separate record.
 
 ## Native Build Repair
 
@@ -221,10 +318,11 @@ the canonical build receipt identity is
 The [33-observation Canterbury record](benchmarks/data/neutron-canterbury-byte-plane-2026-10-05.json)
 qualifies size for these exact native identities. All eleven file sizes and
 the 741,174-byte repetition totals matched the preceding round. No incremental
-size improvement is demonstrated. Native compression increased to 58.89–59.30
+size improvement is demonstrated. Native compression increased to 58.89â€“59.30
 seconds per pass, with 412,062 kernel launches across the study. The new trials
-remain specific to Neutron; trained-model and broader workload benefits are
-still unqualified. The current full Govdocs1 study is in progress.
+remain specific to Neutron; trained-model and broader workload benefits
+were still unqualified at that checkpoint. The subsequent completed pruning
+studies do not retroactively qualify this revision's incomplete Govdocs1 run.
 
 The initial Canterbury run completed all 33 observations but failed its
 controller: Hyperfine exited zero while printing an outlier warning to stderr.

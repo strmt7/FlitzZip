@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 from urllib.request import Request
 
 from tools import benchmark_comparators as comparators
+from tools import neutron_corpus_benchmark as corpus
 from tools import run_archive_comparison as comparison
 
 
@@ -22,7 +25,16 @@ class ComparatorPreflightTests(unittest.TestCase):
     def test_release_redirects_are_not_followed(self) -> None:
         handler = comparators.NoReleaseRedirects()
         request = Request(comparators.RELEASE_SOURCES["Zstd"])
-        for target in ("http://unreviewed.invalid/", "https://unreviewed.invalid/", request.full_url + "?redirect"):
+        origin = urlsplit(request.full_url)
+        targets = (
+            origin._replace(scheme="http").geturl(),
+            origin._replace(netloc="unreviewed.invalid").geturl(),
+            origin._replace(query="redirect").geturl(),
+        )
+        self.assertEqual(urlsplit(targets[0]).scheme, "http")
+        self.assertEqual(urlsplit(targets[0]).netloc, origin.netloc)
+        self.assertEqual(urlsplit(targets[1]).scheme, origin.scheme)
+        for target in targets:
             with self.subTest(target=target), self.assertRaisesRegex(ValueError, "redirected"):
                 handler.redirect_request(request, None, 302, "Found", {}, target)
 
@@ -131,6 +143,118 @@ class ComparatorPreflightTests(unittest.TestCase):
                 comparators.timing_eligibility([{**result, "compress_seconds": samples}])
         with self.assertRaises(ValueError):
             comparators.timing_eligibility([])
+
+
+@unittest.skipUnless(os.name == "nt", "The native benchmark installer uses Windows PowerShell")
+class HyperfineBootstrapTests(unittest.TestCase):
+    def test_offline_bootstrap_rejects_missing_and_changed_artifacts(self) -> None:
+        """Purpose: Exercise installer admission. Inputs: Owned inert fixtures. Outputs: Refusal before execution."""
+        output_root = corpus.ROOT / "out"
+        directory = "hyperfine-v1.20.0-x86_64-pc-windows-msvc"
+        for role in ("missing", "changed_archive", "changed_binary"):
+            with self.subTest(role=role), tempfile.TemporaryDirectory(dir=output_root) as temporary:
+                root = Path(temporary)
+                self.assertEqual(root.resolve().parent, output_root.resolve())
+                if role == "changed_archive":
+                    (root / "downloads").mkdir()
+                    (root / "downloads" / f"{directory}.zip").write_bytes(b"inert changed archive fixture")
+                elif role == "changed_binary":
+                    (root / directory).mkdir()
+                    (root / directory / "hyperfine.exe").write_bytes(b"inert changed executable fixture")
+                expected = "Offline comparison asset is missing" if role == "missing" else "SHA-256 mismatch"
+                with self.assertRaisesRegex(ValueError, expected):
+                    corpus.run_process(
+                        [
+                            "powershell",
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(corpus.ROOT / "tools/bootstrap_comparison_tools.ps1"),
+                            "-Tool",
+                            "Hyperfine",
+                            "-ToolRoot",
+                            str(root),
+                            "-Offline",
+                        ],
+                        None,
+                        20,
+                    )
+
+    def test_bootstrap_refuses_an_external_installation_root(self) -> None:
+        """Purpose: Preserve owned scope. Inputs: The checkout root. Outputs: Refusal without installation."""
+        with self.assertRaisesRegex(ValueError, "Comparison tools must remain inside"):
+            corpus.run_process(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(corpus.ROOT / "tools/bootstrap_comparison_tools.ps1"),
+                    "-Tool",
+                    "Hyperfine",
+                    "-ToolRoot",
+                    str(corpus.ROOT),
+                    "-Offline",
+                ],
+                None,
+                20,
+            )
+
+    def test_bootstrap_refuses_linked_ancestors_before_writing(self) -> None:
+        """Purpose: Guard path escapes. Inputs: An owned junction. Outputs: No nested installation is created."""
+        output_root = corpus.ROOT / "out"
+        with tempfile.TemporaryDirectory(dir=output_root) as temporary:
+            root = Path(temporary)
+            self.assertEqual(root.resolve().parent, output_root.resolve())
+            target = root / "target"
+            target.mkdir()
+            link = root / "linked"
+            setup = root / "junction.ps1"
+            setup.write_text(
+                "param([string]$Link,[string]$Target)\n"
+                "New-Item -ItemType Junction -Path $Link -Target $Target | Out-Null\n",
+                encoding="utf-8",
+            )
+            corpus.run_process(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(setup),
+                    "-Link",
+                    str(link),
+                    "-Target",
+                    str(target),
+                ],
+                None,
+                20,
+            )
+            try:
+                with self.assertRaisesRegex(ValueError, "linked comparison tool ancestor"):
+                    corpus.run_process(
+                        [
+                            "powershell",
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(corpus.ROOT / "tools/bootstrap_comparison_tools.ps1"),
+                            "-Tool",
+                            "Hyperfine",
+                            "-ToolRoot",
+                            str(link / "nested"),
+                            "-Offline",
+                        ],
+                        None,
+                        20,
+                    )
+                self.assertFalse((target / "nested").exists())
+            finally:
+                link.rmdir()
 
 
 if __name__ == "__main__":
