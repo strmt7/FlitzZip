@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from tools.redact_trufflehog import (
     MAX_RECORD_BYTES,
+    REVIEW_EVIDENCE_PATHS,
     PublicFixtureReview,
     redact_finding,
     redact_stream,
@@ -70,6 +71,35 @@ def finding() -> dict:
 
 
 class ReportRedactionTests(unittest.TestCase):
+    # Purpose: Exercise the real checkout's review references through the publication CLI before scanning.
+    # Inputs: Tracked approval cohorts and their actual evidence files, with an empty scanner stream.
+    # Outputs: Zero-finding success and a complete review receipt; missing relocated evidence fails the test.
+    def test_checkout_review_evidence_is_available(self):
+        root = Path(__file__).resolve().parents[1]
+        ledger = json.loads((root / ".github/scanner-secret-reviews.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix="superzip-review-admission-") as directory:
+            report = Path(directory) / "review.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "tools/redact_trufflehog.py",
+                    "--scanner-image",
+                    ledger["reviews"][0]["scanner_image"],
+                    "--review-report",
+                    str(report),
+                ],
+                cwd=root,
+                input=b"",
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+            self.assertEqual(result.stdout, b"")
+            receipt = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual((receipt["total"], receipt["unresolved"]), (0, 0))
+            self.assertEqual(len(receipt["ledger_sha256_by_path"]), 3)
+
     # Purpose: Prove secrets, auxiliary fields, paths, and identities cannot pass the allowlist.
     # Inputs: A realistic private-marker fixture. Outputs: Assertions on the exact public schema and location.
     def test_only_allowlisted_metadata_is_published(self):
@@ -250,7 +280,7 @@ class PublicFixtureReviewTests(unittest.TestCase):
             archive_path = cls.root / review["archive_path"]
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             archive_path.write_bytes((source_root / review["archive_path"]).read_bytes())
-            evidence = cls.root / review["evidence"]
+            evidence = cls.root / REVIEW_EVIDENCE_PATHS[review["evidence"]]
             evidence.parent.mkdir(parents=True, exist_ok=True)
             evidence.write_text("Isolated public fixture review evidence", encoding="utf-8")
         (cls.root / ".github").mkdir()

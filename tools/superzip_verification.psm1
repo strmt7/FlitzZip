@@ -1,4 +1,5 @@
 $Script:SuperZipVerificationRepoRoot = Split-Path -Parent $PSScriptRoot
+$Script:SuperZipReviewEvidencePattern = '^docs/(?:history/security/)?security-(?:nltk-ssrf-fixture|crawl4ai-public-(?:proxy|test))-review-[0-9-]+\.md$'
 . (Join-Path $PSScriptRoot 'local_resources.ps1')
 . (Join-Path $PSScriptRoot 'native_test_selection.ps1')
 . (Join-Path $PSScriptRoot 'native_ci.ps1')
@@ -314,6 +315,7 @@ function Get-SuperZipVerificationScope {
         '^tools/(scanner_preflight|test_scanner_preflight)\.py$',
         '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$',
         '^docs/benchmarks/corpora/.*\.json$',
+        $Script:SuperZipReviewEvidencePattern,
         '^\.github/'
     ))
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
@@ -451,7 +453,7 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id 'scanner-metadata-review-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_metadata_review') -Reason 'approved exact metadata/source dispositions must retain raw findings and reject stale bytes, other locations, unknown evidence and unrelated rules') }
         @{ Pattern = @('^\.github/scanner-hosted-(reviews|approval)\.csv$', '^tools/(scanner_preflight|scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$', '^tools/github_post_push_audit\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id 'scanner-hosted-review-tests' -Stage 'local' -Executable 'py' -Arguments @('-3', '-m', 'unittest', 'tools.test_scanner_hosted_review') -Reason 'individual hosted decisions must expire on source/caller/query changes while preserving raw reports and rejecting unrelated or broadened findings') }
-        @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^\.github/scanner-secret-reviews(?:-crawl4ai(?:-tests)?)?\.json$', '^third_party/upstream/(nltk|crawl4ai)/', '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$', '^tools/scan_trufflehog\.sh$')
+        @{ Pattern = @('^\.github/(workflows/security-code-scanning\.yml|requirements/|codeql/)', '^\.github/scanner-secret-reviews(?:-crawl4ai(?:-tests)?)?\.json$', '^third_party/upstream/(nltk|crawl4ai)/', '^tools/(redact_trufflehog|test_redact_trufflehog)\.py$', '^tools/scan_trufflehog\.sh$', $Script:SuperZipReviewEvidencePattern)
            Command = (Get-SuperZipVerificationCommand -Id "secret-report-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_redact_trufflehog") -Reason "scanner artifacts must retain findings without publishing secrets or identities") }
         @{ Pattern = @('^\.github/openvas/', '^\.github/workflows/greenbone-openvas-vulnetix\.yml$')
            Command = (Get-SuperZipVerificationCommand -Id "greenbone-config-tests" -Stage "local" -Executable "node" -Arguments @("--test", ".github/openvas/resolve_config.test.cjs") -Reason "broker configuration must remain bounded, masked, and authorized before publishing step outputs") }

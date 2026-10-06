@@ -388,6 +388,17 @@ foreach ($path in @("tools/redact_trufflehog.py", "tools/test_redact_trufflehog.
     Assert-Selector (Test-Workflow -Plan $redactionPlan -Name "security") "redaction changes must require hosted scanner validation: $path"
 }
 
+foreach ($directory in @('docs', 'docs/history/security')) {
+    foreach ($reviewName in @('nltk-ssrf-fixture', 'crawl4ai-public-proxy', 'crawl4ai-public-test')) {
+        $path = "$directory/security-$reviewName-review-2026-10-06.md"
+        $evidencePlan = Get-SuperZipVerificationPlan -ChangedPath @($path)
+        Assert-Selector (Test-RequiredCommand -Plan $evidencePlan -Id 'secret-report-tests') "evidence relocation must exercise the actual review consumer: $path"
+        Assert-Selector (Test-Workflow -Plan $evidencePlan -Name 'security') "evidence relocation retains hosted secret scanning: $path"
+        Assert-Selector (-not (Test-RequiredCommand -Plan $evidencePlan -Id 'release-build')) "evidence relocation must not rebuild unchanged native source: $path"
+        Assert-Selector (-not (Test-RequiredCommand -Plan $evidencePlan -Id 'unit-tests')) "evidence relocation must not repeat unchanged native tests: $path"
+    }
+}
+
 $packagingPlan = Get-SuperZipVerificationPlan -ChangedPath @("CMakeLists.txt")
 foreach ($guardPath in @('tools/zstd_rewrite_policy.ps1', 'tools/test_zstd_rewrite_policy.ps1',
         'cmake/ZstdRawBlockWriter.c', 'cmake/ZstdLegacyStreamV05.c', 'tests/cpp/test_zstd_bounds.cpp',

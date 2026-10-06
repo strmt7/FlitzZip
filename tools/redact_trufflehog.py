@@ -18,6 +18,19 @@ MAX_RECORD_BYTES = 1024 * 1024
 MAX_REVIEW_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_REVIEW_EXPANDED_BYTES = 64 * 1024 * 1024
 
+# Approved ledgers retain immutable review identifiers; only the evidence documents' storage moved.
+REVIEW_EVIDENCE_PATHS = {
+    "docs/security-nltk-ssrf-fixture-review-2026-10-05.md": (
+        "docs/history/security/security-nltk-ssrf-fixture-review-2026-10-05.md"
+    ),
+    "docs/security-crawl4ai-public-proxy-review-2026-10-05.md": (
+        "docs/history/security/security-crawl4ai-public-proxy-review-2026-10-05.md"
+    ),
+    "docs/security-crawl4ai-public-test-review-2026-10-06.md": (
+        "docs/history/security/security-crawl4ai-public-test-review-2026-10-06.md"
+    ),
+}
+
 
 # Purpose: Read one exact approved member without extracting files or accepting ambiguous archive names.
 # Inputs: Authenticated bounded archive bytes and an exact review; TAR expansion is separately bounded.
@@ -170,8 +183,10 @@ class PublicFixtureReview:
             or review["detector"] < 0
         ):
             raise ValueError("Invalid public fixture review location")
-        if not (self.root / review["evidence"]).is_file():
-            raise ValueError("Public fixture review evidence is missing")
+        evidence_path = REVIEW_EVIDENCE_PATHS.get(review["evidence"])
+        if evidence_path is None:
+            raise ValueError("Public fixture review evidence identifier is unknown")
+        review_bytes(self.root, evidence_path, MAX_RECORD_BYTES)
 
     # Purpose: Verify the actual historical blob and current complete source. Inputs: Review, immutable Git commit
     # and match. Outputs: Exact-source verdict.

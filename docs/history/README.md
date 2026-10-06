@@ -5,10 +5,15 @@ Their findings and approvals describe the recorded revisions; they are not curre
 Current behavior and procedures are documented outside this directory. Git retains the original revisions.
 
 These files remain within repository scanning. Benchmark data stays in `docs/benchmarks/data`;
-immutable upstream archives and review ledgers remain unchanged.
+Immutable upstream archives and review ledgers remain unchanged. The
+[secret-report consumer](../../tools/redact_trufflehog.py) resolves the exact
+approved document identifiers to the archived records listed below. Unknown
+identifiers and missing or redirected evidence fail admission; this lookup does
+not change approved source/member hashes or scanner/match locations.
 
-The original document identifiers below are retained in immutable approval records.
-Those identifiers describe historical reviews and do not admit current source findings.
+The original document identifiers below identify the recorded reviews. Historical
+source-approval records remain evidence only and do not admit current source findings.
+Exact approved public-fixture reviews retain their existing narrow admission rules.
 
 | Original document identifier | Archived record |
 | --- | --- |
