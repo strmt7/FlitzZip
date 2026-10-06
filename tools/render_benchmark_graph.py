@@ -14,10 +14,10 @@ from pathlib import Path
 
 try:
     from tools.native_build_receipt import validate_receipt
-    from tools.render_svg_graph import SVG, new_document
+    from tools.render_svg_graph import SVG, append_range_whisker, new_document
 except ModuleNotFoundError:
     from native_build_receipt import validate_receipt
-    from render_svg_graph import SVG, new_document
+    from render_svg_graph import SVG, append_range_whisker, new_document
 
 MAX_CONFIRMATION_COUNT = 1024
 MAX_EXACT_REQUESTED_COUNT = 2**53 - 1
@@ -529,14 +529,13 @@ def summarize_records(records: list[dict], allow_dirty: bool) -> tuple[tuple, li
                 "output_bytes": sizes.pop(),
                 "throughput_gib_s": (key[1] / 1024) / elapsed,
             }
-            if identity[5] == 3:
-                timings = [seconds for _, seconds in iterations.values()]
-                metrics[lane].update(
-                    throughput_min_gib_s=(key[1] / 1024) / max(timings),
-                    throughput_max_gib_s=(key[1] / 1024) / min(timings),
-                    elapsed_std_dev_seconds=statistics.stdev(timings),
-                    sample_count=len(timings),
-                )
+            timings = [seconds for _, seconds in iterations.values()]
+            metrics[lane].update(
+                throughput_min_gib_s=(key[1] / 1024) / max(timings),
+                throughput_max_gib_s=(key[1] / 1024) / min(timings),
+                elapsed_std_dev_seconds=statistics.stdev(timings),
+                sample_count=len(timings),
+            )
         rows.append(
             {
                 "profile": key[0],
@@ -617,21 +616,12 @@ def add_sample_range(parent: ET.Element, y: int, x: int, metric: dict, maximum: 
     center = y - 4.5
     group = ET.SubElement(parent, f"{{{SVG}}}g", {"class": "sample-range", "stroke": "#17252b"})
     ET.SubElement(group, f"{{{SVG}}}title").text = (
-        f"All {metric['sample_count']} confirmation samples: "
+        f"All {metric['sample_count']} recorded samples: "
         f"{metric['throughput_min_gib_s']:.6f} to {metric['throughput_max_gib_s']:.6f} GiB/s; "
         f"elapsed-time sample SD {metric['elapsed_std_dev_seconds']:.6f} s. "
         "Observed min-max range; not a confidence interval."
     )
-    for x1, x2, y1, y2 in (
-        (left, right, center, center),
-        (left, left, center - 4, center + 4),
-        (right, right, center - 4, center + 4),
-    ):
-        ET.SubElement(
-            group,
-            f"{{{SVG}}}line",
-            {"x1": f"{x1:.3f}", "x2": f"{x2:.3f}", "y1": str(y1), "y2": str(y2)},
-        )
+    append_range_whisker(group, (left, center), (right, center), "#17252b")
 
 
 # Purpose: Plot exact size and throughput from paired median elapsed times with current-sample dispersion.
@@ -672,7 +662,7 @@ def render_svg(identity: tuple, rows: list[dict]) -> bytes:
     add_text(root, 318, 116, "Encoded size", 16, "bold")
     add_text(root, 318, 136, "Lower is better", 12, fill="#53656d")
     add_text(root, 786, 116, "End-to-end throughput", 16, "bold")
-    speed_caption = "Median elapsed time; whiskers: all-sample min-max" if identity[5] == 3 else "Higher is better"
+    speed_caption = "Median elapsed time; whiskers: all-sample min-max"
     add_text(root, 786, 136, speed_caption, 12, fill="#53656d")
     max_size = max(metric["output_bytes"] / (1024 * 1024) for row in rows for metric in row["metrics"].values())
     max_speed = max(

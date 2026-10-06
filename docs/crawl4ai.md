@@ -8,10 +8,10 @@ is 0.9.4. Its base package and dependency wheels are pinned with upstream
 SHA-256 digests in [the installation lock](../tools/requirements/crawl4ai.txt).
 The installed crawler is the explicitly identified `0.9.4+superzip.portable2`
 source build. It repairs the upstream HTTP download opener on Windows while
-preserving POSIX no-follow behavior; see [the repair and qualification](crawl4ai-portable-download-repair-2026-10-05.md).
+preserving POSIX no-follow behavior; see [the repair and qualification](history/development/crawl4ai-portable-download-repair-2026-10-05.md).
 NLTK uses an explicitly identified upstream-source security build because the
 latest published NLTK release remains affected by a model-artifact sandbox
-bypass. See [the source repair and evidence](nltk-model-artifact-source-repair.md).
+bypass. See [the source repair and evidence](history/security/nltk-model-artifact-source-repair.md).
 
 Normal research invokes Crawl4AI's own `crwl crawl` command, forwarding its
 documented options without an alternative URL parser or extraction pipeline.
@@ -78,7 +78,7 @@ caches from overriding admitted source and prevents new cache writes. The
 temporary directory remains alive until the contained command exits; setup
 and package installation retain their normal cache behavior. NLTK admission
 also rejects native modules and sourceless bytecode in its pure-Python package.
-See [the source-import qualification](nltk-model-artifact-source-repair.md#executed-source-integrity).
+See [the source-import qualification](history/security/nltk-model-artifact-source-repair.md#executed-source-integrity).
 An updated regression contract rechecks the existing installed dependencies and updates
 its admission receipt only after success; it does not reinstall an unchanged
 dependency graph or browser.

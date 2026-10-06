@@ -507,7 +507,7 @@ class BenchmarkGraphTests(unittest.TestCase):
 
     # Purpose: Keep identical observations honest instead of inventing a visual uncertainty width.
     # Inputs: Zero-variance current fixtures and unchanged historical chart evidence.
-    # Outputs: Current ranges have zero width; historical schemas retain their original rendering.
+    # Outputs: Zero-variance ranges have zero width; historical schemas retain their observed dispersion.
     def test_zero_variance_range_is_not_artificially_widened(self) -> None:
         identity, rows = graph.summarize_records([sampling_fixture()], allow_dirty=False)
         root = parse_bounded_document(graph.render_svg(identity, rows))
@@ -515,7 +515,7 @@ class BenchmarkGraphTests(unittest.TestCase):
             line = group.find(f"{{{graph.SVG}}}line")
             self.assertEqual(line.attrib["x1"], line.attrib["x2"])
         identity, rows = graph.summarize_records([fixture_record()], allow_dirty=False)
-        self.assertNotIn(b"sample-range", graph.render_svg(identity, rows))
+        self.assertIn(b"sample-range", graph.render_svg(identity, rows))
 
     # Purpose: Enforce separate pilot retention and a prescribed complete confirmation count.
     # Inputs: Stable evidence and mutations of the predeclared method, sample count and preservation fields.

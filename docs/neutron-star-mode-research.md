@@ -137,7 +137,7 @@ corpus identities never select a transform. Independent source-byte readback,
 malformed-frame controls and representative public measurements must qualify
 the experiment before claims or publication.
 
-The [2026-10-05 ratio review](neutron-ratio-research-2026-10-05.md) evaluates
+The [2026-10-05 ratio review](history/research/neutron-ratio-research-2026-10-05.md) evaluates
 recent lossless AI-model coding, tile-addressable ANS, reversible field
 transforms and neural predictors, with an ordered Neutron-only experiment
 sequence. [Canonical public-corpus benchmarking](neutron-public-corpus-benchmark.md)
@@ -158,7 +158,7 @@ suggests adaptive bit-plane research, but its reported results are not SuperZip
 or AMD HIP benchmark evidence. No external compression runtime, neural model
 or new product dependency is adopted by this primitive.
 
-The [current standard-format size reference](neutron-public-corpus-benchmark.md#standard-format-size-reference-6-october)
+The [current standard-format size reference](history/benchmarks/neutron-public-corpus-rounds.md#standard-format-size-reference-6-october)
 shows a substantial remaining ratio gap on Canterbury: Neutron uses 741,174
 complete bytes, compared with 729,272 for ZIP/DEFLATE, 543,236 for TAR/bzip2 and
 494,376 for TAR/XZ. Further work must target that measured gap, rather than

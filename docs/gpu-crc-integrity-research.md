@@ -145,13 +145,13 @@ existing reservation query proves exclusive device capacity or absence of
 other workloads. See the
 [HIP memory API](https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___memory.html).
 
-The [diagnostic comparison](benchmarks/2026-09-30-crc-readiness.md) separates
+The [diagnostic comparison](history/benchmarks/2026-09-30-crc-readiness.md) separates
 the isolated combination speedup from whole-operation results. Reducing host
 work does not establish faster GPU kernels or a universal application speedup.
 
 ## Cooperative Device Segments
 
-The [October 2026 review](benchmarks/2026-10-02-cooperative-crc-review.md)
+The [October 2026 review](history/benchmarks/2026-10-02-cooperative-crc-review.md)
 replaces long per-thread CRC segments with 256-thread ordered cooperative
 reductions. It preserves result geometry and the archive polynomial, using
 bounded 2 KiB device constants and 2 KiB shared storage per block. CPU and HIP

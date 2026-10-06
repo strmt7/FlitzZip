@@ -8,5 +8,5 @@ attribution requirement, remains inside the archive and every built wheel.
 SuperZip's development installer builds `0.9.4+superzip.portable2` through
 `tools/crawl4ai_source_build.py`. The source repair, added Apache-2.0 helper,
 modified-source notice, wheel digest and normal locked installation are documented
-in `docs/crawl4ai-portable-download-repair-2026-10-05.md`. No source archive,
+in `docs/history/development/crawl4ai-portable-download-repair-2026-10-05.md`. No source archive,
 installed package, browser or personal cache is modified in place.

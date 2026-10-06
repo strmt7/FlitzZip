@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools.render_benchmark_graph import SVG, add_text, validate_record
-from tools.render_svg_graph import new_document
+from tools.render_svg_graph import append_range_whisker, new_document
 
 LEVELS = (1, 3, 5, 7, 9)
 COLORS = {"CPU": "#b15a22", "GPU": "#087e83"}
@@ -156,18 +156,7 @@ def render(identity: tuple, points: list[dict]) -> bytes:
                 {"aria-label": f"{lane} level {point['level']}: {point['bytes']} bytes, {median:.3f} seconds"},
             )
             ET.SubElement(group, f"{{{SVG}}}title").text = group.attrib["aria-label"]
-            ET.SubElement(
-                group,
-                f"{{{SVG}}}line",
-                {
-                    "x1": f"{x:.1f}",
-                    "x2": f"{x:.1f}",
-                    "y1": f"{y_pos(minimum):.1f}",
-                    "y2": f"{y_pos(maximum):.1f}",
-                    "stroke": COLORS[lane],
-                    "stroke-width": "2",
-                },
-            )
+            append_range_whisker(group, (x, y_pos(minimum)), (x, y_pos(maximum)), COLORS[lane], axis="y")
             ET.SubElement(
                 group,
                 f"{{{SVG}}}circle",

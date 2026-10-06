@@ -1,8 +1,9 @@
 # Release Workflow
 
 SuperZip releases are created by `.github/workflows/release.yml`. The workflow
-is manual-only, versioned with SemVer, and publishes either a beta prerelease or
-a stable GitHub release.
+is manual-only and versioned with SemVer. By default it validates a candidate
+without creating a tag or release; explicit publication can create a beta
+prerelease or a stable GitHub release.
 
 Release stages are declared directly in the workflow, whose workspace checkout
 uses `github.sha`. Third-party actions use full commit pins. The single-use
@@ -152,6 +153,11 @@ download paths to the repository.
 
 ## Manual Inputs
 
+- `publish_release`: defaults to `false`. Build, test, scan and retain exact-SHA
+  candidate artifacts without publishing. Set it to `true` only after the
+  maintainer approves publication. Validation has read permission; the separate
+  dependent publisher alone receives release write permission.
+
 - `release_version`: SemVer product version without a `v` prefix. Leave it
   empty to use the version declared in `CMakeLists.txt`.
 - `replace_existing`: replaces the existing release/tag when set to `true`.
@@ -159,7 +165,8 @@ download paths to the repository.
   request explicitly asks to replace that specific version. The workflow builds,
   tests, packages, and smoke-tests first, then deletes the existing release/tag
   immediately before publishing the replacement. Normal release runs use a new
-  SemVer version with `replace_existing=false`.
+  SemVer version with `replace_existing=false`. Replacement is rejected during
+  validation-only runs.
 - `replacement_acknowledgement`: required only when `replace_existing=true`.
   Enter exactly `replace <same-version>`, matching the explicit
   `release_version` value in the same run. The release
@@ -194,7 +201,10 @@ The workflow performs:
   Program Files release install path when requested. Each MSI phase has a
   300-second stale-wait timeout so an unanswered installer or elevation prompt
   cannot block validation indefinitely.
-- GitHub release creation with attached SHA-256 files.
+- Exact-SHA candidate artifact retention for fourteen days, including SHA-256
+  sidecars, curated notes and build metadata. The publisher downloads those same
+  artifacts and checks both ZIP/MSI digests before creating a release, only when
+  `publish_release=true`.
 
 Release notes must list the actual fixes, created assets, validation work, and
 known limitations for that release. Do not publish vague notes that hide what
@@ -264,12 +274,15 @@ Use the GitHub UI:
 4. Choose `release_track=beta` for the first public beta or `stable` for a
    normal release.
 5. Keep `create_msi=true` unless MSI validation is intentionally isolated.
+6. Leave `publish_release=false` to qualify a candidate. Enable publication only
+   after explicit maintainer approval of the concrete candidate.
 
 Use GitHub CLI:
 
 ```powershell
 gh workflow run release.yml -R strmt7/SuperZip `
   -f release_version=<new-semver> `
+  -f publish_release=false `
   -f replace_existing=false `
   -f replacement_acknowledgement="" `
   -f release_track=beta `
@@ -282,6 +295,7 @@ asks to replace that specific version:
 ```powershell
 gh workflow run release.yml -R strmt7/SuperZip `
   -f release_version=<existing-semver> `
+  -f publish_release=true `
   -f replace_existing=true `
   -f replacement_acknowledgement="replace <existing-semver>" `
   -f release_track=beta `

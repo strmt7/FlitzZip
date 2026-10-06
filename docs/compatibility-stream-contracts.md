@@ -52,7 +52,7 @@ dependency, no CRC32C substitution, and no change to required checks, effort,
 or durable publication. The C ABI resets on null initialization and preserves
 a non-null empty range's low 32 seed bits. Bitwise-oracle, fragmentation,
 alignment, and concurrent-first-use tests verify the contract.
-See the [controls and measurement limits](benchmarks/2026-10-01-compatibility-crc-hook.md);
+See the [controls and measurement limits](history/benchmarks/2026-10-01-compatibility-crc-hook.md);
 an isolated checksum gain is not an end-to-end performance guarantee.
 
 ## Lifetime And Byte Identity

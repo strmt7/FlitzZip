@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from tools.render_comparison_graph import SVG, label, summarize
-from tools.render_svg_graph import new_document
+from tools.render_svg_graph import append_range_whisker, new_document
 
 LEVELS = (1, 3, 5, 7, 9)
 COLORS = {"SuperZip": "#087e83", "7-Zip": "#b15a22", "Zstd": "#b15a22"}
@@ -218,17 +218,12 @@ def render(commit: str, panels: list[dict]) -> bytes:
                 {"aria-label": point_description},
             )
             ET.SubElement(group, f"{{{SVG}}}title").text = group.attrib["aria-label"]
-            ET.SubElement(
+            append_range_whisker(
                 group,
-                f"{{{SVG}}}line",
-                {
-                    "x1": f"{x:.1f}",
-                    "x2": f"{x:.1f}",
-                    "y1": f"{y_of(point['seconds'][1], bottom, plot_top, low, high):.1f}",
-                    "y2": f"{y_of(point['seconds'][2], bottom, plot_top, low, high):.1f}",
-                    "stroke": COLORS[point["tool"]],
-                    "stroke-width": "2",
-                },
+                (x, y_of(point["seconds"][1], bottom, plot_top, low, high)),
+                (x, y_of(point["seconds"][2], bottom, plot_top, low, high)),
+                COLORS[point["tool"]],
+                axis="y",
             )
             ET.SubElement(
                 group,

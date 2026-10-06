@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -12,6 +13,42 @@ MAX_DOCUMENT_BYTES = 1024 * 1024
 MAX_DOCUMENT_DEPTH = 32
 MAX_DOCUMENT_NODES = 32768
 ROOT_ATTRIBUTES = {"viewBox", "width", "height", "font-family", "role", "aria-labelledby"}
+
+
+# Purpose: Draw an exact observed range with endpoint caps, including a zero-width range.
+# Inputs: Finite horizontal or vertical endpoints, positive cap extent, and series color.
+# Outputs: Appends three SVG lines without widening the measured interval; rejects invalid geometry.
+def append_range_whisker(
+    parent: ET.Element,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    color: str,
+    cap: float = 4,
+    axis: str = "x",
+) -> None:
+    if not all(math.isfinite(value) for value in (*start, *end, cap)) or cap <= 0:
+        raise ValueError("range whisker geometry must be finite with positive caps")
+    if axis not in ("x", "y") or (start[1] != end[1] if axis == "x" else start[0] != end[0]):
+        raise ValueError("range whisker must follow one plot axis")
+    horizontal = axis == "x"
+    dx, dy = (0, cap) if horizontal else (cap, 0)
+    for (x1, y1), (x2, y2) in (
+        (start, end),
+        ((start[0] - dx, start[1] - dy), (start[0] + dx, start[1] + dy)),
+        ((end[0] - dx, end[1] - dy), (end[0] + dx, end[1] + dy)),
+    ):
+        ET.SubElement(
+            parent,
+            f"{{{SVG}}}line",
+            {
+                "x1": f"{x1:.3f}",
+                "x2": f"{x2:.3f}",
+                "y1": f"{y1:.3f}",
+                "y2": f"{y2:.3f}",
+                "stroke": color,
+                "stroke-width": "2",
+            },
+        )
 
 
 # Purpose: Enforce structural resource limits before allocating each XML element.

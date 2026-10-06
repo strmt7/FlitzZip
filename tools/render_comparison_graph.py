@@ -11,7 +11,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from tools.render_svg_graph import SVG, new_document
+from tools.render_svg_graph import SVG, append_range_whisker, new_document
 from tools.run_archive_comparison import CASES, EXPECTED, command_templates
 
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -274,33 +274,9 @@ def bar(
         {"x": str(x), "y": str(y - 13), "width": str(width), "height": "18", "rx": "2", "fill": color},
     )
     if low != high:
-        left = x + round(span * low / maximum)
-        right = x + round(span * high / maximum)
-        ET.SubElement(
-            parent,
-            f"{{{SVG}}}line",
-            {
-                "x1": str(left),
-                "x2": str(right),
-                "y1": str(y - 17),
-                "y2": str(y - 17),
-                "stroke": "#17252b",
-                "stroke-width": "2",
-            },
-        )
-        for edge in (left, right):
-            ET.SubElement(
-                parent,
-                f"{{{SVG}}}line",
-                {
-                    "x1": str(edge),
-                    "x2": str(edge),
-                    "y1": str(y - 20),
-                    "y2": str(y - 14),
-                    "stroke": "#17252b",
-                    "stroke-width": "2",
-                },
-            )
+        left = x + span * low / maximum
+        right = x + span * high / maximum
+        append_range_whisker(parent, (left, y - 4), (right, y - 4), "#17252b")
     label(parent, x + span + 10, y + 1, display, 12)
 
 

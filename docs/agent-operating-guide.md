@@ -194,6 +194,13 @@ SuperZip is a Windows-native, AMD-only GPU-accelerated archive application writt
 
 ## Engineering Quality Baseline
 
+Keep current user guidance, reusable agent procedures and release requirements
+separate from completed chronological reports. Store retained development,
+benchmark and security narratives in `docs/history`; keep raw host logs and
+build artifacts local. Archive moves must preserve scanning coverage, immutable
+review identities and working relative links. Preserve original measurement
+dates and source identities instead of presenting archived results as current.
+
 These rules were checked against official guidance on 2026-06-20: NIST SSDF,
 CISA Secure by Design, OWASP Secure Coding Practices, Microsoft SDL, GitHub
 Actions secure-use guidance, OpenSSF Scorecard, SLSA v1.2, the C++ Core
@@ -295,7 +302,7 @@ Guidelines, and SEI CERT C++.
   Review all rule/state groups once; reuse the saved evidence until the affected
   source, scanner version, analysis commit/category, or advisory data changes.
   A historical `fixed` or `dismissed` state is not proof of a current repair.
-  Follow the evidence map in `docs/code-scanning-history-review.md`; do not copy
+  Follow the evidence map in `docs/history/security/code-scanning-history-review.md`; do not copy
   its history into prompts or add broad suppression rules.
 - Moving a dependency from a prebuilt runtime to compiled source expands SAST
   coverage even without changing its upstream version. Inventory the actual
@@ -949,7 +956,7 @@ manufacture a clean scan. Individual authorizations belong in review records.
   provenance checks, and publication safeguards intact. Never restore compiled
   outputs into a fresh CodeQL build. Cancel superseded stateless checks, but
   preserve stateful live scans and release transactions. See
-  [the workflow performance review](workflow-performance-review.md).
+  [the workflow performance review](history/development/workflow-performance-review.md).
 - After pushing, verify the remote URL does not contain credentials.
 - After pushing, choose checkpoint intent from actual remaining work, not file
   type. When another development step is planned, use planner/verifier
@@ -1041,7 +1048,7 @@ product CI.
 
 Before using, modifying, benchmarking, publishing or redistributing third-party
 material, check the action-specific rights and retained notices in the
-[license audit](license-and-permission-audit-2026-10-05.md) and
+[license audit](history/security/license-and-permission-audit-2026-10-05.md) and
 [benchmark permissions](benchmark-permissions.md). A download, root license,
 badge, maintainer instruction or successful test does not establish third-party
 rights. Preserve upstream attribution and modified-source notices. Unknown

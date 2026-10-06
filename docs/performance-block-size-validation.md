@@ -382,7 +382,7 @@ Record these fields for every block size:
 | `MemoryOnly`, `DiskWriteBytes` | Confirms the benchmark did not write the workload to storage. |
 | CPU/GPU utilization samples | Helps interpret whether the bottleneck is host, device, or scheduling. |
 
-The owned-output [development checkpoint](benchmarks/2026-10-01-pinned-output-pool.md)
+The owned-output [development checkpoint](history/benchmarks/2026-10-01-pinned-output-pool.md)
 records the bounded pin policy, production/RAM path parity, and matched
 extraction measurements. Its new schema-two fields are additive. Historical
 records without decoder counters retain unavailable values; do not infer their
@@ -492,7 +492,7 @@ Not allowed during development:
 ## Acceptance Gates
 
 The October Mixed study and its failed-export recovery are recorded in
-[round nineteen of the modernization audit](modernization-audit-2026-10-02.md#round-nineteen-completed-measurements-and-report-export-repair).
+[round nineteen of the modernization audit](history/development/modernization-audit-2026-10-02.md#round-nineteen-completed-measurements-and-report-export-repair).
 Its full raw journal is retained; three larger-block GPU cases remain
 inconclusive. Compression phase time includes generated-source preparation
 inside owned encode tasks. Generation and encoding worker totals overlap, so

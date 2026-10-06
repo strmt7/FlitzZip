@@ -69,3 +69,37 @@ function Assert-ReleaseNotesDoNotDuplicateTitle {
         throw "Release notes must not include a duplicate '# SuperZip `$env:RELEASE_TAG' heading; GitHub already renders the release title."
     }
 }
+
+# Purpose: Keep candidate validation read-only and publication dependent on the validated artifact.
+# Inputs: RepoRoot contains the manual release workflow and its explicit publication input.
+# Outputs: Throws when validation can publish, publication is unconditional, or candidate checksums are unchecked.
+function Assert-ReleaseValidationIsolation {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $text = Get-Content -LiteralPath (Join-Path $RepoRoot '.github/workflows/release.yml') -Raw
+    $inputBlock = [regex]::Match($text, '(?ms)^      publish_release:\r?\n(?<body>.*?)(?=^      [a-z_]+:|^#|\z)')
+    $validation = [regex]::Match($text, '(?ms)^  hosted-windows:\r?\n(?<body>.*?)(?=^  [a-z-]+:|\z)')
+    $publication = [regex]::Match($text, '(?ms)^  publish:\r?\n(?<body>.*?)(?=^  [a-z-]+:|\z)')
+    if (-not $inputBlock.Success -or $inputBlock.Groups['body'].Value -notmatch '(?m)^        default: false\s*$' -or
+        $inputBlock.Groups['body'].Value -notmatch '(?m)^        type: boolean\s*$') {
+        throw 'Publication must be an explicit boolean input that defaults to false.'
+    }
+    $validationText = $validation.Groups['body'].Value
+    $publicationText = $publication.Groups['body'].Value
+    if (-not $validation.Success -or $validationText -notmatch '(?m)^      contents: read\s+#' -or
+        $validationText -match 'contents: write|gh release (?:create|edit|delete)|gh api -X DELETE' -or
+        $validationText -notmatch 'uses: actions/upload-artifact@[0-9a-f]{40}' -or
+        $validationText -notmatch 'Validation-only runs cannot replace an existing release') {
+        throw 'Release candidate validation must retain artifacts without write access or release mutation.'
+    }
+    if (-not $publication.Success -or $publicationText -notmatch '(?m)^    if: inputs\.publish_release\s*$' -or
+        $publicationText -notmatch '(?m)^    needs: hosted-windows\s*$' -or
+        $publicationText -notmatch 'uses: actions/download-artifact@[0-9a-f]{40}' -or
+        $publicationText -notmatch 'Validated candidate checksum mismatch' -or
+        $publicationText -notmatch 'Release creation failed' -or $publicationText -notmatch 'Release publication failed') {
+        throw 'Publication must explicitly consume the successful validated candidate and check native failures.'
+    }
+    if ([regex]::Matches($text, 'name: release-candidate-\$\{\{ github\.sha \}\}').Count -ne 2) {
+        throw 'Upload and download must select the same exact-commit candidate artifact.'
+    }
+}

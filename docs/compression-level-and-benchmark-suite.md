@@ -103,7 +103,7 @@ every corpus or a universal speedup. Broader ratio strategies remain open.
 The earlier 10 GiB Mixed study with 16 MiB blocks produced distinct GPU
 archive sizes at levels 1-9, though level 6 was 1,660 bytes larger than level 5
 in a single-run size diagnostic before nested selection. The reviewed five-level
-[CPU/GPU report](benchmarks/native-effort-2026-09-29.md) provides repeated,
+[CPU/GPU report](history/benchmarks/native-effort-2026-09-29.md) provides repeated,
 clean-source measurements. This is not a guarantee
 of monotonic size on arbitrary files. RAM-only shifted-alphabet regressions
 require a strong-tier size reduction and CPU/HIP roundtrips. Longer-repeat and

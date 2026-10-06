@@ -43,8 +43,9 @@ documents compatibility and verification. Unsupported methods fail explicitly.
 Native SUZIP also has a separate experimental [Neutron star mode](docs/neutron-star-mode-research.md)
 below the nine numeric efforts. It requires a compatible AMD HIP GPU and the
 required-GPU setting; the CLI selects it with `--neutron-star`. Its
-[validation record](docs/neutron-star-mode-validation.md) describes measured
-improvement rounds and their limits.
+[public-corpus results](docs/neutron-public-corpus-benchmark.md) describe measured
+improvements and their limits. [Beta readiness](docs/beta-readiness.md) records
+current acceptance boundaries.
 
 ## Requirements
 
@@ -64,7 +65,7 @@ reports missing prerequisites clearly, and records the expected runtime DLL in
 Development systems additionally need:
 
 - Visual Studio C++ build tools.
-- Python 3.14 for the shared development and provisioning tools.
+- CPython 3.13 or 3.14 for the shared development and provisioning tools.
 - CMake 4.4.3, provisioned and checksum-verified by the build tools.
 - The complete ROCm Core SDK 10.0.0 Windows distribution, provisioned using the
   [shared local/hosted toolchain](docs/rocm-toolchain.md). `-HipPath` supports a
@@ -300,7 +301,7 @@ weekly schedule, and manual dispatch.
 
 ![Qualified synthetic native CPU/HIP comparison](resources/benchmarks/beta-native-cpu-hip.svg)
 
-The [3 October beta block-size report](docs/benchmarks/native-beta-blocks-2026-10-03.md)
+The [3 October beta block-size report](docs/history/benchmarks/native-beta-blocks-2026-10-03.md)
 retains all **42 pilots and 112 confirmations** from seven independent 10 GiB
 RAM-only Mixed studies at level 5. Only the 8 MiB case met every declared timing
 quality threshold; all six inconclusive cases remain in the report. Its observed
@@ -312,9 +313,9 @@ mean times, sample SD, exact counts, HIP telemetry and source/binary identity.
 This synthetic workload result establishes neither competitor superiority nor a
 before/after improvement. Broader beta qualification remains in progress.
 
-Fresh [all-nine native effort sizes](docs/benchmarks/native-beta-effort-sizes-2026-10-03.md)
+Fresh [all-nine native effort sizes](docs/history/benchmarks/native-beta-effort-sizes-2026-10-03.md)
 retain 18 byte-exact RAM observations with unqualified single-run timings.
-The [writable-format size report](docs/benchmarks/beta-format-sizes-2026-10-03.md)
+The [writable-format size report](docs/history/benchmarks/beta-format-sizes-2026-10-03.md)
 covers 132 archive/reader cases across all 13 writable formats on bounded
 synthetic fixtures. Separately, all 36 registered formats passed the CLI
 correctness matrix. These size/correctness results are not speed rankings.
@@ -336,7 +337,7 @@ five-run-per-point refresh are in preparation. See the
 
 [Historical application comparison graph](resources/benchmarks/application-comparison.svg).
 
-The [Silesia application comparison report](docs/benchmarks/comparison-silesia-2026-09-29.md)
+The [Silesia application comparison report](docs/history/benchmarks/comparison-silesia-2026-09-29.md)
 shows exact test-system specifications and five-run ZIP/Zstandard results.
 The [reviewed raw record](docs/benchmarks/data/comparison-silesia-current.json)
 and [comparison methodology](docs/comparative-benchmark-methodology.md) disclose
@@ -346,7 +347,7 @@ compatibility-format results do not measure native HIP compression.
 
 [Historical compatibility effort graph](resources/benchmarks/effort-tradeoff.svg).
 
-The [size-versus-time effort study](docs/benchmarks/comparison-effort-2026-09-29.md)
+The [size-versus-time effort study](docs/history/benchmarks/comparison-effort-2026-09-29.md)
 compares SuperZip ZIP and ZST output with 7-Zip and Zstandard on the same
 Silesia inputs. Each point has ten timed runs, exact archive bytes, and
 independently verified extraction. Higher effort sometimes costs far more time
@@ -358,7 +359,7 @@ This snapshot uses three paired RAM-only 10 GiB runs per case, 16 MiB blocks,
 an AMD Ryzen 9 9950X, and an AMD Radeon RX 9070 XT. It measures median
 encode, verify, and extract throughput on the synthetic profiles shown, from
 commit `fd92bc5c728443800040c93509c2cf249fb3a0a1`; the
-[reviewed records](docs/benchmarks/data/) include exact byte counts and binary
+[reviewed records](docs/benchmarks/data) include exact byte counts and binary
 hashes. GPU mode is slower on SegmentedRecords at level 1. It requires AMD HIP
 but still uses CPU work for orchestration and I/O. Its device-event time
 was unavailable, so that case supports wall-time comparisons only. These
@@ -367,13 +368,13 @@ results do not predict performance on other files or hardware. The
 
 [Historical native effort graph](resources/benchmarks/native-effort-tradeoff.svg).
 
-The [native effort report](docs/benchmarks/native-effort-2026-09-29.md) compares
+The [native effort report](docs/history/benchmarks/native-effort-2026-09-29.md) compares
 five settings on the same 10 GiB RAM-only Mixed workload. GPU archives have
 different measured sizes at every plotted setting, and every sample passed
 verification and extraction. The graph prints exact archive bytes; its
 archive-size axis is truncated to make nearby points readable. The
 [methodology](docs/comparative-benchmark-methodology.md) and
-[raw records](docs/benchmarks/data/) contain the source and binary hashes,
+[raw records](docs/benchmarks/data) contain the source and binary hashes,
 individual timings, and limits of the comparison.
 
 For a direct correctness proof that `--require-gpu` is not falling back to CPU,
@@ -445,7 +446,7 @@ See `docs/security.md`, `docs/portability.md`, `docs/design.md`,
 `docs/performance-block-size-validation.md`,
 `docs/compression-level-and-benchmark-suite.md`,
 `docs/refactoring-governance.md`,
-`docs/benchmarks/2026-06-15-ram-block-size-sweep.md`,
-`docs/benchmarks/2026-06-15-ram-level5-benchmark-suite.md`,
+`docs/history/benchmarks/2026-06-15-ram-block-size-sweep.md`,
+`docs/history/benchmarks/2026-06-15-ram-level5-benchmark-suite.md`,
 `docs/third-party.md`, `docs/release.md`, and
 `docs/security-code-scanning.md`.

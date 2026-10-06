@@ -32,7 +32,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination
     }
     foreach ($validator in @('Assert-ReleaseWorkflowIdentity', 'Assert-ReleaseReplacementSafeguard',
-            'Assert-ReleaseNotesDoNotDuplicateTitle')) {
+            'Assert-ReleaseNotesDoNotDuplicateTitle', 'Assert-ReleaseValidationIsolation')) {
         & $validator -RepoRoot $fixtureRoot
     }
     $workflow = '.github/workflows/release.yml'
@@ -46,7 +46,14 @@ try {
             @($workflow, 'MSI replacements get a fresh ProductCode from the release run identity', 'MSI replacement', 'Assert-ReleaseReplacementSafeguard'),
             @($workflow, 'Replacement tag tracking mismatch', 'Unchecked tag', 'Assert-ReleaseReplacementSafeguard'),
             @($workflow, 'MsiProductIdentity = "github-run-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_SHA"', 'MsiProductIdentity = "fixed"', 'Assert-ReleaseReplacementSafeguard'),
-            @($workflow, 'Replacement is exceptional', '# SuperZip $env:RELEASE_TAG', 'Assert-ReleaseNotesDoNotDuplicateTitle'))) {
+            @($workflow, 'Replacement is exceptional', '# SuperZip $env:RELEASE_TAG', 'Assert-ReleaseNotesDoNotDuplicateTitle'),
+            @($workflow, '    if: inputs.publish_release', '    if: always()', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, '      contents: read # validation', '      contents: write # validation', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, '    needs: hosted-windows', '    needs: unrelated', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Validated candidate checksum mismatch', 'Unchecked candidate', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Release creation failed', 'Ignored creation status', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, 'Validation-only runs cannot replace an existing release', 'Unchecked replacement mode', 'Assert-ReleaseValidationIsolation'),
+            @($workflow, '          name: release-candidate-${{ github.sha }}', '          name: release-candidate-main', 'Assert-ReleaseValidationIsolation'))) {
         Assert-ReleasePolicyMutation -FixtureRoot $fixtureRoot -Path $mutation[0] -Original $mutation[1] `
             -Replacement $mutation[2] -Validator $mutation[3]
     }
@@ -60,7 +67,7 @@ try {
         if (-not $rejected) { throw "Missing release policy input was accepted: $relative" }
         Set-Content -LiteralPath $file -Value $text -Encoding UTF8
     }
-    Write-Output 'Release workflow identity, replacement and title contracts passed.'
+    Write-Output 'Release workflow identity, replacement, title and candidate-isolation contracts passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixtureRoot)
     $parentPrefix = $tempParent.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar

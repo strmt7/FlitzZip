@@ -9,11 +9,11 @@ documentation, source contracts and commands in normal, precise language.
 
 | Question | Open next |
 | --- | --- |
-| Current development and unresolved work | [handoff](development-handoff.md), [fresh audit](modernization-audit-2026-10-02.md), then relevant headings in [implementation history](../IMPLEMENTATION_PLAN.md) |
+| Current development and unresolved work | [handoff](history/development/development-handoff.md), [fresh audit](history/development/modernization-audit-2026-10-02.md), then relevant headings in [implementation history](../IMPLEMENTATION_PLAN.md) |
 | Format capabilities and wire contracts | [format support](archive-format-support.md), [native format](native-suzip-format.md) |
 | GPU admission, codecs and timing | [GPU research](gpu-accelerated-ui-and-codec-research.md), [performance validation](performance-block-size-validation.md), exact `src/gpu` and `src/core` sources |
 | Comparison eligibility and results | [comparison methodology](comparative-benchmark-methodology.md), [benchmark index](compression-level-and-benchmark-suite.md) |
-| Validation and hosted acceptance | [targeted verification](targeted-verification.md), [workflow timings](workflow-performance-review.md) |
+| Validation and hosted acceptance | [targeted verification](targeted-verification.md), [workflow timings](history/development/workflow-performance-review.md) |
 | Repeated mistakes and scanner evidence | [learning loop](engineering-learning-loop.md), [security scanning](security-code-scanning.md) |
 | Native GUI design and diagnosis | [design](design.md), [debugging strategy](debugging-strategy.md) |
 

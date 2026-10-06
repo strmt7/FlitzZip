@@ -31,6 +31,11 @@ on:
         required: false
         default: true
         type: boolean
+      publish_release:
+        description: Publish only after maintainer approval; false builds and validates candidate artifacts without a tag or release
+        required: false
+        default: false
+        type: boolean
 
 # Top-level read access is enough for workflow dispatch metadata and checkout defaults.
 permissions:
@@ -45,9 +50,12 @@ jobs:
     name: Hosted Windows release validation
     runs-on: windows-2022
     timeout-minutes: 180
-    # The release action creates tags/releases, so this job needs write access to repository contents.
     permissions:
-      contents: write # allow the manual release job to create tags and GitHub releases
+      contents: read # validation cannot create tags or releases
+    outputs:
+      release_version: ${{ steps.meta.outputs.release_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      package_base: ${{ steps.meta.outputs.package_base }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,6 +72,7 @@ jobs:
           REPLACEMENT_ACKNOWLEDGEMENT: ${{ inputs.replacement_acknowledgement }}
           RELEASE_TRACK: ${{ inputs.release_track }}
           CREATE_MSI: ${{ inputs.create_msi }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
           ENABLE_HIP: "true"
           HIP_ARCH: release
           ALLOW_HIP: "true"
@@ -75,6 +84,7 @@ jobs:
               REPLACEMENT_ACKNOWLEDGEMENT = [string]$env:REPLACEMENT_ACKNOWLEDGEMENT
               RELEASE_TRACK = [string]$env:RELEASE_TRACK
               CREATE_MSI = [string]$env:CREATE_MSI
+              PUBLISH_RELEASE = [string]$env:PUBLISH_RELEASE
               ENABLE_HIP = [string]$env:ENABLE_HIP
               HIP_ARCH = [string]$env:HIP_ARCH
               ALLOW_HIP = [string]$env:ALLOW_HIP
@@ -116,6 +126,12 @@ jobs:
 
           $requestedVersion = [string]$env:RELEASE_VERSION_INPUT
           $replaceExisting = $env:REPLACE_EXISTING -eq "true"
+          if ($env:PUBLISH_RELEASE -notin @("true", "false")) {
+              throw "publish_release must be true or false."
+          }
+          if ($replaceExisting -and $env:PUBLISH_RELEASE -ne "true") {
+              throw "Validation-only runs cannot replace an existing release."
+          }
           if ($env:REPLACE_EXISTING -notin @("true", "false")) {
               throw "replace_existing must be true or false."
           }
@@ -670,6 +686,50 @@ jobs:
           - SHA-256 checksum files are attached beside each package.
           "@ | Set-Content -LiteralPath $notes
 
+      - name: Retain validated candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          path: |
+            out/${{ env.PACKAGE_BASE }}-portable.zip
+            out/${{ env.PACKAGE_BASE }}-portable.zip.sha256
+            out/${{ env.PACKAGE_BASE }}.msi
+            out/${{ env.PACKAGE_BASE }}.msi.sha256
+            out/release-notes.md
+            out/release-metadata.json
+
+  publish:
+    name: Publish validated release
+    if: inputs.publish_release
+    needs: hosted-windows
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: write # only the explicitly selected publication job can create a release
+    env:
+      RELEASE_VERSION: ${{ needs.hosted-windows.outputs.release_version }}
+      RELEASE_TAG: ${{ needs.hosted-windows.outputs.release_tag }}
+      REPLACE_RELEASE_TAG: ${{ needs.hosted-windows.outputs.release_tag }}
+      PACKAGE_BASE: ${{ needs.hosted-windows.outputs.package_base }}
+      REPLACE_EXISTING: ${{ inputs.replace_existing }}
+      RELEASE_TRACK: ${{ inputs.release_track }}
+      CREATE_MSI: ${{ inputs.create_msi }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Retrieve validated candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: out
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -685,6 +745,13 @@ jobs:
                   "out\$env:PACKAGE_BASE.msi",
                   "out\$env:PACKAGE_BASE.msi.sha256"
               )
+          }
+          foreach ($asset in $assets | Where-Object { $_ -notlike "*.sha256" }) {
+              $expected = (Get-Content -LiteralPath "$asset.sha256" -Raw).Trim().Split()[0]
+              $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($expected -notmatch '^[0-9a-f]{64}$' -or $actual -ne $expected) {
+                  throw "Validated candidate checksum mismatch: $asset"
+              }
           }
           if ($env:REPLACE_EXISTING -eq "true") {
               if ($env:REPLACE_RELEASE_TAG -ne $env:RELEASE_TAG) {
@@ -713,10 +780,12 @@ jobs:
               $createArgs += "--prerelease"
           }
           gh @createArgs
+          if ($LASTEXITCODE -ne 0) { throw "Release creation failed." }
           gh release view $env:RELEASE_TAG --json tagName,isDraft,isPrerelease,assets
           $editArgs = @("release", "edit", $env:RELEASE_TAG, "--draft=false")
           if ($env:RELEASE_TRACK -eq "beta") {
               $editArgs += "--prerelease"
           }
           gh @editArgs
+          if ($LASTEXITCODE -ne 0) { throw "Release publication failed." }
           gh release view $env:RELEASE_TAG --json tagName,isDraft,isPrerelease,assets

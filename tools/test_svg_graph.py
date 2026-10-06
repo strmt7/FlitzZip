@@ -15,6 +15,7 @@ from tools.render_svg_graph import (
     SVG,
     TEMPLATE_PATH,
     BoundedDocumentBuilder,
+    append_range_whisker,
     load_template,
     new_document,
     parse_bounded_document,
@@ -26,6 +27,35 @@ from tools.render_svg_graph import (
 # Inputs: The checked-in document and bounded temporary negative fixtures.
 # Outputs: Fails on active markup, resource-bound bypass or cross-render mutation.
 class SvgDocumentTests(unittest.TestCase):
+    # Purpose: Preserve exact observed extrema and perpendicular caps on both axes, including identical samples.
+    # Inputs: Independently specified plot coordinates and invalid diagonal/non-finite controls.
+    # Outputs: The interval is unchanged and invalid coordinates fail before any lines are emitted.
+    def test_range_geometry_preserves_observed_endpoints(self) -> None:
+        for axis, start, end in (
+            ("x", (10, 20), (30, 20)),
+            ("y", (10, 20), (10, 40)),
+            ("x", (10, 20), (10, 20)),
+            ("y", (10, 20), (10, 20)),
+        ):
+            root = ET.Element(f"{{{SVG}}}g")
+            append_range_whisker(root, start, end, "#17252b", axis=axis)
+            self.assertEqual(len(root), 3)
+            line = root[0].attrib
+            self.assertEqual(tuple(float(line[key]) for key in ("x1", "y1", "x2", "y2")), (*start, *end))
+            cap = root[1].attrib
+            same = "x" if axis == "x" else "y"
+            self.assertEqual(cap[f"{same}1"], cap[f"{same}2"])
+        for start, end, axis in (
+            ((10, 20), (30, 40), "x"),
+            ((float("nan"), 20), (10, 20), "x"),
+            ((10, 20), (10, float("inf")), "y"),
+            ((10, 20), (10, 20), "z"),
+        ):
+            root = ET.Element(f"{{{SVG}}}g")
+            with self.assertRaises(ValueError):
+                append_range_whisker(root, start, end, "#17252b", axis=axis)
+            self.assertEqual(len(root), 0)
+
     # Purpose: Reject hostile declarations and alternate encodings before the XML parser can expand entities.
     # Inputs: Entity/DTD fixtures, processing instructions, malformed encodings and oversized documents.
     # Outputs: Each hostile input fails while escaped plain text and UTF-8 documents remain readable.
