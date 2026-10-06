@@ -119,6 +119,22 @@ class SecurityBuildTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "runtime source changed"):
                         build.verify_installed_runtime(expected)
                     extra.unlink()
+                for suffix in (".pyd", ".so", ".dll", ".dylib"):
+                    extra = root / ("unexpected" + suffix)
+                    extra.write_bytes(b"inert native file fixture")
+                    with self.assertRaisesRegex(ValueError, "native executable file"):
+                        build.verify_installed_runtime(expected)
+                    extra.unlink()
+                for name in ("unexpected.pyc", "unexpected.PYC", "unexpected.pyo", "tag/unexpected.pyc"):
+                    extra = root / name
+                    extra.write_bytes(b"inert sourceless file fixture")
+                    with self.assertRaisesRegex(ValueError, "sourceless bytecode"):
+                        build.verify_installed_runtime(expected)
+                    extra.unlink()
+                cache = root / "__pycache__"
+                cache.mkdir()
+                (cache / "__init__.cpython-313.pyc").write_bytes(b"preserved cache fixture")
+                build.verify_installed_runtime(expected)
                 missing = root / "tag/perceptron.py"
                 original = missing.read_bytes()
                 missing.unlink()

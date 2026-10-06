@@ -515,7 +515,9 @@ the Security tab, released artifacts, or the product UI again.
   fields remain separate from encoder fields. RAM reconstruction CRC checks
   must not be described as full byte comparisons. GUI smoke coverage uses the
   current run's returned capture manifest, not stale images accumulated in
-  the output directory.
+  the output directory. Every screenshot-producing helper must return its
+  record or append it to the caller's current collection; writing the image
+  alone does not establish review coverage.
 - Host telemetry recorders compile independently of HIP. A hosted CPU-only
   build caught new pinned-output recorders calling an attempt-merge helper
   hidden under the HIP guard; the recorders now use the same direct atomic
@@ -898,6 +900,13 @@ readback, closed stage kinds, corruption/downgrade controls and cancellation
 at the added stage. Protocol limits belong in the native format contract;
 individual measurements and failed assertions belong in dated validation records.
 
+When adding a serialized kind or readable version, update every closed dispatch,
+independent version oracle and sanitizer seed before qualification. Keep the
+exhaustive byte-kind matrix independent from production dispatch and require
+its latest covered version to match the reader boundary. Test both writer
+refusal and reader refusal of a downgraded new-kind index. Preserve previous
+codec-byte oracles when a new framed representation wins.
+
 Keep backend selection separate from operation failure. Expected absence and
 known unsupported block kinds can select an explicitly permitted CPU route
 before work begins. An error after HIP selection must remain an error; a broad
@@ -923,3 +932,27 @@ types and budgets before reads or extraction writes. Exercise real admitted
 source plus mutation controls and an installed-cache consumer. Verification
 changes can reuse an unchanged, hash-admitted build artifact; they must not
 silently regenerate a wheel or weaken its source/recipe/output binding.
+
+Source admission must also bind the standard import path. A version and source
+digest cannot qualify execution through an unchecked bytecode cache. For a
+source-admitted runtime, use a fresh owned cache prefix with bytecode writing
+disabled, retain cache files, reject executable additions outside that package's
+declared representation, and test actual interpreter import behavior. Keep
+runtime flags scoped to the owned child; do not monkeypatch the import system
+or rebuild an unchanged package merely to change its verification policy.
+
+Verify pinned binary tools before executing even their version probes. When a
+measurement lease follows provisioning, compare the locked executable bytes
+with the provisioner's exact evidence before launch. Test the actual contained
+Python caller as well as direct shell invocation: inherited module search paths
+can differ between PowerShell editions. Load required inbox modules from the
+running interpreter's installation, preserve hash checks, and reject linked
+installation ancestors before creating directories. Keep missing, changed and
+redirected-artifact controls executable without network access.
+
+Construct offline redirect tests from the reviewed origin using the standard
+URL parser, changing protocol, authority and query independently. Assert the
+intended mutation explicitly and require rejection before any network request.
+This isolates the property under test without retaining an unnecessary combined
+protocol-and-origin example or removing downgrade coverage. Such tests remain
+inside source analysis; every raw report and unmatched finding stays retained.

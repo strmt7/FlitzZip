@@ -31,10 +31,8 @@ Required rules:
   ratio, input bytes, and output bytes. Level 5 is the standard balanced
   release baseline.
 - Native `.suzip` required-GPU ratio work must stay on GPU-native block kinds.
-  Version 8 may emit a bounded Huffman lookup block at stronger levels; version
-  9 permits closed two-stage GPU composition only for Neutron star mode;
-  version 10 additionally permits its nonrecursive reversible byte-plane
-  frames. Follow `docs/native-suzip-format.md` for their complete wire contract. Both
+  Follow `docs/native-suzip-format.md` for the current versioned entropy,
+  dictionary, closed composition and reversible byte-plane contracts. Both
   encoding and required-GPU decode must execute through HIP. Older static and
   adaptive prefix archives remain readable. Do not count CPU Deflate/Zstd as
   GPU work or promise that every level changes every input's size.

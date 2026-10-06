@@ -582,8 +582,8 @@ function Assert-NeutronArchiveOperation {
         throw 'The GUI-created Neutron archive is missing or exceeds its smoke bound.'
     }
     $archiveBytes = [IO.File]::ReadAllBytes($archive)
-    if ($archiveBytes.Length -lt 24 -or [BitConverter]::ToUInt32($archiveBytes, $archiveBytes.Length - 20) -notin @(9, 10)) {
-        throw 'The GUI correctness input must exercise actual Neutron compound or byte-plane framing.'
+    if ($archiveBytes.Length -lt 24 -or [BitConverter]::ToUInt32($archiveBytes, $archiveBytes.Length - 20) -notin @(9, 10, 11)) {
+        throw 'The GUI correctness input must exercise actual Neutron compound, byte-plane or context framing.'
     }
     $restoredRoot = Join-Path $Destination ('neutron-readback-' + [guid]::NewGuid().ToString('N'))
     $cli = Join-Path $repo "build/$Configuration/superzip_cli.exe"
@@ -632,11 +632,11 @@ function Assert-NeutronArchiveOperation {
 }
 
 # Purpose: Exercise Neutron's separate row, real operation, persisted intent and format/policy normalization.
-# Inputs: Owned GUI, redirected settings, actual CLI HIP capability, bounded queued input and isolated destination.
-# Outputs: Requires conditional selection and readback, captures its row, and restores the applied choices.
+# Inputs: Owned GUI/settings, actual HIP capability, bounded input/destination and mutable current-run Captures.
+# Outputs: Requires selection/readback, appends its row capture to Captures, and restores the applied choices.
 function Assert-NeutronSelectionIsolation {
     param([IntPtr]$Handle, [int]$Dpi, [string]$SettingsPath, [string]$BasePath, [string]$Extension,
-        [string]$InputPath, [string]$Destination)
+        [string]$InputPath, [string]$Destination, [Parameter(Mandatory = $true)][ref]$Captures)
     $original = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
     $info = & (Join-Path $repo "build/$Configuration/superzip_cli.exe") gpu-info
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect actual HIP capability for Neutron GUI qualification.' }
@@ -648,7 +648,7 @@ function Assert-NeutronSelectionIsolation {
     Invoke-ClientClick -Handle $Handle -Dpi $Dpi -DesignX 820 -DesignY 224 -Synchronous
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x23
     if ($available) {
-        [void](Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Neutron-Selection$Extension")
+        $Captures.Value += Save-SuperZipScreenshot -Handle $Handle -Path "${BasePath}-Neutron-Selection$Extension"
     }
     Invoke-ClientKey -Handle $Handle -VirtualKey 0x0D
     Save-CompressionSmokeChoice -Handle $Handle -Dpi $Dpi -SettingsPath $SettingsPath
@@ -1344,7 +1344,7 @@ try {
     Select-CompressFormatIndex -Handle $windowHandle -Dpi $windowDpi -Index 0
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Level" -OpenX 820 -OpenY 224 -SelectX 820 -SelectY 390 -MenuLeft 657 -MenuTop 252 -MenuRight 1158 -MenuBottom 542 -BasePath $basePath -Extension $extension
     Assert-CompressionEffortSelection -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile
-    Assert-NeutronSelectionIsolation -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension -InputPath $smokeInput -Destination $smokeDestination
+    Assert-NeutronSelectionIsolation -Handle $windowHandle -Dpi $windowDpi -SettingsPath $smokeSettingsFile -BasePath $basePath -Extension $extension -InputPath $smokeInput -Destination $smokeDestination -Captures ([ref]$captures)
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-Method" -OpenX 500 -OpenY 294 -SelectX 500 -SelectY 370 -MenuLeft 116 -MenuTop 322 -MenuRight 617 -MenuBottom 388 -BasePath $basePath -Extension $extension
     $captures += Invoke-DropdownExercise -Handle $windowHandle -Dpi $windowDpi -Name "Compress-BlockSize" -OpenX 820 -OpenY 294 -SelectX 820 -SelectY 498 -MenuLeft 657 -MenuTop 322 -MenuRight 1158 -MenuBottom 548 -BasePath $basePath -Extension $extension
     Invoke-ClientClick -Handle $windowHandle -Dpi $windowDpi -DesignX 175 -DesignY 432

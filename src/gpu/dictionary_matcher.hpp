@@ -30,6 +30,17 @@ inline constexpr std::uint32_t kNeutronEmitSequences = 64U;
 inline constexpr std::uint32_t kEncodedSegmentCapacity = kGpuDictionaryEncodedSegmentCapacity;
 static_assert((kMaxNeutronBatchBytes + kSegmentBytes - 1U) / kSegmentBytes <= 16U);
 
+// Exclusive encoded-byte limits cover complete, independently selected archive block groups.
+struct NeutronParseBudget {
+    std::uint32_t input_bytes = 0U;
+    std::uint32_t maximum_payload_bytes = 0U;
+};
+
+// Purpose: Admit complete nonoverlapping parse groups before checkpoints or device work.
+// Inputs: Bounded source extent and optional groups; only the final group may have an incomplete segment.
+// Outputs: Rejects missing/excess coverage, empty groups or limits larger than their raw source.
+void validate_neutron_budgets(std::size_t input_bytes, std::span<const NeutronParseBudget> budgets);
+
 struct Effort {
     std::uint32_t max_candidates;
     std::uint32_t max_byte_comparisons;
@@ -83,6 +94,8 @@ struct EncodedBatch {
     std::uint32_t explicit_kernel_launches = 0;
     std::uint32_t neutron_active_segment_mask = 0;
     std::uint32_t neutron_parse_launches = 0;
+    std::uint32_t neutron_pruned_segment_mask = 0;
+    std::uint32_t neutron_budget_kernel_launches = 0;
     bool gpu_used = false;
 };
 
@@ -119,10 +132,12 @@ MatchBatch find_matches(std::span<const std::byte> input, int level);
 EncodedBatch encode_segments(std::span<const std::byte> input, int level);
 
 // Purpose: Minimize complete LZ4 segment byte cost over a deeper verified HIP match search.
-// Inputs: At most 1 MiB of immutable source; checkpoint may throw between bounded kernel launches to cancel.
-// Outputs: Returns GPU-encoded independent segments and actual resource telemetry; rejects unavailable HIP.
+// Inputs: At most 1 MiB of source, throwing checkpoint and optional exclusive group payload limits.
+// Outputs: Returns exact competitive parses and valid literal-only noncompetitive groups, with HIP telemetry.
+// A group is noncompetitive only when its verified match graph proves that no permitted parse can win.
 // Empty input needs no GPU; this primitive does not emit archive metadata or claim a universal minimum encoding.
-EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint = {});
+EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint = {},
+                                     std::span<const NeutronParseBudget> budgets = {});
 
 // Purpose: Decode independent dictionary segments on HIP without CPU materialization or fallback.
 // Inputs: At most 64 blocks, each declaring 1..65536 decoded bytes and a bounded nonempty payload.

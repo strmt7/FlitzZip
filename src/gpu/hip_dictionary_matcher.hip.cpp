@@ -802,6 +802,8 @@ struct NeutronRun {
     std::size_t downloaded_size_bytes = 0U;
     std::uint32_t active_segment_mask = 0U;
     std::uint32_t parse_launches = 0U;
+    std::uint32_t pruned_segment_mask = 0U;
+    std::uint32_t budget_kernel_launches = 0U;
 };
 
 template <typename Kernel, typename... Args>
@@ -824,13 +826,67 @@ void run_neutron_stage(NeutronRun& run, const EncodeCheckpoint& checkpoint, Kern
         finish_dictionary_stage);
 }
 
-// Purpose: Execute deeper matches, exact parsing and incremental output entirely on HIP.
-// Inputs: Borrowed device source/index and admitted workspace; host checks only activity, sizes and cancellation.
+// Purpose: Exclude only complete groups whose verified match intervals cannot beat their existing payload.
+// Inputs: Admitted groups, initialized workspace and complete graph activity; cursor storage is not yet live.
+// Outputs: Retains every competitive graph, initializes valid losing literals and records actual device work.
+void apply_neutron_budgets(std::uint32_t input_bytes, const NeutronShape& shape, NeutronWorkspace& workspace,
+                           NeutronRun& run, std::vector<std::uint32_t>& activity,
+                           std::span<const NeutronParseBudget> budgets, const EncodeCheckpoint& checkpoint) {
+    if (budgets.empty()) {
+        return;
+    }
+    if (std::any_of(activity.begin(), activity.end(), [](auto flag) { return flag > 1U; })) {
+        throw GpuError("Neutron match-graph activity is invalid");
+    }
+    const auto segments = static_cast<unsigned int>(shape.segments);
+    run_neutron_stage(run, checkpoint, optimal::bound_match_graphs, segments, workspace.state, input_bytes,
+                      workspace.cursors.get());
+    ++run.budget_kernel_launches;
+    std::vector<optimal::EmitCursor> bounds(shape.segments);
+    check_hip(copy_on_codec_stream(bounds.data(), workspace.cursors.get(), shape.cursor_bytes, hipMemcpyDeviceToHost),
+              "download Neutron match-graph lower bounds");
+    run.downloaded_size_bytes += shape.cursor_bytes;
+    std::size_t first = 0U;
+    for (const auto& budget : budgets) {
+        const auto count = (budget.input_bytes + kSegmentBytes - 1U) / kSegmentBytes;
+        std::uint64_t minimum_bytes = 0U;
+        for (std::size_t segment = first; segment < first + count; ++segment) {
+            const auto size = std::min<std::size_t>(input_bytes - segment * kSegmentBytes, kSegmentBytes);
+            const auto& bound = bounds[segment];
+            if (bound.position > size) {
+                throw GpuError("Neutron match-graph literal bound exceeds its source");
+            }
+            const auto extensions = bound.position <= 14U ? 0U : (bound.position - 14U + 254U) / 255U;
+            if (bound.written != bound.position + 1U + extensions) {
+                throw GpuError("Neutron match-graph payload bound is inconsistent");
+            }
+            minimum_bytes += bound.written;
+        }
+        if (minimum_bytes >= budget.maximum_payload_bytes) {
+            for (std::size_t segment = first; segment < first + count; ++segment) {
+                if (activity[segment] != 0U) {
+                    run.pruned_segment_mask |= 1U << segment;
+                    activity[segment] = 0U;
+                }
+            }
+        }
+        first += count;
+    }
+    if (run.pruned_segment_mask != 0U) {
+        run_neutron_stage(run, checkpoint, optimal::initialize_noncompetitive_graphs, segments, workspace.state,
+                          input_bytes, run.pruned_segment_mask, workspace.sizes.get());
+        ++run.budget_kernel_launches;
+    }
+}
+
+// Purpose: Execute deeper matches, competitive exact parsing and incremental output entirely on HIP.
+// Inputs: Borrowed source/index, admitted workspace and optional group limits; host controls admission only.
 // Outputs: Returns completed segment lengths and real launch/timing/transfer accounting or throws.
 std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const std::uint32_t* previous,
                                                std::uint32_t input_bytes, const NeutronShape& shape,
                                                NeutronWorkspace& workspace, NeutronRun& run,
-                                               const EncodeCheckpoint& checkpoint) {
+                                               const EncodeCheckpoint& checkpoint,
+                                               std::span<const NeutronParseBudget> budgets) {
     const auto segments = static_cast<unsigned int>(shape.segments);
     run_neutron_stage(run, checkpoint, optimal::initialize, segments, workspace.state);
     for (std::uint32_t first = 0U; first < input_bytes; first += optimal::kSearchPositionsPerLaunch) {
@@ -844,6 +900,7 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
     check_hip(copy_on_codec_stream(host_sizes.data(), workspace.sizes.get(), shape.size_bytes, hipMemcpyDeviceToHost),
               "download Neutron match-graph activity");
     run.downloaded_size_bytes += shape.size_bytes;
+    apply_neutron_budgets(input_bytes, shape, workspace, run, host_sizes, budgets, checkpoint);
     std::uint32_t parse_bytes = 0U;
     for (std::size_t segment = 0U; segment < host_sizes.size(); ++segment) {
         const auto active = host_sizes[segment];
@@ -882,11 +939,12 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
 }
 
 // Purpose: Reuse the exact-prefix index and aggregate admission for a stronger minimum-byte segment encoder.
-// Inputs: Admitted nonempty source, optional borrowed HIP mirror and cancellation checkpoint.
+// Inputs: Admitted source, borrowed HIP mirror, cancellation checkpoint and complete optional group limits.
 // Outputs: Returns contiguous LZ4 segments; all allocations unwind before the index reservation is released.
 PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> input,
                                                     const std::byte* borrowed_device_input,
-                                                    const EncodeCheckpoint& checkpoint) {
+                                                    const EncodeCheckpoint& checkpoint,
+                                                    std::span<const NeutronParseBudget> budgets) {
     const auto shape = neutron_shape(input.size());
     return with_dictionary_index(
         input, shape.total_bytes,
@@ -895,7 +953,7 @@ PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> i
             NeutronWorkspace workspace(shape, input.size());
             NeutronRun run;
             const auto sizes = run_neutron_encoder(source, previous, static_cast<std::uint32_t>(input.size()), shape,
-                                                   workspace, run, checkpoint);
+                                                   workspace, run, checkpoint, budgets);
             if (checkpoint) {
                 checkpoint();
             }
@@ -904,6 +962,8 @@ PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> i
                                                     run.clock.launches() + 3U, run.downloaded_size_bytes);
             result.telemetry.neutron_active_segment_mask = run.active_segment_mask;
             result.telemetry.neutron_parse_launches = run.parse_launches;
+            result.telemetry.neutron_pruned_segment_mask = run.pruned_segment_mask;
+            result.telemetry.neutron_budget_kernel_launches = run.budget_kernel_launches;
             workspace.release_checked();
             return result;
         },
@@ -938,25 +998,28 @@ EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort&
 }
 
 // Purpose: Expose the bounded minimum-byte encoder through the same independent-segment diagnostic contract.
-// Inputs: Admitted source and optional throwing checkpoint.
+// Inputs: Admitted source, throwing checkpoint and complete optional group limits.
 // Outputs: Returns complete GPU segments with one owned upload and no CPU parse.
-EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint) {
-    return unpack_dictionary_batch(input, encode_neutron_segments_hip_impl(input, nullptr, checkpoint));
+EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint,
+                                         std::span<const NeutronParseBudget> budgets) {
+    return unpack_dictionary_batch(input, encode_neutron_segments_hip_impl(input, nullptr, checkpoint, budgets));
 }
 
 // Purpose: Admit the production borrowed-input boundary before any stronger search or parse allocation.
-// Inputs: Nonempty bounded host/device mirrors and optional throwing checkpoint.
+// Inputs: Bounded host/device mirrors, throwing checkpoint and complete optional group limits.
 // Outputs: Returns complete GPU segments or rejects invalid spans; CPU fallback is never used.
 PackedEncodedBatch encode_neutron_segments_from_device_hip(std::span<const std::byte> input,
                                                            const std::byte* device_input,
-                                                           const EncodeCheckpoint& checkpoint) {
+                                                           const EncodeCheckpoint& checkpoint,
+                                                           std::span<const NeutronParseBudget> budgets) {
     if (input.empty() || input.size() > kMaxNeutronBatchBytes || device_input == nullptr) {
         throw GpuError("Neutron dictionary device encoding request is invalid");
     }
+    validate_neutron_budgets(input.size(), budgets);
     if (checkpoint) {
         checkpoint();
     }
-    return encode_neutron_segments_hip_impl(input, device_input, checkpoint);
+    return encode_neutron_segments_hip_impl(input, device_input, checkpoint, budgets);
 }
 
 // Purpose: Encode a production candidate from bytes already uploaded by the native HIP pipeline.

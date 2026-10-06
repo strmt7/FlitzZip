@@ -30,11 +30,12 @@ PackedEncodedBatch encode_segments_from_device_hip(std::span<const std::byte> in
                                                    std::span<const std::uint16_t> periodic_distances = {});
 
 // Purpose: Execute minimum-byte parsing on a bounded source already resident on HIP.
-// Inputs: At most 1 MiB host/device mirrors and an optional cancellation checkpoint.
-// Outputs: Returns complete LZ4 segments with actual launch, allocation and transfer counts; no CPU encoding.
+// Inputs: At most 1 MiB mirrors, cancellation checkpoint and optional complete exclusive group limits.
+// Outputs: Returns exact competitive parses or proven-losing literal groups with actual HIP accounting.
 PackedEncodedBatch encode_neutron_segments_from_device_hip(std::span<const std::byte> input,
                                                            const std::byte* device_input,
-                                                           const EncodeCheckpoint& checkpoint = {});
+                                                           const EncodeCheckpoint& checkpoint = {},
+                                                           std::span<const NeutronParseBudget> budgets = {});
 
 // Purpose: Decode already admitted independent LZ4 segments into caller-owned HIP output memory.
 // Inputs: `encoded` and `decoded` are live device pointers; `spans` are validated absolute device-buffer extents.

@@ -2165,7 +2165,8 @@ TEST_CASE(suzip_index_block_kind_version_matrix) {
     std::ostringstream encoded(std::ios::binary);
     superzip::write_archive_index(encoded, index);
     const auto original = encoded.str();
-    constexpr std::array<unsigned int, 13> first_versions{1U, 1U, 1U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U};
+    constexpr std::array<unsigned int, 14> first_versions{1U, 1U, 1U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U};
+    REQUIRE_EQ(first_versions.back(), superzip::kSuperZipMaxReadableVersion);
     constexpr std::size_t kind_offset = 12U + 2U + 1U + 1U + 24U + 4U + 4U;
     REQUIRE_EQ(original.size(), kind_offset + 18U);
     for (std::uint32_t version = 1U; version <= superzip::kSuperZipMaxReadableVersion; ++version) {

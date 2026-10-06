@@ -174,11 +174,15 @@ void record_neutron_batch(const PackedEncodedBatch& batch, std::size_t input_byt
     }
     const auto expected_parse_launches = (parse_bytes + kNeutronParseTilePositions - 1U) / kNeutronParseTilePositions;
     const auto admitted_segment_mask = (1U << segments) - 1U;
+    const auto budget_launches = encoded.neutron_budget_kernel_launches;
     if (!encoded.gpu_used || encoded.h2d_bytes != 0U ||
         (encoded.neutron_active_segment_mask & ~admitted_segment_mask) != 0U ||
+        (encoded.neutron_pruned_segment_mask & ~admitted_segment_mask) != 0U ||
+        (encoded.neutron_pruned_segment_mask & encoded.neutron_active_segment_mask) != 0U || budget_launches > 2U ||
+        ((budget_launches == 2U) != (encoded.neutron_pruned_segment_mask != 0U)) ||
         encoded.neutron_parse_launches != expected_parse_launches ||
-        encoded.explicit_kernel_launches < 7U + search_tiles + expected_parse_launches ||
-        encoded.explicit_kernel_launches > 6U + search_tiles + expected_parse_launches + emit_tiles ||
+        encoded.explicit_kernel_launches < 7U + search_tiles + expected_parse_launches + budget_launches ||
+        encoded.explicit_kernel_launches > 6U + search_tiles + expected_parse_launches + emit_tiles + budget_launches ||
         encoded.device_workspace_bytes < input_bytes || encoded.device_workspace_bytes > kMaxWorkspaceBytes) {
         throw GpuError("Neutron dictionary batch recorded inconsistent device work");
     }
@@ -232,8 +236,13 @@ std::vector<std::byte> encode_neutron_candidate(std::span<const std::byte> input
     segment_sizes.reserve(segment_count);
     for (std::size_t offset = 0U; offset < input.size();) {
         const auto bytes = std::min(kMaxNeutronBatchBytes, input.size() - offset);
-        auto encoded =
-            encode_neutron_segments_from_device_hip(input.subspan(offset, bytes), device_input + offset, checkpoint);
+        const auto remaining = baseline_bytes - table_bytes - packed.size();
+        const std::array<NeutronParseBudget, 1> budget{
+            {{static_cast<std::uint32_t>(bytes), static_cast<std::uint32_t>(remaining)}}};
+        const auto limits =
+            remaining <= bytes ? std::span<const NeutronParseBudget>(budget) : std::span<const NeutronParseBudget>{};
+        auto encoded = encode_neutron_segments_from_device_hip(input.subspan(offset, bytes), device_input + offset,
+                                                               checkpoint, limits);
         record_neutron_batch(encoded, bytes, telemetry);
         if (encoded.payload.size() >= baseline_bytes - table_bytes - packed.size()) {
             return {};
@@ -264,7 +273,15 @@ bool can_group_neutron_block(const BlockDescriptor& block, const std::vector<std
 void encode_neutron_group(std::span<const std::byte> input, const std::byte* device_input,
                           std::span<const BlockDescriptor> blocks, std::span<std::vector<std::byte>> replacements,
                           GpuTelemetry* telemetry, const EncodeCheckpoint& checkpoint) {
-    const auto encoded = encode_neutron_segments_from_device_hip(input, device_input, checkpoint);
+    std::vector<NeutronParseBudget> budgets;
+    budgets.reserve(blocks.size());
+    for (std::size_t index = 0U; index < blocks.size(); ++index) {
+        const auto bytes = blocks[index].uncompressed_len;
+        const auto baseline = replacements[index].empty() ? blocks[index].encoded_len : replacements[index].size();
+        const auto table_bytes = (bytes / kSegmentBytes + 1U) * sizeof(std::uint32_t);
+        budgets.push_back({bytes, static_cast<std::uint32_t>(baseline - table_bytes)});
+    }
+    const auto encoded = encode_neutron_segments_from_device_hip(input, device_input, checkpoint, budgets);
     record_neutron_batch(encoded, input.size(), telemetry);
     if (encoded.segment_sizes.size() != input.size() / kSegmentBytes) {
         throw GpuError("Neutron group segment count differs from its source extent");

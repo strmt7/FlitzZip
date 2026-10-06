@@ -8,7 +8,7 @@
 #include <sstream>
 #include <string>
 
-// Purpose: Feed arbitrary bytes into the native index and closed compound-header parsers.
+// Purpose: Feed arbitrary bytes into the native index and closed GPU stage/frame parsers.
 // Inputs: `data` and `size` are libFuzzer-owned bytes for one fuzz iteration.
 // Outputs: Returns 0 after successful parsing or expected parser rejection; sanitizer findings crash the process.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
@@ -34,6 +34,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                                                      {.kind = superzip::BlockKind::GpuCompound,
                                                       .uncompressed_len = decoded_bytes,
                                                       .encoded_len = static_cast<std::uint32_t>(payload.size())});
+        } catch (const superzip::Error&) {
+        }
+        try {
+            (void)superzip::parse_gpu_byte_plane_contexts(payload,
+                                                          {.kind = superzip::BlockKind::GpuBytePlaneContexts,
+                                                           .uncompressed_len = decoded_bytes,
+                                                           .encoded_len = static_cast<std::uint32_t>(payload.size())});
         } catch (const superzip::Error&) {
         }
         try {

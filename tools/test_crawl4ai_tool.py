@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import py_compile
 import re
 import subprocess
 import sys
@@ -87,6 +88,69 @@ class CrawlerContracts(unittest.TestCase):
             self.assertIn("crawl4ai/superzip_download.py", json.loads(argv[4]))
             self.assertIn("verify_installed_runtime(sys.argv[3])", argv[2])
             self.assertRegex(argv[5], r"^[a-f0-9]{64}$")
+            self.assertTrue(child.call_args.kwargs["source_only"])
+
+    def test_source_only_runtime_ignores_unchecked_bytecode_and_preserves_cache(self):
+        """Purpose: Refuse stale execution. Inputs: Sentinel cache. Outputs: Reviewed source and unchanged old cache."""
+        from tools import nltk_security_build as build
+
+        temporary_root = Path(tempfile.gettempdir()).resolve()
+        with tempfile.TemporaryDirectory(dir=temporary_root) as temporary:
+            root = Path(temporary)
+            self.assertEqual(root.resolve().parent, temporary_root)
+            package = root / "nltk"
+            package.mkdir()
+            source = package / "__init__.py"
+            reviewed = b"SOURCE_SENTINEL = 11\n"
+            source.write_bytes(reviewed)
+            (package / "VERSION").write_text("inert source-guard fixture\n", encoding="utf-8")
+            expected = build.installed_runtime_sha256(package)
+            source.write_bytes(b"SOURCE_SENTINEL = 22\n")
+            cached = Path(
+                py_compile.compile(
+                    str(source),
+                    doraise=True,
+                    invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH,
+                )
+            )
+            original_cache = cached.read_bytes()
+            source.write_bytes(reviewed)
+            with patch("importlib.metadata.distribution", return_value=SimpleNamespace(locate_file=lambda _: package)):
+                build.verify_installed_runtime(expected)
+            script = (
+                "import sys;sys.path.insert(0,sys.argv[1]);import nltk;"
+                "raise SystemExit(0 if nltk.SOURCE_SENTINEL==11 else 5)"
+            )
+            command = [sys.executable, "-c", script, str(root)]
+            self.assertEqual(tool.run_owned(command, dict(os.environ), 10), 5)
+            self.assertEqual(tool.run_source_python(command, dict(os.environ), 10), 0)
+            self.assertEqual(source.read_bytes(), reviewed)
+            self.assertEqual(cached.read_bytes(), original_cache)
+
+    def test_source_runtime_flags_are_scoped_and_temporary(self):
+        """Purpose: Bind import lifetime. Inputs: Captured launcher. Outputs: Empty owned cache and cleanup."""
+        environment = {"PYTHONDONTWRITEBYTECODE": "0", "PYTHONPYCACHEPREFIX": "caller-value"}
+        observed = []
+
+        def observe(command, env, timeout, **kwargs):
+            """Purpose: Inspect actual policy. Inputs: Wrapped argv/environment. Outputs: Fixture exit status."""
+            prefix = Path(env["PYTHONPYCACHEPREFIX"])
+            self.assertTrue(prefix.is_dir())
+            self.assertEqual(list(prefix.iterdir()), [])
+            self.assertEqual(command[:3], [sys.executable, "-B", "-X"])
+            self.assertEqual(command[3], f"pycache_prefix={prefix}")
+            self.assertEqual(command[4:], ["-c", "pass"])
+            self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+            observed.append(prefix)
+            return 7
+
+        with patch.object(tool, "run_owned", side_effect=observe):
+            self.assertEqual(tool.run_source_python([sys.executable, "-c", "pass"], environment, 10), 7)
+        self.assertFalse(observed[0].exists())
+        self.assertEqual(environment, {"PYTHONDONTWRITEBYTECODE": "0", "PYTHONPYCACHEPREFIX": "caller-value"})
+        with patch.object(tool, "run_owned") as child, self.assertRaisesRegex(ValueError, "interpreter command"):
+            tool.run_source_python([], environment)
+        child.assert_not_called()
 
     def test_script_entrypoint_imports_its_checkout_from_another_directory(self):
         """Purpose: Preserve direct script use. Inputs: External cwd/script path. Outputs: Local helper imports."""
@@ -222,7 +286,7 @@ class CrawlerContracts(unittest.TestCase):
             with (
                 patch.object(tool.sys, "argv", ["crawler", "crawl", *arguments]),
                 patch.object(tool, "install", return_value=python) as setup,
-                patch.object(tool, "run_owned", return_value=7) as launch,
+                patch.object(tool, "run_source_python", return_value=7) as launch,
             ):
                 self.assertEqual(tool.main(), 7)
                 setup.assert_called_once()

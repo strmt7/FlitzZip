@@ -472,8 +472,8 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
             if (block.kind == BlockKind::GpuCompound) {
                 (void)parse_gpu_compound_block(payload.subspan(offset, encoded_len), block);
             }
-            if (block.kind == BlockKind::GpuBytePlane) {
-                (void)parse_gpu_byte_plane_block(payload.subspan(offset, encoded_len), block);
+            if (is_gpu_byte_plane_kind(block.kind)) {
+                (void)parse_gpu_byte_plane_stages(payload.subspan(offset, encoded_len), block);
             }
             if (is_gpu_sparse_pattern_kind(block.kind)) {
                 (void)parse_sparse_pattern_block(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
@@ -503,18 +503,19 @@ std::vector<std::size_t> validate_decode_blocks(std::span<const std::byte> paylo
 // Outputs: Decodes the transformed stream and reconstructs full records plus the unchanged partial tail.
 static void materialize_byte_plane_cpu(std::span<const std::byte> encoded, const BlockDescriptor& block,
                                        std::span<std::byte> output) {
-    const auto stage = parse_gpu_byte_plane_block(encoded, block);
     (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), output.size());
     std::vector<std::byte> transformed(output.size());
     const ArchiveCodecOptions stage_options{.worker_count = 1};
-    decode_chunk_cpu(stage.payload, std::span(&stage.inner, 1U), transformed, stage_options);
-    const auto records = output.size() / stage.width;
-    for (std::size_t plane = 0U; plane < stage.width; ++plane) {
+    const auto stages = parse_gpu_byte_plane_stages(encoded, block);
+    const auto width = stages.width;
+    decode_chunk_cpu(stages.payload, std::span(stages.blocks).first(stages.count), transformed, stage_options);
+    const auto records = output.size() / width;
+    for (std::size_t plane = 0U; plane < width; ++plane) {
         for (std::size_t record = 0U; record < records; ++record) {
-            output[record * stage.width + plane] = transformed[plane * records + record];
+            output[record * width + plane] = transformed[plane * records + record];
         }
     }
-    const auto tail_offset = records * stage.width;
+    const auto tail_offset = records * width;
     std::ranges::copy(std::span(transformed).subspan(tail_offset), output.subspan(tail_offset).begin());
 }
 
@@ -560,7 +561,7 @@ void materialize_blocks_cpu(std::span<const std::byte> payload, std::span<const 
                 materialize_dictionary_cpu(payload.subspan(static_cast<std::size_t>(block.encoded_offset),
                                                            static_cast<std::size_t>(block.encoded_len)),
                                            output.subspan(out_pos, len));
-            } else if (block.kind == BlockKind::GpuBytePlane) {
+            } else if (is_gpu_byte_plane_kind(block.kind)) {
                 materialize_byte_plane_cpu(
                     payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block,
                     output.subspan(out_pos, len));
@@ -670,7 +671,8 @@ bool block_kind_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
            kind == BlockKind::GpuHuffman || kind == BlockKind::GpuCompound || kind == BlockKind::GpuBytePlane ||
-           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuBytePlaneContexts || kind == BlockKind::GpuDictionary ||
+           is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Encode a contiguous native CPU block range with one bounded worker-owned Zstandard context.

@@ -20,9 +20,10 @@ MatchBatch find_matches_hip(std::span<const std::byte> input, const Effort& effo
 EncodedBatch encode_segments_hip(std::span<const std::byte> input, const Effort& effort);
 
 // Purpose: Execute admitted deeper search and minimum-byte segment parsing on HIP.
-// Inputs: Nonempty bounded source and optional cancellation checkpoint.
+// Inputs: Nonempty bounded source, cancellation checkpoint and admitted group limits.
 // Outputs: Returns GPU-encoded segments; propagates resource/runtime/cancellation failures.
-EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint);
+EncodedBatch encode_neutron_segments_hip(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint,
+                                         std::span<const NeutronParseBudget> budgets);
 
 // Purpose: Execute HIP decoding after host-side segment-size admission.
 // Inputs: Nonempty bounded segments and their exact total decoded byte count.
@@ -101,13 +102,41 @@ EncodedBatch encode_segments(std::span<const std::byte> input, int level) {
 #endif
 }
 
+// Purpose: Admit complete parse groups before checkpoints, empty returns or GPU admission.
+// Inputs: Exact source size and optional bounded group byte limits.
+// Outputs: Accepts complete canonical groups or throws without allocating or dispatching device work.
+void validate_neutron_budgets(std::size_t input_bytes, std::span<const NeutronParseBudget> budgets) {
+    if (budgets.empty()) {
+        return;
+    }
+    if (input_bytes == 0U || input_bytes > kMaxNeutronBatchBytes ||
+        budgets.size() > kMaxNeutronBatchBytes / kSegmentBytes) {
+        throw GpuError("Neutron parse budget extent is invalid");
+    }
+    std::size_t offset = 0U;
+    for (std::size_t index = 0U; index < budgets.size(); ++index) {
+        const auto& budget = budgets[index];
+        if (budget.input_bytes == 0U || budget.input_bytes > input_bytes - offset ||
+            budget.maximum_payload_bytes > budget.input_bytes ||
+            (index + 1U < budgets.size() && budget.input_bytes % kSegmentBytes != 0U)) {
+            throw GpuError("Neutron parse budgets do not describe canonical groups");
+        }
+        offset += budget.input_bytes;
+    }
+    if (offset != input_bytes) {
+        throw GpuError("Neutron parse budgets do not cover their source");
+    }
+}
+
 // Purpose: Admit bounded minimum-byte parsing without permitting CPU fallback or overlarge workspaces.
-// Inputs: Immutable source and optional throwing cancellation checkpoint.
+// Inputs: Immutable source, throwing cancellation checkpoint and optional complete group limits.
 // Outputs: Returns empty input unchanged or verified GPU segments; throws on invalid size or unavailable HIP.
-EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint) {
+EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const EncodeCheckpoint& checkpoint,
+                                     std::span<const NeutronParseBudget> budgets) {
     if (input.size() > kMaxNeutronBatchBytes) {
         throw ArchiveError("Neutron dictionary batch exceeds its bounded input limit");
     }
+    validate_neutron_budgets(input.size(), budgets);
     if (checkpoint) {
         checkpoint();
     }
@@ -119,7 +148,7 @@ EncodedBatch encode_neutron_segments(std::span<const std::byte> input, const Enc
     if (!info.available) {
         throw GpuError(info.status);
     }
-    return encode_neutron_segments_hip(input, checkpoint);
+    return encode_neutron_segments_hip(input, checkpoint, budgets);
 #else
     throw GpuError("AMD HIP Neutron dictionary encoding is not compiled into this build");
 #endif

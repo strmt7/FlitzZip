@@ -295,6 +295,17 @@ void record_selected_block_kinds(const EncodedChunk& chunk, GpuTelemetry* teleme
     std::uint64_t sparse_blocks = 0U;
     for (const auto& block : chunk.blocks) {
         auto original = block;
+        if (block.kind == BlockKind::GpuBytePlaneContexts) {
+            const auto stages = parse_gpu_byte_plane_contexts(
+                std::span(chunk.payload).subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len),
+                block);
+            for (const auto& inner : std::span(stages.blocks).first(stages.width)) {
+                prefixes += is_gpu_prefix_block(inner);
+                dictionaries += inner.kind == BlockKind::GpuDictionary;
+                sparse_blocks += is_gpu_sparse_pattern_kind(inner.kind);
+            }
+            continue;
+        }
         if (block.kind == BlockKind::GpuBytePlane) {
             original =
                 parse_gpu_byte_plane_block(
@@ -1298,9 +1309,57 @@ EncodedChunk compose_neutron_winners(EncodedChunk baseline, const GpuCodecOption
     return result;
 }
 
-// Purpose: Compare GPU byte-plane trials against every preceding Neutron winner using complete frame costs.
-// Inputs: Immutable source bytes, their dense selected layout and required-HIP policy with bounded checkpoints.
-// Outputs: Retains losses/ties exactly; emits only nonrecursive GPU frames with strictly smaller payloads.
+// Purpose: Encode independent byte-plane contexts with the existing plain HIP portfolio.
+// Inputs: Transposed source, admitted width, exclusive complete-frame limit and operation-owned HIP policy.
+// Outputs: Returns a strictly competitive dense frame or an empty proven loss; device errors remain errors.
+static std::vector<std::byte> encode_neutron_plane_contexts(std::span<const std::byte> transformed, std::uint8_t width,
+                                                            std::size_t exclusive_limit,
+                                                            const GpuCodecOptions& options) {
+    if (!is_gpu_byte_plane_width(width) || transformed.size() < width || transformed.size() > kMaxArchiveBlockBytes ||
+        exclusive_limit > transformed.size()) {
+        throw GpuError("Neutron byte-plane context geometry is invalid");
+    }
+    const auto header_bytes = kGpuBytePlaneHeaderBytes + width * kGpuBytePlaneContextRecordBytes;
+    if (exclusive_limit <= header_bytes) {
+        return {};
+    }
+    std::vector<std::byte> frame(header_bytes, std::byte{0});
+    frame.reserve(exclusive_limit);
+    frame[0] = static_cast<std::byte>(width);
+    const auto records = transformed.size() / width;
+    std::size_t cursor = 0U;
+    for (std::size_t plane = 0U; plane < width; ++plane) {
+        const auto bytes = records + (plane + 1U == width ? transformed.size() % width : 0U);
+        auto trial_options = options;
+        trial_options.block_size = static_cast<std::uint32_t>(bytes);
+        const auto trial = encode_chunk_hip_impl(transformed.subspan(cursor, bytes), nullptr, trial_options, {},
+                                                 nullptr, HipEncodeRole::CompoundTrial);
+        if (trial.blocks.size() != 1U || trial.blocks.front().uncompressed_len != bytes ||
+            trial.blocks.front().encoded_offset != 0U || trial.blocks.front().encoded_len != trial.payload.size()) {
+            throw GpuError("Neutron byte-plane context trial returned inconsistent metadata");
+        }
+        const auto& inner = trial.blocks.front();
+        if (!is_gpu_compound_stage(inner.kind) && inner.kind != BlockKind::Raw && inner.kind != BlockKind::Fill) {
+            throw GpuError("Neutron byte-plane context trial returned a recursive or CPU codec");
+        }
+        if (trial.payload.size() >= exclusive_limit - frame.size()) {
+            return {};
+        }
+        const auto offset = kGpuBytePlaneHeaderBytes + plane * kGpuBytePlaneContextRecordBytes;
+        frame[offset] = static_cast<std::byte>(inner.kind);
+        frame[offset + 1U] = inner.kind == BlockKind::Fill ? static_cast<std::byte>(inner.fill_value) : std::byte{0};
+        for (std::size_t byte = 0U; byte < sizeof(inner.encoded_len); ++byte) {
+            frame[offset + 2U + byte] = static_cast<std::byte>((inner.encoded_len >> (byte * 8U)) & 0xFFU);
+        }
+        frame.insert(frame.end(), trial.payload.begin(), trial.payload.end());
+        cursor += bytes;
+    }
+    return frame;
+}
+
+// Purpose: Compare whole-block and independent-context byte-plane trials against retained Neutron winners.
+// Inputs: Owned baseline/source spans and required-HIP options; trials are closed, serial and completely framed.
+// Outputs: Preserves every preceding winner on ties/losses and emits only strictly smaller GPU-native frames.
 static EncodedChunk select_neutron_byte_planes(std::span<const std::byte> source, EncodedChunk baseline,
                                                const GpuCodecOptions& options) {
     EncodedChunk result;
@@ -1331,6 +1390,17 @@ static EncodedChunk select_neutron_byte_planes(std::span<const std::byte> source
                     continue;
                 }
                 transform_byte_planes_hip(original, transformed, width, false, options);
+                if (width == 2U) {
+                    auto contexts = encode_neutron_plane_contexts(transformed, width, best_bytes, options);
+                    if (!contexts.empty()) {
+                        selected_frame = std::move(contexts);
+                        descriptor.kind = BlockKind::GpuBytePlaneContexts;
+                        descriptor.fill_value = 0U;
+                        descriptor.encoded_len = static_cast<std::uint32_t>(selected_frame.size());
+                        (void)parse_gpu_byte_plane_contexts(selected_frame, descriptor);
+                        best_bytes = selected_frame.size();
+                    }
+                }
                 const auto trial = encode_chunk_hip_impl(transformed, nullptr, trial_options, {}, nullptr,
                                                          HipEncodeRole::CompoundTrial);
                 if (trial.blocks.size() != 1U || trial.blocks.front().uncompressed_len != original.size() ||
@@ -1640,11 +1710,11 @@ static void decode_compound_block_hip(std::span<const std::byte> encoded, const 
 // Outputs: Restores original bytes using one bounded intermediate; never invokes a CPU codec or transform.
 static void decode_byte_plane_block_hip(std::span<const std::byte> encoded, const BlockDescriptor& block,
                                         std::span<std::byte> output, const GpuCodecOptions& options) {
-    const auto stage = parse_gpu_byte_plane_block(encoded, block);
     (void)resolve_host_pipeline_inflight_limit(query_host_memory_snapshot(), output.size());
     std::vector<std::byte> transformed(output.size());
-    decode_plain_chunk_hip(stage.payload, std::span(&stage.inner, 1U), transformed, options);
-    transform_byte_planes_hip(transformed, output, stage.width, true, options);
+    const auto stages = parse_gpu_byte_plane_stages(encoded, block);
+    decode_plain_chunk_hip(stages.payload, std::span(stages.blocks).first(stages.count), transformed, options);
+    transform_byte_planes_hip(transformed, output, stages.width, true, options);
 }
 
 // Purpose: Decode native GPU blocks, including the bounded nonrecursive version-nine composition.
@@ -1659,7 +1729,7 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
         throw GpuError("AMD HIP decode does not support CPU-compressed blocks");
     }
     if (std::ranges::none_of(blocks, [](const BlockDescriptor& block) {
-            return block.kind == BlockKind::GpuCompound || block.kind == BlockKind::GpuBytePlane;
+            return block.kind == BlockKind::GpuCompound || is_gpu_byte_plane_kind(block.kind);
         })) {
         decode_plain_chunk_hip(payload, blocks, output, options);
         return;
@@ -1673,7 +1743,7 @@ void decode_chunk_hip(std::span<const std::byte> payload, std::span<const BlockD
         block.encoded_offset = 0U;
         if (block.kind == BlockKind::GpuCompound) {
             decode_compound_block_hip(encoded, block, decoded, options);
-        } else if (block.kind == BlockKind::GpuBytePlane) {
+        } else if (is_gpu_byte_plane_kind(block.kind)) {
             decode_byte_plane_block_hip(encoded, block, decoded, options);
         } else {
             decode_plain_chunk_hip(encoded, std::span(&block, 1U), decoded, options);
@@ -1734,7 +1804,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
 
     if (std::ranges::any_of(blocks, [](const BlockDescriptor& block) {
-            return block.kind == BlockKind::GpuCompound || block.kind == BlockKind::GpuBytePlane;
+            return block.kind == BlockKind::GpuCompound || is_gpu_byte_plane_kind(block.kind);
         })) {
         return crc_compound_chunk_hip(payload, blocks, options);
     }

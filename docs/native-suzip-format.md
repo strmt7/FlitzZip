@@ -68,10 +68,33 @@ explicit:
   preceding Neutron winner. Both the transform and required-GPU inverse run
   through HIP; the independent CPU reader preserves portability. Trials run
   serially, count all framing bytes and retain losses/ties exactly. Neutron
-  creation admission includes five extra decoded-window extents for retained
-  source/winner/framing and bounded transform/trial storage. Decode retains
+  creation initially admitted five extra decoded-window extents for retained
+  source/winner/framing and bounded transform/trial storage; the current
+  independent-context portfolio uses the six-extents admission described below.
+  Decode retains
   the existing one-window intermediate allowance. Versions one through nine
   retain their original layouts; earlier readers reject version ten.
+- Version 11 adds GPU byte-plane context blocks as kind 13, created only by
+  Neutron star mode. The four-byte header contains a width of two, four or
+  eight followed by three zero reserved bytes. Exactly W six-byte records
+  follow: kind, fill value and little-endian 32-bit encoded length. Their
+  payloads are dense and consume the complete remaining frame. Each plane
+  decodes floor(N/W) bytes, with the unchanged incomplete-record tail appended
+  to the final plane. Inner kinds are raw, fill or the closed plain GPU set;
+  CPU codecs, compositions, byte-plane frames and unknown kinds are rejected.
+  Raw length must equal its decoded extent; fill has zero payload; other
+  kinds must be strictly smaller than their plane. Non-fill values are zero.
+  The complete frame must be smaller than its decoded block and preceding
+  winner. The current writer trials two independent contexts; the reader
+  admits every documented width. Transform, context encoding, required-GPU
+  decoding and inverse run through HIP. No numeric interpretation, external
+  model, quantization or recursive stage is used. The portable reader retains
+  independent original-byte reconstruction. Neutron creation admission uses
+  six extra decoded-window extents for simultaneous retained winners,
+  transform, context framing and plain trials. Decode retains one intermediate
+  window. Versions one through ten remain readable and preserve their layouts;
+  older readers reject version eleven. The writer selects the lowest version
+  required by the final block table.
 - Entropy encoding compares a bounded nested portfolio of static, adaptive,
   and Huffman candidates by complete measured block payload. It packs only
   winning entropy tables and preserves baseline bytes on ties. Candidate

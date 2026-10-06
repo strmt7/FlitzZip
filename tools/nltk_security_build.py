@@ -165,6 +165,12 @@ def installed_runtime_sha256(root: Path) -> str:
                 name = path.relative_to(root).as_posix()
                 if not stat.S_ISREG(info.st_mode):
                     raise ValueError("NLTK installed runtime contains a special file")
+                if path.suffix.lower() in (".pyd", ".so", ".dll", ".dylib"):
+                    raise ValueError("NLTK repaired runtime contains a native executable file")
+                if path.suffix.lower() == ".pyo" or (
+                    path.suffix.lower() == ".pyc" and path.parent.name != "__pycache__"
+                ):
+                    raise ValueError("NLTK repaired runtime contains unreviewed sourceless bytecode")
                 if path.suffix.lower() != ".py" and name != "VERSION":
                     continue
                 with path.open("rb") as stream:

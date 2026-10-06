@@ -574,9 +574,9 @@ inline void validate_byte_plane_decode_layout(std::span<const std::byte> payload
     if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {
         throw ArchiveError("GPU byte-plane block exceeds payload buffer");
     }
-    const auto stage = parse_gpu_byte_plane_block(
-        payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len), block);
-    validate_decode_layout(stage.payload, std::span(&stage.inner, 1U), stage.inner.uncompressed_len, 0U);
+    const auto encoded = payload.subspan(static_cast<std::size_t>(block.encoded_offset), block.encoded_len);
+    const auto stages = parse_gpu_byte_plane_stages(encoded, block);
+    validate_decode_layout(stages.payload, std::span(stages.blocks).first(stages.count), block.uncompressed_len, 0U);
 }
 
 // Purpose: Validate block layout before launching the HIP decode kernel.
@@ -649,7 +649,7 @@ inline void validate_decode_layout(std::span<const std::byte> payload, std::span
             validate_gpu_huffman_payload_table(payload, block, len);
         } else if (block.kind == BlockKind::GpuDictionary) {
             validate_gpu_dictionary_payload(payload, block);
-        } else if (block.kind == BlockKind::GpuBytePlane) {
+        } else if (is_gpu_byte_plane_kind(block.kind)) {
             validate_byte_plane_decode_layout(payload, block);
         } else if (block.kind == BlockKind::GpuCompound) {
             if (block.encoded_offset > payload.size() || block.encoded_len > payload.size() - block.encoded_offset) {

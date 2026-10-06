@@ -30,6 +30,68 @@ struct EmitCursor {
     std::uint32_t written;
 };
 
+// Purpose: Bound any LZ4 parse below by the bytes that every permitted match leaves as literals.
+// Inputs: An uncovered-literal count from one admitted segment, at most 65,536 bytes.
+// Outputs: A conservative payload price including token and unavoidable literal extensions.
+__device__ std::uint32_t literal_cost_floor(std::uint32_t literals) {
+    return literals + 1U + (literals < 15U ? 0U : 1U + (literals - 15U) / 255U);
+}
+
+// Purpose: Reuse the parser's legal verified match extent for conservative coverage analysis.
+// Inputs: Segment-local position/size and its verified match record.
+// Outputs: Returns a bounded exclusive endpoint, or the position when no legal match exists.
+__device__ std::uint32_t legal_match_end(Match match, std::uint32_t position, std::uint32_t size) {
+    if (size - position < 12U || match.distance == 0U || match.distance > position || match.length < 4U) {
+        return position;
+    }
+    return position + min(static_cast<std::uint32_t>(match.length), size - position - 5U);
+}
+
+// Purpose: Bound dictionary payloads using the union of every legal verified match interval.
+// Inputs: Complete match graph and admitted segment extent; all 256 lanes participate in every barrier.
+// Outputs: Reuses pre-writer cursor storage for uncovered bytes and a conservative complete payload price.
+__global__ void bound_match_graphs(State state, std::uint32_t input_size, EmitCursor* bounds) {
+    const auto segment = static_cast<std::uint32_t>(blockIdx.x);
+    const auto start = segment * kSegmentBytes;
+    const auto size = min(input_size - start, kSegmentBytes);
+    const auto lane = static_cast<std::uint32_t>(threadIdx.x);
+    const auto width = (size + kLanes - 1U) / kLanes;
+    const auto begin = min(lane * width, size);
+    const auto end = min(begin + width, size);
+    __shared__ std::uint32_t maximum_ends[kLanes];
+    std::uint32_t reach = 0U;
+    for (auto position = begin; position < end; ++position) {
+        reach = max(reach, legal_match_end(state.matches[start + position], position, size));
+    }
+    maximum_ends[lane] = reach;
+    __syncthreads();
+    for (std::uint32_t stride = 1U; stride < kLanes; stride *= 2U) {
+        const auto prior = lane >= stride ? maximum_ends[lane - stride] : 0U;
+        __syncthreads();
+        maximum_ends[lane] = max(maximum_ends[lane], prior);
+        __syncthreads();
+    }
+    reach = lane == 0U ? 0U : maximum_ends[lane - 1U];
+    // Every lane must finish reading the prefix before shared storage becomes a sum reduction.
+    __syncthreads();
+    std::uint32_t uncovered = 0U;
+    for (auto position = begin; position < end; ++position) {
+        reach = max(reach, legal_match_end(state.matches[start + position], position, size));
+        uncovered += reach <= position ? 1U : 0U;
+    }
+    maximum_ends[lane] = uncovered;
+    __syncthreads();
+    for (auto stride = kLanes / 2U; stride != 0U; stride /= 2U) {
+        if (lane < stride) {
+            maximum_ends[lane] += maximum_ends[lane + stride];
+        }
+        __syncthreads();
+    }
+    if (lane == 0U) {
+        bounds[segment] = {.position = maximum_ends[0], .written = literal_cost_floor(maximum_ends[0])};
+    }
+}
+
 // Purpose: Preserve deterministic minimum-cost ties with one ordered integer.
 // Inputs: Bounded byte cost and segment-local source position.
 // Outputs: Returns a cost-first, position-second key; valid keys are smaller than the infinity sentinel.
@@ -156,6 +218,21 @@ __global__ void classify_match_graphs(State state, std::uint32_t input_size, std
             publish_minimum(state.suffix_tree + segment * kTreeWords, kSegmentBytes, 0U,
                             key(1U + size + extension, 0U));
         }
+    }
+}
+
+// Purpose: Materialize the sole literal representation only for groups proved unable to beat their winners.
+// Inputs: Initialized trees, an admitted segment mask and source extent; no match-derived pointer is formed.
+// Outputs: Clears only the excluded activity flags and publishes valid literal decisions for the HIP writer.
+__global__ void initialize_noncompetitive_graphs(State state, std::uint32_t input_size, std::uint32_t mask,
+                                                 std::uint32_t* active_segments) {
+    const auto segment = static_cast<std::uint32_t>(blockIdx.x);
+    if (threadIdx.x == 0U && (mask & (1U << segment)) != 0U) {
+        const auto start = segment * kSegmentBytes;
+        const auto size = min(input_size - start, kSegmentBytes);
+        active_segments[segment] = 0U;
+        state.next_matches[start] = size;
+        publish_minimum(state.suffix_tree + segment * kTreeWords, kSegmentBytes, 0U, key(literal_cost_floor(size), 0U));
     }
 }
 

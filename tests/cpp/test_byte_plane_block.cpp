@@ -11,6 +11,7 @@
 #include <limits>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -46,14 +47,15 @@ std::vector<std::byte> expected_byte_plane_fixture(std::uint8_t width, std::size
 // Purpose: Demand rejection from both independent CPU and real HIP paths before any kernel dispatch.
 // Inputs: An intentionally malformed wire fixture or descriptor.
 // Outputs: Requires ArchiveError and zero device launches, including the integrity consumer.
-void require_byte_plane_rejection(std::span<const std::byte> payload, const superzip::BlockDescriptor& block) {
+void require_byte_plane_rejection(std::span<const std::byte> payload, const superzip::BlockDescriptor& block,
+                                  std::size_t output_bytes = 64U) {
     for (const bool hip : {false, true}) {
         if (hip && !superzip::query_gpu_info().available) {
             continue;
         }
         const superzip::GpuCodecOptions options{
             .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<superzip::GpuTelemetry>()};
-        std::vector<std::byte> output(64U);
+        std::vector<std::byte> output(output_bytes);
         bool rejected = false;
         try {
             (void)superzip::decode_chunk(payload, std::span(&block, 1U), output, options);
@@ -73,7 +75,214 @@ void require_byte_plane_rejection(std::span<const std::byte> payload, const supe
     }
 }
 
+// Purpose: Construct a context frame independently from the production writer.
+// Inputs: Admitted width and decoded extent; planes alternate fill, two-byte pattern and raw representations.
+// Outputs: Returns a dense closed-stage table and original-order oracle bytes, including the partial tail.
+std::pair<std::vector<std::byte>, std::vector<std::byte>> context_plane_fixture(std::uint8_t width,
+                                                                                std::uint32_t bytes) {
+    std::vector<std::byte> frame(4U + 6U * width, std::byte{0});
+    frame[0] = static_cast<std::byte>(width);
+    const auto records = bytes / width;
+    std::vector<std::byte> expected(bytes);
+    for (std::size_t plane = 0U; plane < width; ++plane) {
+        const auto count = records + (plane + 1U == width ? bytes % width : 0U);
+        const auto kind = plane % 3U == 0U   ? superzip::BlockKind::Fill
+                          : plane % 3U == 1U ? superzip::BlockKind::Pattern
+                                             : superzip::BlockKind::Raw;
+        const auto length = kind == superzip::BlockKind::Fill ? 0U : kind == superzip::BlockKind::Pattern ? 2U : count;
+        const auto offset = 4U + 6U * plane;
+        frame[offset] = static_cast<std::byte>(kind);
+        frame[offset + 1U] = kind == superzip::BlockKind::Fill ? static_cast<std::byte>('A' + plane) : std::byte{0};
+        for (std::size_t byte = 0U; byte < 4U; ++byte) {
+            frame[offset + 2U + byte] = static_cast<std::byte>((length >> (byte * 8U)) & 255U);
+        }
+        if (kind == superzip::BlockKind::Pattern) {
+            frame.push_back(static_cast<std::byte>('A' + plane));
+            frame.push_back(static_cast<std::byte>('a' + plane));
+        }
+        for (std::size_t record = 0U; record < count; ++record) {
+            const auto value = kind == superzip::BlockKind::Raw ? static_cast<std::byte>((plane * 31U + record) % 251U)
+                               : kind == superzip::BlockKind::Fill || record % 2U == 0U
+                                   ? static_cast<std::byte>('A' + plane)
+                                   : static_cast<std::byte>('a' + plane);
+            if (kind == superzip::BlockKind::Raw) {
+                frame.push_back(value);
+            }
+            const auto position = record < records ? record * width + plane : records * width + record - records;
+            expected[position] = value;
+        }
+    }
+    return {std::move(frame), std::move(expected)};
+}
+
 }  // namespace
+
+// Purpose: Independently qualify dense context tables, mixed child codecs and every tail through CPU/HIP readers.
+// Inputs: Handcrafted version-eleven frames at segment/block boundaries and all admitted widths.
+// Outputs: Requires byte-exact reconstruction, actual HIP decoding and GPU CRC equal to the independent oracle.
+TEST_CASE(suzip_byte_plane_context_independent_readers_and_crc) {
+    for (const std::uint8_t width : {2U, 4U, 8U}) {
+        for (const std::uint32_t base : {128U, 4096U, 65536U, 262144U}) {
+            for (std::uint32_t tail = 0U; tail < width; ++tail) {
+                const auto [frame, expected] = context_plane_fixture(width, base + tail);
+                const superzip::BlockDescriptor outer{.kind = superzip::BlockKind::GpuBytePlaneContexts,
+                                                      .uncompressed_len = base + tail,
+                                                      .encoded_len = static_cast<std::uint32_t>(frame.size())};
+                for (const bool hip : {false, true}) {
+                    if (hip && !superzip::query_gpu_info().available) {
+                        continue;
+                    }
+                    const superzip::GpuCodecOptions options{
+                        .require_gpu = hip, .force_cpu = !hip, .telemetry = std::make_shared<superzip::GpuTelemetry>()};
+                    std::vector<std::byte> decoded(expected.size());
+                    (void)superzip::decode_chunk(frame, std::span(&outer, 1U), decoded, options);
+                    REQUIRE_EQ(decoded, expected);
+                    const auto checksum =
+                        superzip::crc_decoded_chunk(frame, std::span(&outer, 1U), decoded.size(), options);
+                    REQUIRE_EQ(checksum.crc32, superzip::crc32(expected));
+                    REQUIRE_EQ(checksum.gpu_used, hip);
+                    REQUIRE_EQ(superzip::snapshot_gpu_telemetry(*options.telemetry).kernel_launches > 0U, hip);
+                }
+            }
+        }
+    }
+}
+
+// Purpose: Refuse malformed context tables before any device work and preserve the explicit version boundary.
+// Inputs: A valid independent frame mutated in header, stage kind/fill, extent, density and version.
+// Outputs: Both readers/integrity consumers reject malformed bytes; only version eleven accepts the new kind.
+TEST_CASE(suzip_byte_plane_context_malformed_and_version_admission) {
+    const auto [frame, expected] = context_plane_fixture(2U, 128U);
+    const superzip::BlockDescriptor outer{.kind = superzip::BlockKind::GpuBytePlaneContexts,
+                                          .uncompressed_len = 128U,
+                                          .encoded_len = static_cast<std::uint32_t>(frame.size())};
+    for (const std::size_t location : {0U, 1U, 2U, 3U, 4U, 6U, 11U, 12U}) {
+        auto changed = frame;
+        changed[location] = location == 4U ? std::byte{13} : std::byte{255};
+        require_byte_plane_rejection(changed, outer, 128U);
+    }
+    for (const std::uint8_t kind : {2U, 8U, 11U, 12U, 13U, 255U}) {
+        auto changed = frame;
+        changed[10] = static_cast<std::byte>(kind);
+        require_byte_plane_rejection(changed, outer, 128U);
+    }
+    for (const std::size_t size : std::array<std::size_t, 5>{0U, 3U, 15U, frame.size() - 1U, frame.size() + 1U}) {
+        auto changed = frame;
+        changed.resize(size, std::byte{0});
+        auto descriptor = outer;
+        descriptor.encoded_len = static_cast<std::uint32_t>(changed.size());
+        require_byte_plane_rejection(changed, descriptor, 128U);
+    }
+    const auto stages = superzip::parse_gpu_byte_plane_contexts(frame, outer);
+    REQUIRE_EQ(stages.width, 2U);
+    superzip::ArchiveIndex index;
+    index.entries.push_back({.path = "context.bin",
+                             .uncompressed_size = expected.size(),
+                             .payload_size = frame.size(),
+                             .crc32 = superzip::crc32(expected),
+                             .blocks = {outer}});
+    index.version = 11U;
+    const auto root = test_temp_dir("plane-context-container");
+    const auto archive = root / "context.suzip";
+    {
+        std::ofstream file(archive, std::ios::binary);
+        file.write(reinterpret_cast<const char*>(frame.data()), static_cast<std::streamsize>(frame.size()));
+        const auto offset = static_cast<std::uint64_t>(file.tellp());
+        superzip::write_archive_index(file, index);
+        superzip_test::write_test_footer(file, offset, static_cast<std::uint64_t>(file.tellp()) - offset,
+                                         index.version);
+    }
+    REQUIRE_EQ(superzip::verify_suzip(archive, {.gpu_required = false, .force_cpu = true}).entries, 1U);
+    REQUIRE_EQ(superzip::extract_suzip(archive, root / "restored", {.gpu_required = false, .force_cpu = true}).entries,
+               1U);
+    {
+        std::ifstream file(root / "restored/context.bin", std::ios::binary);
+        const std::string actual(std::istreambuf_iterator<char>(file), {});
+        REQUIRE_EQ(actual, std::string(reinterpret_cast<const char*>(expected.data()), expected.size()));
+    }
+    if (superzip::query_gpu_info().available) {
+        REQUIRE_TRUE(superzip::verify_suzip(archive, {.gpu_required = true}).gpu_used);
+    }
+    for (std::uint32_t version = 1U; version <= 11U; ++version) {
+        index.version = version;
+        std::ostringstream stream(std::ios::binary);
+        bool rejected = false;
+        try {
+            superzip::write_archive_index(stream, index);
+        } catch (const superzip::ArchiveError&) {
+            rejected = true;
+        }
+        REQUIRE_EQ(rejected, version < 11U);
+        if (!rejected) {
+            std::istringstream admitted(stream.str(), std::ios::binary);
+            const auto parsed = superzip::read_archive_index(admitted);
+            REQUIRE_EQ(parsed.version, 11U);
+            REQUIRE_EQ(parsed.entries.front().blocks.front().kind, outer.kind);
+            for (std::uint32_t older = 1U; older < 11U; ++older) {
+                auto downgraded = stream.str();
+                for (std::size_t byte = 0U; byte < sizeof(older); ++byte) {
+                    downgraded[4U + byte] = static_cast<char>((older >> (byte * 8U)) & 255U);
+                }
+                std::istringstream input(downgraded, std::ios::binary);
+                bool refused = false;
+                try {
+                    (void)superzip::read_archive_index(input);
+                } catch (const superzip::ArchiveError&) {
+                    refused = true;
+                }
+                REQUIRE_TRUE(refused);
+            }
+        }
+    }
+    std::filesystem::remove_all(root);
+}
+
+// Purpose: Qualify actual context creation, independent transform bytes and isolation from ordinary efforts.
+// Inputs: Whole interleaved integer fields, owned/borrowed HIP dispatch and independent CPU/HIP readers.
+// Outputs: Requires a smaller context frame, original-byte readback, real telemetry and unchanged ordinary output.
+TEST_CASE(suzip_neutron_plane_context_writer_gpu_only_and_isolated) {
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    std::vector<std::byte> input(65536U);
+    std::uint32_t random = 0x97A491C3U;
+    for (std::size_t offset = 0U; offset < input.size(); offset += 2U) {
+        random ^= random << 13U;
+        random ^= random >> 17U;
+        random ^= random << 5U;
+        input[offset] = static_cast<std::byte>(random & 255U);
+        input[offset + 1U] = std::byte{0};
+    }
+    const superzip::GpuCodecOptions ordinary{.require_gpu = true, .block_size = 262144U, .compression_level = 9};
+    const auto baseline = superzip::encode_chunk(input, ordinary);
+    auto neutron = ordinary;
+    neutron.compression_mode = superzip::NativeCompressionMode::NeutronStar;
+    neutron.telemetry = std::make_shared<superzip::GpuTelemetry>();
+    const auto encoded = superzip::encode_chunk(input, neutron);
+    REQUIRE_EQ(encoded.blocks.size(), 1U);
+    REQUIRE_EQ(encoded.blocks.front().kind, superzip::BlockKind::GpuBytePlaneContexts);
+    REQUIRE_TRUE(encoded.payload.size() < baseline.payload.size());
+    const auto stages = superzip::parse_gpu_byte_plane_contexts(encoded.payload, encoded.blocks.front());
+    std::vector<std::byte> transformed(input.size());
+    (void)superzip::decode_chunk(stages.payload, std::span(stages.blocks).first(stages.width), transformed,
+                                 {.require_gpu = false, .force_cpu = true});
+    REQUIRE_EQ(stages.width, 2U);
+    for (std::size_t record = 0U; record < input.size() / 2U; ++record) {
+        REQUIRE_EQ(transformed[record], input[record * 2U]);
+        REQUIRE_EQ(transformed[input.size() / 2U + record], input[record * 2U + 1U]);
+    }
+    for (const bool hip : {false, true}) {
+        std::vector<std::byte> decoded(input.size());
+        (void)superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, {.require_gpu = hip, .force_cpu = !hip});
+        REQUIRE_EQ(decoded, input);
+    }
+    REQUIRE_TRUE(superzip::snapshot_gpu_telemetry(*neutron.telemetry).kernel_launches > 0U);
+    const auto owned = superzip::encode_owned_chunk(input, neutron);
+    REQUIRE_EQ(owned.payload, encoded.payload);
+    const auto after = superzip::encode_chunk(input, ordinary);
+    REQUIRE_EQ(after.payload, baseline.payload);
+    REQUIRE_EQ(after.blocks.front().kind, baseline.blocks.front().kind);
+}
 
 // Purpose: Verify every plane width and remainder through independent CPU, actual HIP and device CRC consumers.
 // Inputs: Handcrafted pattern frames, tiny/segment/block boundary lengths and mixed raw/fill layouts.

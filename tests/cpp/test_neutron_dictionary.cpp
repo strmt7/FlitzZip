@@ -584,6 +584,96 @@ TEST_CASE(neutron_dictionary_empty_graph_and_mixed_admission) {
     require_neutron_roundtrip(mixed, encoded);
 }
 
+// Purpose: Reject ambiguous parse budgets before even empty-input checkpoints or device admission.
+// Inputs: Missing/excess coverage, incomplete nonfinal groups, oversized limits and an empty source.
+// Outputs: Requires exact refusal before the checkpoint, preserving the original metadata admission boundary.
+TEST_CASE(neutron_dictionary_budget_admission_precedes_work) {
+    const std::vector<std::byte> input(kSegmentBytes + 17U);
+    const std::vector<std::vector<NeutronParseBudget>> invalid{
+        {{0U, 0U}},
+        {{static_cast<std::uint32_t>(input.size() + 1U), 0U}},
+        {{kSegmentBytes, kSegmentBytes + 1U}, {17U, 0U}},
+        {{kSegmentBytes, 0U}},
+        {{17U, 0U}, {kSegmentBytes, 0U}},
+        {{kSegmentBytes, 0U}, {18U, 0U}},
+    };
+    for (const auto& budgets : invalid) {
+        std::size_t checkpoints = 0U;
+        bool rejected = false;
+        try {
+            (void)encode_neutron_segments(input, [&] { ++checkpoints; }, budgets);
+        } catch (const superzip::GpuError&) {
+            rejected = true;
+        }
+        REQUIRE_TRUE(rejected);
+        REQUIRE_EQ(checkpoints, 0U);
+    }
+    const std::array<NeutronParseBudget, 1> empty_budget{{{1U, 0U}}};
+    bool rejected = false;
+    try {
+        (void)encode_neutron_segments({}, {}, empty_budget);
+    } catch (const superzip::GpuError&) {
+        rejected = true;
+    }
+    REQUIRE_TRUE(rejected);
+}
+
+// Purpose: Prove losing nonempty graphs avoid parsing without excluding any competitive group.
+// Inputs: Independently unique four-byte windows with one real repetition, plus a competitive partial tail.
+// Outputs: Requires unchanged competitive bytes, exact independent readback and honest bounded HIP accounting.
+TEST_CASE(neutron_dictionary_budget_prunes_only_proven_losing_groups) {
+    if (!superzip::query_gpu_info().available) {
+        std::cout << "[SKIP] Neutron payload lower bounds require HIP\n";
+        return;
+    }
+    auto sparse = unique_neutron_segment();
+    std::copy_n(sparse.begin() + 100, 4U, sparse.begin() + 8192);
+    const auto full = encode_neutron_segments(sparse);
+    REQUIRE_EQ(full.neutron_active_segment_mask, 1U);
+    REQUIRE_TRUE(full.segments.front().payload.size() >= sparse.size());
+    const std::array<NeutronParseBudget, 1> losing{{{kSegmentBytes, kSegmentBytes}}};
+    std::size_t completed_checkpoints = 0U;
+    const auto pruned = encode_neutron_segments(sparse, [&] { ++completed_checkpoints; }, losing);
+    REQUIRE_EQ(pruned.neutron_active_segment_mask, 0U);
+    REQUIRE_EQ(pruned.neutron_pruned_segment_mask, 1U);
+    REQUIRE_EQ(pruned.neutron_parse_launches, 0U);
+    REQUIRE_EQ(pruned.neutron_budget_kernel_launches, 2U);
+    REQUIRE_TRUE(pruned.explicit_kernel_launches < full.explicit_kernel_launches);
+    require_neutron_roundtrip(sparse, pruned);
+    const std::vector<std::byte> repeated(600U, std::byte{0xFA});
+    const auto reference = encode_neutron_segments(repeated);
+    REQUIRE_TRUE(reference.segments.front().payload.size() < repeated.size());
+    const auto limit = static_cast<std::uint32_t>(reference.segments.front().payload.size() + 1U);
+    const std::array<NeutronParseBudget, 2> mixed_limits{{{kSegmentBytes, kSegmentBytes}, {600U, limit}}};
+    auto mixed = sparse;
+    mixed.insert(mixed.end(), repeated.begin(), repeated.end());
+    const auto selected = encode_neutron_segments(mixed, {}, mixed_limits);
+    REQUIRE_EQ(selected.neutron_pruned_segment_mask, 1U);
+    REQUIRE_EQ(selected.neutron_active_segment_mask, 2U);
+    REQUIRE_EQ(selected.segments.at(1).payload, reference.segments.front().payload);
+    REQUIRE_EQ(selected.neutron_parse_launches, (600U + kNeutronParseTilePositions - 1U) / kNeutronParseTilePositions);
+    require_neutron_roundtrip(mixed, selected);
+    for (std::size_t stop = 1U; stop <= completed_checkpoints; ++stop) {
+        std::size_t checkpoints = 0U;
+        bool cancelled = false;
+        try {
+            (void)encode_neutron_segments(
+                sparse,
+                [&] {
+                    if (++checkpoints == stop) {
+                        throw superzip::ArchiveError("cancel budget analysis");
+                    }
+                },
+                losing);
+        } catch (const superzip::ArchiveError&) {
+            cancelled = true;
+        }
+        REQUIRE_TRUE(cancelled);
+        REQUIRE_EQ(checkpoints, stop);
+    }
+    REQUIRE_EQ(encode_neutron_segments(repeated).segments.front().payload, reference.segments.front().payload);
+}
+
 // Purpose: Exercise cancellation during different synchronized stages and prove subsequent GPU work remains usable.
 // Inputs: Throwing checkpoints before admission, after initialization and during descending parse tiles.
 // Outputs: Requires exact cancellation propagation and successful byte-exact encoding after every interrupted run.
@@ -709,7 +799,7 @@ TEST_CASE(neutron_dictionary_grouped_portfolio_preserves_winners) {
         const auto payload =
             std::span(encoded.payload).subspan(static_cast<std::size_t>(original.encoded_offset), original.encoded_len);
         original.encoded_offset = restored_payload.size();
-        if (original.kind == superzip::BlockKind::GpuBytePlane) {
+        if (superzip::is_gpu_byte_plane_kind(original.kind)) {
             // A different permutation may now beat composition. Independently invert it before recreating the
             // unchanged ordinary GPU payload; retain the exact baseline byte and descriptor oracle below.
             std::vector<std::byte> restored_source(original.uncompressed_len);

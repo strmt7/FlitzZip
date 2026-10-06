@@ -18,6 +18,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import venv
@@ -170,9 +171,24 @@ def run_owned(command: list[str], env: dict[str, str], timeout: float = 900, *, 
                     raise ValueError("Crawler setup exceeded its 4 MiB output budget")
 
 
-def run(command: list[str], env: dict[str, str], timeout: int = 900) -> None:
-    """Purpose: Require successful setup. Inputs: Explicit command/environment/deadline. Outputs: Success or error."""
-    code = run_owned(command, env, timeout, quiet=True)
+def run_source_python(command: list[str], env: dict[str, str], timeout: float = 900, *, quiet: bool = False) -> int:
+    """Purpose: Import source. Inputs: Trusted Python argv/environment. Outputs: Owned exit without cache reuse."""
+    if not command:
+        raise ValueError("Source-only Python requires an interpreter command")
+    temporary_root = Path(tempfile.gettempdir()).resolve()
+    with tempfile.TemporaryDirectory(prefix="superzip-crawl4ai-bytecode-", dir=temporary_root) as temporary:
+        directory = Path(temporary)
+        if directory.resolve().parent != temporary_root:
+            raise ValueError("Source-only import cache escaped its owned temporary root")
+        runtime_env = {**env, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPYCACHEPREFIX": str(directory)}
+        runtime = [command[0], "-B", "-X", f"pycache_prefix={directory}", *command[1:]]
+        return run_owned(runtime, runtime_env, timeout, quiet=quiet)
+
+
+def run(command: list[str], env: dict[str, str], timeout: int = 900, *, source_only: bool = False) -> None:
+    """Purpose: Require setup success. Inputs: Command, environment and import policy. Outputs: Success or error."""
+    execute = run_source_python if source_only else run_owned
+    code = execute(command, env, timeout, quiet=True)
     if code:
         raise subprocess.CalledProcessError(code, command)
 
@@ -202,6 +218,7 @@ def verify_versions(python: Path, env: dict[str, str]) -> None:
         ],
         env,
         60,
+        source_only=True,
     )
 
 
@@ -262,11 +279,11 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
         if recorded.get("lock_sha256") == identity and recorded.get("platform") == platform.system():
             verify_versions(python, env)
             if recorded.get("model_contract_sha256") != model_contract:
-                run(model_command, env, 60)
+                run(model_command, env, 60, source_only=True)
                 recorded["model_contract_sha256"] = model_contract
                 write_install_receipt(receipt, recorded)
             if recorded.get("download_contract_sha256") != download_contract:
-                run(download_command, env, 60)
+                run(download_command, env, 60, source_only=True)
                 recorded["download_contract_sha256"] = download_contract
                 write_install_receipt(receipt, recorded)
             return python
@@ -296,8 +313,8 @@ def provision(home: Path, directory: Path, python: Path, identity: str) -> Path:
     )
     run([str(python), "-m", "pip", "check"], env, 60)
     verify_versions(python, env)
-    run(model_command, env, 60)
-    run(download_command, env, 60)
+    run(model_command, env, 60, source_only=True)
+    run(download_command, env, 60, source_only=True)
     run([str(python), "-m", "playwright", "install", "chromium"], env)
     write_install_receipt(
         receipt,
@@ -345,7 +362,7 @@ def main() -> int:
         command = [str(python), "-m", "crawl4ai.cli", "crawl", *remaining]
     else:
         command = [str(python), "-m", "tools.crawl4ai_research", args.command, *remaining]
-    return run_owned(command, env, timeout=1800)
+    return run_source_python(command, env, timeout=1800)
 
 
 if __name__ == "__main__":

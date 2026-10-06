@@ -114,3 +114,29 @@ The original six-API negative control and repaired nine-test model/consumer
 evidence still bind the same runtime source. New source-integrity contracts and
 an actual installed-cache consumer are required for this guard; their results
 are recorded in the current development review.
+
+## Executed Source Integrity
+
+A separate inert-package control reproduced a gap between source admission and
+execution: the source digest passed after the original initializer was restored,
+but ordinary Python imported different unchecked-hash bytecode from its cache.
+The isolated source-import control loaded the original initializer instead.
+This test changed only an owned temporary fixture, never the installed package.
+
+Crawler runtime commands now use a fresh temporary
+[`sys.pycache_prefix`](https://docs.python.org/3/library/sys.html#sys.pycache_prefix)
+and `-B` through the standard interpreter. Python documents that this prefix
+changes where caches are read and ignores source-tree `__pycache__` directories;
+`-B` prevents writing new bytecode. The prefix is scoped to the contained child
+and removed after its process tree exits. Existing source and cache files are
+preserved. The pure-Python NLTK admission also rejects native executable modules
+and sourceless bytecode outside ordinary cache directories.
+
+The source-import contracts exercise an actual unchecked-hash cache, exact CLI
+argument forwarding, child-only flags, temporary-directory lifetime and refusal
+of native or sourceless module additions. The unchanged admitted installed
+runtime passed all nine model/API tests under this policy. Crawl4AI then fetched
+the primary Python documentation with robots checking enabled. No package or
+browser reinstall was required. The earlier multi-site qualification remains
+evidence for its original checkpoint; this focused check qualifies the changed
+import mechanism and its actual consumers.

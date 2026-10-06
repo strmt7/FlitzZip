@@ -80,7 +80,8 @@ bool block_has_payload(BlockKind kind) {
     return kind == BlockKind::Raw || kind == BlockKind::Deflate || kind == BlockKind::CpuZstd ||
            kind == BlockKind::Pattern || kind == BlockKind::GpuPrefix || kind == BlockKind::GpuAdaptivePrefix ||
            kind == BlockKind::GpuHuffman || kind == BlockKind::GpuCompound || kind == BlockKind::GpuBytePlane ||
-           kind == BlockKind::GpuDictionary || is_gpu_sparse_pattern_kind(kind);
+           kind == BlockKind::GpuBytePlaneContexts || kind == BlockKind::GpuDictionary ||
+           is_gpu_sparse_pattern_kind(kind);
 }
 
 // Purpose: Create a bounded file-stream buffer for high-throughput archive I/O.
@@ -136,8 +137,8 @@ PipelineBudget resolve_pipeline_budget(std::uint64_t chunk_size, std::uint32_t r
     }
     if (compression != nullptr && compression->compression_mode == NativeCompressionMode::NeutronStar) {
         // Three window owners coexist with one transformed block and its bounded plain-codec trial portfolio.
-        // Five extra chunk extents conservatively cover the transform, trial candidates and framing temporaries.
-        workspace.per_window_bytes = chunk_size * 5U;
+        // Six extra extents cover retained winners, transform, context frame and its simultaneous plain trial.
+        workspace.per_window_bytes = chunk_size * 6U;
     }
     if (compression != nullptr && !compression->gpu_required) {
         workspace = cpu_encode_workspace_estimate(
@@ -533,7 +534,8 @@ void validate_block_header_metadata(const ArchiveEntry& entry, const BlockDescri
         block.kind != BlockKind::CpuZstd && block.kind != BlockKind::Pattern && block.kind != BlockKind::GpuPrefix &&
         block.kind != BlockKind::GpuAdaptivePrefix && block.kind != BlockKind::GpuHuffman &&
         block.kind != BlockKind::GpuCompound && block.kind != BlockKind::GpuBytePlane &&
-        block.kind != BlockKind::GpuDictionary && !is_gpu_sparse_pattern_kind(block.kind)) {
+        block.kind != BlockKind::GpuBytePlaneContexts && block.kind != BlockKind::GpuDictionary &&
+        !is_gpu_sparse_pattern_kind(block.kind)) {
         throw ArchiveError("archive block has unknown encoding kind");
     }
     if (block.uncompressed_len == 0) {
@@ -559,8 +561,10 @@ void require_dense_payload_offset(const ArchiveEntry& entry, const BlockDescript
 // Outputs: Returns the next cursor or throws before reading frame bytes.
 static std::uint64_t validate_byte_plane_payload_metadata(const ArchiveEntry& entry, const BlockDescriptor& block,
                                                           std::uint64_t payload_cursor) {
-    if (block.fill_value != 0U || block.encoded_len < kGpuBytePlaneHeaderBytes ||
-        block.encoded_len >= block.uncompressed_len) {
+    const auto minimum = block.kind == BlockKind::GpuBytePlaneContexts
+                             ? kGpuBytePlaneHeaderBytes + 2U * kGpuBytePlaneContextRecordBytes
+                             : kGpuBytePlaneHeaderBytes;
+    if (block.fill_value != 0U || block.encoded_len < minimum || block.encoded_len >= block.uncompressed_len) {
         throw ArchiveError("GPU byte-plane block metadata is invalid");
     }
     require_dense_payload_offset(entry, block, payload_cursor, "GPU byte-plane");
@@ -644,6 +648,7 @@ std::uint64_t validate_block_payload_metadata(const ArchiveEntry& entry, const B
         require_dense_payload_offset(entry, block, payload_cursor, "GPU compound");
         return checked_add_u64(payload_cursor, block.encoded_len, "GPU compound block payload size overflows");
     case BlockKind::GpuBytePlane:
+    case BlockKind::GpuBytePlaneContexts:
         return validate_byte_plane_payload_metadata(entry, block, payload_cursor);
     case BlockKind::GpuSparsePattern:
     case BlockKind::GpuLongSparsePattern:
@@ -845,12 +850,14 @@ void compress_manifest_file_entry(const ManifestEntry& manifest_entry, const Com
 
 // Purpose: Select the smallest native version that defines every encoded block.
 // Inputs: A completed archive index with all file block descriptors.
-// Outputs: Returns version three through ten without downgrading a new block kind.
+// Outputs: Returns version three through eleven without downgrading a new block kind.
 std::uint32_t required_archive_version(const ArchiveIndex& index) {
     std::uint32_t version = kSuperZipVersion;
     for (const auto& entry : index.entries) {
         for (const auto& block : entry.blocks) {
-            if (block.kind == BlockKind::GpuBytePlane) {
+            if (block.kind == BlockKind::GpuBytePlaneContexts) {
+                version = std::max(version, 11U);
+            } else if (block.kind == BlockKind::GpuBytePlane) {
                 version = std::max(version, 10U);
             } else if (block.kind == BlockKind::GpuCompound) {
                 version = std::max(version, 9U);

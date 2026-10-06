@@ -24,6 +24,7 @@ mkdir -p /out/corpus/archive_index /out/corpus/path_safety /out/corpus/cpio /out
 printf 'SUZP\001\000\000\000\000\000\000\000' > /out/corpus/archive_index/empty-index
 printf '\000\020\000\000\001\003A\000\000\004\000\000' > /out/corpus/archive_index/compound-fill-pattern
 printf '\003\020\000\000\004\003\000\000AB' > /out/corpus/archive_index/byte-plane-pattern-tail
+printf '\200\000\000\000\002\000\000\000\001A\000\000\000\000\003\000\002\000\000\000AB' > /out/corpus/archive_index/byte-plane-context-fill-pattern
 printf '../escape' > /out/corpus/path_safety/traversal
 printf 'C:/absolute' > /out/corpus/path_safety/drive-rooted
 printf 'safe/nested/file.txt' > /out/corpus/path_safety/safe-relative
