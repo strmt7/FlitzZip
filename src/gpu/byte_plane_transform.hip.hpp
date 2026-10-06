@@ -17,7 +17,7 @@ inline void transform_byte_planes_hip(std::span<const std::byte> source, std::sp
     if (options.encode_checkpoint) {
         options.encode_checkpoint();
     }
-    require_hip_device_ready();
+    require_hip_kernel_device_support();
     auto* telemetry = options.telemetry.get();
     const auto allocation_bytes = checked_multiply_bytes(source.size(), 2U, "byte-plane device memory");
     HipDeviceMemoryReservation reservation(allocation_bytes, "byte-plane transform");

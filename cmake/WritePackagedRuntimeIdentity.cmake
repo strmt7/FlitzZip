@@ -62,9 +62,31 @@ if(_hip_enabled)
     message(FATAL_ERROR "Unexpected kernel module filename: ${_name}")
   endif()
   file(SHA256 "${INPUT}" _digest)
-  string(CONCAT _header_text "#pragma once\n\n"
-                "inline constexpr char kHipKernelModuleSha256[] = "
-                "\"${_digest}\";\n")
+  string(JSON _architectures GET "${_manifest}" gpu_backend arch)
+  if(NOT _architectures MATCHES "^gfx[0-9a-z]+(,gfx[0-9a-z]+)*$")
+    message(FATAL_ERROR "Kernel identity requires canonical compiled targets")
+  endif()
+  string(REPLACE "," ";" _targets "${_architectures}")
+  list(LENGTH _targets _target_count)
+  set(_unique_targets "${_targets}")
+  list(REMOVE_DUPLICATES _unique_targets)
+  list(LENGTH _unique_targets _unique_count)
+  if(_target_count GREATER 16 OR NOT _target_count EQUAL _unique_count)
+    message(FATAL_ERROR "Kernel identity requires bounded unique targets")
+  endif()
+  set(_target_literals "")
+  foreach(target IN LISTS _targets)
+    string(APPEND _target_literals "\"${target}\",")
+  endforeach()
+  string(
+    CONCAT _header_text
+           "#pragma once\n\n#include <array>\n"
+           "#include <string_view>\n\n"
+           "inline constexpr char kHipKernelModuleSha256[] = "
+           "\"${_digest}\";\n"
+           "inline constexpr std::array<std::string_view, "
+           "${_target_count}> kHipKernelArchitectures{"
+           "${_target_literals}};\n")
   get_filename_component(_header_directory "${HEADER}" DIRECTORY)
   file(MAKE_DIRECTORY "${_header_directory}")
   file(WRITE "${HEADER}.pending" "${_header_text}")

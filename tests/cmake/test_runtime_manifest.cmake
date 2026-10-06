@@ -137,7 +137,9 @@ foreach(mode IN ITEMS OFF ON)
       if(NOT module_digest STREQUAL expected_kernel
          OR NOT module_count EQUAL 3
          OR NOT module_name STREQUAL "superzip_hip_kernels.dll"
-         OR NOT header_text MATCHES "${expected_kernel}")
+         OR NOT header_text MATCHES "${expected_kernel}"
+         OR NOT header_text MATCHES "kHipKernelArchitectures"
+         OR NOT header_text MATCHES "gfx1201")
         message(
           FATAL_ERROR "Kernel identity does not match actual module bytes")
       endif()
@@ -146,8 +148,15 @@ foreach(mode IN ITEMS OFF ON)
     endif()
   endforeach()
 endforeach()
-foreach(failure IN ITEMS missing-kernel missing-zstd missing-wim changed-wim
-                         cpu-with-kernel)
+foreach(
+  failure IN
+  ITEMS missing-kernel
+        missing-zstd
+        missing-wim
+        changed-wim
+        cpu-with-kernel
+        invalid-target
+        duplicate-target)
   set(_input "${_module}")
   set(_zstd_input "${_zstd}")
   set(_wim_input "${_wim}")
@@ -160,6 +169,24 @@ foreach(failure IN ITEMS missing-kernel missing-zstd missing-wim changed-wim
     set(_wim_input "${OUTPUT_ROOT}/missing.dll")
   elseif(failure STREQUAL "changed-wim")
     file(WRITE "${_wim}" "altered-wim-fixture")
+  elseif(failure STREQUAL "invalid-target" OR failure STREQUAL
+                                              "duplicate-target")
+    file(READ "${_base}" invalid_manifest)
+    if(failure STREQUAL "invalid-target")
+      set(_invalid_arch "gfx1201;unexpected")
+    else()
+      set(_invalid_arch "gfx1201,gfx1201")
+    endif()
+    string(
+      JSON
+      invalid_manifest
+      SET
+      "${invalid_manifest}"
+      gpu_backend
+      arch
+      "\"${_invalid_arch}\"")
+    set(_base "${OUTPUT_ROOT}/invalid-target.json")
+    file(WRITE "${_base}" "${invalid_manifest}")
   else()
     set(_base "${OUTPUT_ROOT}/runtime-OFF.json")
   endif()

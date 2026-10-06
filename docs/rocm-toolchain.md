@@ -146,6 +146,23 @@ GPU. See [release targets and validation](release.md#gpu-targets). Any speed or
 compression-ratio improvement still requires the documented byte-exact RAM-only
 CPU/GPU comparison with measured HIP telemetry and corrected statistical planning.
 
+The kernel identity header embeds the same canonical targets supplied to the
+compiler, together with the linked module's checksum. Admission compares the
+selected device's HIP architecture against those targets before loading the
+module. It then resolves all registered device kernels without launching them.
+An unsupported target is a capability failure, rather than permission to retry
+Neutron on CPU. Only successful immutable code compatibility is cached per
+thread and selected device; runtime readiness and operation errors remain live.
+
+For an incompatible-target regression on a HIP-equipped development host, build
+with an approved target that differs from the device's reported `gcn_arch`.
+`superzip_cli dependency-check` must return 13 with an unsupported-target status;
+required-HIP `--neutron-star` must fail before compression, while `--force-cpu`
+remains byte-exact. Restore the matching target and run the native tests before
+using that build for benchmarks or packaging. This test changes build inputs;
+it must never edit a runtime identity, driver, or compiled payload to simulate
+compatibility.
+
 ## Fresh Hosted Compile Qualification
 
 The manually dispatched `rocm-qualification` workflow uses a fresh selected

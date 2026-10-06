@@ -1147,7 +1147,8 @@ std::optional<int> run_info_command(const std::vector<std::string>& args) {
                   << (code == 0    ? "ready"
                       : code == 10 ? "cpu_only_build"
                       : code == 11 ? "missing_hip_runtime"
-                                   : "missing_amd_gpu")
+                      : code == 12 ? "missing_amd_gpu"
+                                   : "hip_initialization_or_kernel_failure")
                   << "\n";
         return code;
     }

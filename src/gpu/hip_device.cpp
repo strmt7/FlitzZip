@@ -339,14 +339,14 @@ void require_hip_device_ready() {
 }
 
 // Purpose: Distinguish expected HIP absence from a failure on a present runtime/device.
-// Inputs: None; preserves the calling thread's selection and performs no allocation or property queries.
+// Inputs: None; preserves the calling thread's selection and resolves the build's registered device kernels.
 // Outputs: Returns false only for a missing runtime/build or zero devices; unexpected HIP errors propagate.
 bool hip_device_available() {
 #if SUPERZIP_ENABLE_HIP
     if (!load_hip_runtime() || checked_hip_device_identity(true).selected < 0) {
         return false;
     }
-    (void)hip_kernel_api();
+    require_hip_kernel_device_support();
     return true;
 #else
     return false;
@@ -548,7 +548,7 @@ GpuInfo query_hip_gpu_info() {
             info.status = "No AMD HIP device is available";
             return info;
         }
-        (void)hip_kernel_api();
+        require_hip_kernel_device_support();
         info.hip_kernel_loadable = true;
     } catch (const GpuError& error) {
         info.status = error.what();

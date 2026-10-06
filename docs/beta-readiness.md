@@ -5,7 +5,7 @@ A candidate build and its validation are separate from permission to publish.
 
 ## Product Evidence
 
-The retained native qualification covers 626 main tests, seven CTest suites,
+The retained native qualification covers 627 main tests, seven CTest suites,
 required-HIP and CPU readers across all seven block settings, binary benchmark
 input and the frontend's Neutron capability/settings gates. Local reuse requires
 the successful native receipt to match current inputs, configuration and outputs.
@@ -18,6 +18,10 @@ Missing and altered kernel payloads have independent integrity tests: CPU
 operations remain usable, while required-HIP Neutron rejects the failed module.
 Compatibility and kernel DLL hashes are produced from linked bytes and checked
 in staged and installed packages, independently from GPU presence.
+Capability admission checks the selected GPU against the exact compiled targets
+before loading the kernel module, then resolves every registered device kernel
+through HIP before advertising support or allocating codec buffers. A valid
+driver and intact DLL alone do not establish support for this build's kernels.
 
 Neutron is GPU-only and separate from efforts 1–9. The
 [benchmark index](benchmarks/README.md) and [public-corpus protocol](neutron-public-corpus-benchmark.md)

@@ -153,4 +153,9 @@ static_assert(std::is_trivially_copyable_v<hip_detail::EntropyLengthSegmentPlan>
 // Outputs: Returns validated dispatch metadata, or throws before an unverified kernel can execute.
 const HipKernelApi& hip_kernel_api();
 
+// Purpose: Require this build's device kernels to resolve on the current HIP device before advertising support.
+// Inputs: The calling thread's live device selection; preserves it and never launches a kernel.
+// Outputs: Returns on compatibility or throws GpuError; caches only successful immutable device-code resolution.
+void require_hip_kernel_device_support();
+
 }  // namespace superzip

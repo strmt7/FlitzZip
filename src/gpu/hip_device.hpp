@@ -13,7 +13,7 @@ namespace superzip {
 void require_hip_device_ready();
 
 // Purpose: Select optional HIP without treating runtime/device errors as ordinary absence.
-// Inputs: None; preserves device selection and does not cache availability or allocate storage.
+// Inputs: None; preserves device selection and does not cache runtime/device availability.
 // Outputs: Returns false for absent HIP only; unexpected enumeration/selection failures throw GpuError.
 bool hip_device_available();
 

@@ -9,6 +9,10 @@
 #include "core/resource_limits.hpp"
 #include "core/result.hpp"
 
+#if SUPERZIP_ENABLE_HIP
+#include "gpu/hip_kernel_api.hpp"
+#endif
+
 #include <array>
 #include <barrier>
 #include <cmath>
@@ -524,6 +528,33 @@ TEST_CASE(optional_hip_encoding_uses_explicit_availability) {
         REQUIRE_TRUE(!superzip::decode_chunk(encoded.payload, encoded.blocks, decoded, cpu));
         REQUIRE_TRUE(decoded == source);
     }
+}
+
+// Purpose: Preserve thread-local device selection while admitting the actual kernel payload on independent threads.
+// Inputs: The live HIP capability state; absent hardware is separately exercised by dependency/package contracts.
+// Outputs: Requires repeated successful native admission and unchanged device selection on two calling threads.
+TEST_CASE(gpu_kernel_admission_preserves_thread_device_selection) {
+#if SUPERZIP_ENABLE_HIP
+    if (!superzip::query_gpu_info().available) {
+        return;
+    }
+    // Purpose: Check repeated admission against one thread's live device instead of sharing another thread's cache.
+    // Inputs: The thread's default/current device. Outputs: Requires unchanged selection and successful resolution.
+    const auto check = [] {
+        int before = -1;
+        REQUIRE_EQ(hipGetDevice(&before), hipSuccess);
+        superzip::require_hip_kernel_device_support();
+        superzip::require_hip_kernel_device_support();
+        int after = -1;
+        REQUIRE_EQ(hipGetDevice(&after), hipSuccess);
+        REQUIRE_EQ(after, before);
+        REQUIRE_TRUE(superzip::hip_device_available());
+    };
+    check();
+    std::async(std::launch::async, check).get();
+#else
+    REQUIRE_TRUE(!superzip::hip_device_available());
+#endif
 }
 
 // Purpose: Keep allocator compatibility decisions tied to the loaded numeric DLL version rather than SDK labels.

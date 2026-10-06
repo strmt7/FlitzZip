@@ -823,7 +823,7 @@ EncodedChunk encode_chunk_hip_impl(std::span<const std::byte> input, std::vector
     // Nested trial work contributes device counters; its enclosing source publication owns the phase duration.
     auto phase_started = std::chrono::steady_clock::now();
     record_gpu_encode_chunk(telemetry);
-    require_hip_device_ready();
+    require_hip_kernel_device_support();
     record_encode_phase(phase_telemetry, GpuEncodeStage::Readiness, phase_started);
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     const auto computed_block_count =
@@ -968,7 +968,7 @@ static void decode_plain_chunk_hip(std::span<const std::byte> payload, std::span
     }
     auto* telemetry = options.telemetry.get();
     record_gpu_decode_chunk(telemetry);
-    require_hip_device_ready();
+    require_hip_kernel_device_support();
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, output.size(), block_size);
     auto host_blocks = build_decode_device_blocks(blocks);
@@ -1113,7 +1113,7 @@ std::uint32_t crc_decoded_chunk_hip(std::span<const std::byte> payload, std::spa
         }
     }
     auto* telemetry = options.telemetry.get();
-    require_hip_device_ready();
+    require_hip_kernel_device_support();
     const auto block_size = std::max<std::uint32_t>(1, options.block_size);
     validate_decode_layout(payload, blocks, static_cast<std::size_t>(output_size), block_size);
 
