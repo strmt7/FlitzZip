@@ -309,6 +309,10 @@ Guidelines, and SEI CERT C++.
   Reused CodeQL analyses remain covered after the canonical selector proves
   unchanged native/query inputs. Missing or incomplete analysis evidence fails;
   a documentation-only commit must not make retained findings disappear.
+  The hosted selector also compares the latest CPU/HIP analysis inputs so a
+  cancelled native scan remains required across subsequent non-native pushes.
+  Uploaded analysis alone is insufficient: both C++ jobs and their owning
+  workflow must have completed successfully before unchanged inputs are reused.
 - For repeated scanner incidents or a requested history review, use that audit
   with `-IncludeHistory -HistoryReportPath` and a new JSON path under `out/`.
   Review all rule/state groups once; reuse the saved evidence until the affected

@@ -18,6 +18,10 @@ jobs:
     name: Select whole-database C++ analysis
     runs-on: windows-2022
     timeout-minutes: 5
+    permissions:
+      actions: read # verify both analysis jobs completed before reuse
+      contents: read # allow complete committed input comparisons
+      security-events: read # allow latest CPU/HIP analysis coverage checks
     outputs:
       codeql_cpp: ${{ steps.cpp_plan.outputs.codeql_cpp }}
       codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}
@@ -36,11 +40,13 @@ jobs:
         id: cpp_plan
         shell: pwsh
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           PUSH_BASE: ${{ github.event.before }}
         run: >-
           python -B -m tools.cpp_security_plan --event $env:EVENT_NAME
           --push-base "$env:PUSH_BASE" --github-output $env:GITHUB_OUTPUT
+          --repository "$env:GITHUB_REPOSITORY" --ref "$env:GITHUB_REF"
 
   codeql-cpp:
     name: CodeQL C++ (${{ matrix.configuration }})

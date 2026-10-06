@@ -1,6 +1,7 @@
 """Whole-database C++ security admission and real Git range recurrence contracts."""
 
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,157 @@ from tools import cpp_security_plan as cpp
 # Inputs: Actual native receipt projection, workflow and isolated real Git histories.
 # Outputs: Admission, rejection, output and rename/delete controls pass without compilation or scanning.
 class CppSecurityContracts(unittest.TestCase):
+    def test_latest_analysis_is_paginated_and_does_not_replace_newer_attempts(self):
+        """Purpose: Preserve latest roles. Inputs: Two API pages. Outputs: Newest CPU and HIP identities win."""
+
+        def record(category, commit):
+            # Purpose: Build public analysis metadata. Inputs: Category/SHA. Outputs: Complete fixture record.
+            return {"category": category, "commit_sha": commit, "error": "", "warning": ""}
+
+        unrelated = record("/language:actions", "a" * 40)
+        pages = [
+            [record(cpp.CPP_CATEGORIES[0], "b" * 40), *[unrelated] * 99],
+            [record(cpp.CPP_CATEGORIES[0], "a" * 40), record(cpp.CPP_CATEGORIES[1], "c" * 40)],
+        ]
+        with mock.patch.object(
+            cpp, "capture_metadata", side_effect=[json.dumps(page).encode() for page in pages]
+        ) as call:
+            latest = cpp.latest_cpp_analysis("fixture/repository", "refs/heads/main")
+        self.assertEqual(latest[cpp.CPP_CATEGORIES[0]]["commit_sha"], "b" * 40)
+        self.assertEqual(latest[cpp.CPP_CATEGORIES[1]]["commit_sha"], "c" * 40)
+        self.assertEqual(call.call_count, 2)
+        for page, arguments in enumerate(call.call_args_list, 1):
+            command = arguments.args[0]
+            self.assertEqual(command[:2], ["gh", "api"])
+            self.assertIn(f"&page={page}&direction=desc", command[2])
+            self.assertIn("ref=refs%2Fheads%2Fmain&tool_name=CodeQL", command[2])
+
+    def test_invalid_analysis_evidence_cannot_establish_reuse(self):
+        """Purpose: Reject untrusted evidence. Inputs: Bad pages/identities. Outputs: Error, never skipped analysis."""
+        valid = {"category": cpp.CPP_CATEGORIES[0], "commit_sha": "a" * 40, "error": "", "warning": ""}
+        for page in [None, {}, [None], [valid] * 101, [{**valid, "commit_sha": "HEAD"}], [{**valid, "error": None}]]:
+            with (
+                self.subTest(page=page),
+                mock.patch.object(cpp, "capture_metadata", return_value=json.dumps(page).encode()),
+                self.assertRaises(ValueError),
+            ):
+                cpp.latest_cpp_analysis("fixture/repository", "refs/heads/main")
+        for repository, reference in [("bad/name/extra", "refs/heads/main"), ("fixture/repository", "main")]:
+            with self.assertRaises(ValueError):
+                cpp.latest_cpp_analysis(repository, reference)
+        with (
+            mock.patch.object(cpp, "capture_metadata", side_effect=ValueError("API unavailable")),
+            self.assertRaisesRegex(ValueError, "API unavailable"),
+        ):
+            cpp.latest_cpp_analysis("fixture/repository", "refs/heads/main")
+
+    def test_incomplete_analysis_selects_both_databases_with_bounded_lookup(self):
+        """Purpose: Retain coverage. Inputs: Missing/failed/warned roles. Outputs: Both configurations admitted."""
+        valid = {"category": cpp.CPP_CATEGORIES[0], "commit_sha": "a" * 40, "error": "", "warning": ""}
+        for latest in [
+            {},
+            {cpp.CPP_CATEGORIES[0]: valid},
+            {category: {**valid, "category": category, "warning": "partial"} for category in cpp.CPP_CATEGORIES},
+            {category: {**valid, "category": category, "error": "failed"} for category in cpp.CPP_CATEGORIES},
+        ]:
+            with (
+                mock.patch.object(cpp, "latest_cpp_analysis", return_value=latest),
+                mock.patch.object(cpp, "changed_paths") as paths,
+            ):
+                plan = cpp.qualify_analysis_reuse(cpp.select_cpp([]), "fixture/repository", "refs/heads/main")
+            self.assertTrue(plan["codeql_cpp"])
+            self.assertTrue(plan["codeql_hip_host"])
+            paths.assert_not_called()
+        unrelated = {**valid, "category": "/language:actions"}
+        with mock.patch.object(cpp, "capture_metadata", return_value=json.dumps([unrelated] * 100).encode()) as call:
+            self.assertEqual(cpp.latest_cpp_analysis("fixture/repository", "refs/heads/main"), {})
+            self.assertEqual(call.call_count, 32)
+        with mock.patch.object(cpp, "latest_cpp_analysis") as inventory:
+            cpp.qualify_analysis_reuse(cpp.select_cpp(["src/changed.cpp"]), "fixture/repository", "refs/heads/main")
+            inventory.assert_not_called()
+
+    def test_real_cancelled_native_analysis_survives_later_documentation_push(self):
+        """Purpose: Reproduce lost coverage. Inputs: Native then docs commits. Outputs: Stale HIP reselects both."""
+        with tempfile.TemporaryDirectory(prefix="superzip-cancelled-analysis-") as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "--quiet", directory], check=True)
+            for key, value in [("user.name", "Contract Fixture"), ("user.email", "fixture@example.invalid")]:
+                subprocess.run(["git", "-C", directory, "config", key, value], check=True)
+            (root / "src").mkdir()
+            commits = []
+            for name, text in [("src/codec.cpp", "old\n"), ("src/codec.cpp", "new\n"), ("README.md", "docs\n")]:
+                (root / name).write_text(text, encoding="utf-8")
+                subprocess.run(["git", "-C", directory, "add", name], check=True)
+                subprocess.run(["git", "-C", directory, "commit", "--quiet", "-m", "Fixture update"], check=True)
+                commits.append(
+                    subprocess.check_output(["git", "-C", directory, "rev-parse", "HEAD"], text=True).strip()
+                )
+            pushed = cpp.event_plan("push", commits[1], root)
+            self.assertFalse(pushed["codeql_cpp"])
+            latest = {
+                category: {"category": category, "commit_sha": commits[index], "error": "", "warning": ""}
+                for category, index in zip(cpp.CPP_CATEGORIES, [1, 0], strict=True)
+            }
+            with (
+                mock.patch.object(cpp, "latest_cpp_analysis", return_value=latest),
+                mock.patch.object(cpp, "has_qualified_cpp_workflow", return_value=True),
+            ):
+                self.assertTrue(
+                    cpp.qualify_analysis_reuse(pushed, "fixture/repository", "refs/heads/main", root)["codeql_cpp"]
+                )
+            latest[cpp.CPP_CATEGORIES[1]]["commit_sha"] = commits[1]
+            with (
+                mock.patch.object(cpp, "latest_cpp_analysis", return_value=latest),
+                mock.patch.object(cpp, "has_qualified_cpp_workflow", return_value=True),
+            ):
+                self.assertFalse(
+                    cpp.qualify_analysis_reuse(pushed, "fixture/repository", "refs/heads/main", root)["codeql_cpp"]
+                )
+            latest[cpp.CPP_CATEGORIES[1]]["commit_sha"] = "f" * 40
+            with (
+                mock.patch.object(cpp, "latest_cpp_analysis", return_value=latest),
+                mock.patch.object(cpp, "has_qualified_cpp_workflow", return_value=True),
+                self.assertRaisesRegex(ValueError, "Git range failed"),
+            ):
+                cpp.qualify_analysis_reuse(pushed, "fixture/repository", "refs/heads/main", root)
+
+    def test_cancelled_or_skipped_workflow_cannot_admit_uploaded_analysis(self):
+        """Purpose: Qualify consumers. Inputs: Actual workflow/job states. Outputs: Both successful jobs required."""
+        run = {"id": 17, "head_sha": "a" * 40, "head_branch": "main", "status": "completed", "conclusion": "success"}
+        jobs = [
+            {"name": f"CodeQL C++ ({role})", "status": "completed", "conclusion": "success"}
+            for role in ["cpu", "hip-host"]
+        ]
+        for conclusion in ["cancelled", "failure", None]:
+            with mock.patch.object(
+                cpp, "capture_metadata", return_value=json.dumps([{**run, "conclusion": conclusion}]).encode()
+            ):
+                self.assertFalse(cpp.has_qualified_cpp_workflow("fixture/repository", "refs/heads/main", "a" * 40))
+        for job_page, expected in [
+            (jobs, True),
+            (jobs[:1], False),
+            (jobs + [jobs[0]], False),
+            ([jobs[0], {**jobs[1], "conclusion": "skipped"}], False),
+        ]:
+            with mock.patch.object(
+                cpp, "capture_metadata", side_effect=[json.dumps([run]).encode(), json.dumps(job_page).encode()]
+            ):
+                self.assertEqual(
+                    cpp.has_qualified_cpp_workflow("fixture/repository", "refs/heads/main", "a" * 40), expected
+                )
+        latest = {
+            category: {"category": category, "commit_sha": "a" * 40, "error": "", "warning": ""}
+            for category in cpp.CPP_CATEGORIES
+        }
+        with (
+            mock.patch.object(cpp, "latest_cpp_analysis", return_value=latest),
+            mock.patch.object(cpp, "changed_paths", return_value=[]),
+            mock.patch.object(cpp, "has_qualified_cpp_workflow", return_value=False),
+        ):
+            self.assertTrue(
+                cpp.qualify_analysis_reuse(cpp.select_cpp([]), "fixture/repository", "refs/heads/main")["codeql_cpp"]
+            )
+
     def test_every_native_input_root_and_file_selects_whole_database(self):
         """Purpose: Preserve input coverage. Inputs: Actual receipt projection. Outputs: Every input admits CodeQL."""
         for name in [*cpp.INPUT_FILES, *(root + "/future.input" for root in cpp.INPUT_ROOTS)]:
@@ -22,6 +174,38 @@ class CppSecurityContracts(unittest.TestCase):
                 self.assertTrue(cpp.select_cpp([name])["codeql_cpp"])
                 self.assertTrue(cpp.select_cpp([name])["codeql_hip_host"])
                 self.assertTrue(cpp.select_cpp([name])["whole_database"])
+
+    def test_invalid_workflow_metadata_cannot_establish_qualification(self):
+        """Purpose: Reject ambiguous consumers. Inputs: Malformed workflows/jobs. Outputs: Failure, never reuse."""
+        run = {"id": 17, "head_sha": "a" * 40, "head_branch": "main", "status": "completed", "conclusion": "success"}
+        job = {"name": "CodeQL C++ (cpu)", "status": "completed", "conclusion": "success"}
+        for page in [
+            None,
+            {},
+            [None],
+            [run] * 101,
+            [{**run, "id": True}],
+            [{**run, "head_sha": "b" * 40}],
+            [{**run, "conclusion": 1}],
+        ]:
+            with (
+                mock.patch.object(cpp, "capture_metadata", return_value=json.dumps(page).encode()),
+                self.assertRaises(ValueError),
+            ):
+                cpp.has_qualified_cpp_workflow("fixture/repository", "refs/heads/main", "a" * 40)
+        for page in [None, {}, [None], [job] * 101, [{**job, "status": None}], [{**job, "conclusion": True}]]:
+            with (
+                mock.patch.object(
+                    cpp, "capture_metadata", side_effect=[json.dumps([run]).encode(), json.dumps(page).encode()]
+                ),
+                self.assertRaises(ValueError),
+            ):
+                cpp.has_qualified_cpp_workflow("fixture/repository", "refs/heads/main", "a" * 40)
+        with mock.patch.object(
+            cpp, "capture_metadata", return_value=json.dumps([{**run, "head_branch": "other"}]).encode()
+        ) as call:
+            self.assertFalse(cpp.has_qualified_cpp_workflow("fixture/repository", "refs/heads/main", "a" * 40))
+            self.assertEqual(call.call_count, 1)
 
     def test_independent_push_jobs_and_query_changes(self):
         """Purpose: Separate execution roles. Inputs: Passive and policy changes. Outputs: Correct C++ admission."""
@@ -94,6 +278,11 @@ class CppSecurityContracts(unittest.TestCase):
                 output.read_bytes(),
                 b'codeql_cpp=true\ncodeql_hip_host=true\ncodeql_configurations=["cpu","hip-host"]\n',
             )
+        with (
+            mock.patch.object(sys, "argv", ["cpp-plan", "--event", "schedule", "--repository", "fixture/repository"]),
+            self.assertRaisesRegex(ValueError, "both repository and branch"),
+        ):
+            cpp.main()
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         for required in [
             "needs: cpp-security-plan",
@@ -137,6 +326,10 @@ class CppSecurityContracts(unittest.TestCase):
             ('|| \'["cpu","hip-host"]\'', "|| '[\"cpu\"]'"),
             ("if-no-files-found: error", "if-no-files-found: ignore"),
             ("-CpuOnlyValidation", "-CpuOnlyValidation\n          tools/build.ps1 -Configuration Release"),
+            ("security-events: read", "security-events: none"),
+            ("actions: read", "actions: none"),
+            ("GH_TOKEN: ${{ github.token }}", "UNUSED_TOKEN: ${{ github.token }}"),
+            ('--repository "$env:GITHUB_REPOSITORY" --ref "$env:GITHUB_REF"', ""),
         ):
             with self.subTest(original=original):
                 self.assertIn(original, workflow)

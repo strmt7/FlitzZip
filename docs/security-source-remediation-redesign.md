@@ -47,6 +47,10 @@ CodeQL results from an earlier commit remain active when the canonical selector
 proves unchanged native/query inputs. Missing analyses, failed analysis requests,
 partial coverage and changed inputs cannot establish closure. Documentation-only
 pushes therefore neither rebuild native code nor hide retained source findings.
+The hosted selector carries missing or unfinished CPU/HIP analysis across later
+pushes by comparing the latest analysis commits with current native/query inputs.
+Reuse additionally requires successful CPU/HIP jobs in the owned security
+workflow; a cancelled run cannot qualify merely by uploading some analysis.
 Current acceptance limits belong in [beta readiness](beta-readiness.md), not in
 agent instructions or changing finding-count lists.
 
