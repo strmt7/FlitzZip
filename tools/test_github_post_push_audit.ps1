@@ -8,6 +8,17 @@ $auditGitExitCode = 0
 # Inputs: Only the production remote.origin.url query is accepted; scoped fixture values supply its result.
 # Outputs: Returns mock remote text and status or rejects an unexpected Git command.
 function Invoke-TestGitRemote {
+    if ($args.Count -eq 5 -and $args[0] -eq '-C' -and
+        $args[1] -eq (Split-Path -Parent $PSScriptRoot) -and
+        $args[2] -eq 'rev-parse' -and $args[3] -eq '--verify' -and
+        $args[4] -in @('HEAD^{commit}', (('a' * 40) + '^{commit}'), (('b' * 40) + '^{commit}'))) {
+        if ($args[4] -eq (('b' * 40) + '^{commit}')) {
+            $global:LASTEXITCODE = 1
+            return ''
+        }
+        $global:LASTEXITCODE = 0
+        return ('a' * 40)
+    }
     if ($args.Count -ne 5 -or $args[0] -ne '-C' -or
         $args[1] -ne (Split-Path -Parent $PSScriptRoot) -or
         ($args[2..4] -join ' ') -ne 'config --get remote.origin.url') {
@@ -49,10 +60,19 @@ function Test-AuditCase {
     param(
         [string]$Name, [object[]]$Responses, [string]$Failure = '',
         [switch]$IncludeHistory, [string]$HistoryReportPath = '',
-        [AllowEmptyString()][string]$Repository = 'fixture/repository', [string]$Commit = ''
+        [AllowEmptyString()][string]$Repository = 'fixture/repository', [string]$Commit = '',
+        [object[]]$DismissedResponses = @()
     )
     $auditReplies.Clear()
     foreach ($response in $Responses) { $auditReplies.Enqueue($response) }
+    if (-not $IncludeHistory -and ($Failure -eq '' -or $Failure.Contains('Unresolved code-scanning') -or
+            $Failure.Contains('First 12 examples') -or $DismissedResponses.Count -gt 0)) {
+        if ($DismissedResponses.Count -gt 0) {
+            foreach ($response in $DismissedResponses) { $auditReplies.Enqueue($response) }
+        } else {
+            $auditReplies.Enqueue((Get-ApiReply 'repos/fixture/repository/code-scanning/alerts?state=dismissed&*' 0 '[]'))
+        }
+    }
     $message = ''
     try {
         & (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') -Repository $Repository -Commit $Commit `
@@ -107,6 +127,8 @@ foreach ($entryPoint in @('github_post_push_audit.ps1', 'wait_relevant_workflows
 }
 
 Test-AuditCase 'empty successful snapshot' @($emptyDeployments, $emptyAlerts)
+Test-AuditCase 'ambiguous commit rejected before API work' @() 'requires a full commit SHA' -Commit HEAD
+Test-AuditCase 'unavailable full commit rejected before API work' @() 'Cannot resolve the requested checkout commit' -Commit ('b' * 40)
 foreach ($remote in @('https://github.com/fixture/repository.git', 'https://github.com/fixture/repository',
         'git@github.com:fixture/repository.git', 'ssh://git@github.com/fixture/repository.git')) {
     $auditGitRemote = $remote
@@ -175,6 +197,25 @@ Test-AuditCase 'unapproved history entry still blocks' @($emptyDeployments, (Get
 Test-AuditCase 'all-state later page retained' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 0 ($historyJson.Replace('"number":2', '"number":101').Replace('"number":3', '"number":102')))) 'Unresolved code-scanning alerts are open: 100.' -IncludeHistory
 Test-AuditCase 'all-state partial history fails' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $fullPage), (Get-ApiReply $historyEndpoint 1 '[]')) 'code-scanning API failed' -IncludeHistory
 Test-AuditCase 'missing history authorization for report' @() 'requires IncludeHistory' -HistoryReportPath 'unused.json'
+
+$currentDismissed = '[{"number":77,"state":"dismissed","tool":{"name":"CodeQL"},"rule":{"id":"cpp/stack-address-escape"},' +
+    '"most_recent_instance":{"state":"dismissed","commit_sha":"' + ('a' * 40) + '","location":{"path":"src/sample.cpp"}}}]'
+$dismissedEndpoint = 'repos/fixture/repository/code-scanning/alerts?state=dismissed&*'
+Test-AuditCase 'current dismissed source blocks without any open alert' @($emptyDeployments, $emptyAlerts) `
+    'Active dismissed findings: 1.' -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 $currentDismissed))
+Test-AuditCase 'historical dismissed source is not a current finding' @($emptyDeployments, $emptyAlerts) `
+    -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 ($currentDismissed.Replace(('a' * 40), ('b' * 40)))))
+Test-AuditCase 'closed dismissed instance is not currently reproduced' @($emptyDeployments, $emptyAlerts) `
+    -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 ($currentDismissed.Replace('"state":"dismissed","commit_sha"', '"state":"fixed","commit_sha"'))))
+Test-AuditCase 'current dismissed source blocks in full history too' @($emptyDeployments, (Get-ApiReply $historyEndpoint 0 $currentDismissed)) `
+    'Active dismissed findings: 1.' -IncludeHistory
+Test-AuditCase 'dismissed query failure cannot mean closure' @($emptyDeployments, $emptyAlerts) `
+    'code-scanning API failed' -DismissedResponses @((Get-ApiReply $dismissedEndpoint 1 '[]'))
+Test-AuditCase 'wrong state in dismissed query rejected' @($emptyDeployments, $emptyAlerts) `
+    'non-dismissed alert' -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 $unapprovedJson))
+$dismissedPage = $fullPage.Replace('"state":"open"', '"state":"dismissed"')
+Test-AuditCase 'dismissed pagination cannot repeat or hide current findings' @($emptyDeployments, $emptyAlerts) `
+    'duplicate alert' -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 $dismissedPage), (Get-ApiReply $dismissedEndpoint 0 $dismissedPage))
 
 # Purpose: Reject any attempted invocation of the retired source admission path.
 # Inputs: Historically accepted/malformed output, status and snapshot-count fixtures.

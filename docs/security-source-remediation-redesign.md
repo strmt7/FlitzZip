@@ -37,9 +37,12 @@ review matches informational and unresolved. Public checksum metadata has its
 separate exact identity contract; source code cannot use that metadata path.
 Retain raw reports and stable SARIF categories and paths.
 
-`github_post_push_audit.ps1` requires zero open alerts from its complete hosted
-inventory. It has no source or Scorecard admission path. Dismissal is not evidence
-of a source repair. Governance controls require actual governance evidence.
+`github_post_push_audit.ps1` checks the complete open inventory and findings
+reproduced on the requested commit despite an earlier dismissal. It revalidates
+only existing public-integrity approvals against the committed ledger, complete
+Git blob, producer and highlighted value. It has no source or Scorecard admission
+path. Dismissal is not evidence of a source repair. Governance controls require
+actual governance evidence.
 Current acceptance limits belong in [beta readiness](beta-readiness.md), not in
 agent instructions or changing finding-count lists.
 

@@ -1,6 +1,8 @@
 #include "test_util.hpp"
+#include "Ppmd7.h"
 
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <span>
 #include <string_view>
@@ -19,6 +21,17 @@ constexpr std::array<Byte, 51> kTextPpmdInput{
     0xD0, 0x05, 0x1A, 0xDD, 0xD3, 0xF6, 0x97, 0x13, 0x68, 0xEA, 0xF4, 0x29, 0x3B, 0x12, 0x2F, 0xB6, 0xFC};
 constexpr std::string_view kPpmdText = "PPMd streaming regression.\n";
 
+struct PpmdAllocationControl {
+    ISzAlloc vt{};
+    std::array<void*, 2> live{};
+    std::size_t owner_bytes = 0;
+    std::size_t calls = 0;
+    std::size_t fail_call = 0;
+    std::size_t bridge_checks = 0;
+    bool bridge_is_owned = true;
+    bool invalid_free = false;
+};
+
 struct PpmdTestStream {
     ILookInStream vt{};
     std::span<const Byte> input = kEmptyPpmdInput;
@@ -32,7 +45,21 @@ struct PpmdTestStream {
     bool leave_failed_outputs_unchanged = false;
     bool return_null_buffer = false;
     bool return_oversized_buffer = false;
+    PpmdAllocationControl* allocation_control = nullptr;
 };
+
+// Purpose: Independently prove that the public decoder's live callback table belongs to its allocation.
+// Inputs: The allocator's first recorded owner and exact requested byte extent during an input callback.
+// Outputs: True only when the complete IByteIn table lies within that owner, excluding stack bridges.
+bool ppmd_callback_is_owned(const PpmdAllocationControl& control) {
+    if (control.live[0] == nullptr || control.owner_bytes < sizeof(CPpmd7)) {
+        return false;
+    }
+    const auto* decoder = static_cast<const CPpmd7*>(control.live[0]);
+    const auto owner = reinterpret_cast<std::uintptr_t>(control.live[0]);
+    const auto bridge = reinterpret_cast<std::uintptr_t>(decoder->rc.dec.Stream);
+    return bridge >= owner && bridge - owner <= control.owner_bytes - sizeof(IByteIn);
+}
 
 // Purpose: Recover the test stream whose first member is the SDK callback table.
 // Inputs: `stream` points to the callback table of a live PpmdTestStream.
@@ -46,6 +73,11 @@ PpmdTestStream& ppmd_test_stream(ILookInStreamPtr stream) {
 // Outputs: Returns bytes without consuming them, or an error with configured output behavior.
 SRes ppmd_test_look(ILookInStreamPtr stream, const void** buffer, std::size_t* size) {
     auto& self = ppmd_test_stream(stream);
+    if (self.allocation_control != nullptr) {
+        ++self.allocation_control->bridge_checks;
+        self.allocation_control->bridge_is_owned =
+            self.allocation_control->bridge_is_owned && ppmd_callback_is_owned(*self.allocation_control);
+    }
     ++self.look_calls;
     self.max_requested = std::max(self.max_requested, *size);
     const bool failed = self.look_calls == self.fail_look_call;
@@ -107,10 +139,46 @@ void ppmd_test_free(ISzAllocPtr, void* address) {
     std::free(address);
 }
 
+// Purpose: Fail either production PPMd allocation independently while recording successful ownership.
+// Inputs: The allocator table belongs to a live control; size retains the existing fixture's bounded allocation.
+// Outputs: Returns owned storage or null, preserving the production allocator's failure convention.
+void* ppmd_control_allocate(ISzAllocPtr allocator, std::size_t size) {
+    auto& control = *reinterpret_cast<PpmdAllocationControl*>(const_cast<ISzAlloc*>(allocator));
+    ++control.calls;
+    if (control.calls == control.fail_call || control.calls > control.live.size()) {
+        return nullptr;
+    }
+    auto* result = ppmd_test_allocate(nullptr, size);
+    control.live[control.calls - 1] = result;
+    if (control.calls == 1) {
+        control.owner_bytes = size;
+    }
+    return result;
+}
+
+// Purpose: Verify matching deallocation on success and failure without throwing through the SDK C boundary.
+// Inputs: Null or one address returned by this control's allocator.
+// Outputs: Releases a recorded owner or records an invalid/double free for the caller to assert.
+void ppmd_control_free(ISzAllocPtr allocator, void* address) {
+    if (address == nullptr) {
+        return;
+    }
+    auto& control = *reinterpret_cast<PpmdAllocationControl*>(const_cast<ISzAlloc*>(allocator));
+    for (auto& live : control.live) {
+        if (live == address) {
+            ppmd_test_free(nullptr, address);
+            live = nullptr;
+            return;
+        }
+    }
+    control.invalid_free = true;
+}
+
 // Purpose: Exercise the production PPMd reader through the public folder decoder, not a copied implementation.
 // Inputs: `stream` injects I/O behavior; `packed_size` and `output` declare exact packed and decoded extents.
 // Outputs: Returns the real decoder status and writes any decoded bytes into caller-owned output.
-SRes decode_ppmd(PpmdTestStream& stream, UInt64 packed_size = 5, std::span<Byte> output = {}) {
+SRes decode_ppmd(PpmdTestStream& stream, UInt64 packed_size = 5, std::span<Byte> output = {},
+                 ISzAllocPtr controlled_allocator = nullptr) {
     stream.vt = {ppmd_test_look, ppmd_test_skip, ppmd_test_read, ppmd_test_seek};
     std::array<Byte, 11> coders{1, 0x23, 0x03, 0x04, 0x01, 5, 2, 0, 0, 1, 0};
     std::array<std::size_t, 2> coder_offsets{0, coders.size()};
@@ -131,10 +199,39 @@ SRes decode_ppmd(PpmdTestStream& stream, UInt64 packed_size = 5, std::span<Byte>
     archive.CodersData = coders.data();
     const ISzAlloc allocator{ppmd_test_allocate, ppmd_test_free};
     return SzAr_DecodeFolder(&archive, 0, &stream.vt, 0, output.empty() ? &empty_output : output.data(), output.size(),
-                             &allocator);
+                             controlled_allocator != nullptr ? controlled_allocator : &allocator);
 }
 
 }  // namespace
+
+// Purpose: Retain both PPMd owners through decoding and release them on allocation or callback failure.
+// Inputs: Independent allocation failures, a real I/O failure and known valid empty output.
+// Outputs: Exact SDK statuses, no leaked owner, no invalid free, and no I/O before admitted allocations.
+TEST_CASE(sevenzip_ppmd_releases_common_owner_on_every_exit) {
+    for (std::size_t fail_call = 0; fail_call <= 2; ++fail_call) {
+        PpmdAllocationControl control{{ppmd_control_allocate, ppmd_control_free}};
+        control.fail_call = fail_call;
+        PpmdTestStream stream;
+        stream.allocation_control = &control;
+        REQUIRE_EQ(decode_ppmd(stream, 5, {}, &control.vt), fail_call == 0 ? SZ_OK : SZ_ERROR_MEM);
+        REQUIRE_EQ(control.calls, fail_call == 1 ? 1U : 2U);
+        REQUIRE_TRUE(!control.invalid_free);
+        REQUIRE_TRUE(control.live[0] == nullptr && control.live[1] == nullptr);
+        if (fail_call != 0) {
+            REQUIRE_EQ(stream.look_calls, 0U);
+        } else {
+            REQUIRE_TRUE(control.bridge_checks > 0U && control.bridge_is_owned);
+        }
+    }
+    PpmdAllocationControl control{{ppmd_control_allocate, ppmd_control_free}};
+    PpmdTestStream stream;
+    stream.allocation_control = &control;
+    stream.fail_look_call = 1;
+    REQUIRE_EQ(decode_ppmd(stream, 5, {}, &control.vt), SZ_ERROR_READ);
+    REQUIRE_TRUE(!control.invalid_free);
+    REQUIRE_TRUE(control.live[0] == nullptr && control.live[1] == nullptr);
+    REQUIRE_TRUE(control.bridge_checks > 0U && control.bridge_is_owned);
+}
 
 // Purpose: Preserve successful PPMd initialization across arbitrary input chunk boundaries.
 // Inputs: The same valid empty range stream, supplied one to five bytes at a time.

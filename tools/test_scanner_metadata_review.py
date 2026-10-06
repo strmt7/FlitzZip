@@ -453,5 +453,138 @@ class ScannerSourceReviewTests(unittest.TestCase):
             )
 
 
+class CurrentHostedMetadataTests(unittest.TestCase):
+    # Purpose: Bind hosted metadata review tests to real committed blobs rather than mocked hash decisions.
+    # Inputs: Small isolated configuration and approval fixtures. Outputs: One private Git commit and alert.
+    def setUp(self):
+        ScannerMetadataReviewTests.setUp(self)
+        ledger = self.root / review.POLICY
+        ledger.parent.mkdir(parents=True)
+        ledger.write_bytes(self.policy)
+        subprocess.run(["git", "init", "--quiet", str(self.root)], check=True, capture_output=True)
+        self.commit_fixture()
+        column = self.payload.index('"' + self.value)
+        self.alert = {
+            "number": 42,
+            "state": "dismissed",
+            "tool": {"name": "devskim", "version": review.SOURCE_TOOL_VERSION},
+            "rule": {"id": "DS173237"},
+            "most_recent_instance": {
+                "state": "dismissed",
+                "commit_sha": self.commit,
+                "category": "devskim",
+                "location": {
+                    "path": self.name,
+                    "start_line": 1,
+                    "end_line": 1,
+                    "start_column": column,
+                    "end_column": column + 66,
+                },
+            },
+        }
+
+    # Purpose: Commit only this fixture's public metadata and ledger with private repository-local identity.
+    # Inputs: The temporary fixture tree. Outputs: Updates its full commit without affecting the live checkout.
+    def commit_fixture(self):
+        subprocess.run(
+            ["git", "add", "--", self.name, str(review.POLICY)], cwd=self.root, check=True, capture_output=True
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--no-gpg-sign",
+                "-qm",
+                "fixture",
+            ],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+        )
+        self.commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
+
+    # Purpose: Preserve the original hosted report and match only its committed metadata value.
+    # Inputs: One current dismissed public checksum. Outputs: Its ID without mutating any alert or source.
+    def test_current_exact_committed_metadata(self):
+        before = copy.deepcopy(self.alert)
+        self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [42])
+        self.assertEqual(self.alert, before)
+        self.path.write_text("uncommitted local content", encoding="utf-8")
+        self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [42])
+
+    # Purpose: Refuse stale producers, locations, categories, states and source paths independently.
+    # Inputs: Plausible single-field hosted mutations. Outputs: Every altered finding stays unreviewed.
+    def test_current_identity_mutations(self):
+        mutations = [
+            (("tool", "version"), "other"),
+            (("tool", "name"), "CodeQL"),
+            (("rule", "id"), "DS121708"),
+            (("state",), "open"),
+            (("most_recent_instance", "state"), "fixed"),
+            (("most_recent_instance", "commit_sha"), "b" * 40),
+            (("most_recent_instance", "category"), "other"),
+            (("most_recent_instance", "location", "path"), "src/sample.cpp"),
+            (("most_recent_instance", "location", "start_column"), 1),
+            (("most_recent_instance", "location", "end_column"), 999),
+            (("most_recent_instance", "location", "end_line"), 2),
+            (("most_recent_instance", "location", "start_line"), True),
+        ]
+        for keys, value in mutations:
+            with self.subTest(keys=keys):
+                alert = copy.deepcopy(self.alert)
+                target = alert
+                for key in keys[:-1]:
+                    target = target[key]
+                target[keys[-1]] = value
+                self.assertEqual(review.match_current_metadata_alerts(self.root, [alert], self.commit, self.policy), [])
+
+    # Purpose: Prevent changed ledger/source bytes from inheriting an earlier exact disposition.
+    # Inputs: A modified approval and a new commit retaining stale approval. Outputs: Rejection or no match.
+    def test_current_committed_byte_boundaries(self):
+        with self.assertRaisesRegex(ValueError, "ledger differs"):
+            review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy + b"\n")
+        self.path.write_bytes((self.payload + "\n").encode())
+        self.commit_fixture()
+        self.alert["most_recent_instance"]["commit_sha"] = self.commit
+        self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [])
+
+    # Purpose: Reject duplicate IDs and ambiguous commit identifiers instead of interpreting partial evidence.
+    # Inputs: Duplicate alerts, boolean IDs and a ref spelling. Outputs: Explicit validation failures.
+    def test_current_invalid_inventory(self):
+        for alerts, commit in (
+            ([self.alert, self.alert], self.commit),
+            ([{**self.alert, "number": True}], self.commit),
+            ([], "HEAD"),
+        ):
+            with self.assertRaises(ValueError):
+                review.match_current_metadata_alerts(self.root, alerts, commit, self.policy)
+
+    # Purpose: Keep DevSkim's pinned UTF-16 column contract correct across multiline and non-ASCII metadata.
+    # Inputs: A committed CRLF JSON record with a supplementary Unicode character before the checksum.
+    # Outputs: The exact public value matches; a byte-count column cannot inherit that disposition.
+    def test_current_utf16_multiline_columns(self):
+        prefix = '  "label": "\U0001f680", "pin": '
+        payload = ("{\r\n" + prefix + '"' + self.value + '"\r\n}\r\n').encode("utf-8")
+        old_digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+        self.policy = self.policy.replace(
+            old_digest.encode(), hashlib.sha256(payload.replace(b"\r\n", b"\n")).hexdigest().encode()
+        )
+        self.path.write_bytes(payload)
+        (self.root / review.POLICY).write_bytes(self.policy)
+        self.commit_fixture()
+        self.alert["most_recent_instance"]["commit_sha"] = self.commit
+        column = len(prefix.encode("utf-16-le")) // 2
+        self.alert["most_recent_instance"]["location"].update(
+            start_line=2, end_line=2, start_column=column, end_column=column + 66
+        )
+        self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [42])
+        self.alert["most_recent_instance"]["location"].update(start_column=len(prefix), end_column=len(prefix) + 66)
+        self.assertEqual(review.match_current_metadata_alerts(self.root, [self.alert], self.commit, self.policy), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,3 +60,9 @@ so an empty external buffer does not require subtraction of null pointers.
 The SDK's narrower-address-space allocation limits remain enabled on those
 architectures; the stricter 31-bit index limit remains unconditional. Obsolete
 disabled debug fragments were removed from the imported sources.
+
+The PPMd range decoder and its input callback bridge share one bounded owned
+allocation. The decoder no longer stores a pointer to a stack bridge; model
+storage is released before their common owner on success, I/O failure and
+allocation failure. Independent PPMd bytes and allocation-failure controls
+exercise the public folder decoder. Upstream provenance remains unchanged.

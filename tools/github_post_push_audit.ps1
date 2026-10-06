@@ -9,19 +9,20 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'github_repository.ps1')
 
-# Purpose: Fetch a complete open-alert or all-state code-scanning inventory.
-# Inputs: Repository slug, validated page size, and whether resolved/dismissed records are required.
+# Purpose: Fetch a complete selected-state or all-state code-scanning inventory.
+# Inputs: Repository slug, page size, requested state, and whether complete incident history is required.
 # Outputs: Returns alert objects; rejects unavailable, malformed, duplicate, or unexpected-state evidence.
 function Get-CodeScanningAlert {
     param(
         [string]$Repository,
         [ValidateRange(1, 100)][int]$PageSize = 100,
+        [ValidateSet('open', 'dismissed')][string]$State = 'open',
         [switch]$IncludeHistory
     )
 
     $alerts = [System.Collections.Generic.List[object]]::new()
     $seen = [System.Collections.Generic.HashSet[long]]::new()
-    $stateQuery = if ($IncludeHistory) { "" } else { "state=open&" }
+    $stateQuery = if ($IncludeHistory) { "" } else { "state=$State&" }
     $page = 1
     do {
         $json = gh api "repos/$Repository/code-scanning/alerts?${stateQuery}per_page=$PageSize&page=$page"
@@ -57,8 +58,8 @@ function Get-CodeScanningAlert {
                 $item.state -notin @('open', 'fixed', 'dismissed')) {
                 throw "GitHub returned an invalid code-scanning record on page $page."
             }
-            if (-not $IncludeHistory -and $item.state -ne 'open') {
-                throw "GitHub returned a non-open alert in the open-only inventory on page $page."
+            if (-not $IncludeHistory -and $item.state -ne $State) {
+                throw "GitHub returned a non-$State alert in the $State-only inventory on page $page."
             }
             if (-not $seen.Add([long]$item.number)) {
                 throw "GitHub returned duplicate alert $($item.number) on page $page; pagination changed or repeated."
@@ -166,13 +167,13 @@ function Assert-NoDeployment {
     }
 }
 
-# Purpose: Require actual closure of every open code-scanning finding.
-# Inputs: `Alerts` contains validated open alerts only, never resolved or dismissed history.
-# Outputs: Throws with full grouped counts and bounded examples whenever an alert remains open.
+# Purpose: Require closure without inheriting a historical dismissal for a reproduced source finding.
+# Inputs: Validated open alerts and current dismissed findings after exact public-metadata review.
+# Outputs: Throws with grouped counts and bounded examples for either unresolved inventory.
 function Assert-CodeScanningClosure {
-    param([object[]]$Alerts)
+    param([object[]]$Alerts, [object[]]$CurrentDismissed = @())
 
-    $violations = @($Alerts)
+    $violations = @($Alerts) + @($CurrentDismissed)
     if ($violations.Count -gt 0) {
         $groups = $violations | Group-Object { "$($_.tool.name)/$($_.rule.id)" } | Sort-Object Name | ForEach-Object {
             "$($_.Count) $($_.Name)"
@@ -193,7 +194,48 @@ function Assert-CodeScanningClosure {
             $path = if ($_.most_recent_instance.location.path) { $_.most_recent_instance.location.path } else { "no file" }
             "$($_.number) $($_.tool.name)/$($_.rule.id) $path"
         }
-        throw "Unresolved code-scanning alerts are open: $($violations.Count).`nBy rule:`n$($groups -join "`n")`nFirst 12 examples (at most):`n$($details -join "`n")"
+        throw "Unresolved code-scanning alerts are open: $($Alerts.Count). Active dismissed findings: $($CurrentDismissed.Count).`nBy rule:`n$($groups -join "`n")`nFirst 12 examples (at most):`n$($details -join "`n")"
+    }
+}
+
+# Purpose: Apply only the existing exact public-integrity contract to current dismissed metadata reports.
+# Inputs: Current dismissed alert objects and a full analyzed commit; no source-review ledger is consulted.
+# Outputs: Returns individually matched metadata IDs; unavailable or malformed review evidence fails closed.
+function Get-CurrentMetadataReview {
+    param([object[]]$Alerts, [string]$Commit)
+
+    if (@($Alerts | Where-Object { $_.tool.name -eq 'devskim' -and $_.rule.id -eq 'DS173237' }).Count -eq 0) {
+        return @()
+    }
+    $directory = Join-Path $repoRoot ('out/post-push-audit/' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($directory)
+    $snapshot = Join-Path $directory 'current-dismissed.json'
+    $minimal = @($Alerts | ForEach-Object {
+        [ordered]@{ number = $_.number; state = $_.state; tool = $_.tool; rule = $_.rule
+            most_recent_instance = $_.most_recent_instance }
+    })
+    [IO.File]::WriteAllText($snapshot, (ConvertTo-Json -InputObject $minimal -Depth 12), [Text.UTF8Encoding]::new($false))
+    Push-Location $repoRoot
+    try {
+        $output = py -3 -B -m tools.scanner_metadata_review --hosted-alerts $snapshot --commit $Commit --current-metadata
+        if ($LASTEXITCODE -ne 0) { throw 'Current public-metadata review failed; source findings remain blocking.' }
+        $review = ($output -join "`n") | ConvertFrom-Json
+        if ($review.PSObject.Properties.Name.Count -ne 1 -or
+            $review.PSObject.Properties.Name -ne 'reviewed_metadata' -or
+            $review.reviewed_metadata -isnot [System.Array]) {
+            throw 'Current public-metadata review returned an invalid decision.'
+        }
+        $seen = [System.Collections.Generic.HashSet[long]]::new()
+        $possible = @($Alerts.number)
+        foreach ($number in $review.reviewed_metadata) {
+            if (($number -isnot [int] -and $number -isnot [long]) -or $number -le 0 -or
+                $number -notin $possible -or -not $seen.Add([long]$number)) {
+                throw 'Current public-metadata review returned an unbound decision.'
+            }
+        }
+        return @($review.reviewed_metadata)
+    } finally {
+        Pop-Location
     }
 }
 
@@ -201,6 +243,14 @@ if ($HistoryReportPath -and -not $IncludeHistory) {
     throw 'HistoryReportPath requires IncludeHistory; an open-only snapshot is not a complete incident review.'
 }
 $repo = Resolve-GitHubRepository -Repository $Repository -RepositoryRoot $repoRoot
+if ($Commit -and $Commit -cnotmatch '^[0-9a-f]{40}$') { throw 'Post-push audit requires a full commit SHA.' }
+$candidate = if ($Commit) { $Commit } else { 'HEAD' }
+$resolvedCommit = git -C $repoRoot rev-parse --verify "$candidate^{commit}"
+if ($LASTEXITCODE -ne 0 -or $resolvedCommit -cnotmatch '^[0-9a-f]{40}$' -or
+    ($Commit -and $Commit -cne $resolvedCommit)) {
+    throw 'Cannot resolve the requested checkout commit for current finding review.'
+}
+$Commit = $resolvedCommit
 Assert-NoDeployment -Repository $repo
 $inventory = @(Get-CodeScanningAlert -Repository $repo -IncludeHistory:$IncludeHistory)
 if ($IncludeHistory) {
@@ -211,5 +261,12 @@ if ($IncludeHistory) {
     }
 }
 $alerts = @($inventory | Where-Object state -eq 'open')
-Assert-CodeScanningClosure -Alerts $alerts
-Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Open code-scanning alerts: $($alerts.Count). Requested commit: $Commit."
+$dismissed = if ($IncludeHistory) { @($inventory | Where-Object state -eq 'dismissed') }
+else { @(Get-CodeScanningAlert -Repository $repo -State dismissed) }
+$current = @($dismissed | Where-Object {
+    $_.most_recent_instance.commit_sha -eq $Commit -and $_.most_recent_instance.state -eq 'dismissed'
+})
+$metadata = @(Get-CurrentMetadataReview -Alerts $current -Commit $Commit)
+$unresolved = @($current | Where-Object { $_.number -notin $metadata })
+Assert-CodeScanningClosure -Alerts $alerts -CurrentDismissed $unresolved
+Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Open alerts: 0. Active dismissed findings: 0. Exact public-metadata reviews: $($metadata.Count). Commit: $Commit."

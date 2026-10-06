@@ -36,6 +36,9 @@ Broad size superiority and comparative GPU speed remain research targets.
 - The strict hosted audit still reports the previously accepted CodeReview and
   CII Best Practices governance observations. They remain visible and unresolved;
   source changes cannot manufacture peer review or external certification.
+- Current source-analysis reports also require review even when GitHub retains
+  an earlier dismissed state. The audit checks those current instances and does
+  not equate a dismissal or an empty open-alert list with a production repair.
 - Dependabot reports the development crawler's upstream NLTK advisory, whose
   reviewed upstream version has no officially released fix. The source-built
   downstream repair has retained original-failure and installed-consumer tests.

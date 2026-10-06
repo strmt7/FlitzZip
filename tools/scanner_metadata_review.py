@@ -135,6 +135,65 @@ def committed_source_matches(root: Path, commit: str, row: dict[str, str]) -> bo
     )
 
 
+# Purpose: Match current hosted public metadata against its individually approved value and complete Git blob.
+# Inputs: Validated alert inventory, full analyzed commit and the unchanged committed metadata ledger.
+# Outputs: Exact metadata alert IDs only; source, tests, changed locations and stale identities are never admitted.
+def match_current_metadata_alerts(root: Path, alerts: list[dict], commit: str, policy: bytes) -> list[int]:
+    if re.fullmatch(r"[0-9a-f]{40}", commit) is None or len(alerts) > 20000:
+        raise ValueError("Current metadata review requires a full commit and bounded inventory")
+    rows = read_reviews(policy)
+    ledger = {"path": POLICY.as_posix(), "input_sha256": hashlib.sha256(policy.replace(b"\r\n", b"\n")).hexdigest()}
+    if not committed_source_matches(root, commit, ledger):
+        raise ValueError("Metadata ledger differs from the requested commit")
+    accepted, sources, seen = [], {}, set()
+    for alert in alerts:
+        number = alert.get("number")
+        if type(number) is not int or number <= 0 or number in seen:
+            raise ValueError("Current metadata review has an invalid or duplicate alert identity")
+        seen.add(number)
+        instance, tool = alert.get("most_recent_instance", {}), alert.get("tool", {})
+        if (
+            alert.get("state") != "dismissed"
+            or instance.get("state") != "dismissed"
+            or instance.get("commit_sha") != commit
+            or instance.get("category") != "devskim"
+            or tool.get("name") != "devskim"
+            or tool.get("version") != SOURCE_TOOL_VERSION
+        ):
+            continue
+        location = instance.get("location", {})
+        name = location.get("path")
+        candidates = [row for row in rows if row["path"] == name and row["rule"] == alert.get("rule", {}).get("id")]
+        if not candidates:
+            continue
+        if name not in sources:
+            options = {"cwd": root, "check": True, "capture_output": True, "timeout": 15}
+            size = subprocess.run(["git", "cat-file", "-s", f"{commit}:{name}"], **options).stdout.strip()
+            if not size.isdigit() or int(size) > MAX_POLICY_BYTES:
+                raise ValueError("Current metadata source exceeds its byte budget")
+            payload = subprocess.run(["git", "show", f"{commit}:{name}"], **options).stdout
+            if len(payload) != int(size):
+                raise ValueError("Current metadata source has an inconsistent size")
+            sources[name] = payload
+        payload = sources[name]
+        coordinates = [location.get(key) for key in ("start_line", "start_column", "end_line", "end_column")]
+        if any(type(value) is not int for value in coordinates):
+            continue
+        start, column, end, end_column = coordinates
+        lines = payload.decode("utf-8").splitlines(keepends=True)
+        if start < 1 or start != end or start > len(lines):
+            continue
+        width = len(lines[start - 1].rstrip("\r\n").encode("utf-16-le")) // 2
+        if not 0 <= column < end_column <= width:
+            continue
+        # This pinned DevSkim writer emits zero-based UTF-16 columns; GitHub retains them verbatim.
+        offset = sum(len(line.encode("utf-16-le")) // 2 for line in lines[: start - 1]) + column
+        region = {"charOffset": offset, "charLength": end_column - column}
+        if any(public_value_matches(row, payload, region) for row in candidates):
+            accepted.append(number)
+    return accepted
+
+
 # Purpose: Identify historical source review matches without establishing remediation or acceptance.
 # Inputs: Root, complete alerts, historical analysis commit and ledger. Outputs: Informational matched IDs only.
 def match_historical_source_alerts(root: Path, alerts: list[dict], commit: str, policy: bytes) -> list[int]:
@@ -179,13 +238,14 @@ def match_historical_source_alerts(root: Path, alerts: list[dict], commit: str, 
     return accepted
 
 
-# Purpose: Report historical review matches separately from unresolved hosted findings.
+# Purpose: Report historical source context or revalidate exact current public-integrity metadata.
 # Inputs: A bounded raw alert snapshot and optional full commit.
-# Outputs: Informational matches and every open ID as blocking; historical reviews never establish closure.
+# Outputs: Informational source matches or exact metadata IDs; source reviews never establish closure.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hosted-alerts", required=True, type=Path)
     parser.add_argument("--commit", default="")
+    parser.add_argument("--current-metadata", action="store_true")
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     with arguments.hosted_alerts.open("rb") as stream:
@@ -200,6 +260,10 @@ def main() -> None:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True, timeout=15
         ).stdout.strip()
+    if arguments.current_metadata:
+        accepted = match_current_metadata_alerts(root, alerts, commit, read_policy(root))
+        print(json.dumps({"reviewed_metadata": sorted(accepted)}))
+        return
     accepted = match_historical_source_alerts(root, alerts, commit, read_source_policy(root))
     accepted += match_historical_hosted_alerts(root, alerts, commit, read_hosted_policy(root))
     if len(set(accepted)) != len(accepted):

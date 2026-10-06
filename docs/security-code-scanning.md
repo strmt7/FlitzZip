@@ -102,6 +102,13 @@ contents and other findings remain blocking. CSV keeps the review records
 readable without changing the scanned source values. Recognizing a metadata role
 does not authorize a review record.
 This local admission does not dismiss hosted alerts or qualify release security.
+The post-push audit independently revalidates existing public-integrity approvals
+against the requested commit's ledger and source blobs. It checks dismissed
+reports reproduced on that commit and keeps every source/test finding blocking.
+The pinned DevSkim writer emits zero-based UTF-16 columns; the reader uses that
+producer's exact coordinate contract, verified against its raw character offsets
+and [upstream writer](https://github.com/microsoft/DevSkim/blob/ea92e6f3cc/DevSkim-DotNet/Microsoft.DevSkim.CLI/Writers/SarifWriter.cs).
+It does not adjust reports, expand approvals or infer matches from nearby text.
 
 A successful analysis with the same DevSkim category can update obsolete
 findings automatically. Final acceptance requires the hosted result and fresh

@@ -75,6 +75,13 @@ typedef struct
   ILookInStreamPtr inStream;
 } CByteInToLook;
 
+/* The range decoder and its callback bridge have one allocation and lifetime. */
+typedef struct
+{
+  CPpmd7 decoder;
+  CByteInToLook input;
+} CPpmdWithInput;
+
 /* Purpose: Read one byte without crossing the declared packed extent or losing an I/O failure.
    Inputs: pp owns a synchronous look-stream borrow and its remaining packed-byte budget.
    Outputs: Returns a byte on success; otherwise latches the error/EOF and returns the decoder sentinel. */
@@ -118,14 +125,15 @@ static Byte ReadByte(IByteInPtr pp)
   return 0;
 }
 
-/* Purpose: Decode one exact PPMd packed span with bounded allocation and synchronous input lifetime.
-   Inputs: Validated properties, declared packed/output sizes, borrowed stream/output, and owning allocator.
-   Outputs: Writes decoded bytes and frees all state; returns the original I/O failure or a format error. */
+/* Purpose: Decode one exact PPMd packed span with a common owner for decoder and callback bridge.
+ * Inputs: Validated properties, declared packed/output sizes, synchronous borrowed stream/output and allocator.
+ * Outputs: Writes decoded bytes and frees every owner; returns the original I/O failure or a format error. */
 static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, ILookInStreamPtr inStream,
     Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain)
 {
   CPpmd7 *ppmd;
-  CByteInToLook s;
+  CPpmdWithInput *owned;
+  CByteInToLook *s;
   SRes res;
   unsigned order;
   UInt32 memSize;
@@ -139,31 +147,33 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
       memSize < PPMD7_MIN_MEM_SIZE ||
       memSize > PPMD7_MAX_MEM_SIZE)
     return SZ_ERROR_UNSUPPORTED;
-  if ((ppmd = (CPpmd7 *)ISzAlloc_Alloc(allocMain, sizeof(CPpmd7))) == NULL)
+  if ((owned = (CPpmdWithInput *)ISzAlloc_Alloc(allocMain, sizeof(CPpmdWithInput))) == NULL)
     return SZ_ERROR_MEM;
+  ppmd = &owned->decoder;
+  s = &owned->input;
   Ppmd7_Construct(ppmd);
   res = SZ_ERROR_MEM;
   if (Ppmd7_Alloc(ppmd, memSize, allocMain))
   {
-    s.vt.Read = ReadByte;
-    s.inStream = inStream;
-    s.begin = NULL;
-    s.pos = s.size = 0;
-    s.extra = False;
-    s.res = SZ_OK;
-    s.remaining = inSize;
+    s->vt.Read = ReadByte;
+    s->inStream = inStream;
+    s->begin = NULL;
+    s->pos = s->size = 0;
+    s->extra = False;
+    s->res = SZ_OK;
+    s->remaining = inSize;
 
     Ppmd7_Init(ppmd, order);
-    ppmd->rc.dec.Stream = &s.vt;
+    ppmd->rc.dec.Stream = &s->vt;
     res = SZ_ERROR_DATA;
-    if (Ppmd7z_RangeDec_Init(&ppmd->rc.dec) && !s.extra)
+    if (Ppmd7z_RangeDec_Init(&ppmd->rc.dec) && !s->extra)
     {
       Byte *buf = outBuffer;
       const Byte *lim = buf + outSize;
       for (; buf != lim; buf++)
       {
         int sym = Ppmd7z_DecodeSymbol(ppmd);
-        if (s.extra || sym < 0)
+        if (s->extra || sym < 0)
           break;
         *buf = (Byte)sym;
       }
@@ -171,13 +181,13 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
         if (Ppmd7z_RangeDec_IsFinishedOK(&ppmd->rc.dec))
           res = SZ_OK;
     }
-    if (s.extra)
-      res = (s.res != SZ_OK ? s.res : SZ_ERROR_DATA);
-    else if (s.remaining != s.pos)
+    if (s->extra)
+      res = (s->res != SZ_OK ? s->res : SZ_ERROR_DATA);
+    else if (s->remaining != s->pos)
       res = SZ_ERROR_DATA;
     Ppmd7_Free(ppmd, allocMain);
   }
-  ISzAlloc_Free(allocMain, ppmd);
+  ISzAlloc_Free(allocMain, owned);
   return res;
 }
 

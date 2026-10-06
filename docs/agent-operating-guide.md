@@ -303,6 +303,9 @@ Guidelines, and SEI CERT C++.
   final acceptance checkpoint, complete workflows and run
   `tools\github_post_push_audit.ps1`; known unresolved alerts remain failures,
   not passed gates. Related independent work can continue while they are open.
+  The audit also checks dismissed reports reproduced on that commit; an empty
+  open-alert list cannot establish source closure. Existing public-integrity
+  approvals require fresh exact committed-byte and finding-identity validation.
 - For repeated scanner incidents or a requested history review, use that audit
   with `-IncludeHistory -HistoryReportPath` and a new JSON path under `out/`.
   Review all rule/state groups once; reuse the saved evidence until the affected
