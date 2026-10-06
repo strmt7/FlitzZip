@@ -100,31 +100,29 @@ flowchart TD
 
 ## Required Gates
 
-For source refactors:
+Use the change-aware planner and runner for the complete intended change range:
 
 ```powershell
-tools\build.ps1 -Configuration Release
-tools\test.ps1 -Configuration Release
-tools\refactor_audit.ps1 -ChangedOnly -CheckContracts -MaxFunctionLines 120 -MaxComplexityMarkers 35 -FailOnFindings
-tools\security_scan.ps1
+tools\verification_plan.ps1 -IncludeUntracked
+tools\verify_changes.ps1 -IncludeUntracked
 ```
 
-For GUI refactors:
+The planner selects native builds, affected component or full runtime coverage,
+scanner preflight, language lint and the changed-function gate. Preserve its
+required checks; a documentation or tooling change does not independently
+justify rebuilding native targets. Use the operating guide's checkpoint
+procedure for ongoing development and final acceptance.
 
-```powershell
-tools\gui_smoke.ps1 -Configuration Release
-```
-
-For performance or codec refactors:
-
-```powershell
-tools\bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-build\Release\superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
-```
-
-All performance verification remains RAM-only. Use
-`tools\storage_smoke.ps1 -Configuration Release` only for the bounded
-filesystem correctness path.
+GUI changes additionally require the announced all-page smoke and visual
+inspection defined by the operating guide. Performance changes use the
+affected mode's existing measurement protocol: the
+[paired benchmark controller](performance-block-size-validation.md) for numeric
+efforts, or the [public-corpus controller](neutron-public-corpus-benchmark.md)
+for Neutron. A numeric level-five sweep or autotuning run cannot qualify a
+Neutron-only refactor. Keep before/after source and workload identities,
+independent byte-exact readback, complete archive sizes and actual HIP telemetry.
+All development benchmark payloads remain RAM-only. Filesystem correctness
+smoke follows the guide's separate bounded-write contract.
 
 ## Audit Tool
 

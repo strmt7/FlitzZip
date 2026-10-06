@@ -496,7 +496,8 @@ TEST_CASE(neutron_dictionary_gpu_matches_exhaustive_oracle) {
         std::cout << "[SKIP] Neutron minimum-byte parsing requires a compatible HIP device\n";
         return;
     }
-    for (const auto size : {1U, 4U, 12U, 13U, 15U, 19U, 32U, 64U, 127U, 254U, 255U, 269U, 270U, 320U}) {
+    for (const auto size :
+         {1U, 3U, 4U, 5U, 7U, 12U, 13U, 15U, 17U, 19U, 32U, 64U, 127U, 254U, 255U, 257U, 269U, 270U, 320U}) {
         for (const auto alphabet : {1U, 2U, 16U, 256U}) {
             const auto input = small_neutron_fixture(size, size + 0x716255U, alphabet);
             const auto encoded = encode_neutron_segments(input);

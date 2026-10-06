@@ -300,40 +300,44 @@ NeutronShape neutron_shape(std::size_t input_bytes) {
 }
 
 struct NeutronWorkspace {
-    HipDeviceBuffer<std::uint64_t> trees;
-    HipDeviceBuffer<Match> matches;
-    HipDeviceBuffer<std::uint32_t> decisions;
-    HipDeviceBuffer<optimal::EmitCursor> cursors;
-    HipDeviceBuffer<std::uint32_t> sizes;
-    HipDeviceBuffer<std::byte> output;
-    optimal::State state;
+    HipDeviceBuffer<std::byte> allocation;
+    optimal::State state{};
+    optimal::EmitCursor* cursors = nullptr;
+    std::uint32_t* sizes = nullptr;
+    std::byte* output = nullptr;
 
-    // Purpose: Own independently aligned buffers under the index's aggregate memory reservation.
+    // Purpose: Own one aligned allocation for all Neutron arrays with the same synchronized lifetime.
     // Inputs: Exact admitted shape and source byte count.
-    // Outputs: Allocates all state or releases earlier allocations on failure; no source ownership is retained.
+    // Outputs: Binds disjoint device views or throws before dispatch; the aggregate reservation and bytes are
+    // unchanged.
     NeutronWorkspace(const NeutronShape& shape, std::size_t input_bytes)
-        : trees(shape.tree_bytes, "allocate Neutron parse trees"),
-          matches(shape.match_bytes, "allocate Neutron matches"),
-          decisions(shape.decision_bytes, "allocate Neutron decisions"),
-          cursors(shape.cursor_bytes, "allocate Neutron cursors"), sizes(shape.size_bytes, "allocate Neutron sizes"),
-          output(shape.output_bytes, "allocate Neutron output"),
-          state{.matches = matches.get(),
-                .suffix_tree = trees.get(),
-                .residue_tree = trees.get() + shape.segments * optimal::kTreeWords,
-                .match_costs = decisions.get(),
-                .match_ends = decisions.get() + input_bytes,
-                .next_matches = decisions.get() + 2U * input_bytes} {}
+        : allocation(shape.total_bytes, "allocate Neutron workspace") {
+        // Each preceding array's element size preserves the following view's alignment, including odd input sizes.
+        static_assert(sizeof(std::uint64_t) % alignof(Match) == 0U);
+        static_assert(sizeof(Match) % alignof(std::uint32_t) == 0U);
+        static_assert(sizeof(std::uint32_t) % alignof(optimal::EmitCursor) == 0U);
+        static_assert(sizeof(optimal::EmitCursor) % alignof(std::uint32_t) == 0U);
+        auto* next = allocation.get();
+        state.suffix_tree = reinterpret_cast<std::uint64_t*>(next);
+        state.residue_tree = state.suffix_tree + shape.segments * optimal::kTreeWords;
+        next += shape.tree_bytes;
+        state.matches = reinterpret_cast<Match*>(next);
+        next += shape.match_bytes;
+        state.match_costs = reinterpret_cast<std::uint32_t*>(next);
+        state.match_ends = state.match_costs + input_bytes;
+        state.next_matches = state.match_ends + input_bytes;
+        next += shape.decision_bytes;
+        cursors = reinterpret_cast<optimal::EmitCursor*>(next);
+        next += shape.cursor_bytes;
+        sizes = reinterpret_cast<std::uint32_t*>(next);
+        output = next + shape.size_bytes;
+    }
 
     // Purpose: Surface successful-operation release failures before payload publication.
-    // Inputs: Completed synchronized work; automatic destruction still owns any buffers remaining after an error.
-    // Outputs: Releases all transient state with checked HIP calls before the aggregate reservation is returned.
+    // Inputs: Completed synchronized work; automatic destruction retains ownership after an error.
+    // Outputs: Releases all transient arrays with one checked HIP call before the aggregate reservation is returned.
     void release_checked() {
-        output.reset_checked("free Neutron output");
-        sizes.reset_checked("free Neutron sizes");
-        cursors.reset_checked("free Neutron cursors");
-        decisions.reset_checked("free Neutron decisions");
-        matches.reset_checked("free Neutron matches");
-        trees.reset_checked("free Neutron trees");
+        allocation.reset_checked("free Neutron workspace");
     }
 };
 
@@ -380,10 +384,10 @@ void apply_neutron_budgets(std::uint32_t input_bytes, const NeutronShape& shape,
     }
     const auto segments = static_cast<unsigned int>(shape.segments);
     run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_bound_match_graphs, segments, workspace.state,
-                      input_bytes, workspace.cursors.get());
+                      input_bytes, workspace.cursors);
     ++run.budget_kernel_launches;
     std::vector<optimal::EmitCursor> bounds(shape.segments);
-    check_hip(copy_on_codec_stream(bounds.data(), workspace.cursors.get(), shape.cursor_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(bounds.data(), workspace.cursors, shape.cursor_bytes, hipMemcpyDeviceToHost),
               "download Neutron match-graph lower bounds");
     run.downloaded_size_bytes += shape.cursor_bytes;
     std::size_t first = 0U;
@@ -414,7 +418,7 @@ void apply_neutron_budgets(std::uint32_t input_bytes, const NeutronShape& shape,
     }
     if (run.pruned_segment_mask != 0U) {
         run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_initialize_noncompetitive_graphs, segments,
-                          workspace.state, input_bytes, run.pruned_segment_mask, workspace.sizes.get());
+                          workspace.state, input_bytes, run.pruned_segment_mask, workspace.sizes);
         ++run.budget_kernel_launches;
     }
 }
@@ -433,12 +437,12 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
         const auto count = std::min(optimal::kSearchPositionsPerLaunch, input_bytes - first);
         run_neutron_stage(run, checkpoint, hip_kernel_api().search_neutron_matches,
                           (count + kDictionaryKernelThreads - 1U) / kDictionaryKernelThreads, source, input_bytes,
-                          previous, first, count, workspace.matches.get());
+                          previous, first, count, workspace.state.matches);
     }
     run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_classify_match_graphs, segments, workspace.state,
-                      input_bytes, workspace.sizes.get());
+                      input_bytes, workspace.sizes);
     std::vector<std::uint32_t> host_sizes(shape.segments);
-    check_hip(copy_on_codec_stream(host_sizes.data(), workspace.sizes.get(), shape.size_bytes, hipMemcpyDeviceToHost),
+    check_hip(copy_on_codec_stream(host_sizes.data(), workspace.sizes, shape.size_bytes, hipMemcpyDeviceToHost),
               "download Neutron match-graph activity");
     run.downloaded_size_bytes += shape.size_bytes;
     apply_neutron_budgets(input_bytes, shape, workspace, run, host_sizes, budgets, checkpoint);
@@ -457,20 +461,19 @@ std::vector<std::uint32_t> run_neutron_encoder(const std::byte* source, const st
     const auto segment_bytes = std::min(input_bytes, kSegmentBytes);
     for (auto end = parse_bytes; end != 0U;) {
         run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_parse_tile, segments, workspace.state, input_bytes,
-                          end, workspace.sizes.get());
+                          end, workspace.sizes);
         ++run.parse_launches;
         end = end > optimal::kPositionsPerLaunch ? end - optimal::kPositionsPerLaunch : 0U;
     }
-    run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_initialize_writers, 1U, workspace.cursors.get(),
-                      workspace.sizes.get(), segments);
+    run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_initialize_writers, 1U, workspace.cursors,
+                      workspace.sizes, segments);
     const auto maximum_launches =
         (segment_bytes / 4U + 1U + optimal::kSequencesPerLaunch - 1U) / optimal::kSequencesPerLaunch;
     for (std::uint32_t tile = 0U; tile < maximum_launches; ++tile) {
         run_neutron_stage(run, checkpoint, hip_kernel_api().neutron_emit_tile, segments, source, input_bytes,
-                          workspace.state, workspace.output.get(), workspace.cursors.get(), workspace.sizes.get());
-        check_hip(
-            copy_on_codec_stream(host_sizes.data(), workspace.sizes.get(), shape.size_bytes, hipMemcpyDeviceToHost),
-            "download Neutron writer status");
+                          workspace.state, workspace.output, workspace.cursors, workspace.sizes);
+        check_hip(copy_on_codec_stream(host_sizes.data(), workspace.sizes, shape.size_bytes, hipMemcpyDeviceToHost),
+                  "download Neutron writer status");
         run.downloaded_size_bytes += shape.size_bytes;
         if (std::all_of(host_sizes.begin(), host_sizes.end(), [](auto bytes) { return bytes != 0U; })) {
             return host_sizes;
@@ -498,9 +501,9 @@ PackedEncodedBatch encode_neutron_segments_hip_impl(std::span<const std::byte> i
             if (checkpoint) {
                 checkpoint();
             }
-            auto result = finish_encoded_dictionary(workspace.output.get(), workspace.sizes.get(), sizes, packed,
-                                                    packed_capacity, metadata, run.clock.milliseconds(),
-                                                    run.clock.launches() + 3U, run.downloaded_size_bytes);
+            auto result = finish_encoded_dictionary(workspace.output, workspace.sizes, sizes, packed, packed_capacity,
+                                                    metadata, run.clock.milliseconds(), run.clock.launches() + 3U,
+                                                    run.downloaded_size_bytes);
             result.telemetry.neutron_active_segment_mask = run.active_segment_mask;
             result.telemetry.neutron_parse_launches = run.parse_launches;
             result.telemetry.neutron_pruned_segment_mask = run.pruned_segment_mask;

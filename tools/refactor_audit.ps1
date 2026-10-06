@@ -355,7 +355,8 @@ function Get-CppFunctionStart {
     $candidate = $Lines[$Index].Trim()
     if ($candidate -notmatch '\{\s*$') { return -1 }
     $start = $Index
-    if ($candidate -eq '{' -or $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
+    # An initializer call is part of its constructor, not a separate function declaration.
+    if ($candidate -eq '{' -or $candidate -match '^:(?!:)' -or $candidate -notmatch '\b[A-Za-z_]\w*\s*\(') {
         for ($i = $Index - 1; $i -ge [Math]::Max(0, $Index - 12); --$i) {
             $line = $Lines[$i].Trim()
             if (-not $line) { continue }

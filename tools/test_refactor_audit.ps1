@@ -135,6 +135,12 @@ try {
     Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('extern "C"', 'int parse(int first,',
         '          int second) {', '    return first + second;', '}'))
     Test-AuditCase -Name 'multiline attached-brace signatures keep their preceding contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines ($contract + @('Owner(int count)',
+        '    : allocation(count) {', '    initialize();', '}'))
+    Test-AuditCase -Name 'constructor initializer lists retain the declaration contract' -Options '-ChangedOnly'
+    Write-AuditFixture -RelativePath $vendorPath -Lines @('Owner(int count)',
+        '    : allocation(count) {', '    initialize();', '}')
+    Test-AuditCase -Name 'constructor initializer lists still require a contract' -Options '-ChangedOnly' -Expected @($vendorPath)
     Write-AuditFixture -RelativePath $vendorPath -Lines @('extern "C"', 'int parse(int first,',
         '          int second) {', '    return first + second;', '}')
     Test-AuditCase -Name 'multiline attached-brace signatures still require all contract fields' -Options '-ChangedOnly' -Expected @($vendorPath)

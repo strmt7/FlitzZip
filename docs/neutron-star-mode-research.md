@@ -70,7 +70,13 @@ iterates admitted batches inside the existing native block and chunk limits.
 Tree, match, decision, writer, size and
 output buffers are counted before the shared index reserves GPU memory;
 source, radix-sort and packed-output allocations also count toward the
-existing 256 MiB per-batch limit and process-wide device admission. The CPU
+existing 256 MiB per-batch limit and process-wide device admission. The six
+parser arrays share one HIP allocation with disjoint, compile-time-aligned
+views. They retain their exact admitted byte extents and synchronized lifetime;
+normal completion and cancellation release the same owner. This removes five
+allocation/free pairs per trial without changing search, kernels, archive bytes
+or numeric efforts. Allocation-byte telemetry and the conservative reservation
+remain unchanged; fewer runtime calls alone do not establish a speedup. The CPU
 receives only completed payloads and bounded status words. It does not compute
 or materialize the compression parse.
 
