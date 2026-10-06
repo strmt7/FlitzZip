@@ -147,9 +147,50 @@ class ComparatorPreflightTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "The native benchmark installer uses Windows PowerShell")
 class HyperfineBootstrapTests(unittest.TestCase):
+    def setUp(self) -> None:
+        """Purpose: Isolate provisioning from checkout state.
+        Inputs: Exact installer bytes. Outputs: Owned fresh fixture.
+        """
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.fixture_root = Path(temporary.name)
+        tools_root = self.fixture_root / "tools"
+        tools_root.mkdir()
+        self.installer = tools_root / "bootstrap_comparison_tools.ps1"
+        self.installer.write_bytes((corpus.ROOT / "tools/bootstrap_comparison_tools.ps1").read_bytes())
+        self.output_root = self.fixture_root / "out"
+        self.output_root.mkdir()
+
+    def test_fresh_checkout_creates_owned_output_before_offline_admission(self) -> None:
+        """Purpose: Qualify first use.
+        Inputs: Absent output directory and no asset. Outputs: Owned setup, then refusal.
+        """
+        self.output_root.rmdir()
+        self.assertFalse(self.output_root.exists())
+        with self.assertRaisesRegex(ValueError, "Offline comparison asset is missing"):
+            corpus.run_process(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(self.installer),
+                    "-Tool",
+                    "Hyperfine",
+                    "-ToolRoot",
+                    str(self.output_root / "tools"),
+                    "-Offline",
+                ],
+                None,
+                20,
+            )
+        self.assertTrue((self.output_root / "tools/downloads").is_dir())
+        self.assertFalse(list(self.output_root.rglob("*.exe")))
+
     def test_offline_bootstrap_rejects_missing_and_changed_artifacts(self) -> None:
         """Purpose: Exercise installer admission. Inputs: Owned inert fixtures. Outputs: Refusal before execution."""
-        output_root = corpus.ROOT / "out"
+        output_root = self.output_root
         directory = "hyperfine-v1.20.0-x86_64-pc-windows-msvc"
         for role in ("missing", "changed_archive", "changed_binary"):
             with self.subTest(role=role), tempfile.TemporaryDirectory(dir=output_root) as temporary:
@@ -170,7 +211,7 @@ class HyperfineBootstrapTests(unittest.TestCase):
                             "-ExecutionPolicy",
                             "Bypass",
                             "-File",
-                            str(corpus.ROOT / "tools/bootstrap_comparison_tools.ps1"),
+                            str(self.installer),
                             "-Tool",
                             "Hyperfine",
                             "-ToolRoot",
@@ -191,11 +232,11 @@ class HyperfineBootstrapTests(unittest.TestCase):
                     "-ExecutionPolicy",
                     "Bypass",
                     "-File",
-                    str(corpus.ROOT / "tools/bootstrap_comparison_tools.ps1"),
+                    str(self.installer),
                     "-Tool",
                     "Hyperfine",
                     "-ToolRoot",
-                    str(corpus.ROOT),
+                    str(self.fixture_root),
                     "-Offline",
                 ],
                 None,
@@ -204,7 +245,7 @@ class HyperfineBootstrapTests(unittest.TestCase):
 
     def test_bootstrap_refuses_linked_ancestors_before_writing(self) -> None:
         """Purpose: Guard path escapes. Inputs: An owned junction. Outputs: No nested installation is created."""
-        output_root = corpus.ROOT / "out"
+        output_root = self.output_root
         with tempfile.TemporaryDirectory(dir=output_root) as temporary:
             root = Path(temporary)
             self.assertEqual(root.resolve().parent, output_root.resolve())
@@ -242,7 +283,7 @@ class HyperfineBootstrapTests(unittest.TestCase):
                             "-ExecutionPolicy",
                             "Bypass",
                             "-File",
-                            str(corpus.ROOT / "tools/bootstrap_comparison_tools.ps1"),
+                            str(self.installer),
                             "-Tool",
                             "Hyperfine",
                             "-ToolRoot",

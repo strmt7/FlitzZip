@@ -971,3 +971,10 @@ both findings and empty results. Validate private broker credentials before
 passing them to a third-party action, mask them before outputs, and keep their
 values out of failure diagnostics. Offline contracts do not prove a live scan
 or authenticated upload; those require the authorized broker and target.
+
+Installer regressions must run in an owned fresh fixture with the exact current
+installer bytes, independent of the developer checkout's output directory or
+caches. Exercise the absent-output first-use path before missing, changed and
+linked-artifact controls. Keep the negative cases offline and assert that no
+unverified executable is produced. Reusing a developer's existing output tree
+does not establish fresh-host installation behavior.
