@@ -186,7 +186,6 @@ SRes decode_ppmd(PpmdTestStream& stream, UInt64 packed_size = 5, std::span<Byte>
     std::array<Byte, 1> main_indices{0};
     std::array<UInt64, 1> unpack_sizes{output.size()};
     std::array<UInt64, 2> pack_positions{0, packed_size};
-    Byte empty_output = 0;
     CSzAr archive{};
     archive.NumPackStreams = 1;
     archive.NumFolders = 1;
@@ -198,11 +197,23 @@ SRes decode_ppmd(PpmdTestStream& stream, UInt64 packed_size = 5, std::span<Byte>
     archive.CoderUnpackSizes = unpack_sizes.data();
     archive.CodersData = coders.data();
     const ISzAlloc allocator{ppmd_test_allocate, ppmd_test_free};
-    return SzAr_DecodeFolder(&archive, 0, &stream.vt, 0, output.empty() ? &empty_output : output.data(), output.size(),
+    return SzAr_DecodeFolder(&archive, 0, &stream.vt, 0, output.data(), output.size(),
                              controlled_allocator != nullptr ? controlled_allocator : &allocator);
 }
 
 }  // namespace
+
+// Purpose: Decode an empty folder without requiring a dummy output allocation.
+// Inputs: A null empty output span and valid or truncated packed range state.
+// Outputs: Accepts the valid stream and still rejects invalid packed data before returning success.
+TEST_CASE(sevenzip_ppmd_accepts_null_empty_output_without_skipping_validation) {
+    const std::span<Byte> output;
+    REQUIRE_TRUE(output.data() == nullptr);
+    PpmdTestStream valid;
+    REQUIRE_EQ(decode_ppmd(valid, 5, output), SZ_OK);
+    PpmdTestStream truncated;
+    REQUIRE_EQ(decode_ppmd(truncated, 4, output), SZ_ERROR_DATA);
+}
 
 // Purpose: Retain both PPMd owners through decoding and release them on allocation or callback failure.
 // Inputs: Independent allocation failures, a real I/O failure and known valid empty output.

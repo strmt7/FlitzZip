@@ -184,7 +184,8 @@ function Get-AcceptedGovernanceAlert {
     $file = Get-Item -LiteralPath $PolicyPath -ErrorAction Stop
     if ($file.Length -gt 16KB) { throw 'Governance baseline exceeds its size bound.' }
     $policy = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
-    if ($policy -isnot [pscustomobject] -or $policy.schema_version -isnot [int] -or $policy.schema_version -ne 1 -or
+    if ($policy -isnot [pscustomobject] -or
+        ($policy.schema_version -isnot [int] -and $policy.schema_version -isnot [long]) -or $policy.schema_version -ne 1 -or
         $policy.repository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
         $policy.rationale -isnot [string] -or [string]::IsNullOrWhiteSpace($policy.rationale) -or
         $policy.accepted_governance -isnot [System.Array] -or $policy.accepted_governance.Count -ne 2 -or

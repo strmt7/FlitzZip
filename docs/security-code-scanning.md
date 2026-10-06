@@ -104,6 +104,13 @@ metadata dispositions remain visible in GitHub's audit history.
 
 ## Automatic Workflows
 
+The C++ CodeQL job uses a CPU/HIP-host matrix. When the selector proves that
+both complete analyses remain applicable, GitHub skips that job before expanding
+the matrix. Its checks list can therefore display the literal
+`CodeQL C++ (${{ matrix.configuration }})` name. Inspect the successful
+`Select whole-database C++ analysis` job for its reason and analysis commit
+identities; the skipped label alone does not establish coverage or closure.
+
 - `.github/workflows/security-code-scanning.yml` runs source and dependency
   security scans on push, weekly schedule, and manual dispatch.
 - `.github/workflows/scorecard.yml` runs OSSF Scorecard on the default branch,

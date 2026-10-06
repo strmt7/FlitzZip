@@ -168,16 +168,17 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
     res = SZ_ERROR_DATA;
     if (Ppmd7z_RangeDec_Init(&ppmd->rc.dec) && !s->extra)
     {
-      Byte *buf = outBuffer;
-      const Byte *lim = buf + outSize;
-      for (; buf != lim; buf++)
+      SizeT produced = 0;
+      /* A zero-sized folder may have no output allocation. Count bytes without
+         forming or advancing a pointer into that absent allocation. */
+      for (; produced < outSize; produced++)
       {
         int sym = Ppmd7z_DecodeSymbol(ppmd);
         if (s->extra || sym < 0)
           break;
-        *buf = (Byte)sym;
+        outBuffer[produced] = (Byte)sym;
       }
-      if (buf == lim)
+      if (produced == outSize)
         if (Ppmd7z_RangeDec_IsFinishedOK(&ppmd->rc.dec))
           res = SZ_OK;
     }

@@ -66,3 +66,6 @@ allocation. The decoder no longer stores a pointer to a stack bridge; model
 storage is released before their common owner on success, I/O failure and
 allocation failure. Independent PPMd bytes and allocation-failure controls
 exercise the public folder decoder. Upstream provenance remains unchanged.
+Empty PPMd output uses a decoded-byte count without arithmetic on a null output
+pointer. Empty folders still validate their packed range state and I/O results;
+direct decoder tests pass the actual null empty span rather than a dummy byte.

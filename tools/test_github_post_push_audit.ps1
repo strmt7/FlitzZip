@@ -152,6 +152,43 @@ foreach ($entryPoint in @('github_post_push_audit.ps1', 'wait_relevant_workflows
     $script:auditScenarioCount += 1
 }
 
+# Exercise both JSON integer representations even on a host with only one PowerShell runtime.
+# The complete audit cases below still use the real JSON parser and tracked policy.
+$schemaTokens = $null
+$schemaParseErrors = $null
+$schemaAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $PSScriptRoot 'github_post_push_audit.ps1'), [ref]$schemaTokens, [ref]$schemaParseErrors)
+$schemaFunction = $schemaAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-AcceptedGovernanceAlert'
+}, $true)
+if ($schemaParseErrors.Count -ne 0 -or $null -eq $schemaFunction) { throw 'Governance schema contract is unavailable.' }
+$schemaPath = Join-Path (Split-Path -Parent $PSScriptRoot) '.github/scanner-governance-baseline.json'
+$schemaAlerts = '[{"number":71,"tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}}]' | ConvertFrom-Json
+foreach ($schemaValue in @([int]1, [long]1, [double]1, '1', $true, $null, [long]2)) {
+    $schemaVariables = [System.Collections.Generic.List[System.Management.Automation.PSVariable]]::new()
+    $schemaVariables.Add([System.Management.Automation.PSVariable]::new('schemaValue', $schemaValue))
+    $schemaAccepted = $false
+    try {
+        $schemaResult = @($schemaFunction.Body.GetScriptBlock().InvokeWithContext(
+            @{ 'ConvertFrom-Json' = {
+                param([Parameter(ValueFromPipeline = $true)][string]$InputObject)
+                process {
+                    $parsedPolicy = Microsoft.PowerShell.Utility\ConvertFrom-Json -InputObject $InputObject
+                    $parsedPolicy.schema_version = $schemaValue
+                    $parsedPolicy
+                }
+            } },
+            $schemaVariables,
+            @('strmt7/SuperZip', $schemaAlerts, $schemaPath)))
+        $schemaAccepted = $schemaResult.Count -eq 1 -and $schemaResult[0] -eq 71
+    } catch {
+        if ($_.Exception.ToString() -notlike '*Invalid governance baseline policy.*') { throw }
+    }
+    $schemaExpected = ($schemaValue -is [int] -or $schemaValue -is [long]) -and $schemaValue -eq 1
+    if ($schemaAccepted -ne $schemaExpected) { throw 'Governance schema rejected a supported integer or admitted another type.' }
+}
+
 Test-AuditCase 'empty successful snapshot' @($emptyDeployments, $emptyAlerts)
 Test-AuditCase 'ambiguous commit rejected before API work' @() 'requires a full commit SHA' -Commit HEAD
 Test-AuditCase 'unavailable full commit rejected before API work' @() 'Cannot resolve the requested checkout commit' -Commit ('b' * 40)

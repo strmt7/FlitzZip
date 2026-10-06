@@ -27,3 +27,64 @@ See [beta readiness](docs/beta-readiness.md) and [release qualification](docs/re
 [Agent instructions](AGENTS.md) define the mandatory operating rules.
 [Benchmark index](docs/benchmarks/README.md) identifies current evidence and limitations.
 Completed checkpoint narratives remain in Git history and local review artifacts.
+
+## Release Blockers
+
+The maintainer requested a prompt handoff to conserve usage. The work below is
+deferred, not completed or waived. The existing candidate is not approved for
+publication; resume these gates before declaring the next beta ready.
+
+1. **Close the remaining source-analysis findings.** Use the exact-commit audit,
+   including reproduced dismissed reports, as the inventory. Review the PPMd,
+   Gzip and Bzip2 callback lifetimes, LZ4 length/error handling and staged-header
+   contract, and remaining allocation/copy and test-fixture reports. Preserve
+   independent regressions and verify production repairs with the original
+   detectors. Only the two exact, maintainer-approved governance observations
+   count as a pass through the existing baseline.
+2. **Resolve the development dependency advisory.** Preserve the NLTK repair's
+   original-failure and installed-consumer evidence. Check the upstream advisory
+   and compatible fixed releases before changing the pinned crawler environment.
+   The outstanding upstream alert must remain visible; successful crawler use
+   alone does not close it.
+3. **Complete the GPU incident investigation.** Trace bounded kernel progress,
+   asynchronous ownership, failure cleanup and runtime admission against the
+   retained incident evidence. The supplied empty watchdog dumps cannot establish
+   a cause. Do not label the freeze resolved from successful later GPU tests.
+4. **Finish source and release qualification.** Complete the remaining parser,
+   extraction, codec, driver and kernel review, plus any
+   required authenticated scanner qualification. Qualify the final pushed SHA's
+   workflows, audit, HIP-enabled ZIP/MSI, checksums and installer lifecycle before
+   requesting release approval. Earlier successful artifacts cover their own
+   source identities, not every later commit.
+
+## Deferred Improvement Work
+
+- **Neutron effectiveness:** complete the current-format Govdocs1 study using
+  the existing licensed corpus controller and RAM-only payload transport.
+  Follow with controlled, paired CPU/GPU measurements and multiple independent
+  workload classes. Preserve complete archive sizes and byte-exact readback;
+  current evidence does not establish broad size superiority or a GPU speedup.
+- **Compression research:** evaluate the retained primary-source research before
+  another broad crawl. Test GPU-suitable dictionary search, parsing, entropy and
+  lossless model-data ideas, counting every model, dictionary and format byte.
+  Keep Neutron GPU-only and separate from efforts 1–9. Adopt an idea only after
+  independent correctness, malformed-input and representative size measurements.
+- **Repository review:** finish the unreviewed source and document ranges;
+  inventory coverage is not a line-by-line review. Refactor only demonstrated
+  ownership, duplication, complexity or performance problems and retain direct
+  consumers. Recheck frontend Neutron admission and interaction when their code
+  changes. Preserve the existing AGPL-3.0 license, third-party notices and
+  action-specific benchmark permissions.
+- **Benchmark presentation:** finish visual inspection of every remaining graph
+  in every document, including uncertainty/error bars, units, scales, legends
+  and source-data correspondence. Keep current evidence distinct from golden
+  renderer fixtures; archive obsolete narratives locally without removing tests.
+- **Development efficiency:** optimize measured build/workflow bottlenecks while
+  retaining traced security analysis and release gates. Finish fresh-host and
+  existing-installation tool qualification where evidence is missing. Keep
+  canonical agent rules concise, crawler installation portable and finding
+  prevention executable; do not add recurring maintenance for unchanged tools.
+
+Reuse completed checks only when source, tools, configuration and outputs still
+match. Resume from the retained local evidence and current GitHub audit rather
+than repeating unchanged scans or benchmarks.
