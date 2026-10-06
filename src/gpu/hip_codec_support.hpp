@@ -32,6 +32,7 @@ namespace superzip::hip_detail {
 constexpr std::uint32_t kPatternSampleBytes = 2U * kMaxGpuPatternBytes;
 constexpr std::uint32_t kAnalyzeSegmentBytes = 64U * 1024U;
 constexpr std::uint32_t kSmallCrcSegmentBytes = 8U * 1024U;
+constexpr unsigned int kCrcSegmentThreads = 256U;
 constexpr std::uint32_t kLargeCrcSegmentBytes = 32U * 1024U;
 constexpr std::uint64_t kSmallCrcInputLimitBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr std::uint32_t kMaterializeSegmentBytes = 64U * 1024U;
@@ -365,6 +366,8 @@ inline std::uint32_t checked_prefix_offset_add(std::uint32_t current, std::uint3
     return current + added;
 }
 
+#if defined(__HIPCC__)
+
 // Purpose: Return one worker thread's contiguous byte range inside a prefix segment.
 // Inputs: `block_len`, `segment`, and `thread_id` describe the decoded block and GPU worker.
 // Outputs: Writes an inclusive start and exclusive end offset relative to the archive block.
@@ -396,6 +399,8 @@ __device__ inline std::uint32_t gpu_prefix_exclusive_scan(std::uint32_t* sums, s
     }
     return sums[thread_id] - local_bits;
 }
+
+#endif
 
 // Purpose: Read one little-endian prefix-table entry from a host-side GPU-prefix payload span.
 // Inputs: `prefix_payload` is the encoded block payload and `offset` is the table byte offset.

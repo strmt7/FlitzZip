@@ -34,5 +34,14 @@ an existing executable guard over adding another parallel policy framework.
 Completed source-specific lessons and their original guard references remain in
 [the engineering record](history/development/engineering-learning-record.md).
 Archiving prose does not retire any test, scanner or enforcement boundary.
+Optional accelerator registration must not execute before capability admission.
+Keep startup-absence regressions alongside real accelerator execution tests;
+compile-only checks cannot qualify either runtime behavior. Across separately
+linked CRTs, use an explicit versioned interface with ownership retained by its
+allocator and no exception propagation across the boundary. Validate packaged
+bytes independently from hardware availability.
+Produce runtime digests from linked artifacts, not configure-time placeholders.
+PowerShell analyzer lint must also parse source with the native grammar parser;
+an analyzer's empty finding list does not establish syntactic validity.
 Current source-remediation requirements remain in
 [the remediation guide](security-source-remediation-redesign.md).

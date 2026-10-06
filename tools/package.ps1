@@ -12,6 +12,7 @@ $build = Join-Path $repo "build"
 $stage = Join-Path $repo "out\install-$Configuration"
 . (Join-Path $PSScriptRoot "version.ps1")
 . (Join-Path $PSScriptRoot "cmake_toolchain.ps1")
+. (Join-Path $PSScriptRoot "package_runtime.ps1")
 
 $PackageVersion = Resolve-SuperZipPackageVersion -RepoRoot $repo -RequestedVersion $PackageVersion
 $packageBase = Get-SuperZipPackageBase -PackageVersion $PackageVersion
@@ -113,7 +114,17 @@ if (-not $hipEnabled -and -not $AllowCpuValidationPackage) {
     throw "Refusing to package a CPU-only SuperZip build. Rebuild with AMD HIP enabled, or pass -AllowCpuValidationPackage only for internal CI validation artifacts that will not be released."
 }
 
-if (Test-Path $stage) {
+foreach ($directory in @($repo, (Join-Path $repo 'out'), $stage)) {
+    if ((Test-Path -LiteralPath $directory) -and
+        ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Refusing packaging through a redirected workspace or staging directory.'
+    }
+}
+$expectedStage = [IO.Path]::GetFullPath((Join-Path $repo "out/install-$Configuration"))
+if ([IO.Path]::GetFullPath($stage) -cne $expectedStage) {
+    throw 'Package staging directory is outside its exact owned workspace location.'
+}
+if (Test-Path -LiteralPath $stage) {
     Remove-Item -LiteralPath $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
@@ -121,6 +132,7 @@ $cmake = Find-CMake -RepoRoot $repo
 & $cmake --install $build --config $Configuration --prefix $stage
 if ($LASTEXITCODE -ne 0) { throw "Package staging failed: $LASTEXITCODE" }
 & (Join-Path $PSScriptRoot 'verify_license_notices.ps1') -PackageRoot $stage
+Assert-SuperZipPackagedRuntime -PackageRoot $stage -HipEnabled $hipEnabled
 
 $cli = Join-Path $stage "bin\superzip_cli.exe"
 if (-not (Test-Path -LiteralPath $cli)) {
@@ -137,15 +149,7 @@ if ($hipEnabled) {
     $dependencyOutput = & $cli dependency-check 2>&1
     $dependencyExit = $LASTEXITCODE
     $dependencyOutput | Set-Content -LiteralPath (Join-Path $stage "superzip-dependency-check.txt")
-    if ($dependencyOutput -notcontains "hip_compiled=true") {
-        throw "Staged CLI is not reporting a HIP-enabled build."
-    }
-    if ($dependencyOutput -notcontains "hip_runtime_loadable=true") {
-        throw "Staged CLI cannot load the AMD HIP runtime on this build host. Install/update the AMD GPU driver or ensure the HIP SDK bin directory is discoverable before packaging."
-    }
-    if ($dependencyExit -notin @(0, 12)) {
-        throw "Staged CLI dependency check failed with exit code $dependencyExit."
-    }
+    Assert-SuperZipHipDependencyState -Output $dependencyOutput -ExitCode $dependencyExit
 }
 
 if (Test-Path $package) {

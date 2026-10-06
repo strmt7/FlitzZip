@@ -1,34 +1,10 @@
 #pragma once
 
-#include "gpu/dictionary_matcher.hpp"
-#include "gpu/hip_codec_support.hpp"
-
-#include <cstdint>
-#include <limits>
+#include "gpu/hip_dictionary_optimal_state.hpp"
 
 namespace superzip::dictionary::optimal {
 
-inline constexpr std::uint32_t kLanes = 256U;
-inline constexpr std::uint32_t kTreeWords = 2U * kSegmentBytes;
-inline constexpr std::uint32_t kResidueTreeWords = 512U;
-inline constexpr std::uint32_t kPositionsPerLaunch = kNeutronParseTilePositions;
-inline constexpr std::uint32_t kSearchPositionsPerLaunch = kNeutronSearchTileBytes;
-inline constexpr std::uint32_t kSequencesPerLaunch = kNeutronEmitSequences;
-inline constexpr auto kInfinity = std::numeric_limits<std::uint64_t>::max();
-
-struct State {
-    Match* matches;
-    std::uint64_t* suffix_tree;
-    std::uint64_t* residue_tree;
-    std::uint32_t* match_costs;
-    std::uint32_t* match_ends;
-    std::uint32_t* next_matches;
-};
-
-struct EmitCursor {
-    std::uint32_t position;
-    std::uint32_t written;
-};
+#if defined(__HIPCC__)
 
 // Purpose: Bound any LZ4 parse below by the bytes that every permitted match leaves as literals.
 // Inputs: An uncovered-literal count from one admitted segment, at most 65,536 bytes.
@@ -460,5 +436,7 @@ __global__ void emit_tile(const std::byte* input, std::uint32_t input_size, Stat
         cursors[segment] = cursor;
     }
 }
+
+#endif
 
 }  // namespace superzip::dictionary::optimal

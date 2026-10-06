@@ -596,29 +596,49 @@ if(SUPERZIP_ENABLE_HIP)
     superzip_hip_object
     DEPENDS ${SUPERZIP_HIP_OBJECTS}
     COMMENT "Preparing AMD HIP codec object")
-  add_library(superzip_gpu_hip STATIC ${SUPERZIP_HIP_OBJECTS})
+  # Kernel registration must occur after trusted runtime admission, never in an
+  # executable's static constructors. Only a POD dispatch table crosses this
+  # DLL.
+  add_library(superzip_gpu_hip SHARED ${SUPERZIP_HIP_OBJECTS}
+                                      src/gpu/hip_kernel_module.cpp)
   add_dependencies(superzip_gpu_hip superzip_hip_object)
   set_source_files_properties(${SUPERZIP_HIP_OBJECTS}
                               PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
-  set_target_properties(superzip_gpu_hip PROPERTIES LINKER_LANGUAGE CXX)
+  set_target_properties(
+    superzip_gpu_hip
+    PROPERTIES LINKER_LANGUAGE CXX
+               OUTPUT_NAME superzip_hip_kernels
+               MSVC_RUNTIME_LIBRARY MultiThreaded)
   target_include_directories(superzip_gpu_hip
                              PUBLIC src "${SUPERZIP_HIP_PATH}/include")
-  target_compile_definitions(superzip_gpu_hip PUBLIC SUPERZIP_ENABLE_HIP=1)
-  target_link_libraries(superzip_gpu_hip PUBLIC "${SUPERZIP_HIP_LIB}")
+  target_compile_definitions(
+    superzip_gpu_hip PRIVATE SUPERZIP_ENABLE_HIP=1 __HIP_PLATFORM_AMD__=1
+                             NOMINMAX WIN32_LEAN_AND_MEAN)
+  target_link_libraries(superzip_gpu_hip PRIVATE "${SUPERZIP_HIP_LIB}")
   target_include_directories(superzip_core
                              PUBLIC "${SUPERZIP_HIP_PATH}/include")
   target_compile_definitions(
     superzip_core
     PUBLIC __HIP_PLATFORM_AMD__=1
-           SUPERZIP_HIP_RUNTIME_DLL_NAME="${SUPERZIP_HIP_RUNTIME_DLL_NAME}")
+           SUPERZIP_HIP_RUNTIME_DLL_NAME="${SUPERZIP_HIP_RUNTIME_DLL_NAME}"
+           SUPERZIP_HIP_KERNEL_DLL_NAME="superzip_hip_kernels.dll")
   if(MSVC)
     target_link_libraries(superzip_core PUBLIC delayimp)
     target_link_options(superzip_core PUBLIC
                         "/DELAYLOAD:${SUPERZIP_HIP_RUNTIME_DLL_NAME}")
   endif()
-  target_link_libraries(superzip_core PUBLIC superzip_gpu_hip)
-  target_sources(superzip_core PRIVATE src/gpu/dictionary_candidate.cpp
-                                       src/gpu/sparse_pattern_candidate.cpp)
+  target_link_libraries(superzip_core PUBLIC "${SUPERZIP_HIP_LIB}")
+  target_sources(
+    superzip_core
+    PRIVATE src/gpu/dictionary_candidate.cpp
+            src/gpu/sparse_pattern_candidate.cpp
+            src/gpu/hip_codec.cpp
+            src/gpu/hip_crc.cpp
+            src/gpu/hip_codec_static_prefix.cpp
+            src/gpu/hip_codec_adaptive_prefix.cpp
+            src/gpu/hip_dictionary_matcher.cpp
+            src/gpu/hip_sparse_pattern.cpp
+            src/gpu/hip_kernel_api.cpp)
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=1)
 else()
   target_compile_definitions(superzip_core PUBLIC SUPERZIP_ENABLE_HIP=0)
@@ -626,10 +646,50 @@ endif()
 if(WIN32)
   include(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ConfigureRuntimeDependencies.cmake")
+  set(SUPERZIP_RUNTIME_MANIFEST
+      "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json")
+  set(SUPERZIP_RUNTIME_BASE_MANIFEST
+      "${CMAKE_CURRENT_BINARY_DIR}/runtime-base.json")
+  set(SUPERZIP_HIP_GENERATED_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
   superzip_configure_runtime_dependencies(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake" "${SUPERZIP_RUNTIME_BASE_MANIFEST}"
     "${SUPERZIP_ENABLE_HIP}")
+  set(SUPERZIP_RUNTIME_IDENTITY_ARGS)
+  set(SUPERZIP_RUNTIME_IDENTITY_DEPENDS libzstd_shared)
+  set(SUPERZIP_RUNTIME_IDENTITY_BYPRODUCTS)
+  if(SUPERZIP_ENABLE_HIP)
+    set(SUPERZIP_HIP_IDENTITY_HEADER
+        "${SUPERZIP_HIP_GENERATED_DIR}/superzip_hip_kernel_identity.hpp")
+    list(
+      APPEND
+      SUPERZIP_RUNTIME_IDENTITY_ARGS
+      "-DINPUT=$<TARGET_FILE:superzip_gpu_hip>"
+      "-DHEADER=${SUPERZIP_HIP_IDENTITY_HEADER}"
+      "-DPACKAGE_VERSION=${SUPERZIP_PACKAGE_VERSION}")
+    list(APPEND SUPERZIP_RUNTIME_IDENTITY_DEPENDS superzip_gpu_hip)
+    list(APPEND SUPERZIP_RUNTIME_IDENTITY_BYPRODUCTS
+         "${SUPERZIP_HIP_IDENTITY_HEADER}")
+    target_include_directories(
+      superzip_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
+  endif()
+  add_custom_target(
+    superzip_runtime_identity
+    BYPRODUCTS ${SUPERZIP_RUNTIME_IDENTITY_BYPRODUCTS}
+    COMMAND
+      "${CMAKE_COMMAND}" "-DZSTD_DLL=${SUPERZIP_ZSTD_RUNTIME_DLL}"
+      "-DWIM_DLL=${SUPERZIP_WIMLIB_RUNTIME_DLL}"
+      "-DBASE_MANIFEST=${SUPERZIP_RUNTIME_BASE_MANIFEST}"
+      "-DMANIFEST=${SUPERZIP_RUNTIME_MANIFEST}"
+      ${SUPERZIP_RUNTIME_IDENTITY_ARGS} -P
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WritePackagedRuntimeIdentity.cmake"
+    DEPENDS
+      ${SUPERZIP_RUNTIME_IDENTITY_DEPENDS} "${SUPERZIP_WIMLIB_RUNTIME_DLL}"
+      "${SUPERZIP_RUNTIME_BASE_MANIFEST}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WritePackagedRuntimeIdentity.cmake"
+    COMMENT "Binding exact packaged runtime identities"
+    VERBATIM)
+  add_dependencies(superzip_core superzip_runtime_identity)
 endif()
 
 set(SUPERZIP_LICENSE_NOTICES_MANIFEST
@@ -1066,8 +1126,10 @@ install(DIRECTORY docs DESTINATION .)
 install(DIRECTORY resources/brand resources/benchmarks resources/design
         DESTINATION resources)
 if(SUPERZIP_ENABLE_HIP)
-  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/superzip-runtime-dependencies.json"
-          DESTINATION .)
+  install(TARGETS superzip_gpu_hip RUNTIME DESTINATION bin)
+endif()
+if(WIN32)
+  install(FILES "${SUPERZIP_RUNTIME_MANIFEST}" DESTINATION .)
 endif()
 
 set(CPACK_PACKAGE_NAME "SuperZip")

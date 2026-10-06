@@ -63,6 +63,9 @@ $cliHelp = & $cli --help
 if ($LASTEXITCODE -ne 0 -or -not ($cliHelp -match "superzip_cli --version")) {
     throw "CLI --help must advertise --version and exit successfully."
 }
+if ((Read-SuperZipCMakeCacheValue -BuildRoot $build -Name 'SUPERZIP_ENABLE_HIP') -eq 'ON') {
+    & (Join-Path $PSScriptRoot 'test_hip_kernel_boundary.ps1') -Configuration $Configuration
+}
 & (Join-Path $PSScriptRoot 'test_memory_benchmark_plan.ps1') -Configuration $Configuration
 & (Join-Path $PSScriptRoot 'test_memory_benchmark_corpus.ps1') -Configuration $Configuration
 

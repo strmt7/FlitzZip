@@ -5,7 +5,6 @@
 
 namespace superzip::hip_detail {
 
-constexpr unsigned int kCrcSegmentThreads = 256U;
 constexpr std::size_t kDeviceCrcLengthBits = 16U;
 static_assert(kLargeCrcSegmentBytes < (1U << kDeviceCrcLengthBits));
 

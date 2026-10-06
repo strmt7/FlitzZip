@@ -82,6 +82,7 @@ def changed_paths(root: Path, base: str) -> list[str]:
 # Outputs: Whole-database admission; malformed paths prevent an unchanged-input decision.
 def select_cpp(paths: list[str], *, full: bool = False) -> dict:
     changed = False
+    hip_host = full
     native_files = {item.casefold() for item in INPUT_FILES}
     native_roots = tuple(root.casefold() + "/" for root in INPUT_ROOTS)
     for name in paths:
@@ -96,6 +97,12 @@ def select_cpp(paths: list[str], *, full: bool = False) -> dict:
         ):
             raise ValueError("C++ security inventory contains a noncanonical path")
         canonical = name.casefold()
+        hip_host |= (
+            canonical.startswith(("src/gpu/", "cmake/", ".github/codeql/"))
+            or (canonical.startswith("src/core/") and path.suffix.casefold() in {".h", ".hpp", ".hxx"})
+            or canonical in native_files
+            or canonical in POLICY_FILES
+        )
         changed |= (
             canonical in native_files
             or canonical.startswith(native_roots)
@@ -108,6 +115,7 @@ def select_cpp(paths: list[str], *, full: bool = False) -> dict:
         )
     return {
         "codeql_cpp": full or changed,
+        "codeql_hip_host": hip_host,
         "whole_database": True,
         "changed_path_count": len(paths),
         "reason": "explicit full qualification"
@@ -146,6 +154,7 @@ def main() -> None:
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8", newline="\n") as output:
             output.write(f"codeql_cpp={str(plan['codeql_cpp']).lower()}\n")
+            output.write(f"codeql_hip_host={str(plan['codeql_hip_host']).lower()}\n")
     print(json.dumps(plan, sort_keys=True))
 
 

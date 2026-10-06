@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32) && SUPERZIP_ENABLE_HIP
+#include <windows.h>
+#endif
+
 namespace {
 
 using TestFn = std::function<void()>;
@@ -34,6 +38,13 @@ void register_test(std::string name, TestFn fn) {
 // Inputs: `argc`/`argv` may contain one filter; a leading '=' requests exact selection.
 // Outputs: Returns zero for passing selected tests, one for failures, or two for invalid arguments/selections.
 int main(int argc, char** argv) {
+#if defined(_WIN32) && SUPERZIP_ENABLE_HIP
+    if (GetModuleHandleA(SUPERZIP_HIP_RUNTIME_DLL_NAME) != nullptr ||
+        GetModuleHandleA(SUPERZIP_HIP_KERNEL_DLL_NAME) != nullptr) {
+        std::cerr << "HIP runtime/kernel registration occurred before explicit admission\n";
+        return 1;
+    }
+#endif
     if (argc > 2) {
         std::cerr << "Expected at most one test-name filter\n";
         return 2;

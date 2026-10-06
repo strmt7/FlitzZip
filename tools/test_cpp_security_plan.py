@@ -89,7 +89,7 @@ class CppSecurityContracts(unittest.TestCase):
             output = Path(directory) / "job-output"
             with mock.patch.object(sys, "argv", ["cpp-plan", "--event", "schedule", "--github-output", str(output)]):
                 cpp.main()
-            self.assertEqual(output.read_bytes(), b"codeql_cpp=true\n")
+            self.assertEqual(output.read_bytes(), b"codeql_cpp=true\ncodeql_hip_host=true\n")
         workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
         for required in [
             "needs: cpp-security-plan",
@@ -100,10 +100,37 @@ class CppSecurityContracts(unittest.TestCase):
             "fetch-depth: 0",
             "queries: security-extended,security-and-quality",
             "build-mode: manual",
+            "codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}",
+            "needs.cpp-security-plan.outputs.codeql_hip_host != 'false'",
+            "tools/build.ps1 -Configuration Release -HipArch gfx1201",
         ]:
             self.assertIn(required, workflow)
         self.assertNotIn("paths-ignore", workflow)
         self.assertNotIn("continue-on-error", workflow)
+
+    def test_hip_host_inputs_add_real_compilation_without_retiring_cpu_configuration(self):
+        """Purpose: Cover HIP host branches. Inputs: Shared/unrelated paths. Outputs: Exact extra-build roles."""
+        for path in [
+            "src/gpu/hip_kernel_api.cpp",
+            "src/gpu/hip_kernel_module.cpp",
+            "src/gpu/hip_codec.cpp",
+            "src/core/resource_limits.hpp",
+            "cmake/WritePackagedRuntimeIdentity.cmake",
+            "CMakeLists.txt",
+            *cpp.POLICY_FILES,
+        ]:
+            with self.subTest(path=path):
+                self.assertTrue(cpp.select_cpp([path])["codeql_hip_host"])
+        for path in [
+            "README.md",
+            "src/core/checksum.cpp",
+            "src/app/main_window_pages.cpp",
+            "tools/requirements/crawl4ai.txt",
+        ]:
+            self.assertFalse(cpp.select_cpp([path])["codeql_hip_host"])
+        self.assertTrue(cpp.select_cpp([], full=True)["codeql_hip_host"])
+        workflow = (cpp.ROOT / ".github/workflows/security-code-scanning.yml").read_text(encoding="utf-8")
+        self.assertIn("tools/build.ps1 -Configuration Release -CpuOnlyValidation", workflow)
 
 
 if __name__ == "__main__":

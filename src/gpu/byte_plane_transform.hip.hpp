@@ -1,28 +1,9 @@
 #pragma once
 
 #include "core/byte_plane_block.hpp"
-#include "gpu/hip_codec_support.hpp"
+#include "gpu/hip_kernel_api.hpp"
 
 namespace superzip::hip_detail {
-
-// Purpose: Apply one exact byte-plane permutation with one bounded lane per destination byte.
-// Inputs: Distinct device spans of length bytes, an admitted width and forward/inverse direction.
-// Outputs: Writes every destination once; incomplete final groups retain their original order.
-__global__ void byte_plane_transform_kernel(const std::byte* source, std::byte* destination, std::uint32_t bytes,
-                                            std::uint32_t width, bool inverse) {
-    const auto index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index >= bytes) {
-        return;
-    }
-    const auto rows = bytes / width;
-    const auto full_bytes = rows * width;
-    auto source_index = index;
-    if (index < full_bytes) {
-        // rows is positive here. Both mappings are bijections of [0, rows * width).
-        source_index = inverse ? (index % width) * rows + index / width : (index % rows) * width + index / rows;
-    }
-    destination[index] = source[source_index];
-}
 
 // Purpose: Execute the reversible transform exclusively on HIP with operation-owned admitted buffers.
 // Inputs: Equal bounded host spans, admitted width/direction, caller checkpoints and actual device telemetry.
@@ -48,7 +29,7 @@ inline void transform_byte_planes_hip(std::span<const std::byte> source, std::sp
     record_gpu_h2d_bytes(telemetry, source.size());
     const auto events = make_hip_event_pair("create byte-plane timing events");
     const auto grid = static_cast<unsigned int>((source.size() + 255U) / 256U);
-    launch_measured_kernel(byte_plane_transform_kernel, grid, 256, 0, hipStreamPerThread, events,
+    launch_measured_kernel(hip_kernel_api().byte_plane_transform, grid, 256, 0, hipStreamPerThread, events,
                            "launch byte_plane_transform_kernel", input.get(), output.get(),
                            static_cast<std::uint32_t>(source.size()), static_cast<std::uint32_t>(width), inverse);
     finish_measured_kernel(telemetry, events, "synchronize byte_plane_transform_kernel");

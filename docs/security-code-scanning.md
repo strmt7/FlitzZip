@@ -142,7 +142,7 @@ metadata dispositions remain visible in GitHub's audit history.
 
 | Scanner | Purpose | Output |
 | --- | --- | --- |
-| CodeQL C++ | Manual Windows CPU-only build analysis of compiled archive parsers, path handling, CLI, Win32 UI, host GPU boundary, and vendored C/C++; not HIP device-kernel extraction | GitHub code scanning |
+| CodeQL C++ | Manual Windows whole-database CPU build plus a change-aware HIP build for compiled GPU host branches; archive parsers, paths, CLI, UI and vendored C/C++ remain covered; not HIP device-kernel extraction | GitHub code scanning |
 | CodeQL Actions | Workflow injection and Actions misuse | GitHub code scanning |
 | Language linters | C/C++ style drift, PowerShell warnings, Python helper lint/format issues, YAML workflow issues, Markdown issues, and CMake style problems | Workflow check |
 | actionlint | GitHub Actions schema and expression validation | Workflow check |
@@ -509,7 +509,11 @@ variables.
   sources and produced parser-artifact alerts such as namespace qualifiers,
   macros, and typed pointer arithmetic being reported as code issues. Manual
   Windows tracing is the default security signal because it uses real compiler
-  inputs while keeping release artifacts HIP-enabled outside hosted CI.
+  inputs. GPU/shared input changes and broad qualifications also compile the HIP
+  configuration into that same database, retaining CPU branches and covering
+  HIP-only host orchestration and trusted module admission. Device-kernel
+  extraction is not claimed; the six-target compile lane, source scanners,
+  kernel review and actual GPU tests retain that separate coverage.
 - Do not split CodeQL C++ by SuperZip subdirectory. Subdirectory-parallel CodeQL
   can be useful for independent interpreted-language monorepos, but SuperZip is
   one C++ product whose archive parser, path validation, CLI, GUI, and GPU

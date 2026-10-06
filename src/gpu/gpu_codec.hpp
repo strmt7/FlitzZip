@@ -60,6 +60,7 @@ inline constexpr std::size_t kOwnedDecodeStageCount = static_cast<std::size_t>(O
 struct GpuInfo {
     bool hip_compiled = false;
     bool hip_runtime_loadable = false;
+    bool hip_kernel_loadable = false;
     bool available = false;
     int device_count = 0;
     int selected_device = -1;

@@ -210,6 +210,12 @@ Guidelines, and SEI CERT C++.
   explicitly asks for a behavior change.
 - Design secure-by-default paths: fail closed, make risky behavior opt-in, and
   keep trust boundaries visible in code comments and tests.
+- Admit optional accelerator modules explicitly after runtime/device checks;
+  registration must not run in executable startup constructors. Test hardware
+  absence as well as actual device execution. Keep allocator ownership and C++
+  exceptions within their CRT boundary; use a versioned POD interface between
+  separately linked modules. Verify installed bytes independently of host
+  capability, with no missing-driver substitution or CPU retry for required HIP.
 - Use least privilege everywhere: workflow permissions, filesystem writes,
   process creation, GPU/device access, and installer actions.
 - Use modern C++20 deliberately: RAII ownership, value semantics, explicit
@@ -778,7 +784,10 @@ manufacture a clean scan. Individual authorizations belong in review records.
   CI tool installs must be version-pinned and hash-verified when the package
   manager bootstrap is known to be mutable or runner-dependent.
 - CodeQL C++ must use a manual Windows 2022 build database through
-  `tools/build.ps1 -Configuration Release -CpuOnlyValidation`; build-free C/C++
+  `tools/build.ps1 -Configuration Release -CpuOnlyValidation`, adding the HIP
+  configuration to the same database for GPU/shared input changes and broad
+  qualification. This includes HIP-only host code; device-kernel extraction
+  remains unqualified. Build-free C/C++
   analysis produces unacceptable parser-artifact alerts for this Win32/HIP
   codebase and must not be restored for speed.
 - Do not run build/package jobs in parallel with GUI smoke tests or a manually

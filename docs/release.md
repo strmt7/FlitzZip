@@ -250,19 +250,34 @@ The installer smoke test runs `superzip_cli.exe dependency-check` after install.
 The accepted states are:
 
 - `0`: release artifact is HIP-enabled, the HIP runtime is loadable, and an AMD
-  GPU is available.
+  GPU and the exact kernel module are available.
+- `11`: the driver-provided runtime is absent. CPU functionality and capability
+  reporting must still start; GPU features, including Neutron, are unavailable.
 - `12`: release artifact is HIP-enabled and the HIP runtime is loadable, but the
-  hosted runner has no supported AMD GPU.
+  validation host has no supported AMD GPU.
 
-Exit codes `10` and `11` are release-blocking because they mean the installed
-artifact is CPU-only or cannot load the AMD driver-provided HIP runtime.
+Exit `10` blocks a release because its binary is CPU-only. Exit `13` blocks
+qualification because a present device cannot admit its kernel module or other
+required GPU initialization, or runtime device enumeration failed (reported as
+`device_count=-1`). Only successful zero-device enumeration admits exit `12`.
+Missing or modified packaged DLLs independently
+block qualification, including on hosts where the AMD driver is absent.
 
 GitHub-hosted runners normally do not provide an AMD GPU. The workflow therefore
-requires a HIP-enabled binary and a loadable HIP runtime, but it treats a missing
-GPU device as a hosted-runner limitation. Hardware execution with
+requires a HIP-enabled binary and exact packaged DLL integrity, retaining missing
+driver/device diagnostics as hardware absence. It does not install a substitute
+driver or claim GPU execution. Hardware execution with
 `--require-gpu` is validated on AMD hosts through local smoke tests and should be
 added to hosted release validation only when a secure AMD Windows runner profile
 is available without introducing self-hosted-runner risk.
+
+The first-party `superzip_hip_kernels.dll` contains HIP registration and device
+code. Its digest is embedded into the host after linking and recorded in the
+package manifest. Executables do not import this module at process startup.
+The existing trusted loader pins its files, verifies bytes and admits it only
+after the driver and device have passed their checks. A private versioned POD
+dispatch table transfers no STL allocation, CRT owner or C++ exception between
+the module and the host. Neutron still requires actual HIP execution.
 
 ## Triggering
 

@@ -12,6 +12,13 @@ the successful native receipt to match current inputs, configuration and outputs
 Hosted compilation covers the six release HIP targets; it does not prove runtime
 behavior on every AMD device.
 
+Kernel registration lives in a separately admitted first-party DLL. Native
+startup requires no accelerator registration before capability detection.
+Missing and altered kernel payloads have independent integrity tests: CPU
+operations remain usable, while required-HIP Neutron rejects the failed module.
+Compatibility and kernel DLL hashes are produced from linked bytes and checked
+in staged and installed packages, independently from GPU presence.
+
 Neutron is GPU-only and separate from efforts 1–9. The
 [benchmark index](benchmarks/README.md) and [public-corpus protocol](neutron-public-corpus-benchmark.md)
 retain full-file sizes, actual HIP work, byte-exact readback and measurement limits.

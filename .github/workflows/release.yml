@@ -327,15 +327,9 @@ jobs:
           $dependencyExit = $LASTEXITCODE
           $dependency | Set-Content -LiteralPath (Join-Path $root "portable-dependency-check.txt")
           if ($env:ENABLE_HIP -eq "true") {
-              if ($dependency -notcontains "hip_compiled=true") {
-                  throw "Portable release artifact is not HIP-enabled."
-              }
-              if ($dependency -notcontains "hip_runtime_loadable=true") {
-                  throw "Portable release artifact cannot load the AMD HIP runtime."
-              }
-              if ($dependencyExit -notin @(0, 12)) {
-                  throw "Portable dependency check failed with exit code $dependencyExit."
-              }
+              . ./tools/package_runtime.ps1
+              Assert-SuperZipPackagedRuntime -PackageRoot (Join-Path $PWD 'out/install-Release') -HipEnabled $true
+              Assert-SuperZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
           }
           & $cli compress --format zip --output (Join-Path $root "archive.zip") $input
           & $cli extract --format zip --output $extract (Join-Path $root "archive.zip")
@@ -597,15 +591,9 @@ jobs:
               $dependencyExit = $LASTEXITCODE
               $dependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-dependency-check.txt")
               if ($env:ENABLE_HIP -eq "true") {
-                  if ($dependency -notcontains "hip_compiled=true") {
-                      throw "Installed release artifact is not HIP-enabled."
-                  }
-                  if ($dependency -notcontains "hip_runtime_loadable=true") {
-                      throw "Installed release artifact cannot load the AMD HIP runtime."
-                  }
-                  if ($dependencyExit -notin @(0, 12)) {
-                      throw "Installed dependency check failed with exit code $dependencyExit."
-                  }
+                  . ./tools/package_runtime.ps1
+                  Assert-SuperZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
+                  Assert-SuperZipHipDependencyState -Output $dependency -ExitCode $dependencyExit
               } elseif ($dependencyExit -ne 0) {
                   throw "Installed dependency check failed with exit code $dependencyExit."
               }
@@ -621,15 +609,8 @@ jobs:
               $repairDependencyExit = $LASTEXITCODE
               $repairDependency | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "superzip-msi-repair-dependency-check.txt")
               if ($env:ENABLE_HIP -eq "true") {
-                  if ($repairDependency -notcontains "hip_compiled=true") {
-                      throw "Repaired release artifact is not HIP-enabled."
-                  }
-                  if ($repairDependency -notcontains "hip_runtime_loadable=true") {
-                      throw "Repaired release artifact cannot load the AMD HIP runtime."
-                  }
-                  if ($repairDependencyExit -notin @(0, 12)) {
-                      throw "Repaired dependency check failed with exit code $repairDependencyExit."
-                  }
+                  Assert-SuperZipPackagedRuntime -PackageRoot (Split-Path -Parent (Split-Path -Parent $expectedCli)) -HipEnabled $true
+                  Assert-SuperZipHipDependencyState -Output $repairDependency -ExitCode $repairDependencyExit
               } elseif ($repairDependencyExit -ne 0) {
                   throw "Repaired dependency check failed with exit code $repairDependencyExit."
               }

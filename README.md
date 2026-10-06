@@ -61,6 +61,10 @@ AMD documents the HIP runtime as part of the AMD GPU driver, not something an
 application should redistribute. SuperZip therefore delay-loads the HIP runtime,
 reports missing prerequisites clearly, and records the expected runtime DLL in
 `superzip-runtime-dependencies.json` inside each HIP-enabled package.
+Device-kernel registration also loads explicitly after trusted runtime/device
+admission. Missing AMD components leave capability reporting and CPU functions
+usable; Neutron remains unavailable. The packaged kernel DLL must match the
+build's embedded SHA-256 identity before any of its code is loaded.
 
 Development systems additionally need:
 

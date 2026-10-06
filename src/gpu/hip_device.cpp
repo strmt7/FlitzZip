@@ -28,6 +28,7 @@
 #include <wintrust.h>
 #include <winver.h>
 #include <hip/hip_runtime.h>
+#include "gpu/hip_kernel_api.hpp"
 #endif
 
 namespace superzip {
@@ -342,7 +343,11 @@ void require_hip_device_ready() {
 // Outputs: Returns false only for a missing runtime/build or zero devices; unexpected HIP errors propagate.
 bool hip_device_available() {
 #if SUPERZIP_ENABLE_HIP
-    return load_hip_runtime() && checked_hip_device_identity(true).selected >= 0;
+    if (!load_hip_runtime() || checked_hip_device_identity(true).selected < 0) {
+        return false;
+    }
+    (void)hip_kernel_api();
+    return true;
 #else
     return false;
 #endif
@@ -533,14 +538,22 @@ GpuInfo query_hip_gpu_info() {
     }
     info.hip_runtime_loadable = true;
     info.runtime_version = loaded_hip_runtime().version;
+    // A failed enumeration remains unknown; only a successful zero count admits device absence.
+    info.device_count = -1;
     HipDeviceIdentity identity{};
     try {
-        identity = checked_hip_device_identity();
+        identity = checked_hip_device_identity(true);
+        info.device_count = identity.count;
+        if (identity.selected < 0) {
+            info.status = "No AMD HIP device is available";
+            return info;
+        }
+        (void)hip_kernel_api();
+        info.hip_kernel_loadable = true;
     } catch (const GpuError& error) {
         info.status = error.what();
         return info;
     }
-    info.device_count = identity.count;
     const auto selected = identity.selected;
     try {
         info.stream_ordered_allocator_supported = hip_stream_ordered_allocator_supported();

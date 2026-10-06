@@ -8,11 +8,15 @@ an observation does not turn it into a measurement of a later revision.
 
 | Corpus and retained revision | Original files | Input bytes | Complete modeled archive bytes | Evidence |
 | --- | ---: | ---: | ---: | --- |
-| Canterbury, version-eleven contexts, 1 MiB blocks | 11 | 2,810,784 | 723,429 in each of three runs | [Study](benchmarks/data/neutron-canterbury-contexts-block-1024-2026-10-06.json) |
-| Pythia14M, version-eleven contexts, 1 MiB blocks | 1 complete checkpoint | 28,143,920 | 24,162,233 in each of three runs | [Study](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json) |
+| Canterbury, version-eleven contexts with admitted kernel module, 1 MiB blocks | 11 | 2,810,784 | 723,429 in each of three runs | [Study](benchmarks/data/neutron-canterbury-lazy-kernel-block-1024-2026-10-06.json) |
+| Pythia14M, version-eleven contexts with admitted kernel module, 1 MiB blocks | 1 complete checkpoint | 28,143,920 | 24,162,233 in each of three runs | [Study](benchmarks/data/neutron-pythia14m-lazy-kernel-block-1024-2026-10-06.json) |
 | Govdocs1 thread0, preceding pruning revision, 1 MiB blocks | 991 | 593,182,383 | 331,334,741 | [Study](benchmarks/data/neutron-govdocs1-thread0-pruning-block-1024-2026-10-06.json) |
 
-The context refinement saved 1,935,715 bytes (7.42%) on the complete Pythia
+The fresh module-boundary studies preserve every original file's preceding
+context-study size in three repetitions, with actual HIP encoding and decoding.
+The [preceding Canterbury](benchmarks/data/neutron-canterbury-contexts-block-1024-2026-10-06.json)
+and [Pythia studies](benchmarks/data/neutron-pythia14m-contexts-block-1024-2026-10-06.json)
+remain unchanged. The context refinement saved 1,935,715 bytes (7.42%) on the complete Pythia
 checkpoint against its same-setting Neutron baseline. Canterbury retained the
 preceding 1 MiB sizes. The complete Govdocs1 study belongs to its preceding
 revision; full version-eleven context coverage remains unqualified.

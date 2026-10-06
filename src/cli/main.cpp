@@ -272,6 +272,7 @@ void print_defender_scan(const std::filesystem::path& path, bool block_if_detect
 void print_gpu_info(const superzip::GpuInfo& info) {
     std::cout << "hip_compiled=" << (info.hip_compiled ? "true" : "false") << "\n";
     std::cout << "hip_runtime_loadable=" << (info.hip_runtime_loadable ? "true" : "false") << "\n";
+    std::cout << "hip_kernel_loadable=" << (info.hip_kernel_loadable ? "true" : "false") << "\n";
     std::cout << "hip_runtime_name=" << info.runtime_name << "\n";
     std::cout << "hip_runtime_version=" << superzip::hip_runtime_version_text(info.runtime_version) << "\n";
     std::cout << "hip_stream_ordered_allocator_supported="
@@ -318,7 +319,7 @@ int dependency_exit_code(const superzip::GpuInfo& info) {
         return 11;
     }
     if (!info.available) {
-        return 12;
+        return info.device_count != 0 ? 13 : 12;
     }
     return 0;
 }

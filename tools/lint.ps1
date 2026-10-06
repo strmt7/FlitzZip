@@ -166,15 +166,30 @@ function Select-SuperZipCppLintFile {
         } | Sort-Object -Unique)
 }
 
-# Purpose: Run PSScriptAnalyzer and fail on any finding.
+# Purpose: Reject PowerShell grammar errors before linting or running a script.
+# Inputs: Path identifies one owned script/module. Outputs: Throws with parser diagnostics; never executes its contents.
+function Assert-PowerShellSyntax {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $tokens = $null
+    $parseErrors = $null
+    $null = [Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) {
+        $parseErrors | ForEach-Object { Write-Output $_.ToString() }
+        throw "PowerShell syntax errors in ${Path}: $($parseErrors.Count)."
+    }
+}
+
+# Purpose: Parse PowerShell and run PSScriptAnalyzer, failing on either error class.
 # Inputs: `Path` contains PowerShell script/module files to inspect.
-# Outputs: Throws when PSScriptAnalyzer returns findings.
+# Outputs: Throws when syntax parsing or PSScriptAnalyzer returns findings.
 function Invoke-PowerShellLint {
     param([Parameter(Mandatory = $true)][string[]]$Path)
 
     Write-Output "lint step=powershell-psscriptanalyzer"
     Import-Module PSScriptAnalyzer -ErrorAction Stop
     $findings = foreach ($scriptPath in @($Path)) {
+        Assert-PowerShellSyntax -Path $scriptPath
         Invoke-ScriptAnalyzer -Path $scriptPath -Severity Error, Warning
     }
     if ($findings.Count -gt 0) {

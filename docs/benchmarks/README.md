@@ -9,8 +9,9 @@ settings, complete container bytes, correctness, uncertainty and provenance.
 
 ## Current Evidence And Limits
 
-The latest retained Neutron context studies cover all eleven Canterbury files
-and the complete Pythia14M checkpoint in three byte-exact repetitions each.
+Fresh Neutron studies after kernel-module admission cover all eleven Canterbury
+files and the complete Pythia14M checkpoint in three byte-exact HIP repetitions
+each, preserving the preceding context studies' complete per-file sizes.
 The complete 991-file Govdocs1 pruning study belongs to its earlier revision.
 All payloads remained in RAM. Comparative timing and broad superiority remain
 unqualified; archival size observations are not freshly collected measurements.

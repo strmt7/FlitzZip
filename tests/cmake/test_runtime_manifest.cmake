@@ -10,7 +10,10 @@ set(SUPERZIP_PACKAGE_VERSION "0.8.0")
 set(SUPERZIP_HIP_ARCH "gfx1201")
 set(SUPERZIP_ZSTD_RUNTIME_DLL_SHA256 "fixture-zstd")
 set(SUPERZIP_ZSTD_RUNTIME_PACKAGE_SHA256 "fixture-zstd-package")
-set(SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256 "fixture-wim")
+set(_zstd "${OUTPUT_ROOT}/libzstd.dll")
+set(_wim "${OUTPUT_ROOT}/libwim-15.dll")
+file(WRITE "${_wim}" "pinned-wim-fixture")
+file(SHA256 "${_wim}" SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)
 set(SUPERZIP_WIMLIB_RUNTIME_PACKAGE_SHA256 "fixture-wim-package")
 foreach(mode IN ITEMS OFF ON)
   if(mode STREQUAL "ON")
@@ -78,5 +81,100 @@ foreach(mode IN ITEMS OFF ON)
       message(FATAL_ERROR "HIP manifest lost its explicit AMD prerequisite")
     endif()
   endif()
+endforeach()
+
+# All runtime identities must follow linked bytes across incremental builds.
+set(_module "${OUTPUT_ROOT}/superzip_hip_kernels.dll")
+set(_base "${OUTPUT_ROOT}/runtime-ON.json")
+set(_header "${OUTPUT_ROOT}/kernel-identity.hpp")
+set(_final_manifest "${OUTPUT_ROOT}/kernel-manifest.json")
+foreach(mode IN ITEMS OFF ON)
+  set(_optional)
+  if(mode STREQUAL "ON")
+    list(APPEND _optional "-DINPUT=${_module}" "-DHEADER=${_header}"
+         "-DPACKAGE_VERSION=${SUPERZIP_PACKAGE_VERSION}")
+  endif()
+  foreach(content IN ITEMS first-linked-bytes replacement-linked-bytes)
+    file(WRITE "${_zstd}" "zstd-${content}")
+    file(WRITE "${_module}" "kernel-${content}")
+    file(SHA256 "${_zstd}" expected_zstd)
+    file(SHA256 "${_module}" expected_kernel)
+    execute_process(
+      COMMAND
+        "${CMAKE_COMMAND}" "-DZSTD_DLL=${_zstd}" "-DWIM_DLL=${_wim}"
+        "-DBASE_MANIFEST=${OUTPUT_ROOT}/runtime-${mode}.json"
+        "-DMANIFEST=${_final_manifest}" ${_optional} -P
+        "${REPO_ROOT}/cmake/WritePackagedRuntimeIdentity.cmake"
+      RESULT_VARIABLE status
+      OUTPUT_VARIABLE log
+      ERROR_VARIABLE error)
+    if(NOT status EQUAL 0)
+      message(FATAL_ERROR "Runtime identity producer failed: ${log}${error}")
+    endif()
+    file(READ "${_final_manifest}" manifest_text)
+    string(JSON zstd_digest GET "${manifest_text}" packaged_runtime_files 0
+           sha256)
+    string(JSON wim_digest GET "${manifest_text}" packaged_runtime_files 1
+           sha256)
+    string(JSON module_count LENGTH "${manifest_text}" packaged_runtime_files)
+    if(NOT zstd_digest STREQUAL expected_zstd
+       OR NOT wim_digest STREQUAL SUPERZIP_WIMLIB_RUNTIME_DLL_SHA256)
+      message(
+        FATAL_ERROR "Compatibility identities do not match actual DLL bytes")
+    endif()
+    if(mode STREQUAL "ON")
+      file(READ "${_header}" header_text)
+      string(JSON module_digest GET "${manifest_text}" packaged_runtime_files 2
+             sha256)
+      string(
+        JSON
+        module_name
+        GET
+        "${manifest_text}"
+        packaged_runtime_files
+        2
+        name)
+      if(NOT module_digest STREQUAL expected_kernel
+         OR NOT module_count EQUAL 3
+         OR NOT module_name STREQUAL "superzip_hip_kernels.dll"
+         OR NOT header_text MATCHES "${expected_kernel}")
+        message(
+          FATAL_ERROR "Kernel identity does not match actual module bytes")
+      endif()
+    elseif(NOT module_count EQUAL 2)
+      message(FATAL_ERROR "CPU validation manifest admitted an optional kernel")
+    endif()
+  endforeach()
+endforeach()
+foreach(failure IN ITEMS missing-kernel missing-zstd missing-wim changed-wim
+                         cpu-with-kernel)
+  set(_input "${_module}")
+  set(_zstd_input "${_zstd}")
+  set(_wim_input "${_wim}")
+  set(_base "${OUTPUT_ROOT}/runtime-ON.json")
+  if(failure STREQUAL "missing-kernel")
+    set(_input "${OUTPUT_ROOT}/missing.dll")
+  elseif(failure STREQUAL "missing-zstd")
+    set(_zstd_input "${OUTPUT_ROOT}/missing.dll")
+  elseif(failure STREQUAL "missing-wim")
+    set(_wim_input "${OUTPUT_ROOT}/missing.dll")
+  elseif(failure STREQUAL "changed-wim")
+    file(WRITE "${_wim}" "altered-wim-fixture")
+  else()
+    set(_base "${OUTPUT_ROOT}/runtime-OFF.json")
+  endif()
+  execute_process(
+    COMMAND
+      "${CMAKE_COMMAND}" "-DZSTD_DLL=${_zstd_input}" "-DWIM_DLL=${_wim_input}"
+      "-DINPUT=${_input}" "-DBASE_MANIFEST=${_base}" "-DHEADER=${_header}"
+      "-DMANIFEST=${_final_manifest}"
+      "-DPACKAGE_VERSION=${SUPERZIP_PACKAGE_VERSION}" -P
+      "${REPO_ROOT}/cmake/WritePackagedRuntimeIdentity.cmake"
+    RESULT_VARIABLE status
+    OUTPUT_QUIET ERROR_QUIET)
+  if(status EQUAL 0)
+    message(FATAL_ERROR "Runtime identity producer admitted ${failure}")
+  endif()
+  file(WRITE "${_wim}" "pinned-wim-fixture")
 endforeach()
 message(STATUS "CPU/HIP runtime manifest contracts passed")

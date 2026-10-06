@@ -671,4 +671,9 @@ Assert-Selector (($binaryPlan.requiredLocalCommands.id -contains 'binary-corpus-
     ($binaryPlan.requiredLocalCommands.id -notcontains 'release-build') -and
     ($binaryPlan.requiredLocalCommands.id -notcontains 'unit-tests')) 'binary adapter changes must invoke their actual offline consumer without unrelated native work'
 
+$runtimePlan = Get-SuperZipVerificationPlan -ChangedPath @('tools/package_runtime.ps1', 'tools/test_package_runtime.ps1')
+Assert-Selector (($runtimePlan.requiredLocalCommands.id -contains 'package-runtime-contracts') -and
+    ($runtimePlan.requiredLocalCommands.id -notcontains 'unit-tests') -and
+    ($runtimePlan.requiredLocalCommands.id -notcontains 'release-build')) 'isolated package runtime policy changes require their own actual contracts without rebuilding the product'
+
 Write-Output "Verification selector self-test passed."

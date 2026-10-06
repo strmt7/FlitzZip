@@ -217,7 +217,9 @@ function Test-WorkflowSecurityPolicy {
         foreach ($requiredSnippet in @(
                 'runs-on: windows-2022',
                 'build-mode: manual',
-                'tools/build.ps1 -Configuration Release -CpuOnlyValidation')) {
+                'tools/build.ps1 -Configuration Release -CpuOnlyValidation',
+                'tools/build.ps1 -Configuration Release -HipArch gfx1201',
+                "needs.cpp-security-plan.outputs.codeql_hip_host != 'false'")) {
             if ($securityWorkflowText -notmatch [regex]::Escape($requiredSnippet)) {
                 throw "CodeQL C++ workflow is missing required manual Windows build setting: $requiredSnippet"
             }

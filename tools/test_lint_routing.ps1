@@ -68,3 +68,18 @@ if ($configuration -notcontains 'tools/new_fixture.py' -or
     throw 'A configuration-triggered whole-language pass lost a new source file.'
 }
 Write-Output 'Lint routing changed/all/configuration/new-file checks passed.'
+
+# Exercise the production grammar gate with the parser error that analyzer lint
+# failed to report, without executing either fixture.
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('superzip-lint-' + [guid]::NewGuid().ToString('N') + '.ps1')
+try {
+    [IO.File]::WriteAllText($fixture, 'Write-Output "${case}: valid"')
+    Assert-PowerShellSyntax -Path $fixture
+    [IO.File]::WriteAllText($fixture, 'Write-Output "$case: invalid"')
+    $rejected = $false
+    try { Assert-PowerShellSyntax -Path $fixture | Out-Null } catch { $rejected = $true }
+    if (-not $rejected) { throw 'PowerShell lint admitted an invalid interpolation grammar.' }
+    Write-Output 'PowerShell grammar checks admitted valid source and rejected invalid interpolation.'
+} finally {
+    if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture }
+}
