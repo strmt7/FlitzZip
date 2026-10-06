@@ -103,6 +103,12 @@ class CppSecurityContracts(unittest.TestCase):
             "codeql_hip_host: ${{ steps.cpp_plan.outputs.codeql_hip_host }}",
             "needs.cpp-security-plan.outputs.codeql_hip_host != 'false'",
             "tools/build.ps1 -Configuration Release -HipArch gfx1201",
+            "Join-Path $env:RUNNER_TOOL_CACHE",
+            "bootstrap_rocm_sdk.py --parent $sdkParent",
+            "-HipPath $env:HIP_PATH",
+            "output: out/codeql-cpp-sarif",
+            "name: codeql-cpp-raw-${{ github.sha }}",
+            "if-no-files-found: error",
         ]:
             self.assertIn(required, workflow)
         self.assertNotIn("paths-ignore", workflow)

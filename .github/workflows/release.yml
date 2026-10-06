@@ -208,7 +208,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $sdkRoot = python tools/bootstrap_rocm_sdk.py
+          $lock = Get-Content -LiteralPath tools/rocm-sdk-lock.json -Raw | ConvertFrom-Json
+          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "superzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
+          $sdkRoot = python tools/bootstrap_rocm_sdk.py --parent $sdkParent
           if ($LASTEXITCODE -ne 0) { throw "Complete ROCm SDK provisioning failed." }
           . ./tools/rocm_toolchain.ps1
           $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
@@ -272,7 +274,8 @@ jobs:
           }
           if ($env:ENABLE_HIP -eq "true") {
               $buildArgs.EnableHip = $true
-              $buildArgs.HipArch = $env:HIP_ARCH
+            $buildArgs.HipArch = $env:HIP_ARCH
+            $buildArgs.HipPath = $env:HIP_PATH
           } else {
               $buildArgs.CpuOnlyValidation = $true
           }

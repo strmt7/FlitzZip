@@ -68,14 +68,16 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $sdkRoot = python tools/bootstrap_rocm_sdk.py
+          $lock = Get-Content -LiteralPath tools/rocm-sdk-lock.json -Raw | ConvertFrom-Json
+          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "superzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
+          $sdkRoot = python tools/bootstrap_rocm_sdk.py --parent $sdkParent
           if ($LASTEXITCODE -ne 0) { throw 'Complete ROCm SDK provisioning failed.' }
           . ./tools/rocm_toolchain.ps1
           $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "HIP_PATH=$sdkRoot"
       - name: Compile and link all release targets
         shell: pwsh
-        run: tools/build.ps1 -Configuration Release -HipArch release
+        run: tools/build.ps1 -Configuration Release -HipArch release -HipPath $env:HIP_PATH
       - name: Validate required-HIP build receipt
         shell: pwsh
         run: |

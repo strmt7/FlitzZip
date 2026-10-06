@@ -647,6 +647,11 @@ function Test-RocmProvisioningPolicy {
         $WorkflowText -match 'HIP_SDK_INSTALLER|setx\s') {
         throw 'Hosted HIP builds must use the complete pinned distribution provisioner without global installation changes.'
     }
+    if ($WorkflowText -notmatch 'Join-Path\s+\$env:RUNNER_TOOL_CACHE' -or
+        $WorkflowText -notmatch 'bootstrap_rocm_sdk\.py\s+--parent\s+\$sdkParent' -or
+        $WorkflowText -notmatch '(?:-HipPath\s+\$env:HIP_PATH|\$buildArgs\.HipPath\s*=\s*\$env:HIP_PATH)') {
+        throw 'Hosted HIP jobs must provision their pinned SDK in the external tool cache and pass that root explicitly.'
+    }
     if ($WorkflowText -match 'GITHUB_ENV[^\r\n]*(?:LLVM_PATH|HIP_DEVICE_LIB_PATH)') {
         throw 'Compiler-only ROCm environment must not persist into hosted product execution.'
     }

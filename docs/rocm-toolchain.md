@@ -165,6 +165,12 @@ compatibility.
 
 ## Fresh Hosted Compile Qualification
 
+Hosted jobs install the complete SDK in the runner's standard tool cache,
+keyed by distribution version and checksum, and pass its root explicitly to
+the build. Compiler installations are external dependencies; checkout source
+and vendored product code retain the complete CodeQL query coverage. SDK
+integrity checks and raw analysis diagnostics remain required.
+
 The manually dispatched `rocm-qualification` workflow uses a fresh selected
 Windows runner and the same complete-distribution provisioner and native build
 helpers as local development. It builds every release target with read-only

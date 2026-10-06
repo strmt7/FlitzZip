@@ -1,5 +1,6 @@
+#include "test_util.hpp"
+
 #include <exception>
-#include <functional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -10,11 +11,9 @@
 
 namespace {
 
-using TestFn = std::function<void()>;
-
 struct Test {
     std::string name;
-    TestFn fn;
+    TestFunction fn;
 };
 
 // Purpose: Store and expose the process-wide test registry.
@@ -28,10 +27,10 @@ std::vector<Test>& registry() {
 }  // namespace
 
 // Purpose: Add a test case to the local C++ test registry.
-// Inputs: `name` is the test label and `fn` is the callable test body.
+// Inputs: `name` is the test label and `fn` is a nonnull static test function; no captured owner is transferred.
 // Outputs: Mutates the registry; used by `TEST_CASE` static initializers.
-void register_test(std::string name, TestFn fn) {
-    registry().push_back(Test{std::move(name), std::move(fn)});
+void register_test(std::string name, TestFunction fn) {
+    registry().push_back(Test{std::move(name), fn});
 }
 
 // Purpose: Execute registered tests, optionally filtered by substring or exact name.

@@ -39,11 +39,10 @@ function Assert-NativeRunnerCase {
 
 try {
     Copy-Item -LiteralPath (Join-Path $root 'tests/cpp/test_main.cpp') -Destination (Join-Path $fixtureRoot 'test_main.cpp')
+    Copy-Item -LiteralPath (Join-Path $root 'tests/cpp/test_util.hpp') -Destination (Join-Path $fixtureRoot 'test_util.hpp')
     $source = @'
-#include <functional>
+#include "test_util.hpp"
 #include <stdexcept>
-#include <string>
-void register_test(std::string, std::function<void()>);
 struct Cases {
     Cases() {
         register_test("sample", [] {});

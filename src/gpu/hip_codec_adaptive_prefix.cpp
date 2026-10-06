@@ -178,7 +178,9 @@ std::optional<AdaptiveCodebookEstimate> build_huffman_prefix_codebook(const std:
             heap.push(symbol);
         }
     }
-    for (std::uint16_t parent = 256U; parent < 256U + active_count - 1U; ++parent) {
+    const std::size_t parent_end = 256U + active_count - 1U;
+    for (std::size_t parent_index = 256U; parent_index < parent_end; ++parent_index) {
+        const auto parent = static_cast<std::uint16_t>(parent_index);
         const auto left = heap.top();
         heap.pop();
         const auto right = heap.top();

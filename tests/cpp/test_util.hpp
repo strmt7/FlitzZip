@@ -11,7 +11,8 @@
 #include <windows.h>
 #include <winioctl.h>
 
-void register_test(std::string name, std::function<void()> fn);
+using TestFunction = void (*)();
+void register_test(std::string name, TestFunction fn);
 
 #define TEST_CASE(name)                                                                                                \
     static void name();                                                                                                \

@@ -81,7 +81,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $sdkRoot = python tools/bootstrap_rocm_sdk.py
+          $lock = Get-Content -LiteralPath tools/rocm-sdk-lock.json -Raw | ConvertFrom-Json
+          $sdkParent = Join-Path $env:RUNNER_TOOL_CACHE "superzip-rocm-$($lock.version)-$($lock.sha256.Substring(0, 12))"
+          $sdkRoot = python tools/bootstrap_rocm_sdk.py --parent $sdkParent
           if ($LASTEXITCODE -ne 0) { throw 'CodeQL HIP host SDK provisioning failed.' }
           . ./tools/rocm_toolchain.ps1
           $sdkRoot = Assert-RocmSdkRoot -Root ([string]$sdkRoot)
@@ -100,11 +102,21 @@ jobs:
       - name: Build HIP host database input
         if: needs.cpp-security-plan.result != 'success' || needs.cpp-security-plan.outputs.codeql_hip_host != 'false'
         shell: pwsh
-        run: tools/build.ps1 -Configuration Release -HipArch gfx1201
+        run: tools/build.ps1 -Configuration Release -HipArch gfx1201 -HipPath $env:HIP_PATH
       - name: Analyze C++
+        id: analyze_cpp
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:c-cpp
+          output: out/codeql-cpp-sarif
+      - name: Retain complete C++ analysis reports
+        if: always() && steps.analyze_cpp.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-cpp-raw-${{ github.sha }}
+          path: out/codeql-cpp-sarif/*.sarif
+          if-no-files-found: error
+          retention-days: 14
 
   codeql-actions:
     name: CodeQL GitHub Actions
