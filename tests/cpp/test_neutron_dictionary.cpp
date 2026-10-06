@@ -31,6 +31,23 @@ namespace {
 
 using namespace superzip::dictionary;
 
+// Purpose: Preserve LZ4's reachable unsigned error sentinel before a malformed Neutron candidate can publish literals.
+// Inputs: An unterminated literal-length extension and an independently initialized bounded output buffer.
+// Outputs: Requires public decoder rejection and untouched output; removing the reported comparisons fails this case.
+TEST_CASE(neutron_dictionary_lz4_rejects_unterminated_length_extension) {
+    std::array<char, 40> malformed{};
+    malformed.fill(static_cast<char>(0xFF));
+    malformed.front() = static_cast<char>(0xF0);
+    std::array<char, 32> output{};
+    output.fill(static_cast<char>(0xA5));
+    const auto decoded = LZ4_decompress_safe(malformed.data(), output.data(), static_cast<int>(malformed.size()),
+                                             static_cast<int>(output.size()));
+    REQUIRE_TRUE(decoded < 0);
+    for (const auto byte : output) {
+        REQUIRE_EQ(byte, static_cast<char>(0xA5));
+    }
+}
+
 // Purpose: Reject the complete malformed layout before entering a GPU boundary or changing prior winners.
 // Inputs: Live host storage and inconsistent descriptors; HIP builds also exercise the device dispatcher checkpoint.
 // Outputs: Requires precise host-layout rejection in both builds and rejection before actual HIP work when compiled.
