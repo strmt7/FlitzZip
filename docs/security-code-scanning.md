@@ -14,29 +14,16 @@ scripts belong in code directories; passive reports belong in the validated
 data directory. New executable or unknown files there fail role admission
 instead of inheriting a blanket directory exception.
 
-Historical October 4 source dispositions are recorded in
-`.github/scanner-source-reviews.csv` and the
-[individual review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-source-finding-review-2026-10-04.md). The
-[SDK copy supplement](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-sdk-finding-review-2026-10-04.md) records the
-six separately approved fixed-width byte-access operations. The actual
-detectors still scan those files. Historical matching recognizes only each
-exact source hash, rule and complete line/column region. Raw reports and counts
-stay complete. The informational review tool also checks analysis identity.
-These records are historical review evidence. They no longer admit source
-findings to publication or security acceptance. Every source report counts as
-unresolved in the preflight, including an exact historical match. The hosted
-audit requires closure of every open alert and never consults approval ledgers.
+Historical source and hosted review ledgers are informational evidence only.
+They cannot admit a source finding, including an exact match to an earlier
+review. Do not reseal those ledgers to make changed source pass. Raw reports,
+locations, rule identities and producer categories remain complete. Follow the
+[source remediation requirements](security-source-remediation-redesign.md).
 
-The [remaining individual review](https://github.com/strmt7/SuperZip/blob/f27790439954ea9fba4e306bf896e04da350546b/docs/history/security/security-remaining-finding-review-2026-10-04.md)
-records 54 separately approved reports in `.github/scanner-hosted-reviews.csv`.
-Their complete incident identities use the public integrity pin in
-`.github/scanner-hosted-approval.csv`, independently from caller-context
-renewal. That context includes native build inputs, all generated Zstandard
-library sources and CodeQL configuration. Changed source, caller context,
-producer or coordinates invalidate a historical match. Matching a record is
-informational and cannot establish remediation. Do not reseal these ledgers to
-make a changed implementation pass. Follow the
-[source remediation redesign](security-source-remediation-redesign.md).
+The hosted audit separately applies exact public-integrity metadata contracts
+and the maintainer's [governance baseline](../.github/scanner-governance-baseline.json).
+Neither mechanism accepts source-code findings. Current acceptance depends on
+fresh analysis or proven unchanged native/query inputs, not an old dismissal.
 
 ### Prevention Strategy and Research
 
@@ -536,10 +523,12 @@ variables.
 - The generated Win32 logo header is deterministic visual geometry validated by
   `tools\verify_brand_assets.ps1`; keep it covered by the manual Windows build
   database and do not add CodeQL path exclusions for generated source.
-- Every open code-scanning alert blocks final security acceptance, including
-  Scorecard governance reports. Source fixes require fresh analysis of the
-  repaired revision. Governance and attestation reports require their actual
-  controls; a code rewrite cannot establish them.
+- The maintainer's [governance baseline](../.github/scanner-governance-baseline.json)
+  accepts the exact CodeReview and CII Best Practices reports as a pass. The
+  audit binds repository, alert number, producer and rule; other identities
+  remain blocking. It retains raw reports and does not claim peer review or
+  certification was completed. Source fixes require fresh analysis of the
+  repaired revision; this baseline cannot admit a source finding.
 - After every push that changes security, workflows, dependencies, packaging, or
   release artifacts, run:
 

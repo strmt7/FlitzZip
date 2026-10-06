@@ -631,8 +631,11 @@ Source-finding remediation must follow the
 Historical source/hosted approval ledgers do not establish a fix and cannot
 admit an open report. Preserve full scanner coverage and raw results. Require
 an enforceable production contract, its direct-consumer regression and fresh
-analysis of the repaired bytes before claiming source closure. Every open
-hosted alert blocks final acceptance, including governance reports. Retain
+analysis of the repaired bytes before claiming source closure. The maintainer's
+exact [governance baseline](../.github/scanner-governance-baseline.json) accepts
+the identified CodeReview and CII Best Practices observations as passing.
+Reports remain visible; every other open or reproduced finding still blocks
+acceptance. Retain
 deliberately failing sanitizer controls and staged upstream header contracts;
 an empty alert list never justifies weakening them.
 

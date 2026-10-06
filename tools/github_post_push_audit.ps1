@@ -174,6 +174,48 @@ function Assert-NoDeployment {
     }
 }
 
+# Purpose: Match only the maintainer's exact repository-governance baseline without changing scanner reports.
+# Inputs: Repository, validated alerts, and the tracked baseline policy; an alternate path supports isolated tests.
+# Outputs: Accepted alert numbers; malformed policies fail and every source/unknown report remains outside the baseline.
+function Get-AcceptedGovernanceAlert {
+    param([string]$Repository, [object[]]$Alerts,
+        [string]$PolicyPath = (Join-Path $repoRoot '.github/scanner-governance-baseline.json'))
+
+    $file = Get-Item -LiteralPath $PolicyPath -ErrorAction Stop
+    if ($file.Length -gt 16KB) { throw 'Governance baseline exceeds its size bound.' }
+    $policy = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
+    if ($policy -isnot [pscustomobject] -or $policy.schema_version -isnot [int] -or $policy.schema_version -ne 1 -or
+        $policy.repository -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+        $policy.rationale -isnot [string] -or [string]::IsNullOrWhiteSpace($policy.rationale) -or
+        $policy.accepted_governance -isnot [System.Array] -or $policy.accepted_governance.Count -ne 2 -or
+        (@($policy.PSObject.Properties.Name | Sort-Object) -join ',') -cne
+            'accepted_governance,rationale,repository,schema_version') {
+        throw 'Invalid governance baseline policy.'
+    }
+    $numbers = [System.Collections.Generic.HashSet[long]]::new()
+    $rules = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $policy.accepted_governance) {
+        if ($entry -isnot [pscustomobject] -or
+            ($entry.alert_number -isnot [int] -and $entry.alert_number -isnot [long]) -or
+            $entry.alert_number -le 0 -or $entry.tool -cne 'Scorecard' -or
+            $entry.rule_id -cnotin @('CodeReviewID', 'CIIBestPracticesID') -or
+            (@($entry.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'alert_number,rule_id,tool' -or
+            -not $numbers.Add($entry.alert_number) -or -not $rules.Add($entry.rule_id)) {
+            throw 'Governance baseline must contain distinct, exact Scorecard governance identities.'
+        }
+    }
+    if ($Repository -ine $policy.repository) { return }
+    $accepted = [System.Collections.Generic.HashSet[long]]::new()
+    foreach ($alert in $Alerts) {
+        foreach ($entry in $policy.accepted_governance) {
+            if ($alert.number -eq $entry.alert_number -and $alert.tool.name -ceq $entry.tool -and
+                $alert.rule.id -ceq $entry.rule_id -and $accepted.Add($alert.number)) {
+                [long]$alert.number
+            }
+        }
+    }
+}
+
 # Purpose: Require closure without inheriting a historical dismissal for a reproduced source finding.
 # Inputs: Validated open alerts and current dismissed findings after exact public-metadata review.
 # Outputs: Throws with grouped counts and bounded examples for either unresolved inventory.
@@ -341,6 +383,9 @@ $current = @($dismissed | Where-Object {
     $_.most_recent_instance.commit_sha -eq $analysisCommit -and $_.most_recent_instance.state -eq 'dismissed'
 })
 $metadata = @(Get-CurrentMetadataReview -Alerts $current -Commit $Commit)
-$unresolved = @($current | Where-Object { $_.number -notin $metadata })
-Assert-CodeScanningClosure -Alerts $alerts -CurrentDismissed $unresolved
-Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Open alerts: 0. Active dismissed findings: 0. Exact public-metadata reviews: $($metadata.Count). Commit: $Commit."
+$governance = @(Get-AcceptedGovernanceAlert -Repository $repo -Alerts (@($alerts) + @($current)))
+$blockingOpen = @($alerts | Where-Object { $_.number -notin $governance })
+$unresolved = @($current | Where-Object { $_.number -notin $metadata -and $_.number -notin $governance })
+Write-Output "Accepted governance baseline: $($governance.Count). Raw open alerts retained: $($alerts.Count)."
+Assert-CodeScanningClosure -Alerts $blockingOpen -CurrentDismissed $unresolved
+Write-Output "GitHub post-push audit passed for $repo. Deployments: 0. Blocking open alerts: 0. Active dismissed findings outside the baseline: 0. Exact public-metadata reviews: $($metadata.Count). Commit: $Commit."

@@ -38,6 +38,7 @@ Assert-CiContractPlan -Path '.github/workflows/rocm-qualification.yml' -Required
 Assert-CiContractPlan -Path '.github/workflows/release.yml' -Required @('release-workflow-contracts')
 Assert-CiContractPlan -Path 'cmake/ZstdLegacyHistoryV05.c' -Required @('zstd-rewrite-policy-contracts')
 Assert-CiContractPlan -Path '.github/scanner-source-reviews.csv' -Required @('scanner-metadata-review-tests')
+Assert-CiContractPlan -Path '.github/scanner-governance-baseline.json' -Required @('github-post-push-audit-tests')
 Assert-CiContractPlan -Path '.github/scanner-secret-reviews.json' -Required @('secret-report-tests')
 Assert-CiContractPlan -Path '.github/scanner-secret-reviews-crawl4ai.json' -Required @('secret-report-tests')
 Assert-CiContractPlan -Path '.github/scanner-secret-reviews-crawl4ai-tests.json' -Required @('secret-report-tests')

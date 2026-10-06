@@ -261,7 +261,8 @@ $componentCases = @(
     @('tools/refactor_audit.ps1', 'refactor-audit-tests'),
     @('tools/test_refactor_audit.ps1', 'refactor-audit-tests'),
     @('tools/security_scan.ps1', 'security-scan-tests'),
-    @('tools/test_security_scan.ps1', 'security-scan-tests')
+    @('tools/test_security_scan.ps1', 'security-scan-tests'),
+    @('.github/scanner-governance-baseline.json', 'github-post-push-audit-tests')
 )
 foreach ($case in $componentCases) {
     $componentPlan = Get-SuperZipVerificationPlan -ChangedPath @($case[0])

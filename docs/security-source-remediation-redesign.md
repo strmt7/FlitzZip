@@ -40,9 +40,11 @@ Retain raw reports and stable SARIF categories and paths.
 `github_post_push_audit.ps1` checks the complete open inventory and findings
 reproduced on the requested commit despite an earlier dismissal. It revalidates
 only existing public-integrity approvals against the committed ledger, complete
-Git blob, producer and highlighted value. It has no source or Scorecard admission
-path. Dismissal is not evidence of a source repair. Governance controls require
-actual governance evidence.
+Git blob, producer and highlighted value. It has no source-admission path.
+Dismissal is not evidence of a source repair. The separately authorized
+[governance baseline](../.github/scanner-governance-baseline.json) accepts only
+the exact identified Scorecard observations; it does not assert that their
+governance controls have been implemented.
 CodeQL results from an earlier commit remain active when the canonical selector
 proves unchanged native/query inputs. Missing analyses, failed analysis requests,
 partial coverage and changed inputs cannot establish closure. Documentation-only

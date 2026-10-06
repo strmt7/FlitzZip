@@ -39,9 +39,6 @@ Broad size superiority and comparative GPU speed remain research targets.
 - The previously reported system freeze has no confirmed cause. The provided
   watchdog dump files contain zero bytes and supply no diagnostic data. Later
   successful GPU tests cannot establish that the incident is resolved.
-- The strict hosted audit still reports the previously accepted CodeReview and
-  CII Best Practices governance observations. They remain visible and unresolved;
-  source changes cannot manufacture peer review or external certification.
 - Current source-analysis reports also require review even when GitHub retains
   an earlier dismissed state. The audit checks those current instances and does
   not equate a dismissal or an empty open-alert list with a production repair.
@@ -55,6 +52,11 @@ Broad size superiority and comparative GPU speed remain research targets.
   live OpenVAS qualification remain outside the completed evidence.
 
 ## Candidate Qualification
+
+The maintainer accepts the exact CodeReview and CII Best Practices observations
+in the [governance baseline](../.github/scanner-governance-baseline.json) as a
+pass. They remain visible in audit output and do not block release readiness.
+All other source, dependency and qualification requirements remain in force.
 
 The manual [release workflow](release.md) defaults to `publish_release=false`.
 It builds and tests HIP binaries, scans source, qualifies portable/MSI payloads,

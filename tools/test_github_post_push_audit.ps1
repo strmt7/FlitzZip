@@ -44,12 +44,13 @@ Set-Alias -Name git -Value Invoke-TestGitRemote -Scope Script
 # Inputs: The implicit command arguments must request the next fixture endpoint.
 # Outputs: Emits the fixture response and sets the same process-status variable used by a native CLI.
 function Invoke-TestGitHub {
-    if ($args.Count -ge 2 -and $args[0] -eq 'api' -and $args[1] -eq 'repos/fixture/repository') {
+    if ($args.Count -ge 2 -and $args[0] -eq 'api' -and
+        $args[1] -in @('repos/fixture/repository', 'repos/strmt7/SuperZip')) {
         $global:LASTEXITCODE = $auditBranchExitCode
         return 'main'
     }
     if ($args.Count -ge 2 -and $args[0] -eq 'api' -and
-        $args[1] -like 'repos/fixture/repository/code-scanning/analyses?ref=refs%2Fheads%2Fmain&per_page=100&page=*&direction=desc') {
+        $args[1] -like 'repos/*/code-scanning/analyses?ref=refs%2Fheads%2Fmain&per_page=100&page=*&direction=desc') {
         $global:LASTEXITCODE = $auditAnalysisExitCode
         if ($args[1] -match '&page=(\d+)&direction=desc' -and $auditAnalysisPages.ContainsKey([int]$matches[1])) {
             return $auditAnalysisPages[[int]$matches[1]]
@@ -93,13 +94,15 @@ function Test-AuditCase {
         if ($DismissedResponses.Count -gt 0) {
             foreach ($response in $DismissedResponses) { $auditReplies.Enqueue($response) }
         } else {
-            $auditReplies.Enqueue((Get-ApiReply 'repos/fixture/repository/code-scanning/alerts?state=dismissed&*' 0 '[]'))
+            $resolvedRepository = if ($Repository) { $Repository } else { 'fixture/repository' }
+            $auditReplies.Enqueue((Get-ApiReply "repos/$resolvedRepository/code-scanning/alerts?state=dismissed&*" 0 '[]'))
         }
     }
     $message = ''
     try {
-        & (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') -Repository $Repository -Commit $Commit `
-            -IncludeHistory:$IncludeHistory -HistoryReportPath $HistoryReportPath 6>&1 | Out-Null
+        $script:lastAuditOutput = @(& (Join-Path $PSScriptRoot 'github_post_push_audit.ps1') `
+            -Repository $Repository -Commit $Commit -IncludeHistory:$IncludeHistory `
+            -HistoryReportPath $HistoryReportPath 6>&1) -join "`n"
     } catch {
         $message = $_.Exception.Message
     }
@@ -170,6 +173,30 @@ $auditGitExitCode = 0
 $auditGitRemote = ''
 Test-AuditCase 'empty remote query rejected' @() 'remote.origin.url is unset' -Repository ''
 Test-AuditCase 'previously accepted governance alert remains blocking' @($emptyDeployments, (Get-ApiReply $alerts 0 $approvedJson)) 'Unresolved code-scanning'
+Test-AuditCase 'exact maintainer governance baseline passes without deleting reports' @(
+    (Get-ApiReply 'repos/strmt7/SuperZip/deployments' 0 '0'),
+    (Get-ApiReply 'repos/strmt7/SuperZip/code-scanning/alerts*' 0 `
+        '[{"number":71,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}},{"number":73,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CIIBestPracticesID"}}]')
+) -Repository 'strmt7/SuperZip'
+if ($lastAuditOutput -notlike '*Accepted governance baseline: 2. Raw open alerts retained: 2.*') {
+    throw 'Passing audit hid the accepted governance observations.'
+}
+foreach ($changedIdentity in @(
+    '{"number":72,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}}',
+    '{"number":71,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"CodeReviewID"}}',
+    '{"number":71,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"DangerousWorkflowID"}}',
+    '{"number":73,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}}'
+)) {
+    Test-AuditCase 'baseline does not admit changed report identities' @(
+        (Get-ApiReply 'repos/strmt7/SuperZip/deployments' 0 '0'),
+        (Get-ApiReply 'repos/strmt7/SuperZip/code-scanning/alerts*' 0 ("[$changedIdentity]"))
+    ) 'Unresolved code-scanning alerts are open: 1.' -Repository 'strmt7/SuperZip'
+}
+Test-AuditCase 'baseline cannot hide an additional source finding' @(
+    (Get-ApiReply 'repos/strmt7/SuperZip/deployments' 0 '0'),
+    (Get-ApiReply 'repos/strmt7/SuperZip/code-scanning/alerts*' 0 `
+        '[{"number":71,"state":"open","tool":{"name":"Scorecard"},"rule":{"id":"CodeReviewID"}},{"number":100,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/test-rule"}}]')
+) 'Unresolved code-scanning alerts are open: 1.' -Repository 'strmt7/SuperZip'
 Test-AuditCase 'unapproved finding' @($emptyDeployments, (Get-ApiReply $alerts 0 $unapprovedJson)) 'Unresolved code-scanning'
 $priorityJson = '[{"number":100,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/quality"}},' +
     '{"number":2,"state":"open","tool":{"name":"CodeQL"},"rule":{"id":"cpp/critical","security_severity_level":"critical"}},' +

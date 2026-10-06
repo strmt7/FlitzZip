@@ -287,6 +287,7 @@ function Get-SuperZipVerificationScope {
 
     $touchesWorkflow = Test-SuperZipAnyPath -Path $paths -Pattern @('^\.github/(workflows|actions|codeql|requirements|openvas)/', '^\.github/dependabot\.yml$')
     $touchesVerification = Test-SuperZipAnyPath -Path $paths -Pattern @(
+        '^\.github/scanner-governance-baseline\.json$',
         '^tools/(zstd_rewrite_policy|test_zstd_rewrite_policy)\.ps1$',
         '^tools/test_zstd_sanitizers\.ps1$',
         '^tools/(release_workflow_policy|test_release_workflow_policy)\.ps1$',
@@ -430,7 +431,7 @@ function Get-SuperZipToolVerificationCommand {
            Command = (Get-SuperZipVerificationCommand -Id "fuzz-resource-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_fuzz_resources.ps1") -Reason "local fuzz admission must fit Windows and Docker-host RAM without CPU caps") }
         @{ Pattern = @('^\.clusterfuzzlite/', '^tools/(fuzz_memory|test_fuzz_memory)\.py$', '^tools/fuzz\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "fuzz-memory-tests" -Stage "local" -Executable "py" -Arguments @("-3", "-m", "unittest", "tools.test_fuzz_memory") -Reason "local fuzzing must verify real cgroup RAM and zero-swap limits before compiling") }
-        @{ Pattern = @('^tools/(github_post_push_audit|test_github_post_push_audit|wait_relevant_workflows)\.ps1$', '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$', '^\.github/scanner-(source-reviews|hosted-reviews|hosted-approval)\.csv$')
+        @{ Pattern = @('^tools/(github_post_push_audit|test_github_post_push_audit|wait_relevant_workflows)\.ps1$', '^tools/(scanner_metadata_review|test_scanner_metadata_review|scanner_hosted_review|test_scanner_hosted_review)\.py$', '^\.github/scanner-(source-reviews|hosted-reviews|hosted-approval)\.csv$', '^\.github/scanner-governance-baseline\.json$')
            Command = (Get-SuperZipVerificationCommand -Id "github-post-push-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_github_post_push_audit.ps1") -Reason "post-push audits must reject unavailable API evidence, including partial pagination") }
         @{ Pattern = @('^tools/(refactor_audit|test_refactor_audit)\.ps1$')
            Command = (Get-SuperZipVerificationCommand -Id "refactor-audit-tests" -Stage "local" -Executable "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools/test_refactor_audit.ps1") -Reason "source audits must include new and changed files without traversing ignored workspace copies") }
