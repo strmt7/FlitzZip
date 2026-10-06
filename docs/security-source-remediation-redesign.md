@@ -43,6 +43,10 @@ only existing public-integrity approvals against the committed ledger, complete
 Git blob, producer and highlighted value. It has no source or Scorecard admission
 path. Dismissal is not evidence of a source repair. Governance controls require
 actual governance evidence.
+CodeQL results from an earlier commit remain active when the canonical selector
+proves unchanged native/query inputs. Missing analyses, failed analysis requests,
+partial coverage and changed inputs cannot establish closure. Documentation-only
+pushes therefore neither rebuild native code nor hide retained source findings.
 Current acceptance limits belong in [beta readiness](beta-readiness.md), not in
 agent instructions or changing finding-count lists.
 

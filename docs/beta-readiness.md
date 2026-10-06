@@ -5,12 +5,18 @@ A candidate build and its validation are separate from permission to publish.
 
 ## Product Evidence
 
-The retained native qualification covers 627 main tests, seven CTest suites,
+The retained native qualification covers the main test registry, seven CTest suites,
 required-HIP and CPU readers across all seven block settings, binary benchmark
 input and the frontend's Neutron capability/settings gates. Local reuse requires
 the successful native receipt to match current inputs, configuration and outputs.
 Hosted compilation covers the six release HIP targets; it does not prove runtime
 behavior on every AMD device.
+
+The PPMd decoder and its input callback share one allocator-owned lifetime.
+Decoder readback, allocation-failure and cleanup tests exercise that boundary;
+an independent ownership check rejects the preceding implementation. Sanitizer
+qualification includes valid-access and deliberate-overflow instrumentation
+controls. These checks establish their recorded scope, not universal memory safety.
 
 Kernel registration lives in a separately admitted first-party DLL. Native
 startup requires no accelerator registration before capability detection.

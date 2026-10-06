@@ -3,6 +3,16 @@ $auditReplies = [System.Collections.Generic.Queue[object]]::new()
 $auditScenarioCount = 0
 $auditGitRemote = 'https://github.com/fixture/repository.git'
 $auditGitExitCode = 0
+$auditAnalysisExitCode = 0
+$auditAnalysisPages = @{}
+$auditBranchExitCode = 0
+$auditCheckoutCommit = 'a' * 40
+$auditSourceAnalysis = ConvertTo-Json -InputObject @(
+    @{ tool = 'CodeQL'; category = '/language:c-cpp'; commit_sha = ('a' * 40); error = ''; warning = '' },
+    @{ tool = 'CodeQL'; category = '/language:c-cpp/configuration:hip-host'; commit_sha = ('a' * 40); error = ''; warning = '' },
+    @{ tool = 'devskim'; category = 'devskim'; commit_sha = ('a' * 40); error = ''; warning = '' }
+) -Compress
+$auditDefaultSourceAnalysis = $auditSourceAnalysis
 
 # Purpose: Exercise repository resolution without reading or altering real Git configuration.
 # Inputs: Only the production remote.origin.url query is accepted; scoped fixture values supply its result.
@@ -17,6 +27,7 @@ function Invoke-TestGitRemote {
             return ''
         }
         $global:LASTEXITCODE = 0
+        if ($args[4] -eq 'HEAD^{commit}') { return $auditCheckoutCommit }
         return ('a' * 40)
     }
     if ($args.Count -ne 5 -or $args[0] -ne '-C' -or
@@ -33,6 +44,18 @@ Set-Alias -Name git -Value Invoke-TestGitRemote -Scope Script
 # Inputs: The implicit command arguments must request the next fixture endpoint.
 # Outputs: Emits the fixture response and sets the same process-status variable used by a native CLI.
 function Invoke-TestGitHub {
+    if ($args.Count -ge 2 -and $args[0] -eq 'api' -and $args[1] -eq 'repos/fixture/repository') {
+        $global:LASTEXITCODE = $auditBranchExitCode
+        return 'main'
+    }
+    if ($args.Count -ge 2 -and $args[0] -eq 'api' -and
+        $args[1] -like 'repos/fixture/repository/code-scanning/analyses?ref=refs%2Fheads%2Fmain&per_page=100&page=*&direction=desc') {
+        $global:LASTEXITCODE = $auditAnalysisExitCode
+        if ($args[1] -match '&page=(\d+)&direction=desc' -and $auditAnalysisPages.ContainsKey([int]$matches[1])) {
+            return $auditAnalysisPages[[int]$matches[1]]
+        }
+        return $auditSourceAnalysis
+    }
     if ($auditReplies.Count -eq 0) {
         throw 'Unexpected GitHub CLI call during offline audit testing.'
     }
@@ -61,12 +84,12 @@ function Test-AuditCase {
         [string]$Name, [object[]]$Responses, [string]$Failure = '',
         [switch]$IncludeHistory, [string]$HistoryReportPath = '',
         [AllowEmptyString()][string]$Repository = 'fixture/repository', [string]$Commit = '',
-        [object[]]$DismissedResponses = @()
+        [object[]]$DismissedResponses = @(), [switch]$SourceAnalysisFailure
     )
     $auditReplies.Clear()
     foreach ($response in $Responses) { $auditReplies.Enqueue($response) }
     if (-not $IncludeHistory -and ($Failure -eq '' -or $Failure.Contains('Unresolved code-scanning') -or
-            $Failure.Contains('First 12 examples') -or $DismissedResponses.Count -gt 0)) {
+            $Failure.Contains('First 12 examples') -or $DismissedResponses.Count -gt 0 -or $SourceAnalysisFailure)) {
         if ($DismissedResponses.Count -gt 0) {
             foreach ($response in $DismissedResponses) { $auditReplies.Enqueue($response) }
         } else {
@@ -216,6 +239,77 @@ Test-AuditCase 'wrong state in dismissed query rejected' @($emptyDeployments, $e
 $dismissedPage = $fullPage.Replace('"state":"open"', '"state":"dismissed"')
 Test-AuditCase 'dismissed pagination cannot repeat or hide current findings' @($emptyDeployments, $emptyAlerts) `
     'duplicate alert' -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 $dismissedPage), (Get-ApiReply $dismissedEndpoint 0 $dismissedPage))
+
+foreach ($invalidAnalysis in @('[]', '{}', '[null]', $auditDefaultSourceAnalysis.Replace('"warning":""', '"warning":"partial coverage"'))) {
+    $auditSourceAnalysis = $invalidAnalysis
+    $expected = if ($invalidAnalysis -eq '[]') { 'source analyses are unavailable' }
+    elseif ($invalidAnalysis -eq '{}') { 'Invalid source-analysis inventory' }
+    elseif ($invalidAnalysis -eq '[null]') { 'Invalid source-analysis identity' }
+    else { 'incomplete-coverage warnings' }
+    Test-AuditCase 'missing or malformed source analysis cannot establish closure' @($emptyDeployments, $emptyAlerts) `
+        $expected -SourceAnalysisFailure
+}
+$auditSourceAnalysis = $auditDefaultSourceAnalysis
+$auditBranchExitCode = 1
+Test-AuditCase 'failed default-branch API cannot establish source coverage' @($emptyDeployments, $emptyAlerts) `
+    'Cannot resolve the default branch' -SourceAnalysisFailure
+$auditBranchExitCode = 0
+$auditAnalysisExitCode = 1
+Test-AuditCase 'failed analysis API cannot use plausible output' @($emptyDeployments, $emptyAlerts) `
+    'source-analysis inventory failed' -SourceAnalysisFailure
+$auditAnalysisExitCode = 0
+$unrelatedAnalysis = @{ tool = 'other'; category = 'unrelated'; commit_sha = ('b' * 40); error = ''; warning = '' }
+$auditAnalysisPages[1] = ConvertTo-Json -InputObject @(@(1..100 | ForEach-Object { $unrelatedAnalysis })) -Compress
+$auditAnalysisPages[2] = $auditDefaultSourceAnalysis
+try {
+    Test-AuditCase 'complete source roles are discovered on a later analysis page' @($emptyDeployments, $emptyAlerts)
+} finally { $auditAnalysisPages.Clear() }
+$staleAnalyses = $auditDefaultSourceAnalysis | ConvertFrom-Json
+$staleAnalyses[0].commit_sha = 'b' * 40
+$auditSourceAnalysis = ConvertTo-Json -InputObject @($staleAnalyses) -Compress
+$cppReuseOutput = '{"codeql_cpp":false,"codeql_hip_host":false,"whole_database":true}'
+$cppReuseExitCode = 0
+
+# Purpose: Exercise the actual audit's source-reuse decision without bypassing it through historical reviews.
+# Inputs: Only the complete C++ selector CLI and exact prior analysis SHA are accepted.
+# Outputs: The selected equivalence fixture; any different command fails the test.
+function Invoke-TestCppAnalysisReuse {
+    if ($args.Count -ne 8 -or ($args[0..6] -join ' ') -ne '-3 -B -m tools.cpp_security_plan --event push --push-base' -or
+        $args[7] -ne ('b' * 40)) { throw 'Unexpected CodeQL equivalence command.' }
+    $global:LASTEXITCODE = $cppReuseExitCode
+    return $cppReuseOutput
+}
+Set-Alias -Name py -Value Invoke-TestCppAnalysisReuse -Scope Script
+try {
+    $reusedFinding = $currentDismissed.Replace(('a' * 40), ('b' * 40)).Replace(
+        '"state":"dismissed","commit_sha"', '"category":"/language:c-cpp","state":"dismissed","commit_sha"')
+    Test-AuditCase 'unchanged-input CodeQL reuse keeps reproduced dismissed findings blocking' @($emptyDeployments, $emptyAlerts) `
+        'Active dismissed findings: 1.' -DismissedResponses @((Get-ApiReply $dismissedEndpoint 0 $reusedFinding))
+    $cppReuseExitCode = 1
+    Test-AuditCase 'failed selector cannot admit plausible unchanged-input output' @($emptyDeployments, $emptyAlerts) `
+        'Cannot establish CodeQL source/configuration equivalence' -SourceAnalysisFailure
+    $cppReuseExitCode = 0
+    $auditCheckoutCommit = 'b' * 40
+    Test-AuditCase 'reuse cannot compare inputs against a different checkout commit' @($emptyDeployments, $emptyAlerts) `
+        'requires the requested commit at checkout HEAD' -Commit ('a' * 40) -SourceAnalysisFailure
+    $auditCheckoutCommit = 'a' * 40
+    foreach ($cppReuseOutput in @('{"codeql_cpp":true,"codeql_hip_host":true,"whole_database":true}',
+            '{"codeql_cpp":false,"codeql_hip_host":false,"whole_database":1}', '{}')) {
+        Test-AuditCase 'changed or unverified inputs cannot reuse CodeQL closure' @($emptyDeployments, $emptyAlerts) `
+            'stale for changed native/query inputs' -SourceAnalysisFailure
+    }
+} finally {
+    Remove-Item -LiteralPath Alias:py
+    $cppReuseExitCode = 0
+    $auditCheckoutCommit = 'a' * 40
+    $auditSourceAnalysis = $auditDefaultSourceAnalysis
+}
+$staleAnalyses = $auditDefaultSourceAnalysis | ConvertFrom-Json
+$staleAnalyses[2].commit_sha = 'b' * 40
+$auditSourceAnalysis = ConvertTo-Json -InputObject @($staleAnalyses) -Compress
+Test-AuditCase 'DevSkim requires the requested commit' @($emptyDeployments, $emptyAlerts) `
+    'DevSkim analysis does not cover' -SourceAnalysisFailure
+$auditSourceAnalysis = $auditDefaultSourceAnalysis
 
 # Purpose: Reject any attempted invocation of the retired source admission path.
 # Inputs: Historically accepted/malformed output, status and snapshot-count fixtures.

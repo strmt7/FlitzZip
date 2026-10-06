@@ -9,6 +9,26 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'github_repository.ps1')
 
+# Purpose: Preserve JSON array roots consistently across Windows PowerShell and newer PowerShell.
+# Inputs: Bounded GitHub response text and a caller-owned diagnostic label.
+# Outputs: One array object, including empty/null entries; malformed or non-array responses fail closed.
+function ConvertFrom-GitHubArray {
+    param([string]$Text, [string]$Label)
+
+    if ($Text.Length -gt 16MB) { throw "GitHub $Label response exceeds its character budget." }
+    try {
+        $parameters = @{ InputObject = $Text }
+        if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('NoEnumerate')) { $parameters.NoEnumerate = $true }
+        $document = @(ConvertFrom-Json @parameters)
+    } catch {
+        throw "GitHub returned invalid $Label JSON."
+    }
+    if ($document.Count -ne 1 -or $document[0] -isnot [System.Array]) {
+        throw "GitHub returned a non-array $Label response."
+    }
+    return ,$document[0]
+}
+
 # Purpose: Fetch a complete selected-state or all-state code-scanning inventory.
 # Inputs: Repository slug, page size, requested state, and whether complete incident history is required.
 # Outputs: Returns alert objects; rejects unavailable, malformed, duplicate, or unexpected-state evidence.
@@ -32,20 +52,7 @@ function Get-CodeScanningAlert {
         if ([string]::IsNullOrWhiteSpace(($json -join "`n"))) {
             throw "GitHub returned an empty code-scanning response on page $page."
         }
-        try {
-            $parameters = @{ InputObject = ($json -join "`n") }
-            # Windows PowerShell preserves the root array; newer PowerShell needs this explicit option.
-            if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('NoEnumerate')) {
-                $parameters.NoEnumerate = $true
-            }
-            $document = @(ConvertFrom-Json @parameters)
-        } catch {
-            throw "GitHub returned invalid code-scanning JSON on page $page."
-        }
-        if ($document.Count -ne 1 -or $document[0] -isnot [System.Array]) {
-            throw "GitHub returned a non-array code-scanning response on page $page."
-        }
-        $items = $document[0]
+        $items = ConvertFrom-GitHubArray -Text ($json -join "`n") -Label 'code-scanning'
         if ($items.Count -gt $PageSize) {
             throw "GitHub returned more records than requested on page $page."
         }
@@ -239,6 +246,70 @@ function Get-CurrentMetadataReview {
     }
 }
 
+# Purpose: Bind reproduced reports to the latest complete default-branch source analyses, including valid reuse.
+# Inputs: Repository and requested commit; CodeQL reuse requires unchanged native/query inputs at checkout HEAD.
+# Outputs: Latest analysis commits by producer/category; missing, stale or malformed evidence fails closed.
+function Get-CurrentSourceAnalysis {
+    param([string]$Repository, [string]$Commit)
+
+    $branch = gh api "repos/$Repository" --jq '.default_branch'
+    if ($LASTEXITCODE -ne 0 -or $branch -notmatch '^[A-Za-z0-9._/-]+$') {
+        throw 'Cannot resolve the default branch for source analysis.'
+    }
+    $reference = [Uri]::EscapeDataString("refs/heads/$branch")
+    $required = @('CodeQL:/language:c-cpp', 'CodeQL:/language:c-cpp/configuration:hip-host', 'devskim:devskim')
+    $latest = @{}
+    for ($page = 1; $page -le 32 -and $latest.Count -lt $required.Count; ++$page) {
+        $json = gh api "repos/$Repository/code-scanning/analyses?ref=$reference&per_page=100&page=$page&direction=desc" `
+            --jq '[.[] | {tool: .tool.name, category, commit_sha, error, warning}]'
+        if ($LASTEXITCODE -ne 0) { throw 'GitHub source-analysis inventory failed.' }
+        if (-not ($json -join "`n").TrimStart().StartsWith('[')) { throw 'Invalid source-analysis inventory.' }
+        $records = ConvertFrom-GitHubArray -Text ($json -join "`n") -Label 'source-analysis'
+        if ($records.Count -gt 100) { throw 'Source-analysis inventory exceeds its page bound.' }
+        foreach ($record in $records) {
+            if ($record -isnot [pscustomobject] -or $record.tool -isnot [string] -or
+                $record.category -isnot [string] -or $record.commit_sha -cnotmatch '^[0-9a-f]{40}$') {
+                throw 'Invalid source-analysis identity.'
+            }
+            $key = "$($record.tool):$($record.category)"
+            if ($key -in $required -and -not $latest.ContainsKey($key)) {
+                if ($record.error -isnot [string] -or $record.error -ne '' -or
+                    $record.warning -isnot [string] -or $record.warning -ne '') {
+                    throw 'Source analysis contains errors or incomplete-coverage warnings.'
+                }
+                $latest[$key] = $record.commit_sha
+            }
+        }
+        if ($records.Count -lt 100) { break }
+    }
+    if ($latest.Count -ne $required.Count) { throw 'Complete CPU, HIP and DevSkim source analyses are unavailable.' }
+    if ($latest['devskim:devskim'] -ne $Commit) { throw 'DevSkim analysis does not cover the requested commit.' }
+    $checked = @{}
+    foreach ($key in $required | Where-Object { $_.StartsWith('CodeQL:') }) {
+        $analyzedCommit = $latest[$key]
+        if ($analyzedCommit -eq $Commit -or $checked.ContainsKey($analyzedCommit)) { continue }
+        $checkoutCommit = git -C $repoRoot rev-parse --verify 'HEAD^{commit}'
+        if ($LASTEXITCODE -ne 0 -or $checkoutCommit -cne $Commit) {
+            throw 'CodeQL reuse requires the requested commit at checkout HEAD.'
+        }
+        Push-Location $repoRoot
+        try {
+            $output = py -3 -B -m tools.cpp_security_plan --event push --push-base $analyzedCommit
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot establish CodeQL source/configuration equivalence.' }
+            $plan = ($output -join "`n") | ConvertFrom-Json
+            if ($plan.codeql_cpp -isnot [bool] -or $plan.codeql_hip_host -isnot [bool] -or
+                $plan.whole_database -isnot [bool] -or -not $plan.whole_database -or
+                $plan.codeql_cpp -or $plan.codeql_hip_host) {
+                throw 'CodeQL analysis is stale for changed native/query inputs.'
+            }
+        } finally {
+            Pop-Location
+        }
+        $checked[$analyzedCommit] = $true
+    }
+    return $latest
+}
+
 if ($HistoryReportPath -and -not $IncludeHistory) {
     throw 'HistoryReportPath requires IncludeHistory; an open-only snapshot is not a complete incident review.'
 }
@@ -263,8 +334,11 @@ if ($IncludeHistory) {
 $alerts = @($inventory | Where-Object state -eq 'open')
 $dismissed = if ($IncludeHistory) { @($inventory | Where-Object state -eq 'dismissed') }
 else { @(Get-CodeScanningAlert -Repository $repo -State dismissed) }
+$analyses = Get-CurrentSourceAnalysis -Repository $repo -Commit $Commit
 $current = @($dismissed | Where-Object {
-    $_.most_recent_instance.commit_sha -eq $Commit -and $_.most_recent_instance.state -eq 'dismissed'
+    $key = "$($_.tool.name):$($_.most_recent_instance.category)"
+    $analysisCommit = if ($analyses.ContainsKey($key)) { $analyses[$key] } else { $Commit }
+    $_.most_recent_instance.commit_sha -eq $analysisCommit -and $_.most_recent_instance.state -eq 'dismissed'
 })
 $metadata = @(Get-CurrentMetadataReview -Alerts $current -Commit $Commit)
 $unresolved = @($current | Where-Object { $_.number -notin $metadata })
