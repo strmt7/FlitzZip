@@ -71,6 +71,7 @@ COMMANDS = {
         "tools/lint.ps1",
         "-CppMode",
         "Changed",
+        "-IncludeUntracked",
     ],
     "wait_relevant_workflows": [
         "powershell",
@@ -531,6 +532,7 @@ def run_bounded_command(
         raise ValueError("child command limits require a finite positive deadline and positive integer byte counts")
     admitted_bytes = admit_child_memory_bytes(memory_limit_bytes)
     child_directory = command_working_directory(working_directory)
+    output = BoundedOutput(max_output_bytes, response_tail_bytes)
     creation_options = {
         "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
         | subprocess.CREATE_NO_WINDOW
@@ -563,18 +565,17 @@ def run_bounded_command(
             if process.stderr is not None:
                 process.stderr.close()
         raise
-    output = BoundedOutput(max_output_bytes, response_tail_bytes)
-    assert process.stdout is not None and process.stderr is not None
-    readers = [
-        threading.Thread(target=_drain_stream, args=(process.stdout, "stdout", output), daemon=True),
-        threading.Thread(target=_drain_stream, args=(process.stderr, "stderr", output), daemon=True),
-    ]
-    for reader in readers:
-        reader.start()
-
+    readers: list[threading.Thread] = []
     timed_out = False
-    deadline = time.monotonic() + timeout_seconds
     try:
+        assert process.stdout is not None and process.stderr is not None
+        readers = [
+            threading.Thread(target=_drain_stream, args=(process.stdout, "stdout", output), daemon=True),
+            threading.Thread(target=_drain_stream, args=(process.stderr, "stderr", output), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        deadline = time.monotonic() + timeout_seconds
         while process.poll() is None:
             if cancellation is not None and cancellation.is_set():
                 containment.terminate(process)
@@ -596,10 +597,14 @@ def run_bounded_command(
         try:
             containment.close()
         finally:
-            for reader in readers:
-                reader.join(timeout=5)
-            process.stdout.close()
-            process.stderr.close()
+            try:
+                process.wait(timeout=5)
+            finally:
+                for reader in readers:
+                    if reader.ident is not None:
+                        reader.join(timeout=5)
+                process.stdout.close()
+                process.stderr.close()
 
     stdout, stdout_truncated = output.render("stdout")
     stderr, stderr_truncated = output.render("stderr")
@@ -772,12 +777,13 @@ class ProtocolServer:
                 raise ProtocolError(-32600, "another command is running; wait or cancel it first")
             self.active_id = message_id
             self.cancellation.clear()
-            self.worker = threading.Thread(target=self.execute, args=(message_id, name, modern))
             try:
+                self.worker = threading.Thread(target=self.execute, args=(message_id, name, modern))
                 self.worker.start()
-            except RuntimeError:
+            except RuntimeError as exc:
+                self.worker = None
                 self.active_id = None
-                raise
+                raise ProtocolError(-32603, "could not start command worker") from exc
 
     def handle(self, request: object) -> None:
         """Purpose: Dispatch one MCP message with strict JSON-RPC envelope handling.

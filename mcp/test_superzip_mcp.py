@@ -121,6 +121,24 @@ class ProtocolTests(unittest.TestCase):
         self.assertNotIn("-SkipPostPushAudit", final)
         self.assertGreater(superzip_mcp.COMMAND_TIMEOUT_SECONDS["wait_final_commit_workflows"], 60 * 60)
 
+    def test_lint_includes_new_files(self) -> None:
+        """Purpose: Keep new source in MCP lint coverage; inputs: tool allowlist; outputs: required discovery flag."""
+        self.assertIn("-IncludeUntracked", superzip_mcp.COMMANDS["lint"])
+
+    def test_worker_start_failure_preserves_server_lifecycle(self) -> None:
+        """Purpose: Keep command startup failures recoverable at the protocol boundary.
+        Inputs: A rejected worker start followed by ping and close. Outputs: Internal error and no unstarted worker.
+        """
+        with mock.patch.object(threading.Thread, "start", side_effect=RuntimeError("controlled worker failure")):
+            self.request("tools/call", {"name": "lint"})
+        failure = json.loads(self.output.getvalue().splitlines()[-1])
+        self.assertEqual(failure["error"]["code"], -32603)
+        self.assertIsNone(self.server.active_id)
+        self.assertIsNone(self.server.worker)
+        self.request("ping", request_id=2)
+        self.assertEqual(json.loads(self.output.getvalue().splitlines()[-1])["id"], 2)
+        self.server.close()
+
     def setUp(self) -> None:
         """Purpose: Isolate each protocol test; inputs: none; outputs: server and captured transport."""
         self.server = superzip_mcp.ProtocolServer()
@@ -386,6 +404,72 @@ class MemoryAdmissionTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "Windows-native command execution and aggregate job memory")
 class BoundedChildTests(unittest.TestCase):
+    def test_reader_start_failure_reaps_child_and_closes_pipes(self) -> None:
+        """Purpose: Regress partial reader startup leaks using an actual contained child.
+        Inputs: A controlled first or second reader-start failure. Outputs: Reaped child and closed pipes before return.
+        """
+        for fail_at in (1, 2):
+            with self.subTest(fail_at=fail_at):
+                self.check_reader_start_failure(fail_at)
+
+    def check_reader_start_failure(self, fail_at: int) -> None:
+        """Purpose: Exercise one startup failure without leaking test resources.
+        Inputs: One-based reader index to reject. Outputs: Asserts cleanup with independent test ownership.
+        """
+        create_child = subprocess.Popen
+        create_owner = superzip_mcp.ChildContainment
+        start_reader = threading.Thread.start
+        children, owners, readers = [], [], []
+
+        def launch(*args, **kwargs):
+            """Purpose: Retain owned test processes; inputs: real launch arguments; outputs: actual child."""
+            child = create_child(*args, **kwargs)
+            children.append(child)
+            return child
+
+        def contain(*args, **kwargs):
+            """Purpose: Retain test cleanup ownership; inputs: real child and limit; outputs: native job owner."""
+            owner = create_owner(*args, **kwargs)
+            owners.append(owner)
+            return owner
+
+        def start(reader):
+            """Purpose: Fail one reader startup; inputs: actual thread; outputs: real start or controlled failure."""
+            readers.append(reader)
+            if len(readers) == fail_at:
+                raise RuntimeError("controlled reader startup failure")
+            start_reader(reader)
+
+        try:
+            with (
+                mock.patch.object(superzip_mcp.subprocess, "Popen", side_effect=launch),
+                mock.patch.object(superzip_mcp, "ChildContainment", side_effect=contain),
+                mock.patch.object(threading.Thread, "start", start),
+                self.assertRaisesRegex(RuntimeError, "controlled reader startup failure"),
+            ):
+                superzip_mcp.run_bounded_command(
+                    [sys.executable, "-c", "import time; time.sleep(10)"],
+                    timeout_seconds=2,
+                    memory_limit_bytes=128 * superzip_mcp.MIB,
+                )
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll(), "reader failure leaked the running child")
+            self.assertTrue(children[0].stdout.closed)
+            self.assertTrue(children[0].stderr.closed)
+        finally:
+            for owner in owners:
+                owner.close()
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+            for reader in readers:
+                if reader.ident is not None:
+                    reader.join(timeout=5)
+            for child in children:
+                child.stdout.close()
+                child.stderr.close()
+
     def test_memory_limit_is_applied_before_child_can_spawn(self) -> None:
         """Purpose: Verify startup containment; inputs: child querying its job; outputs: exact shared ceiling."""
         script = (

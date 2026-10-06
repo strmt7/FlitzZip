@@ -54,7 +54,9 @@ Launch failure reaps the suspended child and closes owned handles/pipes; a
 descendant cannot launch ahead of containment. Only our child is affected.
 No CPU quota, affinity, breakaway permission or working-set throttling is set.
 Normal exit, cancellation, timeout and output-limit handling retain the existing
-tree cleanup. Results include `job_memory_limit_bytes`; allocation denial remains
+tree cleanup. Failure to start either output-reader thread also terminates and
+reaps the owned child and closes its pipes before returning the error.
+Results include `job_memory_limit_bytes`; allocation denial remains
 a command failure, never a passed or deferred check.
 
 Command execution requires Windows; discovery, framing and pure protocol tests
@@ -88,6 +90,9 @@ timeouts, shared RAM-policy parity, actual aggregate parent/descendant allocatio
 denial, fail-closed launch, and Windows descendant containment. Full verification selects this
 suite automatically. No network transport, resources, prompts, sampling,
 elicitation, subscriptions, or optional MCP extensions are advertised.
+
+The lint tool includes untracked files, matching repository development policy;
+new source must be checked before its first commit.
 
 Protocol references checked on 2026-09-05:
 
