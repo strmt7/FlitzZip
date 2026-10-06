@@ -1,77 +1,57 @@
 ---
 name: superzip-performance
-description: Validate SuperZip CPU/GPU performance, RAM-only benchmarks, compression-level/block-size tuning, and AMD HIP telemetry without causing SSD wear. Use when changing benchmark scripts, compression levels, compression block sizes, worker allocation, GPU utilization, performance docs, or performance claims.
+description: Improve SuperZip compression and execution efficiency using mode-specific RAM-only benchmarks, licensed workloads, complete archive sizes and actual AMD HIP telemetry.
 ---
 
-# SuperZip Performance Skill
+# SuperZip Performance
 
-Read `docs/performance-block-size-validation.md`,
-`docs/compression-level-and-benchmark-suite.md`, and
-`docs/gpu-accelerated-ui-and-codec-research.md` before editing performance
-code, benchmark scripts, compression-level UI, block-size UI, GPU/UI
-performance architecture, or benchmark documentation.
-Run `tools/verification_plan.ps1 -IncludeUntracked` before choosing checks.
-The plan marks RAM-only benchmark sweeps as manual commands when performance
-code or performance claims are touched.
-Choose planner/verifier `-Checkpoint intermediate` during continued tuning,
-including full local escalation. Sample the pushed SHA once opportunistically
-and keep pending gates visible. Final acceptance uses `-Checkpoint final` and
-`-Mode final -FinalCommit` over the accumulated change range. Follow the guide's
-RAM policy; do not lower timing benchmark priority or arbitrarily cap CPUs.
+Read the affected contracts before changing codec policy, scheduling, telemetry
+or benchmark claims:
 
-Required rules:
+- [Compression levels and benchmark suite](../../../docs/compression-level-and-benchmark-suite.md)
+- [Block-size measurement and validation](../../../docs/performance-block-size-validation.md)
+- [GPU codec and UI architecture](../../../docs/gpu-accelerated-ui-and-codec-research.md)
+- [Native format](../../../docs/native-suzip-format.md) when encoding or decoding changes
+- [Neutron corpus protocol](../../../docs/neutron-public-corpus-benchmark.md) for Neutron work
 
-- CPU/GPU comparison benchmarks must use `tools/bench.ps1` in default
-  memory-only mode.
-- The benchmark must report `memory_only=true` and `disk_write_bytes=0` for
-  every forced-CPU and required-AMD-HIP lane.
-- Sweep all production block sizes when validating performance:
-  `-BlockSizeKiB 256,512,1024,2048,4096,8192,16384`.
-- Compare CPU and GPU at the same compression level and report compression
-  ratio, input bytes, and output bytes. Level 5 is the standard balanced
-  release baseline.
-- Native `.suzip` required-GPU ratio work must stay on GPU-native block kinds.
-  Follow `docs/native-suzip-format.md` for the current versioned entropy,
-  dictionary, closed composition and reversible byte-plane contracts. Both
-  encoding and required-GPU decode must execute through HIP. Older static and
-  adaptive prefix archives remain readable. Do not count CPU Deflate/Zstd as
-  GPU work or promise that every level changes every input's size.
-- For effort comparisons, record exact archive bytes for all nine levels and
-  graph the published 1/3/5/7/9 subset only from clean-source, identical-host
-  RAM-only runs. Report smaller high-level gains in bytes, not rounded ratios,
-  and identify any non-monotonic pair instead of smoothing it away.
-- Do not run or reintroduce multi-GB filesystem benchmarks during development.
-  Use `tools/storage_smoke.ps1` or the 64 MiB-capped filesystem smoke only for
-  archive write/read correctness.
-- Required-GPU benchmark lanes must fail if HIP is unavailable. Do not count CPU
-  fallback telemetry as GPU work.
-- Propagate verified benchmark improvements into production code paths. Do not
-  keep benchmark-only optimizations.
-- The System page GPU graph and headline value are total system GPU engine
-  utilization from OS counters. VRAM total and SuperZip dedicated VRAM are
-  detail rows only; do not use VRAM percentage or process-only GPU samples as
-  the graph source.
-- Do not change System graph history length, sampling cadence, or horizontal
-  progression while fixing labels or counter semantics unless the task
-  explicitly asks for graph-cadence work.
-- Do not treat GPU-rendered UI, Direct2D/Composition work, or visual polish as
-  evidence of archive GPU acceleration. Archive acceleration claims require
-  required-HIP codec telemetry and RAM-only CPU/GPU comparisons.
-- Dramatic GPU performance work must target batched, bounded, asynchronous HIP
-  codec execution, not benchmark-only changes. Any pinned host memory,
-  persistent device workspace, stream, HIP graph, or rocPRIM change must prove
-  bounded RAM/VRAM use and pass the full Mixed/Compressible/Incompressible
-  10 GiB memory-only profile sweep before release claims.
+The operating guide owns shared-host admission and execution limits. Use the
+change-aware verifier for correctness checks before benchmarking.
 
-Standard manual command after plan-selected correctness tests pass:
+## Choose the measurement
 
-```powershell
-tools/bench.ps1 -Configuration Release -SizeMiB 10240 -Profile Mixed -CompressionLevel 5 -Iterations 1 -BlockSizeKiB 256,512,1024,2048,4096,8192,16384
-build/Release/superzip_cli.exe benchmark-suite --profile Mixed --compression-level 5 --tune
-```
+| Question | Existing controller and interpretation |
+| --- | --- |
+| Standard numeric effort CPU/HIP comparison | `tools/bench.ps1`; documented paired protocol, equal effort and applicable block-size matrix |
+| Neutron size or kernel improvement | `tools.neutron_corpus_benchmark`; licensed real corpora and required-HIP RAM transport |
+| Compatibility-format comparison | Existing archive-comparison tooling and its permission/independent-reader contracts |
+| Runtime, transfer or device fault | Corresponding diagnostic or focused correctness test; a diagnostic is not an application benchmark |
 
-Record CPU/GPU throughput, worker counts, HIP chunk counts, HIP kernel launches,
-HIP event time, transfer bytes, allocation bytes, input bytes, output bytes,
-compression ratio, and benchmark score for every block size. Do not make
-"much faster" or "order-of-magnitude" claims unless the recorded speedup proves
-that exact statement on the same workload, level, and ratio basis.
+## Improve and verify
+
+1. State the bottleneck or size hypothesis and freeze source, workload, settings
+   and baseline identity. Use representative inputs and a holdout workload when
+   selecting data-dependent strategies.
+2. Inspect production host work, allocation, transfers, kernels, synchronization
+   and final framing. Count complete archive bytes, including tables and any
+   model or dictionary state.
+3. Change the canonical production path. Preserve compatibility, failure behavior
+   and independent byte-exact readback. GPU changes need bounded progress and
+   asynchronous-lifetime controls before device execution.
+4. Run selected correctness consumers, then the affected existing benchmark
+   protocol. Preserve RAM-only transport and its emitted proof fields. Sample
+   competing host load when drawing timing conclusions.
+5. Compare repeated observations on the same basis. Retain losses, non-monotonic
+   effort pairs and inconclusive timings. Separate size, correctness, throughput
+   and hardware-coverage claims.
+6. Refresh affected documentation and generated figures from retained records.
+   Inspect every changed figure visually and preserve uncertainty correctly.
+
+Neutron remains a distinct GPU-only mode prioritizing minimum complete archive
+size. Its measurements and tuning must not enter ordinary effort scores or
+caches. Moving an improvement into numeric efforts requires evidence of both
+smaller output and faster execution under the maintainer's existing contract.
+Standard paired CPU/HIP recipes therefore do not automatically apply to a
+Neutron-only change.
+
+Use intermediate checkpoints while tuning and the operating guide's final
+verification and hosted-audit procedure before reporting release readiness.

@@ -149,6 +149,16 @@ Assert-Selector (Test-Workflow -Plan $docsPlan -Name "lint") "docs-only changes 
 Assert-Selector (-not $docsPlan.workflowWaitPolicy.deferAllowed) "unspecified checkpoint must default to final acceptance"
 Assert-Selector ($docsPlan.workflowWaitPolicy.recommendedMode -eq "final") "final docs acceptance must require relevant lint"
 
+foreach ($path in @('IMPLEMENTATION_PLAN.md', '.github/copilot-instructions.md',
+        '.agents/skills/superzip-build-test/SKILL.md', 'mcp/README.md')) {
+    $guidancePlan = Get-SuperZipVerificationPlan -ChangedPath @($path) -Checkpoint intermediate
+    Assert-Selector (Test-RequiredCommand -Plan $guidancePlan -Id 'language-lint') "first-party Markdown must reach the actual language linter: $path"
+    Assert-Selector (-not (Test-RequiredCommand -Plan $guidancePlan -Id 'release-build')) "guidance changes must not rebuild native products: $path"
+    Assert-Selector (-not $guidancePlan.scope.fullEscalationRequired) "guidance changes retain targeted verification: $path"
+}
+$vendorGuidanceScope = Get-SuperZipVerificationScope -ChangedPath @('third_party/upstream/lz4/README.md')
+Assert-Selector (-not $vendorGuidanceScope.touchesLintSurface) 'Markdown routing must preserve the existing upstream-document formatting boundary'
+
 $sourcePlan = Get-SuperZipVerificationPlan -ChangedPath @("src/core/checksum.cpp")
 Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id "language-lint") "C++ source changes must run the language linter"
 Assert-Selector (Test-RequiredCommand -Plan $sourcePlan -Id "release-build") "C++ source changes must build"

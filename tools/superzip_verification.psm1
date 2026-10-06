@@ -212,6 +212,60 @@ function Test-SuperZipDiffLine {
     return $false
 }
 
+# Purpose: Keep path classification and supported language coverage together without executing checks.
+# Inputs: None; patterns describe repository-owned paths and the linter's existing vendor boundary.
+# Outputs: Returns fresh documentation, known-path and lint pattern arrays for one verification scope.
+function Get-SuperZipVerificationPathPolicy {
+    return [pscustomobject]@{
+        documentation = @(
+            '^AGENTS\.md$',
+            '^README\.md$',
+            '^IMPLEMENTATION_PLAN\.md$',
+            '^docs/',
+            '^\.github/copilot-instructions\.md$',
+            '^\.agents/skills/.*\.md$'
+        )
+        known = @(
+            '^AGENTS\.md$',
+            '^README\.md$',
+            '^IMPLEMENTATION_PLAN\.md$',
+            '^LICENSE(\.md)?$',
+            '^CMakeLists\.txt$',
+            '^cmake/',
+            '^docs/',
+            '^src/',
+            '^tests/',
+            '^fuzz/',
+            '^tools/',
+            '^mcp/',
+            '^\.agents/',
+            '^\.github/',
+            '^\.clang-format$',
+            '^\.pymarkdown\.json$',
+            '^\.ruff\.toml$',
+            '^\.yamllint$',
+            '^\.git(ignore|attributes)$',
+            '^\.clusterfuzzlite/',
+            '^resources/',
+            '^third_party/'
+        )
+        lint = @(
+            '^\.clang-format$',
+            '^\.github/.*\.ya?ml$',
+            '^\.github/workflows/lint\.yml$',
+            '^\.pymarkdown\.json$',
+            '^\.ruff\.toml$',
+            '^\.yamllint$',
+            '^(?!third_party/).*\.md$',
+            '^mcp/.*\.py$',
+            '^tools/.*\.(ps1|psm1|py)$',
+            '^CMakeLists\.txt$',
+            '^cmake/',
+            '^(src|tests|fuzz)/.*\.(c|cc|cpp|h|hpp)$'
+        )
+    }
+}
+
 # Purpose: Classify changed paths into verification-relevant SuperZip risk areas.
 # Inputs: `ChangedPath` is a normalized path set and `SuspectGlobalBug` forces full escalation.
 # Outputs: Returns a scope object with booleans, unknown paths, and escalation reasons.
@@ -222,41 +276,10 @@ function Get-SuperZipVerificationScope {
     )
 
     $paths = Select-SuperZipUniquePath -Path $ChangedPath
-    $documentationPatterns = @(
-        '^AGENTS\.md$',
-        '^README\.md$',
-        '^IMPLEMENTATION_PLAN\.md$',
-        '^docs/',
-        '^\.github/copilot-instructions\.md$',
-        '^\.agents/skills/.*\.md$'
-    )
-    $knownPatterns = @(
-        '^AGENTS\.md$',
-        '^README\.md$',
-        '^IMPLEMENTATION_PLAN\.md$',
-        '^LICENSE(\.md)?$',
-        '^CMakeLists\.txt$',
-        '^cmake/',
-        '^docs/',
-        '^src/',
-        '^tests/',
-        '^fuzz/',
-        '^tools/',
-        '^mcp/',
-        '^\.agents/',
-        '^\.github/',
-        '^\.clang-format$',
-        '^\.pymarkdown\.json$',
-        '^\.ruff\.toml$',
-        '^\.yamllint$',
-        '^\.git(ignore|attributes)$',
-        '^\.clusterfuzzlite/',
-        '^resources/',
-        '^third_party/'
-    )
+    $patterns = Get-SuperZipVerificationPathPolicy
     $unknown = @()
     foreach ($path in $paths) {
-        if (-not (Test-SuperZipAnyPath -Path @($path) -Pattern $knownPatterns)) {
+        if (-not (Test-SuperZipAnyPath -Path @($path) -Pattern $patterns.known)) {
             $unknown += $path
         }
     }
@@ -321,26 +344,11 @@ function Get-SuperZipVerificationScope {
     $touchesGui = Test-SuperZipAnyPath -Path $paths -Pattern @('^src/app/', '^resources/(design|app|brand)/', '^tools/(gui_smoke|generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^tools/SuperZip\.GuiSmoke\.[^/]+\.psm1$')
     $touchesBrand = Test-SuperZipAnyPath -Path $paths -Pattern @('^resources/brand/', '^resources/app/', '^tools/(generate_app_icon|generate_brand_logo_header|verify_brand_assets)\.ps1$', '^src/app/superzip_brand_logo')
     $touchesPackaging = Test-SuperZipAnyPath -Path $paths -Pattern @('^CMakeLists\.txt$', '^cmake/', '^tools/(package|install_wix|build|version|release_metadata)\.(ps1|py)$')
-    $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern @(
-        '^\.clang-format$',
-        '^\.github/.*\.ya?ml$',
-        '^\.github/workflows/lint\.yml$',
-        '^\.pymarkdown\.json$',
-        '^\.ruff\.toml$',
-        '^\.yamllint$',
-        '^AGENTS\.md$',
-        '^README\.md$',
-        '^docs/.*\.md$',
-        '^mcp/.*\.py$',
-        '^tools/.*\.(ps1|psm1|py)$',
-        '^CMakeLists\.txt$',
-        '^cmake/',
-        '^(src|tests|fuzz)/.*\.(c|cc|cpp|h|hpp)$'
-    )
+    $touchesLintSurface = Test-SuperZipAnyPath -Path $paths -Pattern $patterns.lint
     $touchesBenchmarkCliDiff = (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/cli/main\.cpp$')) -and (Test-SuperZipDiffLine -Path @("src/cli/main.cpp") -Pattern @('benchmark', 'throughput', 'compression.?level', 'block.?size', 'workers', 'inflight', 'gpu'))
     $touchesPerformance = $touchesBenchmarkCliDiff -or (Test-SuperZipAnyPath -Path $paths -Pattern @('^src/gpu/', '^src/core/(archive|archive_blocks|archive_block_types|resource_limits)\.', '^tools/(bench|gpu_|storage_smoke)', '^docs/(performance|compression-level|compression-backend)'))
     $touchesMcp = Test-SuperZipAnyPath -Path $paths -Pattern @('^mcp/.*\.py$')
-    $docsOnly = (@($paths).Count -gt 0) -and (Test-SuperZipAllPath -Path $paths -Pattern $documentationPatterns)
+    $docsOnly = (@($paths).Count -gt 0) -and (Test-SuperZipAllPath -Path $paths -Pattern $patterns.documentation)
 
     $reasons = @()
     if ($SuspectGlobalBug.IsPresent) { $reasons += "caller marked the codebase as globally suspicious" }
