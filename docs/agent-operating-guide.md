@@ -980,7 +980,9 @@ manufacture a clean scan. Individual authorizations belong in review records.
   maintainer authorized its validation dispatch, dispatch it on the pushed
   ref and verify the run's head SHA; otherwise report the missing gate. Do not
   drop the selected workflow or keep waiting as though a nonexistent run were
-  progressing. Release dispatch still requires its separate authorization.
+  progressing. Requested candidate qualification uses `publish_release=false`
+  and preserves every build, scan and installer gate. Enabling release publication
+  still requires separate maintainer authorization.
   Fuzzing is long-running: observe it during iteration, wait at final acceptance.
   Intermediate `-Mode defer` is a compatibility alias for an opportunistic check,
   not an unchecked skip. Final mode cannot skip a required post-push audit.
