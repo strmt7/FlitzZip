@@ -100,7 +100,7 @@ verified against both the snapshot and live checkout. All six critical pointer
 reports remain; this result does not establish hosted acceptance. Scanner
 preflight and individual unresolved findings still block publication. See the
 [local review](../security/security-finding-review-2026-10-03.md#legacy-dictionary-failure-propagation)
-and [recurrence lessons](../../engineering-learning-loop.md#adding-a-new-lesson).
+and [recurrence lessons](engineering-learning-record.md#adding-a-new-lesson).
 The maintainer's pause before release remains in force.
 
 The latest continuation retains the completed analysis at tree

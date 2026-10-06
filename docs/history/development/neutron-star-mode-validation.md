@@ -105,7 +105,7 @@ round. This round demonstrates no further size reduction on Canterbury.
 Native compression took 58.89–59.30 seconds per pass and the study recorded
 412,062 kernel launches. Timing remains unqualified. The current 991-file
 Govdocs1 attempt reached its 7,200-second deadline after 643 completed files.
-Its [partial record](../../neutron-public-corpus-benchmark.md#incomplete-current-govdocs-attempt-6-october)
+Its [partial record](../benchmarks/neutron-public-corpus-rounds.md#retained-incomplete-govdocs-attempt-6-october)
 preserves their exact sizes and GPU readback, but the whole study remains
 unqualified. Earlier source-bound results cannot substitute for this
 implementation's complete-corpus evidence.
